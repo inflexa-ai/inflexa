@@ -115,16 +115,20 @@ let interruptArmTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Arm (or refresh) the interrupt double-press window: the UI's first-press binding calls this, and a
- * second press within {@link INTERRUPT_ARM_WINDOW_MS} fires {@link abort}. A fresh press restarts the
- * timer; the timer is `.unref`'d so a pending window never keeps the process alive at shutdown.
+ * second press within the window fires {@link abort}. A fresh press restarts the timer; the timer is
+ * `.unref`'d so a pending window never keeps the process alive at shutdown.
+ *
+ * @param windowMs how long the armed window holds before it lapses and disarms itself. Production
+ * callers pass nothing and get {@link INTERRUPT_ARM_WINDOW_MS}; the override exists purely so a test can
+ * drive the expiry path without a real multi-second wait (mirroring {@link notify}'s `durationMs`).
  */
-export function armInterrupt(): void {
+export function armInterrupt(windowMs: number = INTERRUPT_ARM_WINDOW_MS): void {
     if (interruptArmTimer) clearTimeout(interruptArmTimer);
     setInterruptArmed(true);
     interruptArmTimer = setTimeout(() => {
         interruptArmTimer = null;
         setInterruptArmed(false);
-    }, INTERRUPT_ARM_WINDOW_MS);
+    }, windowMs);
     interruptArmTimer.unref();
 }
 
@@ -1201,6 +1205,11 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
 /** Cancel the in-flight chat request, if any (the abort keybinding). */
 export function abort(): void {
     abortController?.abort();
+    // Once the turn's abort is fired there is nothing left to interrupt, so disarm the double-press
+    // window now — the status hint falls back to its resting form immediately rather than staying
+    // accented through the engine's unwind. `finishTurn` disarms on settlement as a backstop; disarming
+    // here on ctrl+c's abort path is equally correct for the same reason. Idempotent, so the two never clash.
+    disarmInterrupt();
 }
 
 /**

@@ -63,6 +63,98 @@ export function selectionClearLayer(renderer: CliRenderer): LayerConfig {
     };
 }
 
+/** The seams the {@link retractLayer} factory closes over — the composer it gates on and the retract hook it drives. */
+export type RetractLayerDeps = {
+    /**
+     * The chat composer this layer is focus-`target`-gated to. Doubles as the buffer whose emptiness gates
+     * arming (`plainText === ""`) and as the seed target the retract writes the original text back into.
+     */
+    readonly target: TextareaRenderable | null;
+    /** The conversation retract seam: whether a retract is possible right now, and the retract itself. */
+    readonly conversation: Pick<typeof conversation, "canRetract" | "retract">;
+};
+
+/**
+ * The real "up-arrow retracts the just-sent message back into the composer" key layer, built as a pure
+ * factory over its deps so a dispatch test drives the SAME config `App` installs — not a hand-copied
+ * replica that could drift. `App` registers it with `useBindings(() => retractLayer({ target: textareaRef,
+ * conversation }))`, re-invoked each keystroke so `enabled` re-reads the live buffer and retract window.
+ *
+ * Live ONLY while the composer is empty AND the retract window holds (a busy turn that has produced
+ * nothing; the hook owns that gate via `canRetract`). Gated to an EMPTY buffer so a non-empty composer
+ * disables the binding and `up` falls through to the textarea's own cursor movement, and so the seed can
+ * never overwrite text the user has typed. Its own layer (not folded into the clear-input/scroll-mode
+ * layer) so the empty+retractable gate does not also disable those. `setText` leaves the caret at offset
+ * 0, so `gotoBufferEnd` lands it after the seeded text ready to edit. Idle up-arrow stays inert here,
+ * leaving the chord free for future recall.
+ */
+export function retractLayer(deps: RetractLayerDeps): LayerConfig {
+    const target = deps.target;
+    return {
+        mode: MODE_BASE,
+        target,
+        enabled: target?.plainText === "" && deps.conversation.canRetract(),
+        bindings: [
+            {
+                chord: KEYS.up,
+                run: () =>
+                    void deps.conversation.retract((t) => {
+                        target?.setText(t);
+                        target?.gotoBufferEnd();
+                    }),
+                desc: "Retract message",
+                group: "Chat",
+            },
+        ],
+    };
+}
+
+/** The seams the {@link interruptLayer} factory closes over — its focus target, its enable inputs, and the interrupt hook it drives. */
+export type InterruptLayerDeps = {
+    /** The stream pane this layer is focus-`target`-gated to (live only in NORMAL mode, pane focused). */
+    readonly target: Renderable | null;
+    /** True while a turn is in flight — the layer only arms/fires during a busy turn. */
+    readonly busy: () => boolean;
+    /** The live selected text (empty when none) — a live selection excludes the interrupt (see below). */
+    readonly selectedText: () => string;
+    /** The conversation interrupt seam: the armed-state read, arm-the-window, and fire-the-abort. */
+    readonly conversation: Pick<typeof conversation, "interruptArmed" | "armInterrupt" | "abort">;
+};
+
+/**
+ * The real double-press interrupt key layer, built as a pure factory over its deps so a dispatch test
+ * drives the SAME config `App` installs — not a hand-copied replica that could drift. `App` registers it
+ * with `useBindings(() => interruptLayer({ ... }))`, re-invoked each keystroke so `enabled` re-reads the
+ * live busy/selection state and `run` re-reads the armed flag.
+ *
+ * Live only while a turn is busy and the stream pane holds focus (NORMAL mode): the first press arms a
+ * short window, a second within it fires the turn's abort (the hook disarms on finishTurn AND on the
+ * abort itself). A separate layer from the i/enter/o keys so its busy gate does not disable those. Dialog
+ * gating is structural — MODE_BASE suspends under a modal AND a stacked dialog steals the pane's focus, so
+ * the layer is doubly inert while a dialog is open. A live text selection is excluded two ways: the
+ * higher-priority `selectionClearLayer` (priority 50 vs this layer's 0) owns the esc press first and
+ * returns handled, so the interrupt never observes it, and the explicit `enabled` selection check keeps it
+ * disarmed regardless of that ordering. Idle → disabled, so esc in NORMAL stays the deliberate no-op it is today.
+ */
+export function interruptLayer(deps: InterruptLayerDeps): LayerConfig {
+    return {
+        mode: MODE_BASE,
+        target: deps.target,
+        enabled: deps.busy() && !deps.selectedText(),
+        bindings: [
+            {
+                chord: resolveKeybind("app.interrupt"),
+                run: () => {
+                    if (deps.conversation.interruptArmed()) deps.conversation.abort();
+                    else deps.conversation.armInterrupt();
+                },
+                desc: "Interrupt turn (again to confirm)",
+                group: "Chat",
+            },
+        ],
+    };
+}
+
 export function App(props: AppProps) {
     const dims = useTerminalDimensions();
     const renderer = useRenderer();
@@ -414,30 +506,11 @@ export function App(props: AppProps) {
         ],
     }));
 
-    // Up-arrow retracts the just-sent message back into the composer — but ONLY while the composer is
-    // empty and the retract window holds (a busy turn that has produced nothing; the hook owns that gate).
-    // Gated to an EMPTY buffer so a non-empty composer disables the binding and `up` falls through to the
-    // textarea's own cursor movement, and so the seed can never overwrite text the user has typed. Its own
-    // layer (not folded into the clear-input/scroll-mode layer above) so the empty+retractable gate does
-    // not also disable those. `setText` leaves the caret at offset 0, so `gotoBufferEnd` lands it after the
-    // seeded text ready to edit. Idle up-arrow stays inert here, leaving the chord free for future recall.
-    useBindings(() => ({
-        mode: MODE_BASE,
-        target: textareaRef,
-        enabled: textareaRef?.plainText === "" && conversation.canRetract(),
-        bindings: [
-            {
-                chord: KEYS.up,
-                run: () =>
-                    void conversation.retract((t) => {
-                        textareaRef?.setText(t);
-                        textareaRef?.gotoBufferEnd();
-                    }),
-                desc: "Retract message",
-                group: "Chat",
-            },
-        ],
-    }));
+    // Up-arrow retracts the just-sent message back into the composer. The layer config is the exported
+    // `retractLayer` factory (its full rationale lives on that export); registering it via a thunk
+    // re-invokes it each keystroke so `enabled` re-reads the live buffer + retract window. The dispatch
+    // test installs the SAME factory, so the two can never drift.
+    useBindings(() => retractLayer({ target: textareaRef, conversation }));
 
     // NORMAL-mode companion layer, live while the stream's pane is focused: returning to INSERT is
     // chat-specific (dialog panes have no input to return to), so it lives here, not in ScrollPane.
@@ -454,31 +527,18 @@ export function App(props: AppProps) {
         ],
     }));
 
-    // Double-press interrupt, live only while a turn is busy and the stream pane holds focus (NORMAL
-    // mode): the first press arms a short window, a second within it fires the turn's abort (the hook
-    // disarms on finishTurn). A separate layer from the i/enter/o keys above so its busy gate does not
-    // disable those. Dialog gating is structural — MODE_BASE suspends under a modal AND a stacked dialog
-    // steals the pane's focus, so the layer is doubly inert while a dialog is open. A live text selection
-    // is excluded two ways: the higher-priority `selectionClearLayer` (priority 50 vs this layer's 0) owns
-    // the esc press first and returns handled, so the interrupt never observes it, and the explicit
-    // `enabled` selection check keeps it disarmed regardless of that ordering. Idle → disabled, so esc in
-    // NORMAL stays the deliberate no-op it is today.
-    useBindings(() => ({
-        mode: MODE_BASE,
-        target: scrollPaneRef,
-        enabled: chatStatus() === "busy" && !renderer.getSelection()?.getSelectedText(),
-        bindings: [
-            {
-                chord: resolveKeybind("app.interrupt"),
-                run: () => {
-                    if (conversation.interruptArmed()) conversation.abort();
-                    else conversation.armInterrupt();
-                },
-                desc: "Interrupt turn (again to confirm)",
-                group: "Chat",
-            },
-        ],
-    }));
+    // Double-press interrupt. The layer config is the exported `interruptLayer` factory (its full
+    // rationale lives on that export); registering it via a thunk re-invokes it each keystroke so
+    // `enabled` re-reads the live busy/selection state. The dispatch test installs the SAME factory, so
+    // the two can never drift.
+    useBindings(() =>
+        interruptLayer({
+            target: scrollPaneRef,
+            busy: () => chatStatus() === "busy",
+            selectedText: () => renderer.getSelection()?.getSelectedText() ?? "",
+            conversation,
+        }),
+    );
 
     // TODO(robustness): minimal slash-command stub — only quit aliases for now. Replace with a
     // proper registry (parser, help listing, extensible command map) when the slash system lands.
