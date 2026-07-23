@@ -27,6 +27,7 @@
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { join } from "node:path";
+import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import type { Pool } from "pg";
 import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 
@@ -67,6 +68,12 @@ interface FakeDbosState {
     emittedParts: Array<Record<string, unknown>>;
     /** Step-name → message: makes the matching `DBOS.runStep` throw. */
     throwOnStep: Map<string, string>;
+    /**
+     * Step-name → error INSTANCE thrown as-is — for paths that branch on the
+     * error's class (the cancellation guard), where `throwOnStep`'s plain
+     * `new Error(message)` cannot reach the branch.
+     */
+    throwErrorOnStep: Map<string, Error>;
     /** Step-name → value the matching `DBOS.runStep` returns instead of running its body. */
     resultOnStep: Map<string, unknown>;
     /** Monotonic fake clock (ms); `DBOS.now()` reads it then advances by `FAKE_CLOCK_STEP_MS`. */
@@ -102,6 +109,8 @@ async function mockDbos(): Promise<void> {
     // is registered to throw (the synthesis-failure path injects a throw at the
     // "synthesize-findings" step without driving the real synthesizer).
     (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
+        const injectedError = config?.name ? dbosState.throwErrorOnStep.get(config.name) : undefined;
+        if (injectedError !== undefined) throw injectedError;
         const injected = config?.name ? dbosState.throwOnStep.get(config.name) : undefined;
         if (injected !== undefined) throw new Error(injected);
         // A stubbed result stands in for a named step's body, so a test can drive
@@ -182,6 +191,7 @@ beforeEach(async () => {
         childInputs: [],
         emittedParts: [],
         throwOnStep: new Map(),
+        throwErrorOnStep: new Map(),
         resultOnStep: new Map(),
         nowMs: FAKE_CLOCK_BASE_MS,
         workflowIdCounter: 0,
@@ -896,6 +906,218 @@ describe("executeAnalysis body", () => {
 
         expect(result.status).toBe("completed");
         expect(synthesisWrites(pool)).toEqual([]);
+    });
+
+    // ── The run-phase `synthesis` ledger row ───────────────────────────
+    //
+    // The parent seeds a reserved `synthesis` row with the DAG, marks it running
+    // around the synthesize-findings step, and stamps its terminal status from
+    // the classified outcome BEFORE the run row's own terminal write (the
+    // step-execution-tracking spec). The fake pool records every query in
+    // order, so "the run row was still `running` when the step row's terminal
+    // write executed" is asserted from the write timeline itself — the
+    // point-in-time ledger state, not a call-count.
+
+    /** The one seed insert (`ON CONFLICT … DO NOTHING`) — its VALUES are 5-wide row tuples. */
+    const seedWrites = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
+        pool.queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && /DO NOTHING/i.test(q.text));
+
+    /** The mark-running upsert (`ON CONFLICT … DO UPDATE`) for the synthesis row. */
+    const synthesisMarkRunning = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
+        pool.queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && /DO UPDATE/i.test(q.text) && (q.values ?? []).includes("synthesis"));
+
+    /** The synthesis row's terminal `updateStepExecution` write (`SET status = $1`). */
+    const synthesisStepUpdates = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
+        pool.queries.filter((q) => /UPDATE cortex_step_executions\s+SET status = \$1/i.test(q.text) && (q.values ?? []).includes("synthesis"));
+
+    /** The terminal sweep (`pending` → `skipped`). */
+    const sweepWrites = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
+        pool.queries.filter((q) => /UPDATE cortex_step_executions\s+SET status = 'skipped'/i.test(q.text));
+
+    /** The run row's status write (`updateRunStatus`). */
+    const runStatusWrites = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
+        pool.queries.filter((q) => /UPDATE cortex_runs\s+SET status = \$1/i.test(q.text));
+
+    it("seeds the synthesis row with the DAG, last wave, when synthesis is enabled", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({
+            pool,
+            synthesisEnabled: true,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+            ]),
+        });
+        dbosState.resultOnStep.set("synthesize-findings", { findings: [], synthesisStatus: "produced", synthesisReason: null });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+
+        const seeds = seedWrites(pool);
+        expect(seeds.length).toBe(1);
+        const values = [...(seeds[0]!.values ?? [])];
+        // 2 DAG rows + the synthesis row, 5 values per tuple (runId, stepId, analysisId, wave, agentId).
+        expect(values.length).toBe(15);
+        const at = values.indexOf("synthesis");
+        expect(at).toBeGreaterThan(-1);
+        // A is level 0, B level 1 → the synthesis row's wave sits after every DAG level.
+        expect(values[at + 2]).toBe(2);
+        expect(values[at + 3]).toBe("run-synthesizer");
+    });
+
+    it("does not seed a synthesis row when synthesis is disabled", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+
+        const seeds = seedWrites(pool);
+        expect(seeds.length).toBe(1);
+        const values = [...(seeds[0]!.values ?? [])];
+        expect(values.length).toBe(5);
+        expect(values).not.toContain("synthesis");
+    });
+
+    it("marks the row running, then stamps it completed BEFORE the run row's terminal write", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({
+            pool,
+            synthesisEnabled: true,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+        dbosState.resultOnStep.set("synthesize-findings", { findings: [], synthesisStatus: "produced", synthesisReason: null });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+
+        const marks = synthesisMarkRunning(pool);
+        expect(marks.length).toBe(1);
+        expect(marks[0]!.values).toContain("run-synthesizer");
+
+        const updates = synthesisStepUpdates(pool);
+        expect(updates.length).toBe(1);
+        const [status, completedAt, durationMs, error, runId, stepId] = updates[0]!.values ?? [];
+        expect(status).toBe("completed");
+        expect(typeof completedAt).toBe("string");
+        // Exactly one fake-clock tick elapses between the two bracketing DBOS.now()
+        // reads (the synthesize step itself is stubbed), so the duration is exact.
+        expect(durationMs).toBe(FAKE_CLOCK_STEP_MS);
+        expect(error).toBeNull();
+        expect(runId).toBe("run-test");
+        expect(stepId).toBe("synthesis");
+
+        // Ordering: at the moment the step row's terminal write executed, no run-row
+        // status write had been recorded — the run row was still `running`.
+        const stepIdx = pool.queries.indexOf(updates[0]!);
+        const runWrites = runStatusWrites(pool);
+        expect(runWrites.length).toBe(1);
+        expect(stepIdx).toBeLessThan(pool.queries.indexOf(runWrites[0]!));
+    });
+
+    it("skipped_no_summaries → row skipped; skipped_blocker → row blocked with the reason", async () => {
+        for (const [outcome, reason, expectStatus] of [
+            ["skipped_no_summaries", null, "skipped"],
+            ["skipped_blocker", "all step summaries were empty", "blocked"],
+        ] as const) {
+            const pool = makeFakePool();
+            const { deps } = makeDeps({
+                pool,
+                synthesisEnabled: true,
+                childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            });
+            dbosState.resultOnStep.set("synthesize-findings", { findings: [], synthesisStatus: outcome, synthesisReason: reason });
+
+            await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+
+            const updates = synthesisStepUpdates(pool);
+            expect(updates.length).toBe(1);
+            const values = [...(updates[0]!.values ?? [])];
+            expect(values[0]).toBe(expectStatus);
+            // The blocker's reason rides the blocked_reason column (before runId/stepId).
+            if (outcome === "skipped_blocker") expect(values[values.length - 3]).toBe(reason);
+        }
+    });
+
+    it("failed synthesis → row failed with the same reason as cortex_runs, stamped before the run fails", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({
+            pool,
+            synthesisEnabled: true,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+        dbosState.throwOnStep.set("synthesize-findings", "synth boom");
+
+        await expect(runExecuteAnalysisBody(input([{ id: "A" }]), deps)).rejects.toThrow("synth boom");
+
+        const updates = synthesisStepUpdates(pool);
+        expect(updates.length).toBe(1);
+        const [status, , , error] = updates[0]!.values ?? [];
+        expect(status).toBe("failed");
+        expect(error).toBe("synth boom");
+        const runWrites = runStatusWrites(pool);
+        expect(runWrites.length).toBe(1);
+        expect(pool.queries.indexOf(updates[0]!)).toBeLessThan(pool.queries.indexOf(runWrites[0]!));
+    });
+
+    it("cancellation mid-synthesis re-propagates with the row untouched and no outcome persisted", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({
+            pool,
+            synthesisEnabled: true,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+        dbosState.throwErrorOnStep.set("synthesize-findings", new DBOSErrors.DBOSWorkflowCancelledError("run-test"));
+
+        await expect(runExecuteAnalysisBody(input([{ id: "A" }]), deps)).rejects.toThrow("has been cancelled");
+
+        // The row was marked running and then left exactly there: no terminal
+        // stamp, no cortex_runs synthesis outcome, no run-status write at all —
+        // both ledgers stay `running` under the CANCELLED workflow (D7).
+        expect(synthesisMarkRunning(pool).length).toBe(1);
+        expect(synthesisStepUpdates(pool)).toEqual([]);
+        expect(synthesisWrites(pool)).toEqual([]);
+        expect(runStatusWrites(pool)).toEqual([]);
+    });
+
+    it("gate never passes (zero completed steps) → no mark-running; the terminal sweep runs", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({
+            pool,
+            synthesisEnabled: true,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "step died" }]]),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+
+        expect(result.status).toBe("failed");
+        expect(synthesisMarkRunning(pool)).toEqual([]);
+        expect(synthesisStepUpdates(pool)).toEqual([]);
+        // The seeded synthesis row is finalized by the sweep (`pending` → `skipped`).
+        expect(sweepWrites(pool).length).toBe(1);
+    });
+
+    it("budget pause: the synthesis row is already terminal and the sweep does not run", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({
+            pool,
+            synthesisEnabled: true,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "canceled", durationMs: 1, finishReason: null, error: "budget_exceeded" }],
+            ]),
+        });
+        dbosState.resultOnStep.set("synthesize-findings", { findings: [], synthesisStatus: "produced", synthesisReason: null });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+
+        expect(result.status).toBe("canceled");
+        const updates = synthesisStepUpdates(pool);
+        expect(updates.length).toBe(1);
+        expect(updates[0]!.values?.[0]).toBe("completed");
+        // The resumable pause preserves pending DAG rows — no sweep — and the
+        // synthesis row needs none: it reached its terminal before the pause.
+        expect(sweepWrites(pool)).toEqual([]);
     });
 
     // ── Pending seed + terminal sweep ──────────────────────────────────

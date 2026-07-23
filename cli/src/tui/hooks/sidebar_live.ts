@@ -421,7 +421,7 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
             if (myRefresh !== refreshGeneration) return;
             stepsRes.match(
                 (stepRows) => {
-                    const steps: RunStepView[] = stepRows.map((r) => ({ label: r.stepId, state: stepStateOf(r.status) }));
+                    const steps: RunStepView[] = stepRows.map((r) => ({ label: r.stepId, state: stepStateOf(r.status), startedAt: r.startedAt }));
                     const done = steps.filter((s) => s.state === "done").length;
                     setActiveRun({ name: shortRunName(newest), tag: idTail(newest.runId), done, total: steps.length, steps });
                 },

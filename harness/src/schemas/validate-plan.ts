@@ -15,7 +15,7 @@
 import { KNOWN_AGENT_IDS } from "../agents/sandbox-catalog.js";
 import type { ResourceLimits } from "../config/resource-limits.js";
 import { CycleError, DependencyError, topoSortIntoWaves } from "../execution/topo-sort.js";
-import { isSafeId, STEP_SUBDIRS } from "../workspace/paths.js";
+import { isSafeId, STEP_SUBDIRS, SYNTHESIS_STEP_ID } from "../workspace/paths.js";
 import type { AnalysisPlan } from "./workflow-state.js";
 
 const KNOWN_AGENTS: ReadonlySet<string> = new Set(KNOWN_AGENT_IDS);
@@ -23,9 +23,12 @@ const KNOWN_AGENTS: ReadonlySet<string> = new Set(KNOWN_AGENT_IDS);
 /**
  * Reserved step-id names. A step id equal to an artifact subdirectory name
  * would make its directory (`runs/{runId}/{stepId}`) collide with the
- * subdirectory convention agents expect inside a step (see the harness-workspace-tools spec).
+ * subdirectory convention agents expect inside a step, and
+ * {@link SYNTHESIS_STEP_ID} is the run-phase ledger row `executeAnalysis`
+ * writes for run-level synthesis — a plan step with that id would collide with
+ * the row's `(run_id, step_id)` primary key (see the harness-workspace-tools spec).
  */
-const RESERVED_STEP_IDS: ReadonlySet<string> = new Set(STEP_SUBDIRS);
+const RESERVED_STEP_IDS: ReadonlySet<string> = new Set([...STEP_SUBDIRS, SYNTHESIS_STEP_ID]);
 
 export interface ValidationResult {
     valid: boolean;
@@ -126,12 +129,14 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
         }
     }
 
-    // 5. Reserved step-id names (collide with artifact subdirectories)
+    // 5. Reserved step-id names (collide with artifact subdirectories or the
+    //    run-phase synthesis ledger row)
     for (const step of plan.steps) {
         if (RESERVED_STEP_IDS.has(step.id.toLowerCase())) {
             errors.push(
                 `Step "${step.id}" uses a reserved name — step ids must not be one of: ` +
-                    `${STEP_SUBDIRS.join(", ")} (they collide with the artifact subdirectory convention)`,
+                    `${[...RESERVED_STEP_IDS].join(", ")} (the artifact subdirectory names collide with the ` +
+                    `step-directory convention; "${SYNTHESIS_STEP_ID}" is the run-level synthesis phase)`,
             );
         }
     }

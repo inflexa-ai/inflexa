@@ -99,7 +99,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
         enabled: !(renderer.currentFocusedRenderable instanceof TextareaRenderable),
         bindings: [{ chord: KEYS.q, run: () => props.onClose() }],
     }));
-    const runSteps = mockRun.steps.map((s) => ({ label: s.label, state: s.state }));
+    const runSteps = mockRun.steps.map((s) => ({ label: s.label, state: s.state, startedAt: s.startedAt }));
     const longRunSteps = mockLongRun.steps.map((s) => ({ label: s.label, state: s.state }));
     // The live interrupt + abort chords, so the footer-hint exhibits below name the real keys (esc in
     // NORMAL, the one-press ctrl+c in INSERT) rather than hardcoded ones.

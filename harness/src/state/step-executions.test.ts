@@ -144,6 +144,33 @@ describe("step-executions: pending seeding", () => {
         const rows = (await queryStepsByRun(pool, "run-empty"))._unsafeUnwrap();
         expect(rows).toHaveLength(0);
     });
+
+    it("the run-phase synthesis row orders last and survives a replayed seed", async () => {
+        // The parent seeds the reserved `synthesis` row with the DAG (wave after
+        // every DAG level) and later advances it through the mark-running upsert;
+        // the DO NOTHING seed contract must hold for it exactly as for DAG rows.
+        const synthesisRow = { runId: "run-synth", stepId: "synthesis", analysisId: "analysis-1", wave: 1, agentId: "run-synthesizer" };
+        (await seedStepExecutions(pool, [...seedRows("run-synth", ["s1", "s2"], 0), synthesisRow]))._unsafeUnwrap();
+        (
+            await insertStepExecution(pool, {
+                runId: "run-synth",
+                stepId: "synthesis",
+                analysisId: "analysis-1",
+                wave: 1,
+                agentId: "run-synthesizer",
+                childWorkflowId: null,
+            })
+        )._unsafeUnwrap();
+
+        (await seedStepExecutions(pool, [...seedRows("run-synth", ["s1", "s2"], 0), synthesisRow]))._unsafeUnwrap();
+
+        const rows = (await queryStepsByRun(pool, "run-synth"))._unsafeUnwrap();
+        expect(rows.map((r) => r.stepId)).toEqual(["s1", "s2", "synthesis"]);
+        const synth = rows.find((r) => r.stepId === "synthesis");
+        expect(synth?.status).toBe("running");
+        expect(synth?.agentId).toBe("run-synthesizer");
+        expect(synth?.startedAt).not.toBeNull();
+    });
 });
 
 describe("report_blocker tool", () => {

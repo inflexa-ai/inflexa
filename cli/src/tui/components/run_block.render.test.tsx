@@ -1,9 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createSignal } from "solid-js";
 import { testRender } from "@opentui/solid";
+import { parseColor, rgbToHex } from "@opentui/core";
 import { renderFrame } from "../../test_support/tui.ts";
 
-import { size } from "../../lib/design_system.ts";
+import { DEFAULT_THEME_ID, size, themes } from "../../lib/design_system.ts";
+import { setTheme } from "../theme.ts";
 import { RunBlock, type RunStepView } from "./run_block.tsx";
 
 /**
@@ -395,4 +397,68 @@ describe("RunBlock marker selection", () => {
             setup.renderer.destroy();
         }
     });
+});
+
+describe("RunBlock running-step elapsed age", () => {
+    afterEach(() => setTheme(DEFAULT_THEME_ID));
+
+    /** A three-row run: one done, one running (with a start time), one queued. */
+    function agedSteps(runningStartedAt: string | null): RunStepView[] {
+        return [
+            { label: "S1", state: "done" },
+            { label: "S2", state: "running", startedAt: runningStartedAt },
+            { label: "S3", state: "queued" },
+        ];
+    }
+
+    function block(steps: RunStepView[]) {
+        return () => <RunBlock name="cohort-screen" tag="T9S2" done={1} total={3} steps={steps} hint={false} heading={false} />;
+    }
+
+    test("a running step with a start time shows a compact age", async () => {
+        // 4m05s ago → the mNNs form; a fixed offset keeps the shape stable while the exact seconds float.
+        const startedAt = new Date(Date.now() - (4 * 60_000 + 5_000)).toISOString();
+        const frame = await renderFrame(block(agedSteps(startedAt)), { width: 40, height: 12 });
+        // The age sits on the running row (`S2`), never the done or queued rows.
+        const s2Row = frame.split("\n").find((l) => /\bS2\b/.test(l)) ?? "";
+        expect(s2Row).toMatch(/\d+m\d{2}s/);
+        expect(frame.split("\n").find((l) => /\bS1\b/.test(l))).not.toMatch(/\d+m\d{2}s/);
+        expect(frame.split("\n").find((l) => /\bS3\b/.test(l))).not.toMatch(/\d+m\d{2}s/);
+    });
+
+    test("a running step without a start time shows no age", async () => {
+        const frame = await renderFrame(block(agedSteps(null)), { width: 40, height: 12 });
+        const s2Row = frame.split("\n").find((l) => /\bS2\b/.test(l)) ?? "";
+        expect(s2Row).not.toMatch(/\d+m\d{2}s/);
+        expect(s2Row).not.toMatch(/\d+s/);
+    });
+
+    test("an unparseable start time degrades to no age", async () => {
+        const frame = await renderFrame(block(agedSteps("not-a-timestamp")), { width: 40, height: 12 });
+        const s2Row = frame.split("\n").find((l) => /\bS2\b/.test(l)) ?? "";
+        expect(s2Row).not.toMatch(/\d+s/);
+    });
+
+    // The age is information, not decoration, so it must clear the 4.5:1 text floor on both a dark and a
+    // light theme (github-light's pure-white bg is where an unresolved white foreground goes invisible).
+    for (const id of ["tokyo-night", "github-light"] as const) {
+        test(`under ${id} the age paints the muted TEXT tier, not an opentui default`, async () => {
+            setTheme(id);
+            const startedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+            const setup = await testRender(block(agedSteps(startedAt)), { width: 40, height: 12 });
+            try {
+                await setup.renderOnce();
+                let ageFg: string | null = null;
+                for (const line of setup.captureSpans().lines) {
+                    for (const span of line.spans) {
+                        if (/\d+m\d{2}s/.test(span.text)) ageFg = rgbToHex(span.fg);
+                    }
+                }
+                expect(ageFg).not.toBeNull();
+                expect(parseColor(themes[id].colors.fgMuted).equals(parseColor(ageFg!))).toBe(true);
+            } finally {
+                setup.renderer.destroy();
+            }
+        });
+    }
 });

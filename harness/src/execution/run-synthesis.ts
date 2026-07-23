@@ -59,7 +59,13 @@ import type { BioToolKeys } from "../tools/bio/keys.js";
 
 // ── Agent identity / budgets ────────────────────────────────────────
 
-const AGENT_ID = "run-synthesizer";
+/**
+ * The synthesizer's agent identity — the `source.agentId` on its loop events
+ * and the `agent_id` of the run-phase `synthesis` row `executeAnalysis` writes
+ * to `cortex_step_executions`. One definition so the ledger row and the stream
+ * events can never disagree about who did the work.
+ */
+export const SYNTHESIS_AGENT_ID = "run-synthesizer";
 
 /**
  * Budget for the synthesizer loop: read summaries + 1–3 reviewer delegations
@@ -458,7 +464,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
     const tools: readonly Tool[] = [validateTool, submitTool, blockerTool, reviewer];
 
     const agent: AgentDefinition = {
-        id: AGENT_ID,
+        id: SYNTHESIS_AGENT_ID,
         systemPrompt: composeSystemPrompt(synthesisAgentPrompt),
         model: input.model,
         tools,
