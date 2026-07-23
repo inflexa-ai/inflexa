@@ -26,6 +26,15 @@ declare global {
          * `NaNmNaNs` string.
          */
         formatDuration(ms: number): string;
+        /**
+         * ISO timestamp `ms` milliseconds before now (`new Date(Date.now() - ms)`). The inverse
+         * framing of {@link relativeAge}: `relativeAge` reads an age off a past instant, `ago`
+         * mints one a fixed span back — so a caller that wants "a row that has been running for
+         * four minutes" writes `Date.ago(4 * 60_000)` instead of hand-rolling the subtraction and
+         * `toISOString()`. A static on Date beside `now`, so producing a relative instant reads from
+         * one place rather than each fixture/caller re-deriving it.
+         */
+        ago(ms: number): string;
     }
 }
 
@@ -38,6 +47,10 @@ Date.relativeAge = function (since: number): string {
     const hours = Math.floor(mins / 60);
     if (hours < 24) return `${hours}h${(mins % 60).toString().padStart(2, "0")}m`;
     return `${Math.floor(hours / 24)}d${(hours % 24).toString().padStart(2, "0")}h`;
+};
+
+Date.ago = function (ms: number): string {
+    return new Date(Date.now() - ms).toISOString();
 };
 
 Date.formatDuration = function (ms: number): string {

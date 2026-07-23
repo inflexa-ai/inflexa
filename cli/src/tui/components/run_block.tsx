@@ -266,15 +266,12 @@ export function RunBlock(props: RunBlockProps) {
                         const m = stepMark(step.state);
                         // Elapsed age of a running step, from its ledger start. The gate lives HERE, not
                         // in the row→view mapping, so both mapping sites stay dumb projections and every
-                        // rule about WHEN an age shows is in one place: running rows only, and only when
-                        // the timestamp parses. Muted TEXT tier (not the fgSubtle decoration tier) — it is
-                        // information and must clear the 4.5:1 floor. `Date.relativeAge` is the shared
-                        // elapsed-indicator vocabulary (never a hand-rolled formatter — see cli CLAUDE.md).
-                        const age = (): string | null => {
-                            if (step.state !== "running" || !step.startedAt) return null;
-                            const t = Date.parse(step.startedAt);
-                            return Number.isNaN(t) ? null : Date.relativeAge(t);
-                        };
+                        // rule about WHEN an age shows is in one place: running rows only (a queued row
+                        // hasn't started; a done/failed row's duration is a detail-view concern), and only
+                        // when the timestamp parses (`String.relativeAge` returns null otherwise). Muted
+                        // TEXT tier (not the fgSubtle decoration tier) — it is information and must clear
+                        // the 4.5:1 floor.
+                        const age = (): string | null => (step.state === "running" && step.startedAt ? step.startedAt.relativeAge() : null);
                         return (
                             <text>
                                 <Fg role={m.role}>{`${m.glyph} `}</Fg>

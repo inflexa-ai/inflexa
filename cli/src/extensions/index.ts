@@ -7,3 +7,4 @@ import "./json.ext.ts";
 import "./number.ext.ts";
 import "./promise.ext.ts";
 import "./response.ext.ts";
+import "./string.ext.ts";

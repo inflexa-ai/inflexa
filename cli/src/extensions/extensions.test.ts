@@ -124,6 +124,52 @@ describe("Date.formatDuration", () => {
     });
 });
 
+describe("Date.ago", () => {
+    const NOW = 1_700_000_000_000;
+
+    test("returns an ISO timestamp `ms` before now", () => {
+        const now = spyOn(Date, "now").mockReturnValue(NOW);
+        try {
+            expect(Date.ago(0)).toBe(new Date(NOW).toISOString());
+            expect(Date.ago(5 * 60_000)).toBe(new Date(NOW - 5 * 60_000).toISOString());
+        } finally {
+            now.mockRestore();
+        }
+    });
+
+    test("round-trips through String.relativeAge to a stable bucket", () => {
+        const now = spyOn(Date, "now").mockReturnValue(NOW);
+        try {
+            // `ago(5m)` is exactly five minutes back, so its age reads `5m00s`.
+            expect(Date.ago(5 * 60_000).relativeAge()).toBe("5m00s");
+        } finally {
+            now.mockRestore();
+        }
+    });
+});
+
+describe("String.relativeAge", () => {
+    const NOW = 1_700_000_000_000;
+
+    test("parses a serialized date and renders the same buckets as Date.relativeAge", () => {
+        const now = spyOn(Date, "now").mockReturnValue(NOW);
+        try {
+            expect(new Date(NOW - 5_000).toISOString().relativeAge()).toBe("5s");
+            expect(new Date(NOW - 331_000).toISOString().relativeAge()).toBe("5m31s");
+            expect(new Date(NOW - 32_040_000).toISOString().relativeAge()).toBe("8h54m");
+        } finally {
+            now.mockRestore();
+        }
+    });
+
+    test("returns null for an unparseable string, leaving the fallback to the caller", () => {
+        // Deliberately null, not an em dash: the extension is glyph-free so callers pick their own
+        // fallback (the sidebar rail an em dash, the run block nothing).
+        expect("not-a-timestamp".relativeAge()).toBeNull();
+        expect("".relativeAge()).toBeNull();
+    });
+});
+
 describe("Promise.sleep", () => {
     test("resolves only after roughly the requested delay", async () => {
         const start = Date.now();
