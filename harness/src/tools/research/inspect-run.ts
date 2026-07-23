@@ -20,6 +20,7 @@ import { z } from "zod";
 import type { CortexRunRow } from "../../state/schema.js";
 import { queryRun, queryRunsByAnalysis, queryStepsByRun } from "../../state/index.js";
 import { scopeResource } from "../../auth/types.js";
+import { SYNTHESIS_STEP_ID } from "../../workspace/paths.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { defineTool, type ToolError } from "../define-tool.js";
 
@@ -104,9 +105,15 @@ export function createInspectRunTool(pool: Pool) {
                 agentId: s.agentId,
                 wave: s.wave,
                 status: s.status,
-                // Seeded rows exist before a step ever runs; a summary path for one
-                // would point the agent at a file that cannot exist yet (or ever).
-                ...(s.status === "pending" || s.status === "skipped" ? {} : { summaryPath: `runs/${input.runId}/${s.stepId}/output/summary.md` }),
+                // No per-step `summaryPath` when the file cannot exist: a seeded row
+                // (`pending`/`skipped`) never produced output, and the reserved
+                // `synthesis` phase is not a sandbox step — it writes the run-level
+                // `synthesis.json`, surfaced as the run's `synthesisPath`, not a
+                // `{stepId}/output/summary.md`. Emitting the per-step path for it would
+                // point the agent at a file that never exists.
+                ...(s.status === "pending" || s.status === "skipped" || s.stepId === SYNTHESIS_STEP_ID
+                    ? {}
+                    : { summaryPath: `runs/${input.runId}/${s.stepId}/output/summary.md` }),
                 ...(verbose
                     ? {
                           durationMs: s.durationMs,
