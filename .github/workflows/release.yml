@@ -190,17 +190,39 @@ jobs:
       - name: Create tag and GitHub release
         if: steps.gate.outputs.release == 'true'
         working-directory: cli
+        # Draft first, publish last. A non-draft create mints the (immutable,
+        # ruleset-protected) v* tag BEFORE the multi-hundred-MB assets upload,
+        # so a transient upload failure would strand a tag the gate above
+        # reads as "already released" — unhealable by re-run, with binaries
+        # and their attestation existing only in this dead run's workspace. A
+        # draft carries assets but no tag; the tag appears only when the
+        # fully-assembled draft flips live, so a failure at any point before
+        # that leaves the gate open and a plain re-run heals.
+        #
         # gh creates the tag at --target through the API as the Actions
         # integration, which is the v* tag ruleset's only bypass actor.
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.gate.outputs.version }}
         run: |
+          # Drafts reserve no tag, so a run that died mid-upload leaves one
+          # behind without tripping the gate — delete any such straggler, or
+          # the edit below could flip a half-uploaded draft live instead of
+          # the one this run just assembled.
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -r --arg tag "v$VERSION" \
+              '.[] | select(.draft and .tag_name == $tag) | .id' |
+            while read -r id; do
+              echo "deleting stale draft release $id for v$VERSION"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+            done
           gh release create "v$VERSION" \
+            --draft \
             --target "$GITHUB_SHA" \
             --title "v$VERSION" \
             --generate-notes \
             dist/inflexa-* dist/SHA256SUMS dist/SHA256SUMS.sig dist/SHA256SUMS.pem dist/THIRD-PARTY-NOTICES.txt dist/cli-docs.tar.gz
+          gh release edit "v$VERSION" --draft=false
 
       # Downstream distribution runs as separate dispatched workflows
       # (homebrew.yml explains why a `release:` trigger cannot work) so a
