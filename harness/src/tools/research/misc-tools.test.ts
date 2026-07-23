@@ -147,4 +147,60 @@ describe("inspectRun (dependency-bearing factory)", () => {
         // A null reason drops out of the payload rather than reporting a bare null.
         expect(run).not.toHaveProperty("synthesisReason");
     });
+
+    /** A raw `cortex_step_executions` row as `pg` hands it back — completed by default. */
+    function stepRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+        return {
+            run_id: "run-1",
+            step_id: "T1S1",
+            analysis_id: "analysis-001",
+            wave: 0,
+            agent_id: "scientific-executor",
+            status: "completed",
+            started_at: "2026-01-01T00:00:00.000Z",
+            completed_at: "2026-01-01T00:01:00.000Z",
+            duration_ms: 60000,
+            error: null,
+            attempts: 1,
+            last_error_class: null,
+            finish_reason: "stop",
+            hit_max_steps: 0,
+            blocked_reason: null,
+            sandbox_ref: null,
+            exec_id: null,
+            child_workflow_id: null,
+            ...overrides,
+        };
+    }
+
+    /** A pool that answers the run lookup and the step lookup separately, keyed by the target table. */
+    function poolForRunDetail(run: Record<string, unknown>, steps: Array<Record<string, unknown>>): Pool {
+        return {
+            query: async (q: { text: string }) => {
+                if (/cortex_step_executions/i.test(q.text)) return { rows: steps, rowCount: steps.length };
+                return { rows: [run], rowCount: 1 };
+            },
+        } as unknown as Pool;
+    }
+
+    it("emits a per-step summaryPath for a completed DAG step but never for the run-phase synthesis row", async () => {
+        const pool = poolForRunDetail(runRow({ run_id: "run-1", synthesis_status: "produced" }), [
+            stepRow({ step_id: "T1S1", status: "completed" }),
+            // The reserved run-phase row: completed, but its product is the run-level
+            // synthesis.json (surfaced as synthesisPath), not a {stepId}/output/summary.md.
+            stepRow({ step_id: "synthesis", agent_id: "run-synthesizer", wave: 1, status: "completed" }),
+        ]);
+        const { ctx } = makeToolContext();
+
+        const result = (await createInspectRunTool(pool).execute({ runId: "run-1" }, ctx))._unsafeUnwrap();
+        const { run, steps } = result as { run: Record<string, unknown>; steps: Array<Record<string, unknown>> };
+
+        const dagStep = steps.find((s) => s.stepId === "T1S1");
+        const synthesisStep = steps.find((s) => s.stepId === "synthesis");
+        expect(dagStep?.summaryPath).toBe("runs/run-1/T1S1/output/summary.md");
+        expect(synthesisStep).toBeDefined();
+        expect(synthesisStep).not.toHaveProperty("summaryPath");
+        // The synthesis output is still reachable — via the run-level path.
+        expect(run.synthesisPath).toBe("runs/run-1/synthesis.json");
+    });
 });
