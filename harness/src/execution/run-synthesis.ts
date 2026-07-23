@@ -467,7 +467,8 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
 
     const prompt = buildSynthesizerPrompt(input.planNarrative, input.summaries, input.runId);
 
-    const signal = input.signal ?? new AbortController().signal;
+    const abortController = input.signal ? undefined : new AbortController();
+    const signal = abortController ? abortController.signal : input.signal;
     const emit: EmitFn = input.emit ?? (() => {});
 
     const loopDeps = {
@@ -475,16 +476,22 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         signal,
         emit,
         runStep: passthroughStep,
+        isFatalLoopError: (err: unknown) =>
+            err instanceof Error && err.name === "AbortError",
     } as const;
 
-    await runToTerminal(agent, [{ role: "user", content: prompt }], input.session, loopDeps, {
-        resolved: () => holder.outcome !== null,
-        tools: [submitTool, blockerTool],
-        nudge:
-            "You ended without calling a terminal tool. You MUST call " +
-            "submit_synthesis with the final synthesis now, or report_blocker " +
-            "if the run produced nothing synthesizable. Do not reply with prose.",
-    });
+    try {
+        await runToTerminal(agent, [{ role: "user", content: prompt }], input.session, loopDeps, {
+            resolved: () => holder.outcome !== null,
+            tools: [submitTool, blockerTool],
+            nudge:
+                "You ended without calling a terminal tool. You MUST call " +
+                "submit_synthesis with the final synthesis now, or report_blocker " +
+                "if the run produced nothing synthesizable. Do not reply with prose.",
+        });
+    } finally {
+        abortController?.abort();
+    }
 
     const outcome = holder.outcome;
     if (outcome?.kind === "submitted") {
