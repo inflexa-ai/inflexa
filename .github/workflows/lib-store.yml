@@ -65,7 +65,7 @@ jobs:
       r_version: ${{ steps.meta.outputs.r_version }}
       python_version: ${{ steps.meta.outputs.python_version }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Compute version + parse manifest
         id: meta
         run: |
@@ -106,7 +106,7 @@ jobs:
       BASE_IMAGE: ${{ needs.prepare.outputs.base_image }}
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Docker Buildx
         # Use the docker daemon's built-in builder (not a docker-container builder):
