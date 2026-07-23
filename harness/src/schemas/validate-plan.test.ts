@@ -57,6 +57,18 @@ describe("validatePlan", () => {
         }
     });
 
+    it("rejects the run-phase synthesis id", () => {
+        const result = validatePlan(plan([step({ id: "synthesis" })]));
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes("reserved name"))).toBe(true);
+    });
+
+    it("rejects the run-phase synthesis id case-insensitively (SYNTHESIS)", () => {
+        const result = validatePlan(plan([step({ id: "SYNTHESIS" })]));
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes("reserved name"))).toBe(true);
+    });
+
     it("rejects a step id with a path separator", () => {
         const result = validatePlan(plan([step({ id: "a/b" })]));
         expect(result.valid).toBe(false);

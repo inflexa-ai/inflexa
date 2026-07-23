@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, Show, type Accessor } from "solid-js";
 import { useRenderer } from "@opentui/solid";
 
 import { theme } from "../theme.ts";
@@ -11,6 +11,12 @@ export type RunStepView = {
     label: string;
     /** Lifecycle state, selecting the step glyph + color. */
     state: "done" | "running" | "failed" | "queued";
+    /**
+     * ISO start time of a `running` step, from the ledger's `started_at`. Meaningful only while the step
+     * is running — the block renders its elapsed age beside the label so a long step reads as live rather
+     * than wedged. Absent (or unparseable) → no age, exactly as before; non-running rows never show one.
+     */
+    startedAt?: string | null;
 };
 
 /** Props for {@link RunBlock}. */
@@ -258,10 +264,22 @@ export function RunBlock(props: RunBlockProps) {
                 <For each={stepWindow().steps}>
                     {(step) => {
                         const m = stepMark(step.state);
+                        // Elapsed age of a running step, from its ledger start. The gate lives HERE, not
+                        // in the row→view mapping, so both mapping sites stay dumb projections and every
+                        // rule about WHEN an age shows is in one place: running rows only, and only when
+                        // the timestamp parses. Muted TEXT tier (not the fgSubtle decoration tier) — it is
+                        // information and must clear the 4.5:1 floor. `Date.relativeAge` is the shared
+                        // elapsed-indicator vocabulary (never a hand-rolled formatter — see cli CLAUDE.md).
+                        const age = (): string | null => {
+                            if (step.state !== "running" || !step.startedAt) return null;
+                            const t = Date.parse(step.startedAt);
+                            return Number.isNaN(t) ? null : Date.relativeAge(t);
+                        };
                         return (
                             <text>
                                 <Fg role={m.role}>{`${m.glyph} `}</Fg>
                                 <Fg role={step.state === "queued" ? "fgMuted" : "fg"}>{step.label}</Fg>
+                                <Show when={age()}>{(a: Accessor<string>) => <Fg role="fgMuted">{` ${a()}`}</Fg>}</Show>
                             </text>
                         );
                     }}

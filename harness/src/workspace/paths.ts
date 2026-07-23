@@ -285,6 +285,17 @@ export function reportDir(reportId: string): string {
 /** All standard subdirectory types for a step. */
 export const STEP_SUBDIRS: readonly StepSubdirType[] = ["scripts", "output", "figures", "logs", "notebooks"] as const;
 
+/**
+ * Reserved id of the run-phase synthesis row in `cortex_step_executions` — the
+ * ledger row `executeAnalysis` writes for run-level synthesis so progress
+ * readers see the phase. Reserved here beside {@link STEP_SUBDIRS} because the
+ * reservation is a layout fact as much as a ledger one: a plan step with this
+ * id would collide with the row's primary key AND put its step directory
+ * `runs/{runId}/synthesis/` beside the run-level `runs/{runId}/synthesis.json`.
+ * Plan validation rejects it (see validate-plan).
+ */
+export const SYNTHESIS_STEP_ID = "synthesis";
+
 /** Get all subdirectory paths for a step. */
 export function allStepSubdirs(stepBase: string): string[] {
     return STEP_SUBDIRS.map((type) => stepSubdir(stepBase, type));

@@ -59,7 +59,7 @@
  *       via `inspectRun`)
  */
 
-import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
+import { DBOS, Error as DBOSErrors, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Pool } from "pg";
@@ -74,6 +74,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import {
     RunDedupCollisionError,
     countArtifactsForRun,
+    insertStepExecution,
     loadDataProfileStatus,
     queryActiveRun,
     queryStepArtifactPaths,
@@ -82,17 +83,18 @@ import {
     suspendAnalysis as suspendAnalysisQuery,
     sweepPendingStepExecutions,
     updateRunStatus,
+    updateStepExecution,
 } from "../state/index.js";
-import type { SynthesisStatus } from "../state/index.js";
+import type { SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
 import { isBudgetExceeded } from "../loop/budget-exceeded.js";
-import { loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
+import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
 import { MAX_UPSTREAM_ARTIFACTS, composeStepBriefing, type UpstreamHandoff } from "../prompts/briefing.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import type { EmitFn } from "../loop/types.js";
 import type { RunCharge } from "../billing/run-charge.js";
-import { runDir, runStepDir, stepSubdir, stepWritePrefix, toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { SYNTHESIS_STEP_ID, runDir, runStepDir, stepSubdir, stepWritePrefix, toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { isChatDataPart } from "../sandbox/sandbox-step-translate.js";
 import { synthesizeRun } from "../app/synthesize-run.js";
 import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag } from "./execute-analysis-scheduler.js";
@@ -459,6 +461,32 @@ async function collectUpstreamHandoffs(args: {
 }
 
 /**
+ * Project a classified synthesis outcome onto the run-phase `synthesis` ledger
+ * row's terminal update (see the run-synthesis-outcome spec). The blocker keeps
+ * its reason in `blockedReason` — an honest agent-declared blocker, not an
+ * error — and a failure carries the same reason string
+ * `persist-synthesis-outcome` writes to `cortex_runs.synthesis_reason`, so the
+ * two ledgers cannot disagree about why synthesis died. Exported for the
+ * projection tests (the `buildChildInput` pattern).
+ */
+export function synthesisRowUpdate(outcome: { status: SynthesisStatus; reason: string | null }, durationMs: number): UpdateStepExecutionInput {
+    switch (outcome.status) {
+        case "produced":
+            return { status: "completed", durationMs };
+        case "skipped_no_summaries":
+            return { status: "skipped", durationMs };
+        case "skipped_blocker":
+            return { status: "blocked", durationMs, blockedReason: outcome.reason };
+        case "failed":
+            return { status: "failed", durationMs, error: outcome.reason };
+        default: {
+            const _exhaustive: never = outcome.status;
+            throw new Error(`unhandled synthesis status: ${String(_exhaustive)}`);
+        }
+    }
+}
+
+/**
  * Run-level literature-grounded synthesis (no sandbox). Returns the
  * quick-display findings for the run-completed card; empty when synthesis is
  * skipped or produced no synthesizable content. A genuine failure re-throws
@@ -563,20 +591,33 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // The seed's DO NOTHING conflict action makes this replay-safe; the agent
     // fallback mirrors `buildChildInput` so seed and mark-running agree on the
     // row a step's child later upserts.
+    //
+    // The run-phase `synthesis` row is seeded alongside the DAG — gated on
+    // enablement ONLY, because the other half of the run gate for actually
+    // executing synthesis (`final.completed.size > 0`) is unknowable until the
+    // scheduler returns. A seeded row whose gate later fails simply stays
+    // `pending` and the terminal sweep finalizes it to `skipped` — honest
+    // ("never ran, never will"), like any never-dispatched DAG step. Its wave
+    // sits after every DAG level so ledger-ordered readers render it last.
+    const synthesisEnabled = deps.synthesisEnabled ?? true;
+    const synthesisWave = Math.max(-1, ...levels.values()) + 1;
     await DBOS.runStep(
         async () => {
-            unwrapOrThrow(
-                await seedStepExecutions(
-                    deps.pool,
-                    input.steps.map((step) => ({
-                        runId,
-                        stepId: step.id,
-                        analysisId: input.analysisId,
-                        wave: levels.get(step.id) ?? 0,
-                        agentId: input.agentByStepId[step.id] ?? "scientific-executor",
-                    })),
-                ),
-            );
+            const dagRows = input.steps.map((step) => ({
+                runId,
+                stepId: step.id,
+                analysisId: input.analysisId,
+                wave: levels.get(step.id) ?? 0,
+                agentId: input.agentByStepId[step.id] ?? "scientific-executor",
+            }));
+            const synthesisRow = {
+                runId,
+                stepId: SYNTHESIS_STEP_ID,
+                analysisId: input.analysisId,
+                wave: synthesisWave,
+                agentId: SYNTHESIS_AGENT_ID,
+            };
+            unwrapOrThrow(await seedStepExecutions(deps.pool, synthesisEnabled ? [...dagRows, synthesisRow] : dagRows));
         },
         { name: "seed-step-executions" },
     );
@@ -618,10 +659,40 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     let synthesisError: unknown = null;
     let synthesisFindings: readonly RunFinding[] = [];
     // Null when synthesis never ran (disabled or no completed steps): the ledger
-    // columns stay NULL — "unknown", not a recorded skip.
+    // columns stay NULL — "unknown", not a recorded skip — and the seeded
+    // `synthesis` row (if any) stays `pending` for the terminal sweep.
     let synthesisOutcome: { status: SynthesisStatus; reason: string | null } | null = null;
-    const synthesisEnabled = deps.synthesisEnabled ?? true;
     if (synthesisEnabled && final.completed.size > 0) {
+        // Bracketing clock reads for the row's duration_ms — checkpointed, so a
+        // recovered replay reuses the original instants (same rule as `startedAtMs`).
+        const synthStartedAtMs = await DBOS.now();
+        // Mark the seeded `synthesis` row running. The same upsert the DAG children
+        // use: it stamps started_at, and it CREATES the row outright when the seed
+        // never carried it (synthesisEnabled flipped true across a recovery
+        // redeploy) — the mark self-heals rather than trusting the seed's snapshot
+        // of the config. Log-don't-fail: a progress row must never fail an
+        // otherwise-healthy run. Cancellation still re-propagates — it is not a
+        // write failure, and swallowing it here would only defer it one operation.
+        try {
+            await DBOS.runStep(
+                async () => {
+                    unwrapOrThrow(
+                        await insertStepExecution(deps.pool, {
+                            runId,
+                            stepId: SYNTHESIS_STEP_ID,
+                            analysisId: input.analysisId,
+                            wave: synthesisWave,
+                            agentId: SYNTHESIS_AGENT_ID,
+                            childWorkflowId: null,
+                        }),
+                    );
+                },
+                { name: "mark-synthesis-running" },
+            );
+        } catch (err) {
+            if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
+            logger.error("mark-synthesis-running failed", { runId, ...logger.errorFields(err) });
+        }
         try {
             const synthOut = await DBOS.runStep(
                 () =>
@@ -637,9 +708,39 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             synthesisFindings = synthOut.findings;
             synthesisOutcome = { status: synthOut.synthesisStatus, reason: synthOut.synthesisReason };
         } catch (err) {
+            // Cancellation is not a synthesis outcome: re-propagate unchanged (the
+            // sandbox-step rule), so a cancelled workflow is never recorded as a
+            // synthesis failure — neither on the row nor in cortex_runs. The row is
+            // deliberately left `running`: `collectAndComplete` never executes on
+            // this path either, so the run row is equally non-terminal and the pair
+            // stays consistent — the pre-existing cancelled-mid-flight wedge shape
+            // `inflexa run` already detects via its DBOS-status cross-check.
+            if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
             synthesisError = err;
             synthesisOutcome = { status: "failed", reason: err instanceof Error ? err.message : String(err) };
             logger.error("synthesizeFindings failed — failing the run", { runId, ...logger.errorFields(err) });
+        }
+        // Terminal stamp for the `synthesis` row — deliberately BEFORE
+        // `collectAndComplete` writes the run row's terminal status, so no reader
+        // can observe a terminal run beside a still-`running` synthesis row.
+        // Log-don't-fail, like the sibling finalisation writes; the null guard is
+        // for the type only (both paths above set an outcome or threw).
+        if (synthesisOutcome !== null) {
+            const rowOutcome = synthesisOutcome;
+            try {
+                const synthEndedAtMs = await DBOS.now();
+                await DBOS.runStep(
+                    async () => {
+                        unwrapOrThrow(
+                            await updateStepExecution(deps.pool, runId, SYNTHESIS_STEP_ID, synthesisRowUpdate(rowOutcome, synthEndedAtMs - synthStartedAtMs)),
+                        );
+                    },
+                    { name: "persist-synthesis-step" },
+                );
+            } catch (err) {
+                if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
+                logger.error("persist-synthesis-step failed", { runId, ...logger.errorFields(err) });
+            }
         }
     }
 

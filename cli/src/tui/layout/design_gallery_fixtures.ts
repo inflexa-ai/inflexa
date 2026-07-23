@@ -21,6 +21,8 @@ export type RunStep = {
     /** Human label shown in the step list. */
     label: string;
     state: StepState;
+    /** ISO start time of a running step — drives the elapsed-age readout beside the label. */
+    startedAt?: string | null;
 };
 
 /** A run's lifecycle state. */
@@ -301,7 +303,7 @@ export const mockRun: Run = {
     total: 20,
     steps: [
         { id: "mock-step-12", label: "rank consensus", state: "done" },
-        { id: "mock-step-13", label: "build report", state: "running" },
+        { id: "mock-step-13", label: "build report", state: "running", startedAt: ago(4 * 60_000) },
         { id: "mock-step-14", label: "score targets", state: "failed" },
         { id: "mock-step-15", label: "queued", state: "queued" },
     ],

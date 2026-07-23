@@ -80,7 +80,7 @@ export function RunDetailDialog(props: RunDetailDialogProps): JSX.Element {
     const [steps, setSteps] = createSignal<StepsState>({ kind: "loading" });
     onMount(() => {
         void props.loadSteps(props.run.runId).match(
-            (rows) => setSteps({ kind: "loaded", views: rows.map((r) => ({ label: r.stepId, state: stepStateOf(r.status) })) }),
+            (rows) => setSteps({ kind: "loaded", views: rows.map((r) => ({ label: r.stepId, state: stepStateOf(r.status), startedAt: r.startedAt })) }),
             () => setSteps({ kind: "unavailable" }),
         );
     });
