@@ -14,4 +14,4 @@
 
 - [x] 3.1 Render tests: a running row with a start time shows the age with a resolved muted `fg` (span-color assertion, light theme included); done/failed/queued rows and a running row without a start time show none; rail-width frame stays within budget with the age present
 - [x] 3.2 `bun run typecheck`, `bun test`, `bun run format:file` on touched `src/` files
-- [ ] 3.3 Sync/archive the delta specs when done
+- [x] 3.3 Sync/archive the delta specs when done

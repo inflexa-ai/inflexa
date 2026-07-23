@@ -31,4 +31,4 @@
 - [x] 5.1 `tsc -p tsconfig.json` and `bun test` clean in `harness/`; `bun run format:file` on touched `src/` files
 - [x] 5.2 Confirm the consumer surfaces render the row with zero changes: `cli` typecheck/tests still pass against the updated harness (`stepStateOf` and `inflexa run` already handle every status the row uses); note in the PR that denominators become N+1 by design
 - [x] 5.4 `inspect_run` must not emit a per-step `summaryPath` for the reserved `synthesis` row (it has no `{stepId}/output/summary.md`; its product is the run-level `synthesis.json`) — gate the path on the reserved id, with a test
-- [ ] 5.3 Update `openspec/specs/` via archive flow when done (`/opsx:verify` then `/opsx:archive`)
+- [x] 5.3 Update `openspec/specs/` via archive flow when done (`/opsx:verify` then `/opsx:archive`)
