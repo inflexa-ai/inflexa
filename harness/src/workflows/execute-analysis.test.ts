@@ -33,7 +33,7 @@ import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 
-import { runExecuteAnalysisBody } from "./execute-analysis.js";
+import { runExecuteAnalysisBody, synthesisRowUpdate } from "./execute-analysis.js";
 import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunProvenanceEvent } from "./execute-analysis.js";
 import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
@@ -1466,5 +1466,35 @@ describe("executeAnalysis child input projection", () => {
 
         expect(dbosState.childInputs.find((i) => i.stepId === "A")!.dependsOn).toEqual([]);
         expect(dbosState.childInputs.find((i) => i.stepId === "B")!.dependsOn).toEqual(["A"]);
+    });
+});
+
+// ── synthesisRowUpdate — the pure outcome→ledger-row projection ─────────
+//
+// The classified synthesis outcome is mapped onto the reserved `synthesis`
+// row's terminal `updateStepExecution` input (run-synthesis-outcome spec). The
+// body tests above exercise this indirectly through the fake pool; these assert
+// the projection directly — the `buildChildInput` pattern for the pure
+// exported projections.
+
+describe("synthesisRowUpdate", () => {
+    it("maps produced → completed with the duration and no reason columns", () => {
+        expect(synthesisRowUpdate({ status: "produced", reason: null }, 1234)).toEqual({ status: "completed", durationMs: 1234 });
+    });
+
+    it("maps skipped_no_summaries → skipped", () => {
+        expect(synthesisRowUpdate({ status: "skipped_no_summaries", reason: null }, 7)).toEqual({ status: "skipped", durationMs: 7 });
+    });
+
+    it("maps skipped_blocker → blocked, carrying the reason in blocked_reason (not error)", () => {
+        expect(synthesisRowUpdate({ status: "skipped_blocker", reason: "summaries empty" }, 7)).toEqual({
+            status: "blocked",
+            durationMs: 7,
+            blockedReason: "summaries empty",
+        });
+    });
+
+    it("maps failed → failed, carrying the reason in error (not blocked_reason)", () => {
+        expect(synthesisRowUpdate({ status: "failed", reason: "synth boom" }, 7)).toEqual({ status: "failed", durationMs: 7, error: "synth boom" });
     });
 });

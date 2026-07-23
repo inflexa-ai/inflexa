@@ -92,9 +92,9 @@ export const activeRunProgress = activeRun;
  * the JSX layout and nothing forces this module to import back into it.
  */
 export function relAge(iso: string | null): string {
-    if (iso === null) return GLYPHS.emDash;
-    const t = Date.parse(iso);
-    return Number.isNaN(t) ? GLYPHS.emDash : Date.relativeAge(t);
+    // `String.relativeAge` owns the parse-then-age; this wrapper only supplies the rail's em-dash
+    // fallback for an absent or unparseable time (the extension stays glyph-free — see string.ext.ts).
+    return iso?.relativeAge() ?? GLYPHS.emDash;
 }
 
 /**

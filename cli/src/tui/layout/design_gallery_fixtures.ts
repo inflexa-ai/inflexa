@@ -303,7 +303,7 @@ export const mockRun: Run = {
     total: 20,
     steps: [
         { id: "mock-step-12", label: "rank consensus", state: "done" },
-        { id: "mock-step-13", label: "build report", state: "running", startedAt: ago(4 * 60_000) },
+        { id: "mock-step-13", label: "build report", state: "running", startedAt: Date.ago(4 * 60_000) },
         { id: "mock-step-14", label: "score targets", state: "failed" },
         { id: "mock-step-15", label: "queued", state: "queued" },
     ],
@@ -334,18 +334,13 @@ export const mockLongRun: Run = {
         { id: "mock-lstep-5", label: "batch correct", state: "done" },
         { id: "mock-lstep-6", label: "cluster", state: "done" },
         { id: "mock-lstep-7", label: "annotate types", state: "done" },
-        { id: "mock-lstep-8", label: "differential test", state: "running" },
+        { id: "mock-lstep-8", label: "differential test", state: "running", startedAt: Date.ago(6 * 60_000) },
         { id: "mock-lstep-9", label: "pathway enrich", state: "queued" },
         { id: "mock-lstep-10", label: "score targets", state: "queued" },
         { id: "mock-lstep-11", label: "rank consensus", state: "queued" },
         { id: "mock-lstep-12", label: "build report", state: "queued" },
     ],
 };
-
-/** Sample age helper: an ISO timestamp `ms` in the past, so gallery exhibits show fresh relative ages. */
-function ago(ms: number): string {
-    return new Date(Date.now() - ms).toISOString();
-}
 
 /** MOCK sample: the harness run ledger for the RUNS details view (newest-first, mixed statuses). */
 export const mockCortexRuns: CortexRunRow[] = [
@@ -355,7 +350,7 @@ export const mockCortexRuns: CortexRunRow[] = [
         threadId: null,
         workflowName: "executeAnalysis",
         status: "running",
-        startedAt: ago(4 * 60_000),
+        startedAt: Date.ago(4 * 60_000),
         completedAt: null,
         error: null,
         synthesisStatus: null,
@@ -371,8 +366,8 @@ export const mockCortexRuns: CortexRunRow[] = [
         threadId: null,
         workflowName: "executeAnalysis",
         status: "completed",
-        startedAt: ago(3 * 3_600_000),
-        completedAt: ago(2 * 3_600_000),
+        startedAt: Date.ago(3 * 3_600_000),
+        completedAt: Date.ago(2 * 3_600_000),
         error: null,
         synthesisStatus: "produced",
         synthesisReason: null,
@@ -387,8 +382,8 @@ export const mockCortexRuns: CortexRunRow[] = [
         threadId: null,
         workflowName: "executeAnalysis",
         status: "failed",
-        startedAt: ago(2 * 86_400_000),
-        completedAt: ago(2 * 86_400_000 - 5 * 60_000),
+        startedAt: Date.ago(2 * 86_400_000),
+        completedAt: Date.ago(2 * 86_400_000 - 5 * 60_000),
         error: "step_failed",
         synthesisStatus: null,
         synthesisReason: null,
@@ -407,8 +402,8 @@ export const mockCortexRuns: CortexRunRow[] = [
 export const mockDataProfile: DataProfileStatus = {
     status: "completed",
     error: null,
-    startedAt: ago(5 * 60_000),
-    completedAt: ago(4 * 60_000),
+    startedAt: Date.ago(5 * 60_000),
+    completedAt: Date.ago(4 * 60_000),
     result: {
         summary: "12 samples across 2 conditions; counts pass QC with no dropped libraries.",
         files: [
@@ -416,7 +411,7 @@ export const mockDataProfile: DataProfileStatus = {
             { path: "data/meta.csv", description: "sample metadata (condition, batch)" },
         ],
         inputFileIds: ["mock-input-counts", "mock-input-meta"],
-        profiledAt: ago(4 * 60_000),
+        profiledAt: Date.ago(4 * 60_000),
     },
     seedInputFileIds: ["mock-input-counts", "mock-input-meta"],
 };
@@ -430,8 +425,8 @@ export const mockRunSteps: StepExecutionRow[] = [
         wave: 0,
         agentId: "rna-preprocess",
         status: "completed",
-        startedAt: ago(4 * 60_000),
-        completedAt: ago(3 * 60_000),
+        startedAt: Date.ago(4 * 60_000),
+        completedAt: Date.ago(3 * 60_000),
         durationMs: 60_000,
         error: null,
         attempts: 1,
@@ -450,7 +445,7 @@ export const mockRunSteps: StepExecutionRow[] = [
         wave: 1,
         agentId: "deseq2",
         status: "running",
-        startedAt: ago(2 * 60_000),
+        startedAt: Date.ago(2 * 60_000),
         completedAt: null,
         durationMs: null,
         error: null,
@@ -470,8 +465,8 @@ export const mockRunSteps: StepExecutionRow[] = [
         wave: 1,
         agentId: "pathway",
         status: "failed",
-        startedAt: ago(90_000),
-        completedAt: ago(60_000),
+        startedAt: Date.ago(90_000),
+        completedAt: Date.ago(60_000),
         durationMs: 30_000,
         error: "sandbox exited non-zero (exit 1)",
         attempts: 2,

@@ -722,25 +722,24 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         }
         // Terminal stamp for the `synthesis` row — deliberately BEFORE
         // `collectAndComplete` writes the run row's terminal status, so no reader
-        // can observe a terminal run beside a still-`running` synthesis row.
-        // Log-don't-fail, like the sibling finalisation writes; the null guard is
-        // for the type only (both paths above set an outcome or threw).
-        if (synthesisOutcome !== null) {
-            const rowOutcome = synthesisOutcome;
-            try {
-                const synthEndedAtMs = await DBOS.now();
-                await DBOS.runStep(
-                    async () => {
-                        unwrapOrThrow(
-                            await updateStepExecution(deps.pool, runId, SYNTHESIS_STEP_ID, synthesisRowUpdate(rowOutcome, synthEndedAtMs - synthStartedAtMs)),
-                        );
-                    },
-                    { name: "persist-synthesis-step" },
-                );
-            } catch (err) {
-                if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
-                logger.error("persist-synthesis-step failed", { runId, ...logger.errorFields(err) });
-            }
+        // can observe a terminal run beside a still-`running` synthesis row. Both
+        // branches above set `synthesisOutcome` (or threw), so it is non-null here
+        // and the compiler narrows it — no guard needed. Log-don't-fail, like the
+        // sibling finalisation writes.
+        const rowOutcome = synthesisOutcome;
+        try {
+            const synthEndedAtMs = await DBOS.now();
+            await DBOS.runStep(
+                async () => {
+                    unwrapOrThrow(
+                        await updateStepExecution(deps.pool, runId, SYNTHESIS_STEP_ID, synthesisRowUpdate(rowOutcome, synthEndedAtMs - synthStartedAtMs)),
+                    );
+                },
+                { name: "persist-synthesis-step" },
+            );
+        } catch (err) {
+            if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
+            logger.error("persist-synthesis-step failed", { runId, ...logger.errorFields(err) });
         }
     }
 
