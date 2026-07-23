@@ -240,8 +240,19 @@ function removeContainerIgnoreMissing(docker: Docker, sandboxId: string): Result
     return trySandbox(
         async () => {
             const container = docker.getContainer(sandboxId);
-            await container.stop({ t: 5 }).catch(() => {});
-            await container.remove({ force: true, v: true }).catch(() => {});
+            // Only suppress 404 (container already gone). Other errors —
+            // permission denied, engine unreachable, etc. — propagate so
+            // `trySandbox` can classify them and callers see the failure.
+            try {
+                await container.stop({ t: 5 });
+            } catch (stopErr: any) {
+                if (stopErr?.statusCode !== 404) throw stopErr;
+            }
+            try {
+                await container.remove({ force: true, v: true });
+            } catch (removeErr: any) {
+                if (removeErr?.statusCode !== 404) throw removeErr;
+            }
         },
         (status, cause) => ({
             type: "teardown_failed",

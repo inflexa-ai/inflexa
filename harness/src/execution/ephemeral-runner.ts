@@ -173,6 +173,7 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
         mintSandboxIdentity(EPHEMERAL_RUN_LITERAL),
     );
 
+    const abortController = new AbortController();
     try {
         // The fallback reads the CHECKPOINTED clock, not `Date.now()`: `awaitExec`
         // gates on this absolute deadline, and its recovery-pull is a durable step,
@@ -212,13 +213,14 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
         const agentDef = createEphemeralExecutorAgent(sandboxAgentDeps);
         const agent = input.maxIterations !== undefined ? { ...agentDef, maxIterations: input.maxIterations } : agentDef;
 
-        const signal = new AbortController().signal;
         const { messages: finalMessages } = await runAgent(agent, [{ role: "user", content: ephemeralSeed(analysisId, input.prompt) }], childSession, {
             provider: deps.provider,
-            signal,
+            signal: abortController.signal,
             emit: () => {},
             runStep: durableStep,
-            isFatalLoopError: (err) => err instanceof DBOSErrors.DBOSWorkflowCancelledError,
+            isFatalLoopError: (err) =>
+                err instanceof DBOSErrors.DBOSWorkflowCancelledError ||
+                (err instanceof Error && err.name === "AbortError"),
         });
 
         const text = finalText(finalMessages);
@@ -231,6 +233,7 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
         logger.error("failed", { executionId, err: message });
         throw err;
     } finally {
+        abortController.abort();
         try {
             await deps.sandboxClient.teardown(sandbox);
         } catch (teardownErr) {

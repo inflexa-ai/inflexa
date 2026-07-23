@@ -114,7 +114,8 @@ export async function generateStepSummary(opts: GenerateStepSummaryOptions): Pro
         maxIterations: opts.maxIterations ?? DEFAULT_MAX_ITERATIONS,
     };
 
-    const signal = opts.signal ?? new AbortController().signal;
+    const abortController = opts.signal ? undefined : new AbortController();
+    const signal = abortController ? abortController.signal : opts.signal;
 
     let result: RunAgentResult;
     try {
@@ -128,6 +129,8 @@ export async function generateStepSummary(opts: GenerateStepSummaryOptions): Pro
         logger.warn("summary loop failed", logger.errorFields(err));
         incrementSummaryNullCount(opts.agentId, "throw");
         return undefined;
+    } finally {
+        abortController?.abort();
     }
 
     const markdown = finalText(result.messages);

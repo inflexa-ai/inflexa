@@ -240,7 +240,8 @@ export async function generateFileMetadata(opts: GenerateFileMetadataOptions): P
         maxIterations: opts.maxIterations ?? DEFAULT_MAX_ITERATIONS,
     };
 
-    const signal = opts.signal ?? new AbortController().signal;
+    const abortController = opts.signal ? undefined : new AbortController();
+    const signal = abortController ? abortController.signal : opts.signal;
 
     const transcript = opts.messages ? sanitizeTranscript(opts.messages) : [];
 
@@ -253,6 +254,8 @@ export async function generateFileMetadata(opts: GenerateFileMetadataOptions): P
         });
     } catch (err) {
         logger.warn("describer loop failed; using fallbacks", logger.errorFields(err));
+    } finally {
+        abortController?.abort();
     }
 
     const entries: FileMetadataEntry[] = [];
