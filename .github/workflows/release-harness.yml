@@ -92,8 +92,16 @@ jobs:
             # name, re-runs replace their predecessor. A single page holds all
             # of this repo's checks; --paginate would emit one array PER page,
             # which the per-name jq below would misread as multiple documents.
-            runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
-              --jq '[.check_runs[] | {name, status, conclusion}]')
+            #
+            # A transient API failure reads as an empty result: to this loop
+            # it is the same signal as "no checks reported yet" — poll again
+            # rather than kill a release run, with the deadline below as the
+            # backstop against a real outage.
+            if ! runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+              --jq '[.check_runs[] | {name, status, conclusion}]'); then
+              echo "::warning::check-runs API call failed — still waiting"
+              runs="[]"
+            fi
             passed=0
             failed=""
             for name in "${required[@]}"; do
@@ -159,10 +167,33 @@ jobs:
       # prepublishOnly re-runs build + smoke — redundant with the steps above,
       # but it is the last line of defense against a future edit publishing
       # unbuilt output, and it keeps a manual local publish honest too.
+      #
+      # A few attempts because the registry intermittently 503s on uploads.
+      # Every attempt re-checks the registry rather than trusting the
+      # npm-check gate above: a PUT that errored client-side can still have
+      # landed server-side, and publishing over an existing version would
+      # fail the retry for the wrong reason.
       - name: Publish to npm
         if: steps.npm-check.outputs.published == 'false'
         working-directory: harness
-        run: npm publish
+        env:
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          for attempt in 1 2 3; do
+            if npm view "@inflexa-ai/harness@${VERSION}" version >/dev/null 2>&1; then
+              echo "@inflexa-ai/harness@${VERSION} is on the registry — done"
+              break
+            fi
+            echo "publishing @inflexa-ai/harness@${VERSION} (attempt ${attempt} of 3)"
+            if npm publish; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::@inflexa-ai/harness@${VERSION} did not publish after 3 attempts"
+              exit 1
+            fi
+            sleep $((30 * attempt))
+          done
 
       - name: Check whether the harness-v tag already exists
         id: tag-check

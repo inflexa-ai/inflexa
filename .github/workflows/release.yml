@@ -74,8 +74,16 @@ jobs:
             # name, re-runs replace their predecessor. A single page holds all
             # of this repo's checks; --paginate would emit one array PER page,
             # which the per-name jq below would misread as multiple documents.
-            runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
-              --jq '[.check_runs[] | {name, status, conclusion}]')
+            #
+            # A transient API failure reads as an empty result: to this loop
+            # it is the same signal as "no checks reported yet" — poll again
+            # rather than kill a release run, with the deadline below as the
+            # backstop against a real outage.
+            if ! runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+              --jq '[.check_runs[] | {name, status, conclusion}]'); then
+              echo "::warning::check-runs API call failed — still waiting"
+              runs="[]"
+            fi
             passed=0
             failed=""
             for name in "${required[@]}"; do

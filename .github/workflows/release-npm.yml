@@ -85,15 +85,30 @@ jobs:
       # versions, so it must never appear on the registry before the binaries
       # it resolves. The npm-view gate makes re-runs cheap and lets a run
       # that died mid-sequence resume where it stopped.
+      #
+      # Each publish gets a few attempts because the registry intermittently
+      # 503s on these ~80MB binary uploads. The gate is re-checked before
+      # every attempt, not just once per package: a PUT that errored
+      # client-side can still have landed server-side, and publishing over
+      # an existing version would fail the retry for the wrong reason.
       - name: Publish to npm
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           for name in inflexa-darwin-arm64 inflexa-darwin-x64 inflexa-linux-x64 inflexa-linux-arm64 inflexa-win32-x64 inflexa; do
-            if npm view "@inflexa-ai/${name}@${VERSION}" version >/dev/null 2>&1; then
-              echo "@inflexa-ai/${name}@${VERSION} is already on npm — skipping"
-              continue
-            fi
-            echo "publishing @inflexa-ai/${name}@${VERSION}"
-            (cd "npm-dist/${name}" && npm publish)
+            for attempt in 1 2 3; do
+              if npm view "@inflexa-ai/${name}@${VERSION}" version >/dev/null 2>&1; then
+                echo "@inflexa-ai/${name}@${VERSION} is already on npm — skipping"
+                break
+              fi
+              echo "publishing @inflexa-ai/${name}@${VERSION} (attempt ${attempt} of 3)"
+              if (cd "npm-dist/${name}" && npm publish); then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "::error::@inflexa-ai/${name}@${VERSION} did not publish after 3 attempts"
+                exit 1
+              fi
+              sleep $((30 * attempt))
+            done
           done
