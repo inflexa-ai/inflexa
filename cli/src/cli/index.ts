@@ -447,6 +447,24 @@ export function buildProgram(): Command {
         await runPrune();
     });
 
+    // GEO datasets → analysis inputs. `add` downloads a Series host-side and enrolls it as inputs; it
+    // writes (network + input rows), so it is approval-gated. It never boots a runtime and never stages —
+    // staging/profiling is driven later by the runtime owner (run_inflexa's post-action reconcile).
+    const geo = cli.command("geo").description("Work with NCBI GEO gene-expression datasets");
+    registerAction(
+        geo
+            .command("add")
+            .description("Download a GEO Series and add it to an analysis as input data")
+            .argument("<gse>", "GEO Series accession to download (e.g. GSE12345)")
+            .option("--analysis <id|name>", "Operate on a specific analysis")
+            .option("--project <name>", "Scope to a project"),
+        { kind: "approval" },
+        async (gse: string, options: { analysis?: string; project?: string }) => {
+            const { runGeoAdd } = await import("../modules/geo/add.ts");
+            await runGeoAdd(gse, { analysis: options.analysis, project: options.project });
+        },
+    );
+
     // Auth verbs grouped under one parent, à la `gh auth login|logout|status`.
     const auth = cli.command("auth").description("Manage authentication (Auth0 device flow)");
 

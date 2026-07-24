@@ -256,6 +256,13 @@ export const env = Object.freeze({
      */
     refsDir: join(dataDir(), "inflexa", "refs"),
     /**
+     * Durable landing area for GEO datasets downloaded as analysis inputs, one directory per accession.
+     * A peer of `refsDir`: the `geo add` command writes here (never a temp dir) because an enrolled input
+     * row points at this path and the profiler stages from it later — a temp dir cleaned on command exit
+     * would strand the input. Absolute paths under it are what the analysis's input rows reference.
+     */
+    geoDir: join(dataDir(), "inflexa", "geo"),
+    /**
      * Cached sandbox-image package inventories, one directory per image ID. NOT a library
      * store: the packages themselves are baked into the image and never staged here — this
      * holds only the `packages.txt` extracted from the image's inventory label, so the
@@ -481,6 +488,12 @@ export const envDoc: Readonly<
         kind: "path",
         label: "references",
         description: "reference data mounted read-only in sandboxes at /mnt/refs",
+        baseVar: dataVar,
+    },
+    geoDir: {
+        kind: "path",
+        label: "GEO downloads",
+        description: "GEO datasets downloaded as analysis inputs, one directory per accession",
         baseVar: dataVar,
     },
     libsDir: {
