@@ -10,14 +10,20 @@ import { createRunInflexaTool, decideAction, resolveInvocation, spawnInflexa, ty
 // A canned subprocess outcome; overridden per-test for the timeout/cancel/truncation cases.
 const OK_RESULT: SubprocessResult = { exitCode: 0, stdout: "hello", stderr: "", endedBy: "exit" };
 
-/** A `RunSubprocess` that records every `cmd` it is handed and returns a fixed result — no real process. */
-function recordingSubprocess(result: SubprocessResult = OK_RESULT): { fn: RunSubprocess; calls: (readonly string[])[] } {
+/** A `RunSubprocess` that records every `cmd` and `env` it is handed and returns a fixed result — no real process. */
+function recordingSubprocess(result: SubprocessResult = OK_RESULT): {
+    fn: RunSubprocess;
+    calls: (readonly string[])[];
+    envs: Readonly<Record<string, string | undefined>>[];
+} {
     const calls: (readonly string[])[] = [];
-    const fn: RunSubprocess = (cmd, _signal) => {
+    const envs: Readonly<Record<string, string | undefined>>[] = [];
+    const fn: RunSubprocess = (cmd, env, _signal) => {
         calls.push(cmd);
+        envs.push(env);
         return Promise.resolve(result);
     };
-    return { fn, calls };
+    return { fn, calls, envs };
 }
 
 /** An `ask` seam that records its requests and resolves with a fixed approval. */
@@ -30,11 +36,12 @@ function recordingAsk(reply: AskApproval): { fn: (request: AskRequest) => Promis
     return { fn, calls };
 }
 
-/** A minimal `ToolContext`; the tool reads only `signal` and `ask`, so the rest is inert. */
-function makeCtx(ask: (request: AskRequest) => Promise<AskApproval>): ToolContext {
+/** A minimal `ToolContext`; the tool reads `signal`, `ask`, and `session.scope` (for INFLEXA_ANALYSIS injection). */
+function makeCtx(ask: (request: AskRequest) => Promise<AskApproval>, analysisId: string | null = "an-test"): ToolContext {
+    const scope = analysisId === null ? { kind: "target-assessment" } : { kind: "analysis", analysisId };
     return {
-        // The tool never reads `session`, so a cast avoids constructing the full value object.
-        session: {} as unknown as AgentSession,
+        // Only `scope` is read; a cast avoids constructing the full session value object.
+        session: { scope } as unknown as AgentSession,
         signal: new AbortController().signal,
         emit: () => {},
         runStep: (_name, fn) => fn(),
@@ -467,5 +474,27 @@ describe("spawnInflexa — process bounds", () => {
         expect(r.endedBy).toBe("exit");
         expect(r.exitCode).toBe(0);
         expect(r.stdout).toBe("DECLINED");
+    });
+});
+
+describe("run_inflexa — INFLEXA_ANALYSIS injection", () => {
+    test("injects the session's analysis id into the child env, preserving the parent env", async () => {
+        const sub = recordingSubprocess();
+        const tool = makeTool(sub.fn);
+
+        await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-abc"));
+
+        expect(sub.envs[0]?.INFLEXA_ANALYSIS).toBe("an-abc");
+        expect(sub.envs[0]?.PATH).toBe(Bun.env.PATH);
+    });
+
+    test("injects nothing for a non-analysis-scoped session", async () => {
+        const sub = recordingSubprocess();
+        const tool = makeTool(sub.fn);
+
+        await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn, null));
+
+        expect(sub.envs[0]?.INFLEXA_ANALYSIS).toBeUndefined();
+        expect(sub.envs[0]?.PATH).toBe(Bun.env.PATH);
     });
 });

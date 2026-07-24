@@ -129,8 +129,8 @@ export type RunInflexaResult =
  */
 export type SubprocessResult = { readonly exitCode: number; readonly stdout: string; readonly stderr: string; readonly endedBy: "exit" | "timeout" | "cancel" };
 
-/** The subprocess seam — injectable so tests assert on the composed argv without spawning a real process. */
-export type RunSubprocess = (cmd: readonly string[], signal: AbortSignal) => Promise<SubprocessResult>;
+/** The subprocess seam — injectable so tests assert on the composed argv and env without spawning a real process. */
+export type RunSubprocess = (cmd: readonly string[], env: Readonly<Record<string, string | undefined>>, signal: AbortSignal) => Promise<SubprocessResult>;
 
 /**
  * Resolve the OS-level command that runs `argv` through `inflexa`.
@@ -234,12 +234,18 @@ export interface SpawnBounds {
  * `lib/container.ts`'s `capture`). A spawn that fails to launch is an unexpected
  * fault — it throws, and the loop's dispatch maps it to an error tool result.
  */
-export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, bounds: SpawnBounds): Promise<SubprocessResult> {
+export async function spawnInflexa(
+    cmd: readonly string[],
+    signal: AbortSignal,
+    bounds: SpawnBounds,
+    env?: Readonly<Record<string, string | undefined>>,
+): Promise<SubprocessResult> {
     const { timeoutMs, flushGraceMs = FLUSH_GRACE_MS, killGraceMs = KILL_GRACE_MS } = bounds;
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const combined = AbortSignal.any([signal, timeoutSignal]);
-    // `[...cmd]` copies the readonly argv into the mutable array `Bun.spawn` expects.
-    const proc = Bun.spawn({ cmd: [...cmd], stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: combined });
+    // `[...cmd]` copies the readonly argv into the mutable array `Bun.spawn` expects. `env: undefined`
+    // means Bun inherits the parent's startup-snapshot env, which preserves the pre-injection behavior.
+    const proc = Bun.spawn({ cmd: [...cmd], env, stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: combined });
 
     // The abort kill is SIGTERM, which a child can trap and outlive; escalate to
     // SIGKILL after a grace so the deadline is a real bound, not a suggestion.
@@ -329,7 +335,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
     // This module lives at src/modules/harness/, so the CLI source entry is two levels up.
     const scriptPath = deps.scriptPath ?? join(import.meta.dir, "../../index.ts");
     const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const runSubprocess: RunSubprocess = deps.runSubprocess ?? ((cmd, signal) => spawnInflexa(cmd, signal, { timeoutMs }));
+    const runSubprocess: RunSubprocess = deps.runSubprocess ?? ((cmd, env, signal) => spawnInflexa(cmd, signal, { timeoutMs }, env));
 
     return defineTool({
         id: "run_inflexa",
@@ -399,7 +405,13 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
 
             // Introspection and an approved action both reach here and run the same way.
             const cmd = resolveInvocation(c.argv, { isDevelopment, execPath, scriptPath });
-            const r = await runSubprocess(cmd, ctx.signal);
+            // Inject the session's analysis so an analysis-scoped command the child runs without an
+            // explicit --analysis targets the chat's analysis. Read from the trusted session scope, never
+            // the model argv, so chat wording cannot retarget another analysis; spread the parent env
+            // (Bun.env, the sanctioned spawn spread) so PATH / INFLEXA_BUILD_CHANNEL / etc. survive.
+            const scope = ctx.session.scope;
+            const childEnv = scope.kind === "analysis" ? { ...Bun.env, INFLEXA_ANALYSIS: scope.analysisId } : { ...Bun.env };
+            const r = await runSubprocess(cmd, childEnv, ctx.signal);
             // truncateOutput re-bounds here because the seam is injectable: the real
             // spawn already caps at source, but the contract must hold for any seam.
             if (r.endedBy === "timeout") return ok({ status: "timed_out", stdout: truncateOutput(r.stdout), stderr: truncateOutput(r.stderr) });
