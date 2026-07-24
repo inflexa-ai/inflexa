@@ -9,9 +9,13 @@ inputs of a target analysis through the existing add-inputs path
 through the shared context resolution (`resolveContext`) — an explicit `--analysis`
 ref, else the ambient analysis (which `run_inflexa` injects for an agent-driven
 run), else the working-directory marker — so a chat request that names only the
-accession targets the chat's analysis with no ref. The command SHALL NOT introduce a
-separate staging, seed, or re-profile path — enrolled files stage, seed, and
-re-profile exactly as any other added input.
+accession targets the chat's analysis with no ref. Enrollment SHALL be the command's
+whole responsibility: it records the input rows and downloads the bytes, and SHALL
+NOT stage, seed, or (re)profile, and SHALL NOT boot a harness runtime. A headless
+subprocess cannot hold the machine's single harness-runtime lock (a running TUI holds
+it) and cannot safely restage the shared `data/inputs` tree; staging and profiling are
+therefore driven by whoever owns the runtime (see the agent-cli-tool reconcile
+requirement), exactly as an interactively picked input is.
 
 #### Scenario: A GSE accession is enrolled as analysis inputs
 
@@ -25,11 +29,17 @@ re-profile exactly as any other added input.
 - **WHEN** the command resolves its target analysis
 - **THEN** it resolves to the session's analysis via the injected ambient ref, and enrolls the Series there
 
-#### Scenario: Enrolled files stage like any other input
+#### Scenario: The command enrolls but does not stage or boot a runtime
 
-- **GIVEN** a completed download
-- **WHEN** the added files are staged
-- **THEN** they materialize under the analysis `data/inputs` tree and join its `StagedInput` manifest identically to inputs added from local paths
+- **GIVEN** a completed download in a subprocess
+- **WHEN** the command finishes
+- **THEN** the input rows are recorded, no harness runtime was booted, and the `data/inputs` tree was not restaged by the command
+
+#### Scenario: Enrolled files stage like any other input once the runtime owner reconciles
+
+- **GIVEN** enrolled input rows and the runtime owner (the TUI) driving reconciliation
+- **WHEN** staging runs under that runtime
+- **THEN** the files materialize under the analysis `data/inputs` tree and join its `StagedInput` manifest identically to inputs added from local paths
 
 ### Requirement: The command resolves the processed and supplementary artifact set
 
