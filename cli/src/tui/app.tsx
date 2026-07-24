@@ -559,7 +559,12 @@ export function App(props: AppProps) {
     // leaves the entry in place: the write failed, the ask may still be answerable, so the user can
     // retry rather than lose the decision. Bridged through ResultAsync so the harness throw becomes a
     // handled branch (neverthrow-first) rather than a bare try/catch.
-    function answerAsk(askId: string, reply: AskReply): void {
+    //
+    // `onSettled` runs only in the three branches that advance the queue (applied / not_found /
+    // already_terminal) — never on the error branch or the missing-gateway early return. The composer
+    // answer path uses it to defer its buffer clear to settle time: a failed write (or an unbound
+    // gateway) keeps the typed token so the user can retry the submit rather than lose the decision.
+    function answerAsk(askId: string, reply: AskReply, onSettled?: () => void): void {
         const gateway = harnessRuntime()?.askGateway;
         if (!gateway) return;
         setAnswerBusy(true);
@@ -574,14 +579,17 @@ export function App(props: AppProps) {
                         // noteAskFeedback and reconcileAskCard both spread the same card, so they converge.
                         if (reply.kind === "reject" && reply.feedback) conversation.noteAskFeedback(askId, reply.feedback);
                         settleAsk(askId);
+                        onSettled?.();
                         return;
                     case "not_found":
                         notify({ kind: "info", text: "That approval is no longer pending." });
                         settleAsk(askId);
+                        onSettled?.();
                         return;
                     case "already_terminal":
                         notify({ kind: "info", text: "That approval was already answered." });
                         settleAsk(askId);
+                        onSettled?.();
                         return;
                     default: {
                         const _exhaustive: never = outcome;
@@ -769,22 +777,24 @@ export function App(props: AppProps) {
         const action = askSubmitAction(text, head !== null, answerBusy());
         switch (action.kind) {
             case "swallow":
-                // The first answer is already in flight and the prompt renders its busy state — drop this
-                // repeat silently (no notice, and leave the draft: the composer is blurred while docked).
+                // The first answer is already in flight and the prompt renders its busy state, so a
+                // notice would add nothing; drop this repeat and retain the draft so the user can
+                // re-submit if the in-flight answer ultimately fails.
                 return;
             case "answer": {
-                // `answer` is reachable only when an ask is docked, so `head` is non-null here; and a
-                // non-empty `text` was read off `textareaRef.editBuffer` above, so the ref is mounted.
-                textareaRef!.setText("");
+                // `answer` is reachable only when an ask is docked, so `head` is non-null here.
                 // NO focus move here on purpose: the settle/drain choreography (the head-identity effect
                 // above) owns every post-answer transition. Duplicating a focus move at submit time would
                 // race that effect and re-create the double-focus-owner bug the identity gate prevents.
-                answerAsk(head!.askId, action.reply);
+                // The buffer clear is deferred to settle time (onSettled): a failed gateway write keeps
+                // the typed token so this submit can be retried instead of vanishing.
+                answerAsk(head!.askId, action.reply, () => textareaRef?.setText(""));
                 return;
             }
             case "refuse":
-                // Keep today's refusal — return BEFORE clearing so the draft survives — but no longer
-                // silently: name the y/a/n answer path so the pending approval is discoverable.
+                // Refuse without touching the buffer — return before any clear so the draft survives —
+                // and name the y/a/n answer path so the pending approval is discoverable instead of a
+                // silent swallow.
                 notify({ kind: "info", text: "An approval is pending — answer y, a, or n (or use the prompt above)." });
                 return;
             case "passthrough":

@@ -23,5 +23,5 @@ None.
 - `cli/src/tui/components/ask_prompt.tsx` — the choice hint row splits into per-option clickable segments (mouse-up + live-selection guard, `selectable={false}`, inert-gated).
 - `cli/src/tui/app.tsx` — `handleSubmit` intercepts answer tokens before the busy gate; a pure `parseAskAnswer` helper; the docked-ask notice.
 - `cli/src/tui/layout/design_gallery.tsx` — choice-mode ask exhibits become `inert` so gallery clicks cannot flip exhibit state or steal focus.
-- Tests: `ask_prompt.render.test.tsx` (mouse activation + drag guard), app-level submit-interception coverage, gallery render test if exhibit props change.
+- Tests: `ask_prompt.render.test.tsx` (mouse activation + drag guard), pure-derivation submit-precedence coverage (`parseAskAnswer` + `askSubmitAction`), gallery render test if exhibit props change.
 - No new dependencies; no schema, storage, or harness changes — the gateway funnel (`answerAsk`) is reused as-is.

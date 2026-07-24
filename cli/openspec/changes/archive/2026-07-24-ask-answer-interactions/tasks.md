@@ -14,7 +14,7 @@
 
 - [x] 3.1 `ask_prompt.render.test.tsx`: mouse click on each option activates its handler (mockMouse.click at the option's frame coordinates); a selection drag released over an option does not activate; clicks are inert under `busy` and under `inert`
 - [x] 3.2 Unit-test `parseAskAnswer` (tokens, trim, case, rejects everything else) alongside the existing pure-helper tests
-- [x] 3.3 App-level coverage for the composer path: submit `y` with a docked ask answers approve-once and clears the buffer; submit non-answer text keeps the draft and surfaces the notice; submit `y` with no docked ask sends a normal message
+- [x] 3.3 Pure-derivation submit-precedence coverage for the composer path (`parseAskAnswer` + `askSubmitAction`): submit `y` with a docked ask answers approve-once and clears the buffer; submit non-answer text keeps the draft and surfaces the notice; submit `y` with no docked ask sends a normal message
 - [x] 3.4 Run `bun run typecheck`, `bun run lint`, and the full `bun test` suite in `cli/`; `bun run format:file` on every touched `src/` file
 
 ## 4. Follow-up tracking
