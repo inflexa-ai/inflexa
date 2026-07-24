@@ -233,10 +233,16 @@ export async function runModelCommit(
     else effects.reportError(decision.error);
 }
 
+/** The manual-entry row's sentinel value — a non-id token so it can never collide with a real model id. */
+const MANUAL_MODEL_SENTINEL = "__manual__";
+
 /**
  * The agent-parameterized model picker: a {@link SelectDialog} over the connection's live models with the
  * agent's CURRENT model marked, degrading to a {@link PromptDialog} free-text entry when listing failed
- * (`models === null`). A committed pick (listed OR free-text) is accessibility-validated (design D6)
+ * (`models === null`). A "manual entry" row in that listing ALSO opens the same free-text field (pre-filled
+ * with the current model) even when a listing IS present — so an id the connection does not enumerate stays
+ * reachable, mirroring direct-setup, which always prompts free text. A committed pick (listed OR free-text)
+ * is accessibility-validated (design D6)
  * before it persists — while checking, the picker shows a busy {@link PromptDialog}; a definite
  * `not_found` keeps it open with an inline error naming the model; `served`/`inconclusive` persist + close.
  *
@@ -270,6 +276,12 @@ export function ModelPickerDialog(props: {
     const [phase, setPhase] = createSignal<"picking" | "checking" | "error">("picking");
     const [pending, setPending] = createSignal("");
     const [errorText, setErrorText] = createSignal("");
+
+    // The list surface offers a manual-entry row so an id the connection does not enumerate can still be
+    // chosen — the same affordance direct-setup gives by always prompting free text. Selecting it flips this
+    // on, routing the render to the free-text PromptDialog below (with the list present, so it is NOT the
+    // "listing failed" branch).
+    const [manual, setManual] = createSignal(false);
 
     function commit(raw: string): void {
         const id = raw.trim();
@@ -313,14 +325,20 @@ export function ModelPickerDialog(props: {
             }
         >
             <Show
-                when={props.models}
+                // `!manual()` FIRST so `&&` yields the models array (not a bare boolean) when both hold —
+                // the `keyed` child renders that array, so the truthy branch must resolve to it, not to `true`.
+                when={!manual() && props.models}
                 keyed
                 fallback={
                     <PromptDialog
                         title={title()}
                         value={props.current}
                         placeholder="Enter a model id"
-                        description={() => <text fg={theme().fgMuted}>Could not list the connection's models — enter a model id manually.</text>}
+                        description={
+                            props.models
+                                ? undefined
+                                : () => <text fg={theme().fgMuted}>Could not list the connection's models — enter a model id manually.</text>
+                        }
                         onCancel={props.onCancel}
                         onSubmit={commit}
                     />
@@ -330,10 +348,13 @@ export function ModelPickerDialog(props: {
                     <SelectDialog
                         title={title()}
                         placeholder={`Search models${GLYPHS.ellipsis}`}
-                        items={models.map((id) => ({ value: id, title: id, hint: id === props.current ? "current" : undefined }))}
+                        items={[
+                            ...models.map((id) => ({ value: id, title: id, hint: id === props.current ? "current" : undefined })),
+                            { value: MANUAL_MODEL_SENTINEL, title: `Enter a model id manually${GLYPHS.ellipsis}` },
+                        ]}
                         emptyText="No models listed by the connection"
                         onCancel={props.onCancel}
-                        onSelect={commit}
+                        onSelect={(value) => (value === MANUAL_MODEL_SENTINEL ? setManual(true) : commit(value))}
                     />
                 )}
             </Show>
