@@ -77,11 +77,14 @@ export function createLaunchDirTool() {
     return defineTool({
         id: "list_launch_dir",
         description:
-            "List candidate input files in the folder the user launched `inflexa` in (the analysis's anchor folder). " +
-            "Use this when the user refers to data files 'in this folder' (or by name) that may not be staged as inputs yet — " +
-            "the workspace file tools cannot see the launch folder, only this can. Each file comes back with its path " +
-            "relative to the folder, its size, and whether it is ALREADY a registered input, so you can offer to add only the " +
-            "ones that are not. Read-only: it registers nothing — use the input-management tool to actually add files.",
+            "List the files in the folder the user launched `inflexa` from — the process's current working directory " +
+            "(the launch, or anchor, folder), which lies OUTSIDE this analysis's workspace tree. " +
+            "Reach for this whenever the user asks about 'the cwd', 'the current directory', 'this folder/directory', or " +
+            "'where I ran/started/launched inflexa' — those phrasings mean THIS folder, not the analysis tree, and the " +
+            "workspace file tools (list_files / read_file / workspace_search) cannot see it; only this tool can. " +
+            "Each file comes back with its path relative to the folder, its size, and whether it is ALREADY a registered " +
+            "input — so this is also how you discover candidate files the user may want added as inputs (offer to add only " +
+            "the un-registered ones). Read-only: it registers nothing — use the input-management tool to actually add files.",
         inputSchema: z.object({}),
         execute: async (_input, ctx): Promise<Result<LaunchDirResult, ToolError>> => {
             const scoped = scopeResource(ctx.session.scope);
