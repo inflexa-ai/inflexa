@@ -92,6 +92,7 @@ describe("createConversationAgent", () => {
             "chembl",
             "pubchem",
             "opentargets",
+            "search_gwas_catalog",
             "pubmed",
             "comptox",
             "generate_plan",
