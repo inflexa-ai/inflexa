@@ -161,12 +161,17 @@ agents. On a non-TTY the direct path SHALL write no model, and boot's actionable
 failure remains the contract.
 
 After the CLIProxy login, once the provisioned proxy is answering (setup runs no credential
-probe — that is the launch gate's; the step skips gracefully, writing nothing, when the proxy
-or its listing is not available), interactive setup SHALL present a default-model
+probe — that is the launch gate's), interactive setup SHALL present a default-model
 selection: a preselected **Auto** row labeled with the currently elected model
 (`default-model-election`), followed by the connection-family models from the proxy's `/models`
 list, accessibility-checked via bounded-concurrency `count_tokens` requests — only a definite
 `not_found_error` excludes a model from the list; an inconclusive check keeps it listed.
+When the proxy listing is unavailable — a down or not-yet-answering proxy — or nothing it lists is
+servable, interactive setup SHALL offer free-text manual entry with **Auto** as the blank default
+rather than skipping the step: leaving it blank keeps the adaptive default, and an entered id is
+persisted to BOTH user-facing agents after the SAME `count_tokens` accessibility check the list
+uses — a definite `not_found_error` is rejected with a warning that keeps Auto, an inconclusive
+check persists. Only a non-TTY skips the step entirely (Auto semantics).
 Accepting Auto SHALL write nothing (the default stays adaptive `model: null` resolution).
 Explicitly choosing a model SHALL persist it to `models.agents.<agent>` for BOTH user-facing
 agents (a deliberate pin). The flow SHALL contain no hardcoded model ids, with ONE declared
@@ -225,6 +230,14 @@ SHALL skip the selection (Auto semantics).
 - **WHEN** one listed model answers the accessibility check with `not_found_error` and another's
   check times out
 - **THEN** the 404ing model is excluded from the list and the timed-out one remains listed
+
+#### Scenario: An unavailable listing offers manual entry with Auto default
+
+- **WHEN** interactive cliproxy setup reaches the default-model step but the proxy listing is
+  unavailable (or nothing it lists is servable)
+- **THEN** setup offers a free-text model-id prompt with Auto as the blank default; leaving it
+  blank keeps the adaptive default, entering an id the account can serve pins both agents, and a
+  definite `not_found_error` id is rejected with a warning that keeps Auto
 
 #### Scenario: Non-interactive setup skips the model step
 
