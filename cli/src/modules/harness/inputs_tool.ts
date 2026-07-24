@@ -28,6 +28,12 @@ import { expandAndResolve, matchInputRefs } from "../analysis/input.ts";
 /** A current input as reported to the agent. */
 type InputEntry = { readonly path: string; readonly isDir: boolean; readonly anchored: boolean };
 
+/**
+ * The tool outcome as data on the ok channel. `no_analysis` means there is no analysis to act
+ * on — reached outside an analysis scope, or the scoped analysis row is gone; `no_anchor` means
+ * the analysis exists but its home folder could not be located on disk (a moved/deleted anchor —
+ * a routine desync, not a fault); `error` is a genuine fault (a DB failure, or a rejected mutation).
+ */
 type ManageInputsResult =
     | { readonly status: "no_analysis" }
     | { readonly status: "no_anchor" }
@@ -74,9 +80,13 @@ export function createManageInputsTool() {
             if (scoped.resourceType !== "analysis") return ok({ status: "no_analysis" as const });
             const analysisId = scoped.resourceId;
 
-            const analysis = findAnalysis(analysisId).unwrapOr(null);
-            if (!analysis) return ok({ status: "no_anchor" as const });
-            const cwd = anchorFolder(analysis.anchorId);
+            // Keep the three ways this can miss distinct: a real DB fault is an `error` (not a
+            // silently-degraded `no_anchor`); a vanished analysis row is `no_analysis` (nothing to act
+            // on); only an anchor folder that cannot be located on disk is `no_anchor`.
+            const found = findAnalysis(analysisId);
+            if (found.isErr()) return ok({ status: "error" as const, message: `could not load the analysis: ${found.error.type}` });
+            if (!found.value) return ok({ status: "no_analysis" as const });
+            const cwd = anchorFolder(found.value.anchorId);
             if (cwd === null) return ok({ status: "no_anchor" as const });
 
             if (input.action === "list") {
@@ -135,7 +145,12 @@ export function createManageInputsTool() {
             const removed: string[] = [];
             for (const target of matched) {
                 const r = removeInput(target);
-                if (r.isErr()) return ok({ status: "error" as const, message: `could not remove ${target.path}: ${r.error.type}` });
+                if (r.isErr()) {
+                    // Name what was already removed (and emitted prov.input_removed for) before the fault,
+                    // so the agent sees the remove partially applied instead of reading it as a clean no-op.
+                    const done = removed.length > 0 ? ` (already removed: ${removed.join(", ")})` : "";
+                    return ok({ status: "error" as const, message: `could not remove ${target.path}: ${r.error.type}${done}` });
+                }
                 if (r.value !== null) removed.push(target.path);
             }
             return ok({ status: "removed" as const, removed, notInputs });

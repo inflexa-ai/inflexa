@@ -30,11 +30,12 @@ import { statResult } from "../../lib/fs.ts";
 type LaunchDirEntry = { readonly path: string; readonly size: number; readonly registered: boolean };
 
 /**
- * The tool outcome as data on the ok channel. `no_analysis` means the tool was
- * reached outside an analysis scope (it needs an analysis to resolve an anchor);
- * `no_anchor` means the analysis's home folder could not be located on disk
- * (a moved/deleted anchor — a routine desync, not a fault); `listed` carries the
- * candidates, sorted by path.
+ * The tool outcome as data on the ok channel. `no_analysis` means there is no analysis
+ * to act on — reached outside an analysis scope, or the scoped analysis row is gone;
+ * `no_anchor` means the analysis exists but its home folder could not be located on disk
+ * (a moved/deleted anchor — a routine desync, not a fault); `error` is a genuine fault
+ * (a DB failure, or an unreadable launch folder); `listed` carries the candidates, sorted
+ * by path.
  */
 type LaunchDirResult =
     | { readonly status: "no_analysis" }
@@ -87,10 +88,13 @@ export function createLaunchDirTool() {
             if (scoped.resourceType !== "analysis") return ok({ status: "no_analysis" as const });
             const analysisId = scoped.resourceId;
 
-            const analysis = findAnalysis(analysisId).unwrapOr(null);
-            if (!analysis) return ok({ status: "no_anchor" as const });
+            // Keep the miss conditions distinct: a real DB fault is an `error`, a vanished analysis row
+            // is `no_analysis`, and only an anchor folder that cannot be located on disk is `no_anchor`.
+            const found = findAnalysis(analysisId);
+            if (found.isErr()) return ok({ status: "error" as const, message: `could not load the analysis: ${found.error.type}` });
+            if (!found.value) return ok({ status: "no_analysis" as const });
 
-            const folder = resolveAnchor(analysis.anchorId).map(resolvedPathOrCached).unwrapOr(null);
+            const folder = resolveAnchor(found.value.anchorId).map(resolvedPathOrCached).unwrapOr(null);
             if (folder === null) return ok({ status: "no_anchor" as const });
 
             const walked = walkFiles(folder, IGNORED_WALK_DIRS);

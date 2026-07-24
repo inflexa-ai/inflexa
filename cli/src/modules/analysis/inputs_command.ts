@@ -69,7 +69,12 @@ export function runInputsRemove(flags: ContextFlags, paths: string[]): void {
 
     const removed: string[] = [];
     for (const target of matched) {
-        const result = removeInput(target).match((v) => v, dieOn("Failed to remove input"));
+        const result = removeInput(target).match(
+            (v) => v,
+            // Name what was already removed before a mid-loop fault so the failure does not read as
+            // "nothing happened" — each prior removeInput has already emitted its prov.input_removed.
+            (e) => dieOn(`Failed to remove ${target.path}${removed.length > 0 ? ` (already removed: ${removed.join(", ")})` : ""}`)(e),
+        );
         if (result !== null) removed.push(target.path);
     }
     if (removed.length > 0) console.log(`  Removed from "${analysis.name}": ${removed.join(", ")}`);
