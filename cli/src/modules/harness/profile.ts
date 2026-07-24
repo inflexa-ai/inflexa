@@ -19,10 +19,9 @@ import { ensureRuntime, resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { capture, inherit } from "../../lib/container.ts";
 import { variantOfImage } from "../libs/images.ts";
-import { acquireInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
 import { shutdown } from "../../lib/shutdown.ts";
-import { resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
+import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
 import { workspaceDataDir } from "../analysis/output.ts";
 import { stageInputs, type StagedInput } from "../staging/staging.ts";
 import { resolveHarnessConfig } from "./config.ts";
@@ -209,10 +208,7 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
     // read-only `--status` path never reaches here, so it observes without a lock. The
     // process-exit hook (src/index.ts) releases it on every exit, so a bail-out below
     // leaks nothing.
-    const lock = acquireInstanceLock(analysis.id);
-    if (!lock.acquired) {
-        fail(`"${analysis.name}" is already open in another instance (pid ${lock.holderPid}). Wait for it to finish or stop that process, then re-run.`);
-    }
+    claimAnalysisOrFail(analysis, "Wait for it to finish or stop that process, then re-run.");
 
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");
