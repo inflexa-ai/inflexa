@@ -30,7 +30,21 @@ type ReadFileOutput =
           returnedBytes: number;
       }
     | { status: "not_found"; path: string }
-    | { status: "out_of_scope"; path: string };
+    | { status: "out_of_scope"; path: string }
+    | { status: "binary"; path: string; mode: "head" | "tail" | "full" };
+
+/**
+ * Treat returned content as binary when it contains a NUL byte — `grep`'s
+ * `looksBinary` heuristic, applied here to the whole returned window rather than
+ * a 1 KiB probe. These exact bytes are what would be UTF-8-decoded into the
+ * transcript, and a NUL both renders that decode as lossy garbage (useless to
+ * the model) and cannot be persisted into the JSONB message store — Postgres
+ * rejects U+0000 with 22P05, failing the whole turn's append. Reporting the
+ * read as `binary` keeps a NUL out of both.
+ */
+function looksBinary(content: Buffer): boolean {
+    return content.includes(0);
+}
 
 const ReadFileInputSchema = z.object({
     path: z
@@ -72,8 +86,10 @@ export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string)
             "as UTF-8 text. Output is capped at " +
             `${DEFAULT_MAX_BYTES} bytes; pass headLines or tailLines to read a ` +
             "specific window of a large file (typical for bio CSV/TSV/log files). " +
-            "Oversize reads come back truncated with a marker. Missing paths and " +
-            "paths outside the analysis tree return a data variant — not an error.",
+            "Oversize reads come back truncated with a marker. This tool is for " +
+            "text; a binary file (one holding NUL bytes, e.g. a .gz or image) comes " +
+            "back as a `binary` data variant rather than decoded garbage. Missing " +
+            "paths and paths outside the analysis tree return a data variant — not an error.",
         inputSchema: ReadFileInputSchema,
         execute: async ({ path, headLines, tailLines }, ctx): Promise<Result<ReadFileOutput, ToolError>> => {
             if (headLines !== undefined && tailLines !== undefined) {
@@ -99,6 +115,7 @@ export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string)
 
             switch (result.kind) {
                 case "ok":
+                    if (looksBinary(result.content)) return ok({ status: "binary" as const, path, mode });
                     return ok({
                         status: "ok" as const,
                         path,
@@ -106,6 +123,7 @@ export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string)
                         content: result.content.toString("utf8"),
                     });
                 case "truncated":
+                    if (looksBinary(result.content)) return ok({ status: "binary" as const, path, mode });
                     return ok({
                         status: "truncated" as const,
                         path,
