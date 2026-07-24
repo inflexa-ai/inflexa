@@ -13,6 +13,7 @@ import type { IdOrName } from "../lib/types.ts";
 import { resolveHarnessConfig, resolveModelConnection } from "../modules/harness/config.ts";
 import { describeBootError, ensureSandboxImage } from "../modules/harness/profile.ts";
 import { startHarnessBoot } from "./hooks/boot.ts";
+import { reconcileOpenAnalysisProfile } from "./hooks/profile_parity.ts";
 import { App } from "./app.tsx";
 import { setTheme } from "./theme.ts";
 
@@ -82,7 +83,7 @@ async function renderChat(target: ChatTarget): Promise<void> {
     // so it runs async behind the boot animation with the input gated — hooks/boot.ts drives the
     // boot-state store the App reads. Reached ONLY from renderChat: the passive
     // bare-`inflexa`-resolves-to-nothing path returns before renderChat and boots nothing (no-litter).
-    void startHarnessBoot(cfg);
+    void startHarnessBoot(cfg, undefined, reconcileOpenAnalysisProfile);
 }
 
 /** `inflexa new [name] [paths...]` — create an analysis (anchor = cwd) and open its chat. */
