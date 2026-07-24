@@ -39,6 +39,15 @@ describe("ModelPickerDialog", () => {
         expect(frame).toContain("current"); // the SelectItem hint on the active model
     });
 
+    test("offers a manual-entry row so an unlisted id is reachable even when listing succeeds", async () => {
+        const frame = await renderFrame(pickerNode(["claude-opus-4-8", "claude-sonnet-4-5"], "claude-sonnet-4-5"), { width: 80, height: 24 });
+        // With a present list the manual-entry row is still offered — the escape hatch to type an id the
+        // connection does not enumerate, mirroring direct-setup's always-free-text affordance. Selecting it
+        // flips the picker to the same free-text PromptDialog (driving that keypress needs mockInput, which
+        // renderFrame does not expose; the surrounding exhibits assert on the rendered frame only).
+        expect(frame).toContain("Enter a model id manually");
+    });
+
     test("listing failure degrades to a free-text field pre-filled with the current model", async () => {
         const frame = await renderFrame(pickerNode(null, "claude-opus-4-8"), { width: 80, height: 24 });
         expect(frame).toContain("Switch sandbox model");
