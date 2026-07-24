@@ -34,6 +34,26 @@ describe("createReadFileTool", () => {
         if (r.status === "ok") expect(r.content).toBe("hello");
     });
 
+    it("reports a NUL-bearing file as binary instead of decoding it", async () => {
+        // gzip magic (1f 8b 08 04) then a NUL — the exact shape that broke the
+        // JSONB append when read_file decoded it into the transcript.
+        const gzipHead = Buffer.from([0x1f, 0x8b, 0x08, 0x04, 0x00, 0x03, 0x41]);
+        const tool = createReadFileTool(fakeFs(() => ({ kind: "ok", content: gzipHead, truncated: false })));
+        const { ctx } = makeToolContext();
+        const r = (await tool.execute({ path: "data/inputs/x.csv.gz", headLines: 5 }, ctx))._unsafeUnwrap();
+        expect(r.status).toBe("binary");
+        if (r.status === "binary") expect(r.mode).toBe("head");
+    });
+
+    it("reports a truncated binary read as binary, not truncated", async () => {
+        const withNul = Buffer.concat([Buffer.from("plausible text"), Buffer.from([0x00]), Buffer.alloc(16, 0x41)]);
+        const tool = createReadFileTool(fakeFs(() => ({ kind: "truncated", content: withNul, totalSize: 5_000_000 })));
+        const { ctx } = makeToolContext();
+        const r = (await tool.execute({ path: "data/inputs/big.bin" }, ctx))._unsafeUnwrap();
+        expect(r.status).toBe("binary");
+        if (r.status === "binary") expect(r.mode).toBe("full");
+    });
+
     it("returns not_found as a data variant — no throw", async () => {
         const tool = createReadFileTool(fakeFs(() => ({ kind: "not_found" })));
         const { ctx } = makeToolContext();
