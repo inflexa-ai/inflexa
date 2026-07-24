@@ -1158,6 +1158,7 @@ describe("selectDefaultModel", () => {
             candidates: async () => ["claude-a"],
             check: async () => "served",
             prompt: async () => ({ auto: true }),
+            promptManual: async () => null,
             writeBoth,
             warn: () => {},
             ...over,
@@ -1246,18 +1247,60 @@ describe("selectDefaultModel", () => {
         expect(readConfig().models).toBeUndefined();
     });
 
-    test("a down/unreachable proxy (no candidates) skips gracefully — no prompt, no write", async () => {
-        let prompted = false;
+    test("no offerable list → manual entry: a served typed id pins BOTH agents", async () => {
         await selectDefaultModel(
             deps({
                 candidates: async () => [],
+                promptManual: async () => "claude-x",
+                check: async () => "served",
+            }),
+        );
+        expect(persistedAgents()).toEqual({ conversation: "claude-x", sandbox: "claude-x" });
+    });
+
+    test("no offerable list → manual entry left blank keeps Auto — nothing persisted", async () => {
+        await selectDefaultModel(
+            deps({
+                candidates: async () => [],
+                promptManual: async () => null,
+            }),
+        );
+        expect(readConfig().models).toBeUndefined();
+    });
+
+    test("no offerable list → a manually typed not_found id is rejected — warns, keeps Auto", async () => {
+        const warnings: string[] = [];
+        await selectDefaultModel(
+            deps({
+                candidates: async () => [],
+                promptManual: async () => "bad",
+                check: async () => "not_found",
+                warn: (m) => warnings.push(m),
+            }),
+        );
+        expect(readConfig().models).toBeUndefined();
+        expect(warnings.length).toBe(1);
+    });
+
+    test("a sweep that rules out EVERY candidate also routes to manual entry", async () => {
+        let manualCalled = false;
+        let listPrompted = false;
+        await selectDefaultModel(
+            deps({
+                candidates: async () => ["claude-404a", "claude-404b"],
+                check: async () => "not_found",
                 prompt: async () => {
-                    prompted = true;
+                    listPrompted = true;
                     return { auto: true };
+                },
+                promptManual: async () => {
+                    manualCalled = true;
+                    return null;
                 },
             }),
         );
-        expect(prompted).toBe(false);
+        expect(manualCalled).toBe(true);
+        expect(listPrompted).toBe(false);
         expect(readConfig().models).toBeUndefined();
     });
 });

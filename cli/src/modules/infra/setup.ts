@@ -500,9 +500,11 @@ async function runSandboxImageSetup(): Promise<void> {
 // (labeled with the currently elected id) followed by the account's accessible models. Auto writes
 // nothing — the default stays adaptive `model: null` resolution, which keeps electing the newest served
 // model across launches. An explicit pick pins BOTH user-facing agents (per-agent divergence stays a
-// picker power feature). Every id is discovered live from the proxy — none is ever hardcoded — so a
-// proxy that is down or not yet answering simply skips the step: an optional convenience must not add a
-// new way for setup to fail.
+// picker power feature). Every id is discovered live from the proxy — none is ever hardcoded — so when
+// the proxy is down or not yet answering (nothing to offer), the interactive step falls back to free-text
+// manual entry with Auto (blank) as the default, letting the user pin an id the listing can't enumerate;
+// a non-TTY still skips. The step stays optional — blank keeps Auto — so an optional convenience never
+// adds a new way for setup to fail.
 
 /**
  * How many accessibility checks the setup sweep runs at once. Small and fixed: it overlaps the
@@ -539,37 +541,57 @@ type DefaultModelChoice = { auto: true } | { auto: false; modelId: string };
  */
 type DefaultModelDeps = {
     isInteractive: () => boolean;
-    /** The ranked, connection-family candidate ids to sweep; empty (no listing / down proxy) → skip. */
+    /** The ranked, connection-family candidate ids to sweep; empty (no listing / down proxy) → manual entry. */
     candidates: () => Promise<string[]>;
     /** One model's accessibility check, bounded like every probe round-trip. */
     check: (modelId: string) => Promise<ModelAccess>;
     /** Present Auto (preselected, labeled with `electedId`) atop `models`; returns the user's choice. */
     prompt: (electedId: string, models: string[]) => Promise<DefaultModelChoice>;
+    /** Free-text manual id when no list is offerable (listing down/empty, or nothing servable); null = left blank → keep Auto. */
+    promptManual: () => Promise<string | null>;
     /** Persist the chosen id to BOTH user-facing agents. */
     writeBoth: (modelId: string) => Result<void, ConfigError>;
     warn: (message: string) => void;
 };
 
 /**
- * The interactive default-model step. A non-TTY skips entirely (writes nothing — Auto semantics). An
- * empty candidate list (a down/unreachable proxy) or a sweep that rules out EVERY candidate skips
- * gracefully rather than turning an optional step into a failure or recommending a model the account
- * cannot serve. The Auto label is the first accessible candidate in rank order — the SAME id the launch
- * election resolves (both walk the ranked list past `not_found` to the first servable) — read straight
- * from the sweep, so the recommendation and the offered list can never disagree, and so setup makes ONE
- * `/models` pass rather than a separate election round-trip whose per-process cache this setup process
- * (which exits before any chat launch) would only discard. Accepting Auto writes nothing (the default
- * stays adaptive `model: null` resolution). An explicit pick persists to BOTH agents; a write failure
- * only warns — setup's real work is already done.
+ * The interactive default-model step. A non-TTY skips entirely (writes nothing — Auto semantics). When
+ * there is no offerable list — an empty candidate set (a down/unreachable proxy) or a sweep that rules
+ * out EVERY candidate — the interactive step offers free-text manual entry with Auto (blank) as the
+ * default, so a user can still pin an id the listing can't enumerate instead of being stranded; a
+ * committed id is validated with the SAME accessibility check the list uses, and only a definite
+ * `not_found` is rejected (keeping Auto). A non-TTY never reaches this fallback — the `isInteractive`
+ * guard returns first. When a list IS offerable, the Auto label is the first accessible candidate in rank
+ * order — the SAME id the launch election resolves (both walk the ranked list past `not_found` to the
+ * first servable) — read straight from the sweep, so the recommendation and the offered list can never
+ * disagree, and so setup makes ONE `/models` pass rather than a separate election round-trip whose
+ * per-process cache this setup process (which exits before any chat launch) would only discard. Accepting
+ * Auto — or leaving manual entry blank — writes nothing (the default stays adaptive `model: null`
+ * resolution). An explicit pick persists to BOTH agents; a write failure only warns — setup's real work
+ * is already done.
  */
 export async function selectDefaultModel(deps: DefaultModelDeps): Promise<void> {
     if (!deps.isInteractive()) return;
     const ranked = await deps.candidates();
-    if (ranked.length === 0) return;
-    const models = await sweepAccessibleModels(deps.check, ranked);
-    // Every candidate answered `not_found` — no servable model to recommend, so skip rather than preselect
-    // a known-inaccessible id. This guard also makes `models[0]` provably present for the Auto label.
-    if (models.length === 0) return;
+    const models = ranked.length === 0 ? [] : await sweepAccessibleModels(deps.check, ranked);
+    if (models.length === 0) {
+        // No offerable list — the proxy listing is down/empty, or nothing it lists is servable. Rather than
+        // silently skip (stranding a user who wants to pin an id the listing can't enumerate), offer free-text
+        // manual entry with Auto (blank) as the default. The step stays optional: blank keeps the adaptive
+        // `model: null` default, so this never becomes a new way for setup to fail. A committed id is validated
+        // with the SAME accessibility check the list uses — only a definite `not_found` is rejected (keep Auto).
+        const entered = await deps.promptManual();
+        if (entered === null) return; // left blank → keep Auto
+        if ((await deps.check(entered)) === "not_found") {
+            deps.warn(`The account cannot serve "${entered}" — keeping Auto.`);
+            return;
+        }
+        deps.writeBoth(entered).match(
+            () => {},
+            (e) => deps.warn(`Could not save the model selection: ${e.type}`),
+        );
+        return;
+    }
     const electedId = models[0]!;
     const choice = await deps.prompt(electedId, models);
     if (choice.auto) return;
@@ -615,6 +637,14 @@ async function runDefaultModelSetup(mode: ConnectionMode): Promise<void> {
                 ...models.map((id) => ({ value: id, label: id })),
             ]);
             return chosen === AUTO_MODEL_SENTINEL ? { auto: true } : { auto: false, modelId: chosen };
+        },
+        promptManual: async () => {
+            const entered = (
+                await promptText("Default chat model (leave blank for Auto)", {
+                    validate: () => undefined, // blank is allowed — it means "keep Auto"
+                })
+            ).trim();
+            return entered === "" ? null : entered;
         },
         writeBoth: (modelId) => writeAgentModel("conversation", modelId).andThen(() => writeAgentModel("sandbox", modelId)),
         warn: (message) => log.warn(message),
