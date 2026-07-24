@@ -20,14 +20,10 @@ import { listAnalysisInputs } from "../../db/primary_query.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { addInputs, removeInput } from "./analysis.ts";
 import { expandAndResolve, matchInputRefs } from "./input.ts";
-import { resolveContext, type ContextFlags } from "./context.ts";
+import { resolveSingleAnalysis, type ContextFlags } from "./context.ts";
 
-/** Resolve the target analysis from cwd + flags, or exit with a clear message when none resolves here. */
-function requireAnalysis(flags: ContextFlags): Analysis {
-    const ctx = resolveContext(process.cwd(), flags).match((c) => c, dieOn("Failed to resolve context"));
-    if (ctx.kind !== "analysis") fail("No analysis here. Run `inflexa` to start or open one, then manage its inputs.");
-    return ctx.analysis;
-}
+/** The `empty`-context hint for the inputs commands (see `resolveSingleAnalysis`). */
+const EMPTY_HINT = "No analysis here. Run `inflexa` to start or open one, then manage its inputs.";
 
 /** Claim the analysis for a standalone mutation, refusing if a live instance holds it. */
 function claim(analysis: Analysis): void {
@@ -39,7 +35,7 @@ function claim(analysis: Analysis): void {
 
 /** `inflexa inputs ls` — list the analysis's current registered inputs. Read-only. */
 export function runInputsLs(flags: ContextFlags): void {
-    const analysis = requireAnalysis(flags);
+    const analysis = resolveSingleAnalysis(flags, EMPTY_HINT);
     const inputs = listAnalysisInputs(analysis.id).match((v) => v, dieOn("Failed to read inputs"));
     if (inputs.length === 0) {
         console.log(`  "${analysis.name}" has no inputs. Add some with \`inflexa inputs add <paths...>\`.`);
@@ -51,7 +47,7 @@ export function runInputsLs(flags: ContextFlags): void {
 
 /** `inflexa inputs add <paths...>` — register files as inputs after verifying they exist. */
 export function runInputsAdd(flags: ContextFlags, paths: string[]): void {
-    const analysis = requireAnalysis(flags);
+    const analysis = resolveSingleAnalysis(flags, EMPTY_HINT);
     // Pre-check for a precise, path-named message before mutating; addInputs re-checks authoritatively.
     const missing = paths.filter((p) => !existsSync(expandAndResolve(process.cwd(), p)));
     if (missing.length > 0) fail(`no such file: ${missing.join(", ")}`);
@@ -73,7 +69,7 @@ export function runInputsAdd(flags: ContextFlags, paths: string[]): void {
 
 /** `inflexa inputs remove <paths...>` — drop inputs, matching the registered set (no on-disk check). */
 export function runInputsRemove(flags: ContextFlags, paths: string[]): void {
-    const analysis = requireAnalysis(flags);
+    const analysis = resolveSingleAnalysis(flags, EMPTY_HINT);
     claim(analysis);
     const current = listAnalysisInputs(analysis.id).match((v) => v, dieOn("Failed to read inputs"));
     const { matched, notInputs } = matchInputRefs(current, paths, process.cwd());

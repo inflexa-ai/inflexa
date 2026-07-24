@@ -14,7 +14,7 @@ import {
     type Pool,
 } from "@inflexa-ai/harness";
 
-import { confirm, fail, dieOn } from "../../lib/cli.ts";
+import { confirm, fail } from "../../lib/cli.ts";
 import { ensureRuntime, resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { capture, inherit } from "../../lib/container.ts";
@@ -22,8 +22,7 @@ import { variantOfImage } from "../libs/images.ts";
 import { acquireInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
 import { shutdown } from "../../lib/shutdown.ts";
-import type { Analysis } from "../../types/analysis.ts";
-import { resolveContext, type ContextFlags } from "../analysis/context.ts";
+import { resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
 import { workspaceDataDir } from "../analysis/output.ts";
 import { stageInputs, type StagedInput } from "../staging/staging.ts";
 import { resolveHarnessConfig } from "./config.ts";
@@ -36,41 +35,6 @@ import { bootHarnessRuntime, activeHarnessRuntime, type HarnessBootError } from 
 // here); the workflow itself is fire-and-forget and `--status` reads the ledger.
 
 type Spinner = ReturnType<typeof spinner>;
-
-/**
- * Resolve the single analysis a deliberate harness command operates on, or die
- * with a way forward. Shared by `inflexa profile` and `inflexa run` — every
- * branch is identical between the two except the `empty`-context message, which
- * each command passes as `emptyHint` (its own "how to get started" line).
- */
-export function resolveSingleAnalysis(flags: ContextFlags, emptyHint: string): Analysis {
-    const ctx = resolveContext(process.cwd(), flags).match((c) => c, dieOn("Failed to resolve context"));
-    const listCandidates = (analyses: Analysis[]): string => analyses.map((a) => `  - ${a.id}  ${a.name}`).join("\n");
-    switch (ctx.kind) {
-        case "analysis":
-            return ctx.analysis;
-        case "anchor": {
-            const [only, ...rest] = ctx.analyses;
-            if (only && rest.length === 0) return only;
-            if (!only) fail("No analyses on this anchor yet. Run `inflexa new` to create one first.");
-            fail(`Multiple analyses here — pick one with --analysis <id|name>:\n${listCandidates(ctx.analyses)}`);
-            break;
-        }
-        case "pick":
-            fail(`Ambiguous context — pick one with --analysis <id|name>:\n${listCandidates(ctx.analyses)}`);
-            break;
-        case "empty":
-            fail(emptyHint);
-            break;
-        case "copy":
-            fail("This folder is a copied anchor — run `inflexa repair` or `inflexa relocate` first.");
-            break;
-        default: {
-            const exhaustive: never = ctx;
-            throw new Error(`unhandled context kind: ${JSON.stringify(exhaustive)}`);
-        }
-    }
-}
 
 /**
  * Each boot error variant, as one actionable line naming the remedy. Exported so

@@ -22,10 +22,10 @@ import { describeCause } from "../../lib/cause.ts";
 import { fail } from "../../lib/cli.ts";
 import { acquireInstanceLock } from "../../lib/lock.ts";
 import { shutdown } from "../../lib/shutdown.ts";
-import type { ContextFlags } from "../analysis/context.ts";
+import { resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
 import { resolveHarnessConfig } from "./config.ts";
 import { createChatPrinter, type ChatSink } from "./chat_printer.ts";
-import { describeBootError, ensureSandboxImage, resolveSingleAnalysis } from "./profile.ts";
+import { describeBootError, ensureSandboxImage } from "./profile.ts";
 import { bootHarnessRuntime, type HarnessRuntime } from "./runtime.ts";
 import { buildChatSession, runChatTurn } from "./turn.ts";
 

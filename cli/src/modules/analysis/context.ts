@@ -3,6 +3,7 @@ import type { Analysis } from "../../types/analysis.ts";
 import type { AnchorMarker } from "../../types/anchor.ts";
 import type { IdOrName } from "../../lib/types.ts";
 import type { DbError } from "../../db/errors.ts";
+import { dieOn, fail } from "../../lib/cli.ts";
 import { findProjectByRef } from "../../db/primary_query.ts";
 import { findMarkerUpwards } from "../anchor/marker.ts";
 import { classifyMarkerSighting, resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
@@ -87,5 +88,42 @@ export function describeContext(ctx: ResolvedContext): string {
             return `context: copied folder ${ctx.cwd} — re-mint or fork before use`;
         case "empty":
             return `context: empty — ${ctx.cwd} (no analysis here; start one?)`;
+    }
+}
+
+/**
+ * Resolve the single analysis a deliberate command operates on, or die with a way
+ * forward. Shared by the harness commands (`profile`/`run`/`chat`) and `inputs
+ * add`/`remove`/`ls`: an explicit `--analysis` flag or an anchor holding exactly one
+ * analysis resolves directly; multiple/ambiguous/empty each fail with the fix. Lives
+ * here (not in a command module) so every analysis-scoped command reduces context the
+ * same way — `emptyHint` is the only per-command difference (its "how to start" line).
+ */
+export function resolveSingleAnalysis(flags: ContextFlags, emptyHint: string): Analysis {
+    const ctx = resolveContext(process.cwd(), flags).match((c) => c, dieOn("Failed to resolve context"));
+    const listCandidates = (analyses: Analysis[]): string => analyses.map((a) => `  - ${a.id}  ${a.name}`).join("\n");
+    switch (ctx.kind) {
+        case "analysis":
+            return ctx.analysis;
+        case "anchor": {
+            const [only, ...rest] = ctx.analyses;
+            if (only && rest.length === 0) return only;
+            if (!only) fail("No analyses on this anchor yet. Run `inflexa new` to create one first.");
+            fail(`Multiple analyses here — pick one with --analysis <id|name>:\n${listCandidates(ctx.analyses)}`);
+            break;
+        }
+        case "pick":
+            fail(`Ambiguous context — pick one with --analysis <id|name>:\n${listCandidates(ctx.analyses)}`);
+            break;
+        case "empty":
+            fail(emptyHint);
+            break;
+        case "copy":
+            fail("This folder is a copied anchor — run `inflexa repair` or `inflexa relocate` first.");
+            break;
+        default: {
+            const exhaustive: never = ctx;
+            throw new Error(`unhandled context kind: ${JSON.stringify(exhaustive)}`);
+        }
     }
 }
