@@ -198,6 +198,55 @@ export function buildProgram(): Command {
         },
     );
 
+    const inputs = cli.command("inputs").description("Manage an analysis's input files (add, remove, list)");
+
+    // Read-only listing of the current registered inputs. `--analysis` only selects WHICH analysis to
+    // list, so it leaves the command read-only and is safe-listed.
+    registerAction(
+        inputs.command("ls").description("List the analysis's current inputs").option("--analysis <id|name>", "Operate on a specific analysis"),
+        { kind: "auto", safeFlags: ["analysis"] },
+        async (options: { analysis?: string }) => {
+            const { runInputsLs } = await import("../modules/analysis/inputs_command.ts");
+            runInputsLs({ analysis: options.analysis });
+        },
+    );
+
+    // `blocked` for the agent, not `approval`: adding inputs mid-chat must run IN the chat's own process
+    // (the manage_inputs tool), because it emits provenance under the analysis lock the chat already
+    // holds — a run_inflexa subprocess would be refused by that lock. This subcommand is the terminal
+    // (human) surface; the lock keeps a standalone add from writing provenance concurrently with a chat.
+    registerAction(
+        inputs
+            .command("add")
+            .description("Add files or folders as inputs to the analysis")
+            .argument("<paths...>", "Files or folders to add as inputs")
+            .option("--analysis <id|name>", "Operate on a specific analysis"),
+        {
+            kind: "blocked",
+            reason: "`inflexa inputs add` is the terminal surface for a human. During a chat, add inputs with the `manage_inputs` tool instead — running this as a subprocess would be refused by the analysis lock the chat holds.",
+        },
+        async (paths: string[], options: { analysis?: string }) => {
+            const { runInputsAdd } = await import("../modules/analysis/inputs_command.ts");
+            runInputsAdd({ analysis: options.analysis }, paths);
+        },
+    );
+
+    registerAction(
+        inputs
+            .command("remove")
+            .description("Remove inputs from the analysis")
+            .argument("<paths...>", "Input paths to remove")
+            .option("--analysis <id|name>", "Operate on a specific analysis"),
+        {
+            kind: "blocked",
+            reason: "`inflexa inputs remove` is the terminal surface for a human. During a chat, remove inputs with the `manage_inputs` tool instead — running this as a subprocess would be refused by the analysis lock the chat holds.",
+        },
+        async (paths: string[], options: { analysis?: string }) => {
+            const { runInputsRemove } = await import("../modules/analysis/inputs_command.ts");
+            runInputsRemove({ analysis: options.analysis }, paths);
+        },
+    );
+
     // Dev/E2E command surface — `profile`, `run`, and `chat` boot the embedded harness runtime and
     // exist to exercise the loop headlessly; the product conversation surface is the TUI chat. They
     // register ONLY in the dev channel, so a release binary's commands are the product alone: the gate

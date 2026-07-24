@@ -113,7 +113,7 @@ function stageFile(src: string, dest: string): Result<void, FsError> {
  * harness) because the two lists answer different questions — runtime tool
  * noise vs. what counts as user data — and only happen to overlap today.
  */
-const IGNORED_WALK_DIRS: ReadonlySet<string> = new Set([
+export const IGNORED_WALK_DIRS: ReadonlySet<string> = new Set([
     ".ruff_cache",
     "__pycache__",
     ".cache",
@@ -137,7 +137,7 @@ const WALK_EVERYTHING: ReadonlySet<string> = new Set();
  * traversed, and a dangling link is skipped — an unreadable target is a property
  * of the user's source tree, not a staging failure.
  */
-function walkFiles(dir: string, ignoredDirs: ReadonlySet<string>): Result<string[], FsError> {
+export function walkFiles(dir: string, ignoredDirs: ReadonlySet<string>): Result<string[], FsError> {
     try {
         const results: string[] = [];
         const entries = readdirSync(dir, { withFileTypes: true });

@@ -12,9 +12,18 @@ import { resolveAnchor } from "../anchor/anchor.ts";
  * a marker: inside a tracked anchor → `(anchorId, relpath)`; else `(null, absolute)`. This
  * is how an input "lives under an anchor" — and rides it across moves — without any SQL scan.
  */
-export function classifyInputPath(analysisId: string, rawPath: string, cwd: string): Result<AnalysisInput, DbError> {
+/**
+ * Expand a leading `~` to the home directory, then resolve against `cwd` — the front half of
+ * input-path classification, shared with existence pre-checks and removal matching so all three
+ * agree on what a raw path resolves to.
+ */
+export function expandAndResolve(cwd: string, rawPath: string): string {
     const expanded = rawPath.startsWith("~") ? join(homedir(), rawPath.slice(1)) : rawPath;
-    const target = resolve(cwd, expanded);
+    return resolve(cwd, expanded);
+}
+
+export function classifyInputPath(analysisId: string, rawPath: string, cwd: string): Result<AnalysisInput, DbError> {
+    const target = expandAndResolve(cwd, rawPath);
 
     // `isDir` comes from a real stat. A non-existent path cannot honestly produce `isDir`, so
     // surface it (op marks it not-found) rather than defaulting — the caller rejects it.
@@ -49,4 +58,27 @@ export function resolveInputPath(input: AnalysisInput): Result<string | null, Db
     if (input.anchorId === null) return ok(input.path);
     // A missing anchor row (null resolved) or unlocated folder (null path) both mean "can't resolve".
     return resolveAnchor(input.anchorId).map((resolved) => (resolved?.path == null ? null : join(resolved.path, input.path)));
+}
+
+/**
+ * Match raw paths against a set of registered inputs for REMOVAL — by the stored ref `path` OR the
+ * resolved absolute path (`{cwd}`-relative raw paths resolve the same way `classifyInputPath` would).
+ * Existence on disk is deliberately NOT required: an input whose file was moved or deleted must stay
+ * removable. Returns the matched inputs and the raw paths that matched no current input.
+ */
+export function matchInputRefs(inputs: readonly AnalysisInput[], rawPaths: readonly string[], cwd: string): { matched: AnalysisInput[]; notInputs: string[] } {
+    const byStored = new Map(inputs.map((i) => [i.path, i]));
+    const byAbs = new Map<string, AnalysisInput>();
+    for (const input of inputs) {
+        const abs = resolveInputPath(input).unwrapOr(null);
+        if (abs !== null) byAbs.set(abs, input);
+    }
+    const matched: AnalysisInput[] = [];
+    const notInputs: string[] = [];
+    for (const raw of rawPaths) {
+        const hit = byStored.get(raw) ?? byAbs.get(expandAndResolve(cwd, raw));
+        if (hit) matched.push(hit);
+        else notInputs.push(raw);
+    }
+    return { matched, notInputs };
 }
