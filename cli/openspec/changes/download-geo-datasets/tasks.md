@@ -26,11 +26,7 @@
 - [x] 3b.1 `run_inflexa`: after a successful ACTION run (not blocked/denied/introspection) in an analysis-scoped session, invoke an injected host callback to reconcile input parity for the session's analysis. Add the callback to `createRunInflexaTool(deps)`.
 - [x] 3b.2 Wire the callback at the composition root (`harness/runtime.ts`) to drive parity for the open analysis when boot is ready (reuse `driveProfileParity`/the Bus), idempotent no-op when inputs match. Tests: a successful action drives the callback with the session analysis id; a denied/introspection call does not.
 
-## 4. Sandbox parse readiness
+## 4. Validate & finish
 
-- [x] 4.1 Confirm GEOparse and/or GEOquery are provisioned in the sandbox library store so the offline `get_GEO(filepath=…)` / `getGEO(filename=…)` path works; flag for the lib-store build if missing.
-
-## 5. Validate & finish
-
-- [x] 5.1 `openspec validate --strict` ✓; `bun run typecheck` ✓ (clean); `bun run lint` ✓ (exit 0); `bun test` ✓ (1735 pass; the sole failure — `embedding/local-provider` "poisoned proxy" — predates this change and touches no file it modifies); `bun run format:file` applied to changed `src/` files.
-- [ ] 5.2 Integration test: enroll a small public GSE end-to-end; confirm the rows are recorded and (under a runtime owner) the files stage + profile and parse offline in a sandbox step.
+- [x] 4.1 `openspec validate --strict` ✓; `bun run typecheck` ✓ (clean); `bun run lint` ✓ (exit 0); `bun test` ✓ (1735 pass; the sole failure — `embedding/local-provider` "poisoned proxy" — predates this change and touches no file it modifies); `bun run format:file` applied to changed `src/` files.
+- [ ] 4.2 Integration test: enroll a small public GSE end-to-end; confirm the rows are recorded and (under a runtime owner) the files stage + profile, and the staged series matrix reads cleanly with the general data tools (no GEO-specific library).
