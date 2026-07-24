@@ -1,5 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import type { JSX } from "solid-js";
+import { useRenderer } from "@opentui/solid";
 import type { BoxRenderable } from "@opentui/core";
 
 import { GLYPHS, size, space } from "../../lib/design_system.ts";
@@ -33,9 +34,12 @@ export type AskPromptProps = {
      */
     initialMode?: "choice" | "feedback";
     /**
-     * True for a static gallery exhibit: the feedback input mounts blurred so it never steals the
-     * surrounding pane's focus (the same inertness the dialog showcase threads into its editors).
-     * Live docks leave it unset — reaching feedback by pressing `n` should focus the fresh input.
+     * True for a static gallery exhibit — two inertnesses in one flag. The feedback input mounts blurred
+     * so it never steals the surrounding pane's focus (the same inertness the dialog showcase threads
+     * into its editors), AND a click on a choice option is a no-op: a click needs no focus, so without
+     * this an exhibit click on `n` would flip the exhibit into feedback mode and its auto-focusing input
+     * would steal the gallery's focus. Live docks leave it unset — clicks answer, and reaching feedback
+     * by pressing `n` should focus the fresh input.
      */
     inert?: boolean;
     /** Answer the head ask: approve just this call (`once`) or record a standing grant (`always`). */
@@ -81,6 +85,9 @@ export function AskPrompt(props: AskPromptProps): JSX.Element {
     // (below); focusing it is what activates the key layer, and it stays focused-within while the
     // feedback input — its descendant — holds focus.
     let boxRef: BoxRenderable | null = null;
+    // For the choice-option click guard: reading the LIVE selection is how a drag-release is told from a
+    // click (see onOptionClick). The same dependency run_block.tsx (also a components/ widget) takes.
+    const renderer = useRenderer();
 
     function approve(kind: "once" | "always"): void {
         // busy = an answer is already in flight; swallow further presses until the gateway resolves.
@@ -105,6 +112,24 @@ export function AskPrompt(props: AskPromptProps): JSX.Element {
         // The feedback input unmounts on this switch, dropping focus; hand it back to the box so the
         // choice-mode keys stay live (the renderable is not refocusable synchronously — microtask).
         queueMicrotask(() => boxRef?.focus());
+    }
+
+    // A click on a choice option routes into the SAME handler its key would (`approve`/`enterFeedback`),
+    // so click and key can never drift — the `busy` gate lives inside those handlers and is inherited for
+    // free. Two guards fire before it:
+    //   - inert: a gallery exhibit must not answer. A click needs no focus, so the focus-target gate that
+    //     neuters the bare keys does nothing here — without this an exhibit click on `n` flips it into
+    //     feedback mode and its auto-focusing input steals the gallery pane's focus.
+    //   - a live text selection: this runs on mouse-UP (never -down, which would fire the instant a
+    //     selection drag STARTS over the row — an accidental command approval), and a drag that merely
+    //     ENDS on an option fires that mouse-up too. Reading the renderer's LIVE selection distinguishes
+    //     the two: a real click carries none. Read live, never press state remembered on mouse-down — a
+    //     flag can outlive its gesture (the reasoning documented at run_block.tsx:226-234).
+    function onOptionClick(action: "once" | "always" | "reject"): void {
+        if (props.inert) return;
+        if (renderer.getSelection()?.getSelectedText()) return;
+        if (action === "reject") enterFeedback();
+        else approve(action);
     }
 
     // ONE layer, gated on the prompt's focus target. Bare y/a/n are legal ONLY because of that gate:
@@ -186,16 +211,32 @@ export function AskPrompt(props: AskPromptProps): JSX.Element {
                             <Fg role="fgMuted">{props.detail}</Fg>
                         </text>
                     </Show>
+                    {/* Each option is its own mouse target because opentui mouse handlers attach to
+                    renderables, not inline spans — so the one hint <text> splits into a <text> per
+                    option, the middot separators becoming their own muted <text> that carry the spacing.
+                    The split is byte-for-byte the old single line: "y approve · a always · n reject". The
+                    options are `selectable={false}` — they are buttons, not prose, so a press must not
+                    highlight the label as if the click did something other than answer. */}
                     <box flexDirection="row">
-                        <text>
+                        <text selectable={false} onMouseUp={() => onOptionClick("once")}>
                             <Fg role="accent">
                                 <Bold>y</Bold>
                             </Fg>
-                            <Fg role="fgMuted">{` approve ${GLYPHS.middot} `}</Fg>
+                            <Fg role="fgMuted"> approve</Fg>
+                        </text>
+                        <text>
+                            <Fg role="fgMuted">{` ${GLYPHS.middot} `}</Fg>
+                        </text>
+                        <text selectable={false} onMouseUp={() => onOptionClick("always")}>
                             <Fg role="accent">
                                 <Bold>a</Bold>
                             </Fg>
-                            <Fg role="fgMuted">{` always ${GLYPHS.middot} `}</Fg>
+                            <Fg role="fgMuted"> always</Fg>
+                        </text>
+                        <text>
+                            <Fg role="fgMuted">{` ${GLYPHS.middot} `}</Fg>
+                        </text>
+                        <text selectable={false} onMouseUp={() => onOptionClick("reject")}>
                             <Fg role="accent">
                                 <Bold>n</Bold>
                             </Fg>

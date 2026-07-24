@@ -516,18 +516,21 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     />
                 </State>
                 <State n="21" label="approval prompt & ask cards — docked ctx.ask surface + reconciled transcript cards">
-                    {/* The docked AskPrompt as it sits above the chat bar. Rendered INERT: no onFocusReady
-                        handle is passed, so no host ever focuses the box; its y/a/n key layer is gated on
+                    {/* The docked AskPrompt as it sits above the chat bar, rendered inert. No onFocusReady
+                        handle is passed, so no host ever focuses the box: its y/a/n KEY layer is gated on
                         that box's own focus target (and on MODE_BASE, suspended under this dialog), so it can
-                        never win the keymap or swallow a keystroke from the gallery pane. Callbacks are
-                        no-ops. The feedback surface (reject → optional feedback input) is seeded directly via
-                        initialMode below, with inert threading its embedded input's autoFocus off so it too
-                        stays out of the gallery's focus. */}
+                        never win the keymap or swallow a keystroke from the gallery pane. But a CLICK on a
+                        choice option needs no focus, so the focus gate alone would let a gallery click flip
+                        an exhibit into feedback mode and let its auto-focusing input steal the pane's focus —
+                        so every exhibit passes `inert`, which no-ops the option clicks (and, on the feedback
+                        exhibit, also mounts its embedded input blurred). Callbacks are no-ops; the feedback
+                        surface is seeded directly via initialMode below. */}
                     <text fg={theme().fgMuted}>choice mode — title + command, bare y/a/n keys (focus-gated, inert here):</text>
                     <AskPrompt
                         title={mockAskPrompts.basic.title}
                         command={mockAskPrompts.basic.command}
                         queuedCount={mockAskPrompts.basic.queuedCount}
+                        inert
                         onApprove={noop}
                         onReject={noop}
                     />
@@ -537,6 +540,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         command={mockAskPrompts.withDetail.command}
                         detail={mockAskPrompts.withDetail.detail}
                         queuedCount={mockAskPrompts.withDetail.queuedCount}
+                        inert
                         onApprove={noop}
                         onReject={noop}
                     />
@@ -545,6 +549,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         title={mockAskPrompts.queued.title}
                         command={mockAskPrompts.queued.command}
                         queuedCount={mockAskPrompts.queued.queuedCount}
+                        inert
                         onApprove={noop}
                         onReject={noop}
                     />

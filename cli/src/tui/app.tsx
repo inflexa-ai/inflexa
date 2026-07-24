@@ -274,6 +274,66 @@ export function askDrainRefocusTarget(busy: boolean, pane: Renderable | null, co
     return busy ? pane : composer;
 }
 
+/**
+ * Parse a submitted composer buffer into an ask reply, or `null` when it is not an answer token.
+ *
+ * The tokens mirror the docked prompt's rendered key hints one-for-one — `y` → approve-once,
+ * `a` → approve-always, `n` → bare reject — with NO synonyms: `yes`, `no`, and `always` all fall through
+ * to `null` and reach the model as ordinary text. The composer is a convenience alias for the same three
+ * keys, not a second command vocabulary. Matching is case-insensitive after a trim because a shifted `Y`
+ * costs the user nothing, and the hints stay lowercase per the keymap label rule.
+ *
+ * The reject reply is deliberately bare (no `feedback`): composer-carried reject feedback is out of scope
+ * — a mistyped real message must not silently become a rejection-with-feedback — and is tracked as a
+ * follow-up. The prompt's feedback mode stays the only feedback surface.
+ */
+export function parseAskAnswer(text: string): AskReply | null {
+    switch (text.trim().toLowerCase()) {
+        case "y":
+            return { kind: "once" };
+        case "a":
+            return { kind: "always" };
+        case "n":
+            return { kind: "reject" };
+        default:
+            return null;
+    }
+}
+
+/**
+ * The four outcomes of a composer submit while the ask queue is consulted — the result of
+ * {@link askSubmitAction}, executed by `handleSubmit` after the `/quit` alias and before the busy gate.
+ */
+export type AskSubmitAction =
+    /** No ask is docked: hand the submit to the normal turn path unchanged. */
+    | { readonly kind: "passthrough" }
+    /** An answer is already in flight: drop this repeat with no notice (the prompt renders its busy state). */
+    | { readonly kind: "swallow" }
+    /** The buffer is an answer token: answer the head ask with `reply` through the gateway funnel. */
+    | { readonly kind: "answer"; readonly reply: AskReply }
+    /** The buffer is not a token: keep the draft and surface the y/a/n notice. */
+    | { readonly kind: "refuse" };
+
+/**
+ * The composer-submit decision precedence, keyed on the ask queue — NOT on `chatStatus`: the queue is the
+ * source of truth that an answer is expected (busy is merely correlated). Docked first, then in-flight,
+ * then token shape:
+ *   - no ask docked → `passthrough` (the normal turn path handles it),
+ *   - docked + an answer already in flight → `swallow` (the first answer is resolving; no notice),
+ *   - docked + the buffer is an answer token → `answer` (carry the parsed reply),
+ *   - docked + any other text → `refuse` (keep the draft, name the answer path).
+ *
+ * Pure over its three inputs so the whole precedence is unit-testable without mounting the App. The
+ * `answer` case carries only the reply; the caller supplies the head ask's id at the call site (`answer`
+ * is reachable only when an ask is docked, so a non-null head is guaranteed there).
+ */
+export function askSubmitAction(text: string, askDocked: boolean, answerBusy: boolean): AskSubmitAction {
+    if (!askDocked) return { kind: "passthrough" };
+    if (answerBusy) return { kind: "swallow" };
+    const reply = parseAskAnswer(text);
+    return reply ? { kind: "answer", reply } : { kind: "refuse" };
+}
+
 export function App(props: AppProps) {
     const dims = useTerminalDimensions();
     const renderer = useRenderer();
@@ -698,6 +758,40 @@ export function App(props: AppProps) {
                 renderer.destroy();
                 await shutdown(0);
                 return;
+            }
+        }
+
+        // While an ask is docked the composer is a SECOND answer path. Intercept here — after the /quit
+        // alias, before the busy gate — keyed on the ask queue (`activeAsk()`), not `chatStatus`: the
+        // queue is the source of truth that an answer is expected, and an ask only ever pends inside a
+        // busy turn anyway. The precedence lives in the pure `askSubmitAction`; execute its verdict here.
+        const head = activeAsk();
+        const action = askSubmitAction(text, head !== null, answerBusy());
+        switch (action.kind) {
+            case "swallow":
+                // The first answer is already in flight and the prompt renders its busy state — drop this
+                // repeat silently (no notice, and leave the draft: the composer is blurred while docked).
+                return;
+            case "answer": {
+                // `answer` is reachable only when an ask is docked, so `head` is non-null here; and a
+                // non-empty `text` was read off `textareaRef.editBuffer` above, so the ref is mounted.
+                textareaRef!.setText("");
+                // NO focus move here on purpose: the settle/drain choreography (the head-identity effect
+                // above) owns every post-answer transition. Duplicating a focus move at submit time would
+                // race that effect and re-create the double-focus-owner bug the identity gate prevents.
+                answerAsk(head!.askId, action.reply);
+                return;
+            }
+            case "refuse":
+                // Keep today's refusal — return BEFORE clearing so the draft survives — but no longer
+                // silently: name the y/a/n answer path so the pending approval is discoverable.
+                notify({ kind: "info", text: "An approval is pending — answer y, a, or n (or use the prompt above)." });
+                return;
+            case "passthrough":
+                break;
+            default: {
+                const _exhaustive: never = action;
+                throw new Error(`unhandled ask-submit action: ${JSON.stringify(_exhaustive)}`);
             }
         }
 
