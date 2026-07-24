@@ -153,9 +153,11 @@ export function AskPrompt(props: AskPromptProps): JSX.Element {
         <box
             ref={(r: BoxRenderable) => {
                 boxRef = r;
-                // Boxes default to non-focusable; opt this one in so the host can focus it and the
-                // target-gated key layer engages.
-                r.focusable = true;
+                // opentui's mousedown-autofocus walks from the clicked child to the nearest focusable
+                // ancestor, so an inert gallery exhibit must stay non-focusable — otherwise any click on
+                // it (an option, the prose) yanks focus off the gallery pane. Live docks opt in so the
+                // host can focus the box and the target-gated key layer engages.
+                r.focusable = !(props.inert ?? false);
                 props.onFocusReady?.(r);
             }}
             width="100%"
@@ -214,9 +216,10 @@ export function AskPrompt(props: AskPromptProps): JSX.Element {
                     {/* Each option is its own mouse target because opentui mouse handlers attach to
                     renderables, not inline spans — so the one hint <text> splits into a <text> per
                     option, the middot separators becoming their own muted <text> that carry the spacing.
-                    The split is byte-for-byte the old single line: "y approve · a always · n reject". The
-                    options are `selectable={false}` — they are buttons, not prose, so a press must not
-                    highlight the label as if the click did something other than answer. */}
+                    The segments compose one hint line reading "y approve · a always · n reject"; the
+                    per-option split exists only to attach mouse handlers, never to change the rendered
+                    row. The options are `selectable={false}` — they are buttons, not prose, so a press
+                    must not highlight the label as if the click did something other than answer. */}
                     <box flexDirection="row">
                         <text selectable={false} onMouseUp={() => onOptionClick("once")}>
                             <Fg role="accent">

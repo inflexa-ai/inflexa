@@ -294,9 +294,17 @@ describe("AskPrompt mouse activation", () => {
     test("clicks are inert when inert is set — no answer, no mode flip", async () => {
         const approvals: Array<"once" | "always"> = [];
         let rejected = 0;
-        const setup = await testRender(() => <Harness inert onApprove={(k) => approvals.push(k)} onReject={() => rejected++} />, { width: 80, height: 10 });
+        let box: BoxRenderable | null = null;
+        const setup = await testRender(() => <Harness inert onBox={(r) => (box = r)} onApprove={(k) => approvals.push(k)} onReject={() => rejected++} />, {
+            width: 80,
+            height: 10,
+        });
         try {
             await setup.renderOnce();
+
+            // Focus hardening: an inert exhibit's box is non-focusable, so opentui's mousedown-autofocus
+            // walk finds no focusable ancestor and cannot yank focus off the gallery pane.
+            expect(box!.focusable).toBe(false);
 
             const yCell = optionCell(setup, "approve");
             await setup.mockMouse.click(yCell.x, yCell.y);
@@ -373,6 +381,9 @@ describe("AskPrompt key gating (bare-printable rule)", () => {
             await settle();
             // The editor grabbed focus on mount; the prompt is mounted but unfocused.
             expect(ta!.focused).toBe(true);
+            // Positive control for the inert-gating of focusability: a live (non-inert) prompt's box IS
+            // focusable, which is what lets the host focus it to engage the bare-key layer below.
+            expect(box!.focusable).toBe(true);
 
             // With the editor focused, y is NOT a prompt key — it types into the editor and never approves.
             setup.mockInput.pressKey("y");

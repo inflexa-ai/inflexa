@@ -95,7 +95,8 @@ Two structural properties SHALL be preserved by this layout. The prompt's outer 
 While the prompt is visible it SHALL hold input focus, which gates the
 composer (the textarea is blurred; a submit while an ask is docked either
 answers the ask — when the buffer is an answer token — or is refused with a
-transient notice, per the composer answer path requirement). Its key layer
+transient notice — quit aliases and in-flight repeats keep their own
+precedence — per the composer answer path requirement). Its key layer
 SHALL be gated on the prompt's own focus target so its
 bare keys never steal characters from a focused editor. Choice mode SHALL
 offer approve-once (`y`), approve-always (`a`), and reject (`n`); reject SHALL
@@ -161,7 +162,7 @@ Each choice option rendered by the docked prompt (`y` approve, `a` always, `n` r
 
 ### Requirement: The composer answers the head ask while one is docked
 
-While an ask is docked, the chat composer SHALL act as a second answer path: submitting a buffer that is exactly `y`, `a`, or `n` after trimming, matched case-insensitively, SHALL answer the head ask through the same gateway funnel as the prompt's keys (`y` approve-once, `a` approve-always, `n` reject with no feedback), and SHALL clear the buffer. The token set SHALL mirror the prompt's rendered key hints exactly — no synonyms. Post-answer focus and mode transitions SHALL be left entirely to the existing settle/drain choreography (the composer path adds no focus moves of its own). Submitting any other text while an ask is docked SHALL be refused with the draft preserved, and SHALL surface a transient notice naming the `y`/`a`/`n` answer path. While an answer is already in flight, a repeated submit SHALL be swallowed without a notice. The composer path SHALL NOT carry reject feedback — the prompt's feedback mode remains the only feedback surface.
+While an ask is docked, the chat composer SHALL act as a second answer path: submitting a buffer that is exactly `y`, `a`, or `n` after trimming, matched case-insensitively, SHALL answer the head ask through the same gateway funnel as the prompt's keys (`y` approve-once, `a` approve-always, `n` reject with no feedback), and SHALL clear the buffer when the answer settles — a failed gateway write keeps the token so the user can retry. The token set SHALL mirror the prompt's rendered key hints exactly — no synonyms. Post-answer focus and mode transitions SHALL be left entirely to the existing settle/drain choreography (the composer path adds no focus moves of its own). Slash-command quit aliases keep their existing precedence ahead of the answer path — they are commands, not answer text, and are neither intercepted nor refused. Submitting any other text while an ask is docked SHALL be refused with the draft preserved, and SHALL surface a transient notice naming the `y`/`a`/`n` answer path. While an answer is already in flight, a repeated submit SHALL be swallowed without a notice. The composer path SHALL NOT carry reject feedback — the prompt's feedback mode remains the only feedback surface.
 
 #### Scenario: Composer y approves, clears, and lands in NORMAL
 
