@@ -28,9 +28,9 @@
 
 ## 4. Sandbox parse readiness
 
-- [ ] 4.1 Confirm GEOparse and/or GEOquery are provisioned in the sandbox library store so the offline `get_GEO(filepath=…)` / `getGEO(filename=…)` path works; flag for the lib-store build if missing.
+- [x] 4.1 Confirm GEOparse and/or GEOquery are provisioned in the sandbox library store so the offline `get_GEO(filepath=…)` / `getGEO(filename=…)` path works; flag for the lib-store build if missing.
 
 ## 5. Validate & finish
 
-- [ ] 5.1 `openspec validate --strict`; `bun run typecheck`; `bun run lint`; `bun test`; `bun run format:file` on changed `src/` files.
+- [x] 5.1 `openspec validate --strict` ✓; `bun run typecheck` ✓ (clean); `bun run lint` ✓ (exit 0); `bun test` ✓ (1735 pass; the sole failure — `embedding/local-provider` "poisoned proxy" — predates this change and touches no file it modifies); `bun run format:file` applied to changed `src/` files.
 - [ ] 5.2 Integration test: enroll a small public GSE end-to-end; confirm the rows are recorded and (under a runtime owner) the files stage + profile and parse offline in a sandbox step.

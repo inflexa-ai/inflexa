@@ -45,7 +45,7 @@ The streaming transfer primitive in `src/modules/refs/store.ts` (`downloadArtifa
 - **Adding inputs never disturbs a run** — a run snapshots its input set at start, so enrolling GEO files affects only future runs. This is inherent to the existing add-inputs semantics; the command does nothing special to get it. The read-only bind mount does expose new files on disk to an in-flight sandbox, but runs are manifest/plan-scoped and read only what they were told, so nothing is touched. No change needed.
 - **Large downloads** — the command reports a size estimate (via the reference downloader's HEAD probe) before fetching and honors a size cap; the `approval` prompt is the user's gate.
 - **Supplementary enumeration is fragile** (autoindex format, missing `suppl/`) → treat an empty/absent `suppl/` as a normal "nothing to add", never an error.
-- **GEOparse/GEOquery not provisioned** → confirm they are available in the sandbox library store; else the offline parse fails at analysis time with a clear "package not available".
+- **GEOparse/GEOquery not provisioned** → **CONFIRMED missing** from `images/lib-store-manifest.yaml` (only unrelated `geopandas` is present). Until they are added — GEOparse to the Python "Genomics" group, GEOquery to the `bioconductor:` group — plus their `scripts/lib-validator/` smoke tests and a lib-store rebuild+publish, the offline parse fails at analysis time with a clear "package not available" (surfaced by `list_available_packages`). This is a lib-store subsystem prerequisite, tracked separately from this CLI change.
 - **Partial fetch then enroll** — fetch all files to a temp dir and enroll only on full success, so a failed download never enrolls a partial input set.
 
 ## Migration Plan
