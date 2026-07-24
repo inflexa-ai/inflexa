@@ -52,6 +52,7 @@ import {
     chemblTool,
     pubchemTool,
     openTargetsTool,
+    searchGwasCatalogTool,
     searchPharmgkbTool,
     searchFaersTool,
     searchClinicalTrialsTool,
@@ -214,6 +215,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         pubchemTool,
         // Translational medicine.
         openTargetsTool,
+        // Genetic evidence — SNP-trait associations for target validation / MR support.
+        searchGwasCatalogTool,
         searchPharmgkbTool,
         searchFaersTool,
         searchClinicalTrialsTool,
