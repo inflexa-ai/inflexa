@@ -30,9 +30,9 @@ export function createListFilesTool(fs: WorkspaceFilesystem, workingDir?: string
     return defineTool({
         id: "list_files",
         description:
-            "List the entries (files and directories, with file sizes) in a " +
-            "workspace directory. Faster than `ls` via execute_command. Missing " +
-            "and out-of-scope paths return a data variant, not an error.",
+            "List the entries (files and directories, with file sizes) in a directory of the analysis's " +
+            "own workspace tree. Faster than `ls` via execute_command. It sees ONLY the analysis tree — " +
+            "never a directory outside it. Missing and out-of-scope paths return a data variant, not an error.",
         inputSchema: ListFilesInputSchema,
         execute: async ({ path }, ctx): Promise<Result<ListFilesOutput, ToolError>> => {
             const result = unwrapOrThrow(await fs.list({ session: ctx.session, path, workingDir }));
