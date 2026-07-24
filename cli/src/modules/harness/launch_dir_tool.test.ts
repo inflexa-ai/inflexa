@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomUUIDv7 } from "bun";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -78,6 +79,13 @@ describe("list_launch_dir tool", () => {
             ask: () => Promise.reject(new Error("no ask")),
         };
         const result = (await tool.execute({}, ctx))._unsafeUnwrap();
+        expect(result.status).toBe("no_analysis");
+    });
+
+    test("reports no_analysis (not no_anchor) when the scoped analysis row is gone", async () => {
+        // A well-formed id the DB has no row for: findAnalysis returns ok(null) — nothing to act on,
+        // which is no_analysis. no_anchor is reserved for an existing analysis whose folder moved.
+        const result = (await tool.execute({}, ctxFor(randomUUIDv7())))._unsafeUnwrap();
         expect(result.status).toBe("no_analysis");
     });
 });

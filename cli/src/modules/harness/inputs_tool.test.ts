@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomUUIDv7 } from "bun";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -141,5 +142,13 @@ describe("manage_inputs tool", () => {
         const result = (await tool.execute({ action: "list" }, ctxFor(analysisId, ask.fn)))._unsafeUnwrap();
         expect(result.status).toBe("listed");
         if (result.status === "listed") expect(result.inputs.map((i) => i.path)).toContain("data.csv");
+    });
+
+    test("reports no_analysis (not no_anchor) when the scoped analysis row is gone", async () => {
+        // A well-formed id with no DB row: findAnalysis returns ok(null) — nothing to act on, which is
+        // no_analysis. no_anchor is reserved for an existing analysis whose anchor folder moved.
+        const ask = recordingAsk();
+        const result = (await tool.execute({ action: "list" }, ctxFor(randomUUIDv7(), ask.fn)))._unsafeUnwrap();
+        expect(result.status).toBe("no_analysis");
     });
 });
