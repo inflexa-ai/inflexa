@@ -53,7 +53,11 @@ mode; in direct mode, `{baseURL}/models` for BOTH protocols, derived from the SA
 `baseURL` the chat path uses (the `/v1`-terminated protocol root — see `model-connection`), never
 a re-derived variant of it —
 marking each agent's current model. When listing fails (endpoint down, unsupported), the picker
-SHALL degrade to free-text model entry rather than blocking the switch.
+SHALL degrade to free-text model entry rather than blocking the switch. The picker SHALL ALSO
+offer manual free-text entry when a listing IS present: a dedicated manual-entry row in the
+listing opens the same free-text field, pre-filled with the agent's current model, so an id the
+connection does not enumerate can still be chosen — the manually entered id follows the identical
+commit-time validation path as a listed pick.
 
 In direct mode the listing and validation requests SHALL authenticate the way the chat path does:
 when the connection carries an `auth` block, the credential is resolved through the configured
