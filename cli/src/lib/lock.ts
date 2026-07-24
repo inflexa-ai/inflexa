@@ -104,6 +104,16 @@ export function acquireInstanceLock(key: string): LockOutcome {
 }
 
 /**
+ * Whether THIS process currently holds `key`'s lock. Reads the in-process ledger (`heldKeys`), not the
+ * lock file, so it answers "did we acquire it" without a stat — the question a caller that must run
+ * under an already-held lock is asking (e.g. the in-process input-management tool asserting the open
+ * chat holds the analysis, per the provenance single-writer discipline).
+ */
+export function holdsInstanceLock(key: string): boolean {
+    return heldKeys.has(key);
+}
+
+/**
  * Release `key`'s lock, but only if this process still owns the file. The ownership check matters
  * because a crashed holder's lock may have been reclaimed (and rewritten with another pid) by a
  * different instance — we must never delete a lock we no longer hold.

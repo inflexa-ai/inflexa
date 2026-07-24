@@ -52,12 +52,12 @@ import { fail, dieOn, failViaShutdown } from "../../lib/cli.ts";
 import { acquireInstanceLock } from "../../lib/lock.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
-import type { ContextFlags } from "../analysis/context.ts";
+import { resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
 import { workspaceDataDir } from "../analysis/output.ts";
 import { stageInputs } from "../staging/staging.ts";
 import { resolveHarnessConfig } from "./config.ts";
 import { validatePlanFile, persistPlan, type PlanIntakeError } from "./plan_intake.ts";
-import { describeBootError, ensureSandboxImage, formatElapsed, readNewestWorkflowStep, resolveSingleAnalysis, withStatusPool } from "./profile.ts";
+import { describeBootError, ensureSandboxImage, formatElapsed, readNewestWorkflowStep, withStatusPool } from "./profile.ts";
 import { bootHarnessRuntime, type RunTriggerDeps } from "./runtime.ts";
 
 type Spinner = ReturnType<typeof spinner>;

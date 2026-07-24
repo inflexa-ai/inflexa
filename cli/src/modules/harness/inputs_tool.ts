@@ -20,6 +20,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { listAnalysisInputs } from "../../db/primary_query.ts";
+import { holdsInstanceLock } from "../../lib/lock.ts";
 import { resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
 import { addInputs, findAnalysis, removeInput } from "../analysis/analysis.ts";
 import { expandAndResolve, matchInputRefs } from "../analysis/input.ts";
@@ -89,6 +90,17 @@ export function createManageInputsTool() {
 
             const paths = input.paths ?? [];
             if (paths.length === 0) return ok({ status: "error" as const, message: `${input.action} requires at least one path` });
+
+            // Defense-in-depth for the single-writer provenance invariant (design D4): a mutation must run
+            // in the process that holds the analysis lock. The conversation agent is hosted by the open
+            // chat, which holds it — but assert rather than assume, so this tool can never append the
+            // signed provenance chain from a process that does not own it.
+            if (!holdsInstanceLock(analysisId)) {
+                return ok({
+                    status: "error" as const,
+                    message: "this analysis is not held by the current process — input changes must run inside the open chat",
+                });
+            }
 
             if (input.action === "add") {
                 // Pre-check existence for a precise, path-named message before mutating. `addInputs`
