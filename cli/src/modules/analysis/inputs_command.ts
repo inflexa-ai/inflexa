@@ -15,23 +15,16 @@
 import { existsSync } from "node:fs";
 
 import { dieOn, fail } from "../../lib/cli.ts";
-import { acquireInstanceLock } from "../../lib/lock.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
-import type { Analysis } from "../../types/analysis.ts";
 import { addInputs, removeInput } from "./analysis.ts";
 import { expandAndResolve, matchInputRefs } from "./input.ts";
-import { resolveSingleAnalysis, type ContextFlags } from "./context.ts";
+import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "./context.ts";
 
 /** The `empty`-context hint for the inputs commands (see `resolveSingleAnalysis`). */
 const EMPTY_HINT = "No analysis here. Run `inflexa` to start or open one, then manage its inputs.";
 
-/** Claim the analysis for a standalone mutation, refusing if a live instance holds it. */
-function claim(analysis: Analysis): void {
-    const lock = acquireInstanceLock(analysis.id);
-    if (!lock.acquired) {
-        fail(`"${analysis.name}" is open in another instance (pid ${lock.holderPid}). Add or remove inputs there, or close it and re-run.`);
-    }
-}
+/** The refusal tail for a standalone add/remove blocked by a live instance (see `claimAnalysisOrFail`). */
+const HELD_REMEDY = "Add or remove inputs there, or close it and re-run.";
 
 /** `inflexa inputs ls` — list the analysis's current registered inputs. Read-only. */
 export function runInputsLs(flags: ContextFlags): void {
@@ -52,7 +45,7 @@ export function runInputsAdd(flags: ContextFlags, paths: string[]): void {
     const missing = paths.filter((p) => !existsSync(expandAndResolve(process.cwd(), p)));
     if (missing.length > 0) fail(`no such file: ${missing.join(", ")}`);
 
-    claim(analysis);
+    claimAnalysisOrFail(analysis, HELD_REMEDY);
     const added = addInputs(analysis.id, paths, process.cwd()).match(
         (v) => v,
         (e) =>
@@ -70,7 +63,7 @@ export function runInputsAdd(flags: ContextFlags, paths: string[]): void {
 /** `inflexa inputs remove <paths...>` — drop inputs, matching the registered set (no on-disk check). */
 export function runInputsRemove(flags: ContextFlags, paths: string[]): void {
     const analysis = resolveSingleAnalysis(flags, EMPTY_HINT);
-    claim(analysis);
+    claimAnalysisOrFail(analysis, HELD_REMEDY);
     const current = listAnalysisInputs(analysis.id).match((v) => v, dieOn("Failed to read inputs"));
     const { matched, notInputs } = matchInputRefs(current, paths, process.cwd());
 

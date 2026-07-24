@@ -20,9 +20,8 @@ import { createStreamingChat, createThreadHistory, createThreadStore, type Agent
 
 import { describeCause } from "../../lib/cause.ts";
 import { fail } from "../../lib/cli.ts";
-import { acquireInstanceLock } from "../../lib/lock.ts";
 import { shutdown } from "../../lib/shutdown.ts";
-import { resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
+import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
 import { resolveHarnessConfig } from "./config.ts";
 import { createChatPrinter, type ChatSink } from "./chat_printer.ts";
 import { describeBootError, ensureSandboxImage } from "./profile.ts";
@@ -103,10 +102,7 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
     // other last-write-wins. The same guard the TUI takes on open. Acquired after
     // the fail-fast pre-flight and before the runtime boots; the process-exit hook
     // (src/index.ts) releases it on every exit, so a bail-out below leaks nothing.
-    const lock = acquireInstanceLock(analysis.id);
-    if (!lock.acquired) {
-        fail(`"${analysis.name}" is already open in another instance (pid ${lock.holderPid}). Wait for it to finish or stop that process, then re-run.`);
-    }
+    claimAnalysisOrFail(analysis, "Wait for it to finish or stop that process, then re-run.");
 
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");

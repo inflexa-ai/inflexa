@@ -4,6 +4,7 @@ import type { AnchorMarker } from "../../types/anchor.ts";
 import type { IdOrName } from "../../lib/types.ts";
 import type { DbError } from "../../db/errors.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
+import { acquireInstanceLock } from "../../lib/lock.ts";
 import { findProjectByRef } from "../../db/primary_query.ts";
 import { findMarkerUpwards } from "../anchor/marker.ts";
 import { classifyMarkerSighting, resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
@@ -125,5 +126,22 @@ export function resolveSingleAnalysis(flags: ContextFlags, emptyHint: string): A
             const exhaustive: never = ctx;
             throw new Error(`unhandled context kind: ${JSON.stringify(exhaustive)}`);
         }
+    }
+}
+
+/**
+ * Acquire `analysis`'s instance lock for a deliberate mutation, or die naming the
+ * analysis and the way forward. This is the single guard that keeps one process the
+ * writer of an analysis's signed provenance chain (the #37 two-recorder fix): the
+ * `profile`/`run`/`chat` commands and the `inputs add`/`remove` subcommands all claim
+ * it before touching the analysis. `remedy` is the per-command tail — the only line
+ * that differs between "wait for the run to finish" and "add inputs there" — appended
+ * to the shared refusal. The process-exit hook (`src/index.ts`) releases the lock, so
+ * a caller that bails after this leaks nothing.
+ */
+export function claimAnalysisOrFail(analysis: Analysis, remedy: string): void {
+    const lock = acquireInstanceLock(analysis.id);
+    if (!lock.acquired) {
+        fail(`"${analysis.name}" is already open in another instance (pid ${lock.holderPid}). ${remedy}`);
     }
 }
