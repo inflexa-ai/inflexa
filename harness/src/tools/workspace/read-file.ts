@@ -31,7 +31,10 @@ type ReadFileOutput =
       }
     | { status: "not_found"; path: string }
     | { status: "out_of_scope"; path: string }
-    | { status: "binary"; path: string; mode: "head" | "tail" | "full" };
+    // `totalSize` rides only on an oversize binary read, where the real file size
+    // is a signal the agent can act on (e.g. reach for `execute_command` instead);
+    // a fully-read binary omits it, exactly as the text `ok` variant carries no size.
+    | { status: "binary"; path: string; mode: "head" | "tail" | "full"; totalSize?: number };
 
 /**
  * Treat returned content as binary when it contains a NUL byte — `grep`'s
@@ -123,7 +126,7 @@ export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string)
                         content: result.content.toString("utf8"),
                     });
                 case "truncated":
-                    if (looksBinary(result.content)) return ok({ status: "binary" as const, path, mode });
+                    if (looksBinary(result.content)) return ok({ status: "binary" as const, path, mode, totalSize: result.totalSize });
                     return ok({
                         status: "truncated" as const,
                         path,
