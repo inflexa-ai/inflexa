@@ -5,21 +5,21 @@
 
 ## 2. GEO source module
 
-- [ ] 2.1 Pure `parseGseAccession(raw): Result` (`/^GSE\d+$/`, uppercase-normalized) and `geoSeriesUrls(acc)` — bucket = digits with last 3 → `nnn` (`GSE12345`→`GSE12nnn`); soft/matrix/suppl paths on `ftp.ncbi.nlm.nih.gov`. Unit-tested purely.
-- [ ] 2.2 Resolve the artifact set: SOFT family file, series-matrix parts (enumerate `matrix/` autoindex for per-platform files), author supplementary (enumerate `suppl/` autoindex by regex over `href="..."`). Exclude raw SRA. Empty/absent `suppl/` is a normal "nothing to add".
-- [ ] 2.3 Fetch the set to a temp dir via `downloadToFile` (size-estimate/cap, HTTPS-on-redirect); on full success enroll the local paths as inputs via `applyInputsDiff`/`addInputs`. **No staging, no seed, no reprofile, no runtime boot** (see the design decision). Return/report what was enrolled; malformed/unresolvable/empty are `Result` errors.
-- [ ] 2.4 Unit tests: URL resolution; multi-platform matrix enumeration; SRA exclusion; HTTPS-on-redirect refusal; malformed/empty errors; enroll records rows and boots no runtime.
+- [x] 2.1 Pure `parseGseAccession(raw): Result` (`/^GSE\d+$/`, uppercase-normalized) and `geoSeriesUrls(acc)` — bucket = digits with last 3 → `nnn` (`GSE12345`→`GSE12nnn`); soft/matrix/suppl paths on `ftp.ncbi.nlm.nih.gov`. Unit-tested purely.
+- [x] 2.2 Resolve the artifact set: SOFT family file, series-matrix parts (enumerate `matrix/` autoindex for per-platform files), author supplementary (enumerate `suppl/` autoindex by regex over `href="..."`). Exclude raw SRA. Empty/absent `suppl/` is a normal "nothing to add".
+- [x] 2.3 Fetch the set to a temp dir via `downloadToFile` (size-estimate/cap, HTTPS-on-redirect); on full success enroll the local paths as inputs via `applyInputsDiff`/`addInputs`. **No staging, no seed, no reprofile, no runtime boot** (see the design decision). Return/report what was enrolled; malformed/unresolvable/empty are `Result` errors.
+- [x] 2.4 Unit tests: URL resolution; multi-platform matrix enumeration; SRA exclusion; HTTPS-on-redirect refusal; malformed/empty errors; enroll records rows and boots no runtime.
 
 ## 3. Command registration
 
-- [ ] 3.1 Register the `approval` command in `src/cli/index.ts` via `registerAction(...)` with full arg/option descriptions; resolve target via `resolveContext` (ambient-aware); `dieOn` at the boundary.
-- [ ] 3.2 Add the grantKey row (`"approval"`) to both `EXPECTED_DEV_OFF` and `EXPECTED_DEV_ON` in `agent_policy_tree.test.ts`; run it.
-- [ ] 3.3 `bun run docs:gen` accepts every description.
+- [x] 3.1 Register the `approval` command in `src/cli/index.ts` via `registerAction(...)` with full arg/option descriptions; resolve target via `resolveContext` (ambient-aware); `dieOn` at the boundary.
+- [x] 3.2 Add the grantKey row (`"approval"`) to both `EXPECTED_DEV_OFF` and `EXPECTED_DEV_ON` in `agent_policy_tree.test.ts`; run it.
+- [x] 3.3 `bun run docs:gen` accepts every description.
 
 ## 3a. Session-analysis injection + ambient context
 
-- [ ] 3a.1 `run_inflexa` (`inflexa_tool.ts`): thread an explicit child env through the subprocess seam; set `INFLEXA_ANALYSIS` from `ctx.session.scope` when `kind==="analysis"` (spread `Bun.env`). Tests: env carries the id from the session (not argv); non-analysis scope injects nothing; a parent key survives the merge.
-- [ ] 3a.2 `lib/env.ts`: `ambientAnalysisRef()` reader (call-time, empty=unset, out of `env`/`envDoc`). `context.ts`: add `ambientAnalysis?` to `ContextFlags` and the ambient tier (below explicit flag, above marker; miss → fall through). Wire `ambientAnalysisRef()` at the resolveContext boundaries (launch/status/profile). Tests for the tier precedence.
+- [x] 3a.1 `run_inflexa` (`inflexa_tool.ts`): thread an explicit child env through the subprocess seam; set `INFLEXA_ANALYSIS` from `ctx.session.scope` when `kind==="analysis"` (spread `Bun.env`). Tests: env carries the id from the session (not argv); non-analysis scope injects nothing; a parent key survives the merge.
+- [x] 3a.2 `lib/env.ts`: `ambientAnalysisRef()` reader (call-time, empty=unset, out of `env`/`envDoc`). `context.ts`: add `ambientAnalysis?` to `ContextFlags` and the ambient tier (below explicit flag, above marker; miss → fall through). Tests for the tier precedence. NOTE: the `geo add` command wires `ambientAnalysisRef()` at its own boundary (all the feature needs); wiring it at the shared launch/status/profile boundaries — so every agent-run command honors the ambient env — remains a follow-up.
 
 ## 3b. Host-side input reconcile after a run_inflexa action
 
