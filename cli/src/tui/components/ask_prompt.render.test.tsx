@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Show } from "solid-js";
 import { testRender } from "@opentui/solid";
-import type { BoxRenderable, TextareaRenderable } from "@opentui/core";
+import type { BoxRenderable, Renderable, TextareaRenderable } from "@opentui/core";
 
 import { AskPrompt } from "./ask_prompt.tsx";
 import { GLYPHS, size, space } from "../../lib/design_system.ts";
@@ -50,6 +50,8 @@ function makeSettle(setup: { renderOnce: () => Promise<void> }): () => Promise<v
 /** Mounts the prompt under a keymap root, optionally beside a focus-grabbing editor (the leak test). */
 function Harness(props: {
     withEditor?: boolean;
+    busy?: boolean;
+    inert?: boolean;
     onBox?: (r: BoxRenderable) => void;
     onTa?: (r: TextareaRenderable) => void;
     onApprove?: (kind: "once" | "always") => void;
@@ -70,6 +72,8 @@ function Harness(props: {
                 title="Run shell command"
                 command="rm -rf build"
                 queuedCount={0}
+                busy={props.busy}
+                inert={props.inert}
                 onApprove={(kind) => props.onApprove?.(kind)}
                 onReject={(feedback) => props.onReject?.(feedback)}
                 onFocusReady={(r) => props.onBox?.(r)}
@@ -202,6 +206,156 @@ describe("AskPrompt feedback mode", () => {
         const lines = frame.split("\n");
         expect(lines[0]).toBe(markerRow(`Reject ${GLYPHS.emDash} add feedback (optional)`));
         expect(lines.slice(1).filter((l) => l.length > 0 && !hangsAtGutter(l))).toEqual([]);
+    });
+});
+
+describe("AskPrompt mouse activation", () => {
+    // Locate a choice option on the rendered hint row by a word unique to it and return a cell inside its
+    // clickable <text>. The word ("approve"/"always"/"reject") sits in that option's segment, so a click
+    // there lands on the option renderable — not the middot separators between them. Clicking without any
+    // prior box.focus() is the whole point: mouse activation must NOT depend on the focus-target gate that
+    // the bare keys require.
+    function optionCell(setup: Awaited<ReturnType<typeof testRender>>, needle: string): { x: number; y: number } {
+        const lines = setup.captureCharFrame().split("\n");
+        const y = lines.findIndex((l) => l.includes(needle));
+        expect(y).toBeGreaterThanOrEqual(0);
+        return { x: lines[y]!.indexOf(needle), y };
+    }
+
+    test("clicking each option runs its handler with no prior focus; n enters feedback like the key", async () => {
+        const approvals: Array<"once" | "always"> = [];
+        let rejected = 0;
+        const setup = await testRender(() => <Harness onApprove={(k) => approvals.push(k)} onReject={() => rejected++} />, { width: 80, height: 10 });
+        try {
+            await setup.renderOnce();
+
+            const yCell = optionCell(setup, "approve");
+            await setup.mockMouse.click(yCell.x, yCell.y);
+            await setup.renderOnce();
+            expect(approvals).toEqual(["once"]);
+
+            const aCell = optionCell(setup, "always");
+            await setup.mockMouse.click(aCell.x, aCell.y);
+            await setup.renderOnce();
+            expect(approvals).toEqual(["once", "always"]);
+
+            // A click on `n reject` enters feedback mode exactly as the key does — it is NOT an onReject call.
+            const nCell = optionCell(setup, "reject");
+            await setup.mockMouse.click(nCell.x, nCell.y);
+            await setup.renderOnce();
+            await setup.renderOnce();
+            expect(setup.captureCharFrame()).toContain("esc back");
+            expect(rejected).toBe(0);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a selection drag released over an option does not activate it", async () => {
+        const approvals: Array<"once" | "always"> = [];
+        let rejected = 0;
+        const setup = await testRender(() => <Harness onApprove={(k) => approvals.push(k)} onReject={() => rejected++} />, { width: 80, height: 10 });
+        try {
+            await setup.renderOnce();
+            const lines = setup.captureCharFrame().split("\n");
+            // Drag STARTS on the selectable command text and RELEASES on the y approve option: the release
+            // fires the option's mouse-up, but a live selection exists, so the guard treats it as the tail
+            // of the selection gesture — not a click.
+            const cmdY = lines.findIndex((l) => l.includes("rm -rf build"));
+            const optY = lines.findIndex((l) => l.includes("approve"));
+            await setup.mockMouse.drag(lines[cmdY]!.indexOf("rm -rf build"), cmdY, lines[optY]!.indexOf("approve"), optY);
+            await setup.renderOnce();
+
+            expect(setup.renderer.getSelection()?.getSelectedText() ?? "").not.toBe("");
+            expect(approvals).toEqual([]);
+            expect(rejected).toBe(0);
+            // And it did not flip to feedback mode either (the drag ended on approve, but a drag onto reject
+            // would be guarded identically).
+            expect(setup.captureCharFrame()).not.toContain("esc back");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("clicks are inert while busy — the same gate the keys inherit", async () => {
+        const approvals: Array<"once" | "always"> = [];
+        const setup = await testRender(() => <Harness busy onApprove={(k) => approvals.push(k)} onReject={() => {}} />, { width: 80, height: 10 });
+        try {
+            await setup.renderOnce();
+            const cell = optionCell(setup, "approve");
+            await setup.mockMouse.click(cell.x, cell.y);
+            await setup.renderOnce();
+            expect(approvals).toEqual([]);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("clicks are inert when inert is set — no answer, no mode flip", async () => {
+        const approvals: Array<"once" | "always"> = [];
+        let rejected = 0;
+        const setup = await testRender(() => <Harness inert onApprove={(k) => approvals.push(k)} onReject={() => rejected++} />, { width: 80, height: 10 });
+        try {
+            await setup.renderOnce();
+
+            const yCell = optionCell(setup, "approve");
+            await setup.mockMouse.click(yCell.x, yCell.y);
+            await setup.renderOnce();
+            expect(approvals).toEqual([]);
+
+            // The exhibit-inertness scenario: clicking `n reject` must NOT flip the exhibit into feedback
+            // mode (which would mount an auto-focusing input and steal the pane's focus).
+            const nCell = optionCell(setup, "reject");
+            await setup.mockMouse.click(nCell.x, nCell.y);
+            await setup.renderOnce();
+            await setup.renderOnce();
+            expect(setup.captureCharFrame()).not.toContain("esc back");
+            expect(rejected).toBe(0);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    // Frames carry no selectability: captureCharFrame proves a glyph landed in a column, never that the
+    // <text> beneath it opted out of selection. So the spec clause "The option texts SHALL be excluded from
+    // text selection" (tui-ask-approval) is unpinnable from any character frame — it lives solely on each
+    // option renderable's `selectable` flag (opentui's TextBufferRenderable.selectable, default true). Assert
+    // it structurally on the renderable tree, with the command prose as a positive control so a read that is
+    // vacuously false for every renderable cannot pass this test.
+    test("the three option buttons are excluded from selection while the command prose stays selectable", async () => {
+        const setup = await testRender(() => <Harness onApprove={() => {}} onReject={() => {}} />, { width: 80, height: 10 });
+        try {
+            await setup.renderOnce();
+
+            // Walk the renderable tree from the root — the same getChildren() recursion app.tsx's
+            // applySelectionColors uses. A <text> exposes `plainText` (its concatenated visible text) and the
+            // `selectable` flag; a <box> exposes neither, so `"plainText" in r` selects exactly the text nodes
+            // and makes the read of those two members sound.
+            type SelectableText = { plainText: string; selectable: boolean };
+            const texts: SelectableText[] = [];
+            const collect = (r: Renderable): void => {
+                if ("plainText" in r) texts.push(r as unknown as SelectableText);
+                for (const child of r.getChildren()) collect(child);
+            };
+            collect(setup.renderer.root);
+
+            // Each option is its own <text>; match on the word unique to that segment ("y approve", etc.).
+            const selectableOf = (needle: string): boolean => {
+                const hit = texts.find((t) => t.plainText.includes(needle));
+                expect(hit).toBeDefined();
+                // Non-null: toBeDefined above throws when the row is absent, so hit is set on this line.
+                return hit!.selectable;
+            };
+
+            expect(selectableOf("approve")).toBe(false);
+            expect(selectableOf("always")).toBe(false);
+            expect(selectableOf("reject")).toBe(false);
+            // Positive control: ordinary prose keeps selection on, proving the reads above read a real flag
+            // rather than reporting false for every renderable regardless.
+            expect(selectableOf("rm -rf build")).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
     });
 });
 
