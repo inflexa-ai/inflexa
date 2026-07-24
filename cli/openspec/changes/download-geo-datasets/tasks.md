@@ -23,8 +23,8 @@
 
 ## 3b. Host-side input reconcile after a run_inflexa action
 
-- [ ] 3b.1 `run_inflexa`: after a successful ACTION run (not blocked/denied/introspection) in an analysis-scoped session, invoke an injected host callback to reconcile input parity for the session's analysis. Add the callback to `createRunInflexaTool(deps)`.
-- [ ] 3b.2 Wire the callback at the composition root (`harness/runtime.ts`) to drive parity for the open analysis when boot is ready (reuse `driveProfileParity`/the Bus), idempotent no-op when inputs match. Tests: a successful action drives the callback with the session analysis id; a denied/introspection call does not.
+- [x] 3b.1 `run_inflexa`: after a successful ACTION run (not blocked/denied/introspection) in an analysis-scoped session, invoke an injected host callback to reconcile input parity for the session's analysis. Add the callback to `createRunInflexaTool(deps)`.
+- [x] 3b.2 Wire the callback at the composition root (`harness/runtime.ts`) to drive parity for the open analysis when boot is ready (reuse `driveProfileParity`/the Bus), idempotent no-op when inputs match. Tests: a successful action drives the callback with the session analysis id; a denied/introspection call does not.
 
 ## 4. Sandbox parse readiness
 

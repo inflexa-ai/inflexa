@@ -62,13 +62,19 @@ export type BootDriver = typeof bootHarnessRuntime;
  * `ready` is a no-op, so the launcher may fire it once post-render (fire-and-forget) without
  * guarding against a double-open. `driver` is injected only by tests.
  */
-export async function startHarnessBoot(config: ResolvedHarnessConfig, driver: BootDriver = bootHarnessRuntime): Promise<void> {
+export async function startHarnessBoot(
+    config: ResolvedHarnessConfig,
+    driver: BootDriver = bootHarnessRuntime,
+    reconcile?: (analysisId: string) => void,
+): Promise<void> {
     const phase = state().phase;
     // Synchronous up to the `setState` below (no `await` before it), so a second call within the
     // same JS turn already observes `booting` — the guard needs no extra in-flight flag.
     if (phase === "booting" || phase === "ready") return;
     setState({ phase: "booting" });
-    const result = await driver({ config });
+    // `reconcile` is an opaque post-action hook forwarded to the runtime (which wires it into run_inflexa);
+    // boot.ts stays agnostic about it — the TUI supplies the realization — so there is no boot↔parity cycle.
+    const result = await driver({ config, ...(reconcile ? { reconcile } : {}) });
     result.match(
         (rt) => {
             runtime = rt;

@@ -322,6 +322,15 @@ export interface RunInflexaToolDeps {
     readonly execPath?: string;
     readonly scriptPath?: string;
     readonly timeoutMs?: number;
+    /**
+     * Post-run hook the host can use to reconcile an analysis after a successful action. A subprocess
+     * command that enrolled inputs emits its `prov.input_added` on the CHILD's bus, which the host's
+     * in-process watcher never sees — so this hook is the only signal the host gets that the session's
+     * analysis may have drifted. Fired for a successful (`ran`, exit 0) ACTION in an analysis-scoped
+     * session, with that analysis id; never for introspection, a blocked/denied action, or a failed one.
+     * Fire-and-forget from the tool's view; the host realization is expected to be idempotent.
+     */
+    readonly onReconcile?: (analysisId: string) => void;
 }
 
 /**
@@ -416,6 +425,10 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             // spawn already caps at source, but the contract must hold for any seam.
             if (r.endedBy === "timeout") return ok({ status: "timed_out", stdout: truncateOutput(r.stdout), stderr: truncateOutput(r.stderr) });
             if (r.endedBy === "cancel") return ok({ status: "cancelled" });
+            // A successful action may have enrolled inputs in the child process; poke the host to reconcile
+            // the session's analysis. Gated to a real ACTION (not introspection), a clean exit (a failed
+            // command mutated nothing), and an analysis scope (the only scope with an id). Idempotent host-side.
+            if (c.kind === "action" && r.exitCode === 0 && scope.kind === "analysis") deps.onReconcile?.(scope.analysisId);
             return ok({ status: "ran", exitCode: r.exitCode, stdout: truncateOutput(r.stdout), stderr: truncateOutput(r.stderr) });
         },
     });

@@ -133,7 +133,39 @@ const realParityWatchSeams: ParityWatchSeams = {
  *
  * Called once from App's setup body (inside its reactive owner). `seams` is injected only by tests.
  */
+// The workspace the mounted App bound, or null when none is. run_inflexa's post-action reconcile hook is
+// registered at boot — before App exists — so it reads this stable module cell lazily at invocation time
+// (a chat turn, well after App mounts). Bound and cleared by watchProfileParity under App's reactive owner.
+let openWorkspace: Workspace | null = null;
+
+/** Bind (or clear) the workspace the reconcile hook reads. */
+export function bindOpenWorkspace(workspace: Workspace | null): void {
+    openWorkspace = workspace;
+}
+
+/**
+ * Reconcile the open analysis's profile after a subprocess action mutated its inputs.
+ *
+ * A `run_inflexa` child emits `prov.input_added` on its OWN bus, which this process never sees, so this
+ * hook is the host's only signal that the open analysis's input set may have drifted. It reconciles ONLY
+ * when the mutated analysis is the one on screen and the runtime is up — otherwise the subprocess targeted
+ * a different analysis (or the TUI is not ready) and there is nothing to do. Delegates to driveProfileParity,
+ * reusing its shared-queue serialization and mid-check swap guard, and is idempotent (a no-op when the
+ * input set already matches the profile).
+ */
+export function reconcileOpenAnalysisProfile(analysisId: string): void {
+    const runtime = harnessRuntime();
+    const analysis = openWorkspace?.analysis ?? null;
+    if (!runtime || !analysis || analysis.id !== analysisId) return;
+    void driveProfileParity(runtime, analysis, () => openWorkspace?.analysis?.id ?? null);
+}
+
 export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams = realParityWatchSeams): void {
+    // Bind the open workspace so the reconcile hook (registered at boot, before App exists) reaches it
+    // lazily at tool-invocation time. Cleared when this App instance tears down.
+    bindOpenWorkspace(workspace);
+    onCleanup(() => bindOpenWorkspace(null));
+
     // Edge 1 — boot ready + in-place analysis swap.
     createEffect(
         on(

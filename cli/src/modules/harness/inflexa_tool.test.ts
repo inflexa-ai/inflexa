@@ -498,3 +498,50 @@ describe("run_inflexa — INFLEXA_ANALYSIS injection", () => {
         expect(sub.envs[0]?.PATH).toBe(Bun.env.PATH);
     });
 });
+
+describe("run_inflexa — onReconcile hook", () => {
+    function recordingReconcile(): { fn: (id: string) => void; calls: string[] } {
+        const calls: string[] = [];
+        return { fn: (id) => calls.push(id), calls };
+    }
+    function toolWith(runSubprocess: RunSubprocess, onReconcile: (id: string) => void) {
+        return createRunInflexaTool({ runSubprocess, isDevelopment: true, execPath: "/bin/bun", scriptPath: "/app/src/index.ts", onReconcile });
+    }
+
+    test("fires once with the session analysis id after a successful action", async () => {
+        const rec = recordingReconcile();
+        const tool = toolWith(recordingSubprocess().fn, rec.fn);
+        await tool.execute({ argv: ["refs", "download", "x", "--yes"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-xyz"));
+        expect(rec.calls).toEqual(["an-xyz"]);
+    });
+
+    test("does not fire for an introspection call", async () => {
+        const rec = recordingReconcile();
+        const tool = toolWith(recordingSubprocess().fn, rec.fn);
+        await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-xyz"));
+        expect(rec.calls).toEqual([]);
+    });
+
+    test("does not fire for a denied action", async () => {
+        const rec = recordingReconcile();
+        const tool = toolWith(recordingSubprocess().fn, rec.fn);
+        const reject = (_request: AskRequest): Promise<AskApproval> => Promise.reject(new AskRejectedError("no"));
+        await expect(tool.execute({ argv: ["refs", "download", "x", "--yes"] }, makeCtx(reject, "an-xyz"))).rejects.toBeInstanceOf(AskRejectedError);
+        expect(rec.calls).toEqual([]);
+    });
+
+    test("does not fire for a failed (non-zero exit) action", async () => {
+        const rec = recordingReconcile();
+        const failed = recordingSubprocess({ exitCode: 1, stdout: "", stderr: "boom", endedBy: "exit" });
+        const tool = toolWith(failed.fn, rec.fn);
+        await tool.execute({ argv: ["refs", "download", "x", "--yes"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-xyz"));
+        expect(rec.calls).toEqual([]);
+    });
+
+    test("does not fire for a non-analysis-scoped session", async () => {
+        const rec = recordingReconcile();
+        const tool = toolWith(recordingSubprocess().fn, rec.fn);
+        await tool.execute({ argv: ["refs", "download", "x", "--yes"] }, makeCtx(recordingAsk({ kind: "once" }).fn, null));
+        expect(rec.calls).toEqual([]);
+    });
+});

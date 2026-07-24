@@ -435,7 +435,13 @@ export function __resetHarnessRuntimeForTest(): void {
  * {@link bootHarnessRuntimeOnce}.
  */
 export function bootHarnessRuntime(
-    options: { seams?: Partial<BootSeams>; config?: ResolvedHarnessConfig; connection?: ResolvedModelConnection } = {},
+    options: {
+        seams?: Partial<BootSeams>;
+        config?: ResolvedHarnessConfig;
+        connection?: ResolvedModelConnection;
+        /** Post-action reconcile hook wired into `run_inflexa`; the host supplies it (see the TUI's reconcileOpenAnalysisProfile). A live callback, not persisted config. */
+        reconcile?: (analysisId: string) => void;
+    } = {},
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     if (active) return Promise.resolve(ok(active));
     if (booting) return booting;
@@ -443,6 +449,7 @@ export function bootHarnessRuntime(
         { ...realSeams, ...options.seams },
         options.config ?? resolveHarnessConfig(),
         options.connection ?? resolveModelConnection(),
+        options.reconcile,
     );
     booting = attempt;
     void attempt.finally(() => {
@@ -524,6 +531,7 @@ async function bootHarnessRuntimeOnce(
     seams: BootSeams,
     cfg: ResolvedHarnessConfig,
     connection: ResolvedModelConnection,
+    reconcile?: (analysisId: string) => void,
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     const logger = pinoAsHarnessLogger(getLogger("harness"));
 
@@ -961,7 +969,10 @@ async function bootHarnessRuntimeOnce(
             // (run_inflexa), see candidate files in the launch folder (list_launch_dir), and add/remove
             // this analysis's inputs in-process (manage_inputs) — the last must be in-process so it
             // mutates under the chat's own lock and its provenance/parity events stay on this bus.
-            hostTools: [createRunInflexaTool(), createLaunchDirTool(), createManageInputsTool()],
+            // `run_inflexa`'s `onReconcile` covers the subprocess path the in-process tool does not:
+            // a successful child action (e.g. `geo add` enrolling inputs) pokes the host to reconcile
+            // the session's analysis, since the child's provenance bus never reaches this process.
+            hostTools: [createRunInflexaTool(reconcile ? { onReconcile: reconcile } : {}), createLaunchDirTool(), createManageInputsTool()],
         };
         // Re-point the sandbox agent's provenance emitters when its model switches live.
         // The run-engine bundles injected the holder's STABLE `artifactRegistry` / `emitProvenance`
