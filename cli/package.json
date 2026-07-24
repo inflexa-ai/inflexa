@@ -6,7 +6,7 @@
     "scripts": {
         "build": "bun scripts/build.ts",
         "build:all": "bun scripts/build.ts --all",
-        "dev": "bun run src/index.ts",
+        "dev": "NODE_USE_SYSTEM_CA=1 bun run src/index.ts",
         "dev:install": "bun scripts/dev_install.ts",
         "docs:gen": "bun scripts/gen_docs.ts",
         "format": "prettier --write src/",
