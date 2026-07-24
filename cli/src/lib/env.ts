@@ -395,6 +395,26 @@ export function readEnvCredentialVar(name: string): string | undefined {
 }
 
 /**
+ * Opt Bun's `fetch` into the operating system's own trust store, in addition to its compiled-in Mozilla
+ * root set. The one sanctioned `process.env` *write* — homed here so all `process.env` access stays in
+ * this module (the `no-restricted-properties` boundary), not because it reads config.
+ *
+ * WHY this exists: corporate TLS-intercepting proxies (ZScaler, Netskope, …) re-sign HTTPS with a root
+ * CA that IT installs into the OS keychain/trust store. Bun's fetch uses BoringSSL with a bundled root
+ * set and ignores the OS store by default, so behind such a proxy every download fails with
+ * `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` even though the machine's own `curl` (which trusts the keychain)
+ * succeeds. `NODE_USE_SYSTEM_CA=1` merges the OS roots in — additive, it never drops the bundled ones —
+ * so the CLI defers to the machine's trust policy the way native tools do.
+ *
+ * Must run before the process's first TLS handshake; Bun reads the variable lazily, so calling this at
+ * startup (before any command's first `fetch`) is honored without a launcher wrapper. `??=` respects a
+ * user who set the variable deliberately — including to `"0"` to opt back out.
+ */
+export function enableSystemCaTrust(): void {
+    process.env.NODE_USE_SYSTEM_CA ??= "1";
+}
+
+/**
  * The presence + endpoint facts of the conventional provider environment, for `inflexa setup`'s
  * one-time direct-path adoption (see modules/infra/setup.ts). Deliberately reports only WHETHER each API
  * key is set — never its value — because setup copies only the non-secret `{ provider, baseURL, protocol }`

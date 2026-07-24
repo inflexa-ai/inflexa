@@ -10,7 +10,12 @@ import { initBusLogging } from "./lib/bus.ts";
 import { readConfig } from "./lib/config.ts";
 import { addLogStream, flushLogsSync, getLogger } from "./lib/log.ts";
 import { createOtelLogStream, initOtel } from "./lib/otel.ts";
+import { enableSystemCaTrust } from "./lib/env.ts";
 import { onShutdown, shutdown } from "./lib/shutdown.ts";
+
+// Trust the OS certificate store so fetch works behind corporate TLS-intercepting proxies (ZScaler et al.);
+// must precede any command's first TLS handshake. See enableSystemCaTrust for the full rationale.
+enableSystemCaTrust();
 
 if (initOtel(readConfig().telemetry)) {
     addLogStream(createOtelLogStream());
