@@ -378,6 +378,20 @@ for (const target of targets) {
             target: `bun-${target.os}-${target.arch}`,
             // Bun appends .exe automatically for windows targets.
             outfile: `dist/${name}`,
+            // Trust the OS certificate store in addition to Bun's bundled Mozilla roots, so fetch works
+            // behind corporate TLS-intercepting proxies (ZScaler, Netskope, …) whose root CA sits in the
+            // OS keychain/trust store (oven-sh/bun#23735). It MUST be an embedded runtime flag: Bun reads
+            // NODE_USE_SYSTEM_CA once at process boot, so an in-process `process.env` write is invisible
+            // to the TLS verification contexts `fetch`/`node:https` actually use — only
+            // `tls.getCACertificates()` re-reads the variable lazily, which makes that probe a false
+            // positive for the write-at-startup approach. The merge is additive (bundled roots stay), and
+            // it propagates to self-spawned children (the `run_inflexa` subprocess is this same binary).
+            // Accepted trade-off: an embedded flag cannot be disabled at runtime — NODE_USE_SYSTEM_CA=0
+            // does not override it; trusting one's own OS store is the same policy every native tool
+            // (curl included) already applies. Loose per-cert needs stay on NODE_EXTRA_CA_CERTS. The
+            // source-run counterpart is the `NODE_USE_SYSTEM_CA=1` prefix on package.json's dev script,
+            // where the launch environment satisfies the same boot-time read.
+            execArgv: ["--use-system-ca"],
             // A release binary must not change behavior based on files in the
             // user's cwd — the repo's own bunfig.toml preload (dev-only Solid
             // transform) would even crash it at startup.
