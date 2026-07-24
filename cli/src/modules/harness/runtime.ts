@@ -67,6 +67,8 @@ import {
 import type { ContentError } from "./content.ts";
 import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
 import { createRunInflexaTool } from "./inflexa_tool.ts";
+import { createLaunchDirTool } from "./launch_dir_tool.ts";
+import { createManageInputsTool } from "./inputs_tool.ts";
 import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
 import {
     buildEphemeralDeps,
@@ -955,8 +957,11 @@ async function bootHarnessRuntimeOnce(
             // installed?" costs an ephemeral sandbox run — a container spun up to import one name.
             ...(packagesFile ? { packagesFile } : {}),
             chrome: {},
-            // Host-supplied conversation tool: lets the agent drive the local `inflexa` CLI as a subprocess.
-            hostTools: [createRunInflexaTool()],
+            // Host-supplied conversation tools: drive the local `inflexa` CLI as a subprocess
+            // (run_inflexa), see candidate files in the launch folder (list_launch_dir), and add/remove
+            // this analysis's inputs in-process (manage_inputs) — the last must be in-process so it
+            // mutates under the chat's own lock and its provenance/parity events stay on this bus.
+            hostTools: [createRunInflexaTool(), createLaunchDirTool(), createManageInputsTool()],
         };
         // Re-point the sandbox agent's provenance emitters when its model switches live.
         // The run-engine bundles injected the holder's STABLE `artifactRegistry` / `emitProvenance`
