@@ -1,31 +1,36 @@
-## 1. Factor the shared transfer utility
+## 1. Shared download utility
 
-- [ ] 1.1 Extract the streaming-download primitive from `src/modules/refs/store.ts` (`downloadArtifact` / `measureReferenceDownload`) — HTTPS re-checked on the post-redirect URL, sha256, `.part`→atomic activation, progress, HEAD size probe — into a shared utility both the reference installer and the GEO source use. Return `Result`, per the neverthrow rule.
-- [ ] 1.2 Point the reference installer at the shared utility; keep `refs` tests green.
+- [x] 1.1 Extract a generic HTTPS→file utility (`src/lib/download.ts`: `downloadToFile` + `declaredContentLength`) — HTTPS re-checked on the post-redirect URL, sha256, `.part`→atomic activation, progress events, injected `fetch`. Unit-tested (`download.test.ts`).
+- [ ] 1.2 Repoint `refs/store.ts` `downloadArtifact` at `downloadToFile` (thin wrapper: content-addressed dest, `assertOwnedPath`, progress/error remap); dedupe `declaredContentLength`. Keep the 43 refs store tests green.
 
 ## 2. GEO source module
 
-- [ ] 2.1 Implement accession validation + NCBI URL resolution: bucket derivation (`GSE12345` → `GSE12nnn/GSE12345/`), the SOFT family file, the series matrix incl. per-platform parts, and `suppl/` enumeration — excluding raw SRA. Malformed / unresolvable / empty-processed-files return `Result` errors.
-- [ ] 2.2 Fetch the resolved set to a temp dir via the shared utility (size estimate first, HTTPS-on-redirect re-check, size cap); enroll the local paths on the target analysis via `applyInputsDiff`/`addInputs` only on full success.
-- [ ] 2.3 Unit tests: multi-platform matrix resolution; SRA exclusion; HTTPS-on-redirect refusal; malformed and empty-Series error outcomes; failed download enrolls nothing; a successful run enrolls the files and they stage under `data/inputs`.
+- [ ] 2.1 Pure `parseGseAccession(raw): Result` (`/^GSE\d+$/`, uppercase-normalized) and `geoSeriesUrls(acc)` — bucket = digits with last 3 → `nnn` (`GSE12345`→`GSE12nnn`); soft/matrix/suppl paths on `ftp.ncbi.nlm.nih.gov`. Unit-tested purely.
+- [ ] 2.2 Resolve the artifact set: SOFT family file, series-matrix parts (enumerate `matrix/` autoindex for per-platform files), author supplementary (enumerate `suppl/` autoindex by regex over `href="..."`). Exclude raw SRA. Empty/absent `suppl/` is a normal "nothing to add".
+- [ ] 2.3 Fetch the set to a temp dir via `downloadToFile` (size-estimate/cap, HTTPS-on-redirect); on full success enroll the local paths as inputs via `applyInputsDiff`/`addInputs`. **No staging, no seed, no reprofile, no runtime boot** (see the design decision). Return/report what was enrolled; malformed/unresolvable/empty are `Result` errors.
+- [ ] 2.4 Unit tests: URL resolution; multi-platform matrix enumeration; SRA exclusion; HTTPS-on-redirect refusal; malformed/empty errors; enroll records rows and boots no runtime.
 
 ## 3. Command registration
 
-- [ ] 3.1 Register the command via `registerAction(..., "approval", handler)` with full argument/option descriptions (per `cli-reference-docs`); resolve the target analysis through `resolveContext` (so the injected ambient analysis is honored); report success/failure at the CLI boundary with `dieOn`.
-- [ ] 3.2 Update the `agent_policy_tree` snapshot test for the new command; confirm `run_inflexa` resolves it to `approval` and it is not `auto`/`blocked`.
-- [ ] 3.3 Test: the command appears in the reference-docs generation with descriptions; agent-policy classification is `approval`.
+- [ ] 3.1 Register the `approval` command in `src/cli/index.ts` via `registerAction(...)` with full arg/option descriptions; resolve target via `resolveContext` (ambient-aware); `dieOn` at the boundary.
+- [ ] 3.2 Add the grantKey row (`"approval"`) to both `EXPECTED_DEV_OFF` and `EXPECTED_DEV_ON` in `agent_policy_tree.test.ts`; run it.
+- [ ] 3.3 `bun run docs:gen` accepts every description.
 
-## 3a. Session-analysis injection (robust chat targeting)
+## 3a. Session-analysis injection + ambient context
 
-- [ ] 3a.1 In `run_inflexa` (`src/modules/harness/inflexa_tool.ts`), read the analysis id from `ctx.session` scope when kind is `analysis` and set `INFLEXA_ANALYSIS` on the spawned subprocess env (thread an explicit `env` into `runSubprocess`/`Bun.spawn`); inject nothing for a non-analysis scope.
-- [ ] 3a.2 Expose `INFLEXA_ANALYSIS` through `lib/env.ts` (the sole env reader) and read it at the CLI boundary; pass it into `resolveContext` as the ambient analysis ref (below an explicit `--analysis`, above the marker walk-up), keeping `context.ts` library-pure.
-- [ ] 3a.3 Tests: `run_inflexa` sets `INFLEXA_ANALYSIS` from the session (and only from the session, not the argv); a non-analysis session injects nothing; `resolveContext` resolves the ambient ref when no flag is set, an explicit flag overrides it, and the marker is consulted only when neither is set.
+- [ ] 3a.1 `run_inflexa` (`inflexa_tool.ts`): thread an explicit child env through the subprocess seam; set `INFLEXA_ANALYSIS` from `ctx.session.scope` when `kind==="analysis"` (spread `Bun.env`). Tests: env carries the id from the session (not argv); non-analysis scope injects nothing; a parent key survives the merge.
+- [ ] 3a.2 `lib/env.ts`: `ambientAnalysisRef()` reader (call-time, empty=unset, out of `env`/`envDoc`). `context.ts`: add `ambientAnalysis?` to `ContextFlags` and the ambient tier (below explicit flag, above marker; miss → fall through). Wire `ambientAnalysisRef()` at the resolveContext boundaries (launch/status/profile). Tests for the tier precedence.
+
+## 3b. Host-side input reconcile after a run_inflexa action
+
+- [ ] 3b.1 `run_inflexa`: after a successful ACTION run (not blocked/denied/introspection) in an analysis-scoped session, invoke an injected host callback to reconcile input parity for the session's analysis. Add the callback to `createRunInflexaTool(deps)`.
+- [ ] 3b.2 Wire the callback at the composition root (`harness/runtime.ts`) to drive parity for the open analysis when boot is ready (reuse `driveProfileParity`/the Bus), idempotent no-op when inputs match. Tests: a successful action drives the callback with the session analysis id; a denied/introspection call does not.
 
 ## 4. Sandbox parse readiness
 
-- [ ] 4.1 Confirm GEOparse and/or GEOquery are provisioned in the sandbox library store so the offline `get_GEO(filepath=…)` / `getGEO(filename=…)` path is available; flag for the lib-store build if missing.
+- [ ] 4.1 Confirm GEOparse and/or GEOquery are provisioned in the sandbox library store so the offline `get_GEO(filepath=…)` / `getGEO(filename=…)` path works; flag for the lib-store build if missing.
 
 ## 5. Validate & finish
 
-- [ ] 5.1 `openspec validate download-geo-datasets --strict`; `bun run typecheck`; `bun run lint`; `bun test`; `bun run format:file` on changed `src/` files.
-- [ ] 5.2 Integration test: download a small public GSE end-to-end into an analysis; confirm the enrolled files stage as inputs, the profile refreshes, and they parse offline in a sandbox step.
+- [ ] 5.1 `openspec validate --strict`; `bun run typecheck`; `bun run lint`; `bun test`; `bun run format:file` on changed `src/` files.
+- [ ] 5.2 Integration test: enroll a small public GSE end-to-end; confirm the rows are recorded and (under a runtime owner) the files stage + profile and parse offline in a sandbox step.

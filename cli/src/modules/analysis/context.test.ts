@@ -1,6 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { describeContext, type ResolvedContext } from "./context.ts";
+import { describeContext, resolveContext, type ResolvedContext } from "./context.ts";
+import { freshDb } from "../../test_support/db.ts";
+import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { asStr256 } from "../../lib/types.ts";
 
@@ -39,5 +44,43 @@ describe("describeContext", () => {
 
     test("empty: reports nothing-here for the cwd", () => {
         expect(describeContext({ kind: "empty", cwd: "/nowhere" })).toContain("/nowhere");
+    });
+});
+
+describe("resolveContext ambient tier", () => {
+    const roots: string[] = [];
+    function unmarkedCwd(): string {
+        const p = mkdtempSync(join(tmpdir(), "inflexa-ctx-"));
+        roots.push(p);
+        return p;
+    }
+    function seedAnalysis(id: string): Analysis {
+        return insertAnalysis({ id, createdAt: 1, updatedAt: 1, name: asStr256(id), slug: id.toLowerCase(), anchorId: "anc", projectId: null })._unsafeUnwrap();
+    }
+    beforeEach(() => {
+        freshDb();
+        insertAnchor({ id: "anc", createdAt: 1, updatedAt: 1, cachedPath: "/tmp/x", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+    });
+    afterEach(() => {
+        for (const p of roots.splice(0)) rmSync(p, { recursive: true, force: true });
+    });
+
+    test("resolves the ambient analysis when no explicit flag is set", () => {
+        const amb = seedAnalysis("AMB");
+        const ctx = resolveContext(unmarkedCwd(), { ambientAnalysis: amb.id })._unsafeUnwrap();
+        expect(ctx.kind).toBe("analysis");
+        expect(ctx.kind === "analysis" ? ctx.analysis.id : null).toBe("AMB");
+    });
+
+    test("an explicit --analysis flag overrides the ambient ref", () => {
+        seedAnalysis("AMB");
+        const exp = seedAnalysis("EXP");
+        const ctx = resolveContext(unmarkedCwd(), { analysis: exp.id, ambientAnalysis: "AMB" })._unsafeUnwrap();
+        expect(ctx.kind === "analysis" ? ctx.analysis.id : null).toBe("EXP");
+    });
+
+    test("an unmatched ambient ref falls through to the marker walk-up (empty here)", () => {
+        const ctx = resolveContext(unmarkedCwd(), { ambientAnalysis: "does-not-exist" })._unsafeUnwrap();
+        expect(ctx.kind).toBe("empty");
     });
 });

@@ -19,7 +19,17 @@ export type ResolvedContext =
     | { kind: "empty"; cwd: string }; // nothing here → offer to start one
 
 /** Flags that override cwd-based resolution; each is an id-or-name reference. */
-export type ContextFlags = { analysis?: IdOrName; project?: IdOrName };
+export type ContextFlags = {
+    analysis?: IdOrName;
+    project?: IdOrName;
+    /**
+     * The ambient analysis ref (the `INFLEXA_ANALYSIS` value, read at the CLI boundary via `lib/env`).
+     * Ranked below an explicit `analysis`/`project` — a command may always override it — and above the
+     * `.inflexa` marker walk-up, so an agent-run command targets the chat's analysis regardless of the
+     * subprocess's working directory.
+     */
+    ambientAnalysis?: IdOrName;
+};
 
 /**
  * Decide what bare `inflexa` operates on, by the spec's precedence. Pure data — the picker,
@@ -45,6 +55,25 @@ export function resolveContext(cwd: string, flags: ContextFlags): Result<Resolve
             if (!project) return ok({ kind: "pick", analyses: [] }); // unknown project → empty picker
             return listRecentAnalyses({ projectId: project.id }).map((analyses) => ({ kind: "pick", analyses }));
         });
+    }
+
+    // 1b. Ambient analysis ref (INFLEXA_ANALYSIS, injected by run_inflexa for agent-driven runs and read
+    // at the CLI boundary via lib/env so this stays library-pure). Below an explicit flag — a command may
+    // always override it — and above the marker walk-up, so an agent-run command targets the chat's
+    // analysis regardless of the subprocess cwd. A stale ref (its analysis was deleted) is a routine
+    // desync, not an error: fall through to the marker so the command still resolves.
+    if (flags.ambientAnalysis) {
+        const ambient = findAnalysis(flags.ambientAnalysis);
+        if (ambient.isErr()) return err({ type: "query_failed", op: "resolveContext:ambient", cause: ambient.error });
+        const analysis = ambient.value;
+        if (analysis) {
+            return resolveAnchor(analysis.anchorId).map((resolved) => ({
+                kind: "analysis",
+                analysis,
+                anchorPath: resolvedPathOrCached(resolved) ?? cwd,
+            }));
+        }
+        // No match → fall through to the marker walk-up below.
     }
 
     // 2. The folder (or an ancestor) is an anchor.
