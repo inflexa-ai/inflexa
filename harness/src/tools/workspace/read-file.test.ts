@@ -42,16 +42,23 @@ describe("createReadFileTool", () => {
         const { ctx } = makeToolContext();
         const r = (await tool.execute({ path: "data/inputs/x.csv.gz", headLines: 5 }, ctx))._unsafeUnwrap();
         expect(r.status).toBe("binary");
-        if (r.status === "binary") expect(r.mode).toBe("head");
+        if (r.status === "binary") {
+            expect(r.mode).toBe("head");
+            // A fully-read binary carries no size, mirroring the text `ok` variant.
+            expect(r.totalSize).toBeUndefined();
+        }
     });
 
-    it("reports a truncated binary read as binary, not truncated", async () => {
+    it("reports a truncated binary read as binary, carrying the oversize file size", async () => {
         const withNul = Buffer.concat([Buffer.from("plausible text"), Buffer.from([0x00]), Buffer.alloc(16, 0x41)]);
         const tool = createReadFileTool(fakeFs(() => ({ kind: "truncated", content: withNul, totalSize: 5_000_000 })));
         const { ctx } = makeToolContext();
         const r = (await tool.execute({ path: "data/inputs/big.bin" }, ctx))._unsafeUnwrap();
         expect(r.status).toBe("binary");
-        if (r.status === "binary") expect(r.mode).toBe("full");
+        if (r.status === "binary") {
+            expect(r.mode).toBe("full");
+            expect(r.totalSize).toBe(5_000_000);
+        }
     });
 
     it("returns not_found as a data variant — no throw", async () => {
