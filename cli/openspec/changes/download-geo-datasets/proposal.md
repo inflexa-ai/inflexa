@@ -10,7 +10,7 @@ Adding an input is already a solved, CLI-owned operation: `applyInputsDiff` / `a
 - **The command is classified `approval`** (it writes) per `agent-command-policy`, and is therefore reachable by the conversation agent through the existing `run_inflexa` tool (`agent-cli-tool`) with an in-chat approval prompt. No new agent tool and no TUI dialog.
 - **`run_inflexa` injects the session's analysis into the subprocess** (`INFLEXA_ANALYSIS`), and **`resolveContext` honors it** as an ambient tier between an explicit `--analysis` flag and the working-directory marker. This is what makes a bare chat request — "download geo dataset GSE12345" — target the chat's analysis with no ref, and it benefits every analysis-scoped command the agent runs, not just this one.
 - **Reuse the existing streaming-download machinery** in `cli/src/modules/refs/store.ts` (`downloadArtifact`, `measureReferenceDownload`) — HTTPS re-checked on redirect, sha256, `.part`→atomic activate, size probe — factored into a shared utility the reference installer and this command both use.
-- **The sandbox parses the added files offline**, with no network — `GEOparse.get_GEO(filepath=…)` / `GEOquery::getGEO(filename=…)`. Parsing is ordinary in-sandbox analysis.
+- **The sandbox reads the added files offline**, with no network and no GEO-specific library: the series matrix is a tab-delimited table with a `!`-prefixed metadata preamble (expression values plus `!Sample_*` phenotype), read with the general data tools already provisioned (pandas / readr); supplementary processed matrices likewise. Parsing is ordinary in-sandbox analysis.
 
 ## Capabilities
 
@@ -29,5 +29,5 @@ Adding an input is already a solved, CLI-owned operation: `applyInputsDiff` / `a
 - **Reused / factored machinery**: the streaming transfer primitive in `cli/src/modules/refs/store.ts` factored into a shared utility; input enrollment via `cli/src/modules/analysis/analysis.ts` (`applyInputsDiff`/`addInputs`); staging + seed + re-profile via the existing `input-staging` + `harness-runtime`/`data-profile-launch` paths, unchanged.
 - **Agent reachability**: automatic once the command is registered `approval` — `run_inflexa` classifies it via the commander parse and prompts before running. The command's help text must fully describe its argument(s) per `cli-reference-docs`.
 - **Provenance**: unchanged. Enrolled files flow through `addInputs` (which emits `prov.input_added`) and stage identically to any other input; a run classifies them as ordinary `data` inputs.
-- **Sandbox library store**: confirm GEOparse and/or GEOquery are provisioned so the offline parse path is available (harness/lib-store concern; tracked here as a readiness check).
+- **Sandbox library store**: no change needed — the added files are read with the general data tools already provisioned (pandas, numpy, scanpy, anndata; data.table, readr). No GEO-specific parsing library is required, so this feature adds no lib-store dependency.
 - **Docs / prose**: the harness `search_geo_datasets` caveat could later point at this command (a harness-side edit, tracked separately, not part of this CLI change).
