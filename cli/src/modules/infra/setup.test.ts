@@ -1653,13 +1653,11 @@ describe("setup() — batch orchestration", () => {
         // resource budget, and — cliproxy mode — the proxy config with its once-minted client key, which
         // a second run must find and leave alone rather than re-mint.
         //
-        // Three runs, not two, and the reason is worth stating: `writeConfig` serializes whatever key
-        // order the object it is handed carries, and a key ABSENT from the parsed config (here
-        // `harness`, created by the first run's resource write) is APPENDED by the spread rather than
-        // landing in its schema position. So run 1 and run 2 agree on every VALUE while differing in key
-        // ORDER — a serialization artifact, not a re-derived answer. The byte comparison is therefore
-        // taken between two runs that both started from a complete document, and the value comparison
-        // covers the first run too, so neither property goes unasserted.
+        // The headline assertion is on BYTES from the very first run, which is what makes it a real
+        // idempotency check: the second run starts from a document containing `harness` (created by the
+        // first run's resource write) while the first started from one without it, so the two spreads
+        // insert that key at different positions. `writeConfig` emits a canonical, schema-derived key
+        // order precisely so that difference cannot reach the file.
         spies.push(spyOn(compose, "composeAvailable").mockImplementation(async () => true));
         spies.push(spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)));
         // Batch cliproxy with no model answer asks the proxy nothing, so any fetch here is a defect.
@@ -1669,18 +1667,14 @@ describe("setup() — batch orchestration", () => {
 
         const flags = { postgresPassword: "s3cret", postgresPort: "6000", resourceShare: "40" } as const;
         await runSetup(batch(flags, { postgres: true }));
-        const firstValues = readConfig();
+        const firstConfig = readFileSync(env.configPath, "utf8");
         const firstProxyConfig = readFileSync(env.cliproxyConfigPath, "utf8");
-
-        await runSetup(batch(flags, { postgres: true }));
-        const secondConfig = readFileSync(env.configPath, "utf8");
 
         await runSetup(batch(flags, { postgres: true }));
 
         expect(process.exitCode).toBe(0);
-        expect(readFileSync(env.configPath, "utf8")).toBe(secondConfig);
-        // Every VALUE converges from the very first run; the minted client key is read back, never re-minted.
-        expect(readConfig()).toEqual(firstValues);
+        expect(readFileSync(env.configPath, "utf8")).toBe(firstConfig);
+        // The minted client key is read back, never re-minted.
         expect(readFileSync(env.cliproxyConfigPath, "utf8")).toBe(firstProxyConfig);
         // Sanity on WHAT converged: an empty document would satisfy the comparisons just as well.
         expect(readConfig().postgres).toEqual({ password: "s3cret", port: 6000 });
