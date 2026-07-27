@@ -68,8 +68,13 @@ Every vector returned by `createLocalEmbeddingProvider.embed()` SHALL have exact
 
 #### Scenario: Switching backends warns about stranded indexes
 
-- **WHEN** setup is asked to select an embedding mode while `embedding.mode` is already a different non-`off` mode
+- **WHEN** setup is asked to select an embedding backend whose EFFECTIVE VECTOR WIDTH may differ from the currently configured backend's — a different non-`off` mode, or a `local` → `local` switch to a different model path (whose width is unknown until verified)
 - **THEN** it SHALL warn loudly that existing analyses' search indexes keep the previous backend's vector width and fail for search and further indexing until re-profiled (automatic re-embedding is deliberately unsupported for now)
+
+#### Scenario: A same-width backend re-selection does not warn
+
+- **WHEN** setup re-selects the currently configured backend unchanged (same mode, same model path)
+- **THEN** no stranding warning is printed — nothing about the index width can change
 
 ### Requirement: Embedding setup offers the built-in model, a custom GGUF, or api-key
 
@@ -79,7 +84,7 @@ For the BUILT-IN model, setup SHALL materialize the sidecar runtime (per the acq
 
 For a CUSTOM GGUF, setup SHALL prompt for a file path, confirm the file exists, materialize the runtime, and verify through the sidecar WITHOUT asserting a fixed width — MEASURING whatever width the model emits. It SHALL NOT acquire anything: the file is the user's, so nothing is copied or downloaded. On success it SHALL write `embedding.mode = "local"`, `embedding.modelPath = <the supplied path>`, and `embedding.dimensions = <the measured width>` when that differs from the built-in 384 (recording it so the harness sizes each index to what the model emits). A zero-width or failed probe SHALL leave `embedding.mode` unchanged.
 
-For api-key or off, no model SHALL be acquired. An embedding-mode answer (`--embeddings local|api-key|off`; file `embedding.mode`) SHALL select the backend non-interactively. An answered `off` SHALL persist `embedding.mode = "off"` — an answer declares desired state, so it disables a previously configured backend (model files on disk are untouched); this is distinct from the interactive picker's "Off / skip" choice, which continues to leave the mode unchanged. `local` with a GGUF answer (`--embeddings-gguf <path>`; file `embedding.gguf`) SHALL select the CUSTOM-GGUF branch non-interactively — the answer replaces the interactive path prompt, and the same exists-check, runtime materialization, and measured-width verification run; `local` without one is the BUILT-IN model. `api-key` SHALL take its endpoint and model as answers (`--embeddings-url`, `--embeddings-model`; file `embedding.baseURL`, `embedding.model`) with the secret from the `INFLEXA_EMBEDDING_API_KEY` environment variable — required under batch resolution, where the masked prompt cannot run; interactively, answered fields skip their prompts and the key prompt still runs when the variable is unset. Verification through the sidecar SHALL be the same in the compiled binary and from source.
+For api-key or off, no model SHALL be acquired. An embedding-mode answer (`--embeddings local|api-key|off`; file `embedding.mode`) SHALL select the backend non-interactively. An answered `off` SHALL persist `embedding.mode = "off"` — an answer declares desired state, so it disables a previously configured backend (model files on disk are untouched); this is distinct from the interactive picker's "Off / skip" choice, which continues to leave the mode unchanged. `local` with a GGUF answer (`--embeddings-gguf <path>`; file `embedding.gguf`) SHALL select the CUSTOM-GGUF branch non-interactively — the answer replaces the interactive path prompt, and the same exists-check, runtime materialization, and measured-width verification run; `local` without one is the BUILT-IN model. `api-key` SHALL take its endpoint and model as answers (`--embeddings-url`, `--embeddings-model`; file `embedding.baseURL`, `embedding.model`) with the secret from the `INFLEXA_EMBEDDING_API_KEY` environment variable — required under batch resolution, where the masked prompt cannot run; interactively, answered fields skip their prompts and the key prompt still runs when the variable is unset. When the variable IS set, an interactive run SHALL state that the key is being read from `INFLEXA_EMBEDDING_API_KEY` (mirroring the model-key environment notice) instead of silently skipping the masked prompt — a stale exported key must be visible at the moment it is adopted. Verification through the sidecar SHALL be the same in the compiled binary and from source.
 
 #### Scenario: User picks the built-in model in the compiled binary
 
@@ -144,6 +149,16 @@ For api-key or off, no model SHALL be acquired. An embedding-mode answer (`--emb
 
 - **WHEN** `setup --yes --embeddings api-key --embeddings-url https://gw.corp/v1 --embeddings-model my-embed` runs with `INFLEXA_EMBEDDING_API_KEY` set
 - **THEN** the endpoint probe runs with the env key and, on a pass, config records `mode = "api-key"`, the key, and the non-default fields — with no prompt shown
+
+#### Scenario: An exported embedding key is adopted with a notice
+
+- **WHEN** an interactive run picks api-key embeddings while `INFLEXA_EMBEDDING_API_KEY` is exported
+- **THEN** the masked key prompt is skipped, and the run states the key is being read from `INFLEXA_EMBEDDING_API_KEY` before persisting it
+
+#### Scenario: A failing batch endpoint probe leaves the mode unchanged
+
+- **WHEN** `setup --yes --embeddings api-key --embeddings-url https://gw.corp/v1` runs with the env secret set and the endpoint probe fails
+- **THEN** setup exits non-zero showing the probe failure and `embedding.mode` is unchanged
 
 ### Requirement: Embedding model path is env-managed
 
@@ -428,3 +443,4 @@ Terminating the sidecar SHALL send SIGTERM and escalate to SIGKILL when the proc
 
 - **WHEN** a previous CLI process was killed without running its shutdown chain and its sidecar was reparented to pid 1, and any CLI later spawns a sidecar
 - **THEN** the orphaned process is killed before the new spawn, while a sidecar parented to a different live CLI is left untouched
+

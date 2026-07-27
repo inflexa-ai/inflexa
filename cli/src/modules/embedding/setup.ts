@@ -427,19 +427,34 @@ function writeEmbeddingOff(config: ReturnType<typeof readConfig>): Result<void, 
 }
 
 /**
- * Loudly warn when the user is about to change an already-chosen embedding
- * backend. Vector widths differ per backend (local = 384; api-key defaults to
- * 1536), and each analysis's search index keeps the width it was created with —
- * switching strands every existing index at the old width, so search and
- * further indexing on those analyses fail until they are re-profiled.
- * Automatic re-embedding is a deliberate non-feature for now (see the
+ * Loudly warn when the backend about to be written may not emit the width existing indexes were built
+ * at. Vector widths differ per backend (the built-in local model is 384; api-key defaults to 1536) AND
+ * per local model, and each analysis's search index keeps the width it was created with — so a change
+ * strands every existing index at the old width, and search plus further indexing on those analyses fail
+ * until they are re-profiled. Automatic re-embedding is a deliberate non-feature for now (see the
  * local-embeddings design doc); the warning is the mitigation.
+ *
+ * The trigger is the EFFECTIVE width, not the mode alone: a `local` → `local` swap to a different GGUF
+ * changes the width just as surely as a mode change does, and the new model's width is unknowable until
+ * the sidecar measures it — which happens after this point, once the user has already committed. So a
+ * differing model path warns conservatively: a false warning costs a sentence, a missed one costs
+ * stranded indexes. Re-selecting the SAME backend at the same path cannot change the width, and is silent.
  */
-function warnOnModeSwitch(current: "local" | "api-key" | "off", next: "local" | "api-key"): void {
-    if (current === "off" || current === next) return;
+function warnOnWidthChange(
+    current: ReturnType<typeof readConfig>["embedding"],
+    next: { readonly mode: "local"; readonly modelPath: string } | { readonly mode: "api-key" },
+): void {
+    // Nothing is configured, so no index exists at a width this run could strand.
+    if (current.mode === "off") return;
+    const sameBackend = current.mode === next.mode && (next.mode !== "local" || current.modelPath === next.modelPath);
+    if (sameBackend) return;
     log.warn(
         [
-            `SWITCHING EMBEDDING BACKEND (${current} → ${next})`,
+            current.mode === "local" && next.mode === "local"
+                ? // A local config with no recorded path is a hand-edited/legacy one; it is still a change
+                  // away from whatever that machine indexed with, so it warns rather than reading as "same".
+                  `SWITCHING EMBEDDING MODEL (${current.modelPath ?? "an unrecorded model"} → ${next.modelPath})`
+                : `SWITCHING EMBEDDING BACKEND (${current.mode} → ${next.mode})`,
             "",
             "Embedding models emit different vector widths, and every existing analysis's",
             "search index keeps the width it was created with. After this switch:",
@@ -476,7 +491,7 @@ async function materializeEmbeddingRuntime(): Promise<Result<void, EmbeddingSetu
 
 /** The built-in-model branch: materialize runtime, acquire the pinned bge-small, verify at 384, write config. */
 async function runBuiltinLocalSetup(config: ReturnType<typeof readConfig>): Promise<Result<void, EmbeddingSetupError>> {
-    warnOnModeSwitch(config.embedding.mode, "local");
+    warnOnWidthChange(config.embedding, { mode: "local", modelPath: env.embeddingModelPath });
     log.message("Setting up the built-in embedding model (bge-small-en-v1.5, 384-dim, via the pinned llama-server runtime — no API key needed)");
 
     const runtime = await materializeEmbeddingRuntime();
@@ -513,8 +528,6 @@ async function runBuiltinLocalSetup(config: ReturnType<typeof readConfig>): Prom
  * measured-width verification, config write — so the batch outcome cannot drift from the interactive one.
  */
 async function runCustomLocalSetup(config: ReturnType<typeof readConfig>, answeredPath: string | undefined): Promise<Result<void, EmbeddingSetupError>> {
-    warnOnModeSwitch(config.embedding.mode, "local");
-
     // No answer means a prompt, and the prompt is reached only when this run may ask (an unanswered path
     // in a non-interactive run resolves to the built-in branch upstream, never here). promptText hard-exits
     // on cancel, exactly like the mode picker above, so a cancelled path prompt aborts setup rather than
@@ -529,6 +542,11 @@ async function runCustomLocalSetup(config: ReturnType<typeof readConfig>, answer
     if (!(await Bun.file(modelPath).exists())) {
         return err({ type: "acquire_failed", message: `No file at ${modelPath}. Provide the path to a local GGUF embedding model.` });
     }
+
+    // The stranding warning names the model being switched TO, so it necessarily follows the path's
+    // resolution (answer or prompt) AND its exists-check: warning about a path with no file at it would be
+    // a scare with no switch behind it, and the run is about to fail on that path anyway.
+    warnOnWidthChange(config.embedding, { mode: "local", modelPath });
 
     log.message(`Setting up local embeddings from your model at ${modelPath}`);
 
@@ -603,7 +621,8 @@ type ApiKeyInputs = {
 /**
  * The api-key branch: resolve endpoint + key + model from the answers, the environment, or the prompts,
  * probe with one real embed, and record the choice. The key never rides an answer (setup's secrets rule):
- * it comes from {@link EMBEDDING_API_KEY_VAR} when set, else the MASKED prompt (paste-friendly, never
+ * it comes from {@link EMBEDDING_API_KEY_VAR} when set — announced on a run that could have prompted, so
+ * an adopted export is visible at the moment it wins — else the MASKED prompt (paste-friendly, never
  * echoed into scrollback). It is still persisted in the clear to config.json, which the log line says out
  * loud so the trade-off is the user's. Only fields that differ from the provider defaults are written
  * (minimal-config, mirroring {@link runCustomLocalSetup}'s dimensions handling): the measured width
@@ -616,7 +635,7 @@ type ApiKeyInputs = {
  * fallback: it is the one input nothing can invent, so its absence is an error naming the variable.
  */
 async function runApiKeySetup(config: ReturnType<typeof readConfig>, inputs: ApiKeyInputs): Promise<Result<void, EmbeddingSetupError>> {
-    warnOnModeSwitch(config.embedding.mode, "api-key");
+    warnOnWidthChange(config.embedding, { mode: "api-key" });
     log.message("Setting up remote embeddings (an OpenAI-compatible /embeddings endpoint). The key is stored in config.json — keep that file private.");
 
     const urlPrefill = config.embedding.baseURL ?? DEFAULT_API_BASE_URL;
@@ -649,6 +668,19 @@ async function runApiKeySetup(config: ReturnType<typeof readConfig>, inputs: Api
             message: `api-key embeddings need the ${EMBEDDING_API_KEY_VAR} environment variable — a secret never rides a flag or the answers file, and this run cannot prompt for one. Export it and re-run \`inflexa setup --embeddings api-key\`.`,
         });
     }
+    // A run that COULD have asked must say why it didn't. An exported variable is invisible at the moment
+    // it is adopted, so silently skipping the masked prompt lets a stale export be written to config.json
+    // with the user never seeing which value won — the same reason the model key announces its adopted
+    // variable, except this one IS persisted, so the note says that rather than borrowing the model note's
+    // "never written to config" claim. A run that cannot prompt needs no note: the variable is that path's
+    // only channel, required upfront by the answers resolver.
+    if (envKey !== undefined && inputs.canPrompt) {
+        log.info(
+            `Using ${EMBEDDING_API_KEY_VAR} from your environment for the embeddings key — the masked prompt is skipped.\n` +
+                `Unlike the model key, this one is STORED in config.json, exactly as the prompt would store it.\n` +
+                `If that variable holds a stale key, unset it and re-run to paste a different one.`,
+        );
+    }
     const apiKey =
         envKey ??
         (
@@ -672,10 +704,13 @@ async function runApiKeySetup(config: ReturnType<typeof readConfig>, inputs: Api
 
     // `--no-validate` is the deliberate escape for air-gapped staging and gateways that cannot pass a
     // standards-shaped probe. Skipping the probe forfeits the MEASUREMENT, not just the check: the index
-    // width can then only be assumed from what is already configured (or the provider default), which is
-    // exactly the guess the probe exists to replace — so the run says so out loud rather than presenting an
-    // assumption as a verified fact.
-    const assumedDimensions = config.embedding.dimensions ?? DEFAULT_API_EMBEDDING_DIMENSIONS;
+    // width can then only be assumed, which is exactly the guess the probe exists to replace — so the run
+    // says so out loud rather than presenting an assumption as a verified fact.
+    //
+    // The only honest source for that guess is a width THIS backend already recorded: a local GGUF's
+    // measured 384/768 says nothing about what a remote endpoint emits, so a configured `dimensions`
+    // carries over only when the current mode is already api-key. Otherwise the provider default stands.
+    const assumedDimensions = (config.embedding.mode === "api-key" ? config.embedding.dimensions : undefined) ?? DEFAULT_API_EMBEDDING_DIMENSIONS;
     if (!inputs.validate) {
         log.warn(
             `Skipping the endpoint probe (--no-validate): ${confirmedURL} is recorded UNVALIDATED, and the index width is ASSUMED to be ${assumedDimensions} rather than measured.`,

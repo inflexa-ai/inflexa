@@ -1,11 +1,23 @@
-# setup-answers Specification
+# setup-answers delta — hardening
 
-## Purpose
-The non-interactive setup contract: the `SetupAnswers` mechanism through which `inflexa setup --yes`
-(batch mode) and `--config` (the YAML answers file) resolve every interactive decision of the setup
-flow — the resolution precedence, strict file parsing, upfront whole-set validation, batch defaults,
-validation probes, and idempotency. Created by archiving change non-interactive-setup.
-## Requirements
+## ADDED Requirements
+
+### Requirement: The answer set is enumerated once
+
+Every answerable question SHALL be declared exactly once, in a single table keyed by the question's config-file key path. The both-spellings rendering, the per-leaf flag-over-file merge, and the coverage guard SHALL derive from (or be statically linked to) that table, and the schema's leaf set SHALL be type-linked to it, so that adding a question to one surface without the others is a compile-time or test failure — an answer that parses SHALL be consumed and spellable. Block-level keys (`connection`, `postgres`, `resources`, `embedding`) SHALL be spellable too, so a block-shaped file error names both spellings like a leaf error does. The CLI flag surface SHALL be pinned by a registry-level test that parses an argv exercising every batch option and asserts each lands in the resolved answers.
+
+#### Scenario: A schema-only answer addition cannot ship silently dropped
+
+- **WHEN** a new answer is added to the answers schema without its table entry, merge handling, or flag mapping
+- **THEN** the build or the test suite fails naming the gap, rather than the answer parsing and being silently ignored
+
+#### Scenario: A block-level file error names both spellings
+
+- **WHEN** the config file contains `postgres:` as a null or scalar block
+- **THEN** the upfront error names the `postgres` file block together with its flag spellings, not the bare key alone
+
+## MODIFIED Requirements
+
 ### Requirement: One answers mechanism resolves every setup question
 
 Setup SHALL define a single answers schema (`SetupAnswers`) covering every interactive decision point of the setup flow — connection mode, direct-connection facts, credential source, model, Postgres fields, resource share, embedding backend and its values, reference selection, sandbox variant, and runtime. Two front-ends populate it: value flags and the `--config` YAML file, resolved per question with the fixed precedence:
@@ -92,44 +104,6 @@ Under `--yes`, setup SHALL never prompt — on a TTY or off it. The complete ans
 - **WHEN** a run supplies a malformed `--postgres-port` and an invalid `--sandbox` value together
 - **THEN** the single failure names both problems, not just the first
 
-### Requirement: `--config` is a strict YAML answers file
-
-`--config <path>` SHALL load a YAML answers file parsed with the runtime's native YAML support (no new dependency). A missing, unreadable, or unparseable file SHALL fail upfront naming the path and the parse failure. Parsing is STRICT: an unknown key SHALL be an error naming that key — the file is authored intent, where a typo'd key silently skipping a step is the worst fleet failure. The file's content SHALL be extracted into the answers schema and consumed from there only; no file content is ever merged or copied verbatim into `config.json`. The file SHALL carry configuration answers only — execution modifiers (`--yes`, `--no-start`, `--no-postgres`, `--force`, `--no-validate`, `--no-auth`) are flag-only and SHALL NOT be file keys. `--config` and `--yes` are orthogonal: the file is an answer source, `--yes` is the no-prompt guarantee.
-
-#### Scenario: A missing or unparseable file fails upfront
-
-- **WHEN** setup runs with `--config ./fleet.yml` and the file is absent or not valid YAML
-- **THEN** setup fails before any mutation naming the path and the parse failure
-
-#### Scenario: An unknown key is rejected
-
-- **WHEN** the config file contains `embedings: {mode: local}` (typo)
-- **THEN** setup fails upfront naming the unknown key `embedings`, and nothing is provisioned
-
-#### Scenario: An execution modifier in the file is rejected
-
-- **WHEN** the config file contains `start: false`
-- **THEN** setup fails upfront naming `start` as an unknown key (invocation behavior is flag-only)
-
-#### Scenario: File values reach config.json only through extraction
-
-- **WHEN** a config file answers the direct connection and setup completes
-- **THEN** `config.json`'s `models.connection` block was written by the same writer the wizard uses, from the extracted answers — never by copying file content
-
-### Requirement: `--provider` wears the vocabulary of the connection mode
-
-The `--provider` answer (file: `connection.provider`) SHALL be interpreted by the resolved connection mode: in `cliproxy` mode it is the OAuth account kind (`gemini|openai|claude|qwen|iflow`), valid only where the OAuth flow can run — an interactive run; in `direct` mode it is the open vendor slug written to `models.connection.provider`. Under `--yes` (or non-TTY) with cliproxy mode, a provider answer SHALL be rejected during upfront validation with an error explaining that provider OAuth cannot run unattended and that the first launch offers the sign-in.
-
-#### Scenario: Batch cliproxy rejects a provider answer
-
-- **WHEN** `inflexa setup --yes --provider claude` runs (connection defaulting to cliproxy)
-- **THEN** setup fails upfront explaining OAuth cannot run non-interactively and pointing at the first-launch sign-in
-
-#### Scenario: Direct mode takes the provider as a vendor slug
-
-- **WHEN** `inflexa setup --yes --connection direct --base-url https://gw.corp/v1 --provider deepseek --model d1` runs
-- **THEN** `models.connection.provider` is written as `deepseek` (open vocabulary, no account-kind validation)
-
 ### Requirement: Batch cliproxy setup is pre-staging
 
 Under batch resolution in cliproxy mode, setup SHALL provision everything except the provider login: proxy config, compose file, images, Postgres, and the answered optional steps. When no provider credential exists in the auth dir, setup SHALL print a notice that the first launch will offer the interactive sign-in and SHALL exit 0 — pre-staging is a legitimate outcome, not a failure. When the run disabled the auth step (`--no-auth`), the sign-in notice SHALL be suppressed: guidance for a step the operator explicitly turned off is noise.
@@ -181,46 +155,3 @@ No answer — flag or file key — SHALL carry a MODEL or EMBEDDING secret. The 
 
 - **WHEN** a run answers `postgres.password` (by flag or file) and any validation problem is reported
 - **THEN** the password value appears in no error message, notice, or next-steps output (masked where the connection string is shown)
-
-### Requirement: The sandbox image and resource allowance are answerable
-
-`--sandbox python|python-r` (file: `sandbox`) SHALL answer the sandbox-image variant; the answer IS the multi-GB consent, and the pull runs without a size confirmation. Absent an answer, batch setup SHALL skip the image (with the existing pull-later hint) — it is never downloaded implicitly. `resources.sharePct` (flag `--resource-share <pct>`, 1–100) SHALL answer the machine-allowance question as a percentage — portable across heterogeneous fleets — persisted as the absolute budget computed from the detected machine, exactly as the wizard's prompt persists it.
-
-#### Scenario: A sandbox answer pulls without confirmation
-
-- **WHEN** `setup --yes --sandbox python` runs with the image absent locally
-- **THEN** the image is pulled with no size prompt and recorded as `harness.sandboxImage`
-
-#### Scenario: No sandbox answer downloads nothing
-
-- **WHEN** `setup --yes` runs without `--sandbox`
-- **THEN** no image is pulled and the pull-later hint is printed
-
-#### Scenario: The resource share persists machine-relative absolutes
-
-- **WHEN** `setup --yes --resource-share 50` runs on an 8-core / 32 GB machine
-- **THEN** `harness.resourceLimits.budget` persists 4 CPU / 16 GB
-
-### Requirement: Batch setup is idempotent
-
-Re-running batch setup with the same answers SHALL converge to the same final state without destructive or duplicate work: an existing proxy config is left untouched, the compose file is regenerated, images and datasets already present are not re-fetched, the vector extension install is a no-op, and persist-only-explicit config writes rebuild to the same content.
-
-#### Scenario: A second identical run changes nothing
-
-- **WHEN** `setup --yes --config fleet.yml` runs twice on the same machine
-- **THEN** the second run completes successfully with no re-downloads and a byte-identical resulting configuration
-
-### Requirement: The answer set is enumerated once
-
-Every answerable question SHALL be declared exactly once, in a single table keyed by the question's config-file key path. The both-spellings rendering, the per-leaf flag-over-file merge, and the coverage guard SHALL derive from (or be statically linked to) that table, and the schema's leaf set SHALL be type-linked to it, so that adding a question to one surface without the others is a compile-time or test failure — an answer that parses SHALL be consumed and spellable. Block-level keys (`connection`, `postgres`, `resources`, `embedding`) SHALL be spellable too, so a block-shaped file error names both spellings like a leaf error does. The CLI flag surface SHALL be pinned by a registry-level test that parses an argv exercising every batch option and asserts each lands in the resolved answers.
-
-#### Scenario: A schema-only answer addition cannot ship silently dropped
-
-- **WHEN** a new answer is added to the answers schema without its table entry, merge handling, or flag mapping
-- **THEN** the build or the test suite fails naming the gap, rather than the answer parsing and being silently ignored
-
-#### Scenario: A block-level file error names both spellings
-
-- **WHEN** the config file contains `postgres:` as a null or scalar block
-- **THEN** the upfront error names the `postgres` file block together with its flag spellings, not the bare key alone
-

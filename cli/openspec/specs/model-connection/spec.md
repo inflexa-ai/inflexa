@@ -164,8 +164,10 @@ validation — before any mutation — when it is absent, so a provisioned clien
 enabled, and must PASS: a definite model-not-found, an auth rejection, an unreachable endpoint,
 or an outcome the validation cannot classify all FAIL the run with the endpoint's answer shown —
 batch has no save-anyway confirm, so ambiguity fails hard, and `--no-validate` (which persists
-the id unvalidated) is the deliberate escape. A persisted answer lands on BOTH user-facing
-agents.
+the id unvalidated) is the deliberate escape. The batch model validation SHALL run BEFORE the
+`models.connection` block is written: a rejected answer leaves `config.json` untouched, so a
+failed provision never strands a connection without a model — the `model_required` boot the
+model requirement exists to prevent. A persisted answer lands on BOTH user-facing agents.
 
 After the CLIProxy login, once the provisioned proxy is answering (setup runs no credential
 probe — that is the launch gate's), interactive setup SHALL present a default-model
@@ -287,6 +289,20 @@ applies to the direct-endpoint validation above.
 - **WHEN** `setup --yes` runs with `--model <id>` in either connection mode
 - **THEN** `models.agents.conversation` and `models.agents.sandbox` are both written to it without
   any prompt
+
+#### Scenario: A rejected batch model answer leaves no partial connection
+
+- **WHEN** `setup --yes --connection direct --base-url … --provider … --model bad-id` runs with
+  validation on and the endpoint definitively rejects the model
+- **THEN** setup exits non-zero showing the rejection, and `config.json` contains neither a
+  `models.connection` block nor any `models.agents` entry from this run
+
+#### Scenario: A definite cliproxy pin rejection fails the batch run
+
+- **WHEN** `setup --yes --model <id>` runs in cliproxy mode, the provisioned proxy answers, and
+  the accessibility check returns a definite not-found for the id
+- **THEN** setup exits non-zero naming the model, while an inconclusive check on the same run
+  proceeds and pins the id
 
 ### Requirement: No provider identity is ever derived from a model id
 
@@ -552,3 +568,4 @@ settings files or offer detected helpers.
 
 - **WHEN** the same run's probe draws a non-standard status (e.g. a gateway's 500-for-bad-token)
 - **THEN** setup exits non-zero showing the status and body excerpt, names `--no-validate` as the escape, and persists nothing
+

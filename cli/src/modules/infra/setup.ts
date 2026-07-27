@@ -55,7 +55,16 @@ import {
     type ConnectionMode,
 } from "./compose.ts";
 import { formatInfraStateError, writeProxyConfig } from "./proxy_config.ts";
-import { answerOf, describeSetupAnswersError, isBatchRun, isVendorSlug, loadSetupAnswers, type SetupAnswerFlags, type SetupAnswers } from "./setup_answers.ts";
+import {
+    answerOf,
+    answerSpelling,
+    describeSetupAnswersError,
+    isBatchRun,
+    isVendorSlug,
+    loadSetupAnswers,
+    type SetupAnswerFlags,
+    type SetupAnswers,
+} from "./setup_answers.ts";
 
 // `inflexa setup` provisions the inflexa infrastructure stack: CLIProxyAPI (the
 // local model proxy) and Postgres + pgvector (the harness substrate). Both run
@@ -120,6 +129,12 @@ export async function setup(options: SetupOptions): Promise<void> {
     if (resolved === null) return;
     const { answers, connectionMode } = resolved;
 
+    // The resolver's advisories are DATA (it never prints), so rendering them is this layer's job — and it
+    // has to happen for the merge's supersede drop to be an ANNOUNCED override rather than a silent one,
+    // which is the only reading under which "a flag overrides the file" and "no answer is silently
+    // ignored" are both true (design D5). Named `advisory` because `note` is clack's own import here.
+    for (const advisory of resolved.notes) log.info(advisory);
+
     // The answers layer cannot see the run modifiers (they are deliberately not answers — design D3), so
     // the one contradiction that spans both is settled here: a step switched OFF consumes no answers, and
     // silently dropping them is the defect the whole answer surface exists to prevent.
@@ -130,6 +145,21 @@ export async function setup(options: SetupOptions): Promise<void> {
         console.error(
             `\n  --no-postgres skips the step that would consume ${strandedByNoPostgres.map(([field]) => `\`postgres.${field}\``).join(", ")}.\n` +
                 `  Drop the answer, or drop --no-postgres.\n`,
+        );
+        process.exitCode = 1;
+        return;
+    }
+
+    // FAIL BEFORE MUTATE, second half (design D2). The answers resolver deliberately never loads the
+    // reference catalog — it stays a pure function of its inputs — so the one answer whose validity is a
+    // question about the CATALOG is adjudicated here instead, still ahead of every mutator: the embedding
+    // pre-gate below, the runtime pin, `writeProxyConfig`, and the download itself. Without this a
+    // mistyped id surfaced at download time, second-to-last step, on an already-provisioned machine.
+    const unknownRefs = await unknownReferenceIds(answers.refs);
+    if (unknownRefs.length > 0) {
+        console.error(
+            `\n  ${answerSpelling("refs")} names ${unknownRefs.length === 1 ? "a dataset" : "datasets"} the reference catalog does not have: ${unknownRefs.map((id) => `\`${id}\``).join(", ")}.\n` +
+                "  Run `inflexa refs list` for the catalog ids, or drop the answer.\n",
         );
         process.exitCode = 1;
         return;
@@ -195,9 +225,11 @@ export async function setup(options: SetupOptions): Promise<void> {
 
         // `--provider` wears the vocabulary of the connection mode (design D4), so its check can only run
         // once the mode is known — under batch that is upfront in the resolver, on an interactive run it
-        // is here, immediately after the prompt. It runs BEFORE the runtime pin below because that write
-        // is this command's first mutation, and an answer setup is going to reject must not cost the user
-        // a persisted side effect first.
+        // is here, immediately after the prompt. It runs BEFORE the runtime pin below because under BATCH
+        // that write is the run's first mutation, and an answer setup is going to reject must not cost the
+        // operator a persisted side effect first. The claim is scoped to batch deliberately: an
+        // INTERACTIVE run with an answered embedding mode has already configured embeddings at the
+        // pre-gate above, so its fail-before-mutate boundary is that step, not this one.
         const providerCheck = checkProviderAnswer(answers.connection?.provider, mode);
         if (providerCheck.isErr()) {
             console.error(`\n  ${providerCheck.error.message}\n`);
@@ -266,25 +298,31 @@ export async function setup(options: SetupOptions): Promise<void> {
             // authenticate() records the connection provider fact on a successful login (see
             // recordCliproxyProvider), so the cliproxy path always leaves `models.connection` naming
             // the authenticated vendor.
-            if (batch) {
-                // Batch cliproxy is PRE-STAGING (design D10): provider OAuth needs a human in a browser,
-                // and a credential cannot be pre-seeded across a fleet (two proxies refreshing one
-                // rotating refresh token corrupt it). So the login is the one step batch mode leaves
-                // undone — everything else is provisioned — and a missing credential is a NOTICE, not a
-                // failure. An error exit here would make the legitimate pre-staging workflow impossible
-                // to script, so the run continues through the remaining steps and finishes at exit 0;
-                // automation that wants to assert a credential exists greps for this notice.
-                if (await isAuthenticated()) {
-                    log.info("A provider credential exists. If chats fail to authenticate, re-run with `--provider <name>` to sign in again.");
-                } else {
-                    note(
-                        "No provider credential is staged on this machine yet, and the sign-in needs a browser.\n" +
-                            "The first `inflexa` launch offers the interactive sign-in; everything else is provisioned.",
-                        "Provider sign-in pending",
-                    );
-                }
-            } else if (options.auth) {
-                if (provider === undefined && (await isAuthenticated())) {
+            //
+            // `--no-auth` turns the step off, and with it everything this block SAYS about signing in:
+            // guidance for a step the operator explicitly disabled is noise, and under `--yes --no-auth`
+            // there is no one at the terminal to act on it anyway (spec: `--no-auth` suppresses the
+            // sign-in notice). The stack is still fully provisioned — only the narration is dropped.
+            if (options.auth) {
+                if (batch) {
+                    // Batch cliproxy is PRE-STAGING (design D10): provider OAuth needs a human in a
+                    // browser, and a credential cannot be pre-seeded across a fleet (two proxies
+                    // refreshing one rotating refresh token corrupt it). So the login is the one step
+                    // batch mode leaves undone — everything else is provisioned — and a missing
+                    // credential is a NOTICE, not a failure. An error exit here would make the legitimate
+                    // pre-staging workflow impossible to script, so the run continues through the
+                    // remaining steps and finishes at exit 0; automation that wants to assert a
+                    // credential exists greps for this notice.
+                    if (await isAuthenticated()) {
+                        log.info("A provider credential exists. If chats fail to authenticate, re-run with `--provider <name>` to sign in again.");
+                    } else {
+                        note(
+                            "No provider credential is staged on this machine yet, and the sign-in needs a browser.\n" +
+                                "The first `inflexa` launch offers the interactive sign-in; everything else is provisioned.",
+                            "Provider sign-in pending",
+                        );
+                    }
+                } else if (provider === undefined && (await isAuthenticated())) {
                     // "exists", not "authenticated": a dead refresh token is statically invisible
                     // (nothing in the credential file records it), so this branch cannot promise the
                     // credential works — it can only say one is present and name the way to re-login.
@@ -382,6 +420,23 @@ export async function setup(options: SetupOptions): Promise<void> {
                 credentialProbe = validated.value;
             }
 
+            // Direct mode has no model auto-resolve: without an explicit id boot fails `model_required`.
+            // An ANSWERED id is validated pass-or-fail HERE — ahead of `writeDirectConnection` — because
+            // everything the 1-token ping needs (the endpoint, the protocol, and a credential: the probe's
+            // minted token or the static env key) is already in hand, so there is no reason for a rejected
+            // id to cost the operator a written connection. Validating after the write would strand a
+            // connection-without-model on a failed run, booting into exactly the `model_required` state the
+            // batch model requirement exists to prevent (design D1). The persist follows the write below.
+            const modelAnswer = answerOf(answered.model);
+            if (modelAnswer.answered) {
+                const validated = await validateAnsweredDirectModel(direct, modelAnswer.value, credentialProbe, validate);
+                if (validated.isErr()) {
+                    log.error(validated.error.message);
+                    process.exitCode = 1;
+                    return;
+                }
+            }
+
             const writeErr = writeDirectConnection(direct).match(
                 () => null,
                 (e) => e,
@@ -423,15 +478,16 @@ export async function setup(options: SetupOptions): Promise<void> {
                 );
             }
 
-            // Direct mode has no model auto-resolve: without an explicit id boot fails `model_required`.
-            // An ANSWERED id is persisted with no prompt and validated pass-or-fail (batch requires the
-            // answer, so this is the batch path); an unanswered one on a run that may prompt takes the
-            // wizard's collect-and-re-prompt loop.
-            const modelAnswer = answerOf(answered.model);
+            // The validated answer lands only now, after the connection it belongs to. An unanswered id on
+            // a run that may prompt takes the wizard's collect-and-re-prompt loop instead, which keeps its
+            // own ordering: a prompt can re-ask, so nothing there is stranded by a rejection.
             if (modelAnswer.answered) {
-                const persisted = await persistAnsweredDirectModel(direct, modelAnswer.value, credentialProbe, validate);
-                if (persisted.isErr()) {
-                    log.error(persisted.error.message);
+                const persisted = persistAnsweredDirectModel(modelAnswer.value).match(
+                    () => null,
+                    (e) => e,
+                );
+                if (persisted) {
+                    log.error(persisted.message);
                     process.exitCode = 1;
                     return;
                 }
@@ -641,6 +697,38 @@ async function runSandboxImageSetup(answered: SetupAnswers["sandbox"], canPrompt
                 ? log.info(error.message)
                 : log.warn(`Sandbox image install failed: ${error.message}\n  You can retry later with \`inflexa sandbox pull\`.`),
     );
+}
+
+/**
+ * The answered reference ids the catalog cannot resolve — the upfront half of the unknown-id check
+ * (design D2), run before any mutation. Empty means "nothing to refuse", which covers the three cases
+ * that are not a question about ids at all: an unanswered `refs`, a PRESET answer (a preset resolves
+ * against the catalog by construction and can only ever name real ids), and a store this process could
+ * not inspect.
+ *
+ * An id is known when it is OFFERED (in the catalog and not already installed) or INSTALLED. Naming the
+ * two halves rather than testing catalog membership directly is the point: the offered set deliberately
+ * EXCLUDES what is already present, so resolving against it alone would make the second run of the very
+ * same `--refs <id>` command fail on the datasets the first run installed — the opposite of the
+ * idempotency the whole batch contract rests on. An installed id is a valid answer that resolves to
+ * nothing left to do.
+ *
+ * An inspection FAILURE degrades to "no unknown ids" rather than failing the run: this check exists to
+ * move a diagnosis earlier, not to add a new way for a broken store to abort a provision, and the
+ * download-time `unknown_dataset` rejection is still there as defense in depth (design D2).
+ */
+async function unknownReferenceIds(refs: SetupAnswers["refs"]): Promise<readonly string[]> {
+    if (!Array.isArray(refs) || refs.length === 0) return [];
+    const { REFERENCE_DATA_CATALOG } = await import("@inflexa-ai/harness");
+    const { offeredReferenceCatalog } = await import("../refs/commands.ts");
+    const { inspectReferenceStore } = await import("../refs/store.ts");
+    const inspection = await inspectReferenceStore(env.refsDir, REFERENCE_DATA_CATALOG);
+    if (inspection.isErr()) return [];
+    const known = new Set([
+        ...offeredReferenceCatalog(REFERENCE_DATA_CATALOG, inspection.value).datasets.map((dataset) => dataset.id),
+        ...inspection.value.datasets.filter((item) => item.state === "installed").map((item) => item.dataset.id),
+    ]);
+    return refs.filter((id) => !known.has(id));
 }
 
 /**
@@ -869,8 +957,10 @@ function writeBothAgents(modelId: string): Result<void, ConfigError> {
  * This is the ONE answer whose rejection lands after the machine has been mutated, and it is unavoidable:
  * the question "does this account serve that model" can only be put to a RUNNING proxy, so the check
  * cannot join the fail-before-mutate gate that gets every other answer adjudicated ahead of the first
- * container command. The bound on that gate is therefore the answer SET, not the network probes — setup
- * is idempotent, so the remedy for a rejected id is a corrected re-run, not a teardown.
+ * container command — not even the direct path's sibling probe, which needs only the answered endpoint
+ * and a credential and therefore runs BEFORE its connection write ({@link validateAnsweredDirectModel}).
+ * The bound on that gate is therefore the answer SET, not the network probes — setup is idempotent, so
+ * the remedy for a rejected id is a corrected re-run, not a teardown.
  *
  * A failed WRITE fails the run rather than warning (as the interactive picker does): an answer that did
  * not land leaves the client pinned to something other than what the fleet declared, which automation
@@ -1036,7 +1126,14 @@ async function promptResourceConfig(answeredSharePct: number | undefined, canPro
     const machine = detectedMachine();
     const resolved = resolveHarnessConfig();
     const currentPct = Math.min(100, Math.max(1, Math.round((resolved.resourcePolicy.budget.cpu / machine.cpu) * 100)));
-    log.message(`Configure the analysis resource allowance — detected ${machine.cpu} cores / ${machine.memoryGb} GB`);
+    // "Configure …" is an instruction to someone about to be asked something. A batch run reaches this
+    // line only with the share already ANSWERED, so it states the detected machine instead — the same
+    // fact, phrased for a transcript nobody is going to type into (design D9).
+    log.message(
+        canPrompt
+            ? `Configure the analysis resource allowance — detected ${machine.cpu} cores / ${machine.memoryGb} GB`
+            : `Analysis resource allowance — detected ${machine.cpu} cores / ${machine.memoryGb} GB`,
+    );
 
     const sharePct = (v: string): string | undefined => {
         if (v.trim() === "") return undefined;
@@ -2079,18 +2176,23 @@ function directModelValidationDetail(outcome: Exclude<MessagePingOutcome, { kind
 }
 
 /**
- * Persist an ANSWERED direct model to BOTH agents, validated pass-or-fail. The credential is assembled
- * exactly as {@link collectDirectModelAtSetup} assembles it — the credential probe's minted token when a
- * source was configured (no second helper run), else the static env key under the protocol's
- * conventional header — and a model the probe already validated end-to-end is not re-pinged.
+ * Adjudicate an ANSWERED direct model, pass-or-fail, WITHOUT writing anything. The credential is
+ * assembled exactly as {@link collectDirectModelAtSetup} assembles it — the credential probe's minted
+ * token when a source was configured (no second helper run), else the static env key under the
+ * protocol's conventional header — and a model the probe already validated end-to-end is not re-pinged.
+ *
+ * Write-free is the point, not an implementation detail: everything the ping needs is known before the
+ * connection is persisted, so the caller runs this FIRST and a rejected id leaves `config.json`
+ * untouched. The alternative — write, then probe, then roll back — is remediation where prevention is
+ * available, and a crash between the write and the rollback still strands the config (design D1).
  *
  * The contrast with the interactive prompt loop is deliberate: a prompt can re-ask, so a rejection there
  * is a re-prompt and an ambiguity is a save-anyway confirm. An ANSWER has nobody to re-ask, so every
  * non-pass outcome FAILS the run with the endpoint's own words — automation wants that failure at
  * provision time, not on the client's first chat. Without a credential, or under `--no-validate`, the id
- * persists unvalidated with a line that says so.
+ * is accepted unvalidated with a line that says so.
  */
-async function persistAnsweredDirectModel(
+async function validateAnsweredDirectModel(
     direct: DirectConnectionInput,
     model: string,
     probe: CredentialProbeResult | null,
@@ -2120,10 +2222,18 @@ async function persistAnsweredDirectModel(
         }
         s.stop(`Model "${model}" validated`);
     }
+    return ok(undefined);
+}
 
-    // A failed write fails the run rather than warning (as the interactive loop does): an answer that did
-    // not land leaves the client pinned to something other than what was declared, and a scripted run has
-    // no reader to notice a warning.
+/**
+ * Pin a VALIDATED direct model answer to BOTH agents — the write half of the answered-model path, run
+ * only after {@link validateAnsweredDirectModel} passed and the connection it belongs to was persisted.
+ *
+ * A failed write fails the run rather than warning (as the interactive loop does): an answer that did not
+ * land leaves the client pinned to something other than what was declared, and a scripted run has no
+ * reader to notice a warning.
+ */
+function persistAnsweredDirectModel(model: string): Result<void, ProxyError> {
     return writeBothAgents(model)
         .map(() => {
             log.success(`Model "${model}" set for both agents.`);
