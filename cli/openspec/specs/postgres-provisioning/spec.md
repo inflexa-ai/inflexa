@@ -42,7 +42,9 @@ Both service images SHALL be pinned by version tag AND manifest digest (`<name>:
 
 ### Requirement: Setup prompts for Postgres credentials and port
 
-`inflexa setup` SHALL interactively prompt the user for Postgres username (default `inflexa`), password (default `inflexa`), and port (default: the channel-aware `env.postgresPort`) using `@clack/prompts` with `defaultValue` and `placeholder` so pressing Enter accepts the default. Only explicit choices SHALL be persisted to `config.json` under the `postgres` key. Because `config.json` is shared by both build channels, a port equal to EITHER channel's sibling default — production 8432 or dev 8434, the *reserved* channel defaults — SHALL NOT be persisted, from either channel: freezing one channel's default there would override the other channel's default and re-create the very stack collision environment-aware defaults remove. A genuinely customized value (any non-reserved port, or a non-default host/user/password), by contrast, SHALL be persisted and therefore applies to BOTH channels — deliberate, per the per-field override contract; a user who customizes the port on a dual-build machine owns that cross-channel consequence. The persisted block SHALL be rebuilt from the prompted values (never merged over the previous block). Symmetrically, `resolvePostgresConfig` SHALL ignore a persisted port equal to a reserved channel default and fall back to THIS channel's sibling default, so a pin an earlier build froze self-heals on the first resolve from EITHER channel — not only when a setup re-run happens to land on the channel whose default the pin matches. The prompted values SHALL be used in the generated compose file for this run regardless of what is persisted. On non-interactive terminals, the current resolution SHALL be used silently without prompting or persisting.
+`inflexa setup` SHALL interactively prompt the user for Postgres username (default `inflexa`), password (default `inflexa`), and port (default: the channel-aware `env.postgresPort`) using `@clack/prompts` with `defaultValue` and `placeholder` so pressing Enter accepts the default. Only explicit choices SHALL be persisted to `config.json` under the `postgres` key. Because `config.json` is shared by both build channels, a port equal to EITHER channel's sibling default — production 8432 or dev 8434, the *reserved* channel defaults — SHALL NOT be persisted, from either channel: freezing one channel's default there would override the other channel's default and re-create the very stack collision environment-aware defaults remove. A genuinely customized value (any non-reserved port, or a non-default host/user/password), by contrast, SHALL be persisted and therefore applies to BOTH channels — deliberate, per the per-field override contract; a user who customizes the port on a dual-build machine owns that cross-channel consequence. The persisted block SHALL be rebuilt from the prompted values (never merged over the previous block). Symmetrically, `resolvePostgresConfig` SHALL ignore a persisted port equal to a reserved channel default and fall back to THIS channel's sibling default, so a pin an earlier build froze self-heals on the first resolve from EITHER channel — not only when a setup re-run happens to land on the channel whose default the pin matches. The prompted values SHALL be used in the generated compose file for this run regardless of what is persisted.
+
+Every Postgres field SHALL be answerable (flags `--postgres-user`, `--postgres-password`, `--postgres-port`, `--postgres-database`, `--postgres-host`; file `postgres.{user,password,port,database,host}`): an answered field skips its prompt and is treated exactly as a typed value — the persist-only-explicit contract is unchanged, so an answer equal to its default persists nothing and the run still converges. Under batch resolution (`--yes` or non-TTY), unanswered fields SHALL resolve silently to the current resolution without persisting. An answered port equal to a RESERVED channel default SHALL be rejected during batch upfront validation — the interactive warn-and-use-once behavior would silently not persist the value, which automation cannot see; interactively that behavior is unchanged.
 
 #### Scenario: Interactive terminal prompts for credentials
 
@@ -70,10 +72,20 @@ Both service images SHALL be pinned by version tag AND manifest digest (`<name>:
 - **WHEN** `config.json` carries a `postgres.port` equal to a reserved channel default (e.g. the production 8432 frozen by an older build) and the CLI resolves the Postgres config on ANY channel — including the dev channel, whose default the pin does not equal — without a setup re-run
 - **THEN** the reserved pin is ignored and the port resolves to that channel's own sibling default, so a dev developer is never dragged onto the production port and the collision cannot silently persist
 
-#### Scenario: Non-interactive terminal uses defaults silently
+#### Scenario: An answered field skips its prompt
 
-- **WHEN** `inflexa setup` runs on a non-TTY (pipe, CI)
-- **THEN** the CLI uses the current resolution without prompting and writes nothing
+- **WHEN** `inflexa setup --postgres-password s3cret` runs on a TTY without `--yes`
+- **THEN** the password prompt is skipped (the answer is the value) and the username and port prompts still run
+
+#### Scenario: Batch unanswered fields resolve silently
+
+- **WHEN** `inflexa setup --yes` runs with no Postgres answers
+- **THEN** the current resolution is used without prompting and nothing is persisted
+
+#### Scenario: A reserved-port answer fails batch validation
+
+- **WHEN** `inflexa setup --yes --postgres-port 8432` runs
+- **THEN** setup fails during upfront validation naming the reserved channel defaults, before any container work
 
 #### Scenario: Prompted values are used in compose file
 
@@ -265,4 +277,3 @@ The `--help` output SHALL list the Postgres data directory and the compose file 
 
 - **WHEN** the user runs `inflexa --help`
 - **THEN** the Paths table contains rows for the Postgres data directory and the Docker Compose file
-

@@ -157,8 +157,15 @@ minted token, else the static env key; absent both the pick persists unvalidated
 chat remain the gate): a definite model-not-found re-prompts with the
 endpoint's error body shown (endpoints often name their served ids there), an ambiguous outcome
 offers to save anyway, and a pass persists the id to `models.agents.<agent>` for BOTH user-facing
-agents. On a non-TTY the direct path SHALL write no model, and boot's actionable `model_required`
-failure remains the contract.
+agents. Under batch resolution (`--yes`, or any non-TTY run), the direct path SHALL instead
+REQUIRE a model answer (`--model` / `connection.model`): setup SHALL fail during upfront
+validation — before any mutation — when it is absent, so a provisioned client never boots into
+`model_required`. An answered id SHALL be validated with the same request when validation is
+enabled, and must PASS: a definite model-not-found, an auth rejection, an unreachable endpoint,
+or an outcome the validation cannot classify all FAIL the run with the endpoint's answer shown —
+batch has no save-anyway confirm, so ambiguity fails hard, and `--no-validate` (which persists
+the id unvalidated) is the deliberate escape. A persisted answer lands on BOTH user-facing
+agents.
 
 After the CLIProxy login, once the provisioned proxy is answering (setup runs no credential
 probe — that is the launch gate's), interactive setup SHALL present a default-model
@@ -184,8 +191,13 @@ agents (a deliberate pin). The flow SHALL contain no hardcoded model ids, with O
 exception: the provider-conventional default table above, which exists solely as a pre-fill for
 direct setups whose endpoint serves no listing, is confirmed by the user and validated before any
 write, and carries a comment naming its rot risk (a stale entry costs one failed validation and
-one edit at setup — never a persisted broken config). On a non-TTY, setup
-SHALL skip the selection (Auto semantics).
+one edit at setup — never a persisted broken config). Under batch resolution, setup SHALL NOT
+present the selection: without a model answer it writes nothing (Auto semantics); with one, the
+id persists to BOTH agents without any prompt, checked via the accessibility route when the
+provisioned proxy answers — only a definite not-found fails the run; an inconclusive check
+proceeds, because the accessibility check is opportunistic (a pre-staged proxy has no credential
+loaded, so inconclusive must not fail a legitimate pre-stage) — the strict pass-or-fail contract
+applies to the direct-endpoint validation above.
 
 #### Scenario: CLIProxy setup records the provider from the login
 
@@ -258,12 +270,23 @@ SHALL skip the selection (Auto semantics).
 - **THEN** nothing is written, the default stays adaptive Auto, and setup finishes successfully —
   an optional step never fails a setup whose real work has already succeeded
 
-#### Scenario: Non-interactive setup skips the model step
+#### Scenario: Batch cliproxy without a model answer stays adaptive
 
-- **WHEN** setup runs without a TTY
+- **WHEN** `setup --yes` runs in cliproxy mode with no model answer
 - **THEN** no model prompt is shown, nothing is written to `models.agents`, and the default
-  remains adaptive in cliproxy mode — while a non-TTY direct setup boots to the actionable
-  `model_required` failure until a model is configured
+  remains adaptive
+
+#### Scenario: Batch direct without a model answer fails upfront
+
+- **WHEN** `setup --yes --connection direct` runs with the endpoint and provider answered but no
+  model answer
+- **THEN** setup fails before any mutation with an error naming `--model` and `connection.model`
+
+#### Scenario: A batch model answer pins both agents
+
+- **WHEN** `setup --yes` runs with `--model <id>` in either connection mode
+- **THEN** `models.agents.conversation` and `models.agents.sandbox` are both written to it without
+  any prompt
 
 ### Requirement: No provider identity is ever derived from a model id
 
@@ -292,11 +315,14 @@ segment, and defaulting to the provider's public API root when no `*_BASE_URL` i
 normalized value SHALL be shown as an editable pre-fill the user confirms before it is written.
 Only `provider`, `baseURL`, and `protocol` SHALL be written to config; the API key SHALL NOT be
 copied (it remains an environment read per "The direct-mode secret comes from the environment
-only"). When both ecosystem sets are present, interactive setup SHALL prompt which to adopt and a
-non-interactive setup SHALL apply a deterministic precedence (anthropic before openai). Declining
-the offer SHALL fall through to the existing manual endpoint/provider/protocol prompts. The CLI
-SHALL NOT adopt `ANTHROPIC_AUTH_TOKEN` (Anthropic-wire Bearer auth is out of scope pending a
-harness capability) nor Bedrock/Vertex environment (no direct-mode signer).
+only"). When both ecosystem sets are present, interactive setup SHALL prompt which to adopt.
+Adoption is an INTERACTIVE affordance only: under batch resolution (`--yes` or any non-TTY run)
+setup SHALL NOT adopt from the environment — the connection facts must be explicit answers, and a
+batch direct run without them SHALL fail during upfront validation naming the missing flags and
+file keys. Declining the offer SHALL fall through to the existing manual
+endpoint/provider/protocol prompts. The CLI SHALL NOT adopt `ANTHROPIC_AUTH_TOKEN` (Anthropic-wire
+Bearer auth is out of scope pending a harness capability) nor Bedrock/Vertex environment (no
+direct-mode signer).
 
 #### Scenario: Anthropic environment adopted with a normalized baseURL
 
@@ -323,11 +349,12 @@ harness capability) nor Bedrock/Vertex environment (no direct-mode signer).
 - **WHEN** both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are set in an interactive setup
 - **THEN** setup prompts which provider to adopt before pre-filling the connection
 
-#### Scenario: Non-interactive direct setup self-configures
+#### Scenario: Batch direct setup requires explicit answers
 
-- **WHEN** `setup --connection direct` runs on a non-TTY terminal with `ANTHROPIC_API_KEY` set
-- **THEN** the normalized connection is written to config with no prompts; with no detectable
-  provider environment it instead fails with the existing "needs an interactive terminal" guidance
+- **WHEN** `setup --yes --connection direct` runs with `ANTHROPIC_API_KEY` set but no
+  `--base-url`/`--provider` answers
+- **THEN** nothing is adopted and setup fails upfront naming the missing answers — the env key
+  remains only the runtime secret, never a source of connection facts
 
 #### Scenario: The adopted key is never copied to config
 
@@ -494,3 +521,34 @@ Only the source name/command and scheme SHALL be written to `models.connection.a
 - **THEN** setup surfaces that a helper was detected but requires the user to confirm the command
   before Inflexa will run it — it does not auto-execute the managed helper
 
+### Requirement: A direct credential source is declarable as answers
+
+The direct connection's refreshing credential source SHALL be answerable without the interactive
+detection/offer flow: `--auth-env <VAR> --auth-scheme x-api-key|bearer` declares the env-variable
+source, and `--auth-command <cmd> --auth-scheme x-api-key|bearer [--auth-format raw|exec-credential]`
+declares the command source (file: `connection.auth.{kind,var,command,scheme,format,ttlMs}`). The
+answers are token-free by construction — only the variable name, command string, scheme, format,
+and ttl are ever accepted or persisted, mirroring the existing `models.connection.auth` block.
+When validation is enabled, an answered source SHALL be validated with the existing probe ladder
+before it is persisted, and must PASS: any outcome short of a pass — a definite rejection, an
+unreachable endpoint, or an ambiguous non-standard answer — FAILS the run with the probe's
+response shown (batch has no save-anyway confirm; `--no-validate` skips the probe and persists
+the token-free source unvalidated — the deliberate escape for gateways that cannot pass a
+standards-shaped probe).
+Credential-helper DETECTION remains an interactive affordance: batch runs never read the Claude
+settings files or offer detected helpers.
+
+#### Scenario: An answered command source is probed then persisted
+
+- **WHEN** `setup --yes --connection direct --base-url <url> --provider anthropic --model <id> --auth-command "my-helper" --auth-scheme bearer` runs with validation on and the probe ladder passes
+- **THEN** `models.connection.auth` persists `{kind: "command", command: "my-helper", scheme: "bearer"}` with no token material anywhere in config
+
+#### Scenario: A failing answered source fails the provision
+
+- **WHEN** the same run's probe draws a definite auth rejection
+- **THEN** setup exits non-zero with the probe's actionable message and the auth block is not persisted
+
+#### Scenario: An ambiguous probe answer fails hard in batch
+
+- **WHEN** the same run's probe draws a non-standard status (e.g. a gateway's 500-for-bad-token)
+- **THEN** setup exits non-zero showing the status and body excerpt, names `--no-validate` as the escape, and persists nothing

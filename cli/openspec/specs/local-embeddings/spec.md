@@ -79,7 +79,7 @@ For the BUILT-IN model, setup SHALL materialize the sidecar runtime (per the acq
 
 For a CUSTOM GGUF, setup SHALL prompt for a file path, confirm the file exists, materialize the runtime, and verify through the sidecar WITHOUT asserting a fixed width — MEASURING whatever width the model emits. It SHALL NOT acquire anything: the file is the user's, so nothing is copied or downloaded. On success it SHALL write `embedding.mode = "local"`, `embedding.modelPath = <the supplied path>`, and `embedding.dimensions = <the measured width>` when that differs from the built-in 384 (recording it so the harness sizes each index to what the model emits). A zero-width or failed probe SHALL leave `embedding.mode` unchanged.
 
-For api-key or off, no model SHALL be acquired. A `--embeddings local|api-key|off` preselection SHALL select the backend non-interactively; `local` is the BUILT-IN model (a custom path requires the interactive path prompt, so it has no flag form). Verification through the sidecar SHALL be the same in the compiled binary and from source.
+For api-key or off, no model SHALL be acquired. An embedding-mode answer (`--embeddings local|api-key|off`; file `embedding.mode`) SHALL select the backend non-interactively. An answered `off` SHALL persist `embedding.mode = "off"` — an answer declares desired state, so it disables a previously configured backend (model files on disk are untouched); this is distinct from the interactive picker's "Off / skip" choice, which continues to leave the mode unchanged. `local` with a GGUF answer (`--embeddings-gguf <path>`; file `embedding.gguf`) SHALL select the CUSTOM-GGUF branch non-interactively — the answer replaces the interactive path prompt, and the same exists-check, runtime materialization, and measured-width verification run; `local` without one is the BUILT-IN model. `api-key` SHALL take its endpoint and model as answers (`--embeddings-url`, `--embeddings-model`; file `embedding.baseURL`, `embedding.model`) with the secret from the `INFLEXA_EMBEDDING_API_KEY` environment variable — required under batch resolution, where the masked prompt cannot run; interactively, answered fields skip their prompts and the key prompt still runs when the variable is unset. Verification through the sidecar SHALL be the same in the compiled binary and from source.
 
 #### Scenario: User picks the built-in model in the compiled binary
 
@@ -130,6 +130,21 @@ For api-key or off, no model SHALL be acquired. A `--embeddings local|api-key|of
 - **WHEN** the sidecar cannot serve a valid probe embedding for the chosen model (built-in: a non-384 width; either: a zero-width or start failure)
 - **THEN** setup SHALL report the error and leave `embedding.mode` unchanged (not "local")
 
+#### Scenario: An answered off disables a configured backend
+
+- **WHEN** `setup --yes --embeddings off` runs on a machine whose config has `embedding.mode = "local"`
+- **THEN** `embedding.mode` is written to `"off"` and the model files on disk are left untouched
+
+#### Scenario: A GGUF answer selects the custom branch non-interactively
+
+- **WHEN** `setup --yes --embeddings local --embeddings-gguf /models/my.gguf` runs and the file exists
+- **THEN** the custom branch runs with no path prompt — the sidecar measures the width, and config records that `modelPath` (and `dimensions` when non-384)
+
+#### Scenario: Batch api-key embeddings run from answers and the env secret
+
+- **WHEN** `setup --yes --embeddings api-key --embeddings-url https://gw.corp/v1 --embeddings-model my-embed` runs with `INFLEXA_EMBEDDING_API_KEY` set
+- **THEN** the endpoint probe runs with the env key and, on a pass, config records `mode = "api-key"`, the key, and the non-default fields — with no prompt shown
+
 ### Requirement: Embedding model path is env-managed
 
 `cli/src/lib/env.ts` SHALL expose `env.modelDir` (`<dataDir>/inflexa/models/`) and `env.embeddingModelPath` (`<modelDir>/bge-small-en-v1.5-q8_0.gguf`). These SHALL be included in `envDoc` for `--help` visibility.
@@ -171,30 +186,30 @@ For api-key or off, no model SHALL be acquired. A `--embeddings local|api-key|of
 
 ### Requirement: Embedding setup is wired into the interactive setup flow
 
-The interactive `inflexa setup` questionnaire SHALL include an embedding-backend question after provider auth, offering four choices (the built-in model, a path to the user's own GGUF, `api-key`, `off`) in every install context — local mode works identically in the compiled binary and from source, so no context gates the offering. The question SHALL be skippable (defaulting to `off`). Non-interactive shells (no TTY) SHALL skip the embedding question without hanging, leaving `mode` unchanged.
+The interactive `inflexa setup` questionnaire SHALL include an embedding-backend question after provider auth, offering four choices (the built-in model, a path to the user's own GGUF, `api-key`, `off`) in every install context — local mode works identically in the compiled binary and from source, so no context gates the offering. The question SHALL be skippable (defaulting to `off`). Under batch resolution (`--yes` or non-TTY) with no embedding-mode answer, the question SHALL be skipped without hanging, leaving `mode` unchanged.
 
-When `inflexa setup` is invoked with an explicit `--embeddings local|api-key|off` preselection, the embedding step SHALL run before the container-runtime probe, so an environment without a ready Docker/Podman can still configure embeddings non-interactively. This reorder applies ONLY to an explicit preselection: the interactive question's position is unchanged (still after provider auth). The remainder of setup still requires a ready runtime and SHALL still fail afterward when none is available — the preselected embeddings are already durably configured by then. The embedding step SHALL NOT run twice in one setup invocation: when the preselected pre-gate step has already run, the in-flow embedding step SHALL be skipped.
+When an embedding-mode ANSWER is present — the `--embeddings` flag or the config file's `embedding.mode` — the embedding step SHALL run before the container-runtime probe, so an environment without a ready Docker/Podman can still configure embeddings non-interactively. This reorder applies ONLY to an answered mode: the interactive question's position is unchanged (still after provider auth). The remainder of setup still requires a ready runtime and SHALL still fail afterward when none is available — the answered embeddings are already durably configured by then. The embedding step SHALL NOT run twice in one setup invocation: when the answered pre-gate step has already run, the in-flow embedding step SHALL be skipped.
 
 #### Scenario: Interactive setup asks about embeddings
 
 - **WHEN** `inflexa setup` runs in a TTY (compiled binary or source checkout)
 - **THEN** the user SHALL be prompted to choose an embedding mode after provider auth, with `local` selectable
 
-#### Scenario: Non-interactive setup skips embeddings
+#### Scenario: Batch setup without an embeddings answer skips the question
 
-- **WHEN** `inflexa setup` runs without a TTY
-- **THEN** the embedding question SHALL be skipped
+- **WHEN** setup runs under batch resolution with no embedding-mode answer
+- **THEN** the embedding question SHALL be skipped and `mode` left unchanged
 
-#### Scenario: Preselected embeddings configure without a container runtime
+#### Scenario: Answered embeddings configure without a container runtime
 
-- **WHEN** `inflexa setup --embeddings local` runs with no ready Docker or Podman
+- **WHEN** `inflexa setup --yes --embeddings local` runs with no ready Docker or Podman — or the same mode arrives via the config file
 - **THEN** the embedding step SHALL run before the container-runtime probe — the model is acquired, verified, and configured (`embedding.mode = "local"`)
 - **AND** the missing-runtime error SHALL still be reported for the remainder of setup
 
-#### Scenario: Preselected embeddings run once
+#### Scenario: Answered embeddings run once
 
-- **WHEN** a preselected mode is given and a container runtime IS ready
-- **THEN** the embedding step SHALL run exactly once — the pre-gate preselected step runs and the in-flow embedding step is skipped
+- **WHEN** an embedding mode is answered and a container runtime IS ready
+- **THEN** the embedding step SHALL run exactly once — the pre-gate answered step runs and the in-flow embedding step is skipped
 
 ### Requirement: Embedding settings are configured through dialogs in `inflexa config`
 
@@ -413,4 +428,3 @@ Terminating the sidecar SHALL send SIGTERM and escalate to SIGKILL when the proc
 
 - **WHEN** a previous CLI process was killed without running its shutdown chain and its sidecar was reparented to pid 1, and any CLI later spawns a sidecar
 - **THEN** the orphaned process is killed before the new spawn, while a sidecar parented to a different live CLI is left untouched
-
