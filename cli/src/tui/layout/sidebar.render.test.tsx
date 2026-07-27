@@ -2,21 +2,24 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
 import { testRender } from "@opentui/solid";
+import { parseColor, rgbToHex, type RGBA } from "@opentui/core";
 
 import { freshDb } from "../../test_support/db.ts";
 import { renderFrame } from "../../test_support/tui.ts";
 import { str256 } from "../../lib/types.ts";
-import { GLYPHS } from "../../lib/design_system.ts";
+import { DEFAULT_THEME_ID, GLYPHS, themes } from "../../lib/design_system.ts";
 import { createAnalysis, addInputs } from "../../modules/analysis/analysis.ts";
 import { getAnchor } from "../../db/primary_query.ts";
+import { setTheme } from "../theme.ts";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
 import { __resetSidebarLiveForTest, absTime, absTimeShort, idTail, refreshSidebarData, relAge, type RefreshSeams } from "../hooks/sidebar_live.ts";
+import { __resetOpenThreadForTest, refreshOpenThread, type ThreadSeams } from "../hooks/thread.ts";
 import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
 import { Sidebar } from "./sidebar.tsx";
 import type { Analysis } from "../../types/analysis.ts";
-import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
+import type { CortexRunRow, DataProfileStatus, DbError, StepExecutionRow, Thread } from "@inflexa-ai/harness";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 
 // The sidebar's input count is a plain DB read with no reactive dependency — it refreshes only
@@ -42,6 +45,10 @@ afterEach(() => {
     // so one test's seed never bleeds into the next (mirrors __resetSidebarLiveForTest for the live sections).
     __setAgentModelsForTest({ current: { conversation: "", sandbox: "" }, pending: new Map() });
     __setBootStateForTest({ phase: "idle" });
+    // The SESSION section reads the open-thread snapshot (another module singleton) and the loaded-state
+    // case repaints on a light theme; drop both so one case's seed never bleeds into the next.
+    __resetOpenThreadForTest();
+    setTheme(DEFAULT_THEME_ID);
 });
 
 // A minimal static Workspace: the test never swaps sessions, so a plain object (not the reactive
@@ -49,7 +56,7 @@ afterEach(() => {
 function wsFor(analysis: Analysis, workingDir: string): Workspace {
     return {
         analysis,
-        sessionId: "no-such-session", // getSession → null; the SESSION detail row is skipped
+        sessionId: "no-such-session", // no thread snapshot is seeded, so the SESSION detail row stays a placeholder
         workingDir,
         project: null,
         openDialog: () => {},
@@ -118,7 +125,7 @@ describe("Sidebar input count follows the bus", () => {
 // The DATA PROFILE / RUNS sections render the `sidebar_live` store's snapshots. These
 // drive the store through `refreshSidebarData`'s injectable reads (no Postgres, no booted runtime)
 // and assert the rendered rail text — the truthfulness the change exists for. A null-analysis
-// workspace keeps the fixture minimal (getSession → null, no anchor/input reads), so only the two
+// workspace keeps the fixture minimal (no thread snapshot, no anchor/input reads), so only the two
 // live sections vary between cases.
 const fakeRuntime = { pool: {} } as unknown as HarnessRuntime;
 
@@ -240,6 +247,155 @@ describe("Sidebar DATA PROFILE / RUNS live sections", () => {
         // local timestamp leaks onto a still-running run's row.
         expect(frame).toContain(relAge("2026-07-08T00:00:00.000Z"));
         expect(frame).not.toContain(new Date("2026-07-08T00:00:00.000Z").toLocaleString());
+    });
+});
+
+// The SESSION section renders the `hooks/thread.ts` snapshot: a placeholder ladder for every degraded
+// kind, and the pg-owned title + relative age once a row loads. Each case drives the REAL store through
+// `refreshOpenThread`'s injectable reads (no Postgres, no booted runtime) and asserts the rail text.
+// The placeholder strings are shared with DATA PROFILE / RUNS ("runtime not ready", "unavailable"), so
+// every assertion is scoped to the lines the SESSION section owns rather than the whole frame.
+describe("Sidebar SESSION section", () => {
+    // A UUIDv7-shaped thread id, as `resolveThreadId` mints. Its handle head (`0198`) is deliberately
+    // absent from every other fixture string below, so a frame assertion can never confuse the two.
+    const THREAD_ID = "01988cdd-7f00-7abc-8def-0123456789ab";
+    const TITLE = "Ribosome occupancy sweep";
+    // Old enough that the readout sits in the days bucket, and offset half an hour off the boundary so
+    // the rendered `Nd..h` token cannot flip between the render and the assertion.
+    const CREATED_AT = new Date(Date.now() - (3 * 24 + 4) * 3_600_000 - 30 * 60_000);
+    const dbErr: DbError = { type: "query_failed", op: "test", cause: new Error("boom") };
+
+    function threadRow(over: Partial<Thread> = {}): Thread {
+        return { threadId: THREAD_ID, analysisId: "a1", title: TITLE, createdAt: CREATED_AT, updatedAt: CREATED_AT, ...over };
+    }
+
+    /** Thread seams whose row read resolves to `row` (or fails when `row` is the error sentinel). */
+    function threadSeams(read: () => ReturnType<ThreadSeams["getThread"]>): ThreadSeams {
+        return {
+            runtime: () => fakeRuntime,
+            listThreads: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
+            getThread: read,
+            notify: () => {},
+        };
+    }
+
+    // A workspace with a BOUND thread and a distinct message count, so the loaded line's three fields
+    // (title, age, count) are each distinguishable from one another in the frame.
+    function sessionNode(messageCount: number) {
+        const ws = {
+            analysis: null,
+            sessionId: THREAD_ID,
+            workingDir: "/x",
+            project: null,
+            openDialog: () => {},
+            closeDialog: () => {},
+            openSession: () => {},
+            quit: async () => {},
+        } as Workspace;
+        return () => (
+            <WorkspaceContext.Provider value={ws}>
+                <box width="100%" height="100%">
+                    <Sidebar messageCount={() => messageCount} />
+                </box>
+            </WorkspaceContext.Provider>
+        );
+    }
+
+    /**
+     * Whether `needle` renders on a line the SESSION section owns — the rows between its label row and
+     * the next section's. Line-scoped rather than frame-scoped because the rail's placeholder strings
+     * are shared with DATA PROFILE / RUNS, and each captured row also carries the rail border + scrollbar.
+     */
+    function sessionHas(frame: string, needle: string): boolean {
+        const lines = frame.split("\n");
+        const start = lines.findIndex((l) => l.includes("SESSION"));
+        if (start < 0) return false;
+        const after = lines.slice(start + 1);
+        const end = after.findIndex((l) => l.includes("ANALYSIS"));
+        return (end < 0 ? after : after.slice(0, end)).some((l) => l.includes(needle));
+    }
+
+    test("no thread bound yet (pre-ready) shows the runtime placeholder", async () => {
+        await refreshOpenThread(
+            null,
+            threadSeams(() => okAsync(threadRow())),
+        );
+        const frame = await renderFrame(sessionNode(0), { width: 44, height: 24 });
+        expect(sessionHas(frame, "runtime not ready")).toBe(true);
+        expect(frame).not.toContain(TITLE);
+    });
+
+    test("a failed row read degrades to 'unavailable', never a crash or a blank rail", async () => {
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams(() => errAsync(dbErr)),
+        );
+        const frame = await renderFrame(sessionNode(0), { width: 44, height: 24 });
+        expect(sessionHas(frame, "unavailable")).toBe(true);
+        expect(frame).not.toContain(TITLE);
+    });
+
+    test("a bound id with no row reads 'new conversation' — the first turn has yet to create it", async () => {
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams(() => okAsync(null)),
+        );
+        const frame = await renderFrame(sessionNode(0), { width: 44, height: 24 });
+        expect(sessionHas(frame, "new conversation")).toBe(true);
+        // The handle still rides the label row: an identity exists, only its row does not.
+        expect(lineContaining(frame, "SESSION")).toContain("0198");
+    });
+
+    test("a loaded row renders the pg title, its relative age, and the live message count", async () => {
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams(() => okAsync(threadRow())),
+        );
+        const frame = await renderFrame(sessionNode(7), { width: 44, height: 24 });
+
+        expect(sessionHas(frame, TITLE)).toBe(true);
+        // Asserted through the same formatter the row computes, never a hardcoded token.
+        expect(sessionHas(frame, Date.relativeAge(CREATED_AT.getTime()))).toBe(true);
+        expect(sessionHas(frame, "7 msgs")).toBe(true);
+        // The degraded ladder is fully replaced — no placeholder survives beside a real title.
+        expect(sessionHas(frame, "new conversation")).toBe(false);
+        expect(sessionHas(frame, "runtime not ready")).toBe(false);
+    });
+
+    test("a row whose title the first message has not seeded yet reads 'untitled', not a blank line", async () => {
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams(() => okAsync(threadRow({ title: null }))),
+        );
+        const frame = await renderFrame(sessionNode(1), { width: 44, height: 24 });
+        expect(sessionHas(frame, "untitled")).toBe(true);
+    });
+
+    // A character frame carries no color, so it cannot tell a correctly-painted title from one that fell
+    // through to opentui's opaque-white default — on `github-light` (bg pure #ffffff) that default is
+    // 1.00:1, fully invisible, and `toContain(TITLE)` passes identically either way. Assert the resolved
+    // span fg instead, which is the only mechanism that can see this defect class.
+    test("the loaded title paints the theme foreground on a light theme, not the white default", async () => {
+        setTheme("github-light");
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams(() => okAsync(threadRow())),
+        );
+        const setup = await testRender(sessionNode(7), { width: 44, height: 24 });
+        try {
+            await setup.renderOnce();
+            let titleFg: RGBA | undefined;
+            for (const line of setup.captureSpans().lines) {
+                for (const span of line.spans) {
+                    if (span.text.includes(TITLE)) titleFg = span.fg;
+                }
+            }
+            expect(titleFg).toBeDefined();
+            expect(titleFg && rgbToHex(titleFg)).not.toBe("#ffffff");
+            expect(titleFg && parseColor(themes["github-light"].colors.fg).equals(titleFg)).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
     });
 });
 

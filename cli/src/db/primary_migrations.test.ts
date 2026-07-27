@@ -11,15 +11,25 @@ function migratedMemoryDb(): Database {
     return db;
 }
 
+function tableNames(db: Database): string[] {
+    return db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
+        .all()
+        .map((r) => r.name);
+}
+
 describe("runMigrations", () => {
     test("creates the full schema", () => {
-        const db = migratedMemoryDb();
-        const tables = db
-            .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
-            .all()
-            .map((r) => r.name);
-        for (const table of ["anchors", "projects", "analyses", "analysis_inputs", "sessions", "messages", "parts", "_migrations"]) {
+        const tables = tableNames(migratedMemoryDb());
+        for (const table of ["anchors", "projects", "analyses", "analysis_inputs", "_migrations"]) {
             expect(tables).toContain(table);
+        }
+    });
+
+    test("a fresh database ends without the chat tables", () => {
+        const tables = tableNames(migratedMemoryDb());
+        for (const table of ["sessions", "messages", "parts"]) {
+            expect(tables).not.toContain(table);
         }
     });
 
@@ -34,19 +44,19 @@ describe("runMigrations", () => {
         expect(columns).toContain("provenance_prev_chain_hash");
     });
 
-    test("records the applied version in the _migrations ledger", () => {
+    test("records every applied version in the _migrations ledger", () => {
         const versions = migratedMemoryDb()
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1]);
+        expect(versions).toEqual([1, 2]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
         const db = migratedMemoryDb();
         runMigrations(db, migrations)._unsafeUnwrap(); // second run
         const count = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM _migrations").get();
-        expect(count?.n).toBe(1);
+        expect(count?.n).toBe(migrations.length);
     });
 
     test("enforces uniqueness on analysis_inputs", () => {
@@ -59,11 +69,17 @@ describe("runMigrations", () => {
         expect(indexes).toContain("uq_analysis_inputs_unanchored");
     });
 
-    test("sessions.analysis_id FK has ON DELETE CASCADE", () => {
-        const fks = migratedMemoryDb().query<{ table: string; on_delete: string }, []>("PRAGMA foreign_key_list(sessions)").all();
-        const analysisFk = fks.find((f) => f.table === "analyses");
-        expect(analysisFk).toBeDefined();
-        expect(analysisFk!.on_delete).toBe("CASCADE");
+    test("leaves exactly the surviving lookup indexes", () => {
+        const indexes = migratedMemoryDb()
+            .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='index'")
+            .all()
+            .map((r) => r.name);
+        for (const index of ["idx_analyses_project", "idx_analyses_anchor", "idx_analysis_inputs_analysis"]) {
+            expect(indexes).toContain(index);
+        }
+        for (const index of ["idx_sessions_analysis", "idx_messages_session", "idx_parts_message", "idx_parts_session"]) {
+            expect(indexes).not.toContain(index);
+        }
     });
 
     test("declares the analyses foreign keys to anchors and projects", () => {
@@ -73,5 +89,48 @@ describe("runMigrations", () => {
             .map((f) => f.table);
         expect(fkTables).toContain("anchors");
         expect(fkTables).toContain("projects");
+    });
+});
+
+describe("migration 2: dropping the chat tables", () => {
+    // The upgrade an installed user actually takes: a database left at the version-1 baseline, holding
+    // rows in every table, meets the appended migration. Foreign keys are ON as they are on the app
+    // connection (db() sets the pragma), so a drop order that left a dangling child reference would
+    // fail here rather than only in the field.
+    function v1DbWithChatRows(): Database {
+        const db = new Database(":memory:");
+        db.run("PRAGMA foreign_keys = ON");
+        runMigrations(
+            db,
+            migrations.filter((m) => m.version === 1),
+        )._unsafeUnwrap();
+
+        db.run("INSERT INTO anchors (id, created_at, updated_at, cached_path, marker_written, last_seen) VALUES ('anc', 1, 1, '/tmp/x', 1, 1)");
+        db.run("INSERT INTO projects (id, created_at, updated_at, name, description, tags) VALUES ('prj', 1, 1, 'Acme', NULL, '')");
+        db.run("INSERT INTO analyses (id, created_at, updated_at, name, slug, anchor_id, project_id) VALUES ('ana', 1, 1, 'A', 'a', 'anc', 'prj')");
+        db.run("INSERT INTO analysis_inputs (path, is_dir, analysis_id, anchor_id) VALUES ('in.csv', 0, 'ana', 'anc')");
+        db.run("INSERT INTO sessions (id, data, analysis_id) VALUES ('ses', '{}', 'ana')");
+        db.run("INSERT INTO messages (id, data, session_id) VALUES ('msg', '{}', 'ses')");
+        db.run("INSERT INTO parts (id, data, session_id, message_id) VALUES ('prt', '{}', 'ses', 'msg')");
+        return db;
+    }
+
+    test("an existing version-1 database loses the three chat tables", () => {
+        const db = v1DbWithChatRows();
+        runMigrations(db, migrations)._unsafeUnwrap();
+        const tables = tableNames(db);
+        for (const table of ["sessions", "messages", "parts"]) {
+            expect(tables).not.toContain(table);
+        }
+    });
+
+    test("the surviving tables keep their rows", () => {
+        const db = v1DbWithChatRows();
+        runMigrations(db, migrations)._unsafeUnwrap();
+        const tables = tableNames(db);
+        for (const table of ["anchors", "projects", "analyses", "analysis_inputs"]) {
+            expect(tables).toContain(table);
+            expect(db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n).toBe(1);
+        }
     });
 });

@@ -277,6 +277,21 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                             ),
                         okVoid<DbError>(),
                     ),
+                )
+                .andThen(() =>
+                    // Thread listings sort on `cortex_analysis_threads.updated_at`, and
+                    // the only other writer of it is the title update — so without this
+                    // touch "most recently updated" degrades to "most recently created
+                    // or renamed" and an actively-used older thread sorts last. Writing
+                    // it from here (a row the thread store otherwise owns) buys the
+                    // guarantee for every host with no wiring, and inside the turn's own
+                    // transaction there is no window where the rows exist but the thread
+                    // reads stale. Zero rows affected is a normal outcome: a thread with
+                    // no metadata row still gets its turn persisted, because losing a
+                    // turn over a missing breadcrumb is the worse failure.
+                    tryMutation("thread-history.appendTurn.touchThread", () =>
+                        client.query("UPDATE cortex_analysis_threads SET updated_at = NOW() WHERE thread_id = $1", [threadId]),
+                    ).map(() => undefined),
                 ),
         );
     }

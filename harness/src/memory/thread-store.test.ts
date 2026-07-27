@@ -135,6 +135,26 @@ describe("listThreads", () => {
         expect(page.threads.every((t) => t.analysisId === ANALYSIS_A)).toBe(true);
     });
 
+    it("reorders on an appended turn, listing the freshly-active thread first", async () => {
+        const history = createThreadHistory(pool);
+        (await store.createThread({ threadId: "a1", analysisId: ANALYSIS_A, title: "A1" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "a2", analysisId: ANALYSIS_A, title: "A2" }))._unsafeUnwrap();
+
+        // Creation order puts a2 on top; only activity on a1 can flip that.
+        const before = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
+        expect(before.threads.map((t) => t.threadId)).toEqual(["a2", "a1"]);
+
+        (
+            await history.appendTurn("a1", [
+                { role: "user", content: [{ type: "text", text: "hi" }] },
+                { role: "assistant", content: [{ type: "text", text: "hello" }] },
+            ])
+        )._unsafeUnwrap();
+
+        const after = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
+        expect(after.threads.map((t) => t.threadId)).toEqual(["a1", "a2"]);
+    });
+
     it("paginates with total and hasMore (2.3)", async () => {
         for (let i = 0; i < 5; i++) {
             (

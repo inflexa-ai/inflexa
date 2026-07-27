@@ -22,13 +22,14 @@ import {
 } from "../hooks/sidebar_live.ts";
 import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import { agentModels, bootState } from "../hooks/boot.ts";
+import { openThread } from "../hooks/thread.ts";
 import type { AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
-import { getSession, getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
+import { getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
-import type { Session } from "../../types/session.ts";
 import type { Anchor } from "../../types/anchor.ts";
+import type { Thread } from "@inflexa-ai/harness";
 
 /** Props for {@link Sidebar}. Only the live message count is passed; analysis/session/project come from the workspace store, which repaints the sidebar on an in-place swap. */
 export type SidebarProps = {
@@ -40,9 +41,10 @@ export type SidebarProps = {
     onOpenRuns?: () => void;
 };
 
-// Short session handle, per the wireframe ("S·2f9a").
-function shortId(id: string): string {
-    return `S${GLYPHS.middot}${id.replace(/-/g, "").slice(0, 4)}`;
+// Short session handle, per the wireframe ("S·2f9a"). Undefined while no thread is bound, so the
+// Section renders its label alone rather than a handle over an id that does not exist yet.
+function shortId(id: string | null): string | undefined {
+    return id === null ? undefined : `S${GLYPHS.middot}${id.replace(/-/g, "").slice(0, 4)}`;
 }
 
 /**
@@ -239,10 +241,10 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
  * The toggleable sidebar (full-height; spans the main row beside both the stream and the input).
  * Fixed width (`size.railWidth`), NOT mouse-resizable. Four sections in fixed order — SESSION,
  * ANALYSIS, DATA PROFILE, RUNS — following the pipeline: the analysis's inputs feed the DATA PROFILE,
- * and the profile feeds the RUNS. SESSION and ANALYSIS render live SQLite-backed data; DATA PROFILE and
- * RUNS render live harness-ledger data from the `sidebar_live` store (its snapshots degrade gracefully
- * before boot / on a read failure). Nothing here is mock. There is deliberately no CONTEXT/token-cost
- * section — no real accounting source exists to render.
+ * and the profile feeds the RUNS. ANALYSIS renders live SQLite-backed data; SESSION, DATA PROFILE and
+ * RUNS render live Postgres data from the `thread` / `sidebar_live` stores (their snapshots degrade
+ * gracefully before boot / on a read failure). Nothing here is mock. There is deliberately no
+ * CONTEXT/token-cost section — no real accounting source exists to render.
  * Reads the pure `getAnchor` (NOT `resolveAnchor`, which writes a sighting heartbeat), so
  * rendering the sidebar never touches disk — the no-litter rule for passive flows.
  */
@@ -253,12 +255,13 @@ export function Sidebar(props: SidebarProps) {
     // so both surfaces flip together and the working-directory path shows on exactly one of them.
     const dims = useTerminalDimensions();
     const isWide = (): boolean => dims().width >= size.breakpointWide;
-    const session = createMemo(() =>
-        getSession(ws.sessionId).match(
-            (s) => s,
-            () => null,
-        ),
-    );
+    // The bound thread's row, or null in every degraded kind — the SESSION section renders those as
+    // muted placeholders rather than a title it does not have. The store (`hooks/thread.ts`) owns the
+    // read; the rail only reads its snapshot, the same split as DATA PROFILE / RUNS.
+    const thread = createMemo((): Thread | null => {
+        const snap = openThread();
+        return snap.kind === "loaded" ? snap.thread : null;
+    });
     // anchor/inputCount null-guard the (currently unreachable) null analysis; the render also wraps
     // the analysis name in <Show when={ws.analysis}>. The linked project now lives in the workspace
     // store (resolved once per openSession swap), so the sidebar no longer derives it here.
@@ -337,13 +340,31 @@ export function Sidebar(props: SidebarProps) {
                 (see cli/CLAUDE.md Layout) has no chrome row to bleed into. */}
             <ScrollPane focusOnMount={false} flexGrow={1} minHeight={0} width="100%">
                 <Section label="SESSION" value={shortId(ws.sessionId)}>
-                    <Show when={session()} keyed>
-                        {(s: Session) => (
-                            <text fg={theme().fgMuted}>
-                                {Date.relativeAge(s.createdAt)} {GLYPHS.middot} {props.messageCount()} msgs
-                            </text>
-                        )}
-                    </Show>
+                    <Switch>
+                        <Match when={openThread().kind === "unresolved"}>
+                            <text fg={theme().fgMuted}>runtime not ready</text>
+                        </Match>
+                        <Match when={openThread().kind === "unavailable"}>
+                            <text fg={theme().fgMuted}>unavailable</text>
+                        </Match>
+                        {/* A bound id with no row: the identity was minted at open and the first turn
+                        creates the row, so there is no title or age to show yet. */}
+                        <Match when={openThread().kind === "absent"}>
+                            <text fg={theme().fgMuted}>new conversation</text>
+                        </Match>
+                        <Match when={thread()} keyed>
+                            {(t: Thread) => (
+                                <>
+                                    {/* The title is pg-owned and seeded from the first user message, so a
+                                    row can legitimately predate one; say so rather than render a blank line. */}
+                                    <text fg={theme().fg}>{t.title ?? "untitled"}</text>
+                                    <text fg={theme().fgMuted}>
+                                        {Date.relativeAge(t.createdAt.getTime())} {GLYPHS.middot} {props.messageCount()} msgs
+                                    </text>
+                                </>
+                            )}
+                        </Match>
+                    </Switch>
                 </Section>
 
                 <Section label="ANALYSIS" value={ws.analysis?.name}>

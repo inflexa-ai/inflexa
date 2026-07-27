@@ -92,12 +92,12 @@ describe("agent_policy — buildProgram instances do not share stamps", () => {
     test("the same-named leaf in two trees is a distinct, independently-stamped Command", () => {
         const a = buildProgram();
         const b = buildProgram();
-        const aSessions = a.commands.find((c) => c.name() === "sessions");
-        const bSessions = b.commands.find((c) => c.name() === "sessions");
-        if (aSessions === undefined || bSessions === undefined) throw new Error("expected a `sessions` command in each tree");
+        const aLs = a.commands.find((c) => c.name() === "ls");
+        const bLs = b.commands.find((c) => c.name() === "ls");
+        if (aLs === undefined || bLs === undefined) throw new Error("expected an `ls` command in each tree");
 
-        expect(aSessions).not.toBe(bSessions);
-        expect(getAgentPolicy(aSessions)).toEqual({ kind: "auto", safeFlags: [] });
-        expect(getAgentPolicy(bSessions)).toEqual({ kind: "auto", safeFlags: [] });
+        expect(aLs).not.toBe(bLs);
+        expect(getAgentPolicy(aLs)).toEqual({ kind: "auto", safeFlags: ["project"] });
+        expect(getAgentPolicy(bLs)).toEqual({ kind: "auto", safeFlags: ["project"] });
     });
 });

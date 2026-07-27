@@ -16,10 +16,11 @@ import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
 import { setTheme, theme } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
-import { loadPlan, queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
-import type { CortexRunRow } from "@inflexa-ai/harness";
+import { createThreadStore, loadPlan, queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
+import type { CortexRunRow, Thread } from "@inflexa-ai/harness";
 
 import { agentModels, bootState, harnessRuntime } from "./hooks/boot.ts";
+import { refreshOpenThread, resolveThreadId } from "./hooks/thread.ts";
 import { latestPlanCard, sessionOpenables, type SessionOpenable } from "./hooks/conversation.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
 import { resolveEntryPath } from "../modules/harness/artifact_open.ts";
@@ -52,10 +53,9 @@ import { resolveAnchor, resolvedPathOrCached } from "../modules/anchor/anchor.ts
 import { canonicalPath } from "../modules/anchor/marker.ts";
 import { loadAuth, describeAuthError } from "../modules/auth/auth.ts";
 import { decodeIdTokenClaims } from "../modules/auth/whoami.ts";
-import { createProject, createSession, deleteAnalysis, deleteProject, deleteSession, renameSession, updateAnalysisProject } from "../db/primary_mutation.ts";
-import { getSession, listSessionsByAnalysis, listProjects, listAnalysisInputs, countAnalysesByProject } from "../db/primary_query.ts";
+import { createProject, deleteAnalysis, deleteProject, updateAnalysisProject } from "../db/primary_mutation.ts";
+import { listProjects, listAnalysisInputs, countAnalysesByProject } from "../db/primary_query.ts";
 import type { Analysis, AnalysisInput } from "../types/analysis.ts";
-import type { Session } from "../types/session.ts";
 import type { Project } from "../types/project.ts";
 
 // The command registry: the SINGLE source of truth for the palette. Adding a command is one
@@ -122,25 +122,15 @@ async function workspaceBusyReason(analysisId: string): Promise<string | null> {
     );
 }
 
-// Open an analysis's chat in place: reuse its most-recent session or create one, then swap.
-function openAnalysis(ws: Workspace, a: Analysis): void {
-    const sessions = listSessionsByAnalysis(a.id).match(
-        (ss) => ss,
-        () => [],
-    );
-    sessions.sort((x, y) => y.updatedAt - x.updatedAt);
-    const existing = sessions[0];
-    const session =
-        existing ??
-        createSession({ title: `Chat — ${a.name}`, analysisId: a.id }).match(
-            (s) => s,
-            () => null,
-        );
-    if (!session) {
-        notify({ kind: "error", text: "Failed to open a session" });
-        return;
-    }
-    ws.openSession(session.id, workingDirFor(a), a);
+/**
+ * Open an analysis's chat in place: bind its most-recently-active thread (else a freshly minted id
+ * whose row the first turn creates) and swap the scope. Pre-`ready` the resolver hands back `null` —
+ * Postgres is the thread store's only source — and the scope is left unbound, which the boot-edge
+ * resolver (`hooks/thread.ts`) then fills in; binding a mint here instead would hide the analysis's
+ * real threads behind an empty chat for the rest of the session.
+ */
+async function openAnalysis(ws: Workspace, a: Analysis): Promise<void> {
+    ws.openSession(await resolveThreadId(a.id), workingDirFor(a), a);
 }
 
 /** Map a {@link VerifyResult} status to the appropriate notice severity. */
@@ -509,7 +499,7 @@ function NewAnalysisInputsDialog(props: { name: Str256 }): JSX.Element {
                 // exactly the files the user chose — `createAnalysis` enrolls nothing on its own.
                 createAnalysis({ cwd: ws.workingDir, name: props.name, inputPaths: paths }).match(
                     (a) => {
-                        openAnalysis(ws, a);
+                        void openAnalysis(ws, a);
                         notify({ kind: "info", text: `Created analysis "${a.name}"` });
                     },
                     (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
@@ -536,37 +526,63 @@ function SwitchAnalysisDialog(): JSX.Element {
             onCancel={() => ws.closeDialog()}
             onSelect={(a: Analysis) => {
                 ws.closeDialog();
-                openAnalysis(ws, a);
+                void openAnalysis(ws, a);
             }}
         />
     );
 }
 
-function SwitchSessionDialog(): JSX.Element {
-    const ws = useWorkspace();
-    const a = ws.analysis;
-    const sessions = a
-        ? listSessionsByAnalysis(a.id).match(
-              (ss) => ss,
-              () => [],
-          )
-        : [];
-    sessions.sort((x, y) => y.updatedAt - x.updatedAt);
-    const items = sessions.map((s) => ({ value: s, title: s.title, description: new Date(s.updatedAt).toLocaleString() }));
-    return (
+/**
+ * A thread's picker label — its pg-owned title, which is seeded from the first user message and so is
+ * absent on a row that predates one. Shared by the picker and the delete confirmation so both name the
+ * same conversation the same way.
+ */
+function threadLabel(thread: Thread): string {
+    return thread.title ?? "Untitled conversation";
+}
+
+/**
+ * Open the session picker over the analysis's live threads (most-recently-active first). Fetched
+ * BEFORE the dialog opens — the thread store is an async Postgres read, so the dialog cannot pull it
+ * from its own body — mirroring `openRunsPicker`. A read failure degrades to an empty picker rather
+ * than a crash.
+ *
+ * The pre-ready refusal speaks rather than no-ops: the palette hides this command until `ready`, but
+ * its leader chord dispatches by id and bypasses that predicate, so this path IS reachable while the
+ * runtime is still booting (the same shape as `analysis.reprofile`).
+ */
+async function openSwitchSession(ctx: Workspace): Promise<void> {
+    const runtime = harnessRuntime();
+    const analysis = ctx.analysis;
+    if (!analysis) return;
+    if (bootState().phase !== "ready" || !runtime) {
+        notify({ kind: "info", text: `Harness is still booting${GLYPHS.ellipsis}` });
+        return;
+    }
+    const threads = (await createThreadStore(runtime.pool).listThreads({ analysisId: analysis.id })).match(
+        (page) => page.threads,
+        () => {
+            notify({ kind: "warn", text: "Could not list this analysis's conversations." });
+            return [];
+        },
+    );
+    ctx.openDialog(() => (
         <SelectDialog
             title="Switch session"
             placeholder={`Search sessions${GLYPHS.ellipsis}`}
-            items={items}
-            emptyText="Only one session — send a message to start, or switch analysis first"
-            onCancel={() => ws.closeDialog()}
-            onSelect={(s: Session) => {
-                ws.closeDialog();
-                // `a` is non-null: this command is enabled only when an analysis is open.
-                ws.openSession(s.id, ws.workingDir, a!);
+            // Durable-record rule: a listed conversation is a referenced record, so its last-activity
+            // stamp is an absolute local time rather than a compact age.
+            items={threads.map((t) => ({ value: t, title: threadLabel(t), description: t.updatedAt.toLocaleString() }))}
+            // The open chat's own thread has no row until its first turn, so a fresh chat lists nothing
+            // — the empty state has to say what makes a conversation appear here.
+            emptyText="No other conversations — send a message to start one, or switch analysis first"
+            onCancel={() => ctx.closeDialog()}
+            onSelect={(t: Thread) => {
+                ctx.closeDialog();
+                ctx.openSession(t.threadId, ctx.workingDir, analysis);
             }}
         />
-    );
+    ));
 }
 
 function AnalysesListDialog(): JSX.Element {
@@ -708,6 +724,11 @@ function DeleteAnalysisFilesDialog(props: { analysis: Analysis; onDecided: (disp
  * handle); doing it first means such a failure changes nothing at all. The reverse order would
  * leave the row deleted and the tree still sitting at `analyses/<slug>`, where the next analysis
  * of the same name would inherit it — the precise outcome the disposal exists to prevent.
+ *
+ * Scope: the SQLite analysis row (its input refs cascade) and the workspace tree. The analysis's
+ * Postgres conversations and run ledger are deliberately left standing — reclaiming them needs a
+ * purge that spans both stores, which does not exist yet; a partial cleanup here would only make
+ * the orphans harder to find.
  */
 function deleteAnalysisWith(ctx: Workspace, a: Analysis, disposal: "archive" | "delete"): void {
     disposeWorkspace(a, disposal).match(
@@ -726,7 +747,7 @@ function deleteAnalysisWith(ctx: Workspace, a: Analysis, disposal: "archive" | "
                         () => [],
                     );
                     if (remaining.length > 0) {
-                        openAnalysis(ctx, remaining[0]!);
+                        void openAnalysis(ctx, remaining[0]!);
                     } else {
                         void ctx.quit();
                     }
@@ -935,26 +956,101 @@ function RenameAnalysisDialog(): JSX.Element {
     );
 }
 
-function RenameSessionDialog(): JSX.Element {
-    const ws = useWorkspace();
-    return (
+/**
+ * Open the session rename prompt, pre-filled with the thread's current pg title. The title is
+ * pg-owned, so the current value is an async read taken before the dialog opens (as
+ * {@link openSwitchSession} does); a row that has no title yet — one whose first turn has not seeded
+ * it, or that has no row at all — simply opens on an empty field.
+ */
+async function openRenameSession(ctx: Workspace): Promise<void> {
+    const runtime = harnessRuntime();
+    const threadId = ctx.sessionId;
+    // Reachable only through the palette, whose `enabled` already requires both — this restates the
+    // gate for the narrowing rather than handling a state the user can actually reach.
+    if (!runtime || threadId === null) return;
+    const store = createThreadStore(runtime.pool);
+    const current = (await store.getThread(threadId)).match(
+        (t) => t?.title ?? "",
+        () => "",
+    );
+    ctx.openDialog(() => (
         <PromptDialog
             title="Rename session"
             placeholder="New title"
-            onCancel={() => ws.closeDialog()}
+            value={current}
+            onCancel={() => ctx.closeDialog()}
             onSubmit={(raw) => {
-                ws.closeDialog();
-                if (!raw.trim()) {
+                ctx.closeDialog();
+                const title = raw.trim();
+                if (!title) {
                     notify({ kind: "warn", text: "A title is required." });
                     return;
                 }
-                renameSession(ws.sessionId, raw.trim()).match(
-                    () => notify({ kind: "info", text: `Session renamed to "${raw.trim()}"` }),
+                void store.updateTitle(threadId, title).match(
+                    (thread) => {
+                        if (thread === null) {
+                            // The row is created by the first turn, so a rename before then has nothing to
+                            // write to. Say that rather than reporting a success the user will not see.
+                            notify({ kind: "warn", text: "Send a message first — this conversation has no saved title yet." });
+                            return;
+                        }
+                        notify({ kind: "info", text: `Session renamed to "${title}"` });
+                        // The write changes the row without changing the bound id, so no reactive edge
+                        // would re-read it — poke the snapshot so the sidebar shows the new title.
+                        void refreshOpenThread(threadId);
+                    },
                     (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
                 );
             }}
         />
+    ));
+}
+
+/**
+ * Delete the open session: confirm by name, soft-delete the thread, then land the user on whatever
+ * this analysis has left (its next most-recent thread, else a freshly minted empty chat) so the chat
+ * is never left bound to a conversation that no longer lists.
+ *
+ * The removal is a TOMBSTONE — `deleteThread` sets `deleted_at`, so the row and its messages survive
+ * and the thread merely stops appearing anywhere. That is deliberate for now: the archive-vs-purge
+ * split is a separate piece of work, and until it lands a delete that reclaims nothing is strictly
+ * less destructive than one that does.
+ */
+async function deleteSessionFlow(ctx: Workspace): Promise<void> {
+    const runtime = harnessRuntime();
+    const analysis = ctx.analysis;
+    const threadId = ctx.sessionId;
+    // Reachable only through the palette, whose `enabled` already requires all three — this restates
+    // the gate for the narrowing rather than handling a state the user can actually reach.
+    if (!runtime || !analysis || threadId === null) return;
+    const store = createThreadStore(runtime.pool);
+    const name = (await store.getThread(threadId)).match(
+        (t) => (t === null ? null : threadLabel(t)),
+        () => null,
     );
+    if (name === null) {
+        // No row (or it could not be read): there is nothing to delete, and confirming against a name
+        // we do not have would ask the user to type a fiction.
+        notify({ kind: "info", text: "This conversation has nothing saved yet — there is nothing to delete." });
+        return;
+    }
+    ctx.openDialog(() => (
+        <ConfirmDeleteDialog
+            entityLabel="session"
+            entityName={name}
+            onConfirm={() => {
+                void store.deleteThread(threadId).match(
+                    () => {
+                        notify({ kind: "info", text: "Session deleted." });
+                        // Re-enter through the analysis-open path: it performs exactly the landing this
+                        // needs — bind the surviving most-recent thread, else a fresh mint.
+                        void openAnalysis(ctx, analysis);
+                    },
+                    (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                );
+            }}
+        />
+    ));
 }
 
 /** The single source of truth. Add a command = add an entry here. Ordered by category so the
@@ -1212,7 +1308,7 @@ export const commands: Command[] = [
     {
         id: "analysis.delete",
         title: "Delete analysis",
-        description: "Delete this analysis and its sessions; choose whether to keep its files",
+        description: "Delete this analysis and its input refs; choose whether to keep its files",
         category: "Analysis",
         enabled: (ctx) => ctx.analysis !== null,
         run: async (ctx) => {
@@ -1337,54 +1433,32 @@ export const commands: Command[] = [
             notify({ kind: noticeKindFor(result), text: verify.formatVerifyResult(result) });
         },
     },
+    // The three session commands are boot-gated: thread metadata lives only in Postgres, so before
+    // `ready` there is nothing to list, retitle, or remove — offering them then would promise a surface
+    // that cannot answer. Rename and delete additionally need a bound thread to act on.
     {
         id: "session.switch",
         title: "Switch session",
         description: "Switch to another session in this analysis",
         category: "Session",
-        enabled: (ctx) => ctx.analysis !== null,
-        run: (ctx) => ctx.openDialog(() => <SwitchSessionDialog />),
+        enabled: (ctx) => ctx.analysis !== null && bootState().phase === "ready",
+        run: (ctx) => openSwitchSession(ctx),
     },
     {
         id: "session.rename",
         title: "Rename session",
         description: "Change the current session's title",
         category: "Session",
-        run: (ctx) => ctx.openDialog(() => <RenameSessionDialog />),
+        enabled: (ctx) => ctx.sessionId !== null && bootState().phase === "ready",
+        run: (ctx) => openRenameSession(ctx),
     },
     {
         id: "session.delete",
         title: "Delete session",
-        description: "Permanently delete the current session and its messages",
+        description: "Remove the current session from this analysis's conversations",
         category: "Session",
-        enabled: (ctx) => ctx.analysis !== null,
-        run: (ctx) => {
-            const a = ctx.analysis;
-            if (!a) return;
-            const sessionTitle = getSession(ctx.sessionId).match(
-                (s) => s?.title ?? "this session",
-                () => "this session",
-            );
-            ctx.openDialog(() => (
-                <ConfirmDeleteDialog
-                    entityLabel="session"
-                    entityName={sessionTitle}
-                    onConfirm={() => {
-                        deleteSession(ctx.sessionId).match(
-                            (changed) => {
-                                if (changed === 0) {
-                                    notify({ kind: "warn", text: "Session not found." });
-                                    return;
-                                }
-                                notify({ kind: "info", text: "Session deleted." });
-                                openAnalysis(ctx, a);
-                            },
-                            (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
-                        );
-                    }}
-                />
-            ));
-        },
+        enabled: (ctx) => ctx.analysis !== null && ctx.sessionId !== null && bootState().phase === "ready",
+        run: (ctx) => deleteSessionFlow(ctx),
     },
     {
         id: "project.new",

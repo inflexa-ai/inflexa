@@ -14,7 +14,7 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("Usage: inflexa");
         expect(result.stdout).toContain("project");
-        expect(result.stdout).toContain("sessions");
+        expect(result.stdout).toContain("status");
         expect(result.stdout).toContain("refs");
         expect(result.stdout).toContain("reference data mounted read-only in sandboxes at /mnt/refs");
     });
@@ -108,10 +108,11 @@ describe("inflexa help & usage (e2e)", () => {
     });
 
     // Regression for the reverted `enablePositionalOptions()`: it made a root-style flag
-    // placed AFTER a subcommand (`inflexa sessions --project x`) hard-fail "unknown option",
+    // placed AFTER a subcommand (`inflexa project ls --project x`) hard-fail "unknown option",
     // breaking existing invocations. Without it, the shape parses again and runs the command.
-    test("`sessions --project x`-shape (root flag after a subcommand) parses again", () => {
-        const result = runCli(["sessions", "--project", "x"]);
+    // `project ls` declares no options of its own, so `--project` here can only be the ROOT flag.
+    test("`project ls --project x`-shape (root flag after a subcommand) parses again", () => {
+        const result = runCli(["project", "ls", "--project", "x"]);
         expect(result.exitCode).toBe(0);
         expect(result.stderr).not.toContain("unknown option");
     });
