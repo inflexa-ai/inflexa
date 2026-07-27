@@ -48,17 +48,6 @@ function renderEnvHelp(): string {
 }
 
 /**
- * Parse the `--embeddings` flag value. `undefined` (flag absent) → `undefined`
- * (no preselect — setup prompts interactively); a valid mode string → itself;
- * anything else → `null` (invalid, surfaced as a parse error before setup runs).
- */
-function parseEmbeddingMode(value: string | undefined): "local" | "api-key" | "off" | null | undefined {
-    if (value === undefined) return undefined;
-    if (value === "local" || value === "api-key" || value === "off") return value;
-    return null;
-}
-
-/**
  * Builds a fresh commander root — name/description/version, `exitOverride`, and
  * every command with its lazy-imported action — and returns it. A factory rather
  * than a module singleton so the whole tree can be constructed more than once: a
@@ -608,22 +597,11 @@ export function buildProgram(): Command {
             },
         ) => {
             const { setup } = await import("../modules/infra/setup.ts");
-            const { parseReferenceSelection } = await import("../modules/refs/commands.ts");
-            const embeddings = parseEmbeddingMode(options.embeddings);
-            if (embeddings === null) {
-                console.error("\n  `--embeddings` must be one of: local, api-key, off.\n");
-                process.exitCode = 1;
-                return;
-            }
             await setup({
-                connection: options.connection,
-                provider: options.provider,
                 auth: options.auth,
                 start: options.start,
                 force: options.force ?? false,
                 postgres: options.postgres,
-                embeddings,
-                refs: parseReferenceSelection(options.refs),
                 yes: options.yes,
                 validate: options.validate,
                 flags: {

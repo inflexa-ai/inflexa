@@ -27,7 +27,7 @@ import { createEmbeddingProvider, createNoopBillingResolver, type AgentSession }
 
 import { readConfig, writeConfig } from "../../lib/config.ts";
 import { promptSecret, promptText, select } from "../../lib/cli.ts";
-import { env } from "../../lib/env.ts";
+import { EMBEDDING_API_KEY_VAR, env, resolveEmbeddingApiKey } from "../../lib/env.ts";
 import { isCompiledBinary } from "../../lib/install_context.ts";
 import { ensureLlamaServer, materializedLlamaServer } from "./llama_runtime.ts";
 import { createLocalEmbeddingProvider, LOCAL_EMBEDDING_DIMENSIONS, stopLocalSidecar } from "./local-provider.ts";
@@ -60,9 +60,20 @@ declare const __INFLEXA_COMPILED__: boolean | undefined;
 
 // Module-level test seams (mirroring llama_runtime's __set…ForTest): a forced embedded path lets a
 // unit test exercise the embedded-copy branch without a real compiled binary; a forced pin drives the
-// whole acquire pipeline against a fixture url/hash. Both `null` in production.
+// whole acquire pipeline against a fixture url/hash; a forced secret reader drives the api-key branch
+// without mutating the process environment. All `null` in production.
 let embeddedModelOverride: string | null = null;
 let modelPinOverride: { readonly url: string; readonly sha256: string } | null = null;
+let embeddingApiKeyOverride: (() => string | undefined) | null = null;
+
+/**
+ * The api-key embedding secret, read through the sole `process.env` reader (lib/env.ts) at CALL time so
+ * setup sees the live shell. Routed through the seam above rather than read directly for the same reason
+ * `setup_answers.ts` injects it: it is the one value in this flow that is not a function of its inputs.
+ */
+function readEmbeddingApiKey(): string | undefined {
+    return (embeddingApiKeyOverride ?? resolveEmbeddingApiKey)();
+}
 
 /** The active model pin (url + sha256), honoring a test override; otherwise the vendored constants. */
 function modelPin(): { readonly url: string; readonly sha256: string } {
@@ -237,33 +248,76 @@ export async function verifyModel(modelPath: string, expectedDim?: number): Prom
 }
 
 /**
- * Interactive embedding setup, run as part of `inflexa setup`. Prompts the user to pick an embedding
- * backend via a clack `select` picker — the built-in bge-small model, a path to their OWN local GGUF,
- * a remote API-key endpoint, or off:
+ * The embedding questions this step can be handed answers for instead of asking. Structurally the
+ * `embedding` block of setup's `SetupAnswers` (modules/infra/setup_answers.ts) plus the run-level
+ * `--no-validate` switch, declared HERE rather than imported so the dependency arrow keeps pointing
+ * one way: the setup orchestrator consumes this module, and importing its answers schema back would
+ * make the two domains mutually dependent. `setup.test.ts` pins the two shapes together with a
+ * compile-time assignability check, the same way `setup_answers.ts` pins its auth answer against
+ * `lib/config.ts`'s persisted schema.
+ */
+export type EmbeddingSetupAnswers = {
+    /** The backend to configure. Replaces `preselected`, and unlike it an answered `off` is PERSISTED. */
+    readonly mode?: "local" | "api-key" | "off";
+    /** `api-key`: the endpoint, skipping its prompt. */
+    readonly baseURL?: string;
+    /** `api-key`: the embedding model id, skipping its prompt. */
+    readonly model?: string;
+    /** `local`: a path to the user's OWN GGUF, skipping the path prompt (selects the custom branch). */
+    readonly gguf?: string;
+    /** `false` (from `--no-validate`) skips the api-key endpoint's NETWORK probe. Defaults to `true`. */
+    readonly validate?: boolean;
+};
+
+/**
+ * Embedding setup, run as part of `inflexa setup`. Every question is either ANSWERED (from
+ * `--embeddings…` / the `--config` file, via `answers`) or asked with a clack prompt — the built-in
+ * bge-small model, a path to the user's OWN local GGUF, a remote API-key endpoint, or off:
  * - built-in → materialize the sidecar runtime + acquire the pinned GGUF (embedded asset in the compiled
  *   binary, download from source), verify it (asserting the 384-dim width), and record `mode = "local"`
  *   + `modelPath = env.embeddingModelPath`.
- * - your own GGUF → prompt for a path, verify it (measuring whatever width it emits), and record
- *   `mode = "local"` + that `modelPath` + the measured `dimensions` (so the index is sized to it).
- * - API key → prompt for the endpoint/key (the key input is MASKED — paste-friendly, never echoed) +
- *   model id, probe the endpoint with one real embed (measuring the emitted width), and record
- *   `mode = "api-key"` + the key + only the fields that differ from the provider defaults.
+ * - your own GGUF → take the path from `answers.gguf` or prompt for it, verify it (measuring whatever
+ *   width it emits), and record `mode = "local"` + that `modelPath` + the measured `dimensions`.
+ * - API key → take the endpoint/model from the answers or prompt for them, take the secret from
+ *   {@link EMBEDDING_API_KEY_VAR} or the MASKED prompt, probe the endpoint with one real embed
+ *   (measuring the emitted width), and record `mode = "api-key"` + the key + only the fields that
+ *   differ from the provider defaults.
  *
- * Non-interactive shells (no TTY, or `interactive === false`) skip the prompt entirely without hanging —
- * `mode` stays whatever it was. A preselected `mode` (from `--embeddings`) overrides the prompt and runs
- * the matching branch non-interactively; `--embeddings local` is the built-in model (a custom path needs
- * an interactive prompt for the path, so it has no flag form).
+ * Non-interactive shells (no TTY, or `interactive === false`) never prompt: an unanswered question
+ * resolves to what an empty submit at its prompt would have produced, and an unanswered MODE skips the
+ * step entirely without hanging — `mode` stays whatever it was.
+ *
+ * `preselected` is the pre-answers spelling of `answers.mode` and stays supported while the
+ * orchestrator migrates. The two are equivalent EXCEPT for `off`: an ANSWER declares desired state, so
+ * an answered `off` persists `mode = "off"` (disabling a previously configured backend), whereas a
+ * preselected `off` — like the interactive picker's "Off / skip" — leaves the configured mode alone.
+ * `answers.mode` wins when both are supplied; the value answers (`baseURL`/`model`/`gguf`/`validate`)
+ * apply whichever channel carried the mode, and equally to a mode the user picks at the prompt.
  */
-export async function runEmbeddingSetup(interactive: boolean, preselected?: "local" | "api-key" | "off"): Promise<Result<void, EmbeddingSetupError>> {
+export async function runEmbeddingSetup(
+    interactive: boolean,
+    preselected?: "local" | "api-key" | "off",
+    answers?: EmbeddingSetupAnswers,
+): Promise<Result<void, EmbeddingSetupError>> {
     const config = readConfig();
+    // The single "may this run ask a question?" fact. Both call sites pass `process.stdin.isTTY` as
+    // `interactive`, so this is exactly the guard the no-preselection flow already applied — extending it
+    // to the answered branches is what lets a batch run fall back to defaults instead of dying inside a
+    // prompt that cannot render.
+    const canPrompt = interactive && process.stdin.isTTY === true;
+    const validate = answers?.validate ?? true;
 
-    // A preselected mode from `--embeddings` short-circuits the prompt.
-    if (preselected !== undefined) {
-        if (preselected === "off") return ok(undefined);
-        // `api-key` still prompts for its endpoint/key (a secret cannot ride a flag), so it needs a TTY
-        // even when preselected — promptText/promptSecret fail fast with a clear message otherwise.
-        if (preselected === "api-key") return runApiKeySetup(config);
-        // preselected === "local" → the built-in model (custom paths are interactive-only).
+    const mode = answers?.mode ?? preselected;
+    if (mode !== undefined) {
+        if (mode === "off") {
+            // Only an ANSWERED off is a declaration of desired state; a preselected one keeps the
+            // leave-unchanged behavior its call site was written against (see this function's contract).
+            return answers?.mode === "off" ? writeEmbeddingOff(config) : ok(undefined);
+        }
+        if (mode === "api-key") return runApiKeySetup(config, { baseURL: answers?.baseURL, model: answers?.model, validate, canPrompt });
+        // `local` + an answered GGUF is the custom branch (the answer replaces the path prompt); `local`
+        // alone is the built-in model.
+        if (answers?.gguf !== undefined) return runCustomLocalSetup(config, answers.gguf);
         return runBuiltinLocalSetup(config);
     }
 
@@ -272,18 +326,43 @@ export async function runEmbeddingSetup(interactive: boolean, preselected?: "loc
     // separately gates the hot path on a local model being present.
     if (config.embedding.mode !== "off") return ok(undefined);
 
-    // Non-interactive: skip the prompt, leave mode unchanged (no hang).
-    if (!interactive || !process.stdin.isTTY) return ok(undefined);
+    // Non-interactive with no mode answer: skip the question, leave mode unchanged (no hang).
+    if (!canPrompt) return ok(undefined);
 
     const choice = await promptEmbeddingMode();
     if (choice === "off") {
         log.info("Embeddings skipped (mode left unchanged).");
         return ok(undefined);
     }
-    if (choice === "api-key") return runApiKeySetup(config);
-    if (choice === "custom") return runCustomLocalSetup(config);
+    // A value answer skips its prompt even when the MODE came from the picker, so a partially-filled
+    // `--config` file composes with the questions it left open (the answers layer's precedence rule).
+    if (choice === "api-key") return runApiKeySetup(config, { baseURL: answers?.baseURL, model: answers?.model, validate, canPrompt });
+    if (choice === "custom") return runCustomLocalSetup(config, answers?.gguf);
     // choice === "builtin"
     return runBuiltinLocalSetup(config);
+}
+
+/**
+ * Persist an ANSWERED `off`: the answers layer's values declare the client's desired state, so naming
+ * `off` must disable a backend that is already configured rather than mean "no opinion" (which is what
+ * an ABSENT answer means, and what the picker's "Off / skip" choice keeps meaning).
+ *
+ * Nothing on disk is touched — the GGUF and the materialized runtime stay where they are — and the rest
+ * of the `embedding` block is preserved rather than cleared: switching off is not "forget how I was
+ * configured", the recorded `modelPath`/`apiKey` are what make re-enabling one word, and clearing would
+ * silently destroy a key the user pasted. `resolveEmbedder` already reports the resulting
+ * explicit-off-beside-a-backend-field state precisely, so the leftovers cannot read as a mystery.
+ */
+function writeEmbeddingOff(config: ReturnType<typeof readConfig>): Result<void, EmbeddingSetupError> {
+    return writeConfig({ ...config, embedding: { ...config.embedding, mode: "off" } })
+        .mapErr((e): EmbeddingSetupError => ({
+            type: "verify_failed",
+            message: `Embeddings could not be switched off — config could not be written: ${e.type}`,
+        }))
+        .map(() => {
+            log.success("Embeddings disabled — `embedding.mode` is now `off`. Model files on disk are untouched.");
+            return undefined;
+        });
 }
 
 /**
@@ -362,21 +441,29 @@ async function runBuiltinLocalSetup(config: ReturnType<typeof readConfig>): Prom
 }
 
 /**
- * The "your own GGUF" branch: prompt for a local model path, verify it emits a usable width through the
- * sidecar, and record that path + width. No acquisition — the file is the user's, so nothing is copied or
- * downloaded; only verification runs. The measured width is persisted as `embedding.dimensions` (unless it
- * equals the built-in 384, where the provider default already applies), so the harness sizes each analysis
- * index to exactly what this model emits.
+ * The "your own GGUF" branch: take the local model path from the answer (`--embeddings-gguf` / the file's
+ * `embedding.gguf`) or prompt for it, verify it emits a usable width through the sidecar, and record that
+ * path + width. No acquisition — the file is the user's, so nothing is copied or downloaded; only
+ * verification runs, and that verification is OFFLINE, so `--no-validate` never skips it. The measured
+ * width is persisted as `embedding.dimensions` (unless it equals the built-in 384, where the provider
+ * default already applies), so the harness sizes each analysis index to exactly what this model emits.
+ *
+ * An answered path takes exactly the same route as a prompted one — exists-check, runtime materialization,
+ * measured-width verification, config write — so the batch outcome cannot drift from the interactive one.
  */
-async function runCustomLocalSetup(config: ReturnType<typeof readConfig>): Promise<Result<void, EmbeddingSetupError>> {
+async function runCustomLocalSetup(config: ReturnType<typeof readConfig>, answeredPath: string | undefined): Promise<Result<void, EmbeddingSetupError>> {
     warnOnModeSwitch(config.embedding.mode, "local");
 
-    // TTY-only prompt (this branch is reached only interactively). promptText hard-exits on cancel, exactly
-    // like the mode picker above, so a cancelled path prompt aborts setup rather than half-configuring.
-    const entered = await promptText("Path to your GGUF embedding model", {
-        placeholder: "/path/to/model.gguf",
-        validate: (v) => (v.trim() === "" ? "Enter a path to a .gguf file." : undefined),
-    });
+    // No answer means a prompt, and the prompt is reached only when this run may ask (an unanswered path
+    // in a non-interactive run resolves to the built-in branch upstream, never here). promptText hard-exits
+    // on cancel, exactly like the mode picker above, so a cancelled path prompt aborts setup rather than
+    // half-configuring.
+    const entered =
+        answeredPath ??
+        (await promptText("Path to your GGUF embedding model", {
+            placeholder: "/path/to/model.gguf",
+            validate: (v) => (v.trim() === "" ? "Enter a path to a .gguf file." : undefined),
+        }));
     const modelPath = entered.trim();
     if (!(await Bun.file(modelPath).exists())) {
         return err({ type: "acquire_failed", message: `No file at ${modelPath}. Provide the path to a local GGUF embedding model.` });
@@ -440,48 +527,100 @@ async function probeApiEmbedding(candidate: { baseURL: string; apiKey: string; m
     return ok(outcome.dim);
 }
 
+/** What the api-key branch was told, as opposed to what it must still ask for. */
+type ApiKeyInputs = {
+    /** The answered endpoint, or `undefined` to prompt / fall back to the pre-fill. */
+    readonly baseURL: string | undefined;
+    /** The answered model id, or `undefined` to prompt / fall back to the pre-fill. */
+    readonly model: string | undefined;
+    /** `false` (`--no-validate`) skips the endpoint probe — the one NETWORK validation in this module. */
+    readonly validate: boolean;
+    /** Whether an unanswered question may be prompted for at all (see {@link runEmbeddingSetup}). */
+    readonly canPrompt: boolean;
+};
+
 /**
- * The api-key branch: collect endpoint + key + model interactively, probe with one real embed, and
- * record the choice. The key prompt is MASKED (paste-friendly, never echoed into scrollback) — it is
- * still persisted in the clear to config.json, which the log line says out loud so the trade-off is the
- * user's. Only fields that differ from the provider defaults are written (minimal-config, mirroring
- * {@link runCustomLocalSetup}'s dimensions handling): the measured width replaces any guessed
- * `dimensions`, so a non-default model sizes the per-analysis index to what it actually emits.
+ * The api-key branch: resolve endpoint + key + model from the answers, the environment, or the prompts,
+ * probe with one real embed, and record the choice. The key never rides an answer (setup's secrets rule):
+ * it comes from {@link EMBEDDING_API_KEY_VAR} when set, else the MASKED prompt (paste-friendly, never
+ * echoed into scrollback). It is still persisted in the clear to config.json, which the log line says out
+ * loud so the trade-off is the user's. Only fields that differ from the provider defaults are written
+ * (minimal-config, mirroring {@link runCustomLocalSetup}'s dimensions handling): the measured width
+ * replaces any guessed `dimensions`, so a non-default model sizes the per-analysis index to what it
+ * actually emits.
+ *
+ * A run that cannot prompt and was given no answer resolves each field to its pre-fill — precisely the
+ * value an empty submit at that prompt would have produced — so a batch `--embeddings api-key` provisions
+ * the provider defaults rather than dying inside a prompt no terminal can render. The secret has no such
+ * fallback: it is the one input nothing can invent, so its absence is an error naming the variable.
  */
-async function runApiKeySetup(config: ReturnType<typeof readConfig>): Promise<Result<void, EmbeddingSetupError>> {
+async function runApiKeySetup(config: ReturnType<typeof readConfig>, inputs: ApiKeyInputs): Promise<Result<void, EmbeddingSetupError>> {
     warnOnModeSwitch(config.embedding.mode, "api-key");
     log.message("Setting up remote embeddings (an OpenAI-compatible /embeddings endpoint). The key is stored in config.json — keep that file private.");
 
     const urlPrefill = config.embedding.baseURL ?? DEFAULT_API_BASE_URL;
-    const baseURL = (
-        await promptText("Embeddings endpoint URL — the /v1-terminated root", {
-            defaultValue: urlPrefill,
-            placeholder: urlPrefill,
-            validate: (v) => {
-                const s = v.trim();
-                if (s === "") return undefined; // empty submit keeps the pre-filled default
-                return URL.canParse(s) ? undefined : "Must be a valid URL, including the scheme (e.g. https://…).";
-            },
-        })
-    ).trim();
+    const baseURL =
+        inputs.baseURL ??
+        (inputs.canPrompt
+            ? (
+                  await promptText("Embeddings endpoint URL — the /v1-terminated root", {
+                      defaultValue: urlPrefill,
+                      placeholder: urlPrefill,
+                      validate: (v) => {
+                          const s = v.trim();
+                          if (s === "") return undefined; // empty submit keeps the pre-filled default
+                          return URL.canParse(s) ? undefined : "Must be a valid URL, including the scheme (e.g. https://…).";
+                      },
+                  })
+              ).trim()
+            : "");
     const confirmedURL = baseURL === "" ? urlPrefill : baseURL;
 
-    const apiKey = (
-        await promptSecret("API key (input is hidden — paste it)", {
-            validate: (v) => (v.trim() === "" ? "Enter the API key." : undefined),
-        })
-    ).trim();
+    // The environment is the secret's ONLY answer channel, so it is consulted first in every run — a
+    // machine that exports the variable is not asked again. Reaching a prompt-less run without it is a
+    // provisioning error the answers resolver normally catches upfront; this branch must still fail
+    // honestly (and name the variable) if it is reached some other way, never persist a keyless api-key
+    // config the first chat would choke on.
+    const envKey = readEmbeddingApiKey();
+    if (envKey === undefined && !inputs.canPrompt) {
+        return err({
+            type: "not_configured",
+            message: `api-key embeddings need the ${EMBEDDING_API_KEY_VAR} environment variable — a secret never rides a flag or the answers file, and this run cannot prompt for one. Export it and re-run \`inflexa setup --embeddings api-key\`.`,
+        });
+    }
+    const apiKey =
+        envKey ??
+        (
+            await promptSecret("API key (input is hidden — paste it)", {
+                validate: (v) => (v.trim() === "" ? "Enter the API key." : undefined),
+            })
+        ).trim();
 
     const modelPrefill = config.embedding.model ?? DEFAULT_API_EMBEDDING_MODEL;
-    const model =
-        (
-            await promptText("Embedding model id", {
-                defaultValue: modelPrefill,
-                placeholder: modelPrefill,
-            })
-        ).trim() || modelPrefill;
+    const enteredModel =
+        inputs.model ??
+        (inputs.canPrompt
+            ? (
+                  await promptText("Embedding model id", {
+                      defaultValue: modelPrefill,
+                      placeholder: modelPrefill,
+                  })
+              ).trim()
+            : "");
+    const model = enteredModel === "" ? modelPrefill : enteredModel;
 
-    const probe = await probeApiEmbedding({ baseURL: confirmedURL, apiKey, model });
+    // `--no-validate` is the deliberate escape for air-gapped staging and gateways that cannot pass a
+    // standards-shaped probe. Skipping the probe forfeits the MEASUREMENT, not just the check: the index
+    // width can then only be assumed from what is already configured (or the provider default), which is
+    // exactly the guess the probe exists to replace — so the run says so out loud rather than presenting an
+    // assumption as a verified fact.
+    const assumedDimensions = config.embedding.dimensions ?? DEFAULT_API_EMBEDDING_DIMENSIONS;
+    if (!inputs.validate) {
+        log.warn(
+            `Skipping the endpoint probe (--no-validate): ${confirmedURL} is recorded UNVALIDATED, and the index width is ASSUMED to be ${assumedDimensions} rather than measured.`,
+        );
+    }
+    const probe = inputs.validate ? await probeApiEmbedding({ baseURL: confirmedURL, apiKey, model }) : ok<number, EmbeddingSetupError>(assumedDimensions);
     if (probe.isErr()) return err(probe.error);
     const dimensions = probe.value;
 
@@ -495,7 +634,11 @@ async function runApiKeySetup(config: ReturnType<typeof readConfig>): Promise<Re
     return writeConfig({ ...config, embedding })
         .mapErr((e): EmbeddingSetupError => ({ type: "verify_failed", message: `The endpoint probe passed but config could not be written: ${e.type}` }))
         .map(() => {
-            log.success(`Remote embeddings configured (${model}, ${dimensions}-dim). \`embedding.mode\` is now \`api-key\`.`);
+            log.success(
+                inputs.validate
+                    ? `Remote embeddings configured (${model}, ${dimensions}-dim). \`embedding.mode\` is now \`api-key\`.`
+                    : `Remote embeddings configured UNVALIDATED (${model}, ${dimensions}-dim assumed — the endpoint was not probed). \`embedding.mode\` is now \`api-key\`.`,
+            );
             return undefined;
         });
 }
@@ -588,4 +731,13 @@ export function __setEmbeddedModelForTest(path: string | null): void {
  */
 export function __setModelPinForTest(pin: { readonly url: string; readonly sha256: string } | null): void {
     modelPinOverride = pin;
+}
+
+/**
+ * TEST ONLY. Force the api-key embedding secret so a unit test can drive the api-key branch's
+ * environment channel without mutating the process environment, or `null` to restore the real
+ * {@link resolveEmbeddingApiKey} read. Production code never calls it.
+ */
+export function __setEmbeddingApiKeyForTest(read: (() => string | undefined) | null): void {
+    embeddingApiKeyOverride = read;
 }

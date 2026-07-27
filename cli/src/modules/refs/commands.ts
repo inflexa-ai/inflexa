@@ -94,19 +94,6 @@ export type DeclinedReferenceDownload = {
     readonly declined: true;
 };
 
-/** Parse a comma-separated id list into stable, non-empty ids. */
-export function parseReferenceIds(value: string | undefined): readonly string[] | undefined {
-    if (value === undefined) return undefined;
-    return [
-        ...new Set(
-            value
-                .split(",")
-                .map((id) => id.trim())
-                .filter(Boolean),
-        ),
-    ];
-}
-
 /**
  * The words `setup --refs` accepts in place of explicit ids. Scoped to setup's own question on
  * purpose: `inflexa refs download` takes datasets and nothing else, so a set-valued word sharing its
@@ -127,23 +114,6 @@ export type ReferenceSelection =
           /** Catalog ids, as answered. */
           readonly ids: readonly string[];
       };
-
-/**
- * Parse setup's `--refs` value into the selection it names. `undefined` means the question was never
- * answered, which is a different outcome from an empty answer (install nothing), so absence is
- * carried through rather than collapsed into an empty list.
- *
- * A preset is recognized only as the whole answer, case-insensitively: `--refs recommended,demo`
- * stays an id list, so a preset word buried in one fails as the unknown id it is instead of quietly
- * widening the transfer to a set nobody named.
- */
-export function parseReferenceSelection(value: string | undefined): ReferenceSelection | undefined {
-    const ids = parseReferenceIds(value);
-    if (ids === undefined) return undefined;
-    const only = ids.length === 1 ? ids[0]?.toLowerCase() : undefined;
-    const preset = REFERENCE_PRESETS.find((word) => word === only);
-    return preset === undefined ? { ids } : { preset };
-}
 
 /** A file count phrased for the terminal — the catalog pins no sizes, so the upstream determines
  * the bytes at download time and the honest thing to state ahead of time is the number of files. */

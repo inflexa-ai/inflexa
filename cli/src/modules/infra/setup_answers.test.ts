@@ -10,9 +10,9 @@ import {
     answersFromFlags,
     describeSetupAnswersError,
     isBatchRun,
-    isRefsPreset,
     loadSetupAnswers,
     readAnswersFile,
+    refsPresetOf,
     resolveSetupAnswers,
     type SetupAnswers,
     type SetupAnswersContext,
@@ -111,6 +111,13 @@ runtime: docker
     test("an id list is accepted in place of a preset", () => {
         const path = writeAnswers("refs: [CollecTRI, msigdb-hallmark]\n");
         expect(readAnswersFile(path)._unsafeUnwrap().refs).toEqual(["CollecTRI", "msigdb-hallmark"]);
+    });
+
+    test("a preset word is taken in any casing, and canonicalized — the file and the flag read one vocabulary", () => {
+        expect(readAnswersFile(writeAnswers("refs: ALL\n"))._unsafeUnwrap().refs).toBe("all");
+        expect(readAnswersFile(writeAnswers("refs: Recommended\n"))._unsafeUnwrap().refs).toBe("recommended");
+        // Ids are the catalog's identifiers: the same fold applied to them would rewrite what the file names.
+        expect(readAnswersFile(writeAnswers("refs: [CollecTRI]\n"))._unsafeUnwrap().refs).toEqual(["CollecTRI"]);
     });
 
     test("a missing file fails naming the path", () => {
@@ -302,6 +309,17 @@ describe("answersFromFlags — the flag front-end", () => {
         expect(answersFromFlags({ refs: "demo, other, demo" })._unsafeUnwrap().refs).toEqual(["demo", "other"]);
     });
 
+    test("a preset word is command vocabulary, so --refs takes it in any casing", () => {
+        expect(answersFromFlags({ refs: "ALL" })._unsafeUnwrap().refs).toBe("all");
+        expect(answersFromFlags({ refs: "Recommended" })._unsafeUnwrap().refs).toBe("recommended");
+        expect(answersFromFlags({ refs: " All " })._unsafeUnwrap().refs).toBe("all");
+    });
+
+    test("a dataset id keeps its casing — an id is the catalog's identifier, not this CLI's vocabulary", () => {
+        expect(answersFromFlags({ refs: "CollecTRI" })._unsafeUnwrap().refs).toEqual(["CollecTRI"]);
+        expect(answersFromFlags({ refs: "CollecTRI, MSigDB-Hallmark" })._unsafeUnwrap().refs).toEqual(["CollecTRI", "MSigDB-Hallmark"]);
+    });
+
     test("--config names the answers file and is never itself an answer", () => {
         expect(answersFromFlags({ config: "./fleet.yml" })._unsafeUnwrap()).toEqual(answersFromFlags({})._unsafeUnwrap());
     });
@@ -487,9 +505,15 @@ describe("resolveSetupAnswers — no answer is ever silently ignored", () => {
         expect(text).toContain("reserved preset word");
     });
 
+    test("the reservation reads casing the same way the preset check does, and reports the author's spelling", () => {
+        const text = problemsOf(resolveSetupAnswers({ refs: ["ALL", "demo"] }, undefined, batch())._unsafeUnwrapErr()).join("\n");
+        expect(text).toContain("ALL");
+        expect(text).toContain("reserved preset word");
+    });
+
     test("a plain id list passes through — catalog membership is the refs module's question", () => {
         expect(resolveSetupAnswers({ refs: ["demo", "other"] }, undefined, batch())._unsafeUnwrap().answers.refs).toEqual(["demo", "other"]);
-        expect(isRefsPreset("demo")).toBe(false);
+        expect(refsPresetOf("demo")).toBeUndefined();
     });
 });
 

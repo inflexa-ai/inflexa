@@ -19,8 +19,6 @@ import {
     offeredReferenceCatalog,
     onDemandReferenceNote,
     onDemandReferencePanel,
-    parseReferenceIds,
-    parseReferenceSelection,
     plainProgressSink,
     referenceNoteFloats,
     referencePickerBulkSelection,
@@ -142,23 +140,6 @@ afterEach(() => {
 });
 
 describe("reference command policy", () => {
-    test("parses stable selections", () => {
-        expect(parseReferenceIds("demo, other, demo")).toEqual(["demo", "other"]);
-    });
-
-    test("a setup answer is either a preset word or an id list, never both", () => {
-        expect(parseReferenceSelection("demo, other, demo")).toEqual({ ids: ["demo", "other"] });
-        expect(parseReferenceSelection("recommended")).toEqual({ preset: "recommended" });
-        // The word is the whole answer, whatever its casing or surrounding space.
-        expect(parseReferenceSelection(" ALL ")).toEqual({ preset: "all" });
-        // A preset buried in a list stays an id, so it fails as the unknown id it is instead of
-        // quietly widening a named list into a set nobody asked for.
-        expect(parseReferenceSelection("recommended,demo")).toEqual({ ids: ["recommended", "demo"] });
-        // Unanswered stays distinct from an empty answer: one offers a choice, the other installs nothing.
-        expect(parseReferenceSelection(undefined)).toBeUndefined();
-        expect(parseReferenceSelection("")).toEqual({ ids: [] });
-    });
-
     test("headless downloads require ids and explicit consent before mutation", async () => {
         assertTestSandbox(env.refsDir);
         const noIds = await downloadReferences({ ids: [], interactive: false, source: singleFileSource });

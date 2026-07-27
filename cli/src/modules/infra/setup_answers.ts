@@ -36,10 +36,18 @@ export const REFS_PRESETS = ["recommended", "all"] as const;
 /** A reference-data preset word — `recommended` (the catalog's recommended datasets) or `all` (everything offered). */
 export type RefsPreset = (typeof REFS_PRESETS)[number];
 
-/** True when `value` is one of the reserved {@link REFS_PRESETS} words rather than a catalog dataset id. */
-export function isRefsPreset(value: string): value is RefsPreset {
-    // Widen the readonly literal tuple to readonly string[] only so `.includes` accepts an arbitrary string — no runtime effect.
-    return (REFS_PRESETS as readonly string[]).includes(value);
+/**
+ * The preset `value` names, in its canonical spelling — or `undefined` when it is a catalog dataset id.
+ *
+ * Matched case-INSENSITIVELY, and this is the only place in the refs answer that folds case. A preset is
+ * command VOCABULARY: a word this CLI defines, so `--refs ALL` is the same instruction as `--refs all`, and
+ * answering a correctly-spelled word with "unknown dataset id" is a dead end the author cannot debug. A
+ * dataset id is an IDENTIFIER the catalog owns and is compared exactly — folding one would silently rewrite
+ * what the author named into an id that may or may not exist.
+ */
+export function refsPresetOf(value: string): RefsPreset | undefined {
+    const word = value.toLowerCase();
+    return REFS_PRESETS.find((preset) => preset === word);
 }
 
 /**
@@ -146,9 +154,15 @@ export const setupAnswersSchema = z.strictObject({
         .optional(),
     /** A preset word or an explicit dataset-id list. The value IS the download consent; absence downloads nothing. */
     refs: z
-        .union([z.enum(REFS_PRESETS), z.array(z.string().min(1)).min(1, { error: "must list at least one dataset id" })], {
-            error: "must be a preset (`recommended` or `all`) or a non-empty list of dataset ids",
-        })
+        .preprocess(
+            // A scalar `refs:` can only ever be a preset attempt — ids are spelled as a list — so canonicalizing
+            // a recognized preset word is the whole normalization (`refsPresetOf` owns why case folds here and
+            // nowhere else). Anything unrecognized passes through untouched and fails the union below.
+            (value) => (typeof value === "string" ? (refsPresetOf(value) ?? value) : value),
+            z.union([z.enum(REFS_PRESETS), z.array(z.string().min(1)).min(1, { error: "must list at least one dataset id" })], {
+                error: "must be a preset (`recommended` or `all`) or a non-empty list of dataset ids",
+            }),
+        )
         .optional(),
     /** The sandbox image variant to pull. The answer IS the multi-GB consent. */
     sandbox: z.enum(SANDBOX_VARIANTS).optional(),
@@ -394,9 +408,9 @@ function wholeNumber(raw: string | undefined, key: AnswerKey, problems: string[]
  * only to a lone token, so `--refs recommended` is the preset while `--refs a,b` is an id list (a list
  * that CONTAINS a preset word is rejected in validation — the words are reserved).
  *
- * Deliberately not modules/refs/commands.ts's `parseReferenceIds`: this is a superset (preset-or-ids), and
- * importing that module would pull the reference-data catalog into a layer that must not know it — id
- * validation is the refs module's job, at the point where the catalog is already loaded.
+ * Ids are never touched beyond trimming and deduplication: whether one exists is the refs module's question,
+ * asked where the catalog is already loaded. Pulling that catalog in here would make this layer know the
+ * reference data it exists to stay ignorant of.
  */
 function refsFromFlag(raw: string | undefined): RefsPreset | string[] | undefined {
     if (raw === undefined) return undefined;
@@ -409,8 +423,8 @@ function refsFromFlag(raw: string | undefined): RefsPreset | string[] | undefine
         ),
     ];
     const [only] = tokens;
-    if (tokens.length === 1 && only !== undefined && isRefsPreset(only)) return only;
-    return tokens;
+    const preset = tokens.length === 1 && only !== undefined ? refsPresetOf(only) : undefined;
+    return preset ?? tokens;
 }
 
 /**
@@ -717,7 +731,10 @@ export function resolveSetupAnswers(
     // `--refs recommended,foo` is ambiguous rather than additive. Whether the remaining ids exist is the
     // refs module's question — it owns the catalog; this layer never loads it.
     if (Array.isArray(answers.refs)) {
-        const reserved = answers.refs.filter(isRefsPreset);
+        // Reserved by the same case-insensitive reading that makes `--refs ALL` the preset, and reported in
+        // the author's own spelling: a word recognized as vocabulary in one position cannot be an ordinary
+        // id in the other, or the rule has a case-shaped hole that surfaces as an unknown-dataset error.
+        const reserved = answers.refs.filter((id) => refsPresetOf(id) !== undefined);
         if (reserved.length > 0) {
             problems.push(
                 `${answerSpelling("refs")} — ${reserved.join(", ")} ${reserved.length === 1 ? "is a reserved preset word" : "are reserved preset words"}; pass one alone (\`--refs recommended\`) rather than inside a list of dataset ids.`,
