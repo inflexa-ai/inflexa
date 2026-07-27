@@ -467,9 +467,12 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             // Run the child in the analysis's own folder, so a command that resolves its target from the
             // working directory lands on the chat's analysis rather than wherever this process happens to
             // have been started — the two differ after `inflexa resume`, an `--analysis` launch, or a
-            // mid-session swap. The folder comes from the trusted session scope, never the model argv, so
-            // chat wording cannot retarget another analysis. Unlocatable is not a failure: the child then
-            // inherits this process's directory.
+            // mid-session swap. The directory comes from the trusted session scope, never the model argv,
+            // so no wording the model picks can move a cwd-resolved command off the chat's analysis. That
+            // is a property of the cwd alone, not containment: an argv carrying `--analysis` still
+            // retargets, and the approval prompt above — which shows the exact argv — is the boundary
+            // there, as it is for every other approval-gated command. Unlocatable is not a failure: the
+            // child then inherits this process's directory.
             const scope = ctx.session.scope;
             const cwd = scope.kind === "analysis" ? resolveAnalysisFolder(scope.analysisId) : undefined;
             const r = await runSubprocess(cmd, cwd, ctx.signal);

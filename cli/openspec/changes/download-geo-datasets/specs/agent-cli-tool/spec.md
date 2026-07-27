@@ -7,9 +7,13 @@ the subprocess with its working directory set to the folder that analysis lives
 in, so a command that resolves its target from the working directory operates on
 the chat's analysis rather than on whatever directory the host process happens to
 have been started in — the two differ after a resume, an explicit-reference
-launch, or a mid-session analysis swap. The folder SHALL be derived from the
-tool's session scope, never from the model-supplied argv, so the agent cannot
-retarget another analysis by wording. When the session is not analysis-scoped, or
+launch, or a mid-session analysis swap. That working directory SHALL be derived
+from the tool's session scope, never from the model-supplied argv, so no wording
+the model chooses can move a cwd-resolved command off the chat's analysis. The
+guarantee covers the working directory only: a command whose argv names an
+analysis explicitly still resolves to that one, bounded by the approval prompt
+that shows the full argv — the same boundary every other approval-gated command
+has. When the session is not analysis-scoped, or
 the folder cannot be located, the child SHALL inherit the host process's working
 directory: an unlocatable folder is routine desync between the database and the
 filesystem, never a reason to refuse a command that would otherwise run.
@@ -20,7 +24,7 @@ filesystem, never a reason to refuse a command that would otherwise run.
 - **WHEN** `run_inflexa` spawns an `inflexa` command
 - **THEN** the child's working directory is the folder that analysis lives in
 
-#### Scenario: The folder comes from the session, not the argv
+#### Scenario: The working directory comes from the session, not the argv
 
 - **GIVEN** an analysis-scoped session and an argv naming a different analysis
 - **WHEN** `run_inflexa` spawns the command

@@ -3,6 +3,7 @@ import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
+import PQueue from "p-queue";
 
 import { declaredContentLength, downloadToFile, type DownloadError, type FetchLike } from "../../lib/download.ts";
 
@@ -50,6 +51,40 @@ const GEO_RETRY_BASE_MS = 500;
 /** Pause between consecutive GEO requests, so a multi-file series does not read as a burst. */
 const GEO_REQUEST_SPACING_MS = 150;
 
+/**
+ * How many size probes may be open at once.
+ *
+ * Concurrency IS the rate limit for the sweep — four sockets, fewer than a browser opens against one host,
+ * and fewer than the reference installer already asks of this same host. It is applied here and NOT to the
+ * two neighbouring loops, because only here is a shed request harmless: a probe that loses is an artifact of
+ * unknown size, which the cap and the readout already handle. A shed *listing* would instead read as an empty
+ * directory (see {@link listDirectory}) and a shed *transfer* aborts the Series, so both stay serial.
+ */
+const GEO_SIZE_PROBE_CONCURRENCY = 4;
+
+/**
+ * Wall-clock budget for a whole size sweep, shared by every probe in it.
+ *
+ * A per-request timeout bounds one attempt but not the step: a Series of a hundred small files, each probe
+ * free to retry a shed 403 four times, would hold the command silent for minutes before a byte moved — and
+ * this command runs as a subprocess bounded by how long it stays QUIET. One deadline caps the step regardless
+ * of how many artifacts it covers, which is what makes a metadata phase structurally incapable of causing that
+ * kill; whatever has not answered when it fires is simply unsized.
+ */
+const GEO_SIZE_PROBE_BUDGET_MS = 15_000;
+
+/**
+ * The statuses NCBI uses to shed load.
+ *
+ * 403 is in the set because NCBI answers it both for a directory with no index and for a request it is
+ * throttling (see {@link fetchGeo}). Shared with the artifact transfer so a shed GET is retried on the same
+ * terms as a shed listing — a transfer that took the first answer would discard every artifact already
+ * staged for the Series.
+ */
+function isSheddingStatus(status: number): boolean {
+    return status === 403 || status === 429 || status >= 500;
+}
+
 /** A malformed or non-Series accession — the input is echoed back so the caller can report it. */
 export type GeoAccessionError = { readonly type: "invalid_accession"; readonly input: string };
 
@@ -74,6 +109,8 @@ export type GeoFetchOptions = {
     readonly retryBaseMs?: number;
     /** Pause between consecutive requests; defaults to {@link GEO_REQUEST_SPACING_MS}. */
     readonly spacingMs?: number;
+    /** Budget for a whole size sweep; defaults to {@link GEO_SIZE_PROBE_BUDGET_MS}. */
+    readonly budgetMs?: number;
 };
 
 /** The Series' declared transfer cost exceeds {@link GEO_SERIES_MAX_BYTES}; nothing was fetched. */
@@ -214,8 +251,11 @@ export function parseAutoindex(html: string, dirUrl: string): string[] {
 async function fetchGeo(url: string, options: GeoFetchOptions, init: RequestInit = {}): Promise<Result<Response, GeoResolveError>> {
     const doFetch = options.fetch ?? fetch;
     const base = options.retryBaseMs ?? GEO_RETRY_BASE_MS;
-    let lastFailure = "";
+    let lastFailure = `${url} was abandoned before it answered`;
     for (let attempt = 0; attempt < GEO_RETRY_ATTEMPTS; attempt += 1) {
+        // A caller's deadline outranks the retry schedule: once it has fired, every further attempt fails
+        // instantly, so retrying would spend the backoff for nothing and let a sweep outlive its budget.
+        if (init.signal?.aborted === true) break;
         if (attempt > 0 && base > 0) await Promise.sleep(base * 2 ** (attempt - 1));
         let response: Response;
         try {
@@ -224,8 +264,7 @@ async function fetchGeo(url: string, options: GeoFetchOptions, init: RequestInit
             lastFailure = `Could not reach ${url}: ${cause instanceof Error ? cause.message : String(cause)}`;
             continue;
         }
-        const shedding = response.status === 403 || response.status === 429 || response.status >= 500;
-        if (!shedding || attempt === GEO_RETRY_ATTEMPTS - 1) return ok(response);
+        if (!isSheddingStatus(response.status) || attempt === GEO_RETRY_ATTEMPTS - 1) return ok(response);
         lastFailure = `${url} answered HTTP ${response.status} ${response.statusText}`;
     }
     return err({ type: "unreachable", message: `${lastFailure} after ${GEO_RETRY_ATTEMPTS} attempts.` });
@@ -259,6 +298,11 @@ async function listDirectory(dirUrl: string, options: GeoFetchOptions): Promise<
  * so enumeration — not a guessed filename — is what finds them all), and the author-deposited supplementary
  * files. Raw SRA reads are excluded by construction: they live in SRA, never under a Series' FTP tree. A
  * series that resolves but exposes no files in any of the three directories is a `no_processed_files` outcome.
+ *
+ * The three listings stay serial. Issuing them together would save one spacing interval and risk the worst
+ * failure in this module: {@link listDirectory} reads a settled 403 as "this directory holds nothing", so a
+ * shed listing does not fail the command — it silently subtracts a directory from the Series. Landing on
+ * `suppl/` that way yields an exit-zero download of a Series missing its supplementary files.
  */
 export async function resolveGeoArtifacts(accession: string, options: GeoFetchOptions = {}): Promise<Result<GeoArtifact[], GeoResolveError>> {
     const urls = geoSeriesUrls(accession);
@@ -282,26 +326,42 @@ export type GeoSeriesSize = { readonly declaredBytes: number; readonly sized: nu
  * Returns a plain value rather than a `Result`: a probe that fails, times out, or answers without a
  * usable `Content-Length` means one thing to every caller — that artifact's size is unknown — which is
  * a state the cap and the readout already handle. Letting a metadata probe fail a download that would
- * otherwise succeed would trade the work for the commentary on it. Probes run sequentially and spaced,
- * because a burst of HEADs is exactly what NCBI sheds.
+ * otherwise succeed would trade the work for the commentary on it.
+ *
+ * Probes run behind a small queue under one deadline covering the whole sweep, rather than serially: this
+ * is the phase between "the user pressed enter" and the first byte, and probed one at a time a Series of a
+ * hundred small files is minutes of silence in a command whose agent-side bound IS silence. Bounding the
+ * step is the load-bearing half, not the concurrency — anything unanswered when the deadline fires is
+ * unsized, which costs an estimate, never a file. See {@link GEO_SIZE_PROBE_CONCURRENCY} for why the two
+ * neighbouring loops stay serial regardless.
  */
 export async function measureGeoArtifacts(artifacts: readonly GeoArtifact[], options: GeoFetchOptions = {}): Promise<GeoSeriesSize> {
-    const spacing = options.spacingMs ?? GEO_REQUEST_SPACING_MS;
+    if (artifacts.length === 0) return { declaredBytes: 0, sized: 0, unsized: 0 };
+    const queue = new PQueue({ concurrency: GEO_SIZE_PROBE_CONCURRENCY });
+    // Started once, here, so the deadline covers the queue's whole drain rather than restarting per probe —
+    // which is what makes the budget a bound on the step instead of on one request.
+    const deadline = AbortSignal.timeout(options.budgetMs ?? GEO_SIZE_PROBE_BUDGET_MS);
+
+    const declared = await Promise.all(
+        artifacts.map((artifact) =>
+            queue.add(async (): Promise<number | undefined> => {
+                // Checked on entry as well as inside `fetchGeo`: a probe still queued when the budget fires
+                // gives up here, so a fired deadline drains the backlog at once instead of one fetch at a time.
+                if (deadline.aborted) return undefined;
+                const probe = await fetchGeo(artifact.url, options, { method: "HEAD", signal: deadline });
+                return probe.isOk() && probe.value.ok ? declaredContentLength(probe.value) : undefined;
+            }),
+        ),
+    );
+
     let declaredBytes = 0;
     let sized = 0;
-    let unsized = 0;
-    for (const artifact of artifacts) {
-        if (sized + unsized > 0 && spacing > 0) await Promise.sleep(spacing);
-        const probe = await fetchGeo(artifact.url, options, { method: "HEAD" });
-        const size = probe.isOk() && probe.value.ok ? declaredContentLength(probe.value) : undefined;
-        if (size === undefined) {
-            unsized += 1;
-            continue;
-        }
+    for (const size of declared) {
+        if (size === undefined) continue;
         declaredBytes += size;
         sized += 1;
     }
-    return { declaredBytes, sized, unsized };
+    return { declaredBytes, sized, unsized: artifacts.length - sized };
 }
 
 /** Why downloading a Series failed: resolving its artifact set, its declared size, or transferring one of them. */
@@ -380,6 +440,12 @@ export async function downloadGeoSeries(
             let lastReportAt = Date.now();
             const downloaded = await downloadToFile(artifact.url, from, {
                 fetch: options.fetch,
+                // The transfer is the one GEO request not routed through `fetchGeo`, so its schedule is
+                // stated here instead: a single shed GET would otherwise abort the set and discard every
+                // artifact already staged for it. Transfers stay SERIAL despite that — see
+                // `GEO_SIZE_PROBE_CONCURRENCY` — because this is the path with the least room to absorb a
+                // shed response, and parallelism would multiply exposure to exactly the status it sheds with.
+                retry: { attempts: GEO_RETRY_ATTEMPTS, baseMs: options.retryBaseMs ?? GEO_RETRY_BASE_MS, shouldRetry: isSheddingStatus },
                 onProgress: (event) => {
                     if (event.type === "started") {
                         declaredBytes = event.declaredBytes;

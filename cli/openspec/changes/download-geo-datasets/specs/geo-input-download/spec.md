@@ -92,7 +92,15 @@ transfer is distinguishable from a stalled one by an observer that sees only its
 
 Because the upstream sheds load by refusing requests rather than by failing them, the
 command SHALL retry a refused or transiently failing request with backoff before
-treating its status as the settled answer.
+treating its status as the settled answer. This applies to a transfer as much as to a
+listing: a shed transfer that were taken at face value would discard every artifact
+already staged for the Series.
+
+Obtaining the size estimate SHALL be bounded in wall-clock time as a whole, independent
+of how many artifacts it covers, and an artifact left unmeasured when that bound elapses
+SHALL be treated as one of unknown size rather than as a failure. The estimate exists to
+inform the cap and the readout, so it must never become the reason a download does not
+happen — including by holding the command silent long enough to be mistaken for hung.
 
 #### Scenario: A redirect to a non-HTTPS URL is refused
 
@@ -129,6 +137,18 @@ treating its status as the settled answer.
 - **GIVEN** an upstream that refuses a request and then serves it on a later attempt
 - **WHEN** the command lists or fetches
 - **THEN** it retries with backoff and proceeds with the served response
+
+#### Scenario: A shed transfer does not discard the artifacts already staged
+
+- **GIVEN** a Series whose second artifact is refused once and served on a later attempt
+- **WHEN** the command transfers the set
+- **THEN** the whole set lands, including the artifact that transferred before the refusal
+
+#### Scenario: A size sweep that keeps being refused gives up on its bound
+
+- **GIVEN** an upstream that refuses every size probe for a Series of many artifacts
+- **WHEN** the command measures it
+- **THEN** the sweep ends at its bound, the artifacts are treated as unsized, and the transfer proceeds
 
 ### Requirement: An invalid, unknown, or empty Series is a reported failure, not a crash
 
