@@ -447,21 +447,25 @@ export function buildProgram(): Command {
         await runPrune();
     });
 
-    // GEO datasets → analysis inputs. `add` downloads a Series host-side and enrolls it as inputs; it
-    // writes (network + input rows), so it is approval-gated. It never boots a runtime and never stages —
-    // staging/profiling is driven later by the runtime owner (run_inflexa's post-action reconcile).
+    // GEO datasets → the analysis's folder. `add` downloads a Series host-side and stops there; it writes
+    // files, so it is approval-gated. It records no input rows, emits no provenance, and boots no runtime,
+    // so it never contends for the analysis lock — enrolment stays the user's separate, explicit step
+    // through the ordinary add-inputs path (`manage_inputs` in chat, `inputs add` at the terminal).
     const geo = cli.command("geo").description("Work with NCBI GEO gene-expression datasets");
     registerAction(
         geo
             .command("add")
-            .description("Download a GEO Series and add it to an analysis as input data")
+            .description("Download a GEO Series into the analysis's folder")
             .argument("<gse>", "GEO Series accession to download (e.g. GSE12345)")
+            // No `--project`: a project scopes to a SET of analyses, and this command needs exactly one
+            // folder. `resolveContext` answers a project ref with a picker, never a single analysis, so
+            // the flag could only ever have failed — `--analysis` is the way to name a target.
             .option("--analysis <id|name>", "Operate on a specific analysis")
-            .option("--project <name>", "Scope to a project"),
+            .option("--max-size <size>", "Override the per-Series download ceiling (e.g. 500MB, 64GB)"),
         { kind: "approval" },
-        async (gse: string, options: { analysis?: string; project?: string }) => {
+        async (gse: string, options: { analysis?: string; maxSize?: string }) => {
             const { runGeoAdd } = await import("../modules/geo/add.ts");
-            await runGeoAdd(gse, { analysis: options.analysis, project: options.project });
+            await runGeoAdd(gse, { analysis: options.analysis }, options.maxSize);
         },
     );
 
