@@ -5,6 +5,7 @@ import { testRender } from "@opentui/solid";
 
 import "../extensions/index.ts"; // installs Response.prototype.jsonWith, which validateModelSelection uses
 import { renderFrame } from "../test_support/tui.ts";
+import { GLYPHS } from "../lib/design_system.ts";
 import { useKeymapRoot } from "./keymap.ts";
 import { DialogOverlay, DialogShowcase, dialogClear, dialogIsOpen, dialogPush } from "./components/dialog/dialog_host.tsx";
 import { commands, ModelPickerDialog, modelCommitDecision, modelPickerItems, runModelCommit } from "./commands.tsx";
@@ -79,6 +80,12 @@ describe("model picker rows", () => {
         expect(items.map((i) => i.value)).toEqual(["claude-opus-4-8", "claude-sonnet-4-5", "__manual__"]);
         expect(items.filter((i) => i.pinned).map((i) => i.value)).toEqual(["__manual__"]);
         expect(items.find((i) => i.hint === "current")?.value).toBe("claude-sonnet-4-5");
+    });
+
+    // A described row costs the cursor its visibility here — see modelPickerItems. Pinned as data because the
+    // symptom (a row scrolled off-screen under its own description) only appears at one dialog height.
+    test("no row carries a description", () => {
+        expect(modelPickerItems(["claude-opus-4-8"], "claude-opus-4-8").some((i) => i.description !== undefined)).toBe(false);
     });
 
     test("an empty listing still offers the escape hatch", () => {
@@ -159,6 +166,30 @@ describe("ModelPickerDialog — filtering to an unlisted id (rendered)", () => {
             expect(dialogIsOpen()).toBe(false);
             expect(cancelled).toBe(true);
             expect(committed).toEqual([]);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    // A listing longer than the dialog's fixed height puts the escape hatch below the fold, where the ONLY
+    // gesture that reaches it in one stroke is `up` wrapping from the first row. The row must then actually
+    // be on screen: a cursor the list scrolled to and then lost is worse than one that never moved, since
+    // enter now commits a row the user cannot see.
+    test("up from the first row wraps to the escape hatch and scrolls it into view", async () => {
+        const many = Array.from({ length: 13 }, (_, i) => `claude-model-${String(i).padStart(2, "0")}`);
+        const setup = await testRender(() => <Harness />, { width: 100, height: 32 });
+        const settle = makeSettle(setup);
+        try {
+            await settle();
+            dialogPush(() => (
+                <ModelPickerDialog agent="conversation" models={many} current={many[0]!} validate={validateNoop} onCommit={() => {}} onCancel={() => {}} />
+            ));
+            await settle();
+            expect(setup.captureCharFrame()).toContain(`${GLYPHS.chevronRight} ${many[0]}`);
+
+            setup.mockInput.pressArrow("up");
+            await settle();
+            expect(setup.captureCharFrame()).toContain(`${GLYPHS.chevronRight} Enter a model id manually`);
         } finally {
             setup.renderer.destroy();
         }

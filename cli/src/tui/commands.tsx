@@ -245,16 +245,19 @@ const MANUAL_MODEL_SENTINEL = "__manual__";
  * The manual row is `pinned` because the filter query here is a MODEL ID: the moment the user types the very
  * id they opened this row to enter, fuzzy ranking would drop the row (its label shares no subsequence with
  * `grok-4`) and leave an empty list — hiding the escape hatch at precisely the keystroke that asks for it.
+ *
+ * NO row here carries a `description`, and the manual row least of all. The detail line renders for the CURSOR
+ * row only, so in a list where just one row is described, landing on that row grows the dialog's fixed height
+ * budget and shrinks the scroll viewport — after the scroll that brought the row into view has already run
+ * against the taller layout. The row the cursor just reached is pushed back out of sight, leaving its own
+ * description on screen describing a row nobody can see. Wrapping across a `list-primitives` capability is the
+ * only thing that could make a described row safe here; until then the explanation lives on the prompt this
+ * row opens, which has room for it and no cursor to lose.
  */
 export function modelPickerItems(models: readonly string[], current: string): SelectItem<string>[] {
     return [
         ...models.map((id) => ({ value: id, title: id, hint: id === current ? "current" : undefined })),
-        {
-            value: MANUAL_MODEL_SENTINEL,
-            title: `Enter a model id manually${GLYPHS.ellipsis}`,
-            description: "Type an id this connection does not list — it is checked against your account before it applies.",
-            pinned: true,
-        },
+        { value: MANUAL_MODEL_SENTINEL, title: `Enter a model id manually${GLYPHS.ellipsis}`, pinned: true },
     ];
 }
 
