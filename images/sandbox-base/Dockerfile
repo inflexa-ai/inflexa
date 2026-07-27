@@ -40,6 +40,10 @@ RUN gcc -shared -fPIC -O2 -pthread -fstack-protector-strong -Wformat -Wformat-se
 
 FROM ${BASE_IMAGE}
 
+# A failed producer in a pipeline must fail the layer, not be hidden by a
+# successful shell/checksum/filter command on the right-hand side.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # OCI metadata: link the published package to its source repo (so GHCR files it
 # under the repo and it inherits repo access) and give it a specific description.
 LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inflexa"
@@ -114,6 +118,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # =============================================================================
 
 ENV UV_VERSION=0.7.12
+ENV RUFF_VERSION=0.16.0
 # TODO(supply-chain): `| sh` runs Astral's installer before anything can verify it.
 # UV_VERSION pins which uv is installed, but the install.sh itself is fetched
 # unpinned; hardening means downloading the versioned uv tarball and checking it
@@ -121,7 +126,7 @@ ENV UV_VERSION=0.7.12
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
     && cp /root/.local/bin/uv /usr/local/bin/uv \
     && cp /root/.local/bin/uvx /usr/local/bin/uvx \
-    && uv pip install --system --break-system-packages --no-cache ruff
+    && uv pip install --system --break-system-packages --no-cache "ruff==${RUFF_VERSION}"
 
 # =============================================================================
 # Tailwind CSS standalone CLI
@@ -242,7 +247,7 @@ RUN echo "/mnt/libs/current/python/site-packages" > /usr/lib/python3/dist-packag
 # reads $CELLTYPIST_FOLDER) can have one exported per-command, by the agent that
 # just learned the real path.
 
-RUN useradd -m -u 1000 -s /bin/bash sandbox \
+RUN useradd -l -m -u 1000 -s /bin/bash sandbox \
     && mkdir -p /workspace && chown -R sandbox:sandbox /workspace
 
 # Declared explicitly rather than left to the runtime's passwd lookup, which

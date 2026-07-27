@@ -134,6 +134,8 @@ ARG INFLEXA_LIB_ROOT
 ARG TARGETARCH
 ARG R_NCPUS
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 RUN CRAN_PKGS=$(python3 -c "\
 import yaml; \
 m = yaml.safe_load(open('/tmp/manifest.yaml')); \
@@ -148,6 +150,7 @@ print('\n'.join(m.get('r',{}).get('cran',[])))" 2>/dev/null) \
          && grep -E '^(Setting up|E:|Err:|dpkg:)' /tmp/cran-apt.log || true \
          && cp -a /usr/lib/R/site-library/* ${INFLEXA_LIB_ROOT}/r/cran/ 2>/dev/null || true \
          && cp -a /usr/local/lib/R/site-library/* ${INFLEXA_LIB_ROOT}/r/cran/ 2>/dev/null || true; \
+         rm -rf /var/lib/apt/lists/*; \
        else \
          echo "Installing CRAN packages via the base image's P3M snapshot (binary) on $TARGETARCH..." \
          && R -e "\
@@ -173,6 +176,8 @@ print('\n'.join(m.get('r',{}).get('cran',[])))" 2>/dev/null) \
 FROM cran AS bioconductor
 ARG INFLEXA_LIB_ROOT
 ARG R_NCPUS
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Stream install output live through an allow-based filter that drops only
 # gcc/boost compile noise (RBGL's boost-template warnings alone blow past GHA's
@@ -253,6 +258,8 @@ print('\n'.join(m.get('r',{}).get('bioconductor',[])))" 2>/dev/null) \
 # stage runnable locally without a token (with the anonymous limit caveat).
 FROM bioconductor AS github
 ARG INFLEXA_LIB_ROOT
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN --mount=type=secret,id=github_token,required=false \
     GH_PKGS=$(python3 -c "\

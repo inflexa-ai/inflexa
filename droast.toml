@@ -1,0 +1,21 @@
+# All sandbox Dockerfiles are built with the repository root as their context,
+# so the root .dockerignore is the effective ignore file.
+[[overrides]]
+paths = [
+  "images/sandbox-base/Dockerfile",
+  "images/sandbox-python/Dockerfile",
+  "images/sandbox-python-r/Dockerfile",
+]
+skip = ["DF033"]
+
+# wget is intentionally installed as an agent-facing runtime utility. Droast
+# mistakes the apt package name for a second downloader invocation.
+[[overrides]]
+paths = ["images/sandbox-base/Dockerfile"]
+skip = ["DF058"]
+
+# These append to PATH inherited from the parent stage. Docker expands the old
+# value before applying the ENV assignment; droast treats that as self-reference.
+[[overrides]]
+paths = ["images/sandbox-python/Dockerfile"]
+skip = ["DF062"]

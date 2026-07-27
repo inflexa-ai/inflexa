@@ -40,6 +40,9 @@ ARG TARGETARCH
 FROM ${BASE_IMAGE} AS toolchain
 ARG INFLEXA_LIB_ROOT
 
+# Make failures on the left of installer pipelines fail the layer.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # Build toolchain + dev headers (Python C extensions, some conda-built wheels).
 # The apt build-dep set + retry config is shared with sandbox-python-r's R
 # toolchain stage; see the script header for the apt-retry rationale.
@@ -59,7 +62,8 @@ RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
     && cp /root/.local/bin/uv /usr/local/bin/uv
 
 # pyyaml for reading the manifest (use uv, not pip — pip's apt postinst fails under QEMU)
-RUN uv pip install --system --break-system-packages --no-cache pyyaml
+ARG PYYAML_VERSION=6.0.3
+RUN uv pip install --system --break-system-packages --no-cache "pyyaml==${PYYAML_VERSION}"
 
 COPY images/lib-store-manifest.yaml /tmp/manifest.yaml
 
@@ -240,6 +244,9 @@ FROM toolchain AS conda-builder
 ARG INFLEXA_LIB_ROOT
 ARG TARGETARCH
 
+# Re-declare the shell for this stage so pipeline failure semantics are explicit.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # micromamba (deterministic binary from the official image).
 COPY --from=mambaorg/micromamba:2.5.0 /bin/micromamba /usr/local/bin/micromamba
 
@@ -301,6 +308,9 @@ RUN chmod -R a+rX ${INFLEXA_LIB_ROOT}
 # =============================================================================
 FROM toolchain AS node-builder
 ARG INFLEXA_LIB_ROOT
+
+# `npm install | tail` must preserve npm's failure status.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # The node package set is the manifest's flat `node:` list — parsed the same way
 # the conda stage parses `system_tools`.
