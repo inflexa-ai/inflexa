@@ -14,7 +14,7 @@
 
 ## 3. Command registration
 
-- [x] 3.1 Register the `approval` command in `src/cli/index.ts` via `registerAction(...)` with full arg/option descriptions; resolve the target folder via `resolveContext` (ambient-aware); `dieOn` at the boundary.
+- [x] 3.1 Register the `approval` command in `src/cli/index.ts` via `registerAction(...)` with full arg/option descriptions; resolve the target folder via `resolveContext`; `dieOn` at the boundary.
 - [x] 3.2 Add the grantKey row (`"approval"`) to both `EXPECTED_DEV_OFF` and `EXPECTED_DEV_ON` in `agent_policy_tree.test.ts`; run it.
 - [x] 3.3 `bun run docs:gen` accepts every description.
 
@@ -34,12 +34,11 @@
 
 - [x] 5.1 `--analysis` was silently swallowed on every subcommand that declares it: the root program declares the same option names (`index.ts:93`), so commander binds the value to the ROOT and the subcommand's action receives `{}` — the flag reached no handler, on six commands, since `864d25a`. `registerAction` now hands every handler `optsWithGlobals()`, fixing all of them at one choke point. NOT `enablePositionalOptions()`: that was tried and reverted before, because it turns a root-style flag placed after a subcommand (`inflexa sessions --project x`) into a hard "unknown option" — pinned by a regression test, which is what caught the second attempt. Both halves of the trade-off are now pinned in `cli.test.ts`.
 - [x] 5.2 `--max-size <size>` overrides the per-Series ceiling (`500MB`, `64GB`, or a plain byte count; binary units, so a size copied out of the command's own output round-trips). The over-cap message names the flag and the size that would allow it.
-- [x] 5.3 The `run_inflexa` subprocess bound is now QUIET time, not wall-clock: `idleTimeoutMs` (120 s, rearmed on every chunk either stream produces) plus a 30-minute absolute backstop. A flat deadline cannot tell a working command from a wedged one, so any value was wrong for someone — 2 minutes killed a legitimate multi-gigabyte download, and a value generous enough to spare it would have let a hung command hold the turn just as long. `geo add` feeds it a `file_progress` heartbeat every 5 s during a transfer, which doubles as the readout a long download needed anyway.
+- [x] 5.3 The `run_inflexa` subprocess bound is now QUIET time, not wall-clock: `idleTimeoutMs` (120 s, rearmed on every chunk either stream produces) plus a 30-minute absolute backstop. A flat deadline cannot tell a working command from a wedged one, so any value was wrong for someone — 2 minutes killed a legitimate multi-gigabyte download, and a value generous enough to spare it would have let a hung command hold the turn just as long. `geo download` feeds it a `file_progress` heartbeat every 5 s during a transfer, which doubles as the readout a long download needed anyway.
 - [x] 5.4 The harness `search_geo_datasets` description no longer claims fetching is impossible. It still forbids planning an in-sandbox download (the sandbox genuinely has no egress) but defers the question of whether the data can be obtained at all to the agent's actual tool set — it names no host command, since the harness is host-agnostic and `skills`/prompt content must not encode one host's inventory.
-- [x] 5.5 `--project` is gone from `geo add`: a project scopes to a SET of analyses and `resolveContext` answers a project ref with a picker, never a single analysis, so the flag could only ever have failed. `--analysis` names a target.
+- [x] 5.5 `--project` is gone from `geo download`: a project scopes to a SET of analyses and `resolveContext` answers a project ref with a picker, never a single analysis, so the flag could only ever have failed. `--analysis` names a target.
 - [x] 5.6 An unresolvable `--analysis <ref>` now reports that no analysis matches the ref (with the known analyses), instead of telling a user who just passed `--analysis` to pass `--analysis`.
 
 ## 6. Known gaps (not addressed)
 
-- [x] 6.1 Closed by task 1.2 — `refs/store.ts` no longer carries its own transfer primitive, so `lib/download.ts` has two production callers and earns its place as a shared file.
 - [ ] 6.2 A cluster of `spawnInflexa` process-bounds tests fails only in a full-suite run — spawned children yield no captured output under 124-file parallel load, so every assertion on child output fails together. Pre-existing (identical set with this change stashed) and each file passes in isolation, but it now also masks the new idle-bound rearm test.

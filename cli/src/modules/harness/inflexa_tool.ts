@@ -469,7 +469,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             // have been started — the two differ after `inflexa resume`, an `--analysis` launch, or a
             // mid-session swap. The folder comes from the trusted session scope, never the model argv, so
             // chat wording cannot retarget another analysis. Unlocatable is not a failure: the child then
-            // inherits this process's directory, exactly as it did before.
+            // inherits this process's directory.
             const scope = ctx.session.scope;
             const cwd = scope.kind === "analysis" ? resolveAnalysisFolder(scope.analysisId) : undefined;
             const r = await runSubprocess(cmd, cwd, ctx.signal);

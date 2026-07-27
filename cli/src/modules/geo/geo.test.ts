@@ -83,22 +83,21 @@ describe("geoSeriesUrls", () => {
 
     test("buckets the last three digits as nnn and builds the subdir urls", () => {
         const u = geoSeriesUrls("GSE12345");
-        expect(u.base).toBe(`${FTP}/GSE12nnn/GSE12345/`);
         expect(u.softDir).toBe(`${FTP}/GSE12nnn/GSE12345/soft/`);
         expect(u.matrixDir).toBe(`${FTP}/GSE12nnn/GSE12345/matrix/`);
         expect(u.supplDir).toBe(`${FTP}/GSE12nnn/GSE12345/suppl/`);
     });
 
     test("a sub-1000 accession buckets to GSEnnn", () => {
-        expect(geoSeriesUrls("GSE567").base).toBe(`${FTP}/GSEnnn/GSE567/`);
+        expect(geoSeriesUrls("GSE567").softDir).toBe(`${FTP}/GSEnnn/GSE567/soft/`);
     });
 
     test("a four-digit accession buckets to GSE1nnn", () => {
-        expect(geoSeriesUrls("GSE1234").base).toBe(`${FTP}/GSE1nnn/GSE1234/`);
+        expect(geoSeriesUrls("GSE1234").softDir).toBe(`${FTP}/GSE1nnn/GSE1234/soft/`);
     });
 
     test("a six-digit accession buckets to GSE123nnn", () => {
-        expect(geoSeriesUrls("GSE123456").base).toBe(`${FTP}/GSE123nnn/GSE123456/`);
+        expect(geoSeriesUrls("GSE123456").softDir).toBe(`${FTP}/GSE123nnn/GSE123456/soft/`);
     });
 });
 
@@ -323,7 +322,7 @@ describe("downloadGeoSeries", () => {
         expect(readdirSync(root)).toEqual([]);
     });
 
-    test("a transfer that fails partway enrolls nothing and leaves no directory behind", async () => {
+    test("a transfer that fails partway writes nothing and leaves no directory behind", async () => {
         const root = geoRoot();
         const dest = join(root, "GSE12345");
         const stub = serveSeries("GSE12345", { soft: ["GSE12345_family.soft.gz"], suppl: ["GSE12345_counts.txt.gz"] }, { breakOn: "GSE12345_counts.txt.gz" });

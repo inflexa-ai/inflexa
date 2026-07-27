@@ -121,7 +121,7 @@ describe("inflexa help & usage (e2e)", () => {
     // hands handlers `optsWithGlobals()` so the flag still reaches them. An unresolvable ref is the
     // cheap proof — the message names the ref, which is only reachable if the flag arrived at all.
     test("`--analysis` after a subcommand reaches the handler despite the root declaring it too", () => {
-        const result = runCli(["geo", "add", "GSE12345", "--analysis", "no-such-analysis-ref"]);
+        const result = runCli(["geo", "download", "GSE12345", "--analysis", "no-such-analysis-ref"]);
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain("no-such-analysis-ref");
         // The bare-context message would mean the flag never arrived.

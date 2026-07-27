@@ -77,7 +77,7 @@ function reportProgress(event: GeoProgress): void {
 }
 
 /**
- * `inflexa geo add <GSE>` — download a GEO Series' processed data into the analysis's folder.
+ * `inflexa geo download <GSE>` — fetch a GEO Series' processed data into the analysis's folder.
  *
  * Download only. It writes files and touches nothing else: no input rows, no provenance, no staging,
  * no profiling, no harness runtime. That is what makes it safe to run as a subprocess beside a live
@@ -89,7 +89,7 @@ function reportProgress(event: GeoProgress): void {
  * lands in the chat analysis's folder — `run_inflexa` starts the child there, so the ordinary marker
  * walk-up already points at it.
  */
-export async function runGeoAdd(rawGse: string, flags: ContextFlags, maxSize?: string): Promise<void> {
+export async function runGeoDownload(rawGse: string, flags: ContextFlags, maxSize?: string): Promise<void> {
     const accession = parseGseAccession(rawGse).match(
         (a) => a,
         () => fail(`Not a GEO Series accession: "${rawGse}" (expected e.g. GSE12345).`),

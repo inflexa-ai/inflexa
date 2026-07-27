@@ -447,14 +447,15 @@ export function buildProgram(): Command {
         await runPrune();
     });
 
-    // GEO datasets → the analysis's folder. `add` downloads a Series host-side and stops there; it writes
-    // files, so it is approval-gated. It records no input rows, emits no provenance, and boots no runtime,
-    // so it never contends for the analysis lock — enrolment stays the user's separate, explicit step
-    // through the ordinary add-inputs path (`manage_inputs` in chat, `inputs add` at the terminal).
+    // GEO datasets → the analysis's folder. `download`, not `add`: it fetches a Series host-side and
+    // stops, so naming it `add` would promise the one thing it does not do and collide with `inputs add`,
+    // which is how files become inputs. It writes files, so it is approval-gated; it records no input
+    // rows, emits no provenance, and boots no runtime, so it never contends for the analysis lock.
+    // Enrolment stays the user's separate, explicit step (`manage_inputs` in chat, `inputs add` here).
     const geo = cli.command("geo").description("Work with NCBI GEO gene-expression datasets");
     registerAction(
         geo
-            .command("add")
+            .command("download")
             .description("Download a GEO Series into the analysis's folder")
             .argument("<gse>", "GEO Series accession to download (e.g. GSE12345)")
             // No `--project`: a project scopes to a SET of analyses, and this command needs exactly one
@@ -464,8 +465,8 @@ export function buildProgram(): Command {
             .option("--max-size <size>", "Override the per-Series download ceiling (e.g. 500MB, 64GB)"),
         { kind: "approval" },
         async (gse: string, options: { analysis?: string; maxSize?: string }) => {
-            const { runGeoAdd } = await import("../modules/geo/add.ts");
-            await runGeoAdd(gse, { analysis: options.analysis }, options.maxSize);
+            const { runGeoDownload } = await import("../modules/geo/download.ts");
+            await runGeoDownload(gse, { analysis: options.analysis }, options.maxSize);
         },
     );
 
