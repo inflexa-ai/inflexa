@@ -35,8 +35,26 @@ import { classifyInflexaArgv } from "./inflexa_classify.ts";
 /** Combined cap on a run's captured output (stdout and stderr together), so one runaway command cannot overflow the turn's context. */
 const MAX_OUTPUT_CHARS = 60_000;
 
-/** Default wall-clock bound on a single `inflexa` invocation before it is abandoned. */
-const DEFAULT_TIMEOUT_MS = 120_000;
+/**
+ * Default QUIET time a single `inflexa` invocation may spend before it is abandoned.
+ *
+ * The bound that matters is silence, not duration. A flat wall-clock deadline cannot tell a command
+ * that is working from one that is wedged, so any value is wrong for someone: 2 minutes kills a
+ * legitimate multi-gigabyte download, and a value generous enough to spare it would let a genuinely
+ * hung command hold the turn for just as long. Measuring the gap between output separates the two —
+ * a command that is still reporting is still working, however long it takes, and one that has said
+ * nothing for two minutes is not coming back.
+ */
+const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
+
+/**
+ * Default absolute ceiling, independent of how chatty the child is.
+ *
+ * The backstop for the case the idle timer cannot see: a command looping forever while printing.
+ * Deliberately far above any real invocation — a large Series transfer is minutes, not tens of
+ * minutes — so it never truncates honest work, and the user's own turn abort remains the fast path.
+ */
+const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 
 /**
  * How long after the child exits its pipes may keep flowing before capture stops.
@@ -182,7 +200,11 @@ function displayArgvElement(element: string): string {
  * output wins the budget; sound without locking because each decrement is
  * synchronous between `await`s on a single thread.
  */
-function collectCapped(stream: ReadableStream<Uint8Array>, budget: { remaining: number }): { done: Promise<void>; cancel: () => void; text: () => string } {
+function collectCapped(
+    stream: ReadableStream<Uint8Array>,
+    budget: { remaining: number },
+    onActivity?: () => void,
+): { done: Promise<void>; cancel: () => void; text: () => string } {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let text = "";
@@ -192,6 +214,10 @@ function collectCapped(stream: ReadableStream<Uint8Array>, budget: { remaining: 
             for (;;) {
                 const { done: eof, value } = await reader.read();
                 if (eof) return;
+                // Before the truncation check: past the budget the bytes are dropped, but they are
+                // still evidence the child is alive, and the idle bound must not fire on a command
+                // whose only fault is being chatty enough to have exhausted the cap.
+                onActivity?.();
                 if (truncated) continue;
                 const chunk = decoder.decode(value, { stream: true });
                 if (chunk.length <= budget.remaining) {
@@ -218,14 +244,20 @@ function collectCapped(stream: ReadableStream<Uint8Array>, budget: { remaining: 
 
 /** Injectable process bounds for {@link spawnInflexa}; graces default to the real values, shrinkable in tests. */
 export interface SpawnBounds {
+    /** Absolute ceiling on the run, however chatty the child is. */
     readonly timeoutMs: number;
+    /** Longest the child may produce NO output before it is abandoned. Omitted means only `timeoutMs` bounds it. */
+    readonly idleTimeoutMs?: number;
     readonly flushGraceMs?: number;
     readonly killGraceMs?: number;
 }
 
 /**
  * The real subprocess wrapper: spawn `cmd`, capture stdout/stderr memory-bounded,
- * and bound the run by `timeoutMs`. The timeout and the caller's `signal` (chat
+ * and bound the run by `timeoutMs` and, when given, by how long it stays silent
+ * (`idleTimeoutMs`, rearmed on every chunk either stream produces — so a command
+ * that reports progress runs as long as it needs, while a wedged one still dies
+ * promptly). The deadlines and the caller's `signal` (chat
  * disconnect / turn abort) are merged — either aborts the child — and `endedBy`
  * reports which one fired (timeout wins a tie: the deadline elapsed either way),
  * so a user cancel is never mislabelled a timeout or a completed run.
@@ -240,9 +272,25 @@ export async function spawnInflexa(
     bounds: SpawnBounds,
     env?: Readonly<Record<string, string | undefined>>,
 ): Promise<SubprocessResult> {
-    const { timeoutMs, flushGraceMs = FLUSH_GRACE_MS, killGraceMs = KILL_GRACE_MS } = bounds;
-    const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    const combined = AbortSignal.any([signal, timeoutSignal]);
+    const { timeoutMs, idleTimeoutMs, flushGraceMs = FLUSH_GRACE_MS, killGraceMs = KILL_GRACE_MS } = bounds;
+    // Hand-driven rather than `AbortSignal.timeout`, because the idle bound has to be REARMED on
+    // every chunk the child produces and a timeout signal cannot be restarted. `timedOut` is the
+    // authority for `endedBy`: both deadlines mean "the child ran out of time", and the caller's
+    // own signal must still be distinguishable from either.
+    const deadline = new AbortController();
+    let timedOut = false;
+    const expire = (): void => {
+        timedOut = true;
+        deadline.abort();
+    };
+    const totalTimer = setTimeout(expire, timeoutMs);
+    let idleTimer: ReturnType<typeof setTimeout> | null = idleTimeoutMs === undefined ? null : setTimeout(expire, idleTimeoutMs);
+    const noteActivity = (): void => {
+        if (idleTimeoutMs === undefined || timedOut) return;
+        if (idleTimer !== null) clearTimeout(idleTimer);
+        idleTimer = setTimeout(expire, idleTimeoutMs);
+    };
+    const combined = AbortSignal.any([signal, deadline.signal]);
     // `[...cmd]` copies the readonly argv into the mutable array `Bun.spawn` expects. `env: undefined`
     // means Bun inherits the parent's startup-snapshot env, which preserves the pre-injection behavior.
     const proc = Bun.spawn({ cmd: [...cmd], env, stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: combined });
@@ -259,9 +307,11 @@ export async function spawnInflexa(
     // One pool across both streams: the cap is per RUN — the model-facing bound —
     // not per stream, so a stderr-only failure can still use the whole budget.
     const budget = { remaining: MAX_OUTPUT_CHARS };
-    const stdout = collectCapped(proc.stdout, budget);
-    const stderr = collectCapped(proc.stderr, budget);
+    const stdout = collectCapped(proc.stdout, budget, noteActivity);
+    const stderr = collectCapped(proc.stderr, budget, noteActivity);
     const exitCode = await proc.exited;
+    clearTimeout(totalTimer);
+    if (idleTimer !== null) clearTimeout(idleTimer);
     if (killTimer !== null) clearTimeout(killTimer);
     // The child is reaped; a LATER abort of the caller's long-lived turn signal
     // must not schedule a stray SIGKILL timer against it. No-op when the abort
@@ -275,7 +325,7 @@ export async function spawnInflexa(
     stdout.cancel();
     stderr.cancel();
 
-    const endedBy = timeoutSignal.aborted ? "timeout" : signal.aborted ? "cancel" : "exit";
+    const endedBy = timedOut ? "timeout" : signal.aborted ? "cancel" : "exit";
     return { exitCode, stdout: stdout.text(), stderr: stderr.text(), endedBy };
 }
 
@@ -322,15 +372,7 @@ export interface RunInflexaToolDeps {
     readonly execPath?: string;
     readonly scriptPath?: string;
     readonly timeoutMs?: number;
-    /**
-     * Post-run hook the host can use to reconcile an analysis after a successful action. A subprocess
-     * command that enrolled inputs emits its `prov.input_added` on the CHILD's bus, which the host's
-     * in-process watcher never sees — so this hook is the only signal the host gets that the session's
-     * analysis may have drifted. Fired for a successful (`ran`, exit 0) ACTION in an analysis-scoped
-     * session, with that analysis id; never for introspection, a blocked/denied action, or a failed one.
-     * Fire-and-forget from the tool's view; the host realization is expected to be idempotent.
-     */
-    readonly onReconcile?: (analysisId: string) => void;
+    readonly idleTimeoutMs?: number;
 }
 
 /**
@@ -344,7 +386,8 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
     // This module lives at src/modules/harness/, so the CLI source entry is two levels up.
     const scriptPath = deps.scriptPath ?? join(import.meta.dir, "../../index.ts");
     const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const runSubprocess: RunSubprocess = deps.runSubprocess ?? ((cmd, env, signal) => spawnInflexa(cmd, signal, { timeoutMs }, env));
+    const idleTimeoutMs = deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    const runSubprocess: RunSubprocess = deps.runSubprocess ?? ((cmd, env, signal) => spawnInflexa(cmd, signal, { timeoutMs, idleTimeoutMs }, env));
 
     return defineTool({
         id: "run_inflexa",
@@ -425,10 +468,6 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             // spawn already caps at source, but the contract must hold for any seam.
             if (r.endedBy === "timeout") return ok({ status: "timed_out", stdout: truncateOutput(r.stdout), stderr: truncateOutput(r.stderr) });
             if (r.endedBy === "cancel") return ok({ status: "cancelled" });
-            // A successful action may have enrolled inputs in the child process; poke the host to reconcile
-            // the session's analysis. Gated to a real ACTION (not introspection), a clean exit (a failed
-            // command mutated nothing), and an analysis scope (the only scope with an id). Idempotent host-side.
-            if (c.kind === "action" && r.exitCode === 0 && scope.kind === "analysis") deps.onReconcile?.(scope.analysisId);
             return ok({ status: "ran", exitCode: r.exitCode, stdout: truncateOutput(r.stdout), stderr: truncateOutput(r.stderr) });
         },
     });
