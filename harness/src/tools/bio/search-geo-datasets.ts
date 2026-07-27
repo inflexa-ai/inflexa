@@ -49,7 +49,8 @@ export const searchGeoDatasetsTool = defineTool({
     description:
         "Search NCBI GEO for public gene-expression datasets by disease, tissue, or experimental condition — use it to find external validation cohorts or to cite published data. " +
         "Returns totalFound plus datasets[]: { accession (GSE…/GDS…), title, summary (truncated to 500 chars), platform, sampleCount, organism, pubmedIds }. " +
-        "HARD CAVEAT: sandbox containers cannot download GEO data. This tool identifies and cites accessions only — never plan an analysis step that fetches a GEO dataset. " +
+        "HARD CAVEAT: this tool returns metadata only, and sandbox containers have no network — never plan an in-sandbox step that downloads a GEO dataset. " +
+        "Bringing the data itself in is a capability of the surrounding environment, not of this tool: consult the tools you actually have rather than assuming it is possible or that it is not. " +
         "An empty datasets array is a valid 'nothing matched' — do not retry the identical query.",
     inputSchema: z.object({
         query: z
