@@ -17,9 +17,11 @@ import { type ConnectionMode } from "./compose.ts";
 // provision time with an actionable message instead of on the client's first chat.
 //
 // Two rules shape everything here:
-//   - NO ANSWER IS EVER SILENTLY IGNORED. An answer the resolved modes cannot consume (a direct-only
-//     `--base-url` under cliproxy, an `--embeddings-gguf` with api-key embeddings) is an ERROR, not a
-//     no-op — silently dropping it is how a fleet ends up misconfigured with a green setup run.
+//   - NO ANSWER IS EVER SILENTLY IGNORED — in interactive runs as much as batch ones. An answer the
+//     resolved modes cannot consume (a direct-only `--base-url` under cliproxy, an `--embeddings-gguf` with
+//     api-key embeddings) is an ERROR, not a no-op, and so is an answer whose consuming MODE is unanswered:
+//     an unresolved mode is not a promise that a prompt will resolve the way the answer needs. Silently
+//     dropping either is how a fleet ends up misconfigured with a green setup run.
 //   - EVERY ERROR NAMES BOTH SPELLINGS (see {@link answerSpelling}), because the same question is
 //     answerable from a flag or a file key and the author must be able to fix it in either.
 //
@@ -66,7 +68,31 @@ export type OAuthAccountKind = (typeof OAUTH_ACCOUNT_KINDS)[number];
 /** A direct-mode vendor slug: lowercase, digits, and `-`/`_`/`.` — an OPEN vocabulary (only its shape is checked). */
 const VENDOR_SLUG = /^[a-z0-9][a-z0-9._-]*$/;
 
+/**
+ * Whether `value` has the shape of a direct-mode vendor slug. Exported because the orchestrator must
+ * re-ask this question on the ONE path this module cannot judge: an interactive run whose mode is
+ * decided by a prompt, after the resolver has already returned. Sharing the predicate keeps the
+ * vocabulary defined once — a second regex there would drift the moment either is widened.
+ */
+export function isVendorSlug(value: string): boolean {
+    return VENDOR_SLUG.test(value);
+}
+
 const authSchemeSchema = z.enum(["x-api-key", "bearer"]);
+
+/**
+ * A free-text answer, trimmed. Surrounding whitespace is never meaningful in a value this CLI compares,
+ * splices into a URL, or writes to config.json, and both front-ends pick it up by accident — a shell that
+ * quotes an argument with a trailing space, a YAML value indented for readability. Normalizing on the
+ * SCHEMA is what makes flag and file identical: every answer, from either front-end, meets
+ * {@link setupAnswersSchema} exactly once.
+ *
+ * Emptiness is checked AFTER the trim, so an all-whitespace answer is reported as the empty answer it is
+ * rather than accepted as a one-space value nothing downstream can use.
+ */
+function trimmedAnswer(error: string): z.ZodString {
+    return z.string().trim().min(1, { error });
+}
 
 /**
  * The credential-source answer — the strict-parse mirror of `modelAuthSchema` (lib/config.ts), which the
@@ -79,12 +105,12 @@ const authSchemeSchema = z.enum(["x-api-key", "bearer"]);
 export const setupAuthAnswerSchema = z.discriminatedUnion("kind", [
     z.strictObject({
         kind: z.literal("env"),
-        var: z.string().min(1, { error: "must name an environment variable" }),
+        var: trimmedAnswer("must name an environment variable"),
         scheme: authSchemeSchema,
     }),
     z.strictObject({
         kind: z.literal("command"),
-        command: z.string().min(1, { error: "must name a command" }),
+        command: trimmedAnswer("must name a command"),
         scheme: authSchemeSchema,
         format: z.enum(["raw", "exec-credential"]).optional(),
         ttlMs: z.number().int().positive({ error: "must be a positive number of milliseconds" }).optional(),
@@ -110,17 +136,29 @@ export const setupAnswersSchema = z.strictObject({
     connection: z
         .strictObject({
             mode: z.enum(["cliproxy", "direct"]).optional(),
-            provider: z.string().min(1, { error: "must not be empty" }).optional(),
-            baseURL: z.string().min(1, { error: "must not be empty" }).optional(),
+            /**
+             * Case-FOLDED as well as trimmed, because every consumer of a provider answer compares it
+             * exact-lowercase — the vendor slug shape, the OAuth account kinds, the protocol implication, the
+             * conventional model and api-key variable lookups. `--provider Anthropic` is the same instruction
+             * as `--provider anthropic`, and an unfolded answer would silently miss every one of those tables
+             * instead of failing.
+             */
+            provider: z.string().trim().toLowerCase().min(1, { error: "must not be empty" }).optional(),
+            baseURL: trimmedAnswer("must not be empty").optional(),
             protocol: z.enum(["anthropic", "openai-compatible"]).optional(),
-            model: z.string().min(1, { error: "must not be empty" }).optional(),
+            model: trimmedAnswer("must not be empty").optional(),
             auth: setupAuthAnswerSchema.optional(),
         })
         .optional(),
     /** The harness substrate's connection fields; unanswered fields keep their per-field defaults and persist nothing. */
     postgres: z
         .strictObject({
-            user: z.string().min(1, { error: "must not be empty" }).optional(),
+            user: trimmedAnswer("must not be empty").optional(),
+            /**
+             * The ONE free-text answer that is not trimmed: a password's leading or trailing whitespace is a
+             * character of the secret, and silently stripping it would provision a Postgres the operator's own
+             * credential no longer opens.
+             */
             password: z.string().min(1, { error: "must not be empty" }).optional(),
             port: z
                 .number()
@@ -128,8 +166,8 @@ export const setupAnswersSchema = z.strictObject({
                 .min(1, { error: "must be a port between 1 and 65535" })
                 .max(65535, { error: "must be a port between 1 and 65535" })
                 .optional(),
-            database: z.string().min(1, { error: "must not be empty" }).optional(),
-            host: z.string().min(1, { error: "must not be empty" }).optional(),
+            database: trimmedAnswer("must not be empty").optional(),
+            host: trimmedAnswer("must not be empty").optional(),
         })
         .optional(),
     /** The machine allowance, as a PERCENTAGE so one file is portable across a heterogeneous fleet. */
@@ -147,9 +185,9 @@ export const setupAnswersSchema = z.strictObject({
     embedding: z
         .strictObject({
             mode: z.enum(["local", "api-key", "off"]).optional(),
-            baseURL: z.string().min(1, { error: "must not be empty" }).optional(),
-            model: z.string().min(1, { error: "must not be empty" }).optional(),
-            gguf: z.string().min(1, { error: "must not be empty" }).optional(),
+            baseURL: trimmedAnswer("must not be empty").optional(),
+            model: trimmedAnswer("must not be empty").optional(),
+            gguf: trimmedAnswer("must not be empty").optional(),
         })
         .optional(),
     /** A preset word or an explicit dataset-id list. The value IS the download consent; absence downloads nothing. */
@@ -262,10 +300,42 @@ function isAnswerKey(key: string): key is AnswerKey {
     return Object.hasOwn(ANSWER_SPELLINGS, key);
 }
 
-/** Name whatever a zod issue points at: a known question in both spellings, else the raw path (an unmapped nested key). */
+/**
+ * How a problem at the DOCUMENT root is named. An empty issue path — the whole file is a scalar, or the
+ * ARRAY `Bun.YAML.parse` returns for a multi-document file (a stray trailing `---` is enough) — has no key
+ * to quote, and an empty locator renders the problem as a dangling dash with no subject at all.
+ */
+const DOCUMENT_LOCATOR = "the answers document itself";
+
+/**
+ * Name whatever a zod issue points at, in both spellings wherever a spelling exists: the question itself,
+ * else its nearest mapped ancestor, else the raw path.
+ *
+ * The ancestor fallback is what keeps an ARRAY ELEMENT reportable — `refs.0` can never be an answer key of
+ * its own, so without it the one question the author can actually edit (`--refs` / `refs`) goes unnamed.
+ * The raw path rides along so a long list still says which element.
+ */
 function spellPath(path: readonly PropertyKey[]): string {
+    if (path.length === 0) return DOCUMENT_LOCATOR;
     const key = path.join(".");
-    return isAnswerKey(key) ? answerSpelling(key) : `\`${key}\``;
+    if (isAnswerKey(key)) return answerSpelling(key);
+    for (let depth = path.length - 1; depth > 0; depth--) {
+        const ancestor = path.slice(0, depth).join(".");
+        if (isAnswerKey(ancestor)) return `${answerSpelling(ancestor)} (at \`${key}\`)`;
+    }
+    return `\`${key}\``;
+}
+
+/**
+ * The execution modifiers, in the file spelling a mistaken author would reach for. They answer "how should
+ * THIS run behave", never "what should this client look like", so they are absent from the schema by
+ * construction — and an unknown TOP-LEVEL key matching one of them earns the extra sentence explaining
+ * where the answer really lives. A `no-` prefix is folded away so `--no-start`'s file spelling lands here too.
+ */
+const EXECUTION_MODIFIERS: ReadonlySet<string> = new Set(["start", "force", "postgres", "validate", "yes", "auth"]);
+
+function isExecutionModifier(key: string): boolean {
+    return EXECUTION_MODIFIERS.has(key.startsWith("no-") ? key.slice("no-".length) : key);
 }
 
 // The zod issue shape, derived from the schema rather than imported by name so it cannot drift with zod's
@@ -275,10 +345,16 @@ type AnswersIssue = ReturnType<typeof setupAnswersSchema.safeParse> extends { er
 /** One zod issue → the problem lines it means, each naming the offending question in both spellings. */
 function describeIssue(issue: AnswersIssue): string[] {
     if (issue.code === "unrecognized_keys") {
-        return issue.keys.map(
-            (key) =>
-                `Unknown key \`${[...issue.path, key].join(".")}\` — not a setup answer. How a run behaves (start, force, postgres, validate, yes, auth) is answered by flags only, never by the file.`,
-        );
+        return issue.keys.map((key) => {
+            // The modifier sentence only fits a top-level key that names one: appended to a nested typo
+            // (`postgres.prot`, `connection.auth.ttlMs`) it is advice about a different question entirely,
+            // and it contradicts the file-only questions this module documents as `(config file only)`.
+            const modifier =
+                issue.path.length === 0 && isExecutionModifier(key)
+                    ? " How a run behaves (start, force, postgres, validate, yes, auth) is answered by flags only, never by the file."
+                    : "";
+            return `Unknown key \`${[...issue.path, key].join(".")}\` — not a setup answer.${modifier}`;
+        });
     }
     return [`${spellPath(issue.path)} — ${issue.message}`];
 }
@@ -296,17 +372,110 @@ function parseAnswers(document: unknown, path: string | undefined): Result<Setup
 
 // --- the file front-end ----------------------------------------------------
 
+/** The one message for every shape of "this file answers nothing", so the three detections read as one rule. */
+const EMPTY_FILE_PROBLEM = "the file is empty — it must be a YAML mapping of setup answers (e.g. `connection:`, `postgres:`, `refs:`).";
+
+/** A block mapping entry: a key, then `:` followed by whitespace or the end of the line (YAML's own rule). */
+const BLOCK_MAPPING_ENTRY = /^([^\s#][^:]*?)\s*:(\s.*)?$/;
+
+/** A block scalar header (`|`, `>`, with optional chomping/indent indicators and a trailing comment). */
+const BLOCK_SCALAR_HEADER = /^[|>][+-]?\d*[+-]?\s*(#.*)?$/;
+
+/** One mapping level of {@link duplicateMappingKeys}: the indent its keys sit at, plus how to name them. */
+type MappingLevel = {
+    readonly indent: number;
+    /** The key path of the mapping itself, so a duplicate is reported as `embedding.mode`, not `mode`. */
+    readonly path: readonly string[];
+    readonly keys: Set<string>;
+    /** The most recent key seen here — the parent name a deeper level takes when it opens. */
+    lastKey: string;
+};
+
+/**
+ * Find duplicate mapping keys in the RAW file text, as `a.b.c` paths, in the order they occur.
+ *
+ * This exists because `Bun.YAML.parse` resolves duplicates last-wins BEFORE any of this module's code sees
+ * the document (`runtime: docker` + `runtime: podman` parses to `{runtime: "podman"}`), so a fleet file with
+ * two `embedding:` blocks silently loses the first — precisely the failure strict parsing exists to prevent,
+ * and undetectable from the parsed value. The raw text is the only place the evidence still exists.
+ *
+ * It is a LINE SCAN, not a YAML parser, and the honest statement of what that buys is the list of what it
+ * does NOT see:
+ *
+ * - **Flow mappings.** `embedding: {mode: local, mode: off}` is one line with one key to this scan; the
+ *   inner duplicate is invisible.
+ * - **Block-sequence items.** A `- ` line, and everything indented under it, is skipped entirely — the
+ *   answers schema's only list is `refs` (a list of scalars), so descending would add parser complexity for
+ *   no reachable duplicate.
+ * - **Keys containing `:`.** A quoted key (`"a:b": 1`) does not match the entry pattern and is skipped.
+ * - **Quoted scalars spanning lines.** Block scalars (`|`/`>`) are skipped by header, but a plain or quoted
+ *   multi-line value whose continuation lines happen to read as `key: value` IS scanned — twice-repeated
+ *   prose of that exact shape would be a false positive. Nothing in the answers schema takes a multi-line
+ *   value, which is what makes that trade acceptable rather than merely unlikely.
+ */
+function duplicateMappingKeys(text: string): string[] {
+    const duplicates: string[] = [];
+    const levels: MappingLevel[] = [];
+    let blockScalarIndent: number | undefined;
+    let sequenceIndent: number | undefined;
+
+    for (const line of text.split("\n")) {
+        const content = line.trim();
+        const indent = line.length - line.trimStart().length;
+        // A block scalar's body is text, not structure: everything indented past its key is content.
+        if (blockScalarIndent !== undefined) {
+            if (content === "" || indent > blockScalarIndent) continue;
+            blockScalarIndent = undefined;
+        }
+        if (content === "" || content.startsWith("#")) continue;
+        if (sequenceIndent !== undefined) {
+            if (indent >= sequenceIndent) continue;
+            sequenceIndent = undefined;
+        }
+        // A document boundary restarts every mapping level: the same key in two documents is not a duplicate.
+        if (content === "---" || content === "..." || content.startsWith("--- ")) {
+            levels.length = 0;
+            continue;
+        }
+        if (content === "-" || content.startsWith("- ")) {
+            sequenceIndent = indent;
+            continue;
+        }
+        const entry = BLOCK_MAPPING_ENTRY.exec(content);
+        if (entry === null) continue;
+        const key = entry[1];
+        if (key === undefined) continue;
+        // `-1` is below every real indent, so an exhausted stack ends the loop without a separate length test.
+        while ((levels[levels.length - 1]?.indent ?? -1) > indent) levels.pop();
+        const level = levels[levels.length - 1];
+        if (level === undefined || level.indent < indent) {
+            levels.push({ indent, path: level === undefined ? [] : [...level.path, level.lastKey], keys: new Set([key]), lastKey: key });
+        } else {
+            if (level.keys.has(key)) duplicates.push([...level.path, key].join("."));
+            level.keys.add(key);
+            level.lastKey = key;
+        }
+        if (BLOCK_SCALAR_HEADER.test((entry[2] ?? "").trim())) blockScalarIndent = indent;
+    }
+    return duplicates;
+}
+
 /**
  * Load and strict-parse a `--config <file.yml>` answers file. Every failure mode names the path: an
- * unreadable file, a YAML syntax error, and each schema violation (unknown keys included) are all reported
- * here — BEFORE any mutation — because a file is authored intent, and the worst failure a fleet can have
- * is a mistyped key that silently skips a step.
+ * unreadable file, a YAML syntax error, a key answered twice, and each schema violation (unknown keys
+ * included) are all reported here — BEFORE any mutation — because a file is authored intent, and the worst
+ * failure a fleet can have is a mistyped key that silently skips a step.
  *
  * Parsed with the runtime's native YAML (`Bun.YAML.parse`, Bun 1.3+), so the answers file costs no
- * dependency. An empty document is a problem rather than "no answers": a file that answers nothing is a
- * broken deploy, not an intent worth honoring silently.
+ * dependency. Two things the parsed value cannot tell us are therefore checked around it: duplicate keys,
+ * which YAML resolves last-wins before the value exists ({@link duplicateMappingKeys}), and emptiness — a
+ * file that answers nothing is a broken deploy, not an intent worth honoring silently, whether it spells
+ * that as no document at all or as an empty `{}` mapping.
  */
 export function readAnswersFile(path: string): Result<SetupAnswers, SetupAnswersError> {
+    function invalid(problems: readonly string[]): Result<SetupAnswers, SetupAnswersError> {
+        return err({ type: "answers_invalid", path, problems });
+    }
     return Result.fromThrowable(
         () => readFileSync(path, "utf8"),
         (cause): SetupAnswersError => ({ type: "answers_file_unreadable", path, detail: causeMessage(cause) }),
@@ -316,19 +485,26 @@ export function readAnswersFile(path: string): Result<SetupAnswers, SetupAnswers
                 // unknown: an on-disk YAML document, validated by the schema below.
                 (): unknown => Bun.YAML.parse(text),
                 (cause): SetupAnswersError => ({ type: "answers_file_unparseable", path, detail: causeMessage(cause) }),
-            )(),
+            )().map((document) => ({ text, document })),
         )
-        .andThen((document) => {
+        .andThen(({ text, document }) => {
+            const duplicates = duplicateMappingKeys(text);
+            if (duplicates.length > 0) {
+                return invalid(
+                    duplicates.map(
+                        (key) =>
+                            `\`${key}\` is answered twice — YAML keeps only the LAST of two identical keys, so the earlier answer would be discarded without a word. Delete one.`,
+                    ),
+                );
+            }
             // Bun.YAML.parse yields null for an empty (or comment-only) document; zod would report it as a
             // type error against the whole file, which reads as a schema problem rather than an empty file.
-            if (document === null || document === undefined) {
-                return err<SetupAnswers, SetupAnswersError>({
-                    type: "answers_invalid",
-                    path,
-                    problems: ["the file is empty — it must be a YAML mapping of setup answers (e.g. `connection:`, `postgres:`, `refs:`)."],
-                });
-            }
-            return parseAnswers(document, path);
+            if (document === null || document === undefined) return invalid([EMPTY_FILE_PROBLEM]);
+            return parseAnswers(document, path).andThen((answers) =>
+                // A document that parses to `{}` — an explicit empty mapping — answers nothing either, and
+                // provisioning every default off it is the same silent misconfiguration an empty file is.
+                Object.values(answers).some((answer) => answer !== undefined) ? ok(answers) : invalid([EMPTY_FILE_PROBLEM]),
+            );
         });
 }
 
@@ -393,14 +569,24 @@ function pruned<T extends Record<string, unknown>>(block: T): T | undefined {
     return Object.values(block).some((value) => value !== undefined) ? block : undefined;
 }
 
+/** A plain decimal integer, optionally signed — the ONLY shape {@link wholeNumber} accepts. */
+const DECIMAL_INTEGER = /^[+-]?\d+$/;
+
+/**
+ * Read a numeric flag as the whole number its error message promises. The shape is matched BEFORE `Number`
+ * rather than inferred from it, because `Number` also speaks JavaScript's other integer literals: it reads
+ * `0x10` as 16 and `1e2` as 100, both `Number.isInteger`, so a `--postgres-port 0x10` would provision port
+ * 16 while the author reads their file as naming 0x10. A value the CLI cannot echo back unchanged is a
+ * value the author cannot verify, so it is an error instead.
+ */
 function wholeNumber(raw: string | undefined, key: AnswerKey, problems: string[]): number | undefined {
     if (raw === undefined) return undefined;
-    const value = Number(raw);
-    if (raw.trim() === "" || !Number.isInteger(value)) {
+    const text = raw.trim();
+    if (!DECIMAL_INTEGER.test(text)) {
         problems.push(`${answerSpelling(key)} — must be a whole number (got "${raw}").`);
         return undefined;
     }
-    return value;
+    return Number(text);
 }
 
 /**
@@ -590,13 +776,44 @@ function mergeAnswers(file: SetupAnswers, flags: SetupAnswers): SetupAnswers {
     };
 }
 
+function isOAuthAccountKind(value: string): boolean {
+    // The cast widens a readonly TUPLE of string literals to `readonly string[]` purely so `.includes`
+    // accepts an arbitrary string — untouched, TS demands the argument already BE an OAuthAccountKind, which
+    // is the very thing being tested. Type-level only: the array and the comparison are unchanged at runtime.
+    return (OAUTH_ACCOUNT_KINDS as readonly string[]).includes(value);
+}
+
+/**
+ * The connection questions only a DIRECT endpoint can consume, key and value written together so the pair
+ * can never drift. `provider` and `model` are deliberately absent — both are valid in either mode (cliproxy
+ * names an OAuth account kind and pins a model too), so `--provider claude` on an interactive run must stay
+ * the long-standing valid invocation it is.
+ */
+function directOnlyAnswers(connection: SetupAnswers["connection"]): readonly (readonly [AnswerKey, unknown])[] {
+    return [
+        ["connection.baseURL", connection?.baseURL],
+        ["connection.protocol", connection?.protocol],
+        ["connection.auth", connection?.auth],
+    ];
+}
+
 /** Validate the connection questions against the mode they resolved to. */
 function validateConnection(answers: SetupAnswers, mode: ConnectionMode | undefined, batch: boolean, problems: string[]): void {
     const connection = answers.connection;
-    // Mode still unresolved: an interactive run whose first prompt decides it. Every mode-keyed rule below
-    // would be guessing, and rejecting `--base-url` before the user has answered "how should inflexa reach
-    // models?" would reject a perfectly coherent interactive run.
-    if (mode === undefined) return;
+    // Mode still unresolved: an interactive run whose first prompt decides it. The mode-keyed rules below
+    // would be guessing — but a direct-only answer cannot wait for that prompt, because the prompt may well
+    // resolve to cliproxy and then nothing consumes it. Demanding the mode is the only reading that keeps
+    // the module's invariant true interactively: the answer is honored, or the author is told why not.
+    if (mode === undefined) {
+        for (const [key, answered] of directOnlyAnswers(connection)) {
+            if (answered !== undefined) {
+                problems.push(
+                    `${answerSpelling(key)} answers a direct connection, but nothing answers ${answerSpelling("connection.mode")} — the prompt that decides it may still resolve to cliproxy, and then nothing consumes this. Pass \`--connection direct\` / \`connection.mode: direct\`, or drop the answer.`,
+                );
+            }
+        }
+        return;
+    }
 
     if (mode === "direct") {
         if (batch) {
@@ -614,7 +831,7 @@ function validateConnection(answers: SetupAnswers, mode: ConnectionMode | undefi
                 );
             }
         }
-        if (connection?.provider !== undefined && !VENDOR_SLUG.test(connection.provider)) {
+        if (connection?.provider !== undefined && !isVendorSlug(connection.provider)) {
             problems.push(
                 `${answerSpelling("connection.provider")} — a direct connection's provider is a lowercase vendor slug (e.g. anthropic, openai, deepseek).`,
             );
@@ -630,18 +847,11 @@ function validateConnection(answers: SetupAnswers, mode: ConnectionMode | undefi
             problems.push(
                 `${answerSpelling("connection.provider")} names an OAuth account kind in cliproxy mode, and that sign-in cannot run unattended. Drop it — the first \`inflexa\` launch offers the sign-in — or pass \`--connection direct\` to name a vendor slug instead.`,
             );
-        } else if (!(OAUTH_ACCOUNT_KINDS as readonly string[]).includes(connection.provider)) {
+        } else if (!isOAuthAccountKind(connection.provider)) {
             problems.push(`${answerSpelling("connection.provider")} — in cliproxy mode it is an OAuth account kind: ${OAUTH_ACCOUNT_KINDS.join(", ")}.`);
         }
     }
-    // The questions only a direct endpoint can consume. Key and value are written together so the pair can
-    // never drift; `model` is deliberately absent — it is valid in BOTH modes (cliproxy pins it too).
-    const directOnly: readonly (readonly [AnswerKey, unknown])[] = [
-        ["connection.baseURL", connection?.baseURL],
-        ["connection.protocol", connection?.protocol],
-        ["connection.auth", connection?.auth],
-    ];
-    for (const [key, answered] of directOnly) {
+    for (const [key, answered] of directOnlyAnswers(connection)) {
         if (answered !== undefined) {
             problems.push(
                 `${answerSpelling(key)} answers a direct connection, but the connection resolves to cliproxy — pass \`--connection direct\` / \`connection.mode: direct\`, or drop the answer.`,
@@ -655,10 +865,11 @@ function validateEmbedding(answers: SetupAnswers, batch: boolean, readKey: () =>
     const embedding = answers.embedding;
     const mode = embedding?.mode;
     if (mode === undefined) {
-        // Unanswered embedding mode means "leave the configured backend unchanged" under batch, which would
-        // silently strand any endpoint/model/gguf answer — so batch demands the mode that consumes them.
-        // Interactive runs still ask, and the prompt's answer decides which of these apply.
-        if (!batch) return;
+        // An unanswered embedding mode means "leave the configured backend unchanged" — which DISCARDS any
+        // endpoint/model/gguf answer, in every run, not only batch: on an already-configured machine the
+        // interactive step keeps the existing backend and the value answer never reaches a writer, so the run
+        // reports success having written nothing. The value can only be honored by the mode that consumes it,
+        // so the mode is required wherever a value is answered.
         const backendAnswers: readonly (readonly [AnswerKey, string | undefined])[] = [
             ["embedding.baseURL", embedding?.baseURL],
             ["embedding.model", embedding?.model],
@@ -667,7 +878,7 @@ function validateEmbedding(answers: SetupAnswers, batch: boolean, readKey: () =>
         for (const [key, answered] of backendAnswers) {
             if (answered !== undefined) {
                 problems.push(
-                    `${answerSpelling(key)} needs an embedding backend answer in a non-interactive run — add ${answerSpelling("embedding.mode")}, or drop it.`,
+                    `${answerSpelling(key)} names a value for an embedding backend, but nothing answers ${answerSpelling("embedding.mode")} — without it the configured backend is left as it is and this value is discarded. Add the mode, or drop the value.`,
                 );
             }
         }
@@ -749,13 +960,41 @@ export function resolveSetupAnswers(
 }
 
 /**
+ * One error's problem lines, attributed to the input they came from. Used where the two front-ends are
+ * folded into ONE error: that error has no single `path`, so the header can no longer say which input a line
+ * is about and each file problem carries its file inline instead.
+ *
+ * The file-boundary branch exists for totality over {@link SetupAnswersError}, not because a boundary error
+ * reaches the fold — {@link loadSetupAnswers} returns those before any folding.
+ */
+function attributedProblems(error: SetupAnswersError): readonly string[] {
+    if (error.type !== "answers_invalid") return [describeSetupAnswersError(error)];
+    const path = error.path;
+    return path === undefined ? error.problems : error.problems.map((problem) => `in \`${path}\`: ${problem}`);
+}
+
+/**
  * The orchestrator's one call: read the `--config` file when one was named, map the flags, merge, and
- * validate — in that order, so the first failure reported is the one closest to what the author typed.
- * Everything a caller needs to fail the run lives on the returned error ({@link describeSetupAnswersError}).
+ * validate. Everything a caller needs to fail the run lives on the returned error
+ * ({@link describeSetupAnswersError}).
+ *
+ * BOTH front-ends are evaluated before either is reported, so an author who mistyped a flag AND a file key
+ * fixes both in one run instead of discovering the second only after fixing the first — the same
+ * report-every-problem-in-one-pass contract {@link resolveSetupAnswers} holds within a single set.
  */
 export function loadSetupAnswers(flags: SetupAnswerFlags, context: SetupAnswersContext): Result<ResolvedSetupAnswers, SetupAnswersError> {
     // Annotated so both branches meet at ONE Result type — a `Result<undefined, never> | Result<SetupAnswers, …>`
     // union has no callable `.andThen`.
     const file: Result<SetupAnswers | undefined, SetupAnswersError> = flags.config === undefined ? ok(undefined) : readAnswersFile(flags.config);
-    return file.andThen((fileAnswers) => answersFromFlags(flags).andThen((flagAnswers) => resolveSetupAnswers(flagAnswers, fileAnswers, context)));
+    // A file that could not be read or parsed is the terminal case: it yielded no answers at all, so there is
+    // nothing to merge the flags with and nothing the combined list would add beyond the file to fix first.
+    if (file.isErr() && file.error.type !== "answers_invalid") return err(file.error);
+
+    const fromFlags = answersFromFlags(flags);
+    if (file.isErr() && fromFlags.isErr()) {
+        return err({ type: "answers_invalid", path: undefined, problems: [...attributedProblems(file.error), ...attributedProblems(fromFlags.error)] });
+    }
+    // One side failing keeps its own error whole — including the file's `path`, which is what makes the
+    // rendered header name the file the author has to open.
+    return file.andThen((fileAnswers) => fromFlags.andThen((flagAnswers) => resolveSetupAnswers(flagAnswers, fileAnswers, context)));
 }

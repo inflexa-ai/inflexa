@@ -55,7 +55,7 @@ import {
     type ConnectionMode,
 } from "./compose.ts";
 import { formatInfraStateError, writeProxyConfig } from "./proxy_config.ts";
-import { answerOf, describeSetupAnswersError, isBatchRun, loadSetupAnswers, type SetupAnswerFlags, type SetupAnswers } from "./setup_answers.ts";
+import { answerOf, describeSetupAnswersError, isBatchRun, isVendorSlug, loadSetupAnswers, type SetupAnswerFlags, type SetupAnswers } from "./setup_answers.ts";
 
 // `inflexa setup` provisions the inflexa infrastructure stack: CLIProxyAPI (the
 // local model proxy) and Postgres + pgvector (the harness substrate). Both run
@@ -119,6 +119,22 @@ export async function setup(options: SetupOptions): Promise<void> {
     );
     if (resolved === null) return;
     const { answers, connectionMode } = resolved;
+
+    // The answers layer cannot see the run modifiers (they are deliberately not answers — design D3), so
+    // the one contradiction that spans both is settled here: a step switched OFF consumes no answers, and
+    // silently dropping them is the defect the whole answer surface exists to prevent.
+    // Entries — not keys: an answer block carries every field, unanswered ones as `undefined`, so keying
+    // off presence alone would name fields the operator never typed.
+    const strandedByNoPostgres = options.postgres ? [] : Object.entries(answers.postgres ?? {}).filter(([, value]) => value !== undefined);
+    if (strandedByNoPostgres.length > 0) {
+        console.error(
+            `\n  --no-postgres skips the step that would consume ${strandedByNoPostgres.map(([field]) => `\`postgres.${field}\``).join(", ")}.\n` +
+                `  Drop the answer, or drop --no-postgres.\n`,
+        );
+        process.exitCode = 1;
+        return;
+    }
+
     /** Whether a step may still ask a question — the exact complement of batch resolution. */
     const canPrompt = !batch;
     // `--no-validate` is a run modifier, never an answer: it says how this invocation behaves, so it is
@@ -140,7 +156,7 @@ export async function setup(options: SetupOptions): Promise<void> {
     const embeddingModeAnswered = answers.embedding?.mode !== undefined;
     if (embeddingModeAnswered) {
         const { runEmbeddingSetup } = await import("../embedding/setup.ts");
-        const embedResult = await runEmbeddingSetup(canPrompt, undefined, embeddingAnswers);
+        const embedResult = await runEmbeddingSetup(canPrompt, embeddingAnswers);
         if (embedResult.isErr()) {
             log.error(`Embedding setup: ${embedResult.error.message}`);
             process.exitCode = 1;
@@ -171,49 +187,49 @@ export async function setup(options: SetupOptions): Promise<void> {
 
     intro("inflexa setup");
 
-    if (rt.id !== selected?.id) {
-        log.info(
-            runtimeAnswer.answered
-                ? `Using ${rt.label} as the container runtime (answered; saved to settings).`
-                : selected
-                  ? `${selected.label} isn't ready — continuing with ${rt.label} and saving it as the container runtime.`
-                  : `Using ${rt.label} as the container runtime (saved to settings).`,
-        );
-        const writeError = writeConfig({ ...readConfig(), runtime: rt.id }).match(
-            () => null,
-            (e) => e,
-        );
-        if (writeError) {
-            // Later steps (postgres provisioning, the sandbox pull) re-read config
-            // for the runtime, so an unpersisted switch would split this run across
-            // two runtimes — abort instead of provisioning an incoherent stack.
-            log.error(`Could not save the runtime selection: ${writeError.type}`);
-            process.exitCode = 1;
-            return;
-        }
-    }
-
     try {
         // The connection mode is the ONE question whose batch default the resolver applies early and
         // whose interactive default it deliberately does NOT — applying it would pre-empt the wizard's
         // first prompt. So an unresolved mode here means exactly "an interactive run still has to ask".
         const mode = await chooseConnectionMode(connectionMode);
 
-        if (mode === "cliproxy") {
-            // `--provider` wears the vocabulary of the connection mode (design D4), so the account-kind
-            // check can only run once the mode is known — which on an interactive run is right here,
-            // after the prompt above. Batch never reaches a valid provider answer at all: the resolver
-            // rejects one upfront, because OAuth cannot run unattended.
-            const provider = resolveProvider(answers.connection?.provider).match(
-                (p) => p,
-                (e) => {
-                    console.error(`\n  ${e.message}\n`);
-                    process.exitCode = 1;
-                    return null;
-                },
-            );
-            if (provider === null) return;
+        // `--provider` wears the vocabulary of the connection mode (design D4), so its check can only run
+        // once the mode is known — under batch that is upfront in the resolver, on an interactive run it
+        // is here, immediately after the prompt. It runs BEFORE the runtime pin below because that write
+        // is this command's first mutation, and an answer setup is going to reject must not cost the user
+        // a persisted side effect first.
+        const providerCheck = checkProviderAnswer(answers.connection?.provider, mode);
+        if (providerCheck.isErr()) {
+            console.error(`\n  ${providerCheck.error.message}\n`);
+            process.exitCode = 1;
+            return;
+        }
+        const provider = providerCheck.value;
 
+        // Persisted only now: the probe above proved the runtime usable, and the answers are validated,
+        // so this is the first point where writing cannot strand the user with a rejected run. Later
+        // steps (postgres provisioning, the sandbox pull) re-read config for the runtime, so it must be
+        // durable before any of them — a failed write aborts rather than splitting the run across two.
+        if (rt.id !== selected?.id) {
+            log.info(
+                runtimeAnswer.answered
+                    ? `Using ${rt.label} as the container runtime (answered; saved to settings).`
+                    : selected
+                      ? `${selected.label} isn't ready — continuing with ${rt.label} and saving it as the container runtime.`
+                      : `Using ${rt.label} as the container runtime (saved to settings).`,
+            );
+            const writeError = writeConfig({ ...readConfig(), runtime: rt.id }).match(
+                () => null,
+                (e) => e,
+            );
+            if (writeError) {
+                log.error(`Could not save the runtime selection: ${writeError.type}`);
+                process.exitCode = 1;
+                return;
+            }
+        }
+
+        if (mode === "cliproxy") {
             // --- proxy config ---
             const writeResult = await writeProxyConfig();
             if (writeResult.isErr()) {
@@ -509,7 +525,7 @@ export async function setup(options: SetupOptions): Promise<void> {
         // See modules/embedding/setup.ts.
         if (!embeddingModeAnswered) {
             const { runEmbeddingSetup } = await import("../embedding/setup.ts");
-            const embedResult = await runEmbeddingSetup(canPrompt, undefined, embeddingAnswers);
+            const embedResult = await runEmbeddingSetup(canPrompt, embeddingAnswers);
             if (embedResult.isErr()) {
                 log.error(`Embedding setup: ${embedResult.error.message}`);
                 process.exitCode = 1;
@@ -922,10 +938,13 @@ async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPromp
         );
     }
 
+    // Host and database have no prompt — the wizard never asked for them, and adding two questions to
+    // the interactive flow is not this change's business — but they ARE answerable, so an answer must
+    // land here. Falling back to the current resolution keeps the no-answer path byte-identical.
     const conn: PostgresConnection = {
-        host: existing.host,
+        host: answered?.host ?? existing.host,
         port,
-        database: existing.database,
+        database: answered?.database ?? existing.database,
         user,
         password,
     };
@@ -1020,6 +1039,23 @@ function resolveProvider(answered: string | undefined): Result<Provider | undefi
         return err(new ProxyError(`Unknown provider '${answered}'. Choose one of: ${PROVIDERS.join(", ")}.`));
     }
     return ok(answered);
+}
+
+/**
+ * Check the `provider` answer against the mode it will actually be read as (design D4): an OAuth account
+ * kind under cliproxy, an open vendor slug under direct. The answers layer applies exactly this rule when
+ * the mode is known upfront; it cannot when an interactive prompt decides the mode, so the same check runs
+ * here on that path — the reason it exists at all. The ok channel carries the ACCOUNT KIND only, because a
+ * vendor slug names no account to log into: direct mode always yields `undefined`.
+ */
+function checkProviderAnswer(answered: string | undefined, mode: ConnectionMode): Result<Provider | undefined, ProxyError> {
+    if (mode === "cliproxy") return resolveProvider(answered);
+    if (answered !== undefined && !isVendorSlug(answered)) {
+        return err(
+            new ProxyError(`Invalid provider '${answered}'. A direct connection's provider is a lowercase vendor slug (e.g. anthropic, openai, deepseek).`),
+        );
+    }
+    return ok(undefined);
 }
 
 function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: ConnectionMode, embeddingsConfigured: boolean): void {
