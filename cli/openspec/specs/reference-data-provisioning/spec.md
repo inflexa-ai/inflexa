@@ -289,7 +289,7 @@ Setup SHALL also state how references can be obtained later: by running `inflexa
 
 Declining or selecting nothing SHALL continue setup. A selected installation failure SHALL fail setup visibly.
 
-Headless setup SHALL download no reference bytes unless dataset ids and non-interactive consent are explicit. Without them it SHALL print the reference-store path and an actionable `inflexa refs download` command and continue.
+The reference selection SHALL be answerable as `--refs recommended|all|<id,…>` (file: `refs`). `recommended` SHALL resolve to the catalog-recommended datasets within the offered set; `all` to the whole offered set; both preset words SHALL be validated against catalog ids so a colliding dataset id is a loud catalog-authoring error, never a shadowed selection. An explicit selection IS the consent — no separate consent flag is required, interactively or headless; the resolved plan is subject to the same verification, activation, and receipt path as `inflexa refs download`. Under batch resolution (`--yes` or non-TTY) with no refs answer, setup SHALL download no reference bytes: it SHALL print the reference-store path and an actionable `inflexa refs download` command and continue.
 
 #### Scenario: Setup and explicit command share one installer
 
@@ -316,15 +316,20 @@ Headless setup SHALL download no reference bytes unless dataset ids and non-inte
 - **WHEN** the terminal is wide enough to carry the statement beside the listing without squeezing it below a usable width
 - **THEN** the statement is shown alongside the listing and stays visible while the listing scrolls, and on a narrower terminal the same wording is shown above the listing instead
 
-#### Scenario: Headless setup does not silently download
+#### Scenario: Batch setup without a refs answer downloads nothing
 
-- **WHEN** setup runs without a TTY and without explicit reference ids and consent
-- **THEN** it downloads nothing, prints how to install references later, and continues
+- **WHEN** setup runs under batch resolution (`--yes` or no TTY) without a refs answer
+- **THEN** it downloads nothing — even with `--yes` given — prints how to install references later, and continues
 
-#### Scenario: Explicit ids skip the picker
+#### Scenario: A refs preset resolves against the offered set
 
-- **WHEN** setup runs with explicit reference dataset ids supplied on the command line
-- **THEN** no picker is offered, and the named datasets are the plan, subject to the same consent rules
+- **WHEN** `setup --yes --refs recommended` runs while one recommended dataset is already installed and intact
+- **THEN** the plan contains the missing recommended datasets only, and the installed one is not re-fetched
+
+#### Scenario: An explicit selection needs no separate consent
+
+- **WHEN** setup runs with `--refs CollecTRI` (with or without a TTY)
+- **THEN** no picker is offered and the named dataset downloads without any further consent flag — the answer is the consent
 
 #### Scenario: User declines optional references
 
