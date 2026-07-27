@@ -7,7 +7,7 @@ import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts
 import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
 import { ensureRuntime, readConfig, resolvePostgresConfig, selectedRuntime, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
-import { firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
+import { ensureReady, firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
 import {
     anthropicAuthTokenSet,
     detectProviderEnv,
@@ -40,6 +40,7 @@ import {
     type ChatSetupError,
     type ModelAccess,
 } from "../proxy/models.ts";
+import type { EmbeddingSetupAnswers } from "../embedding/setup.ts";
 import type { ReferenceSelection } from "../refs/commands.ts";
 import { DEFAULT_DATABASE, DEFAULT_HOST, DEFAULT_PASSWORD, DEFAULT_USER, type PostgresConnection } from "./postgres_types.ts";
 import {
@@ -54,7 +55,7 @@ import {
     type ConnectionMode,
 } from "./compose.ts";
 import { formatInfraStateError, writeProxyConfig } from "./proxy_config.ts";
-import type { SetupAnswerFlags } from "./setup_answers.ts";
+import { answerOf, describeSetupAnswersError, isBatchRun, loadSetupAnswers, type SetupAnswerFlags, type SetupAnswers } from "./setup_answers.ts";
 
 // `inflexa setup` provisions the inflexa infrastructure stack: CLIProxyAPI (the
 // local model proxy) and Postgres + pgvector (the harness substrate). Both run
@@ -72,67 +73,74 @@ import type { SetupAnswerFlags } from "./setup_answers.ts";
 // --- command ---------------------------------------------------------------
 
 type SetupOptions = {
-    /** Commander fills these in from the flags registered in src/cli/index.ts. */
-    provider?: string;
-    /** Preselected connection mode from `--connection` (`cliproxy` | `direct`); overrides the prompt. */
-    connection?: string;
+    /** Whether the provider authentication step runs (default true; `--no-auth` sets false). */
     auth: boolean;
     start: boolean;
     force: boolean;
     /** Whether to provision Postgres (default true; `--no-postgres` sets false). */
     postgres: boolean;
-    /** Preselected embedding mode from `--embeddings`; overrides the interactive prompt. */
-    embeddings?: "local" | "api-key" | "off";
-    /** Reference selection from `--refs` — a preset word or explicit ids — parsed at the command boundary. */
-    refs?: ReferenceSelection;
     /** Batch mode: never prompt. */
     yes?: boolean;
     /** Whether the network validation probes run (`--no-validate` sets false); the offline local-GGUF verification is not one of them and always runs. */
     validate?: boolean;
     /**
-     * The batch answer flags exactly as commander parsed them — carried, not consumed, because they are the
-     * ANSWERS layer's input: `loadSetupAnswers` (./setup_answers.ts) owns reading `--config`, mapping the
-     * flags into the same schema the file parses into, merging them, and validating the whole set before
-     * anything here mutates. Keeping the registry a pass-through is what stops the two front-ends from
-     * growing separate notions of what an answer means.
+     * The batch answer flags exactly as commander parsed them — the ONE source of every configuration
+     * answer this command consumes. `loadSetupAnswers` (./setup_answers.ts) owns reading `--config`,
+     * mapping the flags into the same schema the file parses into, merging them per question, and
+     * validating the whole set before anything here mutates.
+     *
+     * WHY every answer arrives here rather than pre-parsed beside it: `--connection`, `--provider`,
+     * `--embeddings`, `--refs`, and `--model` are answers, and an answer parsed twice is an answer that
+     * can mean two things. The registry therefore hands the raw values over untouched and the fields
+     * that survive on this type are exclusively EXECUTION MODIFIERS (design D3) — how THIS invocation
+     * behaves, never what the client should look like, which is exactly the line the `--config` file
+     * cannot cross either.
      */
     flags?: SetupAnswerFlags;
 };
 
 export async function setup(options: SetupOptions): Promise<void> {
-    const provider = resolveProvider(options).match(
-        (p) => p,
-        (e) => {
-            console.error(`\n  ${e.message}\n`);
-            process.exitCode = 1;
-            return null as Provider | undefined | null;
-        },
-    );
-    if (provider === null) return;
+    // "Never prompt" is one fact, not two: `--yes` and a missing terminal withdraw the terminal
+    // identically, so every step below reads `batch`/`canPrompt` instead of re-deriving its own TTY
+    // policy (which is how the pre-answers flow ended up with three subtly different gates).
+    const batch = isBatchRun(options.yes, Boolean(process.stdin.isTTY));
 
-    const connectionFlag = parseConnectionMode(options.connection).match(
-        (m) => m,
-        (e) => {
-            console.error(`\n  ${e.message}\n`);
+    // FAIL BEFORE MUTATE. The whole answer set resolves and validates here, ahead of the embedding
+    // pre-gate, the runtime probe, and `writeProxyConfig` — the three earliest mutators — so a bad flag,
+    // an unreadable `--config` file, a mode-mismatched answer, or a contextually-missing one costs the
+    // operator an error message rather than a half-provisioned machine.
+    const resolved = loadSetupAnswers(options.flags ?? {}, { batch }).match(
+        (value) => value,
+        (error) => {
+            console.error(`\n  ${describeSetupAnswersError(error)}\n`);
             process.exitCode = 1;
-            return null as ConnectionMode | undefined | null;
+            return null;
         },
     );
-    if (connectionFlag === null) return;
+    if (resolved === null) return;
+    const { answers, connectionMode } = resolved;
+    /** Whether a step may still ask a question — the exact complement of batch resolution. */
+    const canPrompt = !batch;
+    // `--no-validate` is a run modifier, never an answer: it says how this invocation behaves, so it is
+    // threaded from the options rather than read out of the answer set.
+    const validate = options.validate !== false;
 
     // Local embeddings need no container runtime — the llama-server sidecar is a
     // plain subprocess, not a compose service — and the bge-small model ships as a
-    // build-time embedded asset. So a preselected `--embeddings` mode is configured
-    // ahead of the runtime gate below, so an air-gapped / egress-restricted
-    // `inflexa setup --embeddings local` still durably configures embeddings on a
-    // host with no ready Docker/Podman; the gate that follows governs only the
-    // container stack, which genuinely needs a runtime. The interactive
-    // no-preselection flow keeps its embedding question in its spec-bound position
-    // after provider auth (see the in-flow step below), so this fires ONLY for an
-    // explicit `--embeddings` value.
-    if (options.embeddings !== undefined) {
+    // build-time embedded asset. So an ANSWERED embedding mode is configured ahead
+    // of the runtime gate below, so an air-gapped / egress-restricted
+    // `inflexa setup --embeddings local` (or the same mode arriving via `--config`)
+    // still durably configures embeddings on a host with no ready Docker/Podman;
+    // the gate that follows governs only the container stack, which genuinely needs
+    // a runtime. The interactive no-answer flow keeps its embedding question in its
+    // spec-bound position after provider auth (see the in-flow step below), so this
+    // fires ONLY when the mode was actually answered — from either front-end, which
+    // is why it reads the RESOLVED answers and not a raw flag.
+    const embeddingAnswers: EmbeddingSetupAnswers = { ...answers.embedding, validate };
+    const embeddingModeAnswered = answers.embedding?.mode !== undefined;
+    if (embeddingModeAnswered) {
         const { runEmbeddingSetup } = await import("../embedding/setup.ts");
-        const embedResult = await runEmbeddingSetup(process.stdin.isTTY, options.embeddings);
+        const embedResult = await runEmbeddingSetup(canPrompt, undefined, embeddingAnswers);
         if (embedResult.isErr()) {
             log.error(`Embedding setup: ${embedResult.error.message}`);
             process.exitCode = 1;
@@ -140,16 +148,20 @@ export async function setup(options: SetupOptions): Promise<void> {
         }
     }
 
-    // Setup treats the runtime selection as a preference, not a gate: the selected
-    // runtime (when there is one) is probed first, then the other supported
-    // runtimes, and the first ready one wins ("Docker configured but stopped,
-    // Podman running" self-heals here instead of erroring). Outside setup an
-    // explicit selection is a hard gate (see ensureRuntime) — this deliberate
-    // re-provisioning entry point is the ONE place a dead selection may be
-    // switched away from.
+    // Two runtime policies, keyed on whether the runtime was ANSWERED:
+    //   - Answered (`--runtime` / the file's `runtime`): a hard gate. The named runtime is probed ALONE
+    //     and never switched away from — an answer is provisioning intent, and silently falling back
+    //     would let one fleet member provision a stack on a different engine than its siblings.
+    //   - Unanswered: setup's own preference-then-fallback detection — the selected runtime first, then
+    //     the rest in registry order ("Docker configured but stopped, Podman running" self-heals here
+    //     instead of erroring). Outside setup an explicit selection is a hard gate (see ensureRuntime);
+    //     this deliberate re-provisioning entry point is the ONE place a dead selection may be moved off.
+    const runtimeAnswer = answerOf(answers.runtime);
     const selected = selectedRuntime();
     const candidates = selected ? [selected, ...runtimeIds.filter((id) => id !== selected.id).map((id) => runtimes[id])] : runtimeIds.map((id) => runtimes[id]);
-    const readyResult = await firstReadyRuntime(candidates);
+    const readyResult = runtimeAnswer.answered
+        ? (await ensureReady(runtimes[runtimeAnswer.value])).map(() => runtimes[runtimeAnswer.value])
+        : await firstReadyRuntime(candidates);
     if (readyResult.isErr()) {
         console.error(`\n  ${readyResult.error.message}\n`);
         process.exitCode = 1;
@@ -161,9 +173,11 @@ export async function setup(options: SetupOptions): Promise<void> {
 
     if (rt.id !== selected?.id) {
         log.info(
-            selected
-                ? `${selected.label} isn't ready — continuing with ${rt.label} and saving it as the container runtime.`
-                : `Using ${rt.label} as the container runtime (saved to settings).`,
+            runtimeAnswer.answered
+                ? `Using ${rt.label} as the container runtime (answered; saved to settings).`
+                : selected
+                  ? `${selected.label} isn't ready — continuing with ${rt.label} and saving it as the container runtime.`
+                  : `Using ${rt.label} as the container runtime (saved to settings).`,
         );
         const writeError = writeConfig({ ...readConfig(), runtime: rt.id }).match(
             () => null,
@@ -180,9 +194,26 @@ export async function setup(options: SetupOptions): Promise<void> {
     }
 
     try {
-        const mode = await chooseConnectionMode(connectionFlag);
+        // The connection mode is the ONE question whose batch default the resolver applies early and
+        // whose interactive default it deliberately does NOT — applying it would pre-empt the wizard's
+        // first prompt. So an unresolved mode here means exactly "an interactive run still has to ask".
+        const mode = await chooseConnectionMode(connectionMode);
 
         if (mode === "cliproxy") {
+            // `--provider` wears the vocabulary of the connection mode (design D4), so the account-kind
+            // check can only run once the mode is known — which on an interactive run is right here,
+            // after the prompt above. Batch never reaches a valid provider answer at all: the resolver
+            // rejects one upfront, because OAuth cannot run unattended.
+            const provider = resolveProvider(answers.connection?.provider).match(
+                (p) => p,
+                (e) => {
+                    console.error(`\n  ${e.message}\n`);
+                    process.exitCode = 1;
+                    return null;
+                },
+            );
+            if (provider === null) return;
+
             // --- proxy config ---
             const writeResult = await writeProxyConfig();
             if (writeResult.isErr()) {
@@ -205,7 +236,24 @@ export async function setup(options: SetupOptions): Promise<void> {
             // authenticate() records the connection provider fact on a successful login (see
             // recordCliproxyProvider), so the cliproxy path always leaves `models.connection` naming
             // the authenticated vendor.
-            if (options.auth) {
+            if (batch) {
+                // Batch cliproxy is PRE-STAGING (design D10): provider OAuth needs a human in a browser,
+                // and a credential cannot be pre-seeded across a fleet (two proxies refreshing one
+                // rotating refresh token corrupt it). So the login is the one step batch mode leaves
+                // undone — everything else is provisioned — and a missing credential is a NOTICE, not a
+                // failure. An error exit here would make the legitimate pre-staging workflow impossible
+                // to script, so the run continues through the remaining steps and finishes at exit 0;
+                // automation that wants to assert a credential exists greps for this notice.
+                if (await isAuthenticated()) {
+                    log.info("A provider credential exists. If chats fail to authenticate, re-run with `--provider <name>` to sign in again.");
+                } else {
+                    note(
+                        "No provider credential is staged on this machine yet, and the sign-in needs a browser.\n" +
+                            "The first `inflexa` launch offers the interactive sign-in; everything else is provisioned.",
+                        "Provider sign-in pending",
+                    );
+                }
+            } else if (options.auth) {
                 if (provider === undefined && (await isAuthenticated())) {
                     // "exists", not "authenticated": a dead refresh token is statically invisible
                     // (nothing in the credential file records it), so this branch cannot promise the
@@ -241,52 +289,67 @@ export async function setup(options: SetupOptions): Promise<void> {
             }
         } else {
             // --- direct connection ---
-            // Setup can ADOPT an already-configured ecosystem env (ANTHROPIC_*/OPENAI_*) — a machine set up
-            // for Claude Code / the SDKs need not re-type the endpoint or re-export the key. The detection
-            // is a one-time setup read (never a runtime binding); only the non-secret fields are copied.
-            const snap = detectProviderEnv();
-            const adoptable = detectedAdoptable(snap);
-            // Detected BEFORE the endpoint prompt (a cheap read-only probe): a credential-helper setup
-            // often carries the gateway ENDPOINT too (the settings `env.ANTHROPIC_BASE_URL`, or a
-            // key-less shell export), and the endpoint question comes first — so the detection must
-            // already be in hand for promptDirectConnection to offer that URL as a pre-fill.
-            const detection = detectCredentialHelper();
-
+            const answered = answers.connection ?? {};
             let direct: DirectConnectionInput;
-            // The credential probe's conclusion, when the credential-source offer ran one: carries the
-            // /models ids and minted token the model step below reuses (no second mint, no second listing).
+            // The credential probe's conclusion, when one ran: carries the /models ids and the minted
+            // token the model step below reuses (no second mint, no second listing).
             let credentialProbe: CredentialProbeResult | null = null;
-            if (process.stdin.isTTY) {
-                direct = await promptDirectConnection(snap, adoptable, detection);
+            if (batch) {
+                // Batch builds the connection STRAIGHT from the answers: no ecosystem-env adoption, no
+                // credential-helper read, no prompts. Adoption is an interactive affordance by spec — a
+                // provisioned fleet's endpoint facts must be explicit answers, not whatever happened to
+                // be exported on one machine, and the env key stays purely a runtime secret.
+                if (answered.baseURL === undefined || answered.provider === undefined) {
+                    // Unreachable: `resolveSetupAnswers` requires both under batch and fails before any
+                    // mutation. Asserted rather than assumed, so a regression there writes no connection.
+                    log.error(
+                        "Direct-connection setup needs `--base-url` / `connection.baseURL` and `--provider` / `connection.provider` in a non-interactive run.",
+                    );
+                    process.exitCode = 1;
+                    return;
+                }
+                direct = {
+                    provider: answered.provider,
+                    baseURL: answered.baseURL,
+                    ...(answered.protocol !== undefined && { protocol: answered.protocol }),
+                };
+            } else {
+                // Detected BEFORE the endpoint prompt (a cheap read-only probe): a credential-helper setup
+                // often carries the gateway ENDPOINT too (the settings `env.ANTHROPIC_BASE_URL`, or a
+                // key-less shell export), and the endpoint question comes first — so the detection must
+                // already be in hand for collectDirectConnection to offer that URL as a pre-fill.
+                const detection = detectCredentialHelper();
+                direct = await collectDirectConnection(answered, detection);
                 // A detected credential-helper setup can supply a refreshing token (a helper command or an
                 // env bearer) in place of a static key. Offer it opt-in — the command/scheme need
                 // confirmation, and an org-managed helper must never be auto-executed. Only for an
                 // anthropic-wire connection: the detection signals (Claude Code's `apiKeyHelper`,
                 // `ANTHROPIC_AUTH_TOKEN`) are Anthropic-specific, so minting one to probe against an
-                // unrelated openai-compatible endpoint would be a confusing, wrong offer.
-                if (effectiveProtocol(direct) === "anthropic" && credentialHelperDetected(detection)) {
+                // unrelated openai-compatible endpoint would be a confusing, wrong offer. An ANSWERED
+                // source skips the offer entirely — detection exists to propose what an answer already
+                // states, and the answer is validated on its own terms below.
+                if (answered.auth === undefined && effectiveProtocol(direct) === "anthropic" && credentialHelperDetected(detection)) {
                     const offered = await offerCredentialSource(direct, detection);
                     if (offered !== null) {
                         direct = { ...direct, auth: offered.auth };
                         credentialProbe = offered.probe;
                     }
                 }
-            } else if (adoptable.length > 0) {
-                // Non-interactive self-configure: adopt the detected env with no prompts, applying the
-                // deterministic anthropic-before-openai precedence so a scripted run is reproducible.
-                direct = adoptedConnection(adoptable[0]!, snap);
-                log.info(`Adopting the detected ${direct.provider} environment (${direct.baseURL}).`);
-            } else {
-                // No TTY and nothing to adopt: the endpoint/provider have no non-interactive flags, so a
-                // scripted `--connection direct` cannot proceed — fail with a clear instruction rather than
-                // the shared prompt's generic "stdin is not interactive" bail-out.
-                log.error(
-                    "Direct-connection setup needs an interactive terminal to collect the endpoint and provider,\n" +
-                        "  or a detected ANTHROPIC_*/OPENAI_* environment to adopt.\n" +
-                        "  Re-run `inflexa setup --connection direct` in an interactive shell.",
-                );
-                process.exitCode = 1;
-                return;
+            }
+
+            // An ANSWERED credential source runs the same probe ladder the interactive offer runs, under
+            // the answers contract: it must PASS. There is no save-anyway confirm to fall back on, so an
+            // ambiguous answer is exactly as unprovisionable as a definite rejection — and this holds on
+            // an interactive run too, because an answer is a declaration, not a prompt to re-ask.
+            if (answered.auth !== undefined) {
+                const validated = await validateAnsweredCredentialSource(direct, answered.auth, answered.model, validate);
+                if (validated.isErr()) {
+                    log.error(validated.error.message);
+                    process.exitCode = 1;
+                    return;
+                }
+                direct = { ...direct, auth: answered.auth };
+                credentialProbe = validated.value;
             }
 
             const writeErr = writeDirectConnection(direct).match(
@@ -330,10 +393,19 @@ export async function setup(options: SetupOptions): Promise<void> {
                 );
             }
 
-            // Direct mode has no model auto-resolve: without an explicit id boot fails `model_required`,
-            // so the interactive flow finishes the job here. A non-TTY run writes nothing — boot's
-            // actionable failure remains the documented contract.
-            if (process.stdin.isTTY) {
+            // Direct mode has no model auto-resolve: without an explicit id boot fails `model_required`.
+            // An ANSWERED id is persisted with no prompt and validated pass-or-fail (batch requires the
+            // answer, so this is the batch path); an unanswered one on a run that may prompt takes the
+            // wizard's collect-and-re-prompt loop.
+            const modelAnswer = answerOf(answered.model);
+            if (modelAnswer.answered) {
+                const persisted = await persistAnsweredDirectModel(direct, modelAnswer.value, credentialProbe, validate);
+                if (persisted.isErr()) {
+                    log.error(persisted.error.message);
+                    process.exitCode = 1;
+                    return;
+                }
+            } else if (canPrompt) {
                 await collectDirectModelAtSetup(direct, credentialProbe);
             }
         }
@@ -343,7 +415,7 @@ export async function setup(options: SetupOptions): Promise<void> {
         // drops or keeps the proxy service — see generateComposeFile).
         let pgConn: PostgresConnection;
         if (options.postgres) {
-            pgConn = await promptPostgresConfig();
+            pgConn = await promptPostgresConfig(answers.postgres, canPrompt);
 
             if (!(await composeAvailable(rt))) {
                 log.error(`${rt.label} Compose is not available.\n  Install it: https://docs.docker.com/compose/install/`);
@@ -408,29 +480,36 @@ export async function setup(options: SetupOptions): Promise<void> {
         // Cliproxy only, and only after the compose step above started the proxy, so the live `/models`
         // list and the accessibility sweep can answer. Nothing here WAITS on the proxy's port bind (the
         // readiness wait above is Postgres's own) — a proxy still binding just makes the step skip
-        // gracefully, which is fine because it is optional and must never fail setup. Offers a
-        // preselected Auto default plus the account's accessible models.
-        await runDefaultModelSetup(mode);
+        // gracefully, which is fine because it is optional and must never fail setup. An ANSWERED model
+        // is a pin (no select); an unanswered one offers a preselected Auto default plus the account's
+        // accessible models, and under batch keeps Auto semantics by writing nothing.
+        const cliproxyModel = await runDefaultModelSetup(mode, answers.connection?.model, batch, validate);
+        if (cliproxyModel.isErr()) {
+            log.error(cliproxyModel.error.message);
+            process.exitCode = 1;
+            return;
+        }
 
         // --- analysis resource allowance ---
         // Collects the machine budget for the harness's resource policy — the
         // total share of this host analyses may use; per-step ceilings are
-        // derived from it, and enforcement is the harness's contract. Non-TTY
-        // shells skip the prompt — the resolved default (half the detected
-        // machine) applies.
-        await promptResourceConfig();
+        // derived from it, and enforcement is the harness's contract. An answered
+        // share persists the machine-relative absolutes without the prompt; a run
+        // that can neither ask nor read an answer skips entirely — the resolved
+        // default (half the detected machine) applies unpersisted.
+        await promptResourceConfig(answers.resources?.sharePct, canPrompt);
 
         // --- embeddings ---
         // The spec-bound position for the INTERACTIVE embedding question — after auth
         // + postgres, before "Setup complete". The clack select offers
-        // local / api-key / off; a non-TTY shell skips the prompt. A preselected
-        // `--embeddings` mode is instead configured ahead of the runtime gate (local
-        // embeddings need no container runtime), so only the no-preselection flow
-        // reaches this call — the guard keeps the preselected step from running a
-        // second time here. See modules/embedding/setup.ts.
-        if (options.embeddings === undefined) {
+        // local / api-key / off; a run that cannot prompt skips it. An ANSWERED mode
+        // is instead configured ahead of the runtime gate (local embeddings need no
+        // container runtime), so only the unanswered flow reaches this call — the
+        // guard is what keeps the answered step from running a second time here.
+        // See modules/embedding/setup.ts.
+        if (!embeddingModeAnswered) {
             const { runEmbeddingSetup } = await import("../embedding/setup.ts");
-            const embedResult = await runEmbeddingSetup(process.stdin.isTTY, options.embeddings);
+            const embedResult = await runEmbeddingSetup(canPrompt, undefined, embeddingAnswers);
             if (embedResult.isErr()) {
                 log.error(`Embedding setup: ${embedResult.error.message}`);
                 process.exitCode = 1;
@@ -442,11 +521,12 @@ export async function setup(options: SetupOptions): Promise<void> {
         // The setup offer and `inflexa refs download` share one handler. Creating the public
         // store/user namespace is deliberate here; no passive runtime path creates it.
         const { runReferenceSetup } = await import("../refs/commands.ts");
+        const selection = referenceSelectionOf(answers.refs);
         const refsResult = await runReferenceSetup({
             // A selection is its own consent, so the only thing left to decide is whether the step may
             // ask: a terminal that batch mode has not withdrawn.
-            interactive: process.stdin.isTTY && options.yes !== true,
-            ...(options.refs === undefined ? {} : { selection: options.refs }),
+            interactive: canPrompt,
+            ...(selection === undefined ? {} : { selection }),
         });
         if (refsResult.isErr()) {
             log.error(`Reference-data setup: ${refsResult.error.message}`);
@@ -459,9 +539,9 @@ export async function setup(options: SetupOptions): Promise<void> {
         // `inflexa sandbox pull` (design: one dogfooded path). A pull failure warns
         // and continues — the image is an offer here, not a hard prerequisite
         // (`inflexa profile` pulls it on demand if still missing).
-        await runSandboxImageSetup();
+        await runSandboxImageSetup(answers.sandbox, canPrompt);
 
-        printNextSteps(options, pgConn, mode);
+        printNextSteps(options, pgConn, mode, embeddingModeAnswered);
         outro("Setup complete");
     } catch (error) {
         log.error(`Setup failed unexpectedly: ${error}`);
@@ -471,22 +551,27 @@ export async function setup(options: SetupOptions): Promise<void> {
 
 /**
  * Provision the sandbox image as part of `inflexa setup`. Reuses the `sandboxPull`
- * handler (never a second fetch path); the user picks a variant (`python` /
- * `python-r`) and `docker pull` resolves the host arch from the multi-arch
- * manifest. The image can be multiple GB, so pulling is gated on explicit consent:
- *   - Interactive: hand off to `sandboxPull` so it prompts the variant, confirms
- *     before the transfer, and streams progress.
- *   - Non-interactive: do NOT auto-download — a headless run must never silently
- *     pull GBs. Print a hint to the explicit command and continue.
+ * handler (never a second fetch path); a variant (`python` / `python-r`) selects the
+ * image and `docker pull` resolves the host arch from the multi-arch manifest. The
+ * image can be multiple GB, so pulling is gated on explicit consent — which the
+ * three branches obtain three ways:
+ *   - Answered variant: the ANSWER IS the consent (`--sandbox python` names a
+ *     multi-GB download in as many words), so the pull runs with `yes: true` and no
+ *     size confirmation — there is no terminal to confirm on in the run that
+ *     motivates the answer, and re-asking a question already answered is how a
+ *     batch provision hangs.
+ *   - Unanswered on a run that may prompt: hand off to `sandboxPull` so it prompts
+ *     the variant, confirms before the transfer, and streams progress.
+ *   - Unanswered with no prompt available: do NOT auto-download — a headless run
+ *     must never silently pull GBs. Print a hint to the explicit command and continue.
  * Every branch is non-fatal (decline, failure): the image is an offer here, not a
  * prerequisite — `inflexa profile` pulls it on demand if still missing.
  */
-async function runSandboxImageSetup(): Promise<void> {
-    // Headless setup never auto-downloads (the image is multi-GB); point at the
-    // explicit command and continue so the rest of setup still completes.
-    if (!process.stdin.isTTY) {
+async function runSandboxImageSetup(answered: SetupAnswers["sandbox"], canPrompt: boolean): Promise<void> {
+    const variant = answerOf(answered);
+    if (!variant.answered && !canPrompt) {
         note(
-            "Skipping the sandbox image on a non-interactive terminal.\nRun `inflexa sandbox pull <python|python-r> --yes` to install it later.",
+            "Skipping the sandbox image — no variant was requested.\nRun `inflexa sandbox pull <python|python-r> --yes` to install it later.",
             "Sandbox image",
         );
         return;
@@ -494,7 +579,7 @@ async function runSandboxImageSetup(): Promise<void> {
 
     // sandboxPull owns the variant prompt + size confirmation when left interactive.
     const { sandboxPull } = await import("../libs/pull.ts");
-    (await sandboxPull()).match(
+    (await sandboxPull(variant.answered ? { variant: variant.value, yes: true } : {})).match(
         (outcome) => {
             if (outcome.type === "up_to_date") log.success(`Sandbox image already installed (${outcome.image}).`);
             else if (outcome.type === "pulled") log.success(`Sandbox image installed (${outcome.image}).`);
@@ -505,6 +590,16 @@ async function runSandboxImageSetup(): Promise<void> {
                 ? log.info(error.message)
                 : log.warn(`Sandbox image install failed: ${error.message}\n  You can retry later with \`inflexa sandbox pull\`.`),
     );
+}
+
+/**
+ * Translate the reference answer into the refs module's selection shape. Absence stays absence — an
+ * unanswered question is a different outcome from an empty answer, and the refs step reads that
+ * distinction to decide between offering the picker and downloading nothing.
+ */
+function referenceSelectionOf(refs: SetupAnswers["refs"]): ReferenceSelection | undefined {
+    if (refs === undefined) return undefined;
+    return Array.isArray(refs) ? { ids: refs } : { preset: refs };
 }
 
 // --- default-model selection (setup) ---------------------------------------
@@ -648,11 +743,25 @@ const AUTO_MODEL_SENTINEL = "__auto__";
  * when something has ALREADY gone wrong (no listing, or nothing servable) and its whole purpose is to keep
  * that from stopping anyone — so declining there keeps Auto and setup finishes.
  */
-async function runDefaultModelSetup(mode: ConnectionMode): Promise<void> {
-    if (mode !== "cliproxy") return;
-    const key = await readApiKey();
-    if (key.isErr()) return;
-    const apiKey = key.value;
+async function runDefaultModelSetup(
+    mode: ConnectionMode,
+    answeredModel: string | undefined,
+    batch: boolean,
+    validate: boolean,
+): Promise<Result<void, ProxyError>> {
+    if (mode !== "cliproxy") return ok(undefined);
+    // A missing/unreadable client key means nothing can be asked of the proxy; every branch below
+    // degrades rather than failing, so the read is folded to `null` here instead of short-circuiting.
+    const apiKey = (await readApiKey()).match(
+        (value) => value,
+        () => null,
+    );
+    // An ANSWERED model is a PIN, not a selection: it persists to both agents with no prompt, in either
+    // resolution mode (an answer skips its question even on a TTY).
+    if (answeredModel !== undefined) return pinCliproxyModel(answeredModel, apiKey, validate);
+    // Batch with no model answer keeps Auto semantics: nothing is written, and no listing is even
+    // fetched — the launch election resolves the default adaptively, as it does today.
+    if (batch || apiKey === null) return ok(undefined);
     const provider = resolveModelConnection().provider;
     await selectDefaultModel({
         isInteractive: () => Boolean(process.stdin.isTTY),
@@ -687,6 +796,43 @@ async function runDefaultModelSetup(mode: ConnectionMode): Promise<void> {
         writeBoth: (modelId) => writeAgentModel("conversation", modelId).andThen(() => writeAgentModel("sandbox", modelId)),
         warn: (message) => log.warn(message),
     });
+    return ok(undefined);
+}
+
+/** Persist a model id to BOTH user-facing agents — the one write shape every explicit pick shares. */
+function writeBothAgents(modelId: string): Result<void, ConfigError> {
+    return writeAgentModel("conversation", modelId).andThen(() => writeAgentModel("sandbox", modelId));
+}
+
+/**
+ * Persist an ANSWERED cliproxy model to both agents, accessibility-checked the way the interactive
+ * election checks its list — via the unbilled `count_tokens` route, bounded like every probe round-trip.
+ *
+ * The check is OPPORTUNISTIC, and deliberately asymmetric to the direct-endpoint validation (design D8):
+ * only a definite `not_found` fails the run. `served` obviously proceeds, and so does `inconclusive` —
+ * a pre-staged proxy has NO provider credential loaded and no client key to ask with, so its check is
+ * inconclusive by construction, and failing on that would make the whole legitimate pre-staging workflow
+ * (design D10) impossible. `--no-validate` skips the check entirely: it is a network probe, and that flag
+ * is the air-gapped escape for all of them.
+ *
+ * A failed WRITE fails the run rather than warning (as the interactive picker does): an answer that did
+ * not land leaves the client pinned to something other than what the fleet declared, which automation
+ * cannot see.
+ */
+async function pinCliproxyModel(model: string, apiKey: string | null, validate: boolean): Promise<Result<void, ProxyError>> {
+    if (validate && apiKey !== null && (await checkModelAccess(apiKey, model, AbortSignal.timeout(PROBE_TIMEOUT_MS))) === "not_found") {
+        return err(
+            new ProxyError(
+                `The authenticated account does not serve the model "${model}".\n` +
+                    "  Answer `--model` / `connection.model` with an id the account serves, or drop it to keep the adaptive default.",
+            ),
+        );
+    }
+    return writeBothAgents(model)
+        .map(() => {
+            log.success(`Model "${model}" set for both agents.`);
+        })
+        .mapErr((e) => new ProxyError(`Could not save the model selection: ${e.type}.`));
 }
 
 /**
@@ -723,40 +869,44 @@ export function explicitPostgresFields(conn: PostgresConnection): Partial<Postgr
 }
 
 /**
- * Prompt for Postgres username, password, and port via @clack/prompts.
- * On non-interactive terminals, uses existing config values or defaults silently.
- * Empty input keeps the current value (the default is shown in the placeholder).
+ * Resolve the Postgres connection for this run: every field is either ANSWERED (skipping its prompt,
+ * exactly as a typed value would), prompted via @clack/prompts, or left at the current resolution.
  *
- * Persists ONLY explicit choices (see {@link explicitPostgresFields}): a prompted value equal to its
+ * A run that can neither prompt nor read a single answer returns the current resolution UNTOUCHED and
+ * persists nothing — batch's documented default, and today's non-TTY behavior. As soon as one field is
+ * answered the persist path runs, because an answer IS an explicit choice; the persist-only-explicit
+ * contract then decides what survives, so an answer equal to its default still writes nothing and the
+ * run converges to the same config as an unanswered one.
+ *
+ * Persists ONLY explicit choices (see {@link explicitPostgresFields}): a value equal to its
  * channel-aware default writes nothing, and an all-defaults run removes the `postgres` block entirely so
  * each channel keeps resolving its own defaults. The returned connection is the full resolution used to
  * generate THIS run's compose file, independent of what was persisted.
  */
-async function promptPostgresConfig(): Promise<PostgresConnection> {
+async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPrompt: boolean): Promise<PostgresConnection> {
     const existing = resolvePostgresConfig();
+    const anyAnswered = answered !== undefined && Object.values(answered).some((value) => value !== undefined);
 
-    if (!process.stdin.isTTY) return existing;
+    if (!canPrompt && !anyAnswered) return existing;
 
-    log.message("Configure Postgres (press Enter to accept defaults)");
+    if (canPrompt) log.message("Configure Postgres (press Enter to accept defaults)");
 
-    const user = await promptText("Username", {
-        defaultValue: existing.user,
-        placeholder: existing.user,
-    }).catch(() => existing.user);
-    const password = await promptText("Password", {
-        defaultValue: existing.password,
-        placeholder: existing.password,
-    }).catch(() => existing.password);
-    const portStr = await promptText("Port", {
-        defaultValue: String(existing.port),
-        placeholder: String(existing.port),
-        validate: (v) => {
-            if (v.trim() === "") return undefined;
-            const n = Number(v.trim());
-            if (!Number.isInteger(n) || n <= 0 || n > 65535) return "Must be a valid port number (1-65535).";
-            return undefined;
-        },
-    }).catch(() => String(existing.port));
+    const ask = async (label: string, current: string, validateInput?: (v: string) => string | undefined): Promise<string> =>
+        canPrompt
+            ? promptText(label, { defaultValue: current, placeholder: current, ...(validateInput && { validate: validateInput }) }).catch(() => current)
+            : current;
+
+    const user = answered?.user ?? (await ask("Username", existing.user));
+    const password = answered?.password ?? (await ask("Password", existing.password));
+    const portStr =
+        answered?.port !== undefined
+            ? String(answered.port)
+            : await ask("Port", String(existing.port), (v) => {
+                  if (v.trim() === "") return undefined;
+                  const n = Number(v.trim());
+                  if (!Number.isInteger(n) || n <= 0 || n > 65535) return "Must be a valid port number (1-65535).";
+                  return undefined;
+              });
 
     const port = Number(portStr) || existing.port;
 
@@ -795,17 +945,22 @@ async function promptPostgresConfig(): Promise<PostgresConnection> {
 }
 
 /**
- * Prompt for the machine allowance — the total share of this host analyses may
- * use — and persist it as absolute values under `harness.resourceLimits.budget`.
+ * Resolve the machine allowance — the total share of this host analyses may use —
+ * and persist it as absolute values under `harness.resourceLimits.budget`.
  * One question: everything else about resource limits (per-step ceilings,
  * ephemeral sizing) is derived from the allowance or expert config, not setup
  * material. The default share reflects the currently-resolved budget (half the
  * machine on a fresh config), so re-running setup shows what already applies.
- * Non-interactive terminals skip the prompt — the same resolved defaults apply
- * at run time without a config entry.
+ *
+ * An ANSWERED share (`--resource-share` / `resources.sharePct`) skips the prompt and takes exactly the
+ * same arithmetic and spread-preserving write the prompt does — the percentage is what travels across a
+ * heterogeneous fleet, and the ABSOLUTE budget it resolves to on THIS machine is what is persisted. A
+ * run that can neither ask nor read an answer skips entirely: the same resolved defaults apply at run
+ * time without a config entry.
  */
-async function promptResourceConfig(): Promise<void> {
-    if (!process.stdin.isTTY) return;
+async function promptResourceConfig(answeredSharePct: number | undefined, canPrompt: boolean): Promise<void> {
+    const share = answerOf(answeredSharePct);
+    if (!share.answered && !canPrompt) return;
 
     const machine = detectedMachine();
     const resolved = resolveHarnessConfig();
@@ -818,11 +973,13 @@ async function promptResourceConfig(): Promise<void> {
         if (isNaN(n) || n <= 0 || n > 100) return "Must be a percentage between 1 and 100.";
         return undefined;
     };
-    const answer = await promptText("Max share of this machine analyses may use in total (%)", {
-        defaultValue: String(currentPct),
-        placeholder: String(currentPct),
-        validate: sharePct,
-    }).catch(() => String(currentPct));
+    const answer = share.answered
+        ? String(share.value)
+        : await promptText("Max share of this machine analyses may use in total (%)", {
+              defaultValue: String(currentPct),
+              placeholder: String(currentPct),
+              validate: sharePct,
+          }).catch(() => String(currentPct));
     const parsed = Number(answer);
     const pct = parsed > 0 && parsed <= 100 ? parsed : currentPct;
     const budget = {
@@ -850,15 +1007,22 @@ async function promptResourceConfig(): Promise<void> {
     );
 }
 
-function resolveProvider(options: SetupOptions): Result<Provider | undefined, ProxyError> {
-    if (options.provider === undefined) return ok(undefined);
-    if (!isProvider(options.provider)) {
-        return err(new ProxyError(`Unknown provider '${options.provider}'. Choose one of: ${PROVIDERS.join(", ")}.`));
+/**
+ * Narrow a `provider` ANSWER to the OAuth account kind it names — the vocabulary the answer wears in
+ * CLIPROXY mode (design D4). Called only from the cliproxy branch, because the same answer in direct
+ * mode is an open vendor slug that this check would wrongly reject; the answers resolver applies the
+ * mode-keyed rule upfront whenever the mode is already known, and this is the interactive case where it
+ * is not (the wizard's own prompt decides it).
+ */
+function resolveProvider(answered: string | undefined): Result<Provider | undefined, ProxyError> {
+    if (answered === undefined) return ok(undefined);
+    if (!isProvider(answered)) {
+        return err(new ProxyError(`Unknown provider '${answered}'. Choose one of: ${PROVIDERS.join(", ")}.`));
     }
-    return ok(options.provider);
+    return ok(answered);
 }
 
-function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: ConnectionMode): void {
+function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: ConnectionMode, embeddingsConfigured: boolean): void {
     const lines: string[] = [];
     if (mode === "cliproxy") {
         lines.push(`Proxy: ${env.cliproxyBaseUrl}`);
@@ -872,8 +1036,12 @@ function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: C
     } else if (!options.postgres) {
         lines.push("Postgres provisioning skipped (--no-postgres).");
     }
+    // The "go pick a backend" hint is a lie once the run just configured one from an answer — the whole
+    // point of `--embeddings` / `embedding.mode` is that the question is already settled.
     lines.push(
-        "Embeddings: run `inflexa setup` and pick a backend — the built-in model, your own GGUF, or an api-key endpoint — or edit it later in `inflexa config`.",
+        embeddingsConfigured
+            ? "Embeddings: configured from your answers — change it later in `inflexa config`."
+            : "Embeddings: run `inflexa setup` and pick a backend — the built-in model, your own GGUF, or an api-key endpoint — or edit it later in `inflexa config`.",
     );
     if (!options.start) {
         lines.push("Containers start automatically on next `inflexa` run.");
@@ -905,24 +1073,13 @@ export const MODEL_API_KEY_VAR = "INFLEXA_MODEL_API_KEY";
 const ANTHROPIC_AUTH_TOKEN_VAR = "ANTHROPIC_AUTH_TOKEN";
 
 /**
- * Validate the `--connection` flag value. `undefined` (flag absent) is OK — the mode is then chosen
- * interactively, or defaults to `cliproxy` on a non-TTY (today's scripted-setup behavior). Any other
- * value is a user-actionable error.
+ * Resolve the connection mode: the RESOLVED answer when the answers layer produced one (a `--connection`
+ * / `connection.mode` answer, or the `cliproxy` default it applies under batch), else an interactive
+ * select. The mode value is validated in exactly one place — the answers schema — so this takes it
+ * pre-narrowed rather than re-parsing a string a second front-end already checked.
  */
-export function parseConnectionMode(value: string | undefined): Result<ConnectionMode | undefined, ProxyError> {
-    if (value === undefined) return ok(undefined);
-    if (value !== "cliproxy" && value !== "direct") {
-        return err(new ProxyError(`Unknown connection '${value}'. Choose one of: cliproxy, direct.`));
-    }
-    return ok(value);
-}
-
-/**
- * Resolve the connection mode: the pre-validated `--connection` value when given, else an interactive
- * select, else (non-TTY, no flag) the `cliproxy` default so a scripted setup keeps today's behavior.
- */
-async function chooseConnectionMode(preselected: ConnectionMode | undefined): Promise<ConnectionMode> {
-    if (preselected) return preselected;
+async function chooseConnectionMode(answered: ConnectionMode | undefined): Promise<ConnectionMode> {
+    if (answered) return answered;
     if (!process.stdin.isTTY) return "cliproxy";
     const chosen = await select("How should inflexa reach models?", [
         { value: "cliproxy", label: "Managed local proxy (CLIProxyAPI) — default" },
@@ -998,29 +1155,42 @@ export function adoptedConnection(which: AdoptableProvider, snap: ProviderEnvSna
         : { provider: "openai", baseURL: normalizeAdoptedBaseURL("openai", snap.openaiBaseURL), protocol: "openai-compatible" };
 }
 
+/** The connection facts an answer can supply — the `connection` block of the resolved answers. */
+type ConnectionAnswers = NonNullable<SetupAnswers["connection"]>;
+
 /**
- * Collect a direct connection interactively, most-configured source first: a key-bearing provider env
- * (the classic adoption), then a credential-helper GATEWAY (endpoint from the Claude settings `env`
- * block or a key-less shell `ANTHROPIC_BASE_URL` — see {@link detectedGatewayURL}), then the manual
- * endpoint/provider/protocol prompts. Declining any offer falls through to the next. Only
- * `{ provider, baseURL, protocol }` are ever produced; the key is never read here.
+ * Collect a direct connection on a run that MAY prompt, most-configured source first: a key-bearing
+ * provider env (the classic adoption), then a credential-helper GATEWAY (endpoint from the Claude
+ * settings `env` block or a key-less shell `ANTHROPIC_BASE_URL` — see {@link detectedGatewayURL}), then
+ * the manual endpoint/provider/protocol prompts, each of which an answer skips. Declining any offer
+ * falls through to the next. Only `{ provider, baseURL, protocol }` are ever produced; the key is never
+ * read here.
+ *
+ * The adoption ladder runs ONLY for a run that answered none of these facts. It exists to SUPPLY exactly
+ * `{provider, baseURL, protocol}`, so offering to adopt an environment over facts the run already named
+ * is how an answer gets silently overwritten — and "no answer is ever silently ignored" is the rule the
+ * whole answers layer is built on. Answering any one fact therefore means "I am declaring this
+ * connection", and the still-open facts are asked for directly.
  */
-async function promptDirectConnection(
-    snap: ProviderEnvSnapshot,
-    adoptable: AdoptableProvider[],
-    detection: CredentialHelperDetection,
-): Promise<DirectConnectionInput> {
-    if (adoptable.length > 0) {
-        const offered = await offerAdoption(snap, adoptable);
-        if (offered !== null) return offered;
-        // Declined the offer → fall through to the gateway offer / manual entry.
+async function collectDirectConnection(answered: ConnectionAnswers, detection: CredentialHelperDetection): Promise<DirectConnectionInput> {
+    if (answered.baseURL === undefined && answered.provider === undefined && answered.protocol === undefined) {
+        // Setup can ADOPT an already-configured ecosystem env (ANTHROPIC_*/OPENAI_*) — a machine set up
+        // for Claude Code / the SDKs need not re-type the endpoint or re-export the key. The detection is
+        // a one-time setup read (never a runtime binding); only the non-secret fields are copied.
+        const snap = detectProviderEnv();
+        const adoptable = detectedAdoptable(snap);
+        if (adoptable.length > 0) {
+            const offered = await offerAdoption(snap, adoptable);
+            if (offered !== null) return offered;
+            // Declined the offer → fall through to the gateway offer / manual entry.
+        }
+        const gatewayURL = detectedGatewayURL(detection, snap);
+        if (gatewayURL !== null) {
+            const offered = await offerGatewayAdoption(gatewayURL);
+            if (offered !== null) return offered;
+        }
     }
-    const gatewayURL = detectedGatewayURL(detection, snap);
-    if (gatewayURL !== null) {
-        const offered = await offerGatewayAdoption(gatewayURL);
-        if (offered !== null) return offered;
-    }
-    return promptManualDirectConnection();
+    return promptManualDirectConnection(answered);
 }
 
 /**
@@ -1115,30 +1285,47 @@ async function offerAdoption(snap: ProviderEnvSnapshot, adoptable: AdoptableProv
  * openai-compatible `{baseURL}/chat/completions`) and the model listing (`{baseURL}/models`). A bare
  * root without `/v1` would 404 the chat path, so steering users to the terminated form here prevents a
  * connection that can list models but never chat.
+ *
+ * Each of the three questions is skipped by its own answer, so a partially-answered run asks only for
+ * what is still open (the answers layer's per-question precedence). An answered protocol is taken
+ * verbatim; an ABSENT one keeps meaning "infer from the provider", which is what leaving the key unset
+ * tells `resolveModelConnection`.
  */
-async function promptManualDirectConnection(): Promise<DirectConnectionInput> {
-    const baseURL = await promptText("Model endpoint URL — the /v1-terminated root (e.g. https://api.openai.com/v1 or https://api.anthropic.com/v1)", {
-        placeholder: "https://api.openai.com/v1",
-        validate: (v) => {
-            const s = v.trim();
-            if (s === "") return "Enter the endpoint URL.";
-            if (!URL.canParse(s)) return "Must be a valid URL, including the scheme (e.g. https://…).";
-            return undefined;
-        },
-    });
-    const provider = await promptText("Provider slug (e.g. openai, anthropic, google)", {
-        validate: (v) => (v.trim() === "" ? "Enter a provider slug." : undefined),
-    });
-    const protocolChoice = await select("Wire protocol", [
-        { value: "infer", label: "Infer from provider (default)" },
-        { value: "anthropic", label: "Anthropic" },
-        { value: "openai-compatible", label: "OpenAI-compatible" },
-    ]);
-    return {
-        provider: provider.trim().toLowerCase(),
-        baseURL: baseURL.trim(),
+async function promptManualDirectConnection(answered: ConnectionAnswers): Promise<DirectConnectionInput> {
+    const baseURL =
+        answered.baseURL ??
+        (
+            await promptText("Model endpoint URL — the /v1-terminated root (e.g. https://api.openai.com/v1 or https://api.anthropic.com/v1)", {
+                placeholder: "https://api.openai.com/v1",
+                validate: (v) => {
+                    const s = v.trim();
+                    if (s === "") return "Enter the endpoint URL.";
+                    if (!URL.canParse(s)) return "Must be a valid URL, including the scheme (e.g. https://…).";
+                    return undefined;
+                },
+            })
+        ).trim();
+    const provider =
+        answered.provider ??
+        (
+            await promptText("Provider slug (e.g. openai, anthropic, google)", {
+                validate: (v) => (v.trim() === "" ? "Enter a provider slug." : undefined),
+            })
+        )
+            .trim()
+            .toLowerCase();
+    const protocol =
+        answered.protocol ??
         // "infer" leaves protocol unset; the two explicit values are exactly the schema's wire kinds.
-        ...(protocolChoice !== "infer" && { protocol: protocolChoice as "anthropic" | "openai-compatible" }),
+        ((await select("Wire protocol", [
+            { value: "infer", label: "Infer from provider (default)" },
+            { value: "anthropic", label: "Anthropic" },
+            { value: "openai-compatible", label: "OpenAI-compatible" },
+        ])) as "infer" | "anthropic" | "openai-compatible");
+    return {
+        provider,
+        baseURL,
+        ...(protocol !== "infer" && { protocol }),
     };
 }
 
@@ -1482,6 +1669,59 @@ function truncateCommand(s: string, max = 44): string {
 }
 
 /**
+ * The one escape from a failed answer validation, named in every such failure. It is a SENTENCE rather
+ * than a bare flag because the trade-off has to travel with the flag: skipping the probe does not make
+ * the answer good, it moves the moment of truth to the client's first chat.
+ */
+const VALIDATION_ESCAPE =
+    "Fix the answer, or re-run with `--no-validate` to record it unvalidated — an answered run has no save-anyway confirmation, so anything short of a pass fails here.";
+
+/**
+ * Validate an ANSWERED credential source with the same probe ladder {@link offerCredentialSource} runs,
+ * under the answers contract: it must PASS. Where the interactive offer can show an inconclusive result
+ * and let the user save anyway, an answer has nobody to ask — so `ambiguous` fails exactly like a
+ * definite rejection, and `--no-validate` is the deliberate escape for gateways that cannot pass a
+ * standards-shaped probe. Nothing is persisted on the error path: the caller writes the connection only
+ * after this returns ok.
+ *
+ * Returns the probe conclusion so the model step can reuse its minted credential rather than running the
+ * helper command a second time; `null` when validation was skipped and there is nothing to carry.
+ */
+async function validateAnsweredCredentialSource(
+    direct: DirectConnectionInput,
+    auth: ModelAuthConfig,
+    answeredModel: string | undefined,
+    validate: boolean,
+): Promise<Result<CredentialProbeResult | null, ProxyError>> {
+    if (!validate) {
+        log.warn("Skipping the credential-source probe (--no-validate): the source is recorded UNVALIDATED — the first chat becomes the gate.");
+        return ok(null);
+    }
+    const s = clackSpinner();
+    s.start("Validating the credential source (may send one 1-token test message)");
+    // The ping needs SOME model id. The ANSWERED model is the real target, so it beats the
+    // provider-conventional guess the interactive offer falls back to — and when it passes, the model
+    // step below inherits the verdict instead of spending a second token on the same fact.
+    const pingModel = answeredModel ?? conventionalDefaultModel(direct.provider) ?? conventionalDefaultModel("anthropic") ?? "unknown";
+    const probe = await probeCredentialSource(direct.baseURL, effectiveProtocol(direct), auth, pingModel);
+    if (probe.isErr()) {
+        s.error("Credential source validation failed");
+        return err(new ProxyError(`${probe.error.message}\n  ${VALIDATION_ESCAPE}`));
+    }
+    if (probe.value.outcome === "ambiguous") {
+        s.error("Credential source validation was inconclusive");
+        return err(
+            new ProxyError(
+                `The endpoint answered the credential test with HTTP ${probe.value.status}${probe.value.excerpt !== "" ? `:\n  ${probe.value.excerpt}` : "."}\n` +
+                    `  ${VALIDATION_ESCAPE}`,
+            ),
+        );
+    }
+    s.stop("Credential source validated");
+    return ok(probe.value);
+}
+
+/**
  * Offer the credential-source path for a detected helper setup. Opt-in: the user chooses a credential
  * command — pre-filled from their OWN settings, or from the ORG-MANAGED `managed-settings.json` as its
  * own explicitly-labeled choice, both always editable — the `ANTHROPIC_AUTH_TOKEN` env bearer (when
@@ -1707,10 +1947,86 @@ async function collectDirectModelAtSetup(direct: DirectConnectionInput, probe: C
             log.warn(`Could not confirm the model: ${detail}`);
             return confirm(`Save "${model}" anyway?`);
         },
-        writeBoth: (model) => writeAgentModel("conversation", model).andThen(() => writeAgentModel("sandbox", model)),
+        writeBoth: writeBothAgents,
         warn: (message) => log.warn(message),
         success: (message) => log.success(message),
     });
+}
+
+/**
+ * What the direct endpoint answered, phrased for the operator who wrote the answer. Typed to EXCLUDE
+ * `pass` so the compiler proves every failing outcome is described — the four of them are equally fatal
+ * to an answered run, which is the whole point of the batch contract: there is no save-anyway confirm,
+ * so an outcome nobody can classify is exactly as unprovisionable as a definite rejection.
+ */
+function directModelValidationDetail(outcome: Exclude<MessagePingOutcome, { kind: "pass" }>): string {
+    switch (outcome.kind) {
+        case "model_not_found":
+            return outcome.excerpt !== "" ? `the endpoint does not serve it — ${outcome.excerpt}` : "the endpoint reports it cannot serve this model";
+        case "auth_rejected":
+            return `the endpoint rejected the credential (HTTP ${outcome.status})`;
+        case "unreachable":
+            return `could not reach ${outcome.url} — ${outcome.detail}`;
+        case "ambiguous":
+            return `HTTP ${outcome.status}${outcome.excerpt !== "" ? `: ${outcome.excerpt}` : ""}`;
+        default: {
+            const unhandled: never = outcome;
+            throw new Error(`unhandled MessagePingOutcome: ${JSON.stringify(unhandled)}`);
+        }
+    }
+}
+
+/**
+ * Persist an ANSWERED direct model to BOTH agents, validated pass-or-fail. The credential is assembled
+ * exactly as {@link collectDirectModelAtSetup} assembles it — the credential probe's minted token when a
+ * source was configured (no second helper run), else the static env key under the protocol's
+ * conventional header — and a model the probe already validated end-to-end is not re-pinged.
+ *
+ * The contrast with the interactive prompt loop is deliberate: a prompt can re-ask, so a rejection there
+ * is a re-prompt and an ambiguity is a save-anyway confirm. An ANSWER has nobody to re-ask, so every
+ * non-pass outcome FAILS the run with the endpoint's own words — automation wants that failure at
+ * provision time, not on the client's first chat. Without a credential, or under `--no-validate`, the id
+ * persists unvalidated with a line that says so.
+ */
+async function persistAnsweredDirectModel(
+    direct: DirectConnectionInput,
+    model: string,
+    probe: CredentialProbeResult | null,
+    validate: boolean,
+): Promise<Result<void, ProxyError>> {
+    const protocol = effectiveProtocol(direct);
+    const envKey = resolveModelApiKey(direct.provider);
+    const cred: Credential | null = probe?.cred ?? (envKey !== undefined ? { token: envKey, scheme: protocol === "anthropic" ? "x-api-key" : "bearer" } : null);
+    const alreadyValidated = probe !== null && probe.outcome === "pass" && probe.validatedModel === model;
+
+    if (!validate) {
+        log.warn(`Skipping the model validation (--no-validate): "${model}" is recorded UNVALIDATED — boot and the first chat remain the gate.`);
+    } else if (cred === null) {
+        // Today's documented contract for a connection with no resolvable credential: the pick persists
+        // and the actionable failure lands at boot, where the user can act on it.
+        log.warn(
+            `No credential is resolvable yet, so "${model}" is recorded UNVALIDATED.\n` +
+                `  Export ${MODEL_API_KEY_VAR} (or a provider-conventional key) and the first chat becomes the gate.`,
+        );
+    } else if (!alreadyValidated) {
+        const s = clackSpinner();
+        s.start(`Validating "${model}" (sends one 1-token test message)`);
+        const outcome = await pingMessagesEndpoint(direct.baseURL, protocol, cred, model);
+        if (outcome.kind !== "pass") {
+            s.error(`Could not validate "${model}"`);
+            return err(new ProxyError(`The endpoint did not validate the model "${model}": ${directModelValidationDetail(outcome)}.\n  ${VALIDATION_ESCAPE}`));
+        }
+        s.stop(`Model "${model}" validated`);
+    }
+
+    // A failed write fails the run rather than warning (as the interactive loop does): an answer that did
+    // not land leaves the client pinned to something other than what was declared, and a scripted run has
+    // no reader to notice a warning.
+    return writeBothAgents(model)
+        .map(() => {
+            log.success(`Model "${model}" set for both agents.`);
+        })
+        .mapErr((e) => new ProxyError(`Could not save the model selection: ${e.type}.`));
 }
 
 /**

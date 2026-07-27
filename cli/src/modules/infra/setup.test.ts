@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -18,7 +18,6 @@ import {
     explicitPostgresFields,
     hasProviderCredential,
     normalizeAdoptedBaseURL,
-    parseConnectionMode,
     probeCredentialSource,
     probeOnce,
     providerKindForSlug,
@@ -32,9 +31,11 @@ import {
     type ProbeAttempt,
 } from "./setup.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
+import * as compose from "./compose.ts";
 import * as embeddingSetup from "../embedding/setup.ts";
+import * as sandboxPullModule from "../libs/pull.ts";
 import * as refsCommands from "../refs/commands.ts";
-import { writeAgentModel, type ResolvedModelConnection } from "../harness/config.ts";
+import { detectedMachine, writeAgentModel, type ResolvedModelConnection } from "../harness/config.ts";
 import { __resetModelCacheForTest, type ModelAccess } from "../proxy/models.ts";
 import { readConfig } from "../../lib/config.ts";
 import * as container from "../../lib/container.ts";
@@ -48,26 +49,6 @@ function snapshot(overrides: Partial<ProviderEnvSnapshot> = {}): ProviderEnvSnap
 
 // generateApiKey + proxyConfig live in proxy_config.ts alongside writeProxyConfig; their unit tests
 // live beside them in proxy_config.test.ts.
-
-describe("parseConnectionMode", () => {
-    test("an absent flag resolves to undefined (mode chosen interactively / defaulted)", () => {
-        expect(parseConnectionMode(undefined)._unsafeUnwrap()).toBeUndefined();
-    });
-
-    test("accepts the two valid modes verbatim", () => {
-        expect(parseConnectionMode("cliproxy")._unsafeUnwrap()).toBe("cliproxy");
-        expect(parseConnectionMode("direct")._unsafeUnwrap()).toBe("direct");
-    });
-
-    test("rejects any other value with an actionable message", () => {
-        const error = parseConnectionMode("proxy").match(
-            () => null,
-            (e) => e,
-        );
-        expect(error).not.toBeNull();
-        expect(error?.message).toContain("cliproxy, direct");
-    });
-});
 
 describe("normalizeAdoptedBaseURL", () => {
     test("a bare anthropic root gets /v1 appended (the wire layer needs the terminated form)", () => {
@@ -941,10 +922,10 @@ describe("askProxy — 503 cooldown discrimination", () => {
 
 // Drives the `setup()` command through the repo's spyOn seam pattern (mirroring compose.test.ts's
 // "entry-point wiring" block): the runtime gate and the embedding step are stubbed, so no real
-// container runtime is spawned and no real model is acquired. These assert design D9 — a preselected
-// `--embeddings` mode is configured AHEAD of the runtime gate (so an air-gapped host with no ready
-// runtime still configures embeddings), and the in-flow embedding step does not run a second time.
-describe("setup() — preselected embeddings run ahead of the runtime gate", () => {
+// container runtime is spawned and no real model is acquired. These assert design D9 — an ANSWERED
+// embedding mode is configured AHEAD of the runtime gate (so an air-gapped host with no ready runtime
+// still configures embeddings), and the in-flow embedding step does not run a second time.
+describe("setup() — an answered embedding mode runs ahead of the runtime gate", () => {
     const spies: { mockRestore: () => void }[] = [];
 
     beforeEach(() => {
@@ -958,26 +939,49 @@ describe("setup() — preselected embeddings run ahead of the runtime gate", () 
         rmSync(env.configPath, { force: true });
     });
 
-    test("a preselected --embeddings mode is configured even when NO container runtime is ready", async () => {
+    test("an answered --embeddings mode is configured even when NO container runtime is ready", async () => {
         // mockImplementation (not mockResolvedValue) so the returned Result is consumed, per the neverthrow
         // must-use-result rule (same reasoning as compose.test.ts's wiring block).
         const embedSpy = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(async () => ok(undefined));
         const runtimeSpy = spyOn(container, "firstReadyRuntime").mockImplementation(async () => err(new container.ContainerRuntimeError("no usable runtime")));
         spies.push(embedSpy, runtimeSpy);
 
-        await setup({ auth: false, start: false, force: false, postgres: true, embeddings: "local" });
+        await setup({ auth: false, start: false, force: false, postgres: true, yes: true, flags: { embeddings: "local" } });
 
-        // The embedding step ran (hoisted ahead of the gate) with the preselected mode — configured despite
-        // the dead runtime.
+        // The embedding step ran (hoisted ahead of the gate) with the answered mode — configured despite
+        // the dead runtime — and it receives the whole ANSWER block, not a bare preselect.
         expect(embedSpy).toHaveBeenCalledTimes(1);
-        expect(embedSpy.mock.calls[0]).toEqual([process.stdin.isTTY, "local"]);
+        const [interactive, preselected, answers] = embedSpy.mock.calls[0]!;
+        expect(interactive).toBe(false); // `--yes` withdraws the terminal, so the step may not prompt
+        expect(preselected).toBeUndefined();
+        expect(answers?.mode).toBe("local");
+        expect(answers?.validate).toBe(true);
         // ...and setup still reports the missing runtime and takes the failure exit (the remainder genuinely
         // needs a runtime).
         expect(runtimeSpy).toHaveBeenCalledTimes(1);
         expect(process.exitCode).toBe(1);
     });
 
-    test("with a ready runtime and a preselected mode, the embedding step runs exactly once", async () => {
+    test("a config-file embedding mode (no flag) fires the same pre-gate", async () => {
+        // The reorder is keyed on the RESOLVED answer, so the file front-end reaches it identically — the
+        // regression this pins is a pre-gate that only ever looked at `--embeddings`.
+        const dir = mkdtempSync(join(tmpdir(), "inflexa-answers-"));
+        const answersPath = join(dir, "fleet.yml");
+        writeFileSync(answersPath, "embedding:\n  mode: local\n");
+
+        const embedSpy = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(async () => ok(undefined));
+        const runtimeSpy = spyOn(container, "firstReadyRuntime").mockImplementation(async () => err(new container.ContainerRuntimeError("no usable runtime")));
+        spies.push(embedSpy, runtimeSpy);
+
+        await setup({ auth: false, start: false, force: false, postgres: true, yes: true, flags: { config: answersPath } });
+        rmSync(dir, { recursive: true, force: true });
+
+        expect(embedSpy).toHaveBeenCalledTimes(1);
+        expect(embedSpy.mock.calls[0]![2]?.mode).toBe("local");
+        expect(process.exitCode).toBe(1);
+    });
+
+    test("with a ready runtime and an answered mode, the embedding step runs exactly once", async () => {
         const embedSpy = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(async () => ok(undefined));
         spies.push(embedSpy);
         spies.push(spyOn(container, "firstReadyRuntime").mockImplementation(async () => ok(container.runtimes.docker)));
@@ -987,11 +991,11 @@ describe("setup() — preselected embeddings run ahead of the runtime gate", () 
 
         // postgres:false skips the compose/engine block (which would spawn a real runtime); the flow still
         // runs past the in-flow embedding site so its guard is exercised.
-        await setup({ auth: false, start: false, force: false, postgres: false, embeddings: "local" });
+        await setup({ auth: false, start: false, force: false, postgres: false, yes: true, flags: { embeddings: "local" } });
 
-        // Called exactly once — the preselected step ahead of the gate; the in-flow site is guarded and skipped.
+        // Called exactly once — the answered step ahead of the gate; the in-flow site is guarded and skipped.
         expect(embedSpy).toHaveBeenCalledTimes(1);
-        expect(embedSpy.mock.calls[0]).toEqual([process.stdin.isTTY, "local"]);
+        expect(embedSpy.mock.calls[0]![2]?.mode).toBe("local");
     });
 });
 
@@ -1319,5 +1323,277 @@ describe("selectDefaultModel", () => {
         await selectDefaultModel({ ...record, candidates: async () => [] });
         await selectDefaultModel({ ...record, candidates: async () => ["claude-404"], check: async () => "not_found" });
         expect(reasons).toEqual(["listing-unavailable", "none-servable"]);
+    });
+});
+
+// The batch orchestrator, end to end through `setup()`. Everything that would touch a container
+// engine, the network, or a real model download is a seam: `firstReadyRuntime`/`ensureReady` (the
+// runtime gate), `runEmbeddingSetup`, `runReferenceSetup`, `sandboxPull`, the compose writer, and
+// `globalThis.fetch` for the validation probes. What is deliberately NOT stubbed is the writing —
+// every assertion below reads the REAL sandboxed `config.json` back, because "the answers changed
+// where values come from, never where they go" is the property under test.
+describe("setup() — batch orchestration", () => {
+    const realFetch = globalThis.fetch;
+    const spies: { mockRestore: () => void }[] = [];
+    let firstReady: ReturnType<typeof spyOn<typeof container, "firstReadyRuntime">>;
+    let embedStep: ReturnType<typeof spyOn<typeof embeddingSetup, "runEmbeddingSetup">>;
+    let refsStep: ReturnType<typeof spyOn<typeof refsCommands, "runReferenceSetup">>;
+
+    /** Serve per-route responses keyed by URL suffix; an unmapped route 404s (mirrors probeCredentialSource's own tests). */
+    function routeFetch(routes: Record<string, () => Response>): void {
+        globalThis.fetch = ((url: string | URL) => {
+            const target = String(url);
+            const route = Object.keys(routes).find((suffix) => target.endsWith(suffix));
+            return Promise.resolve(route !== undefined ? routes[route]!() : new Response(null, { status: 404 }));
+        }) as unknown as typeof fetch;
+    }
+
+    /**
+     * Run `setup()` with stdout captured and returned. clack writes every notice, log line, and note
+     * through `process.stdout.write`, so this both quiets the suite and makes the batch-only notices
+     * (the pre-staging line, the `--no-validate` escape) assertable.
+     */
+    async function runSetup(options: Parameters<typeof setup>[0]): Promise<string> {
+        const chunks: string[] = [];
+        const write = spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+            chunks.push(String(chunk));
+            return true;
+        });
+        try {
+            await setup(options);
+        } finally {
+            write.mockRestore();
+        }
+        return chunks.join("");
+    }
+
+    /** The batch invocation shape every test below shares: no containers started, no images pulled. */
+    function batch(flags: NonNullable<Parameters<typeof setup>[0]["flags"]>, over: Partial<Parameters<typeof setup>[0]> = {}) {
+        return { auth: true, start: false, force: false, postgres: false, yes: true, flags, ...over };
+    }
+
+    /** A direct connection answered end to end, plus a token-free credential source to validate. */
+    const directFlags = {
+        connection: "direct",
+        baseUrl: "https://gw.corp/v1",
+        provider: "anthropic",
+        model: "m-1",
+        // A real, deterministic command — the probe genuinely runs it, so nothing here mocks the mint.
+        // The format string is deliberate: the MINTED token (`tok_123`) is nowhere in the command TEXT,
+        // so "the token never reaches config" is assertable against the whole config document.
+        authCommand: "printf tok%s _123",
+        authScheme: "x-api-key",
+    } as const;
+
+    beforeEach(() => {
+        assertTestSandbox(env.configPath);
+        assertTestSandbox(env.cliproxyConfigPath);
+        assertTestSandbox(env.cliproxyAuthDir);
+        rmSync(env.configPath, { force: true });
+        rmSync(env.cliproxyConfigPath, { force: true });
+        rmSync(env.cliproxyAuthDir, { recursive: true, force: true });
+        process.exitCode = 0;
+
+        firstReady = spyOn(container, "firstReadyRuntime").mockImplementation(async () => ok(container.runtimes.docker));
+        embedStep = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(async () => ok(undefined));
+        refsStep = spyOn(refsCommands, "runReferenceSetup").mockImplementation(async () => ok(undefined));
+        spies.push(firstReady, embedStep, refsStep);
+    });
+
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+        for (const s of spies.splice(0)) s.mockRestore();
+        process.exitCode = 0;
+        assertTestSandbox(env.configPath);
+        rmSync(env.configPath, { force: true });
+        rmSync(env.cliproxyConfigPath, { force: true });
+        rmSync(env.cliproxyAuthDir, { recursive: true, force: true });
+    });
+
+    /** `readConfig().models` is `unknown` (validated downstream); read it as a record to inspect the writes. */
+    function models(): Record<string, unknown> | undefined {
+        return readConfig().models as Record<string, unknown> | undefined;
+    }
+
+    test("bare `--yes` takes every default: cliproxy, no model pin, no downloads, embeddings untouched, exit 0", async () => {
+        const output = await runSetup(batch({}));
+
+        expect(process.exitCode).toBe(0);
+        // No model was answered, so nothing is pinned and the launch election stays adaptive (Auto).
+        expect(models()).toBeUndefined();
+        // The embedding step ran with NO mode answer, which leaves the configured backend unchanged.
+        expect(embedStep.mock.calls[0]![2]?.mode).toBeUndefined();
+        // No reference selection was named, so nothing is downloaded — the value IS the consent.
+        expect(refsStep.mock.calls[0]![0].selection).toBeUndefined();
+        expect(refsStep.mock.calls[0]![0].interactive).toBe(false);
+        // The sandbox image is never pulled implicitly; the hint names the explicit command instead.
+        expect(output).toContain("inflexa sandbox pull");
+        // Pre-staging (design D10): no credential in the auth dir is a NOTICE plus a successful run —
+        // the remaining steps still ran (refs above) and the exit code stays 0.
+        expect(output).toContain("first `inflexa` launch");
+    });
+
+    test("batch direct persists the connection, the credential source, and the model from answers", async () => {
+        routeFetch({
+            "/models": () => Response.json({ data: [{ id: "m-1" }] }),
+            "/messages": () => Response.json({ type: "message" }),
+        });
+
+        await runSetup(batch({ ...directFlags }));
+
+        expect(process.exitCode).toBe(0);
+        // Written by the same writer the wizard uses, from the extracted answers — and carrying no token.
+        expect(models()?.connection).toEqual({
+            mode: "direct",
+            provider: "anthropic",
+            baseURL: "https://gw.corp/v1",
+            auth: { kind: "command", command: "printf tok%s _123", scheme: "x-api-key" },
+        });
+        // A batch model answer pins BOTH user-facing agents.
+        expect(models()?.agents).toEqual({ conversation: "m-1", sandbox: "m-1" });
+        // Token-free by construction: the source was RUN (the probe minted `tok_123` and sent it), and
+        // only the command + scheme were written.
+        expect(JSON.stringify(readConfig())).not.toContain("tok_123");
+    });
+
+    test("a resolver error fails BEFORE any mutation — no config, no proxy config, no step ran", async () => {
+        // `--connection direct` under batch without baseURL/provider/model: three upfront errors.
+        await runSetup(batch({ connection: "direct" }));
+
+        expect(process.exitCode).toBe(1);
+        expect(existsSync(env.configPath)).toBe(false);
+        expect(existsSync(env.cliproxyConfigPath)).toBe(false);
+        // The three earliest mutators are all downstream of the resolver, and none of them ran.
+        expect(embedStep).not.toHaveBeenCalled();
+        expect(firstReady).not.toHaveBeenCalled();
+        expect(refsStep).not.toHaveBeenCalled();
+    });
+
+    test("an ambiguous credential-source probe fails the run and persists nothing", async () => {
+        // The enterprise-gateway shape: no listing route, and a non-standard 500 for the test message.
+        routeFetch({
+            "/models": () => new Response(null, { status: 404 }),
+            "/messages": () => new Response("invalid token", { status: 500 }),
+        });
+
+        const output = await runSetup(batch({ ...directFlags }));
+
+        expect(process.exitCode).toBe(1);
+        // Batch has no save-anyway confirm, so an unclassifiable answer is as fatal as a rejection —
+        // and the connection write happens only after this validation, so nothing landed.
+        expect(models()).toBeUndefined();
+        expect(output).toContain("--no-validate");
+    });
+
+    test("an ambiguous model validation fails the run and leaves the model unpinned", async () => {
+        // The credential itself validates (2xx listing); only the model's 1-token ping is unclassifiable.
+        routeFetch({
+            "/models": () => Response.json({ data: [{ id: "m-1" }] }),
+            "/messages": () => new Response("gateway says no", { status: 500 }),
+        });
+
+        const output = await runSetup(batch({ ...directFlags }));
+
+        expect(process.exitCode).toBe(1);
+        expect(models()?.agents).toBeUndefined();
+        expect(output).toContain("--no-validate");
+    });
+
+    test("`--no-validate` persists the same answers with no probe at all", async () => {
+        // Any fetch here would be a bug: the escape skips the NETWORK probes, and there are no others
+        // on this path (the offline GGUF verification lives in the embedding step).
+        globalThis.fetch = (() => {
+            throw new Error("no network call should be made under --no-validate");
+        }) as unknown as typeof fetch;
+
+        await runSetup(batch({ ...directFlags }, { validate: false }));
+
+        expect(process.exitCode).toBe(0);
+        expect(models()?.agents).toEqual({ conversation: "m-1", sandbox: "m-1" });
+        expect((models()?.connection as Record<string, unknown>).auth).toEqual({ kind: "command", command: "printf tok%s _123", scheme: "x-api-key" });
+    });
+
+    test("a second identical batch run converges to a byte-identical config", async () => {
+        routeFetch({
+            "/models": () => Response.json({ data: [{ id: "m-1" }] }),
+            "/messages": () => Response.json({ type: "message" }),
+        });
+
+        await runSetup(batch({ ...directFlags }));
+        const first = readFileSync(env.configPath, "utf8");
+        await runSetup(batch({ ...directFlags }));
+        const second = readFileSync(env.configPath, "utf8");
+
+        expect(process.exitCode).toBe(0);
+        expect(second).toBe(first);
+        // Each run drives each step exactly once — the pre-gate/in-flow embedding guard holds across runs.
+        expect(embedStep).toHaveBeenCalledTimes(2);
+        expect(refsStep).toHaveBeenCalledTimes(2);
+    });
+
+    test("an answered runtime is a hard gate: probed alone, never switched away from", async () => {
+        // Podman is answered and dead while Docker is ready — the fallback must NOT rescue it, or one
+        // fleet member would silently provision on a different engine than its siblings.
+        spies.push(
+            spyOn(container, "ensureReady").mockImplementation(async (rt) =>
+                rt.id === "docker" ? ok(undefined) : err(new container.ContainerRuntimeError("Podman is installed but not ready.")),
+            ),
+        );
+
+        await runSetup(batch({ runtime: "podman" }));
+
+        expect(process.exitCode).toBe(1);
+        expect(firstReady).not.toHaveBeenCalled();
+        expect(existsSync(env.configPath)).toBe(false);
+    });
+
+    test("an answered runtime that IS ready is persisted like a detected choice", async () => {
+        spies.push(spyOn(container, "ensureReady").mockImplementation(async () => ok(undefined)));
+
+        await runSetup(batch({ runtime: "podman" }));
+
+        expect(process.exitCode).toBe(0);
+        expect(readConfig().runtime).toBe("podman");
+        expect(firstReady).not.toHaveBeenCalled();
+    });
+
+    test("an answered sandbox variant pulls without a size confirmation", async () => {
+        const pull = spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () =>
+            ok({ type: "pulled" as const, variant: "python" as const, image: "ghcr.io/x/sandbox-python:latest" }),
+        );
+        spies.push(pull);
+
+        await runSetup(batch({ sandbox: "python" }));
+
+        expect(process.exitCode).toBe(0);
+        // The ANSWER is the multi-GB consent, so `yes` rides the call and no confirm is reached.
+        expect(pull.mock.calls[0]![0]).toEqual({ variant: "python", yes: true });
+    });
+
+    test("an answered resource share persists the machine-relative absolute budget", async () => {
+        await runSetup(batch({ resourceShare: "50" }));
+
+        const machine = detectedMachine();
+        const harness = readConfig().harness as { resourceLimits?: { budget?: unknown } } | undefined;
+        expect(harness?.resourceLimits?.budget).toEqual({
+            cpu: Math.max(1, Math.floor((machine.cpu * 50) / 100)),
+            memoryGb: Math.max(1, Math.floor((machine.memoryGb * 50) / 100)),
+        });
+    });
+
+    test("answered Postgres fields persist through the persist-only-explicit filter; unanswered batch persists nothing", async () => {
+        // The compose layer is a seam here: this test is about which ANSWERS land in config.json, and
+        // `--no-start`/`--no-force` already keep every engine command out of the run.
+        spies.push(spyOn(compose, "composeAvailable").mockImplementation(async () => true));
+        spies.push(spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)));
+
+        await runSetup(batch({ postgresPassword: "s3cret" }, { postgres: true }));
+        // Only the field that DIFFERS from its default is written — the accepted defaults stay unfrozen.
+        expect(readConfig().postgres).toEqual({ password: "s3cret" });
+
+        rmSync(env.configPath, { force: true });
+        await runSetup(batch({}, { postgres: true }));
+        // Unanswered batch resolves the current configuration silently and writes no `postgres` block.
+        expect(readConfig().postgres).toBeUndefined();
     });
 });

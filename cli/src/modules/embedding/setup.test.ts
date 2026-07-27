@@ -6,12 +6,24 @@ import { dirname, join } from "node:path";
 
 import { err, ok } from "neverthrow";
 
+import type { ProviderError } from "@inflexa-ai/harness";
+
 import { readConfig, writeConfig, type Config } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { __setCompiledBinaryForTest } from "../../lib/install_context.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
+import type { SetupAnswers } from "../infra/setup_answers.ts";
 import { __resetLlamaRuntimeForTest, __setLlamaAcquireForTest, __setLlamaPinForTest, materializedLlamaServer, type ResolvedPin } from "./llama_runtime.ts";
-import { __setEmbeddedModelForTest, __setModelPinForTest, acquireModel, ensureEmbedderReady, runEmbeddingSetup } from "./setup.ts";
+import { __resetLocalRuntimeForTest, __setSidecarLauncherForTest } from "./local-provider.ts";
+import {
+    __setEmbeddedModelForTest,
+    __setEmbeddingApiKeyForTest,
+    __setModelPinForTest,
+    acquireModel,
+    ensureEmbedderReady,
+    runEmbeddingSetup,
+    type EmbeddingSetupAnswers,
+} from "./setup.ts";
 
 // The test preload sandboxes XDG_DATA_HOME/XDG_CONFIG_HOME, so env.configPath
 // and env.embeddingModelPath point into a temp dir — safe to create/delete here.
@@ -83,6 +95,62 @@ function stubAcquire(bytes: Uint8Array): { calls: number } {
 function placeFakeModel(): void {
     mkdirSync(dirname(env.embeddingModelPath), { recursive: true });
     writeFileSync(env.embeddingModelPath, "fake-gguf");
+}
+
+/**
+ * Run `body` with `process.stdin.isTTY` forced to `value`. It is a getter at runtime, so redefining it is
+ * safe here — the code under test only ever reads it — and forcing it ON is what lets a test assert that
+ * an ANSWERED question skips its prompt: with prompting available, a prompt that still ran would stall the
+ * run instead of completing it.
+ */
+async function withTTY<T>(value: boolean, body: () => Promise<T>): Promise<T> {
+    const wasTTY = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { value, configurable: true });
+    try {
+        return await body();
+    } finally {
+        Object.defineProperty(process.stdin, "isTTY", { value: wasTTY, configurable: true });
+    }
+}
+
+/**
+ * A stub embeddings server on an ephemeral port, standing in for BOTH endpoints this step probes: the
+ * OpenAI-compatible `/v1/embeddings` route the api-key branch hits directly, and the extra llama-server
+ * routes (`/health`, `/props`, `/tokenize`) the local sidecar's client uses once a stub launcher points it
+ * here. One shape for both branches keeps their fixtures identical apart from the width they emit — which
+ * is the fact each test is actually about. Every request is recorded so a test can assert both which
+ * secret reached the wire and that a skipped probe made no call at all.
+ */
+function startEmbeddingStub(dimensions: number): {
+    readonly origin: string;
+    readonly requests: { readonly path: string; readonly authorization: string | null }[];
+    stop: () => void;
+} {
+    const requests: { path: string; authorization: string | null }[] = [];
+    // Unit vector (all components equal → L2 norm 1), mirroring local-provider.test.ts's fixture.
+    const vector = new Array(dimensions).fill(1 / Math.sqrt(dimensions)) as number[];
+    const server = Bun.serve({
+        port: 0,
+        fetch: async (req: Request): Promise<Response> => {
+            const url = new URL(req.url);
+            requests.push({ path: url.pathname, authorization: req.headers.get("authorization") });
+            if (url.pathname === "/health") return new Response("ok");
+            if (url.pathname === "/props") return Response.json({ model_path: "/stub.gguf" });
+            if (url.pathname === "/tokenize") {
+                // The token-exact fit measures with the sidecar's own tokenizer; ~4 chars per token is
+                // enough for a one-sentence probe that fits under any budget.
+                const body = (await req.json()) as { content: string };
+                return Response.json({ tokens: new Array(Math.ceil(body.content.length / 4)).fill(0) });
+            }
+            if (url.pathname === "/v1/embeddings") {
+                const body = (await req.json()) as { input: string[] };
+                const data = body.input.map((_, index) => ({ object: "embedding", index, embedding: vector }));
+                return Response.json({ object: "list", data, model: "stub-embed", usage: { prompt_tokens: 0, total_tokens: 0 } });
+            }
+            return new Response("not found", { status: 404 });
+        },
+    });
+    return { origin: `http://127.0.0.1:${server.port}`, requests, stop: (): void => void server.stop(true) };
 }
 
 describe("ensureEmbedderReady", () => {
@@ -192,16 +260,9 @@ describe("ensureEmbedderReady", () => {
 describe("runEmbeddingSetup", () => {
     test("non-interactive (no TTY) → ok, mode unchanged", async () => {
         writeConfigWith({ mode: "off" });
-        const wasTTY = process.stdin.isTTY;
-        // isTTY is a getter at runtime; overriding via defineProperty for the test is safe — the function only reads it.
-        Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
-        try {
-            const result = await runEmbeddingSetup(false);
-            expect(result.isOk()).toBe(true);
-            expect(readConfig().embedding.mode).toBe("off");
-        } finally {
-            Object.defineProperty(process.stdin, "isTTY", { value: wasTTY, configurable: true });
-        }
+        const result = await withTTY(false, () => runEmbeddingSetup(false));
+        expect(result.isOk()).toBe(true);
+        expect(readConfig().embedding.mode).toBe("off");
     });
 
     test("preselected off → ok, no download", async () => {
@@ -211,6 +272,161 @@ describe("runEmbeddingSetup", () => {
         expect(readConfig().embedding.mode).toBe("off");
         // Declined setup acquires nothing: the model path stays empty (no embedded copy, no download).
         expect(existsSync(env.embeddingModelPath)).toBe(false);
+    });
+});
+
+// --- answered (non-interactive) setup ----------------------------------------
+// The answers layer supplies what the prompts would otherwise ask for. These tests drive each answered
+// branch end to end against a stub endpoint — a real probe over loopback for api-key, a stub sidecar
+// launcher for a custom GGUF — so what is asserted is the CONFIG the step lands on and the requests it
+// actually made, not that some internal function was called.
+describe("runEmbeddingSetup (answers)", () => {
+    afterEach(() => {
+        __setEmbeddingApiKeyForTest(null);
+        // The sidecar launcher + its lazy-launch cache are process-wide singletons; leaving either set
+        // would point a later test's embed at a stopped stub server.
+        __setSidecarLauncherForTest(null);
+        __resetLocalRuntimeForTest();
+    });
+
+    test("the answers layer's `embedding` block is assignable to this module's answer shape", () => {
+        // A compile-time pin: the two shapes are declared separately (the setup orchestrator consumes this
+        // module, so importing its answers schema back would make the domains mutually dependent), and this
+        // assignment is what keeps them from drifting apart.
+        const fromAnswersFile: NonNullable<SetupAnswers["embedding"]> = { mode: "api-key", baseURL: "https://gw.corp/v1", model: "my-embed" };
+        const answers: EmbeddingSetupAnswers = fromAnswersFile;
+        expect(answers.mode).toBe("api-key");
+    });
+
+    test("an answered api-key backend probes with the env secret and records the non-default fields, prompting for nothing", async () => {
+        writeConfigWith({ mode: "off" });
+        const stub = startEmbeddingStub(768);
+        __setEmbeddingApiKeyForTest(() => "sk-from-env");
+        try {
+            // Prompting is AVAILABLE here (interactive + a TTY) and every question is answered, so a prompt
+            // that still ran would hang this test rather than pass it — the assertion that answers skip
+            // their prompts, including the masked key prompt when the variable is set.
+            const result = await withTTY(true, () => runEmbeddingSetup(true, undefined, { mode: "api-key", baseURL: `${stub.origin}/v1`, model: "my-embed" }));
+
+            expect(result.isOk()).toBe(true);
+            const embedding = readConfig().embedding;
+            expect(embedding.mode).toBe("api-key");
+            expect(embedding.apiKey).toBe("sk-from-env");
+            expect(embedding.baseURL).toBe(`${stub.origin}/v1`);
+            expect(embedding.model).toBe("my-embed");
+            // The width is MEASURED from the probe's own vectors, not guessed from the model id.
+            expect(embedding.dimensions).toBe(768);
+            // Exactly one real embed, carrying the environment secret — the only channel that secret travels on.
+            expect(stub.requests).toEqual([{ path: "/v1/embeddings", authorization: "Bearer sk-from-env" }]);
+        } finally {
+            stub.stop();
+        }
+    });
+
+    test("validate: false skips the endpoint probe and falls back to the configured width", async () => {
+        // The configured width is what the skipped probe would have re-measured, so it — not the provider
+        // default — is what an unvalidated run must assume.
+        writeConfigWith({ mode: "api-key", apiKey: "sk-previous", dimensions: 3072 });
+        const stub = startEmbeddingStub(768);
+        __setEmbeddingApiKeyForTest(() => "sk-from-env");
+        try {
+            const result = await runEmbeddingSetup(false, undefined, {
+                mode: "api-key",
+                baseURL: `${stub.origin}/v1`,
+                model: "my-embed",
+                validate: false,
+            });
+
+            expect(result.isOk()).toBe(true);
+            // The whole point of `--no-validate`: nothing on the network was touched.
+            expect(stub.requests).toEqual([]);
+            const embedding = readConfig().embedding;
+            expect(embedding.mode).toBe("api-key");
+            expect(embedding.apiKey).toBe("sk-from-env");
+            expect(embedding.dimensions).toBe(3072);
+        } finally {
+            stub.stop();
+        }
+    });
+
+    test("api-key with no env secret in a run that cannot prompt fails naming the variable, writing nothing", async () => {
+        writeConfigWith({ mode: "off" });
+        __setEmbeddingApiKeyForTest(() => undefined);
+
+        // The endpoint is deliberately unreachable: the step must fail on the missing secret BEFORE any probe.
+        const result = await runEmbeddingSetup(false, undefined, { mode: "api-key", baseURL: "https://gw.invalid/v1", model: "my-embed" });
+
+        expect(result.isErr()).toBe(true);
+        const e = result._unsafeUnwrapErr();
+        expect(e.type).toBe("not_configured");
+        expect(e.message).toContain("INFLEXA_EMBEDDING_API_KEY");
+        expect(readConfig().embedding.mode).toBe("off");
+    });
+
+    test("an answered gguf runs the custom branch with no path prompt and records the measured width", async () => {
+        writeConfigWith({ mode: "off" });
+        const customDir = mkdtempSync(join(tmpdir(), "inflexa-answered-gguf-"));
+        const customPath = join(customDir, "my-model.gguf");
+        writeFileSync(customPath, "fake-gguf");
+        // Pre-materialize the runtime so the branch's materialization step is a directory check; the sha is
+        // irrelevant because nothing is acquired.
+        __setLlamaPinForTest(pinWith("0".repeat(64)));
+        mkdirSync(join(env.llamaServerDir, TEST_TAG), { recursive: true });
+        writeFileSync(join(env.llamaServerDir, TEST_TAG, "llama-server"), "#!/bin/sh\n");
+        const stub = startEmbeddingStub(512);
+        __setSidecarLauncherForTest(() =>
+            Promise.resolve(
+                ok<{ baseURL: string; origin: string; key: string; stop: () => Promise<void> }, ProviderError>({
+                    baseURL: `${stub.origin}/v1`,
+                    origin: stub.origin,
+                    key: "stub-key",
+                    stop: () => Promise.resolve(),
+                }),
+            ),
+        );
+        try {
+            // Prompting available and unused: the answered path replaces the path prompt.
+            const result = await withTTY(true, () => runEmbeddingSetup(true, undefined, { mode: "local", gguf: customPath }));
+
+            expect(result.isOk()).toBe(true);
+            const embedding = readConfig().embedding;
+            expect(embedding.mode).toBe("local");
+            expect(embedding.modelPath).toBe(customPath);
+            // Measured through the sidecar, not asserted at the built-in 384 — the whole point of the custom branch.
+            expect(embedding.dimensions).toBe(512);
+            // Nothing was acquired: the user's file IS the model, so the built-in location stays empty.
+            expect(existsSync(env.embeddingModelPath)).toBe(false);
+        } finally {
+            stub.stop();
+            rmSync(customDir, { recursive: true, force: true });
+        }
+    });
+
+    test("an answered off persists mode off over a configured local backend, leaving the model on disk", async () => {
+        placeFakeModel();
+        writeConfigWith({ mode: "local", modelPath: env.embeddingModelPath, dimensions: 512 });
+
+        const result = await runEmbeddingSetup(false, undefined, { mode: "off" });
+
+        expect(result.isOk()).toBe(true);
+        const embedding = readConfig().embedding;
+        expect(embedding.mode).toBe("off");
+        // Disabling is not forgetting: the recorded backend survives so re-enabling is one word, and the
+        // GGUF on disk is never touched.
+        expect(embedding.modelPath).toBe(env.embeddingModelPath);
+        expect(existsSync(env.embeddingModelPath)).toBe(true);
+    });
+
+    test("a preselected off still leaves a configured backend alone", async () => {
+        // The transition contract: `preselected` keeps its pre-answers meaning ("no opinion") while the
+        // orchestrator migrates, so only the ANSWER above disables a backend.
+        placeFakeModel();
+        writeConfigWith({ mode: "local", modelPath: env.embeddingModelPath });
+
+        const result = await runEmbeddingSetup(false, "off");
+
+        expect(result.isOk()).toBe(true);
+        expect(readConfig().embedding.mode).toBe("local");
     });
 });
 
