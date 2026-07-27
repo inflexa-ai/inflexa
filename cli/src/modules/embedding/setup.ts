@@ -25,7 +25,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import { createEmbeddingProvider, createNoopBillingResolver, type AgentSession } from "@inflexa-ai/harness";
 
-import { readConfig, writeConfig } from "../../lib/config.ts";
+import { readConfig, writeConfig, type ConfigError } from "../../lib/config.ts";
 import { promptSecret, promptText, select } from "../../lib/cli.ts";
 import { EMBEDDING_API_KEY_VAR, env, resolveEmbeddingApiKey } from "../../lib/env.ts";
 import { isCompiledBinary } from "../../lib/install_context.ts";
@@ -34,18 +34,51 @@ import { createLocalEmbeddingProvider, LOCAL_EMBEDDING_DIMENSIONS, stopLocalSide
 import { MODEL_SHA256, MODEL_URL } from "./model_pin.ts";
 import { DEFAULT_API_BASE_URL, DEFAULT_API_EMBEDDING_DIMENSIONS, DEFAULT_API_EMBEDDING_MODEL } from "./resolve.ts";
 
+/**
+ * How embedding setup can fail. One variant per stage of the flow — read the answers, acquire the bytes,
+ * verify them, persist the choice — so a caller can tell an unusable model apart from an unusable answer
+ * set apart from an unwritable config, none of which have the same remediation.
+ */
 export type EmbeddingSetupError =
-    // Model acquisition failed — spans BOTH byte sources: a from-source HuggingFace download fault AND a
-    // compiled-binary embedded-asset fault (this binary embedded no model, or the embedded bytes are
-    // corrupt). Named for `acquireModel`, not "download", because neither embedded case is a download.
+    /**
+     * Model acquisition failed — spans BOTH byte sources: a from-source HuggingFace download fault AND a
+     * compiled-binary embedded-asset fault (this binary embedded no model, or the embedded bytes are
+     * corrupt). Named for `acquireModel`, not "download", because neither embedded case is a download.
+     * Also covers a custom GGUF path with no file at it: nothing to acquire the model FROM.
+     */
     | { readonly type: "acquire_failed"; readonly message: string; readonly cause?: unknown }
+    /**
+     * A probe embedding could not be obtained: the sidecar failed to serve one, the remote endpoint
+     * rejected it, or either answered with an empty vector. Strictly about the probe — a failure to
+     * RECORD a passing probe is `config_write_failed`.
+     */
     | { readonly type: "verify_failed"; readonly message: string; readonly cause?: unknown }
+    /**
+     * The probe succeeded but emitted the wrong width for a model whose width is known in advance — the
+     * SHA-256-pinned built-in. A custom GGUF or a remote model has no expected width, so it cannot fail
+     * this way; whatever it emits becomes the recorded index width.
+     */
     | { readonly type: "dimension_mismatch"; readonly message: string; readonly expected: number; readonly actual: number }
+    /** A backend was never set up (or a required secret is absent), so the remediation is the setup command. */
     | { readonly type: "not_configured"; readonly message: string }
-    // The GGUF is present but the pinned llama-server runtime could not be acquired. Distinct from
-    // `not_configured` (nothing was ever set up — remediation is the setup command): here the user DID
-    // set up, and the runtime bytes are what's missing — in practice the offline source-checkout case,
-    // since a compiled binary materializes from its embedded asset without touching the network.
+    /**
+     * The supplied answers cannot be acted on as given — today: a value answer (`gguf`/`baseURL`/`model`)
+     * with no `mode` to apply it to. Separate from `not_configured` because nothing is wrong with the
+     * machine: the remediation is to fix the answer set, not to run anything.
+     */
+    | { readonly type: "invalid_answers"; readonly message: string }
+    /**
+     * Everything the user asked for succeeded, but the choice could not be recorded in `config.json` — so
+     * nothing is configured and the run must be repeated. Distinct from `verify_failed`: the failure is
+     * the write, and on the switch-off path nothing was verified at all.
+     */
+    | { readonly type: "config_write_failed"; readonly message: string; readonly cause?: unknown }
+    /**
+     * The GGUF is present but the pinned llama-server runtime could not be acquired. Distinct from
+     * `not_configured` (nothing was ever set up — remediation is the setup command): here the user DID
+     * set up, and the runtime bytes are what's missing — in practice the offline source-checkout case,
+     * since a compiled binary materializes from its embedded asset without touching the network.
+     */
     | { readonly type: "runtime_unavailable"; readonly message: string; readonly cause?: unknown };
 
 // Baked to the literal `true` by scripts/build.ts for every release target, exactly as
@@ -73,6 +106,21 @@ let embeddingApiKeyOverride: (() => string | undefined) | null = null;
  */
 function readEmbeddingApiKey(): string | undefined {
     return (embeddingApiKeyOverride ?? resolveEmbeddingApiKey)();
+}
+
+/**
+ * Translate a config-write fault into this module's error. `stage` names what had already succeeded, so
+ * the message tells the user how much of the run must be repeated; the underlying fault (an EACCES, a
+ * full disk) is what makes it actionable, so it is unwrapped into the message rather than left as an
+ * opaque `cause` only the logs see. Every persisting branch funnels through here — a write failure is
+ * never reported as a verification failure, which on the switch-off path would name a step that never ran.
+ */
+function configWriteFailed(stage: string, e: ConfigError): EmbeddingSetupError {
+    return {
+        type: "config_write_failed",
+        message: `${stage} — config.json could not be written: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`,
+        cause: e.cause,
+    };
 }
 
 /** The active model pin (url + sha256), honoring a test override; otherwise the vendored constants. */
@@ -257,7 +305,11 @@ export async function verifyModel(modelPath: string, expectedDim?: number): Prom
  * `lib/config.ts`'s persisted schema.
  */
 export type EmbeddingSetupAnswers = {
-    /** The backend to configure. Replaces `preselected`, and unlike it an answered `off` is PERSISTED. */
+    /**
+     * The backend to configure. An answer declares desired state, so `off` PERSISTS `embedding.mode =
+     * "off"` — see {@link runEmbeddingSetup}. Without it the value answers below have no backend to
+     * apply to, which is an error rather than a silent skip.
+     */
     readonly mode?: "local" | "api-key" | "off";
     /** `api-key`: the endpoint, skipping its prompt. */
     readonly baseURL?: string;
@@ -283,37 +335,30 @@ export type EmbeddingSetupAnswers = {
  *   (measuring the emitted width), and record `mode = "api-key"` + the key + only the fields that
  *   differ from the provider defaults.
  *
+ * An answered `off` PERSISTS `mode = "off"`, disabling a previously configured backend: an answer names
+ * the state the client wants. The interactive picker's "Off / skip" means the opposite — "no opinion" —
+ * and leaves the configured mode alone, as does an absent answer.
+ *
  * Non-interactive shells (no TTY, or `interactive === false`) never prompt: an unanswered question
  * resolves to what an empty submit at its prompt would have produced, and an unanswered MODE skips the
- * step entirely without hanging — `mode` stays whatever it was.
- *
- * `preselected` is the pre-answers spelling of `answers.mode` and stays supported while the
- * orchestrator migrates. The two are equivalent EXCEPT for `off`: an ANSWER declares desired state, so
- * an answered `off` persists `mode = "off"` (disabling a previously configured backend), whereas a
- * preselected `off` — like the interactive picker's "Off / skip" — leaves the configured mode alone.
- * `answers.mode` wins when both are supplied; the value answers (`baseURL`/`model`/`gguf`/`validate`)
- * apply whichever channel carried the mode, and equally to a mode the user picks at the prompt.
+ * step entirely without hanging — `mode` stays whatever it was. The value answers
+ * (`baseURL`/`model`/`gguf`/`validate`) apply to an answered mode and equally to one the user picks at
+ * the prompt. A value answer that reaches a run where NO mode is answered AND the picker cannot run has
+ * no backend to configure: it is rejected as `invalid_answers`, never dropped on the way to an `ok`.
  */
-export async function runEmbeddingSetup(
-    interactive: boolean,
-    preselected?: "local" | "api-key" | "off",
-    answers?: EmbeddingSetupAnswers,
-): Promise<Result<void, EmbeddingSetupError>> {
+export async function runEmbeddingSetup(interactive: boolean, answers?: EmbeddingSetupAnswers): Promise<Result<void, EmbeddingSetupError>> {
     const config = readConfig();
-    // The single "may this run ask a question?" fact. Both call sites pass `process.stdin.isTTY` as
-    // `interactive`, so this is exactly the guard the no-preselection flow already applied — extending it
-    // to the answered branches is what lets a batch run fall back to defaults instead of dying inside a
-    // prompt that cannot render.
+    // The single "may this run ask a question?" fact, applied to every branch below: a batch run falls
+    // back to the answers and the pre-fills instead of dying inside a prompt that cannot render. Both
+    // call sites pass `process.stdin.isTTY` as `interactive`.
     const canPrompt = interactive && process.stdin.isTTY === true;
     const validate = answers?.validate ?? true;
 
-    const mode = answers?.mode ?? preselected;
+    const mode = answers?.mode;
     if (mode !== undefined) {
-        if (mode === "off") {
-            // Only an ANSWERED off is a declaration of desired state; a preselected one keeps the
-            // leave-unchanged behavior its call site was written against (see this function's contract).
-            return answers?.mode === "off" ? writeEmbeddingOff(config) : ok(undefined);
-        }
+        // The answered mode picks the branch and the branch takes the value answers that belong to it, so
+        // no answer this run can act on goes unread.
+        if (mode === "off") return writeEmbeddingOff(config);
         if (mode === "api-key") return runApiKeySetup(config, { baseURL: answers?.baseURL, model: answers?.model, validate, canPrompt });
         // `local` + an answered GGUF is the custom branch (the answer replaces the path prompt); `local`
         // alone is the built-in model.
@@ -321,7 +366,24 @@ export async function runEmbeddingSetup(
         return runBuiltinLocalSetup(config);
     }
 
-    // Already configured (mode is no longer the default `off`): don't re-prompt
+    // With no answered mode, the ONLY consumer of a value answer is the picker below — and it runs only
+    // on an unconfigured machine that may prompt. Every other route out of this function is a return that
+    // would discard the answer without a prompt and without a word, reporting a successful `setup` on a
+    // machine configured with none of what was asked for. The answers resolver rejects this combination
+    // upfront; if one reaches here anyway, say so instead of eating it.
+    const orphaned = [
+        answers?.gguf === undefined ? null : "gguf",
+        answers?.baseURL === undefined ? null : "baseURL",
+        answers?.model === undefined ? null : "model",
+    ].filter((field): field is string => field !== null);
+    if (orphaned.length > 0 && !(config.embedding.mode === "off" && canPrompt)) {
+        return err({
+            type: "invalid_answers",
+            message: `Embedding answers (${orphaned.join(", ")}) arrived without an embedding mode, so there is no backend to apply them to. Add \`--embeddings local\` (for a GGUF) or \`--embeddings api-key\` (for an endpoint or model id), or set \`embedding.mode\` in the --config file.`,
+        });
+    }
+
+    // Already configured (mode differs from the default `off`): don't re-prompt
     // on every launch — the user already made a choice. `ensureEmbedderReady`
     // separately gates the hot path on a local model being present.
     if (config.embedding.mode !== "off") return ok(undefined);
@@ -331,6 +393,8 @@ export async function runEmbeddingSetup(
 
     const choice = await promptEmbeddingMode();
     if (choice === "off") {
+        // "No opinion" from a user looking at the picker, so the configured mode stands — and a value
+        // answer they declined to use is discarded by their own choice, not behind their back.
         log.info("Embeddings skipped (mode left unchanged).");
         return ok(undefined);
     }
@@ -344,8 +408,8 @@ export async function runEmbeddingSetup(
 
 /**
  * Persist an ANSWERED `off`: the answers layer's values declare the client's desired state, so naming
- * `off` must disable a backend that is already configured rather than mean "no opinion" (which is what
- * an ABSENT answer means, and what the picker's "Off / skip" choice keeps meaning).
+ * `off` disables a backend that is already configured rather than meaning "no opinion" — which is what
+ * an ABSENT answer means, and what the picker's "Off / skip" choice means.
  *
  * Nothing on disk is touched — the GGUF and the materialized runtime stay where they are — and the rest
  * of the `embedding` block is preserved rather than cleared: switching off is not "forget how I was
@@ -355,10 +419,7 @@ export async function runEmbeddingSetup(
  */
 function writeEmbeddingOff(config: ReturnType<typeof readConfig>): Result<void, EmbeddingSetupError> {
     return writeConfig({ ...config, embedding: { ...config.embedding, mode: "off" } })
-        .mapErr((e): EmbeddingSetupError => ({
-            type: "verify_failed",
-            message: `Embeddings could not be switched off — config could not be written: ${e.type}`,
-        }))
+        .mapErr((e) => configWriteFailed("Embeddings could not be switched off", e))
         .map(() => {
             log.success("Embeddings disabled — `embedding.mode` is now `off`. Model files on disk are untouched.");
             return undefined;
@@ -433,7 +494,7 @@ async function runBuiltinLocalSetup(config: ReturnType<typeof readConfig>): Prom
     // so recording it would be redundant. `writeConfig` is sync; mapErr translates its ConfigError, map
     // records the success side-effect. Both consume the Result so the must-use-result rule is satisfied.
     return writeConfig({ ...config, embedding: { mode: "local", modelPath: env.embeddingModelPath } })
-        .mapErr((e): EmbeddingSetupError => ({ type: "verify_failed", message: `Verification passed but config could not be written: ${e.type}` }))
+        .mapErr((e) => configWriteFailed("The built-in model verified", e))
         .map(() => {
             log.success("Local embeddings configured (built-in model). `embedding.mode` is now `local`.");
             return undefined;
@@ -483,7 +544,7 @@ async function runCustomLocalSetup(config: ReturnType<typeof readConfig>, answer
     // keeping config minimal — a 384-dim custom model persists just its path.
     const embedding = { mode: "local" as const, modelPath, ...(dimensions === LOCAL_EMBEDDING_DIMENSIONS ? {} : { dimensions }) };
     return writeConfig({ ...config, embedding })
-        .mapErr((e): EmbeddingSetupError => ({ type: "verify_failed", message: `Verification passed but config could not be written: ${e.type}` }))
+        .mapErr((e) => configWriteFailed("Your model verified", e))
         .map(() => {
             log.success(`Local embeddings configured from your model (${dimensions}-dim). \`embedding.mode\` is now \`local\`.`);
             return undefined;
@@ -632,7 +693,7 @@ async function runApiKeySetup(config: ReturnType<typeof readConfig>, inputs: Api
         ...(dimensions === DEFAULT_API_EMBEDDING_DIMENSIONS ? {} : { dimensions }),
     };
     return writeConfig({ ...config, embedding })
-        .mapErr((e): EmbeddingSetupError => ({ type: "verify_failed", message: `The endpoint probe passed but config could not be written: ${e.type}` }))
+        .mapErr((e) => configWriteFailed(inputs.validate ? "The endpoint probe passed" : "The endpoint was resolved", e))
         .map(() => {
             log.success(
                 inputs.validate
@@ -644,12 +705,12 @@ async function runApiKeySetup(config: ReturnType<typeof readConfig>, inputs: Api
 }
 
 /**
- * Embedding backend picker via clack `select`. Splits the former single "local" option into two distinct
- * choices — the built-in bundled model vs the user's own GGUF — so the built-in is framed as what it is (no
- * "download" claim in a compiled binary, where it is embedded) and a user with a local model can point at
- * it. Returns the chosen value; clack handles cancel (Ctrl-C / Esc) by aborting. All choices work in every
- * install context (both the runtime and the built-in model are embedded/downloaded assets, not native
- * addons), so nothing gates the offering.
+ * Embedding backend picker via clack `select`. Local embeddings are TWO distinct choices — the built-in
+ * bundled model and the user's own GGUF — rather than one "local": that is what lets the built-in be framed
+ * as what it is in each install context (no "download" claim in a compiled binary, where it is embedded)
+ * while a user who already has a model can point at it. Returns the chosen value; clack handles cancel
+ * (Ctrl-C / Esc) by aborting. All choices work in every install context (both the runtime and the built-in
+ * model are embedded/downloaded assets, not native addons), so nothing gates the offering.
  */
 async function promptEmbeddingMode(): Promise<"builtin" | "custom" | "api-key" | "off"> {
     const chosen = await select("Embedding backend", [

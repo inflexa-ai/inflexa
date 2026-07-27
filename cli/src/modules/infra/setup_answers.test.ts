@@ -141,6 +141,68 @@ runtime: docker
         expect(problemsOf(error)[0]).toContain("empty");
     });
 
+    test("an explicit empty mapping is the same problem — `{}` would provision every default in silence", () => {
+        for (const body of ["{}\n", "{}", "# lead-in\n{}\n"]) {
+            const error = readAnswersFile(writeAnswers(body))._unsafeUnwrapErr();
+            expect(error.type).toBe("answers_invalid");
+            expect(problemsOf(error)[0]).toContain("empty");
+        }
+    });
+
+    test("a key answered twice is rejected — YAML resolves duplicates last-wins before any of this code sees them", () => {
+        // Verified: `Bun.YAML.parse("runtime: docker\nruntime: podman")` is `{runtime: "podman"}`. The first
+        // answer is gone by the time the schema runs, so the raw text is the only place the evidence exists.
+        const error = readAnswersFile(writeAnswers("runtime: docker\nruntime: podman\n"))._unsafeUnwrapErr();
+        const text = problemsOf(error).join("\n");
+        expect(text).toContain("`runtime`");
+        expect(text).toContain("twice");
+    });
+
+    test("a duplicate is reported by its full key path, at any depth", () => {
+        const nested = problemsOf(readAnswersFile(writeAnswers("embedding:\n  mode: local\n  mode: off\n"))._unsafeUnwrapErr()).join("\n");
+        expect(nested).toContain("`embedding.mode`");
+
+        // The fleet failure the scan exists for: two whole blocks, the first silently discarded.
+        const block = problemsOf(readAnswersFile(writeAnswers("embedding:\n  mode: local\nrefs: all\nembedding:\n  mode: off\n"))._unsafeUnwrapErr()).join(
+            "\n",
+        );
+        expect(block).toContain("`embedding`");
+
+        const deep = problemsOf(
+            readAnswersFile(writeAnswers("connection:\n  auth:\n    kind: env\n    var: A\n    var: B\n    scheme: bearer\n"))._unsafeUnwrapErr(),
+        ).join("\n");
+        expect(deep).toContain("`connection.auth.var`");
+    });
+
+    test("the same key at different levels is not a duplicate — the scan tracks a path, not a name", () => {
+        const answers = readAnswersFile(
+            writeAnswers(
+                "connection:\n  mode: direct\n  model: m1\n  baseURL: https://gw.corp/v1\nembedding:\n  mode: api-key\n  model: e1\n  baseURL: https://api.openai.com/v1\n",
+            ),
+        )._unsafeUnwrap();
+        expect(answers.connection?.model).toBe("m1");
+        expect(answers.embedding?.model).toBe("e1");
+    });
+
+    test("a block sequence and a block scalar do not confuse the duplicate scan", () => {
+        expect(readAnswersFile(writeAnswers("refs:\n  - CollecTRI\n  - msigdb-hallmark\nruntime: docker\n"))._unsafeUnwrap().refs).toEqual([
+            "CollecTRI",
+            "msigdb-hallmark",
+        ]);
+        // A block scalar's body is text: a `var: …` line inside it is content, not a second mapping key.
+        expect(
+            readAnswersFile(
+                writeAnswers("connection:\n  auth:\n    kind: command\n    command: |\n      var: one\n      var: two\n    scheme: bearer\n"),
+            )._unsafeUnwrap().connection?.auth,
+        ).toEqual({ kind: "command", command: "var: one\nvar: two", scheme: "bearer" });
+    });
+
+    test("the duplicate scan is a line scan: a duplicate inside a FLOW mapping is NOT caught (documented limit)", () => {
+        // Asserted honestly rather than claimed: `embedding: {mode: local, mode: off}` is one line with one
+        // key to the scan, so YAML's last-wins stands and `off` is what the answers carry.
+        expect(readAnswersFile(writeAnswers("embedding: {mode: local, mode: off}\n"))._unsafeUnwrap().embedding?.mode).toBe("off");
+    });
+
     test("a typo'd top-level key is rejected by name (the fleet failure strict parsing exists to prevent)", () => {
         const error = readAnswersFile(writeAnswers("embedings:\n  mode: local\n"))._unsafeUnwrapErr();
         expect(problemsOf(error).join("\n")).toContain("`embedings`");
@@ -170,6 +232,48 @@ runtime: docker
     test("a nested unknown key names its full path (a near-miss spelling is not silently dropped)", () => {
         const error = readAnswersFile(writeAnswers("connection:\n  baseUrl: https://gw.corp/v1\n"))._unsafeUnwrapErr();
         expect(problemsOf(error).join("\n")).toContain("`connection.baseUrl`");
+    });
+
+    test("the flags-only advice is reserved for a TOP-LEVEL key that actually names an execution modifier", () => {
+        // `--no-start`'s file spelling lands on the same advice as `start`.
+        for (const body of ["start: false", "no-start: true", "no-validate: true", "yes: true"]) {
+            expect(problemsOf(readAnswersFile(writeAnswers(`${body}\n`))._unsafeUnwrapErr()).join("\n")).toContain("flags only");
+        }
+    });
+
+    test("a nested typo gets a plain unknown-key error — the flags-only advice would be about another question entirely", () => {
+        for (const [body, key] of [
+            ["postgres:\n  prot: 5555\n", "postgres.prot"],
+            ["connection:\n  auth:\n    kind: env\n    var: V\n    scheme: bearer\n    ttl: 10\n", "connection.auth.ttl"],
+            // `start` nested under a real block is still not an execution modifier — only the top level is.
+            ["postgres:\n  start: false\n", "postgres.start"],
+        ] as const) {
+            const text = problemsOf(readAnswersFile(writeAnswers(body))._unsafeUnwrapErr()).join("\n");
+            expect(text).toContain(`\`${key}\``);
+            expect(text).not.toContain("flags only");
+        }
+    });
+
+    test("a top-level key that is neither an answer nor a modifier gets the plain error too", () => {
+        const text = problemsOf(readAnswersFile(writeAnswers("nope: 1\n"))._unsafeUnwrapErr()).join("\n");
+        expect(text).toContain("`nope`");
+        expect(text).not.toContain("flags only");
+    });
+
+    test("a document-level type error names the document, not an empty locator", () => {
+        // A scalar file, and the ARRAY `Bun.YAML.parse` returns for a multi-document file — a stray trailing
+        // `---` is enough. Both have an empty issue path, which used to render as a dash with no subject.
+        for (const body of ["hello\n", "runtime: docker\n---\n"]) {
+            const message = describeSetupAnswersError(readAnswersFile(writeAnswers(body))._unsafeUnwrapErr());
+            expect(message).toContain("the answers document");
+            expect(message).not.toContain("\n  -  —");
+        }
+    });
+
+    test("an array-element problem falls back to its nearest mapped question, keeping both spellings", () => {
+        const text = problemsOf(readAnswersFile(writeAnswers('refs: ["", CollecTRI]\n'))._unsafeUnwrapErr()).join("\n");
+        expect(text).toContain("--refs");
+        expect(text).toContain("`refs.0`");
     });
 
     test("a credential block rejects anything token-shaped — the auth answer is token-free by construction", () => {
@@ -283,6 +387,18 @@ describe("answersFromFlags — the flag front-end", () => {
         expect(text).toContain("--auth-format");
     });
 
+    test("a numeric flag is a plain decimal integer — JavaScript's other integer literals are not whole numbers the author can verify", () => {
+        // `Number("0x10")` is 16 and `Number("1e2")` is 100, both `Number.isInteger`: taken by `Number` alone
+        // the CLI would provision a port the author never wrote while promising "must be a whole number".
+        for (const raw of ["0x10", "1e2", "0b11", "0o17", "5.5", "Infinity", " ", ""]) {
+            const text = problemsOf(answersFromFlags({ postgresPort: raw })._unsafeUnwrapErr()).join("\n");
+            expect(text).toContain("must be a whole number");
+            expect(text).toContain(`"${raw}"`);
+        }
+        expect(problemsOf(answersFromFlags({ resourceShare: "1e2" })._unsafeUnwrapErr()).join("\n")).toContain("must be a whole number");
+        expect(answersFromFlags({ postgresPort: "5555", resourceShare: "50" })._unsafeUnwrap().postgres?.port).toBe(5555);
+    });
+
     test("a non-numeric numeric flag names both spellings and the value it could not read", () => {
         const text = problemsOf(answersFromFlags({ postgresPort: "abc", resourceShare: "half" })._unsafeUnwrapErr()).join("\n");
         expect(text).toContain("--postgres-port");
@@ -322,6 +438,95 @@ describe("answersFromFlags — the flag front-end", () => {
 
     test("--config names the answers file and is never itself an answer", () => {
         expect(answersFromFlags({ config: "./fleet.yml" })._unsafeUnwrap()).toEqual(answersFromFlags({})._unsafeUnwrap());
+    });
+});
+
+describe("answer normalization — one schema, so both front-ends read a value identically", () => {
+    let dir: string;
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "inflexa-answers-"));
+    });
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    function fromFile(body: string): SetupAnswers {
+        const path = join(dir, "fleet.yml");
+        writeFileSync(path, body);
+        return readAnswersFile(path)._unsafeUnwrap();
+    }
+
+    test("a provider answer is trimmed and case-folded, from the FLAG as well as the file", () => {
+        // Every consumer of a provider answer compares it exact-lowercase (the vendor-slug shape, the OAuth
+        // account kinds, the protocol implication, the conventional model and api-key variable lookups), so an
+        // unfolded `Anthropic` misses all of them silently instead of failing.
+        expect(answersFromFlags({ provider: "  Anthropic  " })._unsafeUnwrap().connection?.provider).toBe("anthropic");
+        expect(fromFile("connection:\n  provider: '  Anthropic  '\n").connection?.provider).toBe("anthropic");
+        expect(answersFromFlags({ provider: "DeepSeek" })._unsafeUnwrap().connection?.provider).toBe("deepseek");
+    });
+
+    test("a folded provider then satisfies the vocabularies that used to miss it", () => {
+        // Interactive cliproxy takes an account kind; direct takes a lowercase vendor slug. Both now accept
+        // the mixed-case spelling a shell or a hand-written file produces.
+        expect(
+            resolveSetupAnswers(answersFromFlags({ connection: "cliproxy", provider: "Claude" })._unsafeUnwrap(), undefined, interactive())._unsafeUnwrap()
+                .answers.connection?.provider,
+        ).toBe("claude");
+        const direct = answersFromFlags({
+            connection: "direct",
+            provider: "DeepSeek",
+            baseUrl: "https://gw.corp/v1",
+            model: "d1",
+        })._unsafeUnwrap();
+        expect(resolveSetupAnswers(direct, undefined, batch())._unsafeUnwrap().answers.connection?.provider).toBe("deepseek");
+    });
+
+    test("free-text answers are trimmed but never case-folded — only the provider is vocabulary", () => {
+        const answers = answersFromFlags({
+            baseUrl: "  https://gw.corp/v1  ",
+            model: " Claude-Sonnet-5 ",
+            postgresUser: " Fleet ",
+            postgresDatabase: " Inflexa ",
+            postgresHost: " Localhost ",
+            embeddingsUrl: " https://api.openai.com/v1 ",
+            embeddingsModel: " Text-Embedding-3-Small ",
+            embeddingsGguf: " /models/M.gguf ",
+            authEnv: " MY_TOKEN ",
+            authScheme: "bearer",
+        })._unsafeUnwrap();
+        expect(answers.connection?.baseURL).toBe("https://gw.corp/v1");
+        expect(answers.connection?.model).toBe("Claude-Sonnet-5");
+        expect(answers.postgres).toEqual({ user: "Fleet", password: undefined, port: undefined, database: "Inflexa", host: "Localhost" });
+        expect(answers.embedding).toEqual({
+            mode: undefined,
+            baseURL: "https://api.openai.com/v1",
+            model: "Text-Embedding-3-Small",
+            gguf: "/models/M.gguf",
+        });
+        expect(answers.connection?.auth).toEqual({ kind: "env", var: "MY_TOKEN", scheme: "bearer" });
+        expect(answersFromFlags({ authCommand: " my-helper ", authScheme: "bearer" })._unsafeUnwrap().connection?.auth).toEqual({
+            kind: "command",
+            command: "my-helper",
+            scheme: "bearer",
+            format: undefined,
+        });
+    });
+
+    test("the same trimming applies from the file", () => {
+        const answers = fromFile("connection:\n  baseURL: '  https://gw.corp/v1  '\n  model: '  m1  '\npostgres:\n  user: '  fleet  '\n");
+        expect(answers.connection?.baseURL).toBe("https://gw.corp/v1");
+        expect(answers.connection?.model).toBe("m1");
+        expect(answers.postgres?.user).toBe("fleet");
+    });
+
+    test("a postgres password keeps its whitespace — those characters are part of the secret", () => {
+        expect(answersFromFlags({ postgresPassword: "  p a s s  " })._unsafeUnwrap().postgres?.password).toBe("  p a s s  ");
+        expect(fromFile("postgres:\n  password: '  p a s s  '\n").postgres?.password).toBe("  p a s s  ");
+    });
+
+    test("an all-whitespace answer is reported as the empty answer it is", () => {
+        expect(problemsOf(answersFromFlags({ provider: "   " })._unsafeUnwrapErr()).join("\n")).toContain("must not be empty");
+        expect(problemsOf(answersFromFlags({ baseUrl: "  " })._unsafeUnwrapErr()).join("\n")).toContain("must not be empty");
     });
 });
 
@@ -461,11 +666,45 @@ describe("resolveSetupAnswers — no answer is ever silently ignored", () => {
         expect(text).toContain("resolves to cliproxy");
     });
 
-    test("an interactive run whose mode is still unanswered does not pre-judge a direct-only answer", () => {
-        // The mode prompt has not happened yet: rejecting `--base-url` here would refuse a coherent run.
-        const resolved = resolveSetupAnswers({ connection: { baseURL: "https://gw.corp/v1" } }, undefined, interactive())._unsafeUnwrap();
-        expect(resolved.connectionMode).toBeUndefined();
+    test("an interactive run with no connection mode rejects a direct-only answer rather than letting the prompt strand it", () => {
+        // The mode prompt has not happened yet, and it may well resolve to cliproxy — at which point nothing
+        // consumes `--base-url` and the run reports success having ignored it.
+        const problems = problemsOf(
+            resolveSetupAnswers(
+                {
+                    connection: {
+                        baseURL: "https://gw.corp/v1",
+                        protocol: "anthropic",
+                        auth: { kind: "env", var: "TOKEN", scheme: "bearer" },
+                    },
+                },
+                undefined,
+                interactive(),
+            )._unsafeUnwrapErr(),
+        );
+        expect(problems).toHaveLength(3);
+        const text = problems.join("\n");
+        for (const spelling of ["--base-url", "connection.baseURL", "--protocol", "connection.protocol", "--auth-env", "connection.auth"]) {
+            expect(text).toContain(spelling);
+        }
+        // The fix the author is told to make names the question that is missing, in both spellings.
+        expect(text).toContain("--connection");
+        expect(text).toContain("connection.mode");
+    });
+
+    test("naming the mode makes the same direct-only answer resolve interactively", () => {
+        const resolved = resolveSetupAnswers({ connection: { mode: "direct", baseURL: "https://gw.corp/v1" } }, undefined, interactive())._unsafeUnwrap();
+        expect(resolved.connectionMode).toBe("direct");
         expect(resolved.answers.connection?.baseURL).toBe("https://gw.corp/v1");
+    });
+
+    test("provider and model are valid in BOTH modes, so an unresolved mode does not reject them", () => {
+        // `--provider claude` on an interactive run is a long-standing valid invocation: the wizard's cliproxy
+        // branch consumes it as an account kind and its direct branch as a vendor slug.
+        const resolved = resolveSetupAnswers({ connection: { provider: "claude", model: "m1" } }, undefined, interactive())._unsafeUnwrap();
+        expect(resolved.connectionMode).toBeUndefined();
+        expect(resolved.answers.connection?.provider).toBe("claude");
+        expect(resolved.answers.connection?.model).toBe("m1");
     });
 
     test("a local-model answer is rejected against api-key embeddings, and endpoint answers against local/off", () => {
@@ -493,9 +732,29 @@ describe("resolveSetupAnswers — no answer is ever silently ignored", () => {
         expect(text).toContain("--embeddings");
     });
 
-    test("interactive endpoint answers without a mode are fine — the prompt decides which apply", () => {
+    test("an embedding value answer demands its mode in EVERY run, not only batch", () => {
+        // On an already-configured machine an unanswered mode leaves the backend as it is, so the interactive
+        // step never reaches a writer with this value: the run would report success having written nothing.
+        for (const [key, embedding] of [
+            ["--embeddings-gguf", { gguf: "/models/new.gguf" }],
+            ["--embeddings-url", { baseURL: "https://api.openai.com/v1" }],
+            ["--embeddings-model", { model: "text-embedding-3-small" }],
+        ] as const) {
+            const problems = problemsOf(resolveSetupAnswers({ embedding }, undefined, interactive())._unsafeUnwrapErr());
+            expect(problems).toHaveLength(1);
+            const text = problems.join("\n");
+            expect(text).toContain(key);
+            expect(text).toContain(`embedding.${Object.keys(embedding)[0]}`);
+            // Both spellings of the answer that is missing, so the file author can fix it in the file.
+            expect(text).toContain("--embeddings");
+            expect(text).toContain("embedding.mode");
+        }
+    });
+
+    test("the mode makes the same interactive value answer resolve", () => {
         expect(
-            resolveSetupAnswers({ embedding: { baseURL: "https://api.openai.com/v1" } }, undefined, interactive())._unsafeUnwrap().answers.embedding?.baseURL,
+            resolveSetupAnswers({ embedding: { mode: "api-key", baseURL: "https://api.openai.com/v1" } }, undefined, interactive())._unsafeUnwrap().answers
+                .embedding?.baseURL,
         ).toBe("https://api.openai.com/v1");
     });
 
@@ -642,8 +901,44 @@ describe("loadSetupAnswers — both front-ends in one call", () => {
     });
 
     test("a missing file fails before the flags are even considered", () => {
+        // A file-BOUNDARY failure yielded no answers at all, so there is nothing to merge the flags with and
+        // nothing a combined list would add beyond the one thing to fix first.
         const error = loadSetupAnswers({ config: join(dir, "absent.yml"), postgresPort: "abc" }, batch())._unsafeUnwrapErr();
         expect(error.type).toBe("answers_file_unreadable");
+    });
+
+    test("an unparseable file is terminal for the same reason", () => {
+        const path = join(dir, "fleet.yml");
+        writeFileSync(path, "connection: [unclosed\n");
+        expect(loadSetupAnswers({ config: path, postgresPort: "abc" }, batch())._unsafeUnwrapErr().type).toBe("answers_file_unparseable");
+    });
+
+    test("when BOTH front-ends have problems, both lists are reported in one pass", () => {
+        const path = join(dir, "fleet.yml");
+        writeFileSync(path, "nope: 1\nresources:\n  sharePct: 300\n");
+        const error = loadSetupAnswers({ config: path, postgresPort: "abc", authScheme: "bearer" }, batch())._unsafeUnwrapErr();
+        const problems = problemsOf(error);
+        const text = problems.join("\n");
+        // The file's two problems…
+        expect(text).toContain("`nope`");
+        expect(text).toContain("--resource-share");
+        // …and the flags' two, which a short-circuit on the file Result would have hidden until the next run.
+        expect(text).toContain("--postgres-port");
+        expect(text).toContain("--auth-env");
+        expect(problems).toHaveLength(4);
+        // The merged error has no single path, so each file problem carries its file inline instead.
+        expect(problems.filter((problem) => problem.includes(path))).toHaveLength(2);
+    });
+
+    test("one side failing keeps its own error whole, so the file's header still names the file to open", () => {
+        const path = join(dir, "fleet.yml");
+        writeFileSync(path, "nope: 1\n");
+        const fileOnly = loadSetupAnswers({ config: path }, batch())._unsafeUnwrapErr();
+        expect(fileOnly.type === "answers_invalid" && fileOnly.path).toBe(path);
+        expect(describeSetupAnswersError(fileOnly)).toContain(`\`${path}\` is not usable`);
+
+        const flagsOnly = loadSetupAnswers({ postgresPort: "abc" }, batch())._unsafeUnwrapErr();
+        expect(flagsOnly.type === "answers_invalid" && flagsOnly.path).toBeUndefined();
     });
 
     test("without --config the flags stand alone", () => {

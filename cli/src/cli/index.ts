@@ -522,26 +522,29 @@ export function buildProgram(): Command {
         cli
             .command("setup")
             .description("Install, authenticate, and start CLIProxyAPI and Postgres (Docker or Podman); optionally configure embeddings")
+            .option("--no-auth", "Skip the provider authentication step")
+            .option("--no-start", "Set up only; don't start the proxy or Postgres containers")
+            .option("--no-postgres", "Skip the Postgres provisioning step")
+            .option("--force", "Re-pull images even if they are already cached")
+            .option(
+                "--no-validate",
+                "Skip the network probes that check an answered endpoint, model, and credential source. Local GGUF verification still runs",
+            )
+            .option("--yes", "Batch mode: never prompt — every unanswered question takes its default or fails. Implied when there is no terminal")
+            // The split is by KIND, not by novelty: everything above toggles how this run behaves, while
+            // everything below supplies a VALUE for a question the wizard would otherwise ask (plus the
+            // file that carries those values). Grouping the answers keeps the flat `--help` list readable
+            // (design D12), and each of them also works interactively, where it simply skips its prompt.
+            // Set as the command's default option group so a new answer flag joins by position alone;
+            // commander's lazily-created `-h, --help` stays under the plain "Options:" heading.
+            .optionsGroup("Batch mode:")
+            .option("--config <path>", "YAML answers file carrying any of the batch-mode answers; a flag overrides the file's answer for that question")
             .option("--connection <mode>", "How inflexa reaches models: cliproxy|direct (default cliproxy)")
             .option(
                 "--provider <name>",
                 "With cliproxy: the account kind to sign in — gemini|openai|claude|qwen|iflow (interactive runs only, the sign-in needs a browser). " +
                     "With --connection direct: the vendor slug recorded for the endpoint, e.g. anthropic, openai, deepseek",
             )
-            .option("--no-auth", "Skip the provider authentication step")
-            .option("--no-start", "Set up only; don't start the proxy or Postgres containers")
-            .option("--no-postgres", "Skip the Postgres provisioning step")
-            .option("--force", "Re-pull images even if they are already cached")
-            .option("--embeddings <mode>", "Configure embeddings non-interactively: local (built-in bge-small model)|api-key|off")
-            .option("--refs <ids>", "Reference data to download: recommended|all|<comma-separated dataset ids>. The value is the download consent")
-            .option("--yes", "Batch mode: never prompt — every unanswered question takes its default or fails. Implied when there is no terminal")
-            // Every option below answers a question the wizard would otherwise ask, so they share one
-            // heading rather than doubling the length of the flat `--help` list (design D12). Set as the
-            // command's default option group so each new answer flag joins it by position alone; the
-            // options declared above (and commander's lazily-created `-h, --help`) keep the plain
-            // "Options:" heading.
-            .optionsGroup("Batch mode:")
-            .option("--config <path>", "YAML answers file carrying any of the batch-mode answers; a flag overrides the file's answer for that question")
             .option("--base-url <url>", "Direct connections only: the endpoint inflexa sends model requests to, `/v1`-terminated")
             .option(
                 "--protocol <wire>",
@@ -561,9 +564,11 @@ export function buildProgram(): Command {
             .option("--postgres-database <db>", "Postgres database the harness uses")
             .option("--postgres-host <host>", "Host the harness reaches Postgres at")
             .option("--resource-share <pct>", "Percentage (1-100) of this machine's CPU and memory sandboxes may use; persisted as the absolute budget")
+            .option("--embeddings <mode>", "Configure embeddings non-interactively: local (built-in bge-small model)|api-key|off")
             .option("--embeddings-url <url>", "api-key embeddings only: the embedding endpoint's base URL")
             .option("--embeddings-model <id>", "api-key embeddings only: the embedding model id")
             .option("--embeddings-gguf <path>", "Local embeddings only: path to your own GGUF model file instead of the built-in one")
+            .option("--refs <ids>", "Reference data to download: recommended|all|<comma-separated dataset ids>. The value is the download consent")
             .option(
                 "--sandbox <variant>",
                 "Sandbox image variant to pull: python|python-r. The value is the multi-GB download consent; nothing is pulled without it",
@@ -571,10 +576,6 @@ export function buildProgram(): Command {
             .option(
                 "--runtime <runtime>",
                 "Container runtime to provision on: docker|podman. A hard gate — setup fails rather than falling back when it is not ready",
-            )
-            .option(
-                "--no-validate",
-                "Skip the network probes that check an answered endpoint, model, and credential source. Local GGUF verification still runs",
             ),
         {
             kind: "blocked",

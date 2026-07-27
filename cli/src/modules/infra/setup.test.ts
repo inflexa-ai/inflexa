@@ -31,6 +31,7 @@ import {
     type ProbeAttempt,
 } from "./setup.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
+import { answerSpelling, type AnswerKey, type SetupAnswerFlags } from "./setup_answers.ts";
 import * as compose from "./compose.ts";
 import * as embeddingSetup from "../embedding/setup.ts";
 import * as sandboxPullModule from "../libs/pull.ts";
@@ -39,7 +40,7 @@ import { detectedMachine, writeAgentModel, type ResolvedModelConnection } from "
 import { __resetModelCacheForTest, type ModelAccess } from "../proxy/models.ts";
 import { readConfig } from "../../lib/config.ts";
 import * as container from "../../lib/container.ts";
-import { env, type ProviderEnvSnapshot } from "../../lib/env.ts";
+import { EMBEDDING_API_KEY_VAR, env, type ProviderEnvSnapshot } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 
 /** Build a provider-env snapshot for the adoption helpers; every field defaults to "absent". */
@@ -949,11 +950,10 @@ describe("setup() — an answered embedding mode runs ahead of the runtime gate"
         await setup({ auth: false, start: false, force: false, postgres: true, yes: true, flags: { embeddings: "local" } });
 
         // The embedding step ran (hoisted ahead of the gate) with the answered mode — configured despite
-        // the dead runtime — and it receives the whole ANSWER block, not a bare preselect.
+        // the dead runtime — and it receives the whole answer block, values included.
         expect(embedSpy).toHaveBeenCalledTimes(1);
-        const [interactive, preselected, answers] = embedSpy.mock.calls[0]!;
+        const [interactive, answers] = embedSpy.mock.calls[0]!;
         expect(interactive).toBe(false); // `--yes` withdraws the terminal, so the step may not prompt
-        expect(preselected).toBeUndefined();
         expect(answers?.mode).toBe("local");
         expect(answers?.validate).toBe(true);
         // ...and setup still reports the missing runtime and takes the failure exit (the remainder genuinely
@@ -977,7 +977,7 @@ describe("setup() — an answered embedding mode runs ahead of the runtime gate"
         rmSync(dir, { recursive: true, force: true });
 
         expect(embedSpy).toHaveBeenCalledTimes(1);
-        expect(embedSpy.mock.calls[0]![2]?.mode).toBe("local");
+        expect(embedSpy.mock.calls[0]![1]?.mode).toBe("local");
         expect(process.exitCode).toBe(1);
     });
 
@@ -995,7 +995,7 @@ describe("setup() — an answered embedding mode runs ahead of the runtime gate"
 
         // Called exactly once — the answered step ahead of the gate; the in-flow site is guarded and skipped.
         expect(embedSpy).toHaveBeenCalledTimes(1);
-        expect(embedSpy.mock.calls[0]![2]?.mode).toBe("local");
+        expect(embedSpy.mock.calls[0]![1]?.mode).toBe("local");
     });
 });
 
@@ -1422,7 +1422,7 @@ describe("setup() — batch orchestration", () => {
         // No model was answered, so nothing is pinned and the launch election stays adaptive (Auto).
         expect(models()).toBeUndefined();
         // The embedding step ran with NO mode answer, which leaves the configured backend unchanged.
-        expect(embedStep.mock.calls[0]![2]?.mode).toBeUndefined();
+        expect(embedStep.mock.calls[0]![1]?.mode).toBeUndefined();
         // No reference selection was named, so nothing is downloaded — the value IS the consent.
         expect(refsStep.mock.calls[0]![0].selection).toBeUndefined();
         expect(refsStep.mock.calls[0]![0].interactive).toBe(false);
@@ -1595,5 +1595,352 @@ describe("setup() — batch orchestration", () => {
         await runSetup(batch({}, { postgres: true }));
         // Unanswered batch resolves the current configuration silently and writes no `postgres` block.
         expect(readConfig().postgres).toBeUndefined();
+    });
+
+    // THE INVARIANT: every answer this CLI accepts reaches a destination the run can be observed at.
+    //
+    // The defect class this pins is an answer that PARSES, VALIDATES, and is then never consumed by the
+    // orchestrator — `setup` exits 0 having silently ignored what the operator asked for. It is invisible
+    // to both existing layers of test: setup_answers.test.ts proves a flag turns into an ANSWER, and the
+    // orchestration cases above spot-check the handful of answers whose wiring someone thought to assert.
+    // Neither can catch the NEXT one, because nothing asserted the set was complete.
+    //
+    // So the table below is keyed on `AnswerKey` — `satisfies Record<AnswerKey, AnswerCase>` makes a
+    // missing entry a compile error — AND the completeness test re-derives the key set from the source at
+    // runtime, so an entry dropped alongside a `@ts-expect-error`-style silencing of that compile error
+    // still fails. Each entry then RUNS `setup()` under batch with that answer supplied, and asserts the
+    // observable effect: what landed in the real sandboxed config.json, or what the stubbed step was
+    // handed. Both front-ends are exercised — a `file:` entry answers through a `--config` YAML document
+    // instead of argv — because an answer can be dropped on one path while landing on the other.
+    describe("every answer reaches its destination", () => {
+        let answersDir: string;
+        let pullStep: ReturnType<typeof spyOn<typeof sandboxPullModule, "sandboxPull">>;
+        let composeWriter: ReturnType<typeof spyOn<typeof compose, "writeComposeFile">>;
+
+        beforeEach(() => {
+            answersDir = mkdtempSync(join(tmpdir(), "inflexa-answers-"));
+            pullStep = spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () =>
+                ok({ type: "pulled" as const, variant: "python-r" as const, image: "ghcr.io/x/sandbox-python-r:latest" }),
+            );
+            composeWriter = spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined));
+            spies.push(
+                pullStep,
+                composeWriter,
+                spyOn(compose, "composeAvailable").mockImplementation(async () => true),
+                spyOn(container, "ensureReady").mockImplementation(async () => ok(undefined)),
+            );
+            // Every case here is hermetic BY CONSTRUCTION — batch cliproxy never lists models, and the
+            // direct cases run under `--no-validate` — so a fetch reaching this stub is a defect in the
+            // flow, not a missing route. Restored by the outer afterEach.
+            globalThis.fetch = (() => {
+                throw new Error("an answer-coverage case must make no network call");
+            }) as unknown as typeof fetch;
+        });
+
+        afterEach(() => {
+            rmSync(answersDir, { recursive: true, force: true });
+        });
+
+        /** Everything one `setup()` run exposes to an assertion: the REAL config on disk, plus each stubbed step's argument. */
+        function observe() {
+            const config = readConfig();
+            // `models` and `harness` are `unknown` in lib/config.ts (each validated downstream by its
+            // owning module), so both are read here as the record shapes the setup writers produce.
+            const models = config.models as { connection?: Record<string, unknown>; agents?: Record<string, string> } | undefined;
+            return {
+                config,
+                connection: models?.connection,
+                agents: models?.agents,
+                harness: config.harness as { resourceLimits?: { budget?: unknown } } | undefined,
+                embedding: embedStep.mock.calls[0]?.[1],
+                refs: refsStep.mock.calls[0]?.[0].selection,
+                sandbox: pullStep.mock.calls[0]?.[0],
+                /** The connection handed to the compose writer — the run's own resolution, whatever was persisted. */
+                compose: composeWriter.mock.calls[0]?.[0],
+            };
+        }
+
+        type SetupRun = ReturnType<typeof observe>;
+
+        /** One answer key's coverage: how the answer is supplied, and the effect it must have produced by the time `setup()` returns. */
+        type AnswerCase = {
+            /** Commander-shaped option values, exactly as the registry hands them over. */
+            readonly flags?: SetupAnswerFlags;
+            /** A `--config` answers document — written into the temp dir and passed as `--config <path>`. */
+            readonly file?: string;
+            /** Execution modifiers, never answers: `postgres: true` to reach the compose writer, `validate: false` to stay offline. */
+            readonly options?: Partial<Parameters<typeof setup>[0]>;
+            /** Environment this case needs — the api-key embedding secret has no answer channel by design (D7). */
+            readonly env?: Readonly<Record<string, string>>;
+            readonly effect: (run: SetupRun) => void;
+        };
+
+        /** The mode plus the three answers a batch DIRECT connection requires; each connection case overrides the one field it observes. */
+        const direct = { connection: "direct", provider: "anthropic", baseUrl: "https://gw.corp/v1", model: "m-1" } as const satisfies SetupAnswerFlags;
+
+        /**
+         * `--no-validate` on every direct case. The probe ladder is not the property under test and is
+         * pinned by its own cases above; skipping it keeps these runs offline WITHOUT changing where an
+         * answer lands (the `--no-validate` case above pins exactly that equivalence).
+         */
+        const offline = { validate: false } as const;
+
+        /** `postgres: true` is what makes the compose writer run, and its argument is the strongest observation of a postgres answer. */
+        const provisioned = { postgres: true } as const;
+
+        /**
+         * The credential source is ONE question spelled as four flags, so its sub-keys share a case that
+         * asserts the WHOLE persisted `auth` block. Two cases are needed rather than one because the
+         * sources are mutually exclusive: a command (the only kind that may carry `format`) and a variable.
+         */
+        const authCommandCase: AnswerCase = {
+            flags: { ...direct, authCommand: "/opt/mint-token", authScheme: "bearer", authFormat: "exec-credential" },
+            options: offline,
+            effect: (run) => {
+                expect(run.connection?.auth).toEqual({ kind: "command", command: "/opt/mint-token", scheme: "bearer", format: "exec-credential" });
+            },
+        };
+
+        const authEnvCase: AnswerCase = {
+            flags: { ...direct, authEnv: "MY_GATEWAY_TOKEN", authScheme: "x-api-key" },
+            options: offline,
+            effect: (run) => {
+                expect(run.connection?.auth).toEqual({ kind: "env", var: "MY_GATEWAY_TOKEN", scheme: "x-api-key" });
+            },
+        };
+
+        const ANSWER_COVERAGE = {
+            "connection.mode": {
+                flags: direct,
+                options: offline,
+                // Reaching the direct writer at all is the effect: under batch an unconsumed mode answer
+                // resolves to cliproxy, and the direct-only answers beside it then fail the resolver.
+                effect: (run) => {
+                    expect(run.connection?.mode).toBe("direct");
+                },
+            },
+            "connection.provider": {
+                flags: { ...direct, provider: "deepseek" },
+                options: offline,
+                effect: (run) => {
+                    expect(run.connection?.provider).toBe("deepseek");
+                },
+            },
+            "connection.baseURL": {
+                flags: { ...direct, baseUrl: "https://endpoint.internal/v1" },
+                options: offline,
+                effect: (run) => {
+                    expect(run.connection?.baseURL).toBe("https://endpoint.internal/v1");
+                },
+            },
+            "connection.protocol": {
+                // The provider stays `anthropic`, whose INFERRED protocol is `anthropic` — so a persisted
+                // `openai-compatible` can only have come from the answer, never from the inference.
+                flags: { ...direct, protocol: "openai-compatible" },
+                options: offline,
+                effect: (run) => {
+                    expect(run.connection?.protocol).toBe("openai-compatible");
+                },
+            },
+            "connection.model": {
+                flags: { ...direct, model: "pinned-1" },
+                options: offline,
+                effect: (run) => {
+                    expect(run.agents).toEqual({ conversation: "pinned-1", sandbox: "pinned-1" });
+                },
+            },
+            "connection.auth": authCommandCase,
+            "connection.auth.kind": authCommandCase,
+            "connection.auth.command": authCommandCase,
+            "connection.auth.scheme": authCommandCase,
+            "connection.auth.format": authCommandCase,
+            "connection.auth.var": authEnvCase,
+            "connection.auth.ttlMs": {
+                // The TTL has no flag, so the FILE front-end is the only way to answer it — which makes
+                // this the case that also proves a whole `--config`-authored connection block lands.
+                file: [
+                    "connection:",
+                    "  mode: direct",
+                    "  provider: anthropic",
+                    "  baseURL: https://gw.corp/v1",
+                    "  model: m-1",
+                    "  auth:",
+                    "    kind: command",
+                    "    command: /opt/mint-token",
+                    "    scheme: bearer",
+                    "    ttlMs: 90000",
+                    "",
+                ].join("\n"),
+                options: offline,
+                effect: (run) => {
+                    expect(run.connection?.auth).toEqual({ kind: "command", command: "/opt/mint-token", scheme: "bearer", ttlMs: 90000 });
+                },
+            },
+            "postgres.user": {
+                flags: { postgresUser: "alice" },
+                options: provisioned,
+                effect: (run) => {
+                    expect(run.config.postgres?.user).toBe("alice");
+                    expect(run.compose?.user).toBe("alice");
+                },
+            },
+            "postgres.password": {
+                flags: { postgresPassword: "s3cret" },
+                options: provisioned,
+                effect: (run) => {
+                    expect(run.config.postgres?.password).toBe("s3cret");
+                    expect(run.compose?.password).toBe("s3cret");
+                },
+            },
+            "postgres.port": {
+                // 6000 is neither channel's reserved default, so persist-only-explicit keeps it (a value
+                // equal to a default would persist nothing and prove nothing).
+                flags: { postgresPort: "6000" },
+                options: provisioned,
+                effect: (run) => {
+                    expect(run.config.postgres?.port).toBe(6000);
+                    expect(run.compose?.port).toBe(6000);
+                },
+            },
+            "postgres.database": {
+                // Answered through the FILE so the pair of questions that were dropped in the orchestrator
+                // is proven on BOTH front-ends: the database from a `--config` document, the host from argv.
+                file: "postgres:\n  database: atlas\n",
+                options: provisioned,
+                effect: (run) => {
+                    expect(run.config.postgres?.database).toBe("atlas");
+                    expect(run.compose?.database).toBe("atlas");
+                },
+            },
+            "postgres.host": {
+                flags: { postgresHost: "db.internal" },
+                options: provisioned,
+                effect: (run) => {
+                    expect(run.config.postgres?.host).toBe("db.internal");
+                    expect(run.compose?.host).toBe("db.internal");
+                },
+            },
+            "resources.sharePct": {
+                // 37 is deliberately not the resolved default (half the machine): a dropped answer skips
+                // the step entirely under batch, and a half-honored one would still read as 50.
+                file: "resources:\n  sharePct: 37\n",
+                effect: (run) => {
+                    const machine = detectedMachine();
+                    expect(run.harness?.resourceLimits?.budget).toEqual({
+                        cpu: Math.max(1, Math.floor((machine.cpu * 37) / 100)),
+                        memoryGb: Math.max(1, Math.floor((machine.memoryGb * 37) / 100)),
+                    });
+                },
+            },
+            "embedding.mode": {
+                flags: { embeddings: "off" },
+                effect: (run) => {
+                    expect(run.embedding?.mode).toBe("off");
+                },
+            },
+            "embedding.baseURL": {
+                // An api-key backend, so the secret's presence gate must pass; the secret itself never
+                // rides an answer, which is why this is the one case that needs an environment.
+                flags: { embeddings: "api-key", embeddingsUrl: "https://embeds.internal/v1" },
+                env: { [EMBEDDING_API_KEY_VAR]: "sk-embed" },
+                effect: (run) => {
+                    expect(run.embedding?.baseURL).toBe("https://embeds.internal/v1");
+                },
+            },
+            "embedding.model": {
+                flags: { embeddings: "api-key", embeddingsModel: "text-embedding-3-large" },
+                env: { [EMBEDDING_API_KEY_VAR]: "sk-embed" },
+                effect: (run) => {
+                    expect(run.embedding?.model).toBe("text-embedding-3-large");
+                },
+            },
+            "embedding.gguf": {
+                flags: { embeddings: "local", embeddingsGguf: "/models/custom.gguf" },
+                effect: (run) => {
+                    expect(run.embedding?.gguf).toBe("/models/custom.gguf");
+                },
+            },
+            refs: {
+                file: "refs:\n  - gtex-v10\n  - collectri\n",
+                effect: (run) => {
+                    expect(run.refs).toEqual({ ids: ["gtex-v10", "collectri"] });
+                },
+            },
+            sandbox: {
+                flags: { sandbox: "python-r" },
+                effect: (run) => {
+                    // The ANSWER is the multi-GB consent, so the pull carries `yes` and reaches no confirm.
+                    expect(run.sandbox).toEqual({ variant: "python-r", yes: true });
+                },
+            },
+            runtime: {
+                flags: { runtime: "podman" },
+                effect: (run) => {
+                    // Docker is what the (stubbed) detection would otherwise pin, so podman is the answer.
+                    expect(run.config.runtime).toBe("podman");
+                },
+            },
+        } satisfies Record<AnswerKey, AnswerCase>;
+
+        /**
+         * The answer keys as the SOURCE declares them, read out of `ANSWER_SPELLINGS`'s object literal.
+         * That table is module-private and exporting it would be a production change made for a test, so
+         * the source text is the honest runtime enumeration. It is cross-checked against the LIVE table
+         * below — `answerSpelling` renders a key the table does not own with an `undefined` flag — so a
+         * pattern that drifted from the declaration fails loudly instead of quietly shrinking the guard.
+         */
+        function declaredAnswerKeys(): string[] {
+            const source = readFileSync(join(import.meta.dir, "setup_answers.ts"), "utf8");
+            const table = /const ANSWER_SPELLINGS = \{\n([\s\S]*?)\n\} as const satisfies/.exec(source)?.[1];
+            expect(table).toBeDefined();
+            // The pattern has exactly one capture group, so every match carries it.
+            return [...(table ?? "").matchAll(/^ {4}"?([A-Za-z][\w.]*)"?:\s/gm)].map((match) => match[1]!);
+        }
+
+        test("the coverage table names every answerable question — a new answer cannot ship unproven", () => {
+            const declared = declaredAnswerKeys();
+            for (const key of declared) {
+                // The cast is checked by the assertion it feeds: a key `ANSWER_SPELLINGS` does not own
+                // renders as "`undefined` / `key`", which fails here rather than passing as a spelling.
+                expect(answerSpelling(key as AnswerKey)).not.toContain("`undefined`");
+            }
+            // Both directions in one comparison, which is also what catches a pattern that matched nothing.
+            expect(declared.toSorted()).toEqual(Object.keys(ANSWER_COVERAGE).toSorted());
+        });
+
+        // Annotated because `satisfies` keeps each entry's own literal type, so a bare `Object.entries`
+        // yields a 25-member union with no common property to read.
+        const cases: readonly (readonly [string, AnswerCase])[] = Object.entries(ANSWER_COVERAGE);
+
+        for (const [key, entry] of cases) {
+            test(`${key} is consumed, not merely parsed`, async () => {
+                const configPath = entry.file === undefined ? undefined : join(answersDir, "answers.yml");
+                if (configPath !== undefined && entry.file !== undefined) writeFileSync(configPath, entry.file);
+                const flags: SetupAnswerFlags = { ...entry.flags, ...(configPath !== undefined && { config: configPath }) };
+
+                // `Bun.env` rather than `process.env` — the same object (Bun aliases it), spelled the way
+                // gen_docs.test.ts already does to stay clear of the `no-restricted-properties` ban on
+                // reading the environment outside lib/env.ts. Only the api-key embedding cases need this:
+                // that secret has no answer channel by design, so its presence gate reads the LIVE env.
+                const restore = new Map<string, string | undefined>();
+                for (const [name, value] of Object.entries(entry.env ?? {})) {
+                    restore.set(name, Bun.env[name]);
+                    Bun.env[name] = value;
+                }
+                try {
+                    await runSetup(batch(flags, entry.options ?? {}));
+                } finally {
+                    for (const [name, prior] of restore) {
+                        if (prior === undefined) delete Bun.env[name];
+                        else Bun.env[name] = prior;
+                    }
+                }
+
+                // An honored answer must also leave the run successful: a silently-ignored answer and a
+                // failed provision are both defects, and asserting only the effect would let the second by.
+                expect(process.exitCode).toBe(0);
+                entry.effect(observe());
+            });
+        }
     });
 });
