@@ -241,6 +241,11 @@ export const KEYBIND_DEFAULTS = {
     // esc — which is a deliberate no-op in that layer otherwise — so the interrupt claims it without
     // colliding with any other esc owner (dialog dismiss, selection-clear, the composer's INSERT→NORMAL).
     "app.interrupt": "esc",
+    // Force a full repaint, recovering a screen wiped behind the renderer's back (see
+    // hooks/repaint.ts). ctrl+l is the universal terminal redraw convention — the key someone
+    // reaches for when a screen looks corrupt — and is unclaimed by every other layer and by the
+    // textarea's own bindings.
+    "app.redraw": "ctrl+l",
     "app.leader": "ctrl+x",
     // Opens the most recent openable artifact card. A bare printable, so it lives in the NORMAL-mode
     // (scroll-pane-focused) layer only — never active while the composer holds focus.
