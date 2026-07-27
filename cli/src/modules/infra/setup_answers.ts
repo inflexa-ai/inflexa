@@ -375,6 +375,25 @@ function parseAnswers(document: unknown, path: string | undefined): Result<Setup
 /** The one message for every shape of "this file answers nothing", so the three detections read as one rule. */
 const EMPTY_FILE_PROBLEM = "the file is empty — it must be a YAML mapping of setup answers (e.g. `connection:`, `postgres:`, `refs:`).";
 
+/**
+ * Whether an answer set answers no QUESTION, which is what {@link EMPTY_FILE_PROBLEM} reports.
+ *
+ * A block is a CONTAINER, not an answer: `connection: {}` parses to a present block holding nothing, so a
+ * presence test on the top level alone reads it as answered and provisions every default in silence —
+ * exactly the outcome the explicit-`{}` check exists to prevent, one nesting level down. So a block counts
+ * only for the leaves inside it.
+ *
+ * `refs` is the one answer that is itself a container without being a block; its schema already rejects an
+ * empty list, so an array reaching here always names something and is counted whole.
+ */
+function answersNothing(answers: SetupAnswers): boolean {
+    return Object.values(answers).every((answer) => {
+        if (answer === undefined) return true;
+        if (typeof answer !== "object" || Array.isArray(answer)) return false;
+        return Object.values(answer).every((leaf) => leaf === undefined);
+    });
+}
+
 /** A block mapping entry: a key, then `:` followed by whitespace or the end of the line (YAML's own rule). */
 const BLOCK_MAPPING_ENTRY = /^([^\s#][^:]*?)\s*:(\s.*)?$/;
 
@@ -501,9 +520,10 @@ export function readAnswersFile(path: string): Result<SetupAnswers, SetupAnswers
             // type error against the whole file, which reads as a schema problem rather than an empty file.
             if (document === null || document === undefined) return invalid([EMPTY_FILE_PROBLEM]);
             return parseAnswers(document, path).andThen((answers) =>
-                // A document that parses to `{}` — an explicit empty mapping — answers nothing either, and
-                // provisioning every default off it is the same silent misconfiguration an empty file is.
-                Object.values(answers).some((answer) => answer !== undefined) ? ok(answers) : invalid([EMPTY_FILE_PROBLEM]),
+                // A document that parses to `{}` — an explicit empty mapping, or blocks that are each
+                // empty — answers nothing either, and provisioning every default off it is the same
+                // silent misconfiguration an empty file is.
+                answersNothing(answers) ? invalid([EMPTY_FILE_PROBLEM]) : ok(answers),
             );
         });
 }

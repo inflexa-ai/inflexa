@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
     OAUTH_ACCOUNT_KINDS,
+    REFS_PRESETS,
     answerOf,
     answerSpelling,
     answersFromFlags,
@@ -20,6 +21,7 @@ import {
     type SetupAuthAnswer,
 } from "./setup_answers.ts";
 import { providerKindForSlug } from "./setup.ts";
+import { REFERENCE_PRESETS } from "../refs/commands.ts";
 import { type ModelAuthConfig } from "../../lib/config.ts";
 import { reservedPostgresPorts } from "../../lib/env.ts";
 
@@ -147,6 +149,29 @@ runtime: docker
             expect(error.type).toBe("answers_invalid");
             expect(problemsOf(error)[0]).toContain("empty");
         }
+    });
+
+    test("blocks that answer nothing are the same problem — a block is a container, not an answer", () => {
+        // The `{}` rule has to reach one level down or it is trivially evaded: `connection: {}` parses to a
+        // PRESENT block holding no answer, and a presence test on the top level alone reads that as an
+        // answered question and provisions every default in silence.
+        for (const body of ["connection: {}\n", "postgres: {}\nresources: {}\n", "connection:\n  {}\n"]) {
+            const error = readAnswersFile(writeAnswers(body))._unsafeUnwrapErr();
+            expect(error.type).toBe("answers_invalid");
+            expect(problemsOf(error)[0]).toContain("empty");
+        }
+    });
+
+    test("one leaf anywhere is enough to make the file an answer set", () => {
+        expect(readAnswersFile(writeAnswers("connection: {}\npostgres:\n  port: 5555\n"))._unsafeUnwrap()).toEqual({
+            connection: {},
+            postgres: { port: 5555 },
+        });
+        // A nested leaf counts through its block, and `refs` counts as the list it is.
+        expect(readAnswersFile(writeAnswers("connection:\n  auth:\n    kind: env\n    var: KEY\n    scheme: bearer\n"))._unsafeUnwrap()).toEqual({
+            connection: { auth: { kind: "env", var: "KEY", scheme: "bearer" } },
+        });
+        expect(readAnswersFile(writeAnswers("refs:\n  - demo\n"))._unsafeUnwrap()).toEqual({ refs: ["demo"] });
     });
 
     test("a key answered twice is rejected — YAML resolves duplicates last-wins before any of this code sees them", () => {
@@ -965,6 +990,15 @@ describe("vocabulary agreement with the orchestrator", () => {
         // dropped there fails here instead of at the first fleet provision.
         const kinds = ["anthropic", "openai", "google", "qwen", "iflow"].map(providerKindForSlug);
         expect(new Set(kinds)).toEqual(new Set(OAUTH_ACCOUNT_KINDS));
+    });
+
+    test("the refs preset words are exactly the refs module's", () => {
+        // The two lists are declared separately so this layer never loads the catalog, which leaves them
+        // free to drift. TypeScript catches only one direction — `referenceSelectionOf` (setup.ts) assigns
+        // a RefsPreset into a ReferencePreset, so a word added HERE alone fails to compile. A word added
+        // to REFERENCE_PRESETS alone compiles fine and is reserved by the collision check while staying
+        // unreachable from `--refs`, which is what this equality catches.
+        expect(new Set<string>(REFS_PRESETS)).toEqual(new Set<string>(REFERENCE_PRESETS));
     });
 
     test("an answered credential source is exactly what config.json persists", () => {

@@ -550,7 +550,11 @@ export function buildProgram(): Command {
                 "--protocol <wire>",
                 "Direct connections only: the endpoint's wire protocol — anthropic|openai-compatible (inferred from the provider when omitted)",
             )
-            .option("--model <id>", "Model id to pin for both agents; required for a direct connection in a non-interactive run")
+            .option(
+                "--model <id>",
+                "Model id to pin for both agents; required for a direct connection in a non-interactive run. " +
+                    "Under cliproxy it is checked against the account only once the proxy is up, so a rejected id fails setup after the stack is provisioned",
+            )
             .option(
                 "--auth-env <var>",
                 "Direct connections only: name of the environment variable holding the endpoint credential (never the credential itself)",
