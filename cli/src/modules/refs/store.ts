@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
-import { createWriteStream, type Stats } from "node:fs";
+import { type Stats } from "node:fs";
 import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { pipeline } from "node:stream/promises";
-import { Readable, Transform } from "node:stream";
 import { randomUUIDv7 } from "bun";
 
 import {
@@ -24,6 +22,7 @@ import {
 import { err, ok, type Result } from "neverthrow";
 import PQueue from "p-queue";
 
+import { declaredContentLength, downloadToFile, type DownloadError, type FetchLike } from "../../lib/download.ts";
 import { sha256File } from "../../lib/hash.ts";
 
 /** Reserved and user-owned paths below one public reference store. */
@@ -328,7 +327,7 @@ export type ReferenceInstallDeps = {
     /** Catalog/plan seam used by tests; production always defaults to the immutable harness source. */
     readonly source?: ReferenceCatalogSource;
     /** Fetch implementation; defaults to the runtime fetch. */
-    readonly fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+    readonly fetch?: FetchLike;
     /** Clock used in receipts. */
     readonly now?: () => Date;
     /** Stable attempt id used for staging. */
@@ -368,28 +367,6 @@ function reportProgress(deps: ReferenceInstallDeps, event: ReferenceDownloadProg
     } catch {
         // Intentionally empty: see above.
     }
-}
-
-/**
- * The size the upstream declared, or undefined when it declared none we can trust.
- *
- * A `Content-Length` beside a content encoding counts the *encoded* entity, while the runtime inflates
- * the body before it reaches the stream this code measures — `data.broadinstitute.org` answers 20551
- * for an artifact that lands at 48690 bytes. The header is not wrong, it just describes something
- * other than what is being counted, and the decoded size is not derivable from it, so the only honest
- * reading is that nothing was declared. Five catalog artifacts are in that state today.
- *
- * Beyond that, a header that is present can still be malformed or negative, so everything that is not
- * a positive finite integer collapses to "unknown" — the state the consumer is already required to
- * handle.
- */
-function declaredContentLength(response: Response): number | undefined {
-    const encoding = response.headers.get("content-encoding");
-    if (encoding !== null && encoding.trim().toLowerCase() !== "identity") return undefined;
-    const raw = response.headers.get("content-length");
-    if (raw === null) return undefined;
-    const parsed = Number(raw);
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 /** Caller-chosen installation behavior. */
@@ -467,7 +444,7 @@ export type ReferenceDownloadSize = {
 /** Seams for a size sweep; production supplies none of them. */
 export type ReferenceSizeProbeDeps = {
     /** Fetch implementation; defaults to the runtime fetch. */
-    readonly fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+    readonly fetch?: FetchLike;
     /** How many probes may be open at once; defaults to {@link DEFAULT_SIZE_PROBE_CONCURRENCY}. */
     readonly concurrency?: number;
     /** Budget for the whole sweep; defaults to {@link SIZE_PROBE_BUDGET_MS}. */
@@ -776,8 +753,17 @@ export async function verifyReferenceDatasets(
     }
 }
 
-function downloadName(key: string): string {
-    return createHash("sha256").update(key).digest("hex");
+/**
+ * Where one artifact's bytes are cached between transfer and staging.
+ *
+ * Content-keyed on `dataset/version/path` (hashed, because an artifact path may carry separators),
+ * so the entry is stable across attempts and a re-run overwrites its predecessor instead of piling
+ * up. `downloadToFile` writes `${cachePath}.part` and renames on success — the `.part` spelling is
+ * the transfer's, not this module's, but a stale one from an interrupted run lands under exactly the
+ * name the next attempt discards.
+ */
+function artifactCachePath(paths: ReferenceStorePaths, dataset: ReferenceInstallPlanDataset, artifact: ReferenceArtifact): string {
+    return join(paths.downloads, createHash("sha256").update(referenceArtifactKey(dataset, artifact)).digest("hex"));
 }
 
 async function assertOwnedPath(root: string, candidate: string): Promise<Result<void, ReferenceProvisionError>> {
@@ -814,81 +800,85 @@ async function assertOwnedPath(root: string, candidate: string): Promise<Result<
 
 /** What one transfer actually produced, whether or not the catalog could predict it. */
 type DownloadedArtifact = {
-    readonly partPath: string;
+    /** Where the bytes landed in the download cache; the caller copies from here into the staging tree. */
+    readonly cachePath: string;
     readonly bytesDownloaded: number;
     readonly observed: ReferenceReceiptArtifact;
 };
 
+/**
+ * Translate a transfer fault into the installer's error vocabulary.
+ *
+ * Everything that went wrong on the wire — an unreachable host, a bad status, a redirect off https —
+ * is one condition to every caller of the installer: the artifact did not arrive. Only a local
+ * filesystem fault stays distinct, because its remedy is the user's disk rather than the upstream.
+ */
+function asProvisionError(error: DownloadError, artifact: ReferenceArtifact): ReferenceProvisionError {
+    return error.type === "io_failed"
+        ? { type: "io_failed", message: `Could not write ${artifact.path}: ${error.message}`, cause: error.cause }
+        : { type: "download_failed", message: `Download failed for ${artifact.path}: ${error.message}`, cause: "cause" in error ? error.cause : undefined };
+}
+
+/**
+ * Fetch one catalog artifact into the download cache.
+ *
+ * The transfer itself is {@link downloadToFile} — https re-checked on the post-redirect URL, sha256,
+ * `.part`→atomic activation — so the installer keeps only what is genuinely its own: the ownership
+ * check that no installer-managed path is a symlink or escapes the store, and the dataset/path
+ * attribution the generic progress events cannot carry.
+ *
+ * The cache entry is content-keyed on `dataset/version/path`, so a re-run overwrites rather than
+ * accumulates, and it is NOT a resumable partial: the catalog carries no size or digest, so a partial
+ * file cannot be told apart from a complete one and appending to bytes the upstream may have changed
+ * would splice two versions together. `downloadToFile` discards any stale `.part` and refetches whole.
+ * TODO(robustness): a conditional If-Range resume could restore resumable large downloads without that
+ * risk, keying the precondition off an ETag captured on the first attempt.
+ */
 async function downloadArtifact(
     dataset: ReferenceInstallPlanDataset,
     artifact: ReferenceArtifact,
     paths: ReferenceStorePaths,
     deps: ReferenceInstallDeps,
 ): Promise<Result<DownloadedArtifact, ReferenceProvisionError>> {
-    const key = referenceArtifactKey(dataset, artifact);
-    const partPath = join(paths.downloads, `${downloadName(key)}.part`);
-    try {
-        const owned = await assertOwnedPath(paths.root, partPath);
-        if (owned.isErr()) return err(owned.error);
-        await mkdir(paths.downloads, { recursive: true });
+    const cachePath = artifactCachePath(paths, dataset, artifact);
+    // Checked here rather than inside the transfer: `downloadToFile` is a generic utility with no
+    // notion of an installer-owned tree, and this is the guard that keeps a symlinked ancestor from
+    // redirecting a write outside the store.
+    const owned = await assertOwnedPath(paths.root, cachePath);
+    if (owned.isErr()) return err(owned.error);
 
-        // The catalog carries no size or digest, so a partial file cannot be told apart from a
-        // complete one, and appending to bytes the upstream may have changed would splice two
-        // versions together — always fetch the whole artifact fresh.
-        // TODO(robustness): a conditional If-Range resume could restore resumable large downloads
-        // without that risk, keying the precondition off an ETag captured on the first attempt.
-        await rm(partPath, { force: true });
-
-        const response = await (deps.fetch ?? fetch)(artifact.url, {});
-        if (!response.ok || response.body === null) {
-            return err({
-                type: "download_failed",
-                message: `Download failed for ${artifact.path}: HTTP ${response.status} ${response.statusText} (${artifact.url})`,
-            });
-        }
-        // https is now the whole integrity story: nothing downstream re-checks the bytes against a
-        // reviewed digest, so a downgraded redirect hop would be trusted on first use. The catalog
-        // guarantees an https URL, but fetch follows redirects, so enforce it on whatever served us.
-        if (response.url !== "" && !response.url.startsWith("https://")) {
-            return err({
-                type: "download_failed",
-                message: `Refusing ${artifact.path}: ${artifact.url} redirected to a non-https location (${response.url}).`,
-            });
-        }
-        const declared = declaredContentLength(response);
-        // Emitted only once the response is accepted, so a started event always corresponds to a
-        // transfer that is actually about to move bytes — never to one already rejected above.
-        reportProgress(deps, {
-            type: "artifact_started",
-            datasetId: dataset.id,
-            path: artifact.path,
-            ...(declared === undefined ? {} : { declaredBytes: declared }),
-        });
-        // A pass-through Transform rather than a `data` listener on the readable: `pipeline` owns the
-        // flow, so a listener would compete with it for the stream's mode, while an inline stage keeps
-        // backpressure and error propagation exactly where they already are.
-        const counter = new Transform({
-            transform(chunk: Buffer, _encoding, callback) {
-                reportProgress(deps, { type: "artifact_bytes", datasetId: dataset.id, path: artifact.path, bytes: chunk.length });
-                callback(null, chunk);
-            },
-        });
-        await pipeline(Readable.fromWeb(response.body), counter, createWriteStream(partPath, { flags: "w" }));
-        const written = (await stat(partPath)).size;
-        const digest = await sha256File(partPath);
-        if (digest.isErr()) return err({ type: "io_failed", message: `Could not hash ${artifact.path}.`, cause: digest.error.cause });
-        // Completion is reported from the observed on-disk size, after hashing succeeded: every
-        // earlier exit (HTTP failure, a non-https redirect, an unhashable file) returns before here,
-        // so a completed event is only ever emitted for an artifact that really landed intact.
-        reportProgress(deps, { type: "artifact_completed", datasetId: dataset.id, path: artifact.path, bytes: written });
-        return ok({
-            partPath,
-            bytesDownloaded: written,
-            observed: { path: artifact.path, bytes: written, sha256: digest.value },
-        });
-    } catch (cause) {
-        return err({ type: "download_failed", message: `Download failed for ${artifact.path} (${artifact.url}).`, cause });
-    }
+    const downloaded = await downloadToFile(artifact.url, cachePath, {
+        ...(deps.fetch ? { fetch: deps.fetch } : {}),
+        onProgress: (event) => {
+            switch (event.type) {
+                case "started":
+                    // Emitted only once the response is accepted, so a started event always corresponds
+                    // to a transfer about to move bytes — never to one already rejected.
+                    reportProgress(deps, {
+                        type: "artifact_started",
+                        datasetId: dataset.id,
+                        path: artifact.path,
+                        ...(event.declaredBytes === undefined ? {} : { declaredBytes: event.declaredBytes }),
+                    });
+                    return;
+                case "bytes":
+                    reportProgress(deps, { type: "artifact_bytes", datasetId: dataset.id, path: artifact.path, bytes: event.bytes });
+                    return;
+                case "completed":
+                    // Reported from the observed on-disk size, after hashing succeeded: every earlier
+                    // exit returns before this, so a completed event only ever describes an artifact
+                    // that really landed intact.
+                    reportProgress(deps, { type: "artifact_completed", datasetId: dataset.id, path: artifact.path, bytes: event.bytes });
+                    return;
+            }
+        },
+    });
+    if (downloaded.isErr()) return err(asProvisionError(downloaded.error, artifact));
+    return ok({
+        cachePath,
+        bytesDownloaded: downloaded.value.bytes,
+        observed: { path: artifact.path, bytes: downloaded.value.bytes, sha256: downloaded.value.sha256 },
+    });
 }
 
 function containedPath(root: string, child: string): boolean {
@@ -997,7 +987,11 @@ async function installDataset(
                 return err({ type: "managed_path_conflict", path: destination, message: `Unsafe artifact destination ${artifact.path}.` });
             }
             await mkdir(dirname(destination), { recursive: true });
-            await copyFile(downloaded.value.partPath, destination);
+            await copyFile(downloaded.value.cachePath, destination);
+            // Dropped as soon as it is staged, not after activation: the cache entry is a whole second
+            // copy of the artifact, and holding every one of them until the end doubles the peak disk a
+            // multi-gigabyte dataset needs for no benefit — nothing resumes from it.
+            await rm(downloaded.value.cachePath, { force: true }).catch(() => undefined);
         }
 
         await mkdir(dirname(finalRoot), { recursive: true });
@@ -1030,9 +1024,6 @@ async function installDataset(
             return err(receiptWrite.error);
         }
         if (hadFinal) await rm(backup, { recursive: true, force: true }).catch(() => undefined);
-        for (const artifact of dataset.artifacts) {
-            await rm(join(paths.downloads, `${downloadName(referenceArtifactKey(dataset, artifact))}.part`), { force: true }).catch(() => undefined);
-        }
         return ok({ id: dataset.id, version: dataset.version, bytesDownloaded });
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not stage ${dataset.id}@${dataset.version}.`, cause });

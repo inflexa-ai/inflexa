@@ -212,7 +212,9 @@ describe("installation", () => {
             ],
         });
         expect(readFileSync(join(path, "user", "mine.fa"), "utf8")).toBe("mine");
-        expect(await Array.fromAsync(new Bun.Glob("*.part").scan(paths.downloads))).toEqual([]);
+        // The WHOLE download cache, not just `*.part`: each entry is a second full copy of its
+        // artifact, so one left behind silently doubles the store's size for every dataset installed.
+        expect(readdirSync(paths.downloads)).toEqual([]);
         // Every attempt gets a fresh staging id, so a leftover attempt dir would accumulate forever.
         expect(readdirSync(paths.staging)).toEqual([]);
         expect((await inspectReferenceStore(path, fixture))._unsafeUnwrap().datasets[0]?.state).toBe("installed");
