@@ -1,7 +1,10 @@
 import { Command } from "commander";
 
 import pkg from "../../package.json";
-import { devCommandsEnabled, env, envDoc, modelConnectionEnvDoc, type EnvDocEntry } from "../lib/env.ts";
+import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, modelConnectionEnvDoc, type EnvDocEntry } from "../lib/env.ts";
+// Type-only, so the registry keeps its lazy-import discipline: nothing of the setup module loads until
+// the action runs. It is the shape of `setup`'s answer flags — see the batch options declared below.
+import type { SetupAnswerFlags } from "../modules/infra/setup_answers.ts";
 import { registerAction } from "./agent_policy.ts";
 
 /**
@@ -27,9 +30,9 @@ function renderEnvHelp(): string {
             varRows.push([doc.name, doc.description]);
         }
     }
-    // The direct-connection secret vars are not `env`-field-backed (resolveModelApiKey reads them on
-    // demand), so they live in their own doc list; render them among the other var rows.
-    for (const doc of modelConnectionEnvDoc) {
+    // The direct-connection and embedding secret vars are not `env`-field-backed (their resolvers read them
+    // on demand), so they live in their own doc lists; render them among the other var rows.
+    for (const doc of [...modelConnectionEnvDoc, ...embeddingEnvDoc]) {
         varRows.push([doc.name, doc.description]);
     }
     for (const [name, labels] of baseVarLabels) {
@@ -531,33 +534,81 @@ export function buildProgram(): Command {
             .command("setup")
             .description("Install, authenticate, and start CLIProxyAPI and Postgres (Docker or Podman); optionally configure embeddings")
             .option("--connection <mode>", "How inflexa reaches models: cliproxy|direct (default cliproxy)")
-            .option("--provider <name>", "Authenticate a provider non-interactively: gemini|openai|claude|qwen|iflow")
+            .option(
+                "--provider <name>",
+                "With cliproxy: the account kind to sign in — gemini|openai|claude|qwen|iflow (interactive runs only, the sign-in needs a browser). " +
+                    "With --connection direct: the vendor slug recorded for the endpoint, e.g. anthropic, openai, deepseek",
+            )
             .option("--no-auth", "Skip the provider authentication step")
             .option("--no-start", "Set up only; don't start the proxy or Postgres containers")
             .option("--no-postgres", "Skip the Postgres provisioning step")
             .option("--force", "Re-pull images even if they are already cached")
             .option("--embeddings <mode>", "Configure embeddings non-interactively: local (built-in bge-small model)|api-key|off")
-            .option("--refs <ids>", "Download comma-separated reference dataset ids")
-            .option("--yes", "Confirm explicitly selected reference downloads"),
+            .option("--refs <ids>", "Reference data to download: recommended|all|<comma-separated dataset ids>. The value is the download consent")
+            .option("--yes", "Batch mode: never prompt — every unanswered question takes its default or fails. Implied when there is no terminal")
+            // Every option below answers a question the wizard would otherwise ask, so they share one
+            // heading rather than doubling the length of the flat `--help` list (design D12). Set as the
+            // command's default option group so each new answer flag joins it by position alone; the
+            // options declared above (and commander's lazily-created `-h, --help`) keep the plain
+            // "Options:" heading.
+            .optionsGroup("Batch mode:")
+            .option("--config <path>", "YAML answers file carrying any of the batch-mode answers; a flag overrides the file's answer for that question")
+            .option("--base-url <url>", "Direct connections only: the endpoint inflexa sends model requests to, `/v1`-terminated")
+            .option(
+                "--protocol <wire>",
+                "Direct connections only: the endpoint's wire protocol — anthropic|openai-compatible (inferred from the provider when omitted)",
+            )
+            .option("--model <id>", "Model id to pin for both agents; required for a direct connection in a non-interactive run")
+            .option(
+                "--auth-env <var>",
+                "Direct connections only: name of the environment variable holding the endpoint credential (never the credential itself)",
+            )
+            .option("--auth-command <cmd>", "Direct connections only: command whose output supplies a refreshing endpoint credential")
+            .option("--auth-scheme <scheme>", "How the credential is sent: x-api-key|bearer. Required with --auth-env or --auth-command")
+            .option("--auth-format <format>", "How --auth-command's output is read: raw|exec-credential (default raw)")
+            .option("--postgres-user <user>", "Postgres role the harness connects as")
+            .option("--postgres-password <password>", "Password for that Postgres role (visible in argv — prefer the --config file)")
+            .option("--postgres-port <port>", "Host port the Postgres container publishes")
+            .option("--postgres-database <db>", "Postgres database the harness uses")
+            .option("--postgres-host <host>", "Host the harness reaches Postgres at")
+            .option("--resource-share <pct>", "Percentage (1-100) of this machine's CPU and memory sandboxes may use; persisted as the absolute budget")
+            .option("--embeddings-url <url>", "api-key embeddings only: the embedding endpoint's base URL")
+            .option("--embeddings-model <id>", "api-key embeddings only: the embedding model id")
+            .option("--embeddings-gguf <path>", "Local embeddings only: path to your own GGUF model file instead of the built-in one")
+            .option(
+                "--sandbox <variant>",
+                "Sandbox image variant to pull: python|python-r. The value is the multi-GB download consent; nothing is pulled without it",
+            )
+            .option(
+                "--runtime <runtime>",
+                "Container runtime to provision on: docker|podman. A hard gate — setup fails rather than falling back when it is not ready",
+            )
+            .option(
+                "--no-validate",
+                "Skip the network probes that check an answered endpoint, model, and credential source. Local GGUF verification still runs",
+            ),
         {
             kind: "blocked",
             reason:
                 "`inflexa setup` provisions and authenticates the infrastructure this conversation depends on. " +
                 "It is not available to you — ask the user to run it from their own shell.",
         },
-        async (options: {
-            connection?: string;
-            provider?: string;
-            auth: boolean;
-            start: boolean;
-            postgres: boolean;
-            force?: boolean;
-            embeddings?: string;
-            refs?: string;
-            yes?: boolean;
-        }) => {
+        // The answer flags arrive as `SetupAnswerFlags` (commander's camelCased spelling of each one) and
+        // are handed on untouched: parsing, the `--config` file, merging, and the fail-before-mutate
+        // validation all belong to modules/infra/setup_answers.ts, so the registry stays a declaration of
+        // the surface rather than a second place where an answer's meaning is decided.
+        async (
+            options: SetupAnswerFlags & {
+                auth: boolean;
+                start: boolean;
+                postgres: boolean;
+                force?: boolean;
+                validate: boolean;
+                yes?: boolean;
+            },
+        ) => {
             const { setup } = await import("../modules/infra/setup.ts");
-            const { parseReferenceIds } = await import("../modules/refs/commands.ts");
+            const { parseReferenceSelection } = await import("../modules/refs/commands.ts");
             const embeddings = parseEmbeddingMode(options.embeddings);
             if (embeddings === null) {
                 console.error("\n  `--embeddings` must be one of: local, api-key, off.\n");
@@ -572,8 +623,34 @@ export function buildProgram(): Command {
                 force: options.force ?? false,
                 postgres: options.postgres,
                 embeddings,
-                refs: parseReferenceIds(options.refs),
+                refs: parseReferenceSelection(options.refs),
                 yes: options.yes,
+                validate: options.validate,
+                flags: {
+                    config: options.config,
+                    connection: options.connection,
+                    provider: options.provider,
+                    baseUrl: options.baseUrl,
+                    protocol: options.protocol,
+                    model: options.model,
+                    authEnv: options.authEnv,
+                    authCommand: options.authCommand,
+                    authScheme: options.authScheme,
+                    authFormat: options.authFormat,
+                    postgresUser: options.postgresUser,
+                    postgresPassword: options.postgresPassword,
+                    postgresPort: options.postgresPort,
+                    postgresDatabase: options.postgresDatabase,
+                    postgresHost: options.postgresHost,
+                    resourceShare: options.resourceShare,
+                    embeddings: options.embeddings,
+                    embeddingsUrl: options.embeddingsUrl,
+                    embeddingsModel: options.embeddingsModel,
+                    embeddingsGguf: options.embeddingsGguf,
+                    refs: options.refs,
+                    sandbox: options.sandbox,
+                    runtime: options.runtime,
+                },
             });
         },
     );

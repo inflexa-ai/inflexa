@@ -20,12 +20,14 @@ import {
     onDemandReferenceNote,
     onDemandReferencePanel,
     parseReferenceIds,
+    parseReferenceSelection,
     plainProgressSink,
     referenceNoteFloats,
     referencePickerBulkSelection,
     referencePickerModel,
     referenceSelectionDisclosure,
     renderPlanCaveat,
+    resolveReferenceSelection,
     runReferenceSetup,
     runRefsList,
     runRefsVerify,
@@ -144,6 +146,19 @@ describe("reference command policy", () => {
         expect(parseReferenceIds("demo, other, demo")).toEqual(["demo", "other"]);
     });
 
+    test("a setup answer is either a preset word or an id list, never both", () => {
+        expect(parseReferenceSelection("demo, other, demo")).toEqual({ ids: ["demo", "other"] });
+        expect(parseReferenceSelection("recommended")).toEqual({ preset: "recommended" });
+        // The word is the whole answer, whatever its casing or surrounding space.
+        expect(parseReferenceSelection(" ALL ")).toEqual({ preset: "all" });
+        // A preset buried in a list stays an id, so it fails as the unknown id it is instead of
+        // quietly widening a named list into a set nobody asked for.
+        expect(parseReferenceSelection("recommended,demo")).toEqual({ ids: ["recommended", "demo"] });
+        // Unanswered stays distinct from an empty answer: one offers a choice, the other installs nothing.
+        expect(parseReferenceSelection(undefined)).toBeUndefined();
+        expect(parseReferenceSelection("")).toEqual({ ids: [] });
+    });
+
     test("headless downloads require ids and explicit consent before mutation", async () => {
         assertTestSandbox(env.refsDir);
         const noIds = await downloadReferences({ ids: [], interactive: false, source: singleFileSource });
@@ -248,26 +263,102 @@ describe("reference command policy", () => {
         expect(await Bun.file(`${env.refsDir}/managed`).exists()).toBe(false);
     });
 
-    test("headless setup without ids defaults to the recommended set but still gates the transfer on consent", async () => {
+    test("batch setup without an answer fetches nothing at all", async () => {
         assertTestSandbox(env.refsDir);
-        // The fixture's only dataset is recommended, so the omitted-`--refs` headless path selects it as
-        // the default — but without `--yes` the consent gate must still stop before any transfer, exactly
-        // as an explicit selection does. This pins the invariant that the default never downloads silently.
-        const result = await runReferenceSetup({ interactive: false, source: singleFileSource });
-        expect(result.isOk()).toBe(true);
+        // The fixture's only dataset is recommended and missing, so a batch run once installed it off
+        // the consent flag alone. A batch flag is a mode, not a request: an unanswered question now
+        // downloads nothing, and the store path plus the explicit command are what it leaves behind.
+        const escaped: string[] = [];
+        const restore = sealGlobalFetch(escaped);
+        try {
+            const result = await runReferenceSetup({ interactive: false, source: singleFileSource });
+            expect(result.isOk()).toBe(true);
+        } finally {
+            restore();
+        }
+        expect(escaped).toEqual([]);
         expect(await Bun.file(`${env.refsDir}/managed`).exists()).toBe(false);
     });
 
-    test("headless setup with ids but no consent prints guidance and continues without transfer", async () => {
-        const result = await runReferenceSetup({ interactive: false, ids: ["demo"] });
-        expect(result.isOk()).toBe(true);
-        expect(await Bun.file(`${env.refsDir}/managed`).exists()).toBe(false);
+    test("an answered selection is the consent, with no separate flag, on a terminal or without one", async () => {
+        for (const interactive of [false, true]) {
+            assertTestSandbox(env.refsDir);
+            rmSync(env.refsDir, { recursive: true, force: true });
+            const result = await runReferenceSetup({
+                interactive,
+                selection: { ids: ["demo"] },
+                source: singleFileSource,
+                // Nothing else is supplied: no consent flag, and no confirmation seam — a prompt on
+                // either path would hang this test, which is the assertion.
+                fetch: async () => new Response("alpha", { headers: { "content-length": "5" } }),
+            });
+            expect(result.isOk()).toBe(true);
+            const inspection = (await inspectReferenceStore(env.refsDir, singleFileSource.catalog))._unsafeUnwrap();
+            expect(inspection.datasets[0]?.state).toBe("installed");
+        }
     });
 
     test("an explicit selected setup failure is returned visibly through the shared handler", async () => {
-        const result = await runReferenceSetup({ interactive: false, ids: ["unknown"], yes: true });
+        const result = await runReferenceSetup({ interactive: false, selection: { ids: ["unknown"] } });
         expect(result._unsafeUnwrapErr().type).toBe("unknown_dataset");
         expect(await Bun.file(`${env.refsDir}/managed`).exists()).toBe(false);
+    });
+});
+
+describe("reference selection presets", () => {
+    test("a preset resolves against the offered set, so an intact install is never re-fetched", async () => {
+        seedIntactInstall();
+        // `demo` is seeded intact; `beta` (recommended) and `gamma` (optional) are still missing.
+        const fixture = pickerCatalog(["demo", "beta"], ["demo", "beta", "gamma"]);
+        const inspection = (await inspectReferenceStore(env.refsDir, fixture))._unsafeUnwrap();
+        expect(inspection.datasets.find((item) => item.dataset.id === "demo")?.state).toBe("installed");
+
+        expect(resolveReferenceSelection({ preset: "recommended" }, fixture, inspection)._unsafeUnwrap()).toEqual(["beta"]);
+        expect(resolveReferenceSelection({ preset: "all" }, fixture, inspection)._unsafeUnwrap()).toEqual(["beta", "gamma"]);
+        // An explicitly named id is a request for that dataset to be present, so install state does
+        // not filter it — the installer nets an intact one out to nothing on its own.
+        expect(resolveReferenceSelection({ ids: ["demo"] }, fixture, inspection)._unsafeUnwrap()).toEqual(["demo"]);
+    });
+
+    test("a catalog id spelled like a preset word is a loud authoring error on every resolve", async () => {
+        const fixture = pickerCatalog([], ["all", "beta"]);
+        const inspection = (await inspectReferenceStore(env.refsDir, fixture))._unsafeUnwrap();
+
+        const collided = resolveReferenceSelection({ preset: "all" }, fixture, inspection)._unsafeUnwrapErr();
+        expect(collided.type).toBe("preset_collision");
+        expect(collided.presets).toEqual(["all"]);
+        expect(collided.message).toContain("--refs all");
+        expect(collided.message).toContain("Rename the dataset");
+        // The ambiguity lives in the catalog, so an answer that happened to spell ids is no evidence
+        // the vocabulary is sound — resolving one must not quietly pick a winner either way.
+        expect(resolveReferenceSelection({ ids: ["beta"] }, fixture, inspection)._unsafeUnwrapErr().type).toBe("preset_collision");
+    });
+
+    test("a batch preset answer installs the offered set without any consent flag", async () => {
+        assertTestSandbox(env.refsDir);
+        const result = await runReferenceSetup({
+            interactive: false,
+            selection: { preset: "recommended" },
+            source: singleFileSource,
+            fetch: async () => new Response("alpha", { headers: { "content-length": "5" } }),
+        });
+        expect(result.isOk()).toBe(true);
+        const inspection = (await inspectReferenceStore(env.refsDir, singleFileSource.catalog))._unsafeUnwrap();
+        expect(inspection.datasets[0]?.state).toBe("installed");
+    });
+
+    test("a preset with nothing left to offer resolves to an empty plan and touches no publisher", async () => {
+        seedIntactInstall();
+        const escaped: string[] = [];
+        const restore = sealGlobalFetch(escaped);
+        try {
+            // Every offered dataset is already intact, so there is no plan to size — not even a HEAD.
+            const result = await runReferenceSetup({ interactive: false, selection: { preset: "all" }, source: singleFileSource });
+            expect(result.isOk()).toBe(true);
+        } finally {
+            restore();
+        }
+        expect(escaped).toEqual([]);
     });
 });
 
@@ -940,8 +1031,7 @@ describe("reference setup seams", () => {
         try {
             await runReferenceSetup({
                 interactive: false,
-                ids: ["demo"],
-                yes: true,
+                selection: { ids: ["demo"] },
                 source: singleFileSource,
                 fetch: async (input, init) => {
                     seen.push(`${init?.method ?? "GET"} ${String(input)}`);
@@ -961,12 +1051,11 @@ describe("reference setup seams", () => {
         const escaped: string[] = [];
         const restore = sealGlobalFetch(escaped);
         try {
-            // `--refs` supplied, so no picker opens; consent is explicit, so the sweep runs and the
-            // transfer follows — the interactive shape of the same two calls.
+            // `--refs` supplied, so no picker opens; the answer is the consent, so the sweep runs and
+            // the transfer follows — the interactive shape of the same two calls.
             await runReferenceSetup({
                 interactive: true,
-                ids: ["demo"],
-                yes: true,
+                selection: { ids: ["demo"] },
                 source: singleFileSource,
                 fetch: async () => new Response("alpha", { headers: { "content-length": "5" } }),
             });

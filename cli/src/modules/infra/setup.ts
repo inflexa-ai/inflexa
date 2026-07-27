@@ -40,6 +40,7 @@ import {
     type ChatSetupError,
     type ModelAccess,
 } from "../proxy/models.ts";
+import type { ReferenceSelection } from "../refs/commands.ts";
 import { DEFAULT_DATABASE, DEFAULT_HOST, DEFAULT_PASSWORD, DEFAULT_USER, type PostgresConnection } from "./postgres_types.ts";
 import {
     writeComposeFile,
@@ -53,6 +54,7 @@ import {
     type ConnectionMode,
 } from "./compose.ts";
 import { formatInfraStateError, writeProxyConfig } from "./proxy_config.ts";
+import type { SetupAnswerFlags } from "./setup_answers.ts";
 
 // `inflexa setup` provisions the inflexa infrastructure stack: CLIProxyAPI (the
 // local model proxy) and Postgres + pgvector (the harness substrate). Both run
@@ -81,10 +83,20 @@ type SetupOptions = {
     postgres: boolean;
     /** Preselected embedding mode from `--embeddings`; overrides the interactive prompt. */
     embeddings?: "local" | "api-key" | "off";
-    /** Explicit comma-separated reference ids parsed at the command boundary. */
-    refs?: readonly string[];
-    /** Explicit consent for selected reference downloads. */
+    /** Reference selection from `--refs` — a preset word or explicit ids — parsed at the command boundary. */
+    refs?: ReferenceSelection;
+    /** Batch mode: never prompt. */
     yes?: boolean;
+    /** Whether the network validation probes run (`--no-validate` sets false); the offline local-GGUF verification is not one of them and always runs. */
+    validate?: boolean;
+    /**
+     * The batch answer flags exactly as commander parsed them — carried, not consumed, because they are the
+     * ANSWERS layer's input: `loadSetupAnswers` (./setup_answers.ts) owns reading `--config`, mapping the
+     * flags into the same schema the file parses into, merging them, and validating the whole set before
+     * anything here mutates. Keeping the registry a pass-through is what stops the two front-ends from
+     * growing separate notions of what an answer means.
+     */
+    flags?: SetupAnswerFlags;
 };
 
 export async function setup(options: SetupOptions): Promise<void> {
@@ -431,9 +443,10 @@ export async function setup(options: SetupOptions): Promise<void> {
         // store/user namespace is deliberate here; no passive runtime path creates it.
         const { runReferenceSetup } = await import("../refs/commands.ts");
         const refsResult = await runReferenceSetup({
-            interactive: process.stdin.isTTY,
-            ...(options.refs === undefined ? {} : { ids: options.refs }),
-            ...(options.yes === undefined ? {} : { yes: options.yes }),
+            // A selection is its own consent, so the only thing left to decide is whether the step may
+            // ask: a terminal that batch mode has not withdrawn.
+            interactive: process.stdin.isTTY && options.yes !== true,
+            ...(options.refs === undefined ? {} : { selection: options.refs }),
         });
         if (refsResult.isErr()) {
             log.error(`Reference-data setup: ${refsResult.error.message}`);
