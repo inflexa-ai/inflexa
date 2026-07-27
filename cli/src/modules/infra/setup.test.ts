@@ -1433,6 +1433,67 @@ describe("setup() — batch orchestration", () => {
         expect(output).toContain("first `inflexa` launch");
     });
 
+    describe("a step switched OFF consumes no answers", () => {
+        /**
+         * `setup()` reports these two through `console.error` (it is refusing before `intro()` on one path
+         * and before the first mutation on the other), so the stdout capture `runSetup` installs does not
+         * see them. Collect both channels to assert the message as well as the exit code.
+         */
+        async function runCapturingStderr(options: Parameters<typeof setup>[0]): Promise<string> {
+            const errors: string[] = [];
+            const consoleError = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+                errors.push(args.map(String).join(" "));
+            });
+            try {
+                await runSetup(options);
+            } finally {
+                consoleError.mockRestore();
+            }
+            return errors.join("\n");
+        }
+
+        test("--no-postgres refuses an answered postgres field rather than dropping it", async () => {
+            const errors = await runCapturingStderr(batch({ postgresPort: "6000", postgresUser: "fleet" }, { postgres: false }));
+
+            expect(process.exitCode).toBe(1);
+            expect(errors).toContain("--no-postgres");
+            expect(errors).toContain("`postgres.port`");
+            expect(errors).toContain("`postgres.user`");
+            // Refused BEFORE the runtime probe, so nothing about the machine was touched.
+            expect(firstReady).not.toHaveBeenCalled();
+        });
+
+        test("--no-auth refuses an answered cliproxy provider rather than dropping it", async () => {
+            // Interactive: batch cliproxy rejects a provider answer upfront (the sign-in needs a browser),
+            // so the stranding this guards is only reachable on a run that COULD have signed in. The
+            // answered mode means no prompt is reached before the refusal.
+            const wasTTY = process.stdin.isTTY;
+            Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+            try {
+                const errors = await runCapturingStderr({
+                    auth: false,
+                    start: false,
+                    force: false,
+                    postgres: false,
+                    flags: { connection: "cliproxy", provider: "claude" },
+                });
+
+                expect(process.exitCode).toBe(1);
+                expect(errors).toContain("--no-auth");
+                expect(errors).toContain("`--provider` / `connection.provider`");
+            } finally {
+                Object.defineProperty(process.stdin, "isTTY", { value: wasTTY, configurable: true });
+            }
+        });
+
+        test("--no-auth alone is untouched — it is only an answer that has nowhere to land that fails", async () => {
+            const output = await runSetup(batch({}, { auth: false }));
+
+            expect(process.exitCode).toBe(0);
+            expect(output).toContain("Setup complete");
+        });
+    });
+
     test("batch direct persists the connection, the credential source, and the model from answers", async () => {
         routeFetch({
             "/models": () => Response.json({ data: [{ id: "m-1" }] }),

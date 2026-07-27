@@ -1007,12 +1007,18 @@ export type ReferencePresetCollisionError = {
  * answer that happened to spell ids is no evidence the vocabulary is sound. It is a catalog-authoring
  * fault with a catalog-authoring fix, so it is stated as one rather than resolved by precedence —
  * either silent reading (preset wins, or id wins) installs something nobody asked for.
+ *
+ * The store reading arrives as a THUNK because only a preset needs it: "what is still missing" is a
+ * question about the store, while an id answer names its datasets outright. Taking the inspection
+ * eagerly would make every `--refs <ids>` run pay for a receipt-and-stat sweep whose result is
+ * discarded — and hiding that behind a caller-side branch would put the "which branch reads the store"
+ * rule somewhere other than the function that owns the branches.
  */
-export function resolveReferenceSelection(
+export async function resolveReferenceSelection(
     selection: ReferenceSelection,
     catalog: ReferenceDataCatalog,
-    inspection: ReferenceStoreInspection,
-): Result<readonly string[], ReferencePresetCollisionError> {
+    inspect: () => Promise<Result<ReferenceStoreInspection, ReferenceProvisionError>>,
+): Promise<Result<readonly string[], ReferencePresetCollisionError | ReferenceProvisionError>> {
     const collisions = REFERENCE_PRESETS.filter((word) => catalog.datasets.some((dataset) => dataset.id.toLowerCase() === word));
     const [collided] = collisions;
     if (collided !== undefined) {
@@ -1026,7 +1032,9 @@ export function resolveReferenceSelection(
         });
     }
     if ("ids" in selection) return ok(selection.ids);
-    const offered = offeredReferenceCatalog(catalog, inspection).datasets;
+    const inspection = await inspect();
+    if (inspection.isErr()) return err(inspection.error);
+    const offered = offeredReferenceCatalog(catalog, inspection.value).datasets;
     return ok(offered.filter((dataset) => selection.preset === "all" || dataset.recommendation.recommended).map((dataset) => dataset.id));
 }
 
@@ -1037,9 +1045,7 @@ export async function runReferenceSetup(options: ReferenceSetupOptions): Promise
     const activeCatalog = options.source?.catalog ?? REFERENCE_DATA_CATALOG;
     const selection = options.selection;
     if (selection !== undefined) {
-        const storeState = await inspectReferenceStore(env.refsDir, options.source?.catalog);
-        if (storeState.isErr()) return err(storeState.error);
-        const resolved = resolveReferenceSelection(selection, activeCatalog, storeState.value);
+        const resolved = await resolveReferenceSelection(selection, activeCatalog, () => inspectReferenceStore(env.refsDir, options.source?.catalog));
         if (resolved.isErr()) return err(resolved.error);
         if (resolved.value.length === 0) {
             log.info(

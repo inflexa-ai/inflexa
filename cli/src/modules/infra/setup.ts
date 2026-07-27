@@ -206,6 +206,20 @@ export async function setup(options: SetupOptions): Promise<void> {
         }
         const provider = providerCheck.value;
 
+        // The other half of the stranded-answer rule the `--no-postgres` guard above states: a step
+        // switched OFF consumes no answers. `provider` is non-undefined only in cliproxy mode — direct
+        // mode records the slug on the connection, which `--no-auth` does not touch — so this is exactly
+        // the interactive `--no-auth --provider <kind>` case. It cannot be checked beside the postgres
+        // guard because the mode is not known there, and batch cliproxy never reaches it: the resolver
+        // already rejects a provider answer whose sign-in cannot run unattended.
+        if (!options.auth && provider !== undefined) {
+            console.error(
+                "\n  --no-auth skips the sign-in step that would consume `--provider` / `connection.provider`.\n" + "  Drop the answer, or drop --no-auth.\n",
+            );
+            process.exitCode = 1;
+            return;
+        }
+
         // Persisted only now: the probe above proved the runtime usable, and the answers are validated,
         // so this is the first point where writing cannot strand the user with a rejected run. Later
         // steps (postgres provisioning, the sandbox pull) re-read config for the runtime, so it must be
@@ -431,7 +445,16 @@ export async function setup(options: SetupOptions): Promise<void> {
         // drops or keeps the proxy service — see generateComposeFile).
         let pgConn: PostgresConnection;
         if (options.postgres) {
-            pgConn = await promptPostgresConfig(answers.postgres, canPrompt);
+            const resolvedPostgres = await promptPostgresConfig(answers.postgres, canPrompt);
+            if (resolvedPostgres.isErr()) {
+                log.error(
+                    `The answered Postgres configuration could not be saved: ${resolvedPostgres.error.type}.\n` +
+                        "  The next run would resolve different values than this one provisioned, so nothing was started.",
+                );
+                process.exitCode = 1;
+                return;
+            }
+            pgConn = resolvedPostgres.value;
 
             if (!(await composeAvailable(rt))) {
                 log.error(`${rt.label} Compose is not available.\n  Install it: https://docs.docker.com/compose/install/`);
@@ -513,7 +536,15 @@ export async function setup(options: SetupOptions): Promise<void> {
         // share persists the machine-relative absolutes without the prompt; a run
         // that can neither ask nor read an answer skips entirely — the resolved
         // default (half the detected machine) applies unpersisted.
-        await promptResourceConfig(answers.resources?.sharePct, canPrompt);
+        const resourceAllowance = await promptResourceConfig(answers.resources?.sharePct, canPrompt);
+        if (resourceAllowance.isErr()) {
+            log.error(
+                `The answered resource allowance could not be saved: ${resourceAllowance.error.type}.\n` +
+                    "  Analyses would run against a different budget than the one declared.",
+            );
+            process.exitCode = 1;
+            return;
+        }
 
         // --- embeddings ---
         // The spec-bound position for the INTERACTIVE embedding question — after auth
@@ -557,7 +588,11 @@ export async function setup(options: SetupOptions): Promise<void> {
         // (`inflexa profile` pulls it on demand if still missing).
         await runSandboxImageSetup(answers.sandbox, canPrompt);
 
-        printNextSteps(options, pgConn, mode, embeddingModeAnswered);
+        // Re-read rather than tracking "did THIS run configure embeddings": the closing hint is about the
+        // MACHINE's state, and a backend left by the interactive picker above — or by an earlier run, which
+        // is what makes the embedding step return early without asking — leaves "go pick a backend" exactly
+        // as wrong as an answered mode would.
+        printNextSteps(options, pgConn, mode, readConfig().embedding.mode);
         outro("Setup complete");
     } catch (error) {
         log.error(`Setup failed unexpectedly: ${error}`);
@@ -831,6 +866,12 @@ function writeBothAgents(modelId: string): Result<void, ConfigError> {
  * (design D10) impossible. `--no-validate` skips the check entirely: it is a network probe, and that flag
  * is the air-gapped escape for all of them.
  *
+ * This is the ONE answer whose rejection lands after the machine has been mutated, and it is unavoidable:
+ * the question "does this account serve that model" can only be put to a RUNNING proxy, so the check
+ * cannot join the fail-before-mutate gate that gets every other answer adjudicated ahead of the first
+ * container command. The bound on that gate is therefore the answer SET, not the network probes — setup
+ * is idempotent, so the remedy for a rejected id is a corrected re-run, not a teardown.
+ *
  * A failed WRITE fails the run rather than warning (as the interactive picker does): an answer that did
  * not land leaves the client pinned to something other than what the fleet declared, which automation
  * cannot see.
@@ -898,12 +939,18 @@ export function explicitPostgresFields(conn: PostgresConnection): Partial<Postgr
  * channel-aware default writes nothing, and an all-defaults run removes the `postgres` block entirely so
  * each channel keeps resolving its own defaults. The returned connection is the full resolution used to
  * generate THIS run's compose file, independent of what was persisted.
+ *
+ * A failed WRITE is fatal once any field was ANSWERED, and a warning otherwise. The asymmetry is the same
+ * one {@link persistAnsweredDirectModel} draws: an answer that did not land leaves the client holding
+ * something other than what was declared, with nothing in a scripted run to read the warning — while an
+ * unanswered run's values are the prompted or already-resolved defaults, which this run's compose file
+ * uses either way, so aborting would cost a working provision to report nothing new.
  */
-async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPrompt: boolean): Promise<PostgresConnection> {
+async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPrompt: boolean): Promise<Result<PostgresConnection, ConfigError>> {
     const existing = resolvePostgresConfig();
     const anyAnswered = answered !== undefined && Object.values(answered).some((value) => value !== undefined);
 
-    if (!canPrompt && !anyAnswered) return existing;
+    if (!canPrompt && !anyAnswered) return ok(existing);
 
     if (canPrompt) log.message("Configure Postgres (press Enter to accept defaults)");
 
@@ -955,12 +1002,13 @@ async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPromp
     // whichever channel runs setup, since a reserved port is never carried forward.
     const explicit = explicitPostgresFields(conn);
     const postgres = Object.keys(explicit).length === 0 ? undefined : explicit;
-    writeConfig({ ...config, postgres }).match(
-        () => {},
-        (e) => log.warn(`Failed to save postgres config: ${e.type}`),
-    );
+    const persisted = writeConfig({ ...config, postgres });
+    if (persisted.isErr()) {
+        if (anyAnswered) return err(persisted.error);
+        log.warn(`Failed to save postgres config: ${persisted.error.type}`);
+    }
 
-    return conn;
+    return ok(conn);
 }
 
 /**
@@ -976,10 +1024,14 @@ async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPromp
  * heterogeneous fleet, and the ABSOLUTE budget it resolves to on THIS machine is what is persisted. A
  * run that can neither ask nor read an answer skips entirely: the same resolved defaults apply at run
  * time without a config entry.
+ *
+ * A failed WRITE is fatal for an ANSWERED share and a warning for a prompted one, on the same reasoning
+ * {@link promptPostgresConfig} states: a declared allowance that did not land is invisible to the script
+ * that declared it, while a prompted one falls back to the resolved default it was already showing.
  */
-async function promptResourceConfig(answeredSharePct: number | undefined, canPrompt: boolean): Promise<void> {
+async function promptResourceConfig(answeredSharePct: number | undefined, canPrompt: boolean): Promise<Result<void, ConfigError>> {
     const share = answerOf(answeredSharePct);
-    if (!share.answered && !canPrompt) return;
+    if (!share.answered && !canPrompt) return ok(undefined);
 
     const machine = detectedMachine();
     const resolved = resolveHarnessConfig();
@@ -1014,16 +1066,18 @@ async function promptResourceConfig(answeredSharePct: number | undefined, canPro
     // survive the rewrite.
     const harness = (config.harness ?? {}) as Record<string, unknown>;
     const resourceLimits = (harness.resourceLimits ?? {}) as Record<string, unknown>;
-    writeConfig({
+    const persisted = writeConfig({
         ...config,
         harness: {
             ...harness,
             resourceLimits: { ...resourceLimits, budget },
         },
-    }).match(
-        () => {},
-        (e) => log.warn(`Failed to save resource limits: ${e.type}`),
-    );
+    });
+    if (persisted.isErr()) {
+        if (share.answered) return err(persisted.error);
+        log.warn(`Failed to save resource limits: ${persisted.error.type}`);
+    }
+    return ok(undefined);
 }
 
 /**
@@ -1058,7 +1112,14 @@ function checkProviderAnswer(answered: string | undefined, mode: ConnectionMode)
     return ok(undefined);
 }
 
-function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: ConnectionMode, embeddingsConfigured: boolean): void {
+/**
+ * The embedding backend as `readConfig` reports it — always one of the three words, because the config
+ * schema infers a mode from the filled-in backend fields when none is recorded. Derived from the reader
+ * rather than re-declared so the summary below cannot describe a state the config layer stopped producing.
+ */
+type EmbeddingMode = ReturnType<typeof readConfig>["embedding"]["mode"];
+
+function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: ConnectionMode, embeddingMode: EmbeddingMode): void {
     const lines: string[] = [];
     if (mode === "cliproxy") {
         lines.push(`Proxy: ${env.cliproxyBaseUrl}`);
@@ -1072,12 +1133,13 @@ function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: C
     } else if (!options.postgres) {
         lines.push("Postgres provisioning skipped (--no-postgres).");
     }
-    // The "go pick a backend" hint is a lie once the run just configured one from an answer — the whole
-    // point of `--embeddings` / `embedding.mode` is that the question is already settled.
+    // Keyed on the RESOLVED backend rather than on how it was chosen: "go pick a backend" is a lie
+    // wherever one is already configured — an answer, the picker above, or an earlier run — and it is the
+    // right remediation wherever none is, including when the operator deliberately answered `off`.
     lines.push(
-        embeddingsConfigured
-            ? "Embeddings: configured from your answers — change it later in `inflexa config`."
-            : "Embeddings: run `inflexa setup` and pick a backend — the built-in model, your own GGUF, or an api-key endpoint — or edit it later in `inflexa config`.",
+        embeddingMode === "off"
+            ? "Embeddings: run `inflexa setup` and pick a backend — the built-in model, your own GGUF, or an api-key endpoint — or edit it later in `inflexa config`."
+            : `Embeddings: ${embeddingMode} — change it later in \`inflexa config\`.`,
     );
     if (!options.start) {
         lines.push("Containers start automatically on next `inflexa` run.");
@@ -1352,7 +1414,11 @@ async function promptManualDirectConnection(answered: ConnectionAnswers): Promis
             .toLowerCase();
     const protocol =
         answered.protocol ??
-        // "infer" leaves protocol unset; the two explicit values are exactly the schema's wire kinds.
+        // `select` is typed to the widened `string` its option values collapse to, so the assertion
+        // re-states the three literals declared one line below it — sound because clack can only return a
+        // value it was offered, and the offered set is right here rather than assembled elsewhere. It is
+        // narrowed rather than left wide because the sentinel has to be distinguishable: "infer" leaves
+        // protocol unset, and the two explicit values are exactly the schema's wire kinds.
         ((await select("Wire protocol", [
             { value: "infer", label: "Infer from provider (default)" },
             { value: "anthropic", label: "Anthropic" },

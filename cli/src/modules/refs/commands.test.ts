@@ -4,7 +4,7 @@ import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { REFERENCE_DATA_CATALOG_VERSION, UnknownReferenceDatasetError, type ReferenceDataCatalog } from "@inflexa-ai/harness";
-import { err, ok } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 
 // Side-effect import: the command actions render byte counts through Number.prototype.formatBytes,
 // which only exists once the extension loader has run.
@@ -32,7 +32,13 @@ import {
     type ReferenceProgressSink,
     type ReferenceProgressSnapshot,
 } from "./commands.ts";
-import { inspectReferenceStore, referenceStorePaths, type ReferenceCatalogSource } from "./store.ts";
+import {
+    inspectReferenceStore,
+    referenceStorePaths,
+    type ReferenceCatalogSource,
+    type ReferenceProvisionError,
+    type ReferenceStoreInspection,
+} from "./store.ts";
 
 function sha(bytes: string): string {
     return createHash("sha256").update(bytes).digest("hex");
@@ -294,25 +300,35 @@ describe("reference selection presets", () => {
         const inspection = (await inspectReferenceStore(env.refsDir, fixture))._unsafeUnwrap();
         expect(inspection.datasets.find((item) => item.dataset.id === "demo")?.state).toBe("installed");
 
-        expect(resolveReferenceSelection({ preset: "recommended" }, fixture, inspection)._unsafeUnwrap()).toEqual(["beta"]);
-        expect(resolveReferenceSelection({ preset: "all" }, fixture, inspection)._unsafeUnwrap()).toEqual(["beta", "gamma"]);
+        let inspections = 0;
+        const inspect = async (): Promise<Result<ReferenceStoreInspection, ReferenceProvisionError>> => {
+            inspections += 1;
+            return ok(inspection);
+        };
+
+        expect((await resolveReferenceSelection({ preset: "recommended" }, fixture, inspect))._unsafeUnwrap()).toEqual(["beta"]);
+        expect((await resolveReferenceSelection({ preset: "all" }, fixture, inspect))._unsafeUnwrap()).toEqual(["beta", "gamma"]);
+        expect(inspections).toBe(2);
         // An explicitly named id is a request for that dataset to be present, so install state does
-        // not filter it — the installer nets an intact one out to nothing on its own.
-        expect(resolveReferenceSelection({ ids: ["demo"] }, fixture, inspection)._unsafeUnwrap()).toEqual(["demo"]);
+        // not filter it — the installer nets an intact one out to nothing on its own. It is also the
+        // reason the store reading is a thunk: an id answer never reads the store at all.
+        expect((await resolveReferenceSelection({ ids: ["demo"] }, fixture, inspect))._unsafeUnwrap()).toEqual(["demo"]);
+        expect(inspections).toBe(2);
     });
 
     test("a catalog id spelled like a preset word is a loud authoring error on every resolve", async () => {
         const fixture = pickerCatalog([], ["all", "beta"]);
         const inspection = (await inspectReferenceStore(env.refsDir, fixture))._unsafeUnwrap();
+        const inspect = async (): Promise<Result<ReferenceStoreInspection, ReferenceProvisionError>> => ok(inspection);
 
-        const collided = resolveReferenceSelection({ preset: "all" }, fixture, inspection)._unsafeUnwrapErr();
+        const collided = (await resolveReferenceSelection({ preset: "all" }, fixture, inspect))._unsafeUnwrapErr();
         expect(collided.type).toBe("preset_collision");
-        expect(collided.presets).toEqual(["all"]);
+        expect(collided).toMatchObject({ presets: ["all"] });
         expect(collided.message).toContain("--refs all");
         expect(collided.message).toContain("Rename the dataset");
         // The ambiguity lives in the catalog, so an answer that happened to spell ids is no evidence
         // the vocabulary is sound — resolving one must not quietly pick a winner either way.
-        expect(resolveReferenceSelection({ ids: ["beta"] }, fixture, inspection)._unsafeUnwrapErr().type).toBe("preset_collision");
+        expect((await resolveReferenceSelection({ ids: ["beta"] }, fixture, inspect))._unsafeUnwrapErr().type).toBe("preset_collision");
     });
 
     test("a batch preset answer installs the offered set without any consent flag", async () => {
