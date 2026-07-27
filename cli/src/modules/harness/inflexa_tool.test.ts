@@ -474,19 +474,6 @@ describe("spawnInflexa — process bounds", () => {
         expect(r.endedBy).toBe("timeout");
     });
 
-    test("a caller abort is still reported as a cancel, not a timeout", async () => {
-        const controller = new AbortController();
-        setTimeout(() => controller.abort(), 200);
-        const r = await spawnInflexa([bun, "-e", "setTimeout(() => {}, 30000);"], controller.signal, {
-            timeoutMs: 30_000,
-            idleTimeoutMs: 25_000,
-            flushGraceMs: FLUSH_GRACE,
-            killGraceMs: 200,
-        });
-
-        expect(r.endedBy).toBe("cancel");
-    });
-
     test("a grandchild holding the pipes open does not stall past the child's exit", async () => {
         // The child hands its pipes to a 6s `sleep` and exits at once; EOF never
         // arrives until that grandchild dies. The flush grace must return us long
@@ -518,8 +505,10 @@ describe("spawnInflexa — process bounds", () => {
     test("the caller's abort reports cancel, not timeout and not a plain exit", async () => {
         const controller = new AbortController();
         setTimeout(() => controller.abort(), 100);
+        // Both deadlines armed and neither reached: `endedBy` must name the caller, not a bound.
         const r = await spawnInflexa([bun, "-e", "setTimeout(() => {}, 30000);"], controller.signal, {
             timeoutMs: 10_000,
+            idleTimeoutMs: 5_000,
             flushGraceMs: FLUSH_GRACE,
             killGraceMs: 400,
         });

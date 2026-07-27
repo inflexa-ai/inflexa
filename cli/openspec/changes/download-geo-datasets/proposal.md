@@ -12,7 +12,7 @@ Getting the files onto disk is the entire missing piece. Turning local files int
 - **`run_inflexa` spawns the subprocess in the session analysis's folder.** This is what makes a bare chat request — "download geo dataset GSE12345" — land in the chat analysis's folder rather than in whatever directory the host process was started in (the two differ after a resume, an `--analysis` launch, or a mid-session swap). The child then behaves exactly as if the user had `cd`'d there, so the ordinary marker walk-up already does the work and every agent-run command benefits, not only ones that opt in.
 - **Directory enumeration resolves links rather than matching them.** Each href is resolved against the directory URL and kept only when same-origin and exactly one segment deeper, so navigation links, NCBI's site-wide off-origin footer link, the "Access forbidden" page's `mailto:` links, and path traversal are all excluded by construction. Requests retry with backoff, because NCBI sheds load by answering 403 — indistinguishable from the 403 it serves for a directory with no index.
 - **Transfers stage and activate on full success**, so a failed or interrupted download leaves nothing in the user's data folder; a HEAD sweep gives a size estimate and enforces a cap before any bytes move.
-- **A shared streaming-download utility** (`src/lib/download.ts`) is factored out of the reference installer's machinery — HTTPS re-checked on redirect, sha256, `.part`→atomic activation, size probe. Repointing `refs/store.ts` at it is tracked separately.
+- **A shared streaming-download utility** (`src/lib/download.ts`) is factored out of the reference installer's machinery — HTTPS re-checked on redirect, sha256, `.part`→atomic activation, size probe — and `refs/store.ts` is repointed at it, so the primitive has one implementation rather than two.
 
 ## Capabilities
 
@@ -30,7 +30,7 @@ Getting the files onto disk is the entire missing piece. Turning local files int
 
 - **New CLI code**: a GEO source module — accession → NCBI URL resolution, autoindex enumeration, staged HTTPS fetch — plus one registered command action (`registerAction(..., "approval", ...)`). Fetching is a `Result`-returning boundary per the CLI's neverthrow rule.
 - **Reused / factored machinery**: a shared streaming transfer utility in `src/lib/download.ts`.
-- **Not touched**: input enrollment, staging, seeding, profiling, provenance, the analysis lock, the sandbox, and the harness. The command's whole effect is files on disk.
+- **Not touched**: input enrollment, staging, seeding, profiling, provenance, the analysis lock, and the sandbox. The command's whole effect is files on disk. The harness is touched in one place only, and only as prose: `search_geo_datasets`'s description no longer claims fetching is impossible.
 - **Agent reachability**: automatic once the command is registered `approval` — `run_inflexa` classifies it via the commander parse and prompts before running. The command's help text must fully describe its argument(s) per `cli-reference-docs`.
 - **Sandbox library store**: no change needed — once the user adds them, the files are read with the general data tools already provisioned (pandas, numpy, scanpy, anndata; data.table, readr). No GEO-specific parsing library is required.
-- **Docs / prose**: the harness `search_geo_datasets` caveat tells the agent that fetching is impossible, which is now misleading — a harness-side edit, tracked separately, not part of this CLI change.
+- **Docs / prose**: the harness `search_geo_datasets` caveat told the agent that fetching is impossible, which this change makes false. Corrected here, host-agnostically — it still forbids planning an in-sandbox download and names no host command.

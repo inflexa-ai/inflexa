@@ -8,8 +8,6 @@ import { declaredContentLength, downloadToFile, type DownloadError, type FetchLi
 
 /** The GEO FTP mirror (served over HTTPS) that holds per-series files and directory autoindexes. */
 const GEO_FTP_BASE = "https://ftp.ncbi.nlm.nih.gov/geo/series";
-/** The GEO web app that streams the bundled supplementary tar for a series. */
-const GEO_WEB_BASE = "https://www.ncbi.nlm.nih.gov/geo/download";
 
 /**
  * Total declared bytes a single Series may transfer before the command refuses.
@@ -57,11 +55,9 @@ export type GeoAccessionError = { readonly type: "invalid_accession"; readonly i
 
 /** The canonical URLs for one GEO Series' processed data. `softDir`/`matrixDir`/`supplDir` are autoindex directories to enumerate. */
 export type GeoSeriesUrls = {
-    readonly base: string;
     readonly softDir: string;
     readonly matrixDir: string;
     readonly supplDir: string;
-    readonly bundle: string;
 };
 
 /** One downloadable GEO artifact: its absolute URL and the file name it should land under. */
@@ -113,17 +109,14 @@ function seriesBucket(accession: string): string {
  *
  * `softDir`/`matrixDir`/`supplDir` are Apache autoindex directories the caller enumerates: a single-platform
  * series has one `..._series_matrix.txt.gz` under `matrix/`, a multi-platform series has one file per platform
- * and no combined file, so enumeration — not a guessed filename — finds them all. `bundle` is the web app's
- * single-tar endpoint for all supplementary files (a different host).
+ * and no combined file, so enumeration — not a guessed filename — finds them all.
  */
 export function geoSeriesUrls(accession: string): GeoSeriesUrls {
     const dir = `${GEO_FTP_BASE}/${seriesBucket(accession)}/${accession}/`;
     return {
-        base: dir,
         softDir: `${dir}soft/`,
         matrixDir: `${dir}matrix/`,
         supplDir: `${dir}suppl/`,
-        bundle: `${GEO_WEB_BASE}/?acc=${accession}&format=file`,
     };
 }
 
@@ -343,11 +336,11 @@ export type DownloadGeoSeriesOptions = GeoFetchOptions & {
  * Download a GEO Series' processed + supplementary artifact set into `destDir`.
  *
  * The bytes land in a sibling staging directory and are moved into `destDir` only once every artifact
- * has transferred, so a caller that enrols on `ok` can never enrol a partial set and a failed run
- * leaves nothing behind — the durable download directory is the analysis's, and littering it with the
- * debris of an aborted attempt would strand files no input row points at. A single failed transfer
- * aborts the set: the artifact list is what GEO published for the Series, so a missing member means
- * the local copy is not that Series. Returns the destination paths in resolution order.
+ * has transferred, so `destDir` either holds the complete published Series or does not exist at all —
+ * a half-set can never be mistaken for a finished download, and an aborted run leaves no debris in
+ * what is the user's own data folder. A single failed transfer aborts the set: the artifact list is
+ * what GEO published for the Series, so a missing member means the local copy is not that Series.
+ * Returns the destination paths in resolution order.
  */
 export async function downloadGeoSeries(
     accession: string,

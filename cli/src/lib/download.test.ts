@@ -24,13 +24,12 @@ function sha(body: string): string {
 /** Offline upstream: serves `body`, optionally as an error status, a post-redirect url, or with a content-length header. */
 function serve(
     body: string,
-    opts?: { status?: number; url?: string; contentLength?: boolean; encoding?: string },
+    opts?: { status?: number; url?: string; contentLength?: boolean },
 ): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
     return async () => {
         if (opts?.status !== undefined && opts.status >= 400) return new Response("missing", { status: opts.status, statusText: "Not Found" });
         const headers: Record<string, string> = {};
         if (opts?.contentLength) headers["content-length"] = String(Buffer.byteLength(body));
-        if (opts?.encoding) headers["content-encoding"] = opts.encoding;
         const response = new Response(body, Object.keys(headers).length > 0 ? { headers } : undefined);
         if (opts?.url) Object.defineProperty(response, "url", { value: opts.url });
         return response;
@@ -42,7 +41,7 @@ describe("downloadToFile", () => {
         const dest = join(root(), "out.bin");
         const body = "hello geo world";
         const result = await downloadToFile(URL_OK, dest, { fetch: serve(body) });
-        expect(result._unsafeUnwrap()).toEqual({ path: dest, bytes: Buffer.byteLength(body), sha256: sha(body) });
+        expect(result._unsafeUnwrap()).toEqual({ bytes: Buffer.byteLength(body), sha256: sha(body) });
         expect(readFileSync(dest, "utf8")).toBe(body);
         expect(existsSync(`${dest}.part`)).toBe(false);
     });

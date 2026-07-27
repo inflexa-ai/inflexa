@@ -23,14 +23,13 @@ export type DownloadError =
 /** The injectable fetch seam — production passes nothing (global `fetch`), tests inject a stub. */
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
-/** The final artifact of a successful download: where it landed, its byte count, and its sha256. */
-export type DownloadedFile = { readonly path: string; readonly bytes: number; readonly sha256: string };
+/** What a successful download produced. The destination is the caller's own `dest` argument, so it is not repeated here. */
+export type DownloadedFile = { readonly bytes: number; readonly sha256: string };
 
 /** Options for {@link downloadToFile}. */
 export type DownloadToFileOptions = {
     readonly fetch?: FetchLike;
     readonly onProgress?: (event: DownloadProgress) => void;
-    readonly signal?: AbortSignal;
 };
 
 /**
@@ -86,7 +85,7 @@ export async function downloadToFile(url: string, dest: string, options: Downloa
     }
     let response: Response;
     try {
-        response = await doFetch(url, options.signal === undefined ? {} : { signal: options.signal });
+        response = await doFetch(url, {});
     } catch (cause) {
         return err({ type: "http_failed", message: `Could not reach ${url}.`, cause });
     }
@@ -116,7 +115,7 @@ export async function downloadToFile(url: string, dest: string, options: Downloa
         if (digest.isErr()) return err({ type: "io_failed", message: `Could not hash the download of ${url}.`, cause: digest.error.cause });
         await rename(partPath, dest);
         reportProgress(options.onProgress, { type: "completed", bytes: written });
-        return ok({ path: dest, bytes: written, sha256: digest.value });
+        return ok({ bytes: written, sha256: digest.value });
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not write ${dest}.`, cause });
     }
