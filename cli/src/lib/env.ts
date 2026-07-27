@@ -43,11 +43,6 @@ const configVar = process.platform === "win32" ? "APPDATA" : "XDG_CONFIG_HOME";
 const logLevelVar = "INFLEXA_LOG_LEVEL";
 const otelEndpointVar = "OTEL_EXPORTER_OTLP_ENDPOINT";
 const modelApiKeyVar = "INFLEXA_MODEL_API_KEY";
-// The analysis a spawned `inflexa` child should default to — injected by the run_inflexa tool from the
-// trusted agent session (never model argv), read live here (the sole process.env reader) so the child
-// sees the value the parent set at spawn time. An internal agent-injection channel, not user config, so
-// it stays out of `env`/`envDoc` — see {@link ambientAnalysisRef}.
-const ambientAnalysisVar = "INFLEXA_ANALYSIS";
 // The ecosystem-conventional provider variables a `direct` connection can read/adopt. The API-key vars
 // are the provider-derived FALLBACK for the direct-mode secret (after INFLEXA_MODEL_API_KEY); the
 // *_BASE_URL vars are read ONLY for one-time setup detection (never a runtime endpoint binding). Homed
@@ -396,17 +391,6 @@ export function anthropicAuthTokenSet(): boolean {
  */
 export function readEnvCredentialVar(name: string): string | undefined {
     const value = process.env[name];
-    return value === undefined || value === "" ? undefined : value;
-}
-
-/**
- * The ambient analysis reference (`INFLEXA_ANALYSIS`) a spawned `inflexa` child should default to, or
- * undefined when none was injected. A live read (not frozen at import) so the value the parent set at
- * spawn time is seen; an empty value counts as unset. Consumed at the CLI boundary and passed into
- * `resolveContext` as the ambient tier, so `context.ts` stays library-pure (it never reads process.env).
- */
-export function ambientAnalysisRef(): string | undefined {
-    const value = process.env[ambientAnalysisVar];
     return value === undefined || value === "" ? undefined : value;
 }
 

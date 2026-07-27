@@ -6,9 +6,9 @@ The CLI SHALL provide a command that accepts a GEO Series accession (`GSE…`) a
 fetches the Series' processed data host-side into a per-accession directory in the
 target analysis's home folder. The command SHALL resolve that folder through the
 shared context resolution (`resolveContext`) — an explicit `--analysis` ref, else the
-ambient analysis (which `run_inflexa` injects for an agent-driven run), else the
-working-directory marker — so a chat request that names only the accession downloads
-into the chat analysis's folder regardless of the subprocess's working directory.
+working-directory marker. It needs no resolution tier of its own for the agent path:
+`run_inflexa` starts the subprocess in the session analysis's folder, so a chat request
+that names only the accession resolves there through the ordinary marker walk-up.
 
 Downloading SHALL be the command's whole responsibility. It SHALL NOT record input
 rows, emit provenance, stage, seed, (re)profile, or boot a harness runtime. Because
@@ -27,7 +27,7 @@ add-inputs path, which already stages and profiles them like any other local fil
 
 - **GIVEN** the conversation agent running the command through `run_inflexa` in an analysis-scoped session, with only the accession in the argv
 - **WHEN** the command resolves its target folder
-- **THEN** it resolves to the session analysis's folder via the injected ambient ref, not the subprocess's working directory
+- **THEN** it resolves to the session analysis's folder, because the subprocess was started there
 
 #### Scenario: The command records nothing about the analysis
 

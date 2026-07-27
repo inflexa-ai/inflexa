@@ -1,3 +1,5 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AskRejectedError, UnavailableAsk, type AgentSession, type AskApproval, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
@@ -10,20 +12,20 @@ import { createRunInflexaTool, decideAction, resolveInvocation, spawnInflexa, ty
 // A canned subprocess outcome; overridden per-test for the timeout/cancel/truncation cases.
 const OK_RESULT: SubprocessResult = { exitCode: 0, stdout: "hello", stderr: "", endedBy: "exit" };
 
-/** A `RunSubprocess` that records every `cmd` and `env` it is handed and returns a fixed result — no real process. */
+/** A `RunSubprocess` that records every `cmd` and `cwd` it is handed and returns a fixed result — no real process. */
 function recordingSubprocess(result: SubprocessResult = OK_RESULT): {
     fn: RunSubprocess;
     calls: (readonly string[])[];
-    envs: Readonly<Record<string, string | undefined>>[];
+    cwds: (string | undefined)[];
 } {
     const calls: (readonly string[])[] = [];
-    const envs: Readonly<Record<string, string | undefined>>[] = [];
-    const fn: RunSubprocess = (cmd, env, _signal) => {
+    const cwds: (string | undefined)[] = [];
+    const fn: RunSubprocess = (cmd, cwd, _signal) => {
         calls.push(cmd);
-        envs.push(env);
+        cwds.push(cwd);
         return Promise.resolve(result);
     };
-    return { fn, calls, envs };
+    return { fn, calls, cwds };
 }
 
 /** An `ask` seam that records its requests and resolves with a fixed approval. */
@@ -36,7 +38,7 @@ function recordingAsk(reply: AskApproval): { fn: (request: AskRequest) => Promis
     return { fn, calls };
 }
 
-/** A minimal `ToolContext`; the tool reads `signal`, `ask`, and `session.scope` (for INFLEXA_ANALYSIS injection). */
+/** A minimal `ToolContext`; the tool reads `signal`, `ask`, and `session.scope` (to pick the child's working directory). */
 function makeCtx(ask: (request: AskRequest) => Promise<AskApproval>, analysisId: string | null = "an-test"): ToolContext {
     const scope = analysisId === null ? { kind: "target-assessment" } : { kind: "analysis", analysisId };
     return {
@@ -375,10 +377,15 @@ describe("decideAction — policy cascade", () => {
 // against a live OS process. Graces are shrunk so the suite stays fast.
 describe("spawnInflexa — process bounds", () => {
     const bun = process.execPath;
+    // Generous on purpose. The flush window bounds how long captured output may still arrive AFTER
+    // the child exits, and this suite runs its 124 files in parallel: at 200-300ms a loaded machine
+    // routinely closes the pipes before the child's bytes land, which reads as "the command produced
+    // no output" and fails every assertion here for reasons that have nothing to do with the code.
+    const FLUSH_GRACE = 1_500;
     const live = (): AbortSignal => new AbortController().signal;
 
     test("runaway output is capped at the source, not buffered whole", async () => {
-        const r = await spawnInflexa([bun, "-e", 'process.stdout.write("a".repeat(200000));'], live(), { timeoutMs: 10_000, flushGraceMs: 200 });
+        const r = await spawnInflexa([bun, "-e", 'process.stdout.write("a".repeat(200000));'], live(), { timeoutMs: 10_000, flushGraceMs: FLUSH_GRACE });
 
         expect(r.endedBy).toBe("exit");
         expect(r.exitCode).toBe(0);
@@ -389,7 +396,7 @@ describe("spawnInflexa — process bounds", () => {
     test("the output cap is one budget across stdout AND stderr, not per stream", async () => {
         // 40k + 40k exceeds the 60k run budget; per-stream caps would keep all 80k.
         const script = 'process.stdout.write("a".repeat(40000)); process.stderr.write("b".repeat(40000));';
-        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 10_000, flushGraceMs: 300 });
+        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 10_000, flushGraceMs: FLUSH_GRACE });
 
         expect(r.endedBy).toBe("exit");
         const marker = "…[truncated]";
@@ -402,13 +409,37 @@ describe("spawnInflexa — process bounds", () => {
         expect(r.stderr.length).toBeGreaterThan(0);
     });
 
+    test("the child really runs in the cwd it was handed", async () => {
+        // The whole point of passing a folder down: a command that resolves its target from the working
+        // directory must see the analysis's folder, not wherever this process happens to have started.
+        //
+        // Asserted through a file the child writes to a RELATIVE path rather than through its stdout,
+        // because a relative write is the very thing a working directory decides — and because captured
+        // output is the one part of a spawn this suite cannot rely on when its files run in parallel.
+        const dir = mkdtempSync(join(tmpdir(), "inflexa-cwd-"));
+        try {
+            const r = await spawnInflexa(
+                [bun, "-e", 'require("node:fs").writeFileSync("landed-here", "x");'],
+                live(),
+                { timeoutMs: 10_000, flushGraceMs: FLUSH_GRACE },
+                dir,
+            );
+
+            expect(r.endedBy).toBe("exit");
+            expect(r.exitCode).toBe(0);
+            expect(existsSync(join(dir, "landed-here"))).toBe(true);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     test("a silent child is abandoned once the idle bound elapses, well before the absolute one", async () => {
         const started = performance.now();
         // Says nothing and would run for 30s; only the idle bound can end this.
         const r = await spawnInflexa([bun, "-e", "setTimeout(() => {}, 30000);"], live(), {
             timeoutMs: 30_000,
             idleTimeoutMs: 400,
-            flushGraceMs: 200,
+            flushGraceMs: FLUSH_GRACE,
             killGraceMs: 200,
         });
         const elapsed = performance.now() - started;
@@ -428,7 +459,7 @@ describe("spawnInflexa — process bounds", () => {
         // inside the window, while 30 ticks still carry the run past the bound by a full second.
         const script =
             'process.stdout.write("tick\\n"); let n = 1; const t = setInterval(() => { process.stdout.write("tick\\n"); if (++n === 30) { clearInterval(t); process.exit(0); } }, 100);';
-        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 30_000, idleTimeoutMs: 2_000, flushGraceMs: 300 });
+        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 30_000, idleTimeoutMs: 2_000, flushGraceMs: FLUSH_GRACE });
 
         expect(r.endedBy).toBe("exit");
         expect(r.exitCode).toBe(0);
@@ -438,7 +469,7 @@ describe("spawnInflexa — process bounds", () => {
     test("the absolute ceiling still bounds a child that never stops talking", async () => {
         // Chatty enough that the idle bound never fires; only timeoutMs can end it.
         const script = 'setInterval(() => process.stdout.write("x"), 20);';
-        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 600, idleTimeoutMs: 10_000, flushGraceMs: 200, killGraceMs: 200 });
+        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 600, idleTimeoutMs: 10_000, flushGraceMs: FLUSH_GRACE, killGraceMs: 200 });
 
         expect(r.endedBy).toBe("timeout");
     });
@@ -449,7 +480,7 @@ describe("spawnInflexa — process bounds", () => {
         const r = await spawnInflexa([bun, "-e", "setTimeout(() => {}, 30000);"], controller.signal, {
             timeoutMs: 30_000,
             idleTimeoutMs: 25_000,
-            flushGraceMs: 200,
+            flushGraceMs: FLUSH_GRACE,
             killGraceMs: 200,
         });
 
@@ -463,19 +494,19 @@ describe("spawnInflexa — process bounds", () => {
         const script =
             'Bun.spawn({ cmd: ["sleep", "6"], stdout: "inherit", stderr: "inherit" }); process.stdout.write("parent-done"); setTimeout(() => process.exit(0), 100);';
         const started = performance.now();
-        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 10_000, flushGraceMs: 300 });
+        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 10_000, flushGraceMs: FLUSH_GRACE });
         const elapsed = performance.now() - started;
 
         expect(r.endedBy).toBe("exit");
         expect(r.exitCode).toBe(0);
         expect(r.stdout).toContain("parent-done");
-        expect(elapsed).toBeLessThan(3_000);
+        expect(elapsed).toBeLessThan(4_000);
     });
 
     test("a SIGTERM-trapping child is SIGKILLed, so the deadline is a real bound", async () => {
         const script = 'process.on("SIGTERM", () => {}); process.stdout.write("trapped"); setTimeout(() => {}, 30000);';
         const started = performance.now();
-        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 300, flushGraceMs: 200, killGraceMs: 400 });
+        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 300, flushGraceMs: FLUSH_GRACE, killGraceMs: 400 });
         const elapsed = performance.now() - started;
 
         expect(r.endedBy).toBe("timeout");
@@ -489,7 +520,7 @@ describe("spawnInflexa — process bounds", () => {
         setTimeout(() => controller.abort(), 100);
         const r = await spawnInflexa([bun, "-e", "setTimeout(() => {}, 30000);"], controller.signal, {
             timeoutMs: 10_000,
-            flushGraceMs: 200,
+            flushGraceMs: FLUSH_GRACE,
             killGraceMs: 400,
         });
 
@@ -523,7 +554,7 @@ describe("spawnInflexa — process bounds", () => {
             `Object.assign(process.env, ${JSON.stringify(sandboxEnv)}); ` +
             `const { confirm } = await import(${JSON.stringify(confirmModule)}); ` +
             `process.stdout.write((await confirm("Proceed?")) ? "PROCEEDED" : "DECLINED");`;
-        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 10_000, flushGraceMs: 300 });
+        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 10_000, flushGraceMs: FLUSH_GRACE });
 
         expect(r.endedBy).toBe("exit");
         expect(r.exitCode).toBe(0);
@@ -531,24 +562,54 @@ describe("spawnInflexa — process bounds", () => {
     });
 });
 
-describe("run_inflexa — INFLEXA_ANALYSIS injection", () => {
-    test("injects the session's analysis id into the child env, preserving the parent env", async () => {
+describe("run_inflexa — the child's working directory", () => {
+    /** Build the tool with both seams stubbed: the recorder observes the cwd, the resolver supplies it. */
+    function toolWithFolder(sub: RunSubprocess, folders: Record<string, string>) {
+        return createRunInflexaTool({
+            runSubprocess: sub,
+            isDevelopment: true,
+            execPath: "/bin/bun",
+            scriptPath: "/app/src/index.ts",
+            resolveAnalysisFolder: (id) => folders[id],
+        });
+    }
+
+    test("runs the child in the session analysis's folder", async () => {
         const sub = recordingSubprocess();
-        const tool = makeTool(sub.fn);
+        const tool = toolWithFolder(sub.fn, { "an-abc": "/data/study-a" });
 
         await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-abc"));
 
-        expect(sub.envs[0]?.INFLEXA_ANALYSIS).toBe("an-abc");
-        expect(sub.envs[0]?.PATH).toBe(Bun.env.PATH);
+        expect(sub.cwds[0]).toBe("/data/study-a");
     });
 
-    test("injects nothing for a non-analysis-scoped session", async () => {
+    test("the folder comes from the session scope, not from anything in the argv", async () => {
         const sub = recordingSubprocess();
-        const tool = makeTool(sub.fn);
+        const tool = toolWithFolder(sub.fn, { "an-abc": "/data/study-a", "an-other": "/data/study-b" });
+
+        // The argv names a different analysis; the spawn directory must still be the session's.
+        await tool.execute({ argv: ["refs", "download", "x", "--yes", "--analysis", "an-other"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-abc"));
+
+        expect(sub.cwds[0]).toBe("/data/study-a");
+    });
+
+    test("inherits this process's directory when the session is not analysis-scoped", async () => {
+        const sub = recordingSubprocess();
+        const tool = toolWithFolder(sub.fn, { "an-abc": "/data/study-a" });
 
         await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn, null));
 
-        expect(sub.envs[0]?.INFLEXA_ANALYSIS).toBeUndefined();
-        expect(sub.envs[0]?.PATH).toBe(Bun.env.PATH);
+        expect(sub.cwds[0]).toBeUndefined();
+    });
+
+    test("an unlocatable folder inherits rather than failing the command", async () => {
+        const sub = recordingSubprocess();
+        // The analysis row or its anchor is gone — a routine desync, never a reason to refuse.
+        const tool = toolWithFolder(sub.fn, {});
+
+        const result = (await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-abc")))._unsafeUnwrap();
+
+        expect(sub.cwds[0]).toBeUndefined();
+        expect(result.status).toBe("ran");
     });
 });

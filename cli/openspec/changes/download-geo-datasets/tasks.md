@@ -18,10 +18,11 @@
 - [x] 3.2 Add the grantKey row (`"approval"`) to both `EXPECTED_DEV_OFF` and `EXPECTED_DEV_ON` in `agent_policy_tree.test.ts`; run it.
 - [x] 3.3 `bun run docs:gen` accepts every description.
 
-## 3a. Session-analysis injection + ambient context
+## 3a. The agent's subprocess runs in the analysis's folder
 
-- [x] 3a.1 `run_inflexa` (`inflexa_tool.ts`): thread an explicit child env through the subprocess seam; set `INFLEXA_ANALYSIS` from `ctx.session.scope` when `kind==="analysis"` (spread `Bun.env`). Tests: env carries the id from the session (not argv); non-analysis scope injects nothing; a parent key survives the merge.
-- [x] 3a.2 `lib/env.ts`: `ambientAnalysisRef()` reader (call-time, empty=unset, out of `env`/`envDoc`). `context.ts`: add `ambientAnalysis?` to `ContextFlags` and the ambient tier (below explicit flag, above marker; miss → fall through). Tests for the tier precedence. NOTE: the `geo add` command wires `ambientAnalysisRef()` at its own boundary (all the feature needs); wiring it at the shared launch/status/profile boundaries — so every agent-run command honors the ambient env — remains a follow-up.
+- [x] 3a.1 `run_inflexa` (`inflexa_tool.ts`): thread a `cwd` through the subprocess seam and spawn the child in the session analysis's folder when `ctx.session.scope.kind === "analysis"`; inherit otherwise. The folder resolver is an injected seam (`resolveAnalysisFolder`) so the tool's tests need no database. Tests: the child runs in the session analysis's folder; the folder comes from the session even when the argv names a different analysis; a non-analysis scope inherits; an unlocatable folder inherits and the command still runs. Plus a real-process test that the spawn honours the cwd it was handed.
+- [x] 3a.2 `analysis/output.ts`: `anchorPathForAnalysisId(id)` — the folder an analysis lives in, `null` for every routine desync (row gone, anchor gone, folder deleted) since the caller has a sound fallback in all of them. Tested against a real anchored home, an unknown id, and a deleted folder.
+- [x] 3a.3 Deleted the earlier ambient-analysis machinery this replaces: `INFLEXA_ANALYSIS` and `ambientAnalysisRef()` (`lib/env.ts`), `ContextFlags.ambientAnalysis` and the ambient tier in `resolveContext` (`analysis/context.ts`), their tests, and the whole `context-resolution` spec delta. Resolving the working directory answers the same question — *which folder* — without an id round-trip through the database, and does it for every agent-run command rather than only the ones that opted in. See D5.
 
 ## 4. Validate & finish
 

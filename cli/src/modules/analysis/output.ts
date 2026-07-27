@@ -68,6 +68,29 @@ function locateAnchorPath(analysis: Analysis): Result<string, WorkspaceError> {
     });
 }
 
+/**
+ * The folder an analysis lives in — its anchor — from a bare id, or `null` when it cannot be located.
+ *
+ * `null` covers every reason the folder is not reachable: the analysis row is gone, its anchor row is
+ * gone, or the marker's directory was deleted. All of them are routine desync between the database and
+ * the user's filesystem rather than faults (see the no-hard-fail rule), and the sole caller — choosing
+ * a working directory for a spawned child — has a sound fallback in every case, so a storage error
+ * collapses into the same `null` instead of failing a command that would otherwise have run.
+ */
+export function anchorPathForAnalysisId(analysisId: string): string | null {
+    return findAnalysesByRef(analysisId)
+        .andThen((rows) => {
+            const analysis = rows[0];
+            if (analysis === undefined) return ok<string | null, DbError>(null);
+            // `touch: false` — picking a working directory is not a folder sighting.
+            return resolveAnchor(analysis.anchorId, { touch: false }).map((resolved) => resolved?.path ?? null);
+        })
+        .match(
+            (path) => path,
+            () => null,
+        );
+}
+
 export function resolveOutputDir(analysis: Analysis): Result<string, WorkspaceError> {
     return locateAnchorPath(analysis).andThen((path) => {
         if (!isDirWritable(path)) {

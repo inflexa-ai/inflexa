@@ -30,6 +30,7 @@ import { z } from "zod";
 import { type AgentPolicy, getAgentPolicy } from "../../cli/agent_policy.ts";
 import { buildProgram } from "../../cli/index.ts";
 import { env } from "../../lib/env.ts";
+import { anchorPathForAnalysisId } from "../analysis/output.ts";
 import { classifyInflexaArgv } from "./inflexa_classify.ts";
 
 /** Combined cap on a run's captured output (stdout and stderr together), so one runaway command cannot overflow the turn's context. */
@@ -147,8 +148,16 @@ export type RunInflexaResult =
  */
 export type SubprocessResult = { readonly exitCode: number; readonly stdout: string; readonly stderr: string; readonly endedBy: "exit" | "timeout" | "cancel" };
 
-/** The subprocess seam — injectable so tests assert on the composed argv and env without spawning a real process. */
-export type RunSubprocess = (cmd: readonly string[], env: Readonly<Record<string, string | undefined>>, signal: AbortSignal) => Promise<SubprocessResult>;
+/** The subprocess seam — injectable so tests assert on the composed argv and working directory without spawning a real process. */
+export type RunSubprocess = (cmd: readonly string[], cwd: string | undefined, signal: AbortSignal) => Promise<SubprocessResult>;
+
+/**
+ * Locate the folder an analysis lives in — injectable so tests need no database.
+ *
+ * `undefined` means "could not be located", which the caller treats as "inherit this process's
+ * directory": a best-effort improvement on the working directory, never a reason to refuse a command.
+ */
+export type ResolveAnalysisFolder = (analysisId: string) => string | undefined;
 
 /**
  * Resolve the OS-level command that runs `argv` through `inflexa`.
@@ -266,12 +275,7 @@ export interface SpawnBounds {
  * `lib/container.ts`'s `capture`). A spawn that fails to launch is an unexpected
  * fault — it throws, and the loop's dispatch maps it to an error tool result.
  */
-export async function spawnInflexa(
-    cmd: readonly string[],
-    signal: AbortSignal,
-    bounds: SpawnBounds,
-    env?: Readonly<Record<string, string | undefined>>,
-): Promise<SubprocessResult> {
+export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, bounds: SpawnBounds, cwd?: string): Promise<SubprocessResult> {
     const { timeoutMs, idleTimeoutMs, flushGraceMs = FLUSH_GRACE_MS, killGraceMs = KILL_GRACE_MS } = bounds;
     // Hand-driven rather than `AbortSignal.timeout`, because the idle bound has to be REARMED on
     // every chunk the child produces and a timeout signal cannot be restarted. `timedOut` is the
@@ -291,9 +295,10 @@ export async function spawnInflexa(
         idleTimer = setTimeout(expire, idleTimeoutMs);
     };
     const combined = AbortSignal.any([signal, deadline.signal]);
-    // `[...cmd]` copies the readonly argv into the mutable array `Bun.spawn` expects. `env: undefined`
-    // means Bun inherits the parent's startup-snapshot env, which preserves the pre-injection behavior.
-    const proc = Bun.spawn({ cmd: [...cmd], env, stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: combined });
+    // `[...cmd]` copies the readonly argv into the mutable array `Bun.spawn` expects. No `env`: Bun
+    // then inherits the parent's startup snapshot, which is what every other child of this process
+    // gets. An absent `cwd` likewise inherits, so the key is omitted rather than passed as undefined.
+    const proc = Bun.spawn({ cmd: [...cmd], stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: combined, ...(cwd === undefined ? {} : { cwd }) });
 
     // The abort kill is SIGTERM, which a child can trap and outlive; escalate to
     // SIGKILL after a grace so the deadline is a real bound, not a suggestion.
@@ -373,6 +378,7 @@ export interface RunInflexaToolDeps {
     readonly scriptPath?: string;
     readonly timeoutMs?: number;
     readonly idleTimeoutMs?: number;
+    readonly resolveAnalysisFolder?: ResolveAnalysisFolder;
 }
 
 /**
@@ -387,7 +393,8 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
     const scriptPath = deps.scriptPath ?? join(import.meta.dir, "../../index.ts");
     const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const idleTimeoutMs = deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
-    const runSubprocess: RunSubprocess = deps.runSubprocess ?? ((cmd, env, signal) => spawnInflexa(cmd, signal, { timeoutMs, idleTimeoutMs }, env));
+    const resolveAnalysisFolder: ResolveAnalysisFolder = deps.resolveAnalysisFolder ?? ((analysisId) => anchorPathForAnalysisId(analysisId) ?? undefined);
+    const runSubprocess: RunSubprocess = deps.runSubprocess ?? ((cmd, cwd, signal) => spawnInflexa(cmd, signal, { timeoutMs, idleTimeoutMs }, cwd));
 
     return defineTool({
         id: "run_inflexa",
@@ -457,13 +464,15 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
 
             // Introspection and an approved action both reach here and run the same way.
             const cmd = resolveInvocation(c.argv, { isDevelopment, execPath, scriptPath });
-            // Inject the session's analysis so an analysis-scoped command the child runs without an
-            // explicit --analysis targets the chat's analysis. Read from the trusted session scope, never
-            // the model argv, so chat wording cannot retarget another analysis; spread the parent env
-            // (Bun.env, the sanctioned spawn spread) so PATH / INFLEXA_BUILD_CHANNEL / etc. survive.
+            // Run the child in the analysis's own folder, so a command that resolves its target from the
+            // working directory lands on the chat's analysis rather than wherever this process happens to
+            // have been started — the two differ after `inflexa resume`, an `--analysis` launch, or a
+            // mid-session swap. The folder comes from the trusted session scope, never the model argv, so
+            // chat wording cannot retarget another analysis. Unlocatable is not a failure: the child then
+            // inherits this process's directory, exactly as it did before.
             const scope = ctx.session.scope;
-            const childEnv = scope.kind === "analysis" ? { ...Bun.env, INFLEXA_ANALYSIS: scope.analysisId } : { ...Bun.env };
-            const r = await runSubprocess(cmd, childEnv, ctx.signal);
+            const cwd = scope.kind === "analysis" ? resolveAnalysisFolder(scope.analysisId) : undefined;
+            const r = await runSubprocess(cmd, cwd, ctx.signal);
             // truncateOutput re-bounds here because the seam is injectable: the real
             // spawn already caps at source, but the contract must hold for any seam.
             if (r.endedBy === "timeout") return ok({ status: "timed_out", stdout: truncateOutput(r.stdout), stderr: truncateOutput(r.stderr) });
