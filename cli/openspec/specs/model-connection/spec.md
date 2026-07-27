@@ -168,10 +168,16 @@ list, accessibility-checked via bounded-concurrency `count_tokens` requests — 
 `not_found_error` excludes a model from the list; an inconclusive check keeps it listed.
 When the proxy listing is unavailable — a down or not-yet-answering proxy — or nothing it lists is
 servable, interactive setup SHALL offer free-text manual entry with **Auto** as the blank default
-rather than skipping the step: leaving it blank keeps the adaptive default, and an entered id is
-persisted to BOTH user-facing agents after the SAME `count_tokens` accessibility check the list
-uses — a definite `not_found_error` is rejected with a warning that keeps Auto, an inconclusive
-check persists. Only a non-TTY skips the step entirely (Auto semantics).
+rather than skipping the step, SHALL first state which of the two happened (an unanswered listing
+leaves the account's models unknown; a listing whose every model is inaccessible leaves Auto with
+nothing to elect), and SHALL persist an entered id to BOTH user-facing agents. An entered id SHALL
+be accessibility-checked with the SAME `count_tokens` request the list uses whenever the proxy
+answered the listing — a definite `not_found_error` is rejected with a warning that keeps Auto, an
+inconclusive check persists — and SHALL be accepted unchecked when the listing itself was
+unavailable, since that check can then only time out into the same persist. DECLINING the prompt —
+blank, or cancelled — SHALL keep Auto and let setup finish successfully: this step is appended to
+work that has already succeeded and SHALL never fail the command. A non-TTY skips it entirely
+(Auto semantics).
 Accepting Auto SHALL write nothing (the default stays adaptive `model: null` resolution).
 Explicitly choosing a model SHALL persist it to `models.agents.<agent>` for BOTH user-facing
 agents (a deliberate pin). The flow SHALL contain no hardcoded model ids, with ONE declared
@@ -235,9 +241,22 @@ SHALL skip the selection (Auto semantics).
 
 - **WHEN** interactive cliproxy setup reaches the default-model step but the proxy listing is
   unavailable (or nothing it lists is servable)
-- **THEN** setup offers a free-text model-id prompt with Auto as the blank default; leaving it
-  blank keeps the adaptive default, entering an id the account can serve pins both agents, and a
-  definite `not_found_error` id is rejected with a warning that keeps Auto
+- **THEN** setup states which of the two happened and offers a free-text model-id prompt with Auto
+  as the blank default; leaving it blank keeps the adaptive default, entering an id the account can
+  serve pins both agents, and a definite `not_found_error` id is rejected with a warning that keeps
+  Auto
+
+#### Scenario: A model id typed against an unanswered listing is taken at its word
+
+- **WHEN** the proxy never answered `/models` and the user types an id at the manual-entry prompt
+- **THEN** setup pins both agents to it without a further accessibility round-trip, which against an
+  unanswered proxy could only time out into the same result
+
+#### Scenario: Declining the manual-entry prompt still completes setup
+
+- **WHEN** the user cancels the manual-entry prompt instead of typing an id
+- **THEN** nothing is written, the default stays adaptive Auto, and setup finishes successfully —
+  an optional step never fails a setup whose real work has already succeeded
 
 #### Scenario: Non-interactive setup skips the model step
 

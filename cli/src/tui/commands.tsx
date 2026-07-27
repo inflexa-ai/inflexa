@@ -8,6 +8,7 @@ import type { VerifyResult } from "../types/prov.ts";
 import { PromptDialog } from "./components/dialog/prompt_dialog.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
 import { SelectDialog } from "./components/dialog/select_dialog.tsx";
+import type { SelectItem } from "./components/list_core.tsx";
 import { PlanStepDetailDialog } from "./components/dialog/plan_step_detail_dialog.tsx";
 import { RunDetailDialog } from "./components/dialog/run_detail_dialog.tsx";
 import { FilePicker } from "./components/dialog/file_picker.tsx";
@@ -237,12 +238,34 @@ export async function runModelCommit(
 const MANUAL_MODEL_SENTINEL = "__manual__";
 
 /**
+ * The picker's rows: the connection's models in listing order with the agent's current one marked, then the
+ * manual-entry escape hatch. Built as a pure function so the row set — which row carries the sentinel, which
+ * is marked `current`, and that the escape hatch is `pinned` — is assertable without a rendered dialog.
+ *
+ * The manual row is `pinned` because the filter query here is a MODEL ID: the moment the user types the very
+ * id they opened this row to enter, fuzzy ranking would drop the row (its label shares no subsequence with
+ * `grok-4`) and leave an empty list — hiding the escape hatch at precisely the keystroke that asks for it.
+ */
+export function modelPickerItems(models: readonly string[], current: string): SelectItem<string>[] {
+    return [
+        ...models.map((id) => ({ value: id, title: id, hint: id === current ? "current" : undefined })),
+        {
+            value: MANUAL_MODEL_SENTINEL,
+            title: `Enter a model id manually${GLYPHS.ellipsis}`,
+            description: "Type an id this connection does not list — it is checked against your account before it applies.",
+            pinned: true,
+        },
+    ];
+}
+
+/**
  * The agent-parameterized model picker: a {@link SelectDialog} over the connection's live models with the
  * agent's CURRENT model marked, degrading to a {@link PromptDialog} free-text entry when listing failed
- * (`models === null`). A "manual entry" row in that listing ALSO opens the same free-text field (pre-filled
- * with the current model) even when a listing IS present — so an id the connection does not enumerate stays
- * reachable, mirroring direct-setup, which always prompts free text. A committed pick (listed OR free-text)
- * is accessibility-validated (design D6)
+ * (`models === null`). A pinned manual-entry row ({@link modelPickerItems}) opens that same free-text field
+ * even when a listing IS present — so an id the connection does not enumerate stays reachable, mirroring
+ * direct-setup, which always prompts free text — and esc there returns to the list rather than closing the
+ * picker, since the row was reached FROM it. A committed pick (listed OR free-text) is
+ * accessibility-validated (design D6)
  * before it persists — while checking, the picker shows a busy {@link PromptDialog}; a definite
  * `not_found` keeps it open with an inline error naming the model; `served`/`inconclusive` persist + close.
  *
@@ -256,7 +279,7 @@ export function ModelPickerDialog(props: {
     agent: AgentName;
     /** The connection's model ids, or `null` when listing failed (degrade to free-text entry). */
     models: readonly string[] | null;
-    /** The agent's currently-running model, marked `current` in the list and pre-filled in the free-text field. */
+    /** The agent's currently-running model, marked `current` in the list and pre-filled in the listing-failure free-text field. */
     current: string;
     /** Accessibility-validate a committed id before persisting (design D6); the picker renders the busy/error phases around it. */
     validate: (model: string) => Promise<ModelAccess>;
@@ -332,13 +355,22 @@ export function ModelPickerDialog(props: {
                 fallback={
                     <PromptDialog
                         title={title()}
-                        value={props.current}
+                        // Pre-fill ONLY when the listing failed: there the current id is invisible otherwise, so
+                        // offering it to edit saves retyping. Reached from a present list it is already on screen
+                        // (marked `current`) and the user chose manual entry precisely to name a DIFFERENT id — a
+                        // pre-fill there is text to clear, not a head start.
+                        value={props.models ? "" : props.current}
                         placeholder="Enter a model id"
-                        description={
-                            props.models
-                                ? undefined
-                                : () => <text fg={theme().fgMuted}>Could not list the connection's models — enter a model id manually.</text>
-                        }
+                        description={() => (
+                            <text fg={theme().fgMuted}>
+                                {props.models
+                                    ? "Enter an id this connection does not list — it is checked against your account before it applies."
+                                    : "Could not list the connection's models — enter a model id manually."}
+                            </text>
+                        )}
+                        // Back to the list, not out of the picker: this prompt was reached FROM the list, so esc
+                        // means "I didn't want manual entry after all". With no list there is nowhere to go back to.
+                        onBack={props.models ? () => setManual(false) : undefined}
                         onCancel={props.onCancel}
                         onSubmit={commit}
                     />
@@ -348,11 +380,10 @@ export function ModelPickerDialog(props: {
                     <SelectDialog
                         title={title()}
                         placeholder={`Search models${GLYPHS.ellipsis}`}
-                        items={[
-                            ...models.map((id) => ({ value: id, title: id, hint: id === props.current ? "current" : undefined })),
-                            { value: MANUAL_MODEL_SENTINEL, title: `Enter a model id manually${GLYPHS.ellipsis}` },
-                        ]}
-                        emptyText="No models listed by the connection"
+                        items={modelPickerItems(models, props.current)}
+                        // Unreachable while the manual row is pinned (it always survives the filter), but the
+                        // list primitive owns that guarantee, not this caller — so the text still has to be right.
+                        emptyText="No models match"
                         onCancel={props.onCancel}
                         onSelect={(value) => (value === MANUAL_MODEL_SENTINEL ? setManual(true) : commit(value))}
                     />

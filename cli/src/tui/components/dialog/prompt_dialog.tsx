@@ -24,7 +24,8 @@ import { TextInput } from "../text_input.tsx";
  *
  * Esc/cancel is the HOST's: the dialog binds no keys itself. It participates in the close funnel
  * via its entry handle — `onCancel` fires for every non-commit close (esc, click-outside, ctrl+c),
- * and the busy state vetoes ALL closes, making an in-flight operation dismissal-proof.
+ * and the busy state vetoes ALL closes, making an in-flight operation dismissal-proof. An `onBack`
+ * prompt vetoes the esc close too, returning to the surface that opened it (see `onBack`).
  */
 export function PromptDialog(props: {
     /** Panel title shown in the border chrome. */
@@ -55,6 +56,14 @@ export function PromptDialog(props: {
     onSubmit: (value: string) => void;
     /** Called when the dialog closes for any non-commit reason (esc, click-outside, ctrl+c). */
     onCancel: () => void;
+    /**
+     * Optional back-out for a prompt reached FROM another surface within the same dialog entry (the model
+     * picker's manual-entry row, opened from its list): esc runs this and KEEPS the entry open, so the user
+     * returns to where they came from instead of losing the whole dialog to a step they only wanted to
+     * back out of. Only `cancel` (esc) is intercepted — `dismiss` (click-outside, ctrl+c) means "take this
+     * off my screen", which a return-to-parent would disobey. Absent it, every close behaves as usual.
+     */
+    onBack?: () => void;
 }): JSX.Element {
     const dialog = useDialogEntry();
     // Showcased exhibits must not grab focus at mount: the editor's `focused` prop acts below
@@ -68,7 +77,14 @@ export function PromptDialog(props: {
     // error without the dialog ever closing.
     const [validationError, setValidationError] = createSignal<string | null>(null);
 
-    useDialogCloseGuard(() => !props.busy);
+    useDialogCloseGuard((reason) => {
+        if (props.busy) return false;
+        if (reason === "cancel" && props.onBack) {
+            props.onBack();
+            return false;
+        }
+        return true;
+    });
     useDialogCancel(() => props.onCancel());
 
     createEffect(() => {
@@ -110,10 +126,12 @@ export function PromptDialog(props: {
         }
     });
 
+    // The esc label follows the esc BEHAVIOR: an `onBack` prompt returns to its parent surface rather than
+    // closing, and a footer still promising "cancel" would misdescribe the only key the dialog documents.
     const footer = (): string =>
         props.busy
             ? `${GLYPHS.spinner[spinFrame()]} ${props.busyText ?? `Working${GLYPHS.ellipsis}`}`
-            : `${chordLabel(KEYS.enter)} submit ${GLYPHS.middot} ${chordLabel(KEYS.escape)} cancel`;
+            : `${chordLabel(KEYS.enter)} submit ${GLYPHS.middot} ${chordLabel(KEYS.escape)} ${props.onBack ? "back" : "cancel"}`;
 
     return (
         <DialogPanel title={props.title} size="md" tone={props.tone} padY footer={footer()}>

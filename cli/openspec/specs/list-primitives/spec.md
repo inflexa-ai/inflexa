@@ -8,7 +8,7 @@ The `FixedList`/`DynamicList` pure list components: query-driven fuzzy filtering
 
 ### Requirement: Two pure list components
 
-The system SHALL provide `FixedList<T>` and `DynamicList<T>` in `src/tui/components/` as pure list surfaces: they SHALL render no dialog chrome (no `DialogPanel`), no filter input, and SHALL NOT bind esc (dismissal is the dialog host's structural concern). Both SHALL consume rows as `SelectItem<T>` (`value`, `title`, optional `description`, `hint`, `category`) and share one internal core (ranking, grouping, cursor, selection, row rendering) colocated with them. A single component with a mode/chrome flag matrix SHALL NOT be reintroduced.
+The system SHALL provide `FixedList<T>` and `DynamicList<T>` in `src/tui/components/` as pure list surfaces: they SHALL render no dialog chrome (no `DialogPanel`), no filter input, and SHALL NOT bind esc (dismissal is the dialog host's structural concern). Both SHALL consume rows as `SelectItem<T>` (`value`, `title`, optional `description`, `hint`, `meta`, `category`, `pinned`) and share one internal core (ranking, grouping, cursor, selection, row rendering) colocated with them. A single component with a mode/chrome flag matrix SHALL NOT be reintroduced.
 
 #### Scenario: Lists render no chrome
 
@@ -61,6 +61,8 @@ The system SHALL provide `FixedList<T>` and `DynamicList<T>` in `src/tui/compone
 
 Both lists SHALL accept an optional reactive `query` string prop and SHALL NOT own a filter input. When `query` is empty or absent, items render in the given order. When non-empty, the list SHALL rank with the shared `rankBy` (`src/lib/fuzzy.ts`) over weighted fields: `title` at weight 2, `category` at weight 1.
 
+A row MAY declare `pinned`, which exempts it from that ranking: a pinned row the query drops SHALL be re-appended after the ranked matches, and one the query matches SHALL keep its earned rank rather than appear twice. `pinned` exists for an ESCAPE-HATCH row — one whose action is "supply a value these rows cannot express" — where the query is by definition text the row's own label does not match, so ranking it would hide the row at exactly the keystroke that calls for it. It SHALL NOT be used to give an ordinary row priority.
+
 #### Scenario: Host owns the input
 
 - **WHEN** a host renders a filterable list
@@ -70,6 +72,11 @@ Both lists SHALL accept an optional reactive `query` string prop and SHALL NOT o
 
 - **WHEN** `query` is non-empty
 - **THEN** row order is `rankBy` order (title hits weighted 2× over category-only hits); an empty query preserves input order
+
+#### Scenario: A pinned row outlives a query nothing matches
+
+- **WHEN** the query matches no row's title, including the pinned row's own
+- **THEN** the pinned row is still listed (so `emptyText` does not render), it is the cursor row and selectable, and clearing the query restores the full set with the pinned row appearing exactly once
 
 ### Requirement: Category grouping survives filtering
 

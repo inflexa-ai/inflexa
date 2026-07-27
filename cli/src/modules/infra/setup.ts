@@ -18,7 +18,7 @@ import {
     type ProviderEnvSnapshot,
 } from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialScheme } from "../../lib/credential.ts";
-import { select, promptText, confirm } from "../../lib/cli.ts";
+import { select, promptText, promptTextOptional, confirm } from "../../lib/cli.ts";
 import {
     AGENT_NAMES,
     detectedMachine,
@@ -503,8 +503,9 @@ async function runSandboxImageSetup(): Promise<void> {
 // picker power feature). Every id is discovered live from the proxy — none is ever hardcoded — so when
 // the proxy is down or not yet answering (nothing to offer), the interactive step falls back to free-text
 // manual entry with Auto (blank) as the default, letting the user pin an id the listing can't enumerate;
-// a non-TTY still skips. The step stays optional — blank keeps Auto — so an optional convenience never
-// adds a new way for setup to fail.
+// a non-TTY still skips. The step stays optional in EVERY sense — blank keeps Auto, and so does declining
+// the prompt outright (`promptTextOptional`, not the aborting `promptText`) — so an optional convenience
+// appended to a setup whose real work has already succeeded never adds a new way for it to fail.
 
 /**
  * How many accessibility checks the setup sweep runs at once. Small and fixed: it overlaps the
@@ -535,6 +536,17 @@ async function sweepAccessibleModels(check: (modelId: string) => Promise<ModelAc
 type DefaultModelChoice = { auto: true } | { auto: false; modelId: string };
 
 /**
+ * Why the step has no list to offer — the two causes differ in what the user should expect, and in whether a
+ * further round-trip can tell them anything:
+ * - `listing-unavailable`: the proxy never answered `/models` (down, still starting, or the fetch timed out).
+ *   Nothing is known about what the account can serve, and any id may still be right.
+ * - `none-servable`: the proxy answered, and every model it listed is definitively inaccessible to this
+ *   credential. Auto is known-broken here — the launch election walks the same ranked list — so typing an id
+ *   is the only way to end up with a working default.
+ */
+type NoListReason = "listing-unavailable" | "none-servable";
+
+/**
  * The seams {@link selectDefaultModel} drives, injectable so the TTY gate, the accessibility sweep, and
  * the Auto-vs-pin write policy are unit-testable without clack, a proxy, or a TTY. Production assembly:
  * {@link runDefaultModelSetup}.
@@ -547,8 +559,8 @@ type DefaultModelDeps = {
     check: (modelId: string) => Promise<ModelAccess>;
     /** Present Auto (preselected, labeled with `electedId`) atop `models`; returns the user's choice. */
     prompt: (electedId: string, models: string[]) => Promise<DefaultModelChoice>;
-    /** Free-text manual id when no list is offerable (listing down/empty, or nothing servable); null = left blank → keep Auto. */
-    promptManual: () => Promise<string | null>;
+    /** Free-text manual id when no list is offerable; `null` = declined (blank, cancelled) → keep Auto. */
+    promptManual: (reason: NoListReason) => Promise<string | null>;
     /** Persist the chosen id to BOTH user-facing agents. */
     writeBoth: (modelId: string) => Result<void, ConfigError>;
     warn: (message: string) => void;
@@ -559,8 +571,9 @@ type DefaultModelDeps = {
  * there is no offerable list — an empty candidate set (a down/unreachable proxy) or a sweep that rules
  * out EVERY candidate — the interactive step offers free-text manual entry with Auto (blank) as the
  * default, so a user can still pin an id the listing can't enumerate instead of being stranded; a
- * committed id is validated with the SAME accessibility check the list uses, and only a definite
- * `not_found` is rejected (keeping Auto). A non-TTY never reaches this fallback — the `isInteractive`
+ * committed id is validated with the SAME accessibility check the list uses whenever that check can still
+ * decide anything (see {@link NoListReason}), and only a definite `not_found` is rejected (keeping Auto).
+ * A non-TTY never reaches this fallback — the `isInteractive`
  * guard returns first. When a list IS offerable, the Auto label is the first accessible candidate in rank
  * order — the SAME id the launch election resolves (both walk the ranked list past `not_found` to the
  * first servable) — read straight from the sweep, so the recommendation and the offered list can never
@@ -575,14 +588,18 @@ export async function selectDefaultModel(deps: DefaultModelDeps): Promise<void> 
     const ranked = await deps.candidates();
     const models = ranked.length === 0 ? [] : await sweepAccessibleModels(deps.check, ranked);
     if (models.length === 0) {
-        // No offerable list — the proxy listing is down/empty, or nothing it lists is servable. Rather than
-        // silently skip (stranding a user who wants to pin an id the listing can't enumerate), offer free-text
-        // manual entry with Auto (blank) as the default. The step stays optional: blank keeps the adaptive
-        // `model: null` default, so this never becomes a new way for setup to fail. A committed id is validated
-        // with the SAME accessibility check the list uses — only a definite `not_found` is rejected (keep Auto).
-        const entered = await deps.promptManual();
-        if (entered === null) return; // left blank → keep Auto
-        if ((await deps.check(entered)) === "not_found") {
+        // No offerable list. Rather than silently skip (stranding a user who wants to pin an id the listing
+        // can't enumerate), offer free-text manual entry with Auto (blank) as the default. The step stays
+        // optional: declining keeps the adaptive `model: null` default, so this never becomes a new way for
+        // setup to fail.
+        const reason: NoListReason = ranked.length === 0 ? "listing-unavailable" : "none-servable";
+        const entered = await deps.promptManual(reason);
+        if (entered === null) return; // declined → keep Auto
+        // Validate with the SAME accessibility check the list uses — but only when the proxy demonstrably
+        // ANSWERS. A listing that never came back means this check would spend its whole timeout to reach
+        // `inconclusive`, which persists anyway: the user would pay a silent round-trip for a verdict that
+        // cannot change the outcome. Trust the typed id there, exactly as `inconclusive` is trusted.
+        if (reason === "none-servable" && (await deps.check(entered)) === "not_found") {
             deps.warn(`The account cannot serve "${entered}" — keeping Auto.`);
             return;
         }
@@ -608,11 +625,15 @@ const AUTO_MODEL_SENTINEL = "__auto__";
  * Production assembly of {@link selectDefaultModel} for the cliproxy setup path. Every model id is
  * discovered live from the raw `/models` list ({@link listModelCandidates}), ranked and filtered to the
  * connection family (in practice the rank already yields the winning family's pool); the sweep then both
- * offers and recommends from it. A missing proxy key or an unreachable/hung proxy resolves to a skip (the
- * key read short-circuits, and the bounded `candidates` fetch throws → `[]`), so a down proxy never fails
- * OR wedges setup. Cliproxy only — a direct connection has no owned proxy to elect against. The select
- * matches the surrounding setup prompts (`select` from lib/cli.ts), so a cancel aborts the command
- * exactly as they do.
+ * offers and recommends from it. A missing proxy key skips the step outright (nothing can be checked without
+ * a credential), while an unreachable/hung proxy yields no candidates (the bounded fetch throws → `[]`) and
+ * so lands on manual entry — a down proxy never fails OR wedges setup either way. Cliproxy only — a direct
+ * connection has no owned proxy to elect against.
+ *
+ * The two prompts differ deliberately in what a cancel means. The select matches the surrounding setup
+ * prompts, where a cancel aborts the command; the manual-entry prompt cannot, because it is reached only
+ * when something has ALREADY gone wrong (no listing, or nothing servable) and its whole purpose is to keep
+ * that from stopping anyone — so declining there keeps Auto and setup finishes.
  */
 async function runDefaultModelSetup(mode: ConnectionMode): Promise<void> {
     if (mode !== "cliproxy") return;
@@ -638,13 +659,17 @@ async function runDefaultModelSetup(mode: ConnectionMode): Promise<void> {
             ]);
             return chosen === AUTO_MODEL_SENTINEL ? { auto: true } : { auto: false, modelId: chosen };
         },
-        promptManual: async () => {
-            const entered = (
-                await promptText("Default chat model (leave blank for Auto)", {
-                    validate: () => undefined, // blank is allowed — it means "keep Auto"
-                })
-            ).trim();
-            return entered === "" ? null : entered;
+        promptManual: async (reason) => {
+            // Say WHY there is no list before asking for a free-text id: an unexplained prompt at the tail of
+            // setup reads as a step the user is failing, and the two causes call for different judgement —
+            // a proxy that never answered may still serve anything, while a listing whose every model is
+            // inaccessible means Auto resolves to nothing and typing an id is the only way out.
+            log.warn(
+                reason === "listing-unavailable"
+                    ? "The proxy did not answer its model listing — it may still be starting."
+                    : "Your account cannot serve any model the proxy lists, so Auto has nothing to elect.",
+            );
+            return await promptTextOptional("Default chat model (leave blank for Auto)");
         },
         writeBoth: (modelId) => writeAgentModel("conversation", modelId).andThen(() => writeAgentModel("sandbox", modelId)),
         warn: (message) => log.warn(message),

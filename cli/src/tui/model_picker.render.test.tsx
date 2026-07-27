@@ -1,10 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { ok } from "neverthrow";
+import type { JSX } from "solid-js";
+import { testRender } from "@opentui/solid";
 
 import "../extensions/index.ts"; // installs Response.prototype.jsonWith, which validateModelSelection uses
 import { renderFrame } from "../test_support/tui.ts";
-import { DialogShowcase } from "./components/dialog/dialog_host.tsx";
-import { commands, ModelPickerDialog, modelCommitDecision, runModelCommit } from "./commands.tsx";
+import { useKeymapRoot } from "./keymap.ts";
+import { DialogOverlay, DialogShowcase, dialogClear, dialogIsOpen, dialogPush } from "./components/dialog/dialog_host.tsx";
+import { commands, ModelPickerDialog, modelCommitDecision, modelPickerItems, runModelCommit } from "./commands.tsx";
 import { validateModelSelection, type ValidateSelectionSeams } from "../modules/harness/model_listing.ts";
 import type { ModelAccess } from "../modules/proxy/models.ts";
 
@@ -42,9 +45,7 @@ describe("ModelPickerDialog", () => {
     test("offers a manual-entry row so an unlisted id is reachable even when listing succeeds", async () => {
         const frame = await renderFrame(pickerNode(["claude-opus-4-8", "claude-sonnet-4-5"], "claude-sonnet-4-5"), { width: 80, height: 24 });
         // With a present list the manual-entry row is still offered — the escape hatch to type an id the
-        // connection does not enumerate, mirroring direct-setup's always-free-text affordance. Selecting it
-        // flips the picker to the same free-text PromptDialog (driving that keypress needs mockInput, which
-        // renderFrame does not expose; the surrounding exhibits assert on the rendered frame only).
+        // connection does not enumerate, mirroring direct-setup's always-free-text affordance.
         expect(frame).toContain("Enter a model id manually");
     });
 
@@ -66,6 +67,101 @@ describe("ModelPickerDialog", () => {
             { width: 80, height: 24 },
         );
         expect(frame).toContain("Switch chat model");
+    });
+});
+
+// The row set as DATA: which row carries the manual sentinel, which is marked `current`, and that the
+// escape hatch is pinned. Asserting it here — rather than through a frame — is what makes the pin a
+// contract of the picker rather than an accident of how a particular list renders.
+describe("model picker rows", () => {
+    test("the manual-entry row is last, pinned, and the only row that is not a model id", () => {
+        const items = modelPickerItems(["claude-opus-4-8", "claude-sonnet-4-5"], "claude-sonnet-4-5");
+        expect(items.map((i) => i.value)).toEqual(["claude-opus-4-8", "claude-sonnet-4-5", "__manual__"]);
+        expect(items.filter((i) => i.pinned).map((i) => i.value)).toEqual(["__manual__"]);
+        expect(items.find((i) => i.hint === "current")?.value).toBe("claude-sonnet-4-5");
+    });
+
+    test("an empty listing still offers the escape hatch", () => {
+        expect(modelPickerItems([], "claude-opus-4-8").map((i) => i.value)).toEqual(["__manual__"]);
+    });
+});
+
+// The picker driven through the REAL dialog host and keyboard bus — the only way to observe the
+// behaviors that only exist while a user is typing: that the escape hatch survives a filter query no
+// row matches, and that backing out of it returns to the list instead of destroying the picker.
+describe("ModelPickerDialog — filtering to an unlisted id (rendered)", () => {
+    afterEach(() => {
+        dialogClear();
+    });
+
+    function Harness(): JSX.Element {
+        useKeymapRoot();
+        return (
+            <box width="100%" height="100%">
+                <DialogOverlay />
+            </box>
+        );
+    }
+
+    // A lone ESC byte is an ambiguous escape-sequence prefix — opentui's parser holds it ~20ms before
+    // flushing it as a standalone key, so settling on a real clock is required for esc to arrive.
+    function makeSettle(setup: { renderOnce: () => Promise<void> }): () => Promise<void> {
+        return async () => {
+            await new Promise((r) => setTimeout(r, 35));
+            await setup.renderOnce();
+            await setup.renderOnce();
+        };
+    }
+
+    test("typing an id the connection does not list keeps the escape hatch; esc returns to the list", async () => {
+        const committed: string[] = [];
+        let cancelled = false;
+        const setup = await testRender(() => <Harness />, { width: 80, height: 24 });
+        const settle = makeSettle(setup);
+        try {
+            await settle();
+            dialogPush(() => (
+                <ModelPickerDialog
+                    agent="sandbox"
+                    models={["claude-opus-4-8", "claude-sonnet-4-5"]}
+                    current="claude-sonnet-4-5"
+                    validate={validateNoop}
+                    onCommit={(m) => committed.push(m)}
+                    onCancel={() => {
+                        cancelled = true;
+                    }}
+                />
+            ));
+            await settle();
+
+            // The query IS a model id — no listed row and no label shares a subsequence with it.
+            await setup.mockInput.typeText("grok-4");
+            await settle();
+            let frame = setup.captureCharFrame();
+            expect(frame).not.toContain("claude-opus-4-8");
+            expect(frame).toContain("Enter a model id manually");
+
+            setup.mockInput.pressEnter(); // the escape hatch is the only surviving row, so it is the cursor row
+            await settle();
+            frame = setup.captureCharFrame();
+            expect(frame).toContain("Enter an id this connection does not list");
+            expect(frame).not.toContain("claude-sonnet-4-5"); // no pre-fill: the list already showed the current id
+
+            setup.mockInput.pressEscape(); // back to the list — NOT out of the picker
+            await settle();
+            frame = setup.captureCharFrame();
+            expect(dialogIsOpen()).toBe(true);
+            expect(cancelled).toBe(false);
+            expect(frame).toContain("claude-opus-4-8");
+
+            setup.mockInput.pressEscape(); // from the list, esc means what it always did
+            await settle();
+            expect(dialogIsOpen()).toBe(false);
+            expect(cancelled).toBe(true);
+            expect(committed).toEqual([]);
+        } finally {
+            setup.renderer.destroy();
+        }
     });
 });
 
