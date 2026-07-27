@@ -402,6 +402,60 @@ describe("spawnInflexa — process bounds", () => {
         expect(r.stderr.length).toBeGreaterThan(0);
     });
 
+    test("a silent child is abandoned once the idle bound elapses, well before the absolute one", async () => {
+        const started = performance.now();
+        // Says nothing and would run for 30s; only the idle bound can end this.
+        const r = await spawnInflexa([bun, "-e", "setTimeout(() => {}, 30000);"], live(), {
+            timeoutMs: 30_000,
+            idleTimeoutMs: 400,
+            flushGraceMs: 200,
+            killGraceMs: 200,
+        });
+        const elapsed = performance.now() - started;
+
+        expect(r.endedBy).toBe("timeout");
+        expect(elapsed).toBeLessThan(5_000);
+    });
+
+    test("a child that keeps reporting outlives the idle bound many times over", async () => {
+        // Runs ~3s against a 2s idle bound, so without rearming on output it dies at 2s — the
+        // property that lets a long download survive the agent path.
+        //
+        // The margins are deliberately loose on both sides. The idle clock starts at spawn, so the
+        // child's `bun` startup counts against the FIRST tick: this suite runs its files in
+        // parallel, and a 1s bound expired before a loaded runtime had booted at all. Writing
+        // immediately (not waiting out the first interval) plus a 2s bound puts that startup well
+        // inside the window, while 30 ticks still carry the run past the bound by a full second.
+        const script =
+            'process.stdout.write("tick\\n"); let n = 1; const t = setInterval(() => { process.stdout.write("tick\\n"); if (++n === 30) { clearInterval(t); process.exit(0); } }, 100);';
+        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 30_000, idleTimeoutMs: 2_000, flushGraceMs: 300 });
+
+        expect(r.endedBy).toBe("exit");
+        expect(r.exitCode).toBe(0);
+        expect(r.stdout.match(/tick/g)?.length).toBe(30);
+    });
+
+    test("the absolute ceiling still bounds a child that never stops talking", async () => {
+        // Chatty enough that the idle bound never fires; only timeoutMs can end it.
+        const script = 'setInterval(() => process.stdout.write("x"), 20);';
+        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 600, idleTimeoutMs: 10_000, flushGraceMs: 200, killGraceMs: 200 });
+
+        expect(r.endedBy).toBe("timeout");
+    });
+
+    test("a caller abort is still reported as a cancel, not a timeout", async () => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 200);
+        const r = await spawnInflexa([bun, "-e", "setTimeout(() => {}, 30000);"], controller.signal, {
+            timeoutMs: 30_000,
+            idleTimeoutMs: 25_000,
+            flushGraceMs: 200,
+            killGraceMs: 200,
+        });
+
+        expect(r.endedBy).toBe("cancel");
+    });
+
     test("a grandchild holding the pipes open does not stall past the child's exit", async () => {
         // The child hands its pipes to a 6s `sleep` and exits at once; EOF never
         // arrives until that grandchild dies. The flush grace must return us long
@@ -496,52 +550,5 @@ describe("run_inflexa — INFLEXA_ANALYSIS injection", () => {
 
         expect(sub.envs[0]?.INFLEXA_ANALYSIS).toBeUndefined();
         expect(sub.envs[0]?.PATH).toBe(Bun.env.PATH);
-    });
-});
-
-describe("run_inflexa — onReconcile hook", () => {
-    function recordingReconcile(): { fn: (id: string) => void; calls: string[] } {
-        const calls: string[] = [];
-        return { fn: (id) => calls.push(id), calls };
-    }
-    function toolWith(runSubprocess: RunSubprocess, onReconcile: (id: string) => void) {
-        return createRunInflexaTool({ runSubprocess, isDevelopment: true, execPath: "/bin/bun", scriptPath: "/app/src/index.ts", onReconcile });
-    }
-
-    test("fires once with the session analysis id after a successful action", async () => {
-        const rec = recordingReconcile();
-        const tool = toolWith(recordingSubprocess().fn, rec.fn);
-        await tool.execute({ argv: ["refs", "download", "x", "--yes"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-xyz"));
-        expect(rec.calls).toEqual(["an-xyz"]);
-    });
-
-    test("does not fire for an introspection call", async () => {
-        const rec = recordingReconcile();
-        const tool = toolWith(recordingSubprocess().fn, rec.fn);
-        await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-xyz"));
-        expect(rec.calls).toEqual([]);
-    });
-
-    test("does not fire for a denied action", async () => {
-        const rec = recordingReconcile();
-        const tool = toolWith(recordingSubprocess().fn, rec.fn);
-        const reject = (_request: AskRequest): Promise<AskApproval> => Promise.reject(new AskRejectedError("no"));
-        await expect(tool.execute({ argv: ["refs", "download", "x", "--yes"] }, makeCtx(reject, "an-xyz"))).rejects.toBeInstanceOf(AskRejectedError);
-        expect(rec.calls).toEqual([]);
-    });
-
-    test("does not fire for a failed (non-zero exit) action", async () => {
-        const rec = recordingReconcile();
-        const failed = recordingSubprocess({ exitCode: 1, stdout: "", stderr: "boom", endedBy: "exit" });
-        const tool = toolWith(failed.fn, rec.fn);
-        await tool.execute({ argv: ["refs", "download", "x", "--yes"] }, makeCtx(recordingAsk({ kind: "once" }).fn, "an-xyz"));
-        expect(rec.calls).toEqual([]);
-    });
-
-    test("does not fire for a non-analysis-scoped session", async () => {
-        const rec = recordingReconcile();
-        const tool = toolWith(recordingSubprocess().fn, rec.fn);
-        await tool.execute({ argv: ["refs", "download", "x", "--yes"] }, makeCtx(recordingAsk({ kind: "once" }).fn, null));
-        expect(rec.calls).toEqual([]);
     });
 });
