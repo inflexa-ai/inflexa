@@ -112,6 +112,25 @@ export async function promptText(
 }
 
 /**
+ * {@link promptText} for a step whose SKIP is a legitimate answer: declining resolves to `null` instead of
+ * aborting the command — cancelling (Ctrl-C / Esc), submitting empty, and a non-interactive stdin all mean
+ * "no value", and the caller applies its defined default.
+ *
+ * The distinction from {@link promptText} is which outcome is a failure. A value the command cannot proceed
+ * without (an endpoint URL) SHOULD abort on cancel — there is nothing to continue with. An OPTIONAL step
+ * appended to a command whose real work already succeeded must not turn a reflexive Ctrl-C into a non-zero
+ * exit that disowns that work; it declines and returns. Reach for this only where the caller genuinely has a
+ * defined "user declined" behavior.
+ */
+export async function promptTextOptional(message: string, opts?: { placeholder?: string }): Promise<string | null> {
+    if (!process.stdin.isTTY) return null;
+    const answer = await clackText({ message, placeholder: opts?.placeholder });
+    if (isCancel(answer)) return null;
+    const trimmed = answer.trim();
+    return trimmed === "" ? null : trimmed;
+}
+
+/**
  * Interactive SECRET prompt for the text commands (API keys, tokens): behaves like
  * {@link promptText} but every typed or pasted character renders masked, so a key never
  * lands in the terminal scrollback. The submitted value is returned in the clear — masking

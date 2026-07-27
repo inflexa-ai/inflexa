@@ -53,11 +53,16 @@ mode; in direct mode, `{baseURL}/models` for BOTH protocols, derived from the SA
 `baseURL` the chat path uses (the `/v1`-terminated protocol root — see `model-connection`), never
 a re-derived variant of it —
 marking each agent's current model. When listing fails (endpoint down, unsupported), the picker
-SHALL degrade to free-text model entry rather than blocking the switch. The picker SHALL ALSO
-offer manual free-text entry when a listing IS present: a dedicated manual-entry row in the
-listing opens the same free-text field, pre-filled with the agent's current model, so an id the
-connection does not enumerate can still be chosen — the manually entered id follows the identical
-commit-time validation path as a listed pick.
+SHALL degrade to free-text model entry, pre-filled with the agent's current model, rather than
+blocking the switch. The picker SHALL ALSO offer manual free-text entry when a listing IS present:
+a dedicated manual-entry row in the listing opens the same free-text field — empty, since the
+current id is already listed and marked — so an id the connection does not enumerate can still be
+chosen; the manually entered id follows the identical commit-time validation path as a listed pick.
+
+That row SHALL remain offered whatever the user has typed into the picker's filter, because the
+filter query IS a model id and the row exists to accept the ids the list cannot match. Backing out
+of the manual field (esc) SHALL return to the listing rather than close the picker, since the field
+was reached from it.
 
 In direct mode the listing and validation requests SHALL authenticate the way the chat path does:
 when the connection carries an `auth` block, the credential is resolved through the configured
@@ -82,6 +87,13 @@ immediately, independent of when the runtime applies it.
 - **WHEN** the user runs `Switch sandbox model` on a booted cliproxy runtime
 - **THEN** the picker shows the proxy's current `/models` ids with the sandbox agent's active
   model marked, and choosing one writes `models.agents.sandbox`
+
+#### Scenario: An unlisted id is reachable from a successful listing
+
+- **WHEN** the picker lists the connection's models and the user filters it by an id the connection
+  does not enumerate
+- **THEN** the manual-entry row is still offered (the filter never hides it), selecting it opens an
+  empty free-text field, and esc there returns to the listing with the picker still open
 
 #### Scenario: Listing failure degrades to free text
 

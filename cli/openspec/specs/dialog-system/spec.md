@@ -41,7 +41,7 @@ The host SHALL expose `dialogClose(reason)` with `reason ∈ "cancel" | "dismiss
 
 ### Requirement: Host-owned structural keys with per-dialog close interception
 
-The host SHALL own a single esc binding (active while the stack is non-empty) that closes the top entry with reason `"cancel"`; content dialogs SHALL NOT each bind their own esc-to-cancel layer. A dialog entry MAY register an `onRequestClose(reason) → boolean` interceptor (via `useDialogCloseGuard`); when it returns false, the close is vetoed and the entry stays open. A busy `PromptDialog` SHALL veto all reasons — busy blocks submit AND every dismissal gesture. The app's abort chord SHALL escalate past a veto on a quick SECOND press: the first vetoed press stops at the veto (the dialog shows its own feedback — a dirty-config arm, a busy spinner), and a second press within the escalation window proceeds to the abort's next tier, keeping a panic exit within two keystrokes without letting a single accidental ctrl+c blow past a dirty-form guard.
+The host SHALL own a single esc binding (active while the stack is non-empty) that closes the top entry with reason `"cancel"`; content dialogs SHALL NOT each bind their own esc-to-cancel layer. A dialog entry MAY register an `onRequestClose(reason) → boolean` interceptor (via `useDialogCloseGuard`); when it returns false, the close is vetoed and the entry stays open. A busy `PromptDialog` SHALL veto all reasons — busy blocks submit AND every dismissal gesture. A `PromptDialog` given an `onBack` handler SHALL veto the `cancel` reason ALONE and run that handler instead, returning to the surface that opened it within the same entry — the contract for a prompt reached FROM another surface of the same dialog (a list row that opens a free-text field), where esc means "back", not "close"; its footer's esc label SHALL read `back` rather than `cancel`, so the documented key matches what it does. `dismiss` (click-outside, ctrl+c) SHALL still close, because it means "take this off my screen", which a return-to-parent would disobey. The app's abort chord SHALL escalate past a veto on a quick SECOND press: the first vetoed press stops at the veto (the dialog shows its own feedback — a dirty-config arm, a busy spinner), and a second press within the escalation window proceeds to the abort's next tier, keeping a panic exit within two keystrokes without letting a single accidental ctrl+c blow past a dirty-form guard.
 
 #### Scenario: One esc binding closes any dialog
 
@@ -52,6 +52,11 @@ The host SHALL own a single esc binding (active while the stack is non-empty) th
 
 - **WHEN** a `PromptDialog` is busy and the user presses esc, clicks outside, or presses ctrl+c once
 - **THEN** the dialog stays open and its busy state is unaffected
+
+#### Scenario: A prompt reached from a list backs out to it
+
+- **WHEN** a `PromptDialog` carrying `onBack` is open and the user presses esc
+- **THEN** the entry stays open and re-renders the surface that opened the prompt; the pusher's `onClose` does not fire, and a subsequent esc from that surface cancels normally
 
 #### Scenario: Abort escalates past a veto on the second press
 

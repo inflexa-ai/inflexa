@@ -48,6 +48,16 @@ export type SelectItem<T> = {
     readonly meta?: string;
     /** Optional group label; rows sharing a category render under one header, surviving filtering. */
     readonly category?: string;
+    /**
+     * Keep this row listed no matter what the query is, instead of ranking its title against it. For an
+     * ESCAPE-HATCH row — one whose action is "do something other than pick from these rows" (the model
+     * picker's manual-id entry) — fuzzy ranking is actively wrong: the query is then the very text the row
+     * exists to accept, which its own label never matches, so the row would vanish at exactly the keystroke
+     * that calls for it. Pinned rows sort after the ranked matches (the filter still ORDERS the list; it
+     * just cannot empty it), and a row that also matches the query keeps its earned rank rather than being
+     * listed twice.
+     */
+    readonly pinned?: boolean;
 };
 
 /** The props both list primitives share — see {@link FixedList}/{@link DynamicList} for the items contract. */
@@ -125,10 +135,16 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
     const ranked = createMemo<readonly SelectItem<T>[]>(() => {
         const q = (props.query ?? "").trim();
         if (q === "") return props.items;
-        return rankBy(props.items, q, [
+        const matched = rankBy(props.items, q, [
             { get: (it) => it.title, weight: 2 },
             { get: (it) => it.category ?? "", weight: 1 },
         ]);
+        // Re-append the pinned rows the ranking dropped (see `SelectItem.pinned`). Membership is tested by
+        // reference against the matches, which both primitives guarantee: FixedList's items are immutable,
+        // and DynamicList mints its rows once per update — so a pinned row is never both ranked and appended.
+        const kept = new Set(matched);
+        const missing = props.items.filter((it) => it.pinned && !kept.has(it));
+        return missing.length === 0 ? matched : [...matched, ...missing];
     });
 
     // The grouped [category, items[]][] projection, derived AFTER ranking so a category keeps its

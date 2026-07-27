@@ -1210,22 +1210,6 @@ describe("selectDefaultModel", () => {
         expect(recommended).toBe("claude-newest");
     });
 
-    test("every candidate not_found → skip: nothing to recommend, no prompt, no write", async () => {
-        let prompted = false;
-        await selectDefaultModel(
-            deps({
-                candidates: async () => ["claude-404a", "claude-404b"],
-                check: async () => "not_found",
-                prompt: async () => {
-                    prompted = true;
-                    return { auto: true };
-                },
-            }),
-        );
-        expect(prompted).toBe(false);
-        expect(readConfig().models).toBeUndefined();
-    });
-
     test("a non-TTY skips the step entirely — no listing, no prompt, no write", async () => {
         let listed = false;
         let prompted = false;
@@ -1250,15 +1234,15 @@ describe("selectDefaultModel", () => {
     test("no offerable list → manual entry: a served typed id pins BOTH agents", async () => {
         await selectDefaultModel(
             deps({
-                candidates: async () => [],
+                candidates: async () => ["claude-404"],
                 promptManual: async () => "claude-x",
-                check: async () => "served",
+                check: async (id) => (id === "claude-x" ? "served" : "not_found"),
             }),
         );
         expect(persistedAgents()).toEqual({ conversation: "claude-x", sandbox: "claude-x" });
     });
 
-    test("no offerable list → manual entry left blank keeps Auto — nothing persisted", async () => {
+    test("no offerable list → manual entry declined keeps Auto — nothing persisted", async () => {
         await selectDefaultModel(
             deps({
                 candidates: async () => [],
@@ -1268,11 +1252,11 @@ describe("selectDefaultModel", () => {
         expect(readConfig().models).toBeUndefined();
     });
 
-    test("no offerable list → a manually typed not_found id is rejected — warns, keeps Auto", async () => {
+    test("nothing servable → a manually typed not_found id is rejected — warns, keeps Auto", async () => {
         const warnings: string[] = [];
         await selectDefaultModel(
             deps({
-                candidates: async () => [],
+                candidates: async () => ["claude-404"],
                 promptManual: async () => "bad",
                 check: async () => "not_found",
                 warn: (m) => warnings.push(m),
@@ -1280,6 +1264,24 @@ describe("selectDefaultModel", () => {
         );
         expect(readConfig().models).toBeUndefined();
         expect(warnings.length).toBe(1);
+    });
+
+    // An unanswered listing means the same round-trip would only time out again on the typed id, and its
+    // `inconclusive` verdict persists anyway — so the id is trusted rather than bought with a silent wait.
+    test("an unavailable listing trusts the typed id — no second check, still pins BOTH agents", async () => {
+        const checked: string[] = [];
+        await selectDefaultModel(
+            deps({
+                candidates: async () => [],
+                promptManual: async () => "claude-unlisted",
+                check: async (id) => {
+                    checked.push(id);
+                    return "not_found";
+                },
+            }),
+        );
+        expect(checked).toEqual([]);
+        expect(persistedAgents()).toEqual({ conversation: "claude-unlisted", sandbox: "claude-unlisted" });
     });
 
     test("a sweep that rules out EVERY candidate also routes to manual entry", async () => {
@@ -1302,5 +1304,20 @@ describe("selectDefaultModel", () => {
         expect(manualCalled).toBe(true);
         expect(listPrompted).toBe(false);
         expect(readConfig().models).toBeUndefined();
+    });
+
+    // The reason drives what setup TELLS the user before prompting (a proxy that never answered vs an
+    // account that can serve nothing it lists), so the two causes must stay distinguishable at the seam.
+    test("manual entry is told WHY there is no list — unanswered listing vs nothing servable", async () => {
+        const reasons: string[] = [];
+        const record = deps({
+            promptManual: async (reason) => {
+                reasons.push(reason);
+                return null;
+            },
+        });
+        await selectDefaultModel({ ...record, candidates: async () => [] });
+        await selectDefaultModel({ ...record, candidates: async () => ["claude-404"], check: async () => "not_found" });
+        expect(reasons).toEqual(["listing-unavailable", "none-servable"]);
     });
 });

@@ -74,6 +74,65 @@ describe("filtering", () => {
         }
     });
 
+    // A pinned row is an ESCAPE HATCH out of the list ("enter a value the rows can't express"), so the query
+    // that calls for it is by definition text its own label does not match. Ranking it like any other row
+    // would hide it at exactly that keystroke — and, when it is the only way forward, leave a dead end.
+    test("a pinned row survives a query nothing else matches, and stays selectable", async () => {
+        const selected: string[] = [];
+        const [query, setQuery] = createSignal("");
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList
+                        items={[...FRUIT, { value: "other", title: "Enter something else…", pinned: true }]}
+                        query={query()}
+                        emptyText="none"
+                        onSelect={(v) => selected.push(v)}
+                    />
+                </Harness>
+            ),
+            { width: 40, height: 14 },
+        );
+        try {
+            setQuery("zzz"); // matches no title, pinned or otherwise
+            let frame = await settle(setup);
+            expect(frame).toContain("Enter something else");
+            expect(frame).not.toContain("apple");
+            expect(frame).not.toContain("none"); // the list is never empty while a pinned row exists
+
+            setup.mockInput.pressEnter(); // the sole surviving row is the cursor row
+            await settle(setup);
+            expect(selected).toEqual(["other"]);
+
+            setQuery(""); // restored WITHOUT a duplicate — the pin re-appends only what ranking dropped
+            frame = await settle(setup);
+            expect(frame).toContain("apple");
+            expect(frame.match(/Enter something else/g)?.length).toBe(1);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a pinned row that also matches the query keeps its ranked place, not an appended one", async () => {
+        const [query, setQuery] = createSignal("");
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={[{ value: "other", title: "enter apple manually", pinned: true }, ...FRUIT]} query={query()} emptyText="none" />
+                </Harness>
+            ),
+            { width: 40, height: 14 },
+        );
+        try {
+            setQuery("apple"); // matches the pinned row AND a real one
+            const frame = await settle(setup);
+            expect(frame.match(/enter apple manually/g)?.length).toBe(1);
+            expect(frame).toContain("apple");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
     test("empty state renders emptyText; errorText substitutes", async () => {
         const [err, setErr] = createSignal<string | null>(null);
         const setup = await testRender(
