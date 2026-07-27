@@ -1901,6 +1901,10 @@ describe("setup() — batch orchestration", () => {
                     // offer (which reads the developer's REAL ~/.claude settings) out of the run.
                     return opts?.defaultValue ?? "openai";
                 }),
+                spyOn(cliPrompts, "promptTextOptional").mockImplementation(async (message: string) => {
+                    prompts.push(message);
+                    return null;
+                }),
                 spyOn(cliPrompts, "select").mockImplementation(async (message: string, options: { value: string; label: string }[]) => {
                     selects.push(message);
                     // The first option is each of these selects' documented default ("infer", "cliproxy").
@@ -1909,7 +1913,7 @@ describe("setup() — batch orchestration", () => {
                 spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () => ok({ type: "declined" as const })),
             );
             // The interactive default-model step lists models off the proxy; every route 404s, so the
-            // candidate list is empty and the step skips without a prompt (its own tests cover the rest).
+            // candidate list is empty and the optional manual-entry fallback is declined by the seam above.
             globalThis.fetch = (() => Promise.resolve(new Response(null, { status: 404 }))) as unknown as typeof fetch;
         });
 
