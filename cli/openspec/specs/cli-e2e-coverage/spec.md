@@ -4,7 +4,7 @@
 TBD - created by archiving change add-test-suite. Update Purpose after archive.
 ## Requirements
 ### Requirement: Read-only commands are tested end-to-end
-The suite SHALL verify the read-only commands (`inflexa ls`, `inflexa status`, `inflexa sessions`,
+The suite SHALL verify the read-only commands (`inflexa ls`, `inflexa status`,
 `inflexa project ls`) via subprocess against a seeded temp DB: each exits 0 and prints the seeded
 entities to stdout.
 

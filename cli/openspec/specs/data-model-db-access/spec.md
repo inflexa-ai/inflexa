@@ -70,19 +70,14 @@ The system SHALL provide `findAnalysesByRef(ref: IdOrName)` and `findProjectByRe
 - **WHEN** `findProjectByRef(ref)` is called
 - **THEN** it returns the single project whose `id` or `name` equals `ref`, or `null`
 
-### Requirement: Project and session create helpers mint ids inline
+### Requirement: Project create helper mints ids inline
 
-The system SHALL provide `createProject({ name, description, tags })` and `createSession({ title?, analysisId })`, each minting `id = randomUUIDv7()` and timestamps inline and persisting the row. `createProject` SHALL rely on the `projects.name` `UNIQUE` constraint, surfacing a duplicate as a `constraint_violation` (`unique`) for the caller to translate. `createSession` SHALL write `analysisId` into the `sessions.analysis_id` column, leaving the `Session` JSON unchanged.
+The system SHALL provide `createProject({ name, description, tags })`, minting `id = randomUUIDv7()` and timestamps inline and persisting the row. `createProject` SHALL rely on the `projects.name` `UNIQUE` constraint, surfacing a duplicate as a `constraint_violation` (`unique`) for the caller to translate.
 
 #### Scenario: Duplicate project name trips the constraint
 
 - **WHEN** `createProject` is called with a name that already exists
 - **THEN** it returns a `constraint_violation` error of constraint `unique` (no second row is created)
-
-#### Scenario: Session carries its analysis id in the column
-
-- **WHEN** `createSession({ analysisId })` succeeds
-- **THEN** the row's `analysis_id` column equals `analysisId` and `listSessionsByAnalysis(analysisId)` returns it
 
 ### Requirement: Entity insert functions do not mint ids
 
@@ -117,12 +112,4 @@ The system SHALL provide `countAnalysesByProject(projectId)` and `countAnalysesB
 - **WHEN** `relocateRawInputPrefix("/a/b", "/a/c")` runs
 - **THEN** a raw input at `/a/b/x` becomes `/a/c/x` and a sibling `/a/bc` is left untouched
 
-### Requirement: Analysis-scoped session reads
-
-The system SHALL provide `listSessionsByAnalysis(analysisId)` returning `Result<Session[], DbError>`, selecting sessions `WHERE analysis_id = ?`. The `Session` type SHALL remain unchanged (the link lives in the column, not the JSON).
-
-#### Scenario: Sessions filtered by analysis
-
-- **WHEN** sessions are linked to an analysis via the `analysis_id` column
-- **THEN** `listSessionsByAnalysis(analysisId)` returns exactly those sessions
 
