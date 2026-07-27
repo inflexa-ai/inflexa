@@ -117,8 +117,9 @@ describe("inflexa help & usage (e2e)", () => {
     });
 
     // The other half of that trade-off: because the root also declares `--analysis`, commander binds
-    // the value THERE and a subcommand's own identically-named option stays empty. `registerAction`
-    // hands handlers `optsWithGlobals()` so the flag still reaches them. An unresolvable ref is the
+    // the value THERE and a subcommand's own identically-named option stays empty. `registerAction`'s
+    // `preAction` hook copies the ancestor's value onto the subcommand, so the flag still reaches the
+    // handler. An unresolvable ref is the
     // cheap proof — the message names the ref, which is only reachable if the flag arrived at all.
     test("`--analysis` after a subcommand reaches the handler despite the root declaring it too", () => {
         const result = runCli(["geo", "download", "GSE12345", "--analysis", "no-such-analysis-ref"]);

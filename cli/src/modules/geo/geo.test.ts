@@ -333,6 +333,42 @@ describe("downloadGeoSeries", () => {
         expect(readdirSync(root)).toEqual([]);
     });
 
+    test("a transfer shed once is retried, not read as a failed series", async () => {
+        const root = geoRoot();
+        const dest = join(root, "GSE12345");
+        const base = serveSeries("GSE12345", { soft: ["GSE12345_family.soft.gz"], suppl: ["GSE12345_counts.txt.gz"] });
+        let gets = 0;
+        const stub: FetchLike = async (input, init) => {
+            if (init?.method !== "HEAD" && String(input).endsWith(encodeURIComponent("GSE12345_counts.txt.gz"))) {
+                gets += 1;
+                if (gets === 1) return new Response("shed", { status: 503, statusText: "Service Unavailable" });
+            }
+            return base(input, init);
+        };
+        const paths = (await downloadGeoSeries("GSE12345", dest, { fetch: stub, ...FAST }))._unsafeUnwrap();
+        expect(gets).toBe(2);
+        // The regression this pins: the SOFT file had already transferred, so taking the first shed answer
+        // discarded a completed artifact along with the whole Series.
+        expect(paths).toHaveLength(2);
+        expect(readdirSync(dest).sort()).toEqual(["GSE12345_counts.txt.gz", "GSE12345_family.soft.gz"]);
+        expect(readFileSync(join(dest, "GSE12345_counts.txt.gz"), "utf8")).toBe("content:GSE12345_counts.txt.gz");
+    });
+
+    test("a size sweep that keeps being shed gives up on its budget instead of holding the command", async () => {
+        const dest = join(geoRoot(), "GSE12345");
+        const files = Array.from({ length: 12 }, (_, i) => `GSE12345_f${i}.txt.gz`);
+        const base = serveSeries("GSE12345", { suppl: files });
+        const stub: FetchLike = async (input, init) =>
+            init?.method === "HEAD" ? new Response(null, { status: 403, statusText: "Forbidden" }) : base(input, init);
+        const started = Date.now();
+        // Production backoff, so a sweep that ignored the budget would spend ~3.5s per artifact serially.
+        const paths = (await downloadGeoSeries("GSE12345", dest, { fetch: stub, spacingMs: 0, budgetMs: 250 }))._unsafeUnwrap();
+        // Every probe lost, so nothing is sized — and the transfer runs anyway, because an unknown size is
+        // a state the cap already handles, never a reason to refuse the download.
+        expect(Date.now() - started).toBeLessThan(3_000);
+        expect(paths).toHaveLength(files.length);
+    });
+
     test("propagates a no_processed_files series as an error", async () => {
         const result = await downloadGeoSeries("GSE12345", join(geoRoot(), "GSE12345"), { fetch: serveSeries("GSE12345", {}), ...FAST });
         expect(result._unsafeUnwrapErr().type).toBe("no_processed_files");

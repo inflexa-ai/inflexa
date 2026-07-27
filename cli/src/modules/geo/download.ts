@@ -20,14 +20,12 @@ function resolveTargetFolder(flags: ContextFlags): string {
         case "anchor":
             return ctx.anchorPath;
         case "pick": {
-            // `pick` covers two different situations, and telling a user who just passed `--analysis`
-            // to pass `--analysis` is the unhelpful half: an unmatched ref lands here too.
+            // Reachable only through an unmatched `--analysis`: `resolveContext` answers with `pick` for a
+            // ref that matched nothing or for a `--project`, and this command declares no `--project`. So
+            // the ambiguity half of `pick` — "several analyses could match, name one" — cannot arise here,
+            // and a message offering `--analysis` to a user who just passed it would be the unhelpful half.
             const known = ctx.analyses.length === 0 ? "" : `\nKnown analyses:\n${ctx.analyses.map((a) => `  - ${a.id}  ${a.name}`).join("\n")}`;
-            return fail(
-                flags.analysis === undefined
-                    ? `More than one analysis could match — pass --analysis <id|name> to choose whose folder to download into.${known}`
-                    : `No analysis matches "${flags.analysis}".${known}`,
-            );
+            return fail(`No analysis matches "${flags.analysis}".${known}`);
         }
         case "copy":
             return fail("This folder looks copied — run `inflexa repair` or `inflexa relocate` before downloading into it.");
@@ -36,8 +34,14 @@ function resolveTargetFolder(flags: ContextFlags): string {
     }
 }
 
-/** A human way-forward for a failed GEO download. */
-function describeGeoDownloadError(error: GeoDownloadError, accession: string): string {
+/**
+ * A human way-forward for a failed GEO download.
+ *
+ * Exported for its tests: the command never threads a fetch seam into `downloadGeoSeries`, so no end-to-end
+ * run can reach these arms without an upstream, and a remedy that does not actually work — a `--max-size`
+ * the Series still fails — is a user-facing defect with nothing else to catch it.
+ */
+export function describeGeoDownloadError(error: GeoDownloadError, accession: string): string {
     switch (error.type) {
         case "no_processed_files":
             return `${accession} exposes no downloadable processed files (SOFT / matrix / supplementary). Check the accession on the GEO site — a Series whose data is under embargo lists nothing. Nothing was downloaded.`;

@@ -26,10 +26,32 @@ export type FetchLike = (input: string | URL | Request, init?: RequestInit) => P
 /** What a successful download produced. The destination is the caller's own `dest` argument, so it is not repeated here. */
 export type DownloadedFile = { readonly bytes: number; readonly sha256: string };
 
+/**
+ * How the INITIAL request is retried. `attempts` counts the first try, so `1` means "take the answer".
+ *
+ * Only the request is retried, never a body that has already begun arriving: by then bytes are on disk,
+ * and restarting would need the resume this utility deliberately does not do (it carries no digest to
+ * tell a truncated file from a complete one).
+ */
+export type DownloadRetry = {
+    readonly attempts: number;
+    readonly baseMs: number;
+    /** Whether this status is worth another attempt — the caller's knowledge of its own upstream. */
+    readonly shouldRetry: (status: number) => boolean;
+};
+
 /** Options for {@link downloadToFile}. */
 export type DownloadToFileOptions = {
     readonly fetch?: FetchLike;
     readonly onProgress?: (event: DownloadProgress) => void;
+    /**
+     * Retry schedule for the initial request; omitted means the first answer is the settled one.
+     *
+     * Off by default because WHICH statuses are worth retrying is a property of the upstream, not of
+     * downloading: a CDN that answers honestly has nothing to retry, while GEO sheds load with a status
+     * it also uses to mean "nothing here". Only the caller knows which of the two it is talking to.
+     */
+    readonly retry?: DownloadRetry;
 };
 
 /**
@@ -49,6 +71,9 @@ export function declaredContentLength(response: Response): number | undefined {
     const parsed = Number(raw);
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
+
+/** The default schedule: ask once and believe the answer. Named so the retry loop reads the same either way. */
+const SINGLE_ATTEMPT: DownloadRetry = { attempts: 1, baseMs: 0, shouldRetry: () => false };
 
 /** Deliver a progress event, swallowing observer throws — progress is decoration and must never abort a live transfer. */
 function reportProgress(onProgress: ((event: DownloadProgress) => void) | undefined, event: DownloadProgress): void {
@@ -70,6 +95,9 @@ function reportProgress(onProgress: ((event: DownloadProgress) => void) | undefi
  * transport guarantee. The utility carries no digest to distinguish a partial file from a complete one, so
  * it never resumes; a stale `.part` is discarded and the body fetched fresh. Returns the computed sha256 so
  * a caller that DOES have a pinned digest can verify against it.
+ *
+ * Retries only the initial request, and only on the caller's schedule ({@link DownloadToFileOptions.retry}).
+ * A body that truncates mid-stream is never restarted, for the same reason it never resumes.
  */
 export async function downloadToFile(url: string, dest: string, options: DownloadToFileOptions = {}): Promise<Result<DownloadedFile, DownloadError>> {
     const doFetch = options.fetch ?? fetch;
@@ -83,12 +111,28 @@ export async function downloadToFile(url: string, dest: string, options: Downloa
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not prepare ${dest} for download.`, cause });
     }
-    let response: Response;
-    try {
-        response = await doFetch(url, {});
-    } catch (cause) {
-        return err({ type: "http_failed", message: `Could not reach ${url}.`, cause });
+    const retry = options.retry ?? SINGLE_ATTEMPT;
+    let response: Response | undefined;
+    let lastCause: unknown;
+    for (let attempt = 0; attempt < retry.attempts; attempt += 1) {
+        if (attempt > 0 && retry.baseMs > 0) await Promise.sleep(retry.baseMs * 2 ** (attempt - 1));
+        let attempted: Response;
+        try {
+            attempted = await doFetch(url, {});
+        } catch (cause) {
+            // A transport fault retries on the same schedule as a shed status: in the moment, neither is
+            // distinguishable from an upstream that will answer on the next try.
+            lastCause = cause;
+            response = undefined;
+            continue;
+        }
+        response = attempted;
+        if (!retry.shouldRetry(attempted.status) || attempt === retry.attempts - 1) break;
+        // A discarded response still owns its socket until the body is drained or cancelled, and an
+        // abandoned one would hold the connection the imminent retry needs.
+        await attempted.body?.cancel().catch(() => undefined);
     }
+    if (response === undefined) return err({ type: "http_failed", message: `Could not reach ${url}.`, cause: lastCause });
 
     if (!response.ok || response.body === null) {
         return err({ type: "http_failed", message: `Download failed: HTTP ${response.status} ${response.statusText} (${url}).` });
