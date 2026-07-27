@@ -2,15 +2,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 import {
+    EMBEDDING_API_KEY_VAR,
     anthropicAuthTokenSet,
     detectProviderEnv,
     devCommandsActive,
+    embeddingEnvDoc,
     env,
     envDoc,
     isDevelopmentBuild,
     isUnsandboxedTestRun,
     modelConnectionEnvDoc,
     providerApiKeyVar,
+    resolveEmbeddingApiKey,
     resolveModelApiKey,
     stackPaths,
     stackPorts,
@@ -288,6 +291,38 @@ describe("model-connection env documentation", () => {
 
     test("the secret is no longer an env field, so envDoc carries no modelApiKey entry", () => {
         expect(Object.keys(envDoc)).not.toContain("modelApiKey");
+    });
+});
+
+// The api-key embedding secret's ONE channel: no flag, no answers-file key. Like resolveModelApiKey it is
+// a CALL-TIME read (never a frozen `env` field), so the contract is directly testable by driving the
+// variable — including the empty-string case, which must count as unset so an exported-but-blank variable
+// fails setup's upfront check instead of persisting an empty key to config.json.
+describe("resolveEmbeddingApiKey", () => {
+    const saved = process.env[EMBEDDING_API_KEY_VAR];
+    afterEach(() => {
+        if (saved === undefined) delete process.env[EMBEDDING_API_KEY_VAR];
+        else process.env[EMBEDDING_API_KEY_VAR] = saved;
+    });
+
+    test("reads the live value at call time", () => {
+        process.env[EMBEDDING_API_KEY_VAR] = "sk-embed";
+        expect(resolveEmbeddingApiKey()).toBe("sk-embed");
+    });
+
+    test("unset and empty both resolve to undefined", () => {
+        delete process.env[EMBEDDING_API_KEY_VAR];
+        expect(resolveEmbeddingApiKey()).toBeUndefined();
+        process.env[EMBEDDING_API_KEY_VAR] = "";
+        expect(resolveEmbeddingApiKey()).toBeUndefined();
+    });
+
+    test("the variable is documented for --help in its own list, never as an envDoc field", () => {
+        // envDoc is key-locked to `env`'s fields; an on-demand secret has no field, so it rides a separate
+        // list that src/cli/index.ts renders among the other var rows.
+        expect(embeddingEnvDoc.map((d) => d.name)).toEqual([EMBEDDING_API_KEY_VAR]);
+        expect(Object.keys(envDoc)).not.toContain("embeddingApiKey");
+        expect(modelConnectionEnvDoc.map((d) => d.name)).not.toContain(EMBEDDING_API_KEY_VAR);
     });
 });
 

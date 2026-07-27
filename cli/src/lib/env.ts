@@ -57,6 +57,15 @@ const openaiBaseUrlVar = "OPENAI_BASE_URL";
 // setup. Read here (the sole `process.env` reader) — see {@link anthropicAuthTokenSet}.
 const anthropicAuthTokenVar = "ANTHROPIC_AUTH_TOKEN";
 
+/**
+ * The api-key embedding secret's variable NAME. Unlike this file's other variable names it is EXPORTED,
+ * because setup's answers layer both reads the value ({@link resolveEmbeddingApiKey}) and must NAME the
+ * variable in its batch error when api-key embeddings are answered without it — one home for the literal
+ * beats a display copy drifting from the read (contrast `modelApiKeyVar`, whose display copy in
+ * modules/infra/setup.ts exists precisely because nothing outside this file may READ that secret).
+ */
+export const EMBEDDING_API_KEY_VAR = "INFLEXA_EMBEDDING_API_KEY";
+
 function dataDir(): string {
     const base = process.env[dataVar];
     if (base) return base;
@@ -395,6 +404,19 @@ export function readEnvCredentialVar(name: string): string | undefined {
 }
 
 /**
+ * Resolve the api-key embedding secret from {@link EMBEDDING_API_KEY_VAR} — the ONLY channel that secret
+ * travels on, since no answer (flag or config-file key) may carry one. Read at CALL time, not frozen at
+ * import, so `inflexa setup` sees the live shell; an empty value counts as unset, matching
+ * {@link readEnvCredentialVar}. Setup's answers resolver consumes it as a presence check (an api-key
+ * embedding answer in a batch run without the variable fails upfront), and the embedding step persists
+ * the value to `config.json` exactly as the interactive masked prompt does.
+ */
+export function resolveEmbeddingApiKey(): string | undefined {
+    const value = process.env[EMBEDDING_API_KEY_VAR];
+    return value === undefined || value === "" ? undefined : value;
+}
+
+/**
  * The presence + endpoint facts of the conventional provider environment, for `inflexa setup`'s
  * one-time direct-path adoption (see modules/infra/setup.ts). Deliberately reports only WHETHER each API
  * key is set — never its value — because setup copies only the non-secret `{ provider, baseURL, protocol }`
@@ -535,6 +557,21 @@ export const modelConnectionEnvDoc: readonly { readonly name: string; readonly d
         name: `${anthropicApiKeyVar} / ${openaiApiKeyVar}`,
         description:
             "provider-conventional fallback for the direct-connection key when INFLEXA_MODEL_API_KEY is unset (ANTHROPIC_API_KEY for provider anthropic, OPENAI_API_KEY otherwise); read from the environment only, never persisted",
+    },
+]);
+
+/**
+ * `--help` documentation for the api-key embedding secret. A separate list from {@link envDoc} for the same
+ * reason {@link modelConnectionEnvDoc} is one — that record is key-locked to `env`'s fields and this
+ * variable is resolved on demand ({@link resolveEmbeddingApiKey}) — and separate from `modelConnectionEnvDoc`
+ * because it is a different channel: the EMBEDDING endpoint's credential, never the chat connection's.
+ * Rendered alongside `envDoc`'s var rows by src/cli/index.ts.
+ */
+export const embeddingEnvDoc: readonly { readonly name: string; readonly description: string }[] = Object.freeze([
+    {
+        name: EMBEDDING_API_KEY_VAR,
+        description:
+            "API key for api-key embeddings (`inflexa setup --embeddings api-key`) — the only channel that secret travels on, since setup answers never carry one; persisted to config.json by the embedding step",
     },
 ]);
 
