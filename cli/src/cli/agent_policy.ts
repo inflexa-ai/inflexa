@@ -60,29 +60,43 @@ export function getAgentPolicy(command: Command): AgentPolicy | undefined {
  * for the root, whose action attaches after its own `.option(...)` chain
  * (`registerAction(cli.option(...)…, policy, fn)`).
  *
- * The options object the handler receives is `optsWithGlobals()`, not the command's own
- * `opts()`. The root declares `--analysis`/`--project` for the bare-`inflexa` flow, and
- * commander lets a program option appear anywhere on the line — so for `inflexa profile
- * --analysis x` the value binds to the ROOT and the subcommand's identically-named option
- * never receives it, handing the handler an empty object and dropping the flag in silence.
- * Merging ancestors here fixes every command at once and keeps a subcommand's own value
- * winning when it has one. The alternative, `enablePositionalOptions()`, was tried and
- * reverted: it makes a root-style flag placed after a subcommand a hard "unknown option"
- * error, breaking shapes like `inflexa sessions --project x` that users already rely on
- * (see the regression test in `cli.test.ts`).
+ * Registration also makes a command see the options its ancestors parsed. The root declares
+ * `--analysis`/`--project` for the bare-`inflexa` flow, and commander binds a program option
+ * to the command that DECLARED it wherever it appears on the line — so `inflexa profile
+ * --analysis x` binds the value to the root, the subcommand's identically-named option never
+ * receives it, and its handler is called with an empty options object. The flag reaches no
+ * code and nothing reports that it was ignored. See {@link hydrateFromAncestors}.
+ *
+ * The alternative, `enablePositionalOptions()`, was tried and reverted: it makes a root-style
+ * flag placed AFTER a subcommand a hard "unknown option" error, breaking shapes like
+ * `inflexa sessions --project x` that already work. `cli.test.ts` pins both halves.
  */
+/**
+ * Copy the options an ancestor parsed onto `command`, for the ones `command` did not receive itself.
+ *
+ * Runs as a `preAction` hook rather than by rewriting the handler's arguments, because commander
+ * builds those arguments from `command.opts()` at invocation time — which is after hooks — so
+ * seeding the values here means the handler is called with its ordinary, correctly-typed options
+ * object and nothing downstream has to know this happened.
+ *
+ * A value the command parsed itself always wins: only keys it has no value for are filled, so an
+ * explicit `inflexa profile --analysis x` still beats anything an ancestor holds. Idempotent, which
+ * matters because the root registers this hook too and ancestor hooks fire for a subcommand's action
+ * as well — the second pass finds every key already set.
+ */
+function hydrateFromAncestors(command: Command): void {
+    const own = command.opts();
+    for (const [key, value] of Object.entries(command.optsWithGlobals())) {
+        if (value !== undefined && own[key] === undefined) command.setOptionValue(key, value);
+    }
+}
+
 export function registerAction<Args extends readonly unknown[]>(
     command: Command,
     policy: AgentPolicy,
     handler: (...args: Args) => void | Promise<void>,
 ): Command {
     setAgentPolicy(command, policy);
-    // Commander invokes an action as (...declaredArguments, options, command), always passing both
-    // trailing values — so the options slot is at `length - 2` whatever the command's arity.
-    return command.action((...args: unknown[]) => {
-        const self = args[args.length - 1] as Command;
-        const merged = [...args];
-        merged[args.length - 2] = self.optsWithGlobals();
-        return handler(...(merged as unknown as Args));
-    });
+    command.hook("preAction", (_parent, actionCommand) => hydrateFromAncestors(actionCommand));
+    return command.action(handler);
 }
