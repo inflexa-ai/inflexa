@@ -145,18 +145,6 @@ non-interactive stdin — no bespoke `readline` picker.
 - **WHEN** the registry builds under the release channel without the runtime override
 - **THEN** `chat`, `profile`, and `run` are not registered
 
-### Requirement: inflexa sessions lists chat sessions
-
-The system SHALL provide `inflexa sessions`, listing the saved chat sessions (id, title, creation
-time) from the primary store. Sessions are the live launch-identity rows (threads bind 1:1 to
-them); their `messages`/`parts` history is frozen legacy data with no remaining writer, and the
-command performs reads only. The action lives in `src/modules/analysis/sessions.ts`.
-
-#### Scenario: Sessions are listed read-only
-
-- **WHEN** the user runs `inflexa sessions`
-- **THEN** saved sessions print (or "No sessions found.") and no row is created or modified
-
 ### Requirement: inflexa prov lineage traverses a file's provenance
 
 The system SHALL register `inflexa prov lineage <analysis> <ref>` under the

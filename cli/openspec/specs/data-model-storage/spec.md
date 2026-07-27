@@ -1,19 +1,25 @@
 # data-model-storage Specification
 
 ## Purpose
-The SQLite schema for the local data model — the columnar `anchors`/`projects`/`analyses` tables, the blob-free `analysis_inputs` table, the `sessions.analysis_id` link, and their indexes — defined as a single forward-only baseline migration with identity → core → FK column ordering.
+The SQLite schema for the local data model — the columnar `anchors`/`projects`/`analyses` tables, the blob-free `analysis_inputs` table, and their indexes — defined as a forward-only migration history (v1 baseline plus versioned deltas) with identity → core → FK column ordering. Chat/session state lives in the harness Postgres thread store, not here.
 ## Requirements
 
 ### Requirement: Single forward-only baseline migration
 
 
-The data-model schema SHALL be defined as a single `version: 1` baseline in `src/db/primary_migrations.ts` (not a separate appended migration), applied in one transaction by the existing versioned runner. Tables SHALL be declared parent-before-child so every foreign key is a backward reference. There is no prod SQLite to preserve, so the schema is consolidated rather than layered as deltas.
+The data-model schema SHALL be defined as the `version: 1` baseline in `src/db/primary_migrations.ts` plus subsequent forward-only versioned migrations, each applied in one transaction by the existing versioned runner. The baseline SHALL remain byte-stable (it keeps creating the historical chat tables so already-applied histories replay identically); migration `version: 2` SHALL drop the legacy chat tables (`sessions`, `messages`, `parts`) — a deliberate deletion of frozen legacy transcript rows that are unreachable from any surface. Tables SHALL be declared parent-before-child so every foreign key is a backward reference.
 
-#### Scenario: Fresh database gets the full schema
+#### Scenario: Fresh database ends without chat tables
 
 - **WHEN** the migration runner executes against a database with no applied migrations
-- **THEN** migration 1 is applied
-- **AND** the `anchors`, `projects`, `analyses`, `analysis_inputs`, `sessions`, `messages`, and `parts` tables all exist
+- **THEN** migrations 1 and 2 are applied in order
+- **AND** the `anchors`, `projects`, `analyses`, and `analysis_inputs` tables exist
+- **AND** the `sessions`, `messages`, and `parts` tables do not exist
+
+#### Scenario: Existing database drops the chat tables
+
+- **WHEN** the runner executes against a database whose latest applied migration is 1
+- **THEN** migration 2 drops `sessions`, `messages`, and `parts` (and their indexes) in one transaction
 
 #### Scenario: Parent tables precede children
 
@@ -64,31 +70,16 @@ The system SHALL create an `analysis_inputs` table whose columns are the entire 
 - **AND** `anchor_id` is nullable (a raw absolute-path input belongs to no tracked anchor)
 - **AND** deleting an analysis cascades to delete its input rows
 
-### Requirement: Chat tables keep a JSON data blob with FK columns
-
-
-The `sessions`, `messages`, and `parts` tables SHALL keep their application-shaped JSON `data` blob, exposing only the id and foreign-key columns: `sessions(id, data, analysis_id)`, `messages(id, data, session_id)`, `parts(id, data, session_id, message_id)`. `sessions.analysis_id` links a chat session to its analysis (one analysis, many sessions); it is nullable with no default.
-
-#### Scenario: Sessions link to analyses by column
-
-- **WHEN** the migration has been applied
-- **THEN** `sessions` has a nullable `analysis_id` column referencing `analyses(id)`, alongside `id` and `data`
-- **AND** the analysis link lives in the column, not the JSON blob
-
-#### Scenario: Message and part cascades
-
-- **WHEN** a session (or message) is deleted
-- **THEN** its `messages` (or `parts`) cascade-delete via their FK
-
 ### Requirement: Lookup indexes
 
 
-The migration SHALL create the indexes `idx_analyses_project` on `analyses(project_id)`, `idx_analyses_anchor` on `analyses(anchor_id)`, `idx_analysis_inputs_analysis` on `analysis_inputs(analysis_id)`, `idx_sessions_analysis` on `sessions(analysis_id)`, `idx_messages_session` on `messages(session_id)`, `idx_parts_message` on `parts(message_id)`, and `idx_parts_session` on `parts(session_id)`.
+The migrations SHALL leave exactly the indexes `idx_analyses_project` on `analyses(project_id)`, `idx_analyses_anchor` on `analyses(anchor_id)`, and `idx_analysis_inputs_analysis` on `analysis_inputs(analysis_id)`; the chat-table indexes are dropped with their tables by migration 2.
 
 #### Scenario: FK lookup indexes exist
 
-- **WHEN** the migration has been applied
-- **THEN** all seven named indexes exist over their stated columns
+- **WHEN** all migrations have been applied
+- **THEN** the three named indexes exist over their stated columns
+- **AND** `idx_sessions_analysis`, `idx_messages_session`, `idx_parts_message`, and `idx_parts_session` do not exist
 
 ### Requirement: Provenance integrity columns in the baseline schema
 
@@ -99,7 +90,7 @@ The `version: 1` baseline in `src/db/primary_migrations.ts` SHALL declare four p
 
 - **WHEN** the migration runner executes against a fresh database
 - **THEN** migration 1 is applied and `analyses` has `provenance`, `provenance_chain_hash`, `provenance_signature`, and `provenance_prev_chain_hash` columns
-- **AND** the `_migrations` ledger records exactly `[1]`
+- **AND** the `_migrations` ledger records migration 1 (followed by the later versioned migrations)
 
 #### Scenario: Column ordering follows house convention
 

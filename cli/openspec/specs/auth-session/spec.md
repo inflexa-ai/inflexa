@@ -50,7 +50,7 @@ The flow additionally depends on tenant configuration outside this repository, w
 
 #### Scenario: Other commands unaffected
 
-- **WHEN** `inflexa sessions` runs with no `INFLEXA_AUTH0_*` variables set
+- **WHEN** `inflexa ls` runs with no `INFLEXA_AUTH0_*` variables set
 - **THEN** it works exactly as before
 
 ### Requirement: Device authorization initiation
