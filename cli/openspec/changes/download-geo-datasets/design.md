@@ -1,20 +1,21 @@
 ## Context
 
-Adding an input to an analysis is fully implemented and CLI-owned: `applyInputsDiff` → `addInputs` (`src/modules/analysis/analysis.ts`) enroll local paths and emit `prov.input_added`; `input-staging` materializes them under `data/inputs/local/…` as the `StagedInput[]` manifest; the harness bridge (`src/modules/harness/profile.ts`, `seedProfileLedger` + `triggerDataProfile`) seeds and re-profiles. The command palette's `AddInputDialog` and `inflexa new <paths>` are two front ends onto this one path, both taking **local file paths**.
+Users routinely want to analyze a published GEO dataset, but there is no way to get one onto their machine from inflexa. The harness's `search_geo_datasets` finds and cites accessions and then explicitly forbids fetching them, because the sandbox has zero egress. The download must happen host-side, in the CLI process, exactly where the reference-data installer already downloads.
 
-A GEO download needs none of that rebuilt. It needs only a new **input source**: produce the GEO files on local disk, then hand their paths to the existing add-inputs path. The sandbox has zero egress, so the fetch runs in the CLI host process (which has network), exactly where the reference-data installer already downloads. The downloaded files then behave as ordinary inputs — a run snapshots its input set at start, profiles and reads these files like any other, and provenance classifies them as `data`. Nothing in staging, the sandbox, or the harness changes.
+Getting the files onto disk is the whole problem. Everything after that is already built and already reachable: `applyInputsDiff` → `addInputs` enroll local paths and emit `prov.input_added`; `input-staging` materializes them under `data/inputs/local/…`; the harness bridge seeds and re-profiles. The user reaches that path from chat with `manage_inputs`, from the palette with `AddInputDialog`, and from the terminal with `inflexa inputs add` — three front ends onto one path, all taking **local file paths**. A downloaded GEO Series is just local file paths.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- One command that turns a GEO Series accession into analysis inputs, reusing the existing add-inputs path end to end.
-- Host-side fetch (CLI process); offline parse in the sandbox on the added files.
+
+- One command that downloads a GEO Series accession into the analysis's folder, correctly and completely.
+- Host-side fetch (CLI process); offline parse in the sandbox on the files once they are inputs.
 - Agent-reachable through `run_inflexa` with an approval prompt, per the CLI's command policy.
-- Reuse the existing streaming-download machinery rather than growing a second one.
 
 **Non-Goals:**
-- A new harness tool or capability, or any harness change — input materialization is and stays the CLI's job.
-- A new "add input" capability — `applyInputsDiff`/`addInputs` already is it.
+
+- **Enrolling the files as inputs.** Adding an input is a solved, user-driven action with three existing front ends; this command does not duplicate, wrap, or trigger any of them.
+- A new harness tool or capability, or any harness change.
 - A command-palette dialog — this change is a text command (+ agent reachability), not TUI work.
 - Raw SRA sequencing reads (FASTQ) — GB–TB scale, separate egress path and pipeline.
 - GSM / GDS / GPL single-sample, curated-dataset, and platform accessions — GSE Series is the unit.
@@ -22,41 +23,81 @@ A GEO download needs none of that rebuilt. It needs only a new **input source**:
 
 ## Decisions
 
-### D1 — A new input source feeding the existing add-inputs path
-The command resolves and fetches the GEO files to a local temp dir, then calls `applyInputsDiff`/`addInputs` with those paths — the same entry point the file picker uses. *Alternative — a bespoke GEO staging path:* rejected — it would duplicate `input-staging` + seed + re-profile, the exact over-build this design exists to avoid.
+### D1 — Download only; enrolment stays the user's separate, explicit step
 
-### D2 — Download processed + supplementary, not raw reads
-Fetch the SOFT family file, the series matrix (per-platform parts when present), and author-deposited supplementary files. *Alternatives:* include raw SRA (rejected v1 — separate egress path, sra-tools, pipeline, size); metadata only (too thin — structure without values).
+The command writes files and stops. It records no input rows, emits no provenance, stages nothing, profiles nothing, and boots no runtime. The user then asks for the files to be added as inputs through the path that already exists.
 
-### D3 — Fetch in the CLI host process; parse offline in the sandbox
-The command constructs GEO's deterministic public NCBI URLs and fetches host-side, where the reference installer already downloads. The staged files are then read in the sandbox with the environment's general data tools — the series matrix is a tab-delimited table with a `!`-prefixed metadata preamble (expression values plus `!Sample_*` phenotype), read by pandas/readr; supplementary processed matrices likewise. No GEO-specific parsing library is required (naming one would also violate the declare-what-not-how rule for agent-facing content).
+*Alternative — enroll the downloaded files automatically (the original design):* rejected. It bought nothing the user cannot already do in one sentence, and it cost a great deal:
 
-### D4 — Classified `approval`; agent reaches it via run_inflexa
-The command writes (fetches bytes, enrolls inputs), so per `agent-command-policy` it is `approval` — never `auto`. The conversation agent invokes it through the existing `run_inflexa` subprocess tool (`agent-cli-tool`), which classifies it by the commander parse and shows the in-chat approval prompt. No new agent tool. (Per the CLI convention that a write is a subcommand with its own policy, the GEO source is its own subcommand, not a flag on an existing one.)
+- **It broke the analysis lock.** Enrolment emits provenance, and every other mutating surface claims the analysis instance lock first (`inputs add/remove`, `chat`, `profile`, `run`). A subprocess spawned by `run_inflexa` beside a live TUI cannot hold that lock — which is precisely why `inputs add` is classified `blocked` for the agent. An auto-enrolling `geo add` was the same mutation through a door that skipped the guard, and it forked the signed provenance chain: the host's cached document overwrote the child's records and `verifyAnalysisIntegrity` reported `tampered`.
+- **It needed a reconcile channel back to the host.** The child emits `prov.input_added` on its own bus, which the host never sees, so the host had to be poked out of band to re-stage and re-profile (the `onReconcile` hook, D-removed below). That hook fired after every successful analysis-scoped action, including read-only ones.
+- **It coupled two independent decisions.** "Fetch this dataset" and "make this dataset an input" are separate user intents; a user may reasonably want the files without profiling them.
+
+Dropping enrolment deletes all of it: no lock to claim, no provenance to fork, no reconcile channel, no staging trigger.
+
+### D2 — The files land in the analysis's home folder
+
+A downloaded Series goes to `<anchor>/<accession>/` — the folder the user ran `inflexa` in, beside their other data. Downloaded data is the user's, in the place they already keep data, visible without `inflexa open` and addable by the same paths as anything else there.
+
+*Alternative — the analysis workspace (`.inflexa/analyses/<slug>/geo/`):* rejected — hiding a 150 MB download the user asked for inside a dot-directory makes it hard to find and hard to reason about, and the workspace is inflexa-managed space for staged copies and run artifacts, not a home for source data. *Alternative — a shared `env.geoDir` cache:* rejected for v1 — an accession-keyed cross-analysis cache is a real optimization (accessions are immutable) but it separates the bytes from the analysis they belong to, and nothing yet reference-counts them.
+
+The target folder is resolved through `resolveContext`, so the agent path lands in the chat analysis's folder rather than the subprocess's arbitrary cwd (see D5).
+
+### D3 — Download processed + supplementary, not raw reads
+
+Fetch the SOFT family file, the series matrix (per-platform parts when present), and author-deposited supplementary files — the last is not optional garnish: for most modern RNA-seq Series the count matrices live in `suppl/`. *Alternatives:* include raw SRA (rejected v1 — separate egress path, sra-tools, pipeline, size); metadata only (too thin — structure without values).
+
+### D4 — Enumerate by resolving links, never by pattern-matching hrefs
+
+GEO serves each directory as an Apache autoindex, so the artifact set is discovered by enumeration — a guessed filename cannot find the per-platform matrix parts of a multi-platform Series. But an autoindex is a web page, and a listing scan that filters hrefs by pattern cannot reliably tell a file from the page's furniture: NCBI puts a site-wide `https://www.hhs.gov/vulnerability-disclosure-policy/…` link on **every** page, spells the parent link as an absolute path, and serves an "Access forbidden" page (with `mailto:` links) for any directory lacking an index.
+
+Each href is therefore *resolved against the directory's own URL* and kept only when the result is same-origin and names exactly one further segment. That one test subsumes every case a negative filter kept getting wrong, and disposes of path traversal for free — `a/../../etc/passwd` normalizes during resolution and lands outside the directory. Names are then HTML-unescaped and percent-decoded, and admitted only as single safe path segments; the decode order is load-bearing, since `%2e%2e%2f` survives URL parsing intact and becomes `../` only afterward.
 
 ### D5 — run_inflexa injects the session analysis; resolveContext honors it
-For "download geo dataset GSE12345" to target the chat's analysis with no ref, the ambient analysis must reach the subprocess. `run_inflexa` spawns with the parent env inherited and passes no analysis context today; its `execute(input, ctx)` already holds `ctx.session`. So `run_inflexa` reads the session's analysis id (when scope is analysis-kind) and sets `INFLEXA_ANALYSIS` on the child env, and `resolveContext` gains an ambient tier honoring it (below an explicit flag, above the marker walk-up). *Alternative — inject `--analysis <id>` into argv:* rejected — it breaks the commander parse for commands that do not accept `--analysis` (`--help`, `refs list`), and it would clutter the approval prompt with a machine id; env injection touches neither the parse nor the displayed command. *Alternative — the geo command alone defaults to the current analysis from cwd:* rejected as the robust path — it only fixes geo, and cwd is not guaranteed to match the chat's analysis; injecting the session analysis fixes every agent-run analysis-scoped command at once. The id is read from the trusted session, never the model argv, so wording cannot retarget another analysis. To keep `context-resolution` library-pure, the `INFLEXA_ANALYSIS` value is read at the CLI boundary (via `lib/env`) and passed into `resolveContext` as the ambient ref, not read inside it.
 
-### D6 — Reuse and factor the reference downloader
-The streaming transfer primitive in `src/modules/refs/store.ts` (`downloadArtifact`: HTTPS re-checked on the post-redirect URL, sha256, `.part`→atomic activation, progress; `measureReferenceDownload`: HEAD size probe) is factored into a shared utility the reference installer and this command both use, rather than a second downloader.
+For "download geo dataset GSE12345" to land in the chat analysis's folder with no ref, the ambient analysis must reach the subprocess. `run_inflexa`'s `execute(input, ctx)` already holds `ctx.session`, so it sets `INFLEXA_ANALYSIS` on the child env when the scope is analysis-kind, and `resolveContext` gains an ambient tier honoring it (below an explicit flag, above the marker walk-up).
+
+*Alternative — inject `--analysis <id>` into argv:* rejected — it breaks the commander parse for commands that do not accept `--analysis` (`--help`, `refs list`), and it would clutter the approval prompt with a machine id; env injection touches neither the parse nor the displayed command. *Alternative — the geo command alone defaults to the current analysis from cwd:* rejected — cwd is not guaranteed to match the chat's analysis. The id is read from the trusted session, never the model argv, so wording cannot retarget another analysis. To keep `context-resolution` library-pure, the value is read at the CLI boundary (via `lib/env`) and passed into `resolveContext` as the ambient ref, not read inside it.
+
+### D6 — Classified `approval`; agent reaches it via run_inflexa
+
+The command writes files, so per `agent-command-policy` it is `approval` — never `auto`. The conversation agent invokes it through the existing `run_inflexa` subprocess tool, which classifies it by the commander parse and shows the in-chat approval prompt. No new agent tool.
+
+### D7 — Retry, because the upstream sheds load by refusing
+
+NCBI answers 403 both for a directory with no index and, intermittently, for a request it is shedding — the same status, the same body, observed flapping 200↔403 on identical URLs seconds apart. The two cannot be told apart in the moment, so requests retry with exponential backoff and are spaced; a throttled request recovers within a couple of attempts, while a genuinely empty directory answers 403 every time and the settled answer is read as "nothing here". An absent or unreadable directory contributes nothing rather than failing the whole resolution.
+
+### D8 — Transfer to staging, place on full success
+
+Artifacts land in a staging directory beside the destination and move into place only once the whole set has transferred. A failed run therefore creates no destination directory and retains no partial set — important because the destination is the user's own data folder, and littering it with the debris of an aborted attempt is worse than failing cleanly.
+
+### D9 — The subprocess bound is silence, not duration
+
+`run_inflexa` bounded a child by wall-clock, which cannot distinguish a command that is working from one that is wedged — so every value was wrong for someone: 120 s killed a legitimate multi-gigabyte download, and a ceiling generous enough to spare it would have let a hung command hold the turn just as long. The bound is now the gap between output (`idleTimeoutMs`, 120 s, rearmed on every chunk either stream produces), with a 30-minute absolute backstop for the case the idle clock cannot see — a command looping forever while printing.
+
+Rearming is why `geo add` emits a `file_progress` heartbeat every 5 s: a single large artifact would otherwise transfer in total silence and read as hung. The heartbeat is the readout a long download needed regardless, so the timeout requirement and the UX requirement are satisfied by the same event. Activity is noted before the output cap is applied — past the cap the bytes are dropped, but they are still evidence the child is alive, and a command must not die for being chatty.
+
+### D10 — Subcommand options are read with `optsWithGlobals()`
+
+The root declares `--analysis`/`--project` for the bare-`inflexa` flow, and commander lets a program option appear anywhere on the line — so for `inflexa profile --analysis x` the value binds to the ROOT and the subcommand's identically-named option never receives it. Six commands took the flag and ignored it in silence, and the ambient `INFLEXA_ANALYSIS` tier could not be overridden by the flag this change's own spec says outranks it. `registerAction` — the single sanctioned way to attach an action — now hands handlers `optsWithGlobals()`, fixing every command at one choke point with a subcommand's own value still winning when it has one.
+
+*Alternative — `enablePositionalOptions()`:* rejected, and this is the second time. It binds an option to whichever command precedes it, which fixes the shadowing but makes a root-style flag placed after a subcommand (`inflexa sessions --project x`) a hard "unknown option" error, breaking invocations users already rely on. A regression test in `cli.test.ts` pins that shape precisely because the approach was tried and reverted once before; both halves of the trade-off are now pinned there.
+
+### D11 — A shared transfer utility, extracted but not yet deduped
+
+`src/lib/download.ts` (`downloadToFile` + `declaredContentLength`: HTTPS re-checked on the post-redirect URL, sha256, `.part`→atomic activation, progress, injected `fetch`) is factored out for this command to use. `refs/store.ts` still carries its own equivalent; repointing it is tracked as task 1.2 and is deliberately not a blind swap — refs treats the `.part` itself as the durable artifact in a separate downloads directory and reclaims it by name, guards its destination with `assertOwnedPath`, and carries a different error union. Until that lands, the extraction has one caller and the duplication is real rather than notional.
 
 ## Risks / Trade-offs
 
-- **Adding inputs never disturbs a run** — a run snapshots its input set at start, so enrolling GEO files affects only future runs. This is inherent to the existing add-inputs semantics; the command does nothing special to get it. The read-only bind mount does expose new files on disk to an in-flight sandbox, but runs are manifest/plan-scoped and read only what they were told, so nothing is touched. No change needed.
-- **Large downloads** — the command reports a size estimate (via the reference downloader's HEAD probe) before fetching and honors a size cap; the `approval` prompt is the user's gate.
-- **Supplementary enumeration is fragile** (autoindex format, missing `suppl/`) → treat an empty/absent `suppl/` as a normal "nothing to add", never an error.
-- **No GEO-specific parsing library is needed** → the series matrix is plain TSV with a `!`-prefixed metadata preamble and supplementary files are ordinary processed matrices, all readable by the general tools already in the lib store (pandas/numpy/scanpy/anndata, data.table/readr). GEOparse/GEOquery are download-and-parse convenience libraries whose network half we replaced host-side; requiring them would add an unnecessary lib-store dependency and hardcode a tool into agent-facing content. (If ever wanted purely for SOFT-parsing ergonomics, they are an optional lib-store addition, not a prerequisite.)
-- **Partial fetch then enroll** — fetch all files to a temp dir and enroll only on full success, so a failed download never enrolls a partial input set.
+- **Large downloads** — the command HEAD-probes the set for a size estimate before transferring, honors a cap that `--max-size` can raise, and reports per-file progress plus a heartbeat; the `approval` prompt is the user's gate.
+- **Autoindex enumeration depends on a served HTML shape.** Resolving links rather than pattern-matching them removes the fragility that actually bit, and the tests pin it against captured real responses, but a wholesale change to how NCBI serves directories would still need a code change.
+- **No GEO-specific parsing library is needed** → the series matrix is plain TSV with a `!`-prefixed metadata preamble and supplementary files are ordinary processed matrices, all readable by the general tools already in the lib store (pandas/numpy/scanpy/anndata, data.table/readr). GEOparse/GEOquery are download-and-parse convenience libraries whose network half is replaced host-side; requiring them would add an unnecessary lib-store dependency and hardcode a tool into agent-facing content.
 
 ## Migration Plan
 
-Additive — no breaking changes, no harness change, no lib-store change. Order: (1) factor the shared transfer utility from `store.ts`; (2) add the GEO source module (accession→URL resolution, fetch to temp, enroll via `applyInputsDiff`); (3) register the `approval` command with full help text; (4) update the `agent-command-policy` snapshot test for the new command. Rollback is unregistering the command.
+Additive — no breaking changes, no harness change, no lib-store change. Order: (1) the shared transfer utility; (2) the GEO source module (accession→URL resolution, enumeration, staged transfer); (3) the `approval` command with full help text; (4) the `agent-command-policy` snapshot row. Rollback is unregistering the command.
 
 ## Open Questions
 
-- **Command surface**: exact registry placement / name of the new subcommand (e.g. an input-source subcommand under the analysis input surface) and how the target analysis is referenced (`--analysis <ref>` vs positional), following existing command conventions.
-- **Where the factored transfer utility lands** within `src/modules/` (a shared lib vs. staying in `refs/` and imported).
-- **Supplementary strategy**: enumerate `suppl/` and fetch selectively, vs. the coarser bundled `?acc=…&format=file` RAW.tar.
-- **Multi-platform matrices**: fetch all parts, or expose a selector.
-- **Size-cap default** and over-cap behavior (hard fail vs. proceed after the approval prompt).
-- **Re-profile eagerness**: rely on the existing add-inputs re-profile trigger as-is, or force an immediate profile.
+- **Cross-invocation caching** keyed by accession, once something reference-counts the bytes.
+- **Re-download behavior** — re-running for an accession already on disk currently re-fetches every byte.

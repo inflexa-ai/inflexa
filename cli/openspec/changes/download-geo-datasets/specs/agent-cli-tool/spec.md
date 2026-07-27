@@ -30,33 +30,38 @@ and no command's commander parse is altered.
 - **WHEN** `run_inflexa` spawns an `inflexa` command
 - **THEN** no analysis value is injected into the child environment
 
-### Requirement: run_inflexa reconciles inputs after a successful action
+### Requirement: run_inflexa bounds a subprocess by silence, not by duration
 
-`run_inflexa` SHALL drive an input-parity reconciliation after a successful action,
-because it runs inside the process that owns the harness runtime (the TUI) and is
-therefore the only party that can safely stage and (re)profile after a subprocess
-command mutates an analysis's input set. For a successful action run in an
-analysis-scoped session, `run_inflexa` SHALL reconcile the session's
-analysis through an injected host callback, so inputs a subprocess enrolled (which the
-in-process event bus never delivered across the process boundary) are staged and
-profiled under the already-booted runtime. The reconciliation SHALL be idempotent —
-when the input set already matches the profile it SHALL be a no-op — and it SHALL run
-only for a successful action, never for a blocked, denied, or introspection call.
+`run_inflexa` SHALL bound a spawned command by how long it produces NO output,
+rearming that bound whenever the child writes to either stream, and SHALL apply a
+separate absolute ceiling independent of output. A wall-clock-only bound cannot
+distinguish a command that is working from one that is wedged, so it either kills
+legitimate long-running work or lets a hung command hold the turn for just as long;
+bounding on silence separates the two. Output that arrives after the capture cap is
+exhausted SHALL still count as activity — the bytes are discarded, but they are
+evidence the child is alive. A bound that elapses SHALL be reported as a timeout, and
+the caller's own cancellation SHALL remain distinguishable from either bound.
 
-#### Scenario: A successful input-mutating command triggers reconciliation
+#### Scenario: A silent command is abandoned at the idle bound
 
-- **GIVEN** an analysis-scoped session and a successful `run_inflexa` action that enrolled a new input in a subprocess
-- **WHEN** the tool returns success
-- **THEN** it drives an input-parity reconciliation for the session's analysis under the host runtime
+- **GIVEN** a spawned command that produces no output
+- **WHEN** the idle bound elapses
+- **THEN** the command is terminated and reported as timed out, without waiting for the absolute ceiling
 
-#### Scenario: Reconciliation is a no-op when nothing changed
+#### Scenario: A command that keeps reporting outlives the idle bound
 
-- **GIVEN** a successful `run_inflexa` action that changed no inputs
-- **WHEN** the reconciliation runs
-- **THEN** the input set already matches the profile and no re-profile is started
+- **GIVEN** a spawned command that produces output more often than the idle bound
+- **WHEN** it runs for longer than that bound
+- **THEN** it is allowed to continue and run to completion
 
-#### Scenario: A denied or introspection call drives no reconciliation
+#### Scenario: The absolute ceiling still bounds a command that never stops talking
 
-- **GIVEN** a blocked or denied action, or an introspection call
-- **WHEN** `run_inflexa` returns
-- **THEN** it drives no reconciliation
+- **GIVEN** a spawned command that produces output continuously and never exits
+- **WHEN** the absolute ceiling elapses
+- **THEN** the command is terminated and reported as timed out
+
+#### Scenario: A caller cancellation is not reported as a timeout
+
+- **GIVEN** a spawned command and a caller that aborts the turn
+- **WHEN** the abort fires before either bound
+- **THEN** the outcome is reported as cancelled, not as a timeout
