@@ -10,12 +10,13 @@ import type { ProviderError } from "@inflexa-ai/harness";
 
 import * as prompts from "../../lib/cli.ts";
 import { readConfig, writeConfig, type Config } from "../../lib/config.ts";
-import { env } from "../../lib/env.ts";
+import { EMBEDDING_API_KEY_VAR, env } from "../../lib/env.ts";
 import { __setCompiledBinaryForTest } from "../../lib/install_context.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import type { SetupAnswers } from "../infra/setup_answers.ts";
 import { __resetLlamaRuntimeForTest, __setLlamaAcquireForTest, __setLlamaPinForTest, materializedLlamaServer, type ResolvedPin } from "./llama_runtime.ts";
 import { __resetLocalRuntimeForTest, __setSidecarLauncherForTest, LOCAL_EMBEDDING_DIMENSIONS } from "./local-provider.ts";
+import { DEFAULT_API_EMBEDDING_DIMENSIONS } from "./resolve.ts";
 import {
     __setEmbeddedModelForTest,
     __setEmbeddingApiKeyForTest,
@@ -142,14 +143,41 @@ async function withTTY<T>(value: boolean, body: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Run `body` with `process.stdout` captured, returning its value alongside everything written. clack emits
+ * every notice, warning, and success line through `process.stdout.write`, so this both quiets the suite and
+ * makes the step's own narration assertable — the env-key notice, the stranding warning, the assumed-width
+ * line. Mirrors infra/setup.test.ts's `runSetup` capture. clack's `log` splits on `\n` and never wraps, so
+ * a single-line substring assertion against the result is stable regardless of terminal width.
+ */
+async function captureStdout<T>(body: () => Promise<T>): Promise<{ readonly value: T; readonly output: string }> {
+    const chunks: string[] = [];
+    const write = spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+        chunks.push(String(chunk));
+        return true;
+    });
+    try {
+        return { value: await body(), output: chunks.join("") };
+    } finally {
+        write.mockRestore();
+    }
+}
+
+/**
  * A stub embeddings server on an ephemeral port, standing in for BOTH endpoints this step probes: the
  * OpenAI-compatible `/v1/embeddings` route the api-key branch hits directly, and the extra llama-server
  * routes (`/health`, `/props`, `/tokenize`) the local sidecar's client uses once a stub launcher points it
  * here. One shape for both branches keeps their fixtures identical apart from the width they emit — which
  * is the fact each test is actually about. Every request is recorded so a test can assert both which
  * secret reached the wire and that a skipped probe made no call at all.
+ *
+ * `rejectWith` makes `/v1/embeddings` answer that HTTP status instead of a vector — the wrong-key /
+ * wrong-endpoint case the probe exists to catch. 401 specifically, because the OpenAI SDK does not retry
+ * it: a retried status would make the failing-probe test pay the client's backoff for no added coverage.
  */
-function startEmbeddingStub(dimensions: number): {
+function startEmbeddingStub(
+    dimensions: number,
+    rejectWith?: number,
+): {
     readonly origin: string;
     readonly requests: { readonly path: string; readonly authorization: string | null }[];
     stop: () => void;
@@ -171,6 +199,7 @@ function startEmbeddingStub(dimensions: number): {
                 return Response.json({ tokens: new Array(Math.ceil(body.content.length / 4)).fill(0) });
             }
             if (url.pathname === "/v1/embeddings") {
+                if (rejectWith !== undefined) return Response.json({ error: { message: "invalid api key" } }, { status: rejectWith });
                 const body = (await req.json()) as { input: string[] };
                 const data = body.input.map((_, index) => ({ object: "embedding", index, embedding: vector }));
                 return Response.json({ object: "list", data, model: "stub-embed", usage: { prompt_tokens: 0, total_tokens: 0 } });
@@ -351,6 +380,30 @@ describe("runEmbeddingSetup (answers)", () => {
         }
     });
 
+    test("an exported key is adopted with a notice naming the variable, and the masked prompt never runs", async () => {
+        writeConfigWith({ mode: "off" });
+        const stub = startEmbeddingStub(768);
+        __setEmbeddingApiKeyForTest(() => "sk-from-env");
+        // Mocked rather than left real: on a TTY the genuine masked prompt would HANG this test instead of
+        // failing it, and the sentinel return makes "the prompt won anyway" visible in the persisted key.
+        const secretPrompt = spyOn(prompts, "promptSecret").mockImplementation(async () => "sk-typed-at-the-prompt");
+        try {
+            const { value: result, output } = await captureStdout(() =>
+                withTTY(true, () => runEmbeddingSetup(true, { mode: "api-key", baseURL: `${stub.origin}/v1`, model: "my-embed" })),
+            );
+
+            expect(result.isOk()).toBe(true);
+            expect(secretPrompt).toHaveBeenCalledTimes(0);
+            // The whole point of the notice: an exported key is invisible at the moment it wins, and this
+            // one is persisted, so a stale export would otherwise reach config.json unannounced.
+            expect(output).toContain(`Using ${EMBEDDING_API_KEY_VAR} from your environment`);
+            expect(readConfig().embedding.apiKey).toBe("sk-from-env");
+        } finally {
+            secretPrompt.mockRestore();
+            stub.stop();
+        }
+    });
+
     test("validate: false skips the endpoint probe and falls back to the configured width", async () => {
         // The configured width is what the skipped probe would have re-measured, so it — not the provider
         // default — is what an unvalidated run must assume.
@@ -372,6 +425,55 @@ describe("runEmbeddingSetup (answers)", () => {
             expect(embedding.mode).toBe("api-key");
             expect(embedding.apiKey).toBe("sk-from-env");
             expect(embedding.dimensions).toBe(3072);
+        } finally {
+            stub.stop();
+        }
+    });
+
+    test("validate: false never assumes the width a DIFFERENT backend measured", async () => {
+        // 768 describes the local GGUF the sidecar measured — it says nothing about what a remote endpoint
+        // emits, so an unvalidated api-key run must fall back to the provider default rather than inherit it.
+        placeFakeModel();
+        writeConfigWith({ mode: "local", modelPath: env.embeddingModelPath, dimensions: 768 });
+        __setEmbeddingApiKeyForTest(() => "sk-from-env");
+
+        const { value: result, output } = await captureStdout(() =>
+            runEmbeddingSetup(false, { mode: "api-key", baseURL: "https://gw.corp/v1", model: "my-embed", validate: false }),
+        );
+
+        expect(result.isOk()).toBe(true);
+        const embedding = readConfig().embedding;
+        expect(embedding.mode).toBe("api-key");
+        // Minimal config drops a field equal to the provider default, so `undefined` IS the api-key default
+        // width — and 768 reached neither the config nor the narration.
+        expect(embedding.dimensions).toBeUndefined();
+        expect(output).not.toContain("768");
+        // The number is presented as an assumption, not a measurement.
+        expect(output).toContain(`ASSUMED to be ${DEFAULT_API_EMBEDDING_DIMENSIONS}`);
+        // Changing backend at all is what strands the existing indexes, so the switch is announced too.
+        expect(output).toContain("SWITCHING EMBEDDING BACKEND (local → api-key)");
+    });
+
+    test("a rejected endpoint probe fails the run and leaves the configured backend untouched", async () => {
+        placeFakeModel();
+        writeConfigWith({ mode: "local", modelPath: env.embeddingModelPath, dimensions: 512 });
+        const stub = startEmbeddingStub(768, 401);
+        __setEmbeddingApiKeyForTest(() => "sk-wrong");
+        try {
+            const result = await runEmbeddingSetup(false, { mode: "api-key", baseURL: `${stub.origin}/v1`, model: "my-embed" });
+
+            expect(result.isErr()).toBe(true);
+            expect(result._unsafeUnwrapErr().type).toBe("verify_failed");
+            // The probe genuinely reached the endpoint and was rejected there — not a missing secret, not
+            // an unresolvable URL, both of which fail earlier and would pass the config assertions below.
+            expect(stub.requests.map((r) => r.path)).toEqual(["/v1/embeddings"]);
+            // Verification gates the write: a failed probe records nothing, so the previous backend stands
+            // and the rejected key is nowhere in config.
+            const embedding = readConfig().embedding;
+            expect(embedding.mode).toBe("local");
+            expect(embedding.modelPath).toBe(env.embeddingModelPath);
+            expect(embedding.dimensions).toBe(512);
+            expect(embedding.apiKey).toBeUndefined();
         } finally {
             stub.stop();
         }
@@ -415,6 +517,24 @@ describe("runEmbeddingSetup (answers)", () => {
             stub.stop();
             rmSync(customDir, { recursive: true, force: true });
         }
+    });
+
+    test("an answered gguf with no file at it fails naming the path, leaving the mode unchanged", async () => {
+        writeConfigWith({ mode: "off" });
+        const absentPath = join(tmpdir(), "inflexa-answered-absent-model.gguf");
+        rmSync(absentPath, { force: true });
+
+        const result = await runEmbeddingSetup(false, { mode: "local", gguf: absentPath });
+
+        expect(result.isErr()).toBe(true);
+        const e = result._unsafeUnwrapErr();
+        // `acquire_failed`: there is nothing to acquire the model FROM. Naming the path is what makes it
+        // actionable — a batch operator sees the typo without re-deriving which answer produced it.
+        expect(e.type).toBe("acquire_failed");
+        expect(e.message).toContain(absentPath);
+        expect(readConfig().embedding.mode).toBe("off");
+        // The custom branch acquires nothing even on the happy path, so a failure must not have either.
+        expect(existsSync(env.embeddingModelPath)).toBe(false);
     });
 
     test("an answered off persists mode off over a configured local backend, leaving the model on disk", async () => {
@@ -512,6 +632,70 @@ describe("runEmbeddingSetup (answers)", () => {
         expect(embedding.baseURL).toBeUndefined();
         expect(embedding.model).toBeUndefined();
         expect(embedding.dimensions).toBeUndefined();
+    });
+});
+
+// --- the stranding warning ----------------------------------------------------
+// Every analysis's search index keeps the width it was built at, so setup warns whenever the backend it is
+// about to write may emit a different one. The trigger is the EFFECTIVE width, not the mode: swapping to a
+// different GGUF strands indexes exactly as a mode change does — and the new model's width is unknowable
+// until the sidecar measures it, so the path difference alone must warn. Re-selecting the same model at the
+// same path cannot change anything, and must stay silent or the warning stops meaning something.
+describe("runEmbeddingSetup (stranding warning)", () => {
+    afterEach(() => {
+        __setSidecarLauncherForTest(null);
+        __resetLocalRuntimeForTest();
+    });
+
+    /** Two GGUF stand-ins in one temp dir, so a swap between them is a genuine model-path change. */
+    function twoModels(): { readonly dir: string; readonly first: string; readonly second: string } {
+        const dir = mkdtempSync(join(tmpdir(), "inflexa-stranding-"));
+        const first = join(dir, "first.gguf");
+        const second = join(dir, "second.gguf");
+        writeFileSync(first, "fake-gguf");
+        writeFileSync(second, "fake-gguf");
+        return { dir, first, second };
+    }
+
+    test("a local → local swap to a different model path warns", async () => {
+        const models = twoModels();
+        writeConfigWith({ mode: "local", modelPath: models.first, dimensions: 768 });
+        placeMaterializedRuntime();
+        const stub = startEmbeddingStub(512);
+        useStubSidecar(stub.origin);
+        try {
+            const { value: result, output } = await captureStdout(() => runEmbeddingSetup(false, { mode: "local", gguf: models.second }));
+
+            expect(result.isOk()).toBe(true);
+            expect(output).toContain("SWITCHING EMBEDDING MODEL");
+            expect(output).toContain("until each analysis is re-profiled under the new backend.");
+            // The mode never changed, and the measured width did — exactly the case a mode-only trigger misses.
+            expect(readConfig().embedding.mode).toBe("local");
+            expect(readConfig().embedding.dimensions).toBe(512);
+        } finally {
+            stub.stop();
+            rmSync(models.dir, { recursive: true, force: true });
+        }
+    });
+
+    test("re-selecting the configured model unchanged stays silent", async () => {
+        const models = twoModels();
+        writeConfigWith({ mode: "local", modelPath: models.first, dimensions: 512 });
+        placeMaterializedRuntime();
+        const stub = startEmbeddingStub(512);
+        useStubSidecar(stub.origin);
+        try {
+            const { value: result, output } = await captureStdout(() => runEmbeddingSetup(false, { mode: "local", gguf: models.first }));
+
+            expect(result.isOk()).toBe(true);
+            // Same mode, same path: nothing about the index width can change, so a warning here would be
+            // noise on every idempotent re-run.
+            expect(output).not.toContain("SWITCHING EMBEDDING");
+            expect(readConfig().embedding.dimensions).toBe(512);
+        } finally {
+            stub.stop();
+            rmSync(models.dir, { recursive: true, force: true });
+        }
     });
 });
 

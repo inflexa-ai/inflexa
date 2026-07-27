@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { REFERENCE_DATA_CATALOG } from "@inflexa-ai/harness";
 import { ok, err } from "neverthrow";
 import {
     adoptedConnection,
@@ -31,15 +32,20 @@ import {
     type ProbeAttempt,
 } from "./setup.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
-import { answerSpelling, type AnswerKey, type SetupAnswerFlags } from "./setup_answers.ts";
+import { answerSpelling, type AnswerKey, type AnswerValueKey, type SetupAnswerFlags } from "./setup_answers.ts";
 import * as compose from "./compose.ts";
 import * as embeddingSetup from "../embedding/setup.ts";
 import * as sandboxPullModule from "../libs/pull.ts";
 import * as refsCommands from "../refs/commands.ts";
+import * as refsStore from "../refs/store.ts";
 import { detectedMachine, writeAgentModel, type ResolvedModelConnection } from "../harness/config.ts";
 import { __resetModelCacheForTest, type ModelAccess } from "../proxy/models.ts";
-import { readConfig } from "../../lib/config.ts";
+import { readConfig, writeConfig } from "../../lib/config.ts";
 import * as container from "../../lib/container.ts";
+import * as cliPrompts from "../../lib/cli.ts";
+// Namespace import beside the named one purely so `detectProviderEnv` is spyable at the seam setup.ts
+// calls it through; `env` itself is a value the assertions read, so it stays a named import.
+import * as envModule from "../../lib/env.ts";
 import { EMBEDDING_API_KEY_VAR, env, type ProviderEnvSnapshot } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 
@@ -47,6 +53,19 @@ import { assertTestSandbox } from "../../test_support/sandbox.ts";
 function snapshot(overrides: Partial<ProviderEnvSnapshot> = {}): ProviderEnvSnapshot {
     return { anthropicApiKeySet: false, anthropicBaseURL: undefined, openaiApiKeySet: false, openaiBaseURL: undefined, ...overrides };
 }
+
+/**
+ * Two ids the reference catalog really declares, and one it cannot. Read off the LIVE catalog rather
+ * than hardcoded, because setup now resolves an answered `--refs` id list against that catalog BEFORE
+ * anything mutates (design D2): a hardcoded id that a catalog revision renames would fail these runs
+ * upfront and report the wrong defect. The non-`null` assertions are safe because the catalog schema
+ * requires a non-empty dataset list, and a catalog with fewer than two datasets would fail its own
+ * validation long before this file loads.
+ */
+const CATALOG_ID = REFERENCE_DATA_CATALOG.datasets[0]!.id;
+const OTHER_CATALOG_ID = REFERENCE_DATA_CATALOG.datasets[1]!.id;
+/** Shaped like a plausible typo of a real id, which is exactly the mistake the upfront check exists to catch. */
+const UNKNOWN_CATALOG_ID = "gtex-typo";
 
 // generateApiKey + proxyConfig live in proxy_config.ts alongside writeProxyConfig; their unit tests
 // live beside them in proxy_config.test.ts.
@@ -1367,6 +1386,25 @@ describe("setup() — batch orchestration", () => {
         return chunks.join("");
     }
 
+    /**
+     * `setup()` reports its pre-`intro()` refusals through `console.error` (it is refusing before the
+     * clack session opens, or before the first mutation), so the stdout capture `runSetup` installs does
+     * not see them. Collect that channel too, for the tests that assert the message as well as the exit
+     * code.
+     */
+    async function runCapturingStderr(options: Parameters<typeof setup>[0]): Promise<string> {
+        const errors: string[] = [];
+        const consoleError = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+            errors.push(args.map(String).join(" "));
+        });
+        try {
+            await runSetup(options);
+        } finally {
+            consoleError.mockRestore();
+        }
+        return errors.join("\n");
+    }
+
     /** The batch invocation shape every test below shares: no containers started, no images pulled. */
     function batch(flags: NonNullable<Parameters<typeof setup>[0]["flags"]>, over: Partial<Parameters<typeof setup>[0]> = {}) {
         return { auth: true, start: false, force: false, postgres: false, yes: true, flags, ...over };
@@ -1434,24 +1472,6 @@ describe("setup() — batch orchestration", () => {
     });
 
     describe("a step switched OFF consumes no answers", () => {
-        /**
-         * `setup()` reports these two through `console.error` (it is refusing before `intro()` on one path
-         * and before the first mutation on the other), so the stdout capture `runSetup` installs does not
-         * see them. Collect both channels to assert the message as well as the exit code.
-         */
-        async function runCapturingStderr(options: Parameters<typeof setup>[0]): Promise<string> {
-            const errors: string[] = [];
-            const consoleError = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-                errors.push(args.map(String).join(" "));
-            });
-            try {
-                await runSetup(options);
-            } finally {
-                consoleError.mockRestore();
-            }
-            return errors.join("\n");
-        }
-
         test("--no-postgres refuses an answered postgres field rather than dropping it", async () => {
             const errors = await runCapturingStderr(batch({ postgresPort: "6000", postgresUser: "fleet" }, { postgres: false }));
 
@@ -1546,18 +1566,53 @@ describe("setup() — batch orchestration", () => {
         expect(output).toContain("--no-validate");
     });
 
-    test("an ambiguous model validation fails the run and leaves the model unpinned", async () => {
-        // The credential itself validates (2xx listing); only the model's 1-token ping is unclassifiable.
-        routeFetch({
-            "/models": () => Response.json({ data: [{ id: "m-1" }] }),
-            "/messages": () => new Response("gateway says no", { status: 500 }),
+    // Design D1: the answered model's 1-token validation runs BEFORE `writeDirectConnection`, so a
+    // rejected id costs the operator an error message and nothing else. The assertion is on the config
+    // FILE's bytes rather than on the absence of `models.agents`, because the defect this replaces was
+    // precisely a run that pinned no model and still left a `models.connection` behind — a client that
+    // boots into `model_required`, the state the batch model requirement exists to prevent.
+    describe("a rejected batch direct model leaves config.json untouched", () => {
+        /**
+         * Pin the runtime BEFORE the run so the runtime write (the one legitimate mutation that precedes
+         * the direct path) is a no-op and the whole file becomes comparable. `readConfig()` supplies the
+         * schema-shaped rest, so the seeded document is exactly what `writeConfig` would have produced.
+         */
+        function seedPinnedRuntime(): string {
+            writeConfig({ ...readConfig(), runtime: "docker" })._unsafeUnwrap();
+            return readFileSync(env.configPath, "utf8");
+        }
+
+        test("a definite model-not-found writes nothing — neither a connection nor a pin", async () => {
+            // The credential itself validates (2xx listing); the model's own ping is definitively rejected.
+            routeFetch({
+                "/models": () => Response.json({ data: [{ id: "m-1" }] }),
+                "/messages": () => Response.json({ error: { type: "not_found_error", message: "model m-1 not found" } }, { status: 404 }),
+            });
+            const before = seedPinnedRuntime();
+
+            const output = await runSetup(batch({ ...directFlags }));
+
+            expect(process.exitCode).toBe(1);
+            expect(readFileSync(env.configPath, "utf8")).toBe(before);
+            expect(models()).toBeUndefined();
+            expect(output).toContain("m-1");
         });
 
-        const output = await runSetup(batch({ ...directFlags }));
+        test("an unclassifiable model validation is equally fatal, and equally write-free", async () => {
+            // Batch has no save-anyway confirm, so an outcome nobody can classify fails exactly like a
+            // rejection — and, per D1, at the same point: before anything is persisted.
+            routeFetch({
+                "/models": () => Response.json({ data: [{ id: "m-1" }] }),
+                "/messages": () => new Response("gateway says no", { status: 500 }),
+            });
+            const before = seedPinnedRuntime();
 
-        expect(process.exitCode).toBe(1);
-        expect(models()?.agents).toBeUndefined();
-        expect(output).toContain("--no-validate");
+            const output = await runSetup(batch({ ...directFlags }));
+
+            expect(process.exitCode).toBe(1);
+            expect(readFileSync(env.configPath, "utf8")).toBe(before);
+            expect(output).toContain("--no-validate");
+        });
     });
 
     test("`--no-validate` persists the same answers with no probe at all", async () => {
@@ -1590,6 +1645,176 @@ describe("setup() — batch orchestration", () => {
         // Each run drives each step exactly once — the pre-gate/in-flow embedding guard holds across runs.
         expect(embedStep).toHaveBeenCalledTimes(2);
         expect(refsStep).toHaveBeenCalledTimes(2);
+    });
+
+    test("a POSTGRES-PROVISIONING run converges byte-identically, proxy config and minted key included", async () => {
+        // The direct-mode idempotency case above exercises none of the writers a real fleet provision
+        // uses. This one turns them all on: the rebuilt `postgres` block (persist-only-explicit), the
+        // resource budget, and — cliproxy mode — the proxy config with its once-minted client key, which
+        // a second run must find and leave alone rather than re-mint.
+        //
+        // Three runs, not two, and the reason is worth stating: `writeConfig` serializes whatever key
+        // order the object it is handed carries, and a key ABSENT from the parsed config (here
+        // `harness`, created by the first run's resource write) is APPENDED by the spread rather than
+        // landing in its schema position. So run 1 and run 2 agree on every VALUE while differing in key
+        // ORDER — a serialization artifact, not a re-derived answer. The byte comparison is therefore
+        // taken between two runs that both started from a complete document, and the value comparison
+        // covers the first run too, so neither property goes unasserted.
+        spies.push(spyOn(compose, "composeAvailable").mockImplementation(async () => true));
+        spies.push(spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)));
+        // Batch cliproxy with no model answer asks the proxy nothing, so any fetch here is a defect.
+        globalThis.fetch = (() => {
+            throw new Error("a postgres-provisioning batch run should make no network call");
+        }) as unknown as typeof fetch;
+
+        const flags = { postgresPassword: "s3cret", postgresPort: "6000", resourceShare: "40" } as const;
+        await runSetup(batch(flags, { postgres: true }));
+        const firstValues = readConfig();
+        const firstProxyConfig = readFileSync(env.cliproxyConfigPath, "utf8");
+
+        await runSetup(batch(flags, { postgres: true }));
+        const secondConfig = readFileSync(env.configPath, "utf8");
+
+        await runSetup(batch(flags, { postgres: true }));
+
+        expect(process.exitCode).toBe(0);
+        expect(readFileSync(env.configPath, "utf8")).toBe(secondConfig);
+        // Every VALUE converges from the very first run; the minted client key is read back, never re-minted.
+        expect(readConfig()).toEqual(firstValues);
+        expect(readFileSync(env.cliproxyConfigPath, "utf8")).toBe(firstProxyConfig);
+        // Sanity on WHAT converged: an empty document would satisfy the comparisons just as well.
+        expect(readConfig().postgres).toEqual({ password: "s3cret", port: 6000 });
+        expect((readConfig().harness as { resourceLimits?: { budget?: unknown } }).resourceLimits?.budget).toBeDefined();
+    });
+
+    // Design D2: an answered `--refs` id list is resolved against the OFFERED catalog immediately after
+    // answer resolution — before the embedding pre-gate, the runtime pin, the proxy config, and the
+    // download. Before this, a typo'd id surfaced at download time, second-to-last step, on a machine
+    // that had already been provisioned.
+    describe("reference ids validate before any mutation", () => {
+        test("an unknown id fails naming both spellings and the id, with nothing mutated", async () => {
+            const errors = await runCapturingStderr(batch({ refs: `${CATALOG_ID},${UNKNOWN_CATALOG_ID}` }));
+
+            expect(process.exitCode).toBe(1);
+            expect(errors).toContain("`--refs` / `refs`");
+            expect(errors).toContain(UNKNOWN_CATALOG_ID);
+            // The valid sibling is not reported — only what the operator has to fix.
+            expect(errors).not.toContain(`\`${CATALOG_ID}\``);
+            // No config write, no container command, no download: every mutator sits downstream of this.
+            expect(existsSync(env.configPath)).toBe(false);
+            expect(existsSync(env.cliproxyConfigPath)).toBe(false);
+            expect(embedStep).not.toHaveBeenCalled();
+            expect(firstReady).not.toHaveBeenCalled();
+            expect(refsStep).not.toHaveBeenCalled();
+        });
+
+        test("an already-installed id is a valid answer — the second run of the same command passes", async () => {
+            // The offered catalog EXCLUDES what is installed, so resolving against it alone would make
+            // `--refs <id>` fail on the very datasets its own first run installed. Stubbing the store
+            // inspection is how a "second run" is expressed without a multi-gigabyte download.
+            spies.push(
+                spyOn(refsStore, "inspectReferenceStore").mockImplementation(async () =>
+                    ok({
+                        exists: true,
+                        datasets: REFERENCE_DATA_CATALOG.datasets.map((dataset) => ({
+                            dataset,
+                            state: dataset.id === CATALOG_ID ? ("installed" as const) : ("missing" as const),
+                        })),
+                        userContent: [],
+                    }),
+                ),
+            );
+
+            await runSetup(batch({ refs: CATALOG_ID }));
+
+            expect(process.exitCode).toBe(0);
+            expect(refsStep.mock.calls[0]![0].selection).toEqual({ ids: [CATALOG_ID] });
+        });
+
+        test("a valid id list lets the run continue — the answered sandbox pull still happens", async () => {
+            const pull = spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () =>
+                ok({ type: "pulled" as const, variant: "python" as const, image: "ghcr.io/x/sandbox-python:latest" }),
+            );
+            spies.push(pull);
+
+            await runSetup(batch({ refs: `${CATALOG_ID},${OTHER_CATALOG_ID}`, sandbox: "python" }));
+
+            expect(process.exitCode).toBe(0);
+            expect(refsStep.mock.calls[0]![0].selection).toEqual({ ids: [CATALOG_ID, OTHER_CATALOG_ID] });
+            expect(pull.mock.calls[0]![0]).toEqual({ variant: "python", yes: true });
+        });
+    });
+
+    test("a mode-carrying flag superseding the file's leaves prints the note naming each dropped key", async () => {
+        // Design D5, at the orchestration level: the resolver produces the advisory as DATA, and this is
+        // the layer that has to RENDER it — an unrendered note turns the documented per-machine override
+        // (`--config fleet.yml --embeddings off`) back into a silent drop.
+        const dir = mkdtempSync(join(tmpdir(), "inflexa-answers-"));
+        const answersPath = join(dir, "fleet.yml");
+        writeFileSync(answersPath, "embedding:\n  mode: api-key\n  baseURL: https://embeds.internal/v1\n  model: text-embedding-3-large\n");
+
+        const output = await runSetup(batch({ config: answersPath, embeddings: "off" }));
+        rmSync(dir, { recursive: true, force: true });
+
+        expect(process.exitCode).toBe(0);
+        expect(output).toContain("--embeddings off");
+        expect(output).toContain("embedding.baseURL");
+        expect(output).toContain("embedding.model");
+        // The flag won, and the file's now-moot leaves reached no writer.
+        expect(embedStep.mock.calls[0]![1]?.mode).toBe("off");
+        expect(embedStep.mock.calls[0]![1]?.baseURL).toBeUndefined();
+        expect(embedStep.mock.calls[0]![1]?.model).toBeUndefined();
+    });
+
+    // The batch cliproxy model PIN, which is deliberately asymmetric to the direct-endpoint validation:
+    // only a definite not-found fails, because a pre-staged proxy has no credential loaded and its check
+    // is inconclusive by construction — failing on that would make pre-staging impossible.
+    describe("the answered cliproxy model pin", () => {
+        test("a definite not-found fails the run naming the model, and pins nothing", async () => {
+            routeFetch({
+                "/messages/count_tokens": () => Response.json({ error: { type: "not_found_error" } }, { status: 404 }),
+            });
+
+            const output = await runSetup(batch({ model: "claude-nope" }));
+
+            expect(process.exitCode).toBe(1);
+            expect(output).toContain("claude-nope");
+            expect(models()?.agents).toBeUndefined();
+        });
+
+        test("an inconclusive check proceeds and pins BOTH agents", async () => {
+            // Every route 404s with an unparseable body — exactly what an unauthenticated pre-staged proxy
+            // answers, and what `checkModelAccess` classifies as `inconclusive` rather than a verdict.
+            routeFetch({});
+
+            await runSetup(batch({ model: "claude-maybe" }));
+
+            expect(process.exitCode).toBe(0);
+            expect(models()?.agents).toEqual({ conversation: "claude-maybe", sandbox: "claude-maybe" });
+        });
+    });
+
+    test("`--yes --no-auth` provisions the stack without printing the sign-in notice", async () => {
+        // The auth dir is empty (the beforeEach removes it), which is exactly the state that earns the
+        // pre-staging notice on a normal batch run — so its absence here can only be the `--no-auth` gate.
+        const output = await runSetup(batch({}, { auth: false }));
+
+        expect(process.exitCode).toBe(0);
+        expect(output).toContain("Setup complete");
+        expect(output).not.toContain("Provider sign-in pending");
+        expect(output).not.toContain("first `inflexa` launch");
+        // The step being silent is not the step being skipped: the stack is still provisioned.
+        expect(existsSync(env.cliproxyConfigPath)).toBe(true);
+    });
+
+    test("a fully non-interactive run prints no prompt-shaped banner for a step that cannot prompt", async () => {
+        const output = await runSetup(batch({ resourceShare: "40" }));
+
+        expect(process.exitCode).toBe(0);
+        // The allowance is still reported — as a statement about the machine, not an instruction to a
+        // reader who is never going to be asked anything.
+        expect(output).toContain("Analysis resource allowance");
+        expect(output).not.toContain("Configure the analysis resource allowance");
     });
 
     test("an answered runtime is a hard gate: probed alone, never switched away from", async () => {
@@ -1656,6 +1881,106 @@ describe("setup() — batch orchestration", () => {
         await runSetup(batch({}, { postgres: true }));
         // Unanswered batch resolves the current configuration silently and writes no `postgres` block.
         expect(readConfig().postgres).toBeUndefined();
+    });
+
+    // The precedence rule's INTERACTIVE half: "a supplied answer SHALL skip its prompt even in an
+    // interactive run, so a partially-filled config file composes with prompts for the remaining
+    // questions." The batch cases above cannot see it — batch has no prompts to skip — so these flip the
+    // TTY on and assert on which questions were actually asked. Every prompt seam is stubbed, so a
+    // question that WAS reached shows up as a recorded label rather than a hung suite.
+    describe("an answer skips exactly its own prompt on an interactive run", () => {
+        let wasTTY: boolean | undefined;
+        let prompts: string[];
+        let selects: string[];
+
+        beforeEach(() => {
+            wasTTY = process.stdin.isTTY;
+            Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+            prompts = [];
+            selects = [];
+            spies.push(
+                spyOn(cliPrompts, "promptText").mockImplementation(async (message: string, opts?: { defaultValue?: string }) => {
+                    prompts.push(message);
+                    // Accept the pre-fill wherever there is one (what "press Enter" does), and type
+                    // `openai` where there is not — the only such prompt these flows reach is the provider
+                    // slug, and an openai-compatible connection keeps the anthropic-only credential-helper
+                    // offer (which reads the developer's REAL ~/.claude settings) out of the run.
+                    return opts?.defaultValue ?? "openai";
+                }),
+                spyOn(cliPrompts, "select").mockImplementation(async (message: string, options: { value: string; label: string }[]) => {
+                    selects.push(message);
+                    // The first option is each of these selects' documented default ("infer", "cliproxy").
+                    return options[0]!.value;
+                }),
+                spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () => ok({ type: "declined" as const })),
+            );
+            // The interactive default-model step lists models off the proxy; every route 404s, so the
+            // candidate list is empty and the step skips without a prompt (its own tests cover the rest).
+            globalThis.fetch = (() => Promise.resolve(new Response(null, { status: 404 }))) as unknown as typeof fetch;
+        });
+
+        afterEach(() => {
+            Object.defineProperty(process.stdin, "isTTY", { value: wasTTY, configurable: true });
+        });
+
+        /** An interactive invocation: no `--yes`, and the TTY the surrounding `beforeEach` installed. */
+        function interactive(flags: NonNullable<Parameters<typeof setup>[0]["flags"]>, over: Partial<Parameters<typeof setup>[0]> = {}) {
+            return { auth: false, start: false, force: false, postgres: false, flags, ...over };
+        }
+
+        /** Whether any recorded prompt/select message contains `fragment` — the labels are the observable. */
+        function asked(messages: readonly string[], fragment: string): boolean {
+            return messages.some((message) => message.includes(fragment));
+        }
+
+        test("`--postgres-password` skips ONLY the password prompt — user and port are still asked", async () => {
+            spies.push(spyOn(compose, "composeAvailable").mockImplementation(async () => true));
+            spies.push(spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)));
+
+            await runSetup(interactive({ connection: "cliproxy", postgresPassword: "s3cret" }, { postgres: true }));
+
+            expect(process.exitCode).toBe(0);
+            expect(asked(prompts, "Password")).toBe(false);
+            expect(asked(prompts, "Username")).toBe(true);
+            expect(asked(prompts, "Port")).toBe(true);
+            // The answer still landed, through the same persist-only-explicit writer the prompt feeds.
+            expect(readConfig().postgres).toEqual({ password: "s3cret" });
+        });
+
+        test("promptManualDirectConnection asks only for what is still open", async () => {
+            await runSetup(
+                interactive({ connection: "direct", baseUrl: "https://gw.corp/v1", protocol: "openai-compatible", model: "m-1" }, { validate: false }),
+            );
+
+            expect(process.exitCode).toBe(0);
+            expect(asked(prompts, "Provider slug")).toBe(true);
+            expect(asked(prompts, "Model endpoint URL")).toBe(false);
+            // An answered model takes the persist path, not the wizard's collect-and-re-prompt loop.
+            expect(asked(prompts, "Model id the endpoint serves")).toBe(false);
+            // The connection mode and the wire protocol were both answered, so no select ran at all.
+            expect(selects).toEqual([]);
+            expect(models()?.connection).toEqual({ mode: "direct", provider: "openai", baseURL: "https://gw.corp/v1", protocol: "openai-compatible" });
+            expect(models()?.agents).toEqual({ conversation: "m-1", sandbox: "m-1" });
+        });
+
+        test("an answered `--base-url` suppresses the ecosystem-adoption ladder entirely", async () => {
+            // A machine set up for the Anthropic SDK: without an answer, setup would OFFER to adopt this
+            // environment. With one, offering to replace the endpoint the operator just declared is how an
+            // answer gets silently overwritten — so the detection must not even be consulted.
+            const detect = spyOn(envModule, "detectProviderEnv").mockImplementation(() =>
+                snapshot({ anthropicApiKeySet: true, anthropicBaseURL: "https://api.anthropic.com" }),
+            );
+            spies.push(detect);
+
+            await runSetup(interactive({ connection: "direct", baseUrl: "https://gw.corp/v1", model: "m-1" }, { validate: false }));
+
+            expect(process.exitCode).toBe(0);
+            expect(detect).not.toHaveBeenCalled();
+            // The only select left is the wire-protocol question, which nothing answered.
+            expect(selects).toEqual(["Wire protocol"]);
+            // The answered endpoint survived — not the adoptable https://api.anthropic.com/v1.
+            expect((models()?.connection as Record<string, unknown>).baseURL).toBe("https://gw.corp/v1");
+        });
     });
 
     // THE INVARIANT: every answer this CLI accepts reaches a destination the run can be observed at.
@@ -1922,9 +2247,12 @@ describe("setup() — batch orchestration", () => {
                 },
             },
             refs: {
-                file: "refs:\n  - gtex-v10\n  - collectri\n",
+                // Real catalog ids: the orchestrator now resolves an answered id list against the offered
+                // catalog BEFORE anything mutates (design D2), so an invented id would fail this run
+                // upfront rather than reaching the step whose consumption is under test.
+                file: `refs:\n  - ${CATALOG_ID}\n  - ${OTHER_CATALOG_ID}\n`,
                 effect: (run) => {
-                    expect(run.refs).toEqual({ ids: ["gtex-v10", "collectri"] });
+                    expect(run.refs).toEqual({ ids: [CATALOG_ID, OTHER_CATALOG_ID] });
                 },
             },
             sandbox: {
@@ -1941,29 +2269,36 @@ describe("setup() — batch orchestration", () => {
                     expect(run.config.runtime).toBe("podman");
                 },
             },
-        } satisfies Record<AnswerKey, AnswerCase>;
+        } satisfies Record<AnswerValueKey, AnswerCase>;
 
         /**
-         * The answer keys as the SOURCE declares them, read out of `ANSWER_SPELLINGS`'s object literal.
-         * That table is module-private and exporting it would be a production change made for a test, so
-         * the source text is the honest runtime enumeration. It is cross-checked against the LIVE table
-         * below — `answerSpelling` renders a key the table does not own with an `undefined` flag — so a
-         * pattern that drifted from the declaration fails loudly instead of quietly shrinking the guard.
+         * The answer keys as the SOURCE declares them, read out of `ANSWER_QUESTIONS`'s object literal —
+         * the ONE table setup_answers.ts derives its spellings, its merge, and its schema link from. That
+         * table is module-private and exporting it would be a production change made for a test, so the
+         * source text is the honest runtime enumeration. It is cross-checked against the LIVE table below
+         * — `answerSpelling` throws on a key the table does not own — so a pattern that drifted from the
+         * declaration fails loudly instead of quietly shrinking the guard.
+         *
+         * Block entries (`at: "block"`) are excluded: a block is spellable, so a block-shaped file error
+         * names both spellings, but it holds answers rather than being one and so has no destination of
+         * its own to reach. That is the same cut `AnswerValueKey` makes at the type level.
          */
         function declaredAnswerKeys(): string[] {
             const source = readFileSync(join(import.meta.dir, "setup_answers.ts"), "utf8");
-            const table = /const ANSWER_SPELLINGS = \{\n([\s\S]*?)\n\} as const satisfies/.exec(source)?.[1];
+            const table = /const ANSWER_QUESTIONS = \{\n([\s\S]*?)\n\} as const satisfies/.exec(source)?.[1];
             expect(table).toBeDefined();
-            // The pattern has exactly one capture group, so every match carries it.
-            return [...(table ?? "").matchAll(/^ {4}"?([A-Za-z][\w.]*)"?:\s/gm)].map((match) => match[1]!);
+            // Both capture groups are mandatory in the pattern, so every match carries them.
+            return [...(table ?? "").matchAll(/^ {4}"?([A-Za-z][\w.]*)"?: \{(.*)\},$/gm)]
+                .filter((match) => !match[2]!.includes('at: "block"'))
+                .map((match) => match[1]!);
         }
 
         test("the coverage table names every answerable question — a new answer cannot ship unproven", () => {
             const declared = declaredAnswerKeys();
             for (const key of declared) {
-                // The cast is checked by the assertion it feeds: a key `ANSWER_SPELLINGS` does not own
-                // renders as "`undefined` / `key`", which fails here rather than passing as a spelling.
-                expect(answerSpelling(key as AnswerKey)).not.toContain("`undefined`");
+                // The cast is checked by the assertion it feeds: a key `ANSWER_QUESTIONS` does not own has
+                // no entry to read a flag off, so `answerSpelling` throws rather than rendering a spelling.
+                expect(answerSpelling(key as AnswerKey)).toContain(`\`${key}\``);
             }
             // Both directions in one comparison, which is also what catches a pattern that matched nothing.
             expect(declared.toSorted()).toEqual(Object.keys(ANSWER_COVERAGE).toSorted());

@@ -21,7 +21,9 @@ import { type ConnectionMode } from "./compose.ts";
 //     resolved modes cannot consume (a direct-only `--base-url` under cliproxy, an `--embeddings-gguf` with
 //     api-key embeddings) is an ERROR, not a no-op, and so is an answer whose consuming MODE is unanswered:
 //     an unresolved mode is not a promise that a prompt will resolve the way the answer needs. Silently
-//     dropping either is how a fleet ends up misconfigured with a green setup run.
+//     dropping either is how a fleet ends up misconfigured with a green setup run. The ONE override that is
+//     not an error is announced instead: a mode-carrying FLAG supersedes the FILE's leaves that only the
+//     mode it replaced could consume, and every dropped key is named in `ResolvedSetupAnswers.notes`.
 //   - EVERY ERROR NAMES BOTH SPELLINGS (see {@link answerSpelling}), because the same question is
 //     answerable from a flag or a file key and the author must be able to fix it in either.
 //
@@ -95,6 +97,23 @@ function trimmedAnswer(error: string): z.ZodString {
 }
 
 /**
+ * A URL answer: a {@link trimmedAnswer} that must also parse AS a URL — which is to say WITH a scheme,
+ * because the WHATWG parser is given no base to resolve against. `gw.corp/v1`, the shape a hand-written
+ * file most often carries, fails here rather than at the first model request.
+ *
+ * The interactive prompts have always enforced this; the refinement is what makes the flag and file legs
+ * agree with them, so one question has one validity rule whichever front-end answers it (design D7).
+ */
+function urlAnswer(): z.ZodString {
+    return trimmedAnswer("must not be empty").refine(
+        // Emptiness is the trim check's problem and is already reported by it; re-reporting it as a URL
+        // problem would be two messages for one mistake.
+        (value) => value === "" || URL.canParse(value),
+        { error: "must be a URL with a scheme, e.g. https://gw.corp/v1" },
+    );
+}
+
+/**
  * The credential-source answer — the strict-parse mirror of `modelAuthSchema` (lib/config.ts), which the
  * orchestrator persists verbatim as `models.connection.auth`. Declared separately rather than imported
  * because the persisted schema is deliberately LENIENT (config.json is runtime state that must survive
@@ -144,7 +163,7 @@ export const setupAnswersSchema = z.strictObject({
              * instead of failing.
              */
             provider: z.string().trim().toLowerCase().min(1, { error: "must not be empty" }).optional(),
-            baseURL: trimmedAnswer("must not be empty").optional(),
+            baseURL: urlAnswer().optional(),
             protocol: z.enum(["anthropic", "openai-compatible"]).optional(),
             model: trimmedAnswer("must not be empty").optional(),
             auth: setupAuthAnswerSchema.optional(),
@@ -185,7 +204,7 @@ export const setupAnswersSchema = z.strictObject({
     embedding: z
         .strictObject({
             mode: z.enum(["local", "api-key", "off"]).optional(),
-            baseURL: trimmedAnswer("must not be empty").optional(),
+            baseURL: urlAnswer().optional(),
             model: trimmedAnswer("must not be empty").optional(),
             gguf: trimmedAnswer("must not be empty").optional(),
         })
@@ -249,56 +268,176 @@ export function describeSetupAnswersError(error: SetupAnswersError): string {
     }
 }
 
-// --- both spellings of one question ----------------------------------------
+// --- one table of questions -------------------------------------------------
 
 /**
- * Every answerable question in BOTH spellings: its config-file key path → its flag, or `null` when the
- * question has no flag (a value too niche for argv, answerable only in a file). The single source behind
- * {@link answerSpelling}, so an error message can never name one spelling and forget the other.
+ * The BLOCKS of the answers document — the top-level keys whose value is a mapping of further questions,
+ * as opposed to the top-level leaves (`refs`, `sandbox`, `runtime`) that carry a value of their own.
+ *
+ * Derived from the schema rather than listed, so a new block joins by its schema declaration alone. The
+ * array guard is what keeps `refs` out: a sequence is a VALUE, not a mapping of questions.
  */
-const ANSWER_SPELLINGS = {
-    "connection.mode": "--connection",
-    "connection.provider": "--provider",
-    "connection.baseURL": "--base-url",
-    "connection.protocol": "--protocol",
-    "connection.model": "--model",
-    "connection.auth": "--auth-env / --auth-command",
-    "connection.auth.kind": "--auth-env / --auth-command",
-    "connection.auth.var": "--auth-env",
-    "connection.auth.command": "--auth-command",
-    "connection.auth.scheme": "--auth-scheme",
-    "connection.auth.format": "--auth-format",
-    "connection.auth.ttlMs": null,
-    "postgres.user": "--postgres-user",
-    "postgres.password": "--postgres-password",
-    "postgres.port": "--postgres-port",
-    "postgres.database": "--postgres-database",
-    "postgres.host": "--postgres-host",
-    "resources.sharePct": "--resource-share",
-    "embedding.mode": "--embeddings",
-    "embedding.baseURL": "--embeddings-url",
-    "embedding.model": "--embeddings-model",
-    "embedding.gguf": "--embeddings-gguf",
-    refs: "--refs",
-    sandbox: "--sandbox",
-    runtime: "--runtime",
-} as const satisfies Record<string, string | null>;
+type AnswerBlock = {
+    [K in keyof SetupAnswers]-?: NonNullable<SetupAnswers[K]> extends readonly unknown[] ? never : NonNullable<SetupAnswers[K]> extends object ? K : never;
+}[keyof SetupAnswers];
+
+/** A top-level answer that is a value in its own right — everything the document holds that is not a block. */
+type AnswerTopLeaf = Exclude<keyof SetupAnswers, AnswerBlock>;
+
+/** The leaf names one block owns. */
+type LeafOf<B extends AnswerBlock> = Extract<keyof NonNullable<SetupAnswers[B]>, string>;
+
+/** Every key of every member of a union — plain `keyof` would yield only the keys the members share. */
+type KeysOfUnion<T> = T extends unknown ? keyof T : never;
+
+/**
+ * The key paths the SCHEMA owns: the blocks, each block's leaves, and the top-level leaves. The question
+ * table below must cover this set exactly, which is the compile-time link that makes an answer added to the
+ * schema alone a BUILD error rather than a value that parses and is then never spelled, merged, or consumed.
+ */
+type SchemaAnswerKey = AnswerBlock | AnswerTopLeaf | { [B in AnswerBlock]: `${B}.${LeafOf<B>}` }[AnswerBlock];
+
+/**
+ * The fields INSIDE the credential-source answer. They are not schema leaves — `connection.auth` is one
+ * question whose interior is a discriminated union — but each is spellable, because a zod issue can land on
+ * one and the author needs to know which flag writes it. Derived from the auth schema for the same reason
+ * the block leaves are: a field added there must not become an unspellable path.
+ */
+type AuthFieldKey = `connection.auth.${Extract<KeysOfUnion<SetupAuthAnswer>, string>}`;
+
+/**
+ * Where a question's value sits in an answer set — everything {@link mergeAnswers} needs to move it from a
+ * front-end into the merged set, and nothing more.
+ */
+type AnswerLocation =
+    /** The block itself: a container. Spellable (a block-shaped file error names it), never a value. */
+    | { readonly at: "block" }
+    /** A leaf under a block — the merge unit `block.leaf`. */
+    | { readonly at: "leaf"; readonly block: AnswerBlock; readonly leaf: string }
+    /** A top-level leaf; its own merge unit. */
+    | { readonly at: "top"; readonly leaf: AnswerTopLeaf }
+    /** A field inside another answer (the credential source's interior) — spellable, never merged on its own. */
+    | { readonly at: "within" };
+
+/**
+ * The table entry a given key must carry: its flag spelling, plus the {@link AnswerLocation} the key itself
+ * implies. A `postgres.port` entry can therefore only say `block: "postgres", leaf: "port"` — mistyping
+ * either is a compile error, which is what lets {@link mergeAnswers} trust the table instead of re-deriving
+ * the paths beside it.
+ */
+type AnswerQuestion<K extends string> = { readonly flag: string | null } & (K extends `${infer B}.${infer L}`
+    ? B extends AnswerBlock
+        ? L extends LeafOf<B>
+            ? Extract<AnswerLocation, { at: "leaf" }> & { readonly block: B; readonly leaf: L }
+            : Extract<AnswerLocation, { at: "within" }>
+        : never
+    : K extends AnswerBlock
+      ? Extract<AnswerLocation, { at: "block" }>
+      : Extract<AnswerLocation, { at: "top" }> & { readonly leaf: K });
+
+/**
+ * EVERY answerable question, declared ONCE: its config-file key path (this module's canonical id) → the
+ * flag that answers it and where its value lives. Four surfaces read this one table — {@link answerSpelling}
+ * renders both spellings from it, {@link mergeAnswers} walks it to merge flag-over-file per leaf, the
+ * orchestrator's answer-coverage guard re-derives the key set from this declaration, and the `satisfies`
+ * below ties it to the schema's leaf set — so an answer can no longer ship parsed-but-dropped or unspelled
+ * because someone updated three places out of four (design D3).
+ *
+ * `flag` is `null` for a question with no flag at all (a value too niche for argv, answerable only in a
+ * file). A BLOCK is not answerable by one flag — its flags are a family — so its entry names that family
+ * rather than a single switch: enough for an author staring at a mis-shaped `postgres:` to know which flags
+ * fill it, without pasting nine flags into one error line.
+ */
+const ANSWER_QUESTIONS = {
+    connection: { flag: "--connection / --provider / --base-url / …", at: "block" },
+    "connection.mode": { flag: "--connection", at: "leaf", block: "connection", leaf: "mode" },
+    "connection.provider": { flag: "--provider", at: "leaf", block: "connection", leaf: "provider" },
+    "connection.baseURL": { flag: "--base-url", at: "leaf", block: "connection", leaf: "baseURL" },
+    "connection.protocol": { flag: "--protocol", at: "leaf", block: "connection", leaf: "protocol" },
+    "connection.model": { flag: "--model", at: "leaf", block: "connection", leaf: "model" },
+    "connection.auth": { flag: "--auth-env / --auth-command", at: "leaf", block: "connection", leaf: "auth" },
+    "connection.auth.kind": { flag: "--auth-env / --auth-command", at: "within" },
+    "connection.auth.var": { flag: "--auth-env", at: "within" },
+    "connection.auth.command": { flag: "--auth-command", at: "within" },
+    "connection.auth.scheme": { flag: "--auth-scheme", at: "within" },
+    "connection.auth.format": { flag: "--auth-format", at: "within" },
+    "connection.auth.ttlMs": { flag: null, at: "within" },
+    postgres: { flag: "--postgres-*", at: "block" },
+    "postgres.user": { flag: "--postgres-user", at: "leaf", block: "postgres", leaf: "user" },
+    "postgres.password": { flag: "--postgres-password", at: "leaf", block: "postgres", leaf: "password" },
+    "postgres.port": { flag: "--postgres-port", at: "leaf", block: "postgres", leaf: "port" },
+    "postgres.database": { flag: "--postgres-database", at: "leaf", block: "postgres", leaf: "database" },
+    "postgres.host": { flag: "--postgres-host", at: "leaf", block: "postgres", leaf: "host" },
+    resources: { flag: "--resource-share", at: "block" },
+    "resources.sharePct": { flag: "--resource-share", at: "leaf", block: "resources", leaf: "sharePct" },
+    embedding: { flag: "--embeddings / --embeddings-*", at: "block" },
+    "embedding.mode": { flag: "--embeddings", at: "leaf", block: "embedding", leaf: "mode" },
+    "embedding.baseURL": { flag: "--embeddings-url", at: "leaf", block: "embedding", leaf: "baseURL" },
+    "embedding.model": { flag: "--embeddings-model", at: "leaf", block: "embedding", leaf: "model" },
+    "embedding.gguf": { flag: "--embeddings-gguf", at: "leaf", block: "embedding", leaf: "gguf" },
+    refs: { flag: "--refs", at: "top", leaf: "refs" },
+    sandbox: { flag: "--sandbox", at: "top", leaf: "sandbox" },
+    runtime: { flag: "--runtime", at: "top", leaf: "runtime" },
+} as const satisfies { readonly [K in SchemaAnswerKey | AuthFieldKey]: AnswerQuestion<K> };
 
 /** A setup question, named by its config-file key path (the key `--config` files use, and this module's canonical id). */
-export type AnswerKey = keyof typeof ANSWER_SPELLINGS;
+export type AnswerKey = keyof typeof ANSWER_QUESTIONS;
+
+/**
+ * A question that carries a VALUE — every {@link AnswerKey} except the block containers, which are
+ * spellable (a block-shaped file error names them) but hold answers rather than being one.
+ *
+ * Exported for the orchestrator's answer-coverage guard, which asserts that each answer reaches a
+ * destination: a block has no destination of its own to reach, so keying that guard on the whole
+ * {@link AnswerKey} set would demand a case that cannot exist.
+ */
+export type AnswerValueKey = Exclude<AnswerKey, AnswerBlock>;
 
 /**
  * Name a question in both spellings — ``` `--base-url` / `connection.baseURL` ``` — the opening of every
  * error this module reports. A file-only question renders as its key plus the reason it has no flag.
  */
 export function answerSpelling(key: AnswerKey): string {
-    const flag = ANSWER_SPELLINGS[key];
+    const flag = ANSWER_QUESTIONS[key].flag;
     return flag === null ? `\`${key}\` (config file only)` : `\`${flag}\` / \`${key}\``;
 }
 
 function isAnswerKey(key: string): key is AnswerKey {
-    return Object.hasOwn(ANSWER_SPELLINGS, key);
+    return Object.hasOwn(ANSWER_QUESTIONS, key);
 }
+
+/** `Object.keys` for an `as const` table: the stdlib signature widens to `string[]`, losing what the declaration proves. */
+function keysOf<T extends object>(table: T): (keyof T & string)[] {
+    // Sound because every key of a `const`-asserted object literal IS one of its literal key types; the
+    // widening TypeScript applies here is a limitation of the signature, not a real loss of knowledge.
+    return Object.keys(table) as (keyof T & string)[];
+}
+
+/** A block whose `mode` leaf decides which of its OTHER leaves are answerable at all. */
+type ModeGatedBlock = Extract<AnswerBlock, "connection" | "embedding">;
+
+/** The mode vocabulary of one mode-gated block. */
+type ModeOf<B extends ModeGatedBlock> = NonNullable<NonNullable<SetupAnswers[B]>["mode"]>;
+
+/**
+ * Which leaves each mode-carrying block gates, and the ONE mode that can consume each. Two rules read it
+ * and must never disagree: the mismatch errors below (an answer no resolved mode can consume is an ERROR,
+ * never a no-op) and the supersede drop {@link mergeAnswers} performs when a mode-carrying FLAG moves a
+ * block away from the mode the FILE's leaves were written for.
+ *
+ * `connection.provider` and `connection.model` are deliberately absent: both are valid in either mode
+ * (cliproxy names an OAuth account kind and pins a model too), so neither is gated by the mode.
+ */
+const MODE_GATED_LEAVES = {
+    connection: { baseURL: "direct", protocol: "direct", auth: "direct" },
+    embedding: { gguf: "local", baseURL: "api-key", model: "api-key" },
+} as const satisfies { readonly [B in ModeGatedBlock]: Readonly<Partial<Record<LeafOf<B>, ModeOf<B>>>> };
+
+/** The mode-gated blocks, in the order their supersede notes are reported. */
+const MODE_GATED_BLOCKS = keysOf(MODE_GATED_LEAVES);
+
+/** A plain decimal integer, optionally signed — the ONLY numeric literal shape either front-end accepts. */
+const DECIMAL_INTEGER = /^[+-]?\d+$/;
 
 /**
  * How a problem at the DOCUMENT root is named. An empty issue path — the whole file is a scalar, or the
@@ -364,6 +503,16 @@ function causeMessage(cause: unknown): string {
     return cause instanceof Error ? cause.message : String(cause);
 }
 
+/**
+ * The problem lines inside an error, for the places that CONCATENATE two error's lists into one report.
+ *
+ * The file-boundary branch exists for totality over {@link SetupAnswersError}, not because a boundary error
+ * ever reaches a fold — an unreadable or unparseable file is terminal and returns on its own.
+ */
+function problemsIn(error: SetupAnswersError): readonly string[] {
+    return error.type === "answers_invalid" ? error.problems : [describeSetupAnswersError(error)];
+}
+
 function parseAnswers(document: unknown, path: string | undefined): Result<SetupAnswers, SetupAnswersError> {
     const parsed = setupAnswersSchema.safeParse(document);
     if (parsed.success) return ok(parsed.data);
@@ -410,19 +559,55 @@ type MappingLevel = {
     lastKey: string;
 };
 
+/** What the RAW-text scan finds — the two things the parsed document can no longer show. */
+type RawAnswerScan = {
+    /** Full key paths answered twice, in the order they occur. */
+    readonly duplicates: readonly string[];
+    /** Full key path → the raw scalar text the author wrote after it, for every mapping entry that had one. */
+    readonly scalars: ReadonlyMap<string, string>;
+};
+
+/** A trailing YAML comment on a value line: `#` starts one only when whitespace precedes it. */
+const TRAILING_COMMENT = /\s+#.*$/;
+
+/** A one-line flow mapping (`postgres: {port: 8080}`) — a block written inline. */
+const FLOW_MAPPING = /^\{(.*)\}$/;
+
+/** Record one mapping entry's raw value under its full key path, descending ONE level into a flow mapping. */
+function recordScalar(scalars: Map<string, string>, path: string, raw: string): void {
+    const value = raw.replace(TRAILING_COMMENT, "");
+    const flow = FLOW_MAPPING.exec(value);
+    if (flow === null) {
+        if (value !== "") scalars.set(path, value);
+        return;
+    }
+    // The single level is what makes a block written inline (`postgres: {port: 0x1F5B}`) readable to the
+    // numeric check below; descending further would be a hand-rolled YAML parser in all but name, and every
+    // value this map is consulted for is a scalar leaf sitting directly under a block.
+    for (const field of flow[1]!.split(",")) {
+        const at = field.indexOf(":");
+        if (at === -1) continue;
+        scalars.set(`${path}.${field.slice(0, at).trim()}`, field.slice(at + 1).trim());
+    }
+}
+
 /**
- * Find duplicate mapping keys in the RAW file text, as `a.b.c` paths, in the order they occur.
+ * Scan the RAW file text for what the parsed document cannot report: mapping keys answered twice, and the
+ * literal each value was written as.
  *
- * This exists because `Bun.YAML.parse` resolves duplicates last-wins BEFORE any of this module's code sees
- * the document (`runtime: docker` + `runtime: podman` parses to `{runtime: "podman"}`), so a fleet file with
- * two `embedding:` blocks silently loses the first — precisely the failure strict parsing exists to prevent,
- * and undetectable from the parsed value. The raw text is the only place the evidence still exists.
+ * Both exist because `Bun.YAML.parse` has already resolved the evidence away by the time any of this
+ * module's code sees a value. Duplicates go last-wins (`runtime: docker` + `runtime: podman` parses to
+ * `{runtime: "podman"}`), so a fleet file with two `embedding:` blocks silently loses the first — precisely
+ * the failure strict parsing exists to prevent. And a numeric literal is already a number (`0x1F5B` is
+ * 8027), so the file would accept a port shape the flag front-end rejects. The raw text is the only place
+ * either fact survives.
  *
  * It is a LINE SCAN, not a YAML parser, and the honest statement of what that buys is the list of what it
  * does NOT see:
  *
- * - **Flow mappings.** `embedding: {mode: local, mode: off}` is one line with one key to this scan; the
- *   inner duplicate is invisible.
+ * - **Flow mappings, beyond one level.** `embedding: {mode: local, mode: off}` is one line with one key to
+ *   the duplicate half of the scan; the inner duplicate is invisible. The scalar half descends exactly one
+ *   level (see {@link recordScalar}), which is as deep as any numeric answer sits.
  * - **Block-sequence items.** A `- ` line, and everything indented under it, is skipped entirely — the
  *   answers schema's only list is `refs` (a list of scalars), so descending would add parser complexity for
  *   no reachable duplicate.
@@ -432,8 +617,9 @@ type MappingLevel = {
  *   prose of that exact shape would be a false positive. Nothing in the answers schema takes a multi-line
  *   value, which is what makes that trade acceptable rather than merely unlikely.
  */
-function duplicateMappingKeys(text: string): string[] {
+function scanAnswersText(text: string): RawAnswerScan {
     const duplicates: string[] = [];
+    const scalars = new Map<string, string>();
     const levels: MappingLevel[] = [];
     let blockScalarIndent: number | undefined;
     let sequenceIndent: number | undefined;
@@ -474,9 +660,54 @@ function duplicateMappingKeys(text: string): string[] {
             level.keys.add(key);
             level.lastKey = key;
         }
-        if (BLOCK_SCALAR_HEADER.test((entry[2] ?? "").trim())) blockScalarIndent = indent;
+        // Non-null: the branch above either pushed a level or found one, so the stack is never empty here.
+        const path = [...levels[levels.length - 1]!.path, key].join(".");
+        const value = (entry[2] ?? "").trim();
+        if (BLOCK_SCALAR_HEADER.test(value)) blockScalarIndent = indent;
+        else recordScalar(scalars, path, value);
     }
-    return duplicates;
+    return { duplicates, scalars };
+}
+
+/**
+ * The answers whose value is a NUMBER, and whose literal shape the file must therefore state as plainly as
+ * the flag does.
+ */
+const NUMERIC_ANSWER_KEYS = ["postgres.port", "resources.sharePct", "connection.auth.ttlMs"] as const satisfies readonly AnswerKey[];
+
+/** Walk a dotted key path into the parsed document. Anything the path cannot be followed through is absent. */
+function answerAt(document: unknown, key: string): unknown {
+    let node: unknown = document;
+    for (const segment of key.split(".")) {
+        if (typeof node !== "object" || node === null) return undefined;
+        // unknown in, unknown out: the document is unvalidated YAML, and an indexed read is the only way
+        // into it. Nothing downstream treats the result as a checked value — the only question asked of it
+        // below is `typeof === "number"`.
+        node = (node as Record<string, unknown>)[segment];
+    }
+    return node;
+}
+
+/**
+ * Reject a numeric answer whose raw literal is not a plain decimal integer, naming both spellings and the
+ * text the author actually wrote — the same rule, and the same message, {@link wholeNumber} enforces on the
+ * flag side. `Bun.YAML.parse` resolves `0x1F5B` to 8027 and `1e2` to 100 before zod can see either, so this
+ * parity cannot live in the schema (design D4).
+ *
+ * Gated on the PARSED value already being a number, which keeps the check to exactly the hole it exists
+ * for: a literal YAML turned into a number the author did not write. Anything else — a quoted `'5555'`, a
+ * bare `abc` — is a plain type error the schema reports in the author's own terms, and reporting it here
+ * too would be two messages for one mistake.
+ */
+function nonDecimalNumericProblems(scan: RawAnswerScan, document: unknown): string[] {
+    const problems: string[] = [];
+    for (const key of NUMERIC_ANSWER_KEYS) {
+        const raw = scan.scalars.get(key);
+        if (raw === undefined || DECIMAL_INTEGER.test(raw)) continue;
+        if (typeof answerAt(document, key) !== "number") continue;
+        problems.push(`${answerSpelling(key)} — must be a whole number (got "${raw}").`);
+    }
+    return problems;
 }
 
 /**
@@ -486,10 +717,11 @@ function duplicateMappingKeys(text: string): string[] {
  * failure a fleet can have is a mistyped key that silently skips a step.
  *
  * Parsed with the runtime's native YAML (`Bun.YAML.parse`, Bun 1.3+), so the answers file costs no
- * dependency. Two things the parsed value cannot tell us are therefore checked around it: duplicate keys,
- * which YAML resolves last-wins before the value exists ({@link duplicateMappingKeys}), and emptiness — a
- * file that answers nothing is a broken deploy, not an intent worth honoring silently, whether it spells
- * that as no document at all or as an empty `{}` mapping.
+ * dependency. Three things the parsed value cannot tell us are therefore checked around it: duplicate keys,
+ * which YAML resolves last-wins before the value exists, numeric literals YAML has already normalized away
+ * (both from {@link scanAnswersText}), and emptiness — a file that answers nothing is a broken deploy, not
+ * an intent worth honoring silently, whether it spells that as no document at all or as an empty `{}`
+ * mapping.
  */
 export function readAnswersFile(path: string): Result<SetupAnswers, SetupAnswersError> {
     function invalid(problems: readonly string[]): Result<SetupAnswers, SetupAnswersError> {
@@ -507,10 +739,10 @@ export function readAnswersFile(path: string): Result<SetupAnswers, SetupAnswers
             )().map((document) => ({ text, document })),
         )
         .andThen(({ text, document }) => {
-            const duplicates = duplicateMappingKeys(text);
-            if (duplicates.length > 0) {
+            const scan = scanAnswersText(text);
+            if (scan.duplicates.length > 0) {
                 return invalid(
-                    duplicates.map(
+                    scan.duplicates.map(
                         (key) =>
                             `\`${key}\` is answered twice — YAML keeps only the LAST of two identical keys, so the earlier answer would be discarded without a word. Delete one.`,
                     ),
@@ -519,12 +751,16 @@ export function readAnswersFile(path: string): Result<SetupAnswers, SetupAnswers
             // Bun.YAML.parse yields null for an empty (or comment-only) document; zod would report it as a
             // type error against the whole file, which reads as a schema problem rather than an empty file.
             if (document === null || document === undefined) return invalid([EMPTY_FILE_PROBLEM]);
-            return parseAnswers(document, path).andThen((answers) =>
-                // A document that parses to `{}` — an explicit empty mapping, or blocks that are each
-                // empty — answers nothing either, and provisioning every default off it is the same
-                // silent misconfiguration an empty file is.
-                answersNothing(answers) ? invalid([EMPTY_FILE_PROBLEM]) : ok(answers),
-            );
+            const numeric = nonDecimalNumericProblems(scan, document);
+            const parsed = parseAnswers(document, path);
+            // One pass over the file: a badly-shaped numeric literal and a schema violation elsewhere are
+            // both things the author fixes in the same editor session, so both are reported together.
+            if (parsed.isErr()) return invalid([...numeric, ...problemsIn(parsed.error)]);
+            if (numeric.length > 0) return invalid(numeric);
+            // A document that parses to `{}` — an explicit empty mapping, or blocks that are each empty —
+            // answers nothing either, and provisioning every default off it is the same silent
+            // misconfiguration an empty file is.
+            return answersNothing(parsed.value) ? invalid([EMPTY_FILE_PROBLEM]) : ok(parsed.value);
         });
 }
 
@@ -589,15 +825,13 @@ function pruned<T extends Record<string, unknown>>(block: T): T | undefined {
     return Object.values(block).some((value) => value !== undefined) ? block : undefined;
 }
 
-/** A plain decimal integer, optionally signed — the ONLY shape {@link wholeNumber} accepts. */
-const DECIMAL_INTEGER = /^[+-]?\d+$/;
-
 /**
  * Read a numeric flag as the whole number its error message promises. The shape is matched BEFORE `Number`
  * rather than inferred from it, because `Number` also speaks JavaScript's other integer literals: it reads
  * `0x10` as 16 and `1e2` as 100, both `Number.isInteger`, so a `--postgres-port 0x10` would provision port
  * 16 while the author reads their file as naming 0x10. A value the CLI cannot echo back unchanged is a
- * value the author cannot verify, so it is an error instead.
+ * value the author cannot verify, so it is an error instead. The file front-end holds the same line
+ * ({@link nonDecimalNumericProblems}) — one question, one value grammar.
  */
 function wholeNumber(raw: string | undefined, key: AnswerKey, problems: string[]): number | undefined {
     if (raw === undefined) return undefined;
@@ -675,6 +909,10 @@ function authFromFlags(flags: SetupAnswerFlags, problems: string[]): unknown {
  * Value-domain errors (a misspelled mode, an out-of-range percentage) surface here naming both spellings;
  * CONTEXTUAL requirements are not checked here — they belong to {@link resolveSetupAnswers}, which sees
  * the merged set.
+ *
+ * ONE PASS (design D6): flag-level problems no longer short-circuit the schema. An author who mistyped a
+ * port AND a sandbox variant is told about both in the same run, which is the same contract
+ * {@link resolveSetupAnswers} holds within a single set.
  */
 export function answersFromFlags(flags: SetupAnswerFlags): Result<SetupAnswers, SetupAnswersError> {
     const problems: string[] = [];
@@ -706,11 +944,13 @@ export function answersFromFlags(flags: SetupAnswerFlags): Result<SetupAnswers, 
         sandbox: flags.sandbox,
         runtime: flags.runtime,
     };
+    const parsed = parseAnswers(raw, undefined);
+    if (problems.length === 0) return parsed;
     // A flag that could not even be turned into a candidate value (a non-numeric port, an incoherent
-    // credential source) is reported before the schema runs, so its message names the flag rather than
-    // zod's view of a value we already know we dropped.
-    if (problems.length > 0) return err({ type: "answers_invalid", path: undefined, problems });
-    return parseAnswers(raw, undefined);
+    // credential source) was DROPPED from `raw` above, so the schema never sees it and it cannot
+    // double-report: its own message — which names the flag, not zod's view of a value we already know we
+    // discarded — simply rides alongside whatever else the schema found.
+    return err({ type: "answers_invalid", path: undefined, problems: [...problems, ...(parsed.isErr() ? problemsIn(parsed.error) : [])] });
 }
 
 // --- resolution ------------------------------------------------------------
@@ -761,39 +1001,89 @@ export type ResolvedSetupAnswers = {
      * applied early, because applying it would pre-empt the wizard's first question).
      */
     readonly connectionMode: ConnectionMode | undefined;
+    /**
+     * Advisories the run must SHOW but that are not failures — today, the file leaves a mode-carrying flag
+     * superseded (design D5).
+     *
+     * DATA, not output: this module never prints, which is what keeps it a pure function of its inputs, so
+     * the ORCHESTRATOR owns rendering these exactly as it owns rendering {@link describeSetupAnswersError}.
+     * An empty array is the normal case.
+     */
+    readonly notes: readonly string[];
 };
 
-/** Merge one question: the flag answer when present, else the file's. Applied per LEAF, so a file block survives a single overriding flag. */
-function mergeAnswers(file: SetupAnswers, flags: SetupAnswers): SetupAnswers {
-    return {
-        connection: pruned({
-            mode: flags.connection?.mode ?? file.connection?.mode,
-            provider: flags.connection?.provider ?? file.connection?.provider,
-            baseURL: flags.connection?.baseURL ?? file.connection?.baseURL,
-            protocol: flags.connection?.protocol ?? file.connection?.protocol,
-            model: flags.connection?.model ?? file.connection?.model,
-            // The credential source is ONE question, not four: its fields are interlocked by `kind`, so a
-            // flag-declared source replaces a file-declared one wholesale rather than merging across kinds.
-            auth: flags.connection?.auth ?? file.connection?.auth,
-        }),
-        postgres: pruned({
-            user: flags.postgres?.user ?? file.postgres?.user,
-            password: flags.postgres?.password ?? file.postgres?.password,
-            port: flags.postgres?.port ?? file.postgres?.port,
-            database: flags.postgres?.database ?? file.postgres?.database,
-            host: flags.postgres?.host ?? file.postgres?.host,
-        }),
-        resources: pruned({ sharePct: flags.resources?.sharePct ?? file.resources?.sharePct }),
-        embedding: pruned({
-            mode: flags.embedding?.mode ?? file.embedding?.mode,
-            baseURL: flags.embedding?.baseURL ?? file.embedding?.baseURL,
-            model: flags.embedding?.model ?? file.embedding?.model,
-            gguf: flags.embedding?.gguf ?? file.embedding?.gguf,
-        }),
-        refs: flags.refs ?? file.refs,
-        sandbox: flags.sandbox ?? file.sandbox,
-        runtime: flags.runtime ?? file.runtime,
-    };
+/**
+ * One leaf of one block, addressed by NAME. The generic merge cannot use the per-block object types (each
+ * block owns a different leaf set), so the widening lives here, in one place: what makes it sound is
+ * {@link ANSWER_QUESTIONS}'s `satisfies` link, which already proves every `block`/`leaf` pair handed over
+ * is a real leaf of a real block.
+ */
+function leafOf(answers: SetupAnswers, block: AnswerBlock, leaf: string): unknown {
+    return (answers[block] as Readonly<Record<string, unknown>> | undefined)?.[leaf];
+}
+
+/**
+ * Merge the two front-ends one question at a time — the flag's answer when it has one, else the file's —
+ * walking {@link ANSWER_QUESTIONS} so a new question joins the merge by its table entry alone.
+ *
+ * Per LEAF, so a file block survives a single overriding flag. The credential source is the apparent
+ * exception that is really the rule: `connection.auth` is ONE leaf, because its fields are interlocked by
+ * `kind`, so a flag-declared source replaces a file-declared one wholesale rather than merging across kinds.
+ *
+ * The one thing the table alone cannot express is the SUPERSEDE: when a mode-carrying flag moves a block to
+ * a mode the file's leaves were not written for, those leaves are dropped here and named in
+ * {@link ResolvedSetupAnswers.notes}. Both of this module's rules survive that only because the drop is
+ * announced — "a flag overrides the file's answer for that question" and "no answer is silently ignored"
+ * are simultaneously true only for an ANNOUNCED override. A same-source contradiction (a flag mode against
+ * a flag leaf, a file mode against a file leaf) is untouched and still fails in validation: that is an
+ * authoring mistake, not an override.
+ */
+function mergeAnswers(file: SetupAnswers, flags: SetupAnswers): { readonly answers: SetupAnswers; readonly notes: readonly string[] } {
+    const notes: string[] = [];
+    /** The `block.leaf` merge units a mode-carrying flag has made moot; they resolve to unanswered. */
+    const superseded = new Set<string>();
+    for (const block of MODE_GATED_BLOCKS) {
+        const flagMode: string | undefined = flags[block]?.mode;
+        if (flagMode === undefined) continue;
+        const dropped: string[] = [];
+        for (const leaf of keysOf(MODE_GATED_LEAVES[block])) {
+            const consumer: string = MODE_GATED_LEAVES[block][leaf];
+            if (consumer === flagMode) continue;
+            // The flag answering the leaf TOO is a same-source contradiction, not an override: left in
+            // place so validation reports it, exactly as an all-file mismatch is reported.
+            if (leafOf(flags, block, leaf) !== undefined) continue;
+            if (leafOf(file, block, leaf) === undefined) continue;
+            superseded.add(`${block}.${leaf}`);
+            dropped.push(`${block}.${leaf}`);
+        }
+        if (dropped.length > 0) {
+            notes.push(
+                `\`${ANSWER_QUESTIONS[`${block}.mode`].flag} ${flagMode}\` supersedes ${dropped.map((key) => `\`${key}\``).join(", ")} from the answers file — ` +
+                    `those values answer a mode the flag replaced, so they are not applied on this machine.`,
+            );
+        }
+    }
+
+    const merged: Record<string, unknown> = {};
+    const blocks = new Map<AnswerBlock, Record<string, unknown>>();
+    for (const [key, question] of Object.entries(ANSWER_QUESTIONS)) {
+        if (question.at === "leaf") {
+            const leaves = blocks.get(question.block) ?? {};
+            blocks.set(question.block, leaves);
+            leaves[question.leaf] = superseded.has(key)
+                ? undefined
+                : (leafOf(flags, question.block, question.leaf) ?? leafOf(file, question.block, question.leaf));
+        } else if (question.at === "top") {
+            merged[question.leaf] = flags[question.leaf] ?? file[question.leaf];
+        }
+    }
+    for (const [block, leaves] of blocks) merged[block] = pruned(leaves);
+
+    // The loop writes exactly the keys the table declares, each with the value type its schema leaf owns —
+    // a shape TypeScript cannot follow key-by-key out of a generic walk, but that the table's `satisfies`
+    // link has already proven. Nothing else can reach this object, so the assertion cannot go stale
+    // silently: a table entry naming a leaf the schema dropped is a compile error at the declaration.
+    return { answers: merged as SetupAnswers, notes };
 }
 
 function isOAuthAccountKind(value: string): boolean {
@@ -804,17 +1094,14 @@ function isOAuthAccountKind(value: string): boolean {
 }
 
 /**
- * The connection questions only a DIRECT endpoint can consume, key and value written together so the pair
- * can never drift. `provider` and `model` are deliberately absent — both are valid in either mode (cliproxy
- * names an OAuth account kind and pins a model too), so `--provider claude` on an interactive run must stay
- * the long-standing valid invocation it is.
+ * The connection questions only a DIRECT endpoint can consume, read off {@link MODE_GATED_LEAVES} so this
+ * rule and the supersede drop can never disagree about which leaves those are. `provider` and `model` are
+ * absent from that table for a reason worth repeating here: both are valid in either mode (cliproxy names
+ * an OAuth account kind and pins a model too), so `--provider claude` on an interactive run must stay the
+ * long-standing valid invocation it is.
  */
 function directOnlyAnswers(connection: SetupAnswers["connection"]): readonly (readonly [AnswerKey, unknown])[] {
-    return [
-        ["connection.baseURL", connection?.baseURL],
-        ["connection.protocol", connection?.protocol],
-        ["connection.auth", connection?.auth],
-    ];
+    return keysOf(MODE_GATED_LEAVES.connection).map((leaf) => [`connection.${leaf}`, connection?.[leaf]] as const);
 }
 
 /** Validate the connection questions against the mode they resolved to. */
@@ -880,6 +1167,20 @@ function validateConnection(answers: SetupAnswers, mode: ConnectionMode | undefi
     }
 }
 
+/** The embedding modes that actually CONSUME a value — `off` gates nothing, so it never needs a phrasing. */
+type EmbeddingValueMode = (typeof MODE_GATED_LEAVES)["embedding"][keyof (typeof MODE_GATED_LEAVES)["embedding"]];
+
+/**
+ * How a mismatch error names an embedding VALUE: by the role it plays at the backend rather than by the
+ * mode word, so the line reads as an explanation ("answers a local embedding model, but the mode resolves
+ * to api-key") instead of a restatement. Keyed on the mode that consumes the value, so every gated leaf
+ * has a phrasing by construction.
+ */
+const EMBEDDING_VALUE_ROLE: Readonly<Record<EmbeddingValueMode, string>> = {
+    local: "a local embedding model",
+    "api-key": "an api-key embedding endpoint",
+};
+
 /** Validate the embedding questions against the mode they resolved to, including the secret's environment channel. */
 function validateEmbedding(answers: SetupAnswers, batch: boolean, readKey: () => string | undefined, problems: string[]): void {
     const embedding = answers.embedding;
@@ -890,31 +1191,19 @@ function validateEmbedding(answers: SetupAnswers, batch: boolean, readKey: () =>
         // interactive step keeps the existing backend and the value answer never reaches a writer, so the run
         // reports success having written nothing. The value can only be honored by the mode that consumes it,
         // so the mode is required wherever a value is answered.
-        const backendAnswers: readonly (readonly [AnswerKey, string | undefined])[] = [
-            ["embedding.baseURL", embedding?.baseURL],
-            ["embedding.model", embedding?.model],
-            ["embedding.gguf", embedding?.gguf],
-        ];
-        for (const [key, answered] of backendAnswers) {
-            if (answered !== undefined) {
-                problems.push(
-                    `${answerSpelling(key)} names a value for an embedding backend, but nothing answers ${answerSpelling("embedding.mode")} — without it the configured backend is left as it is and this value is discarded. Add the mode, or drop the value.`,
-                );
-            }
+        for (const leaf of keysOf(MODE_GATED_LEAVES.embedding)) {
+            if (embedding?.[leaf] === undefined) continue;
+            problems.push(
+                `${answerSpelling(`embedding.${leaf}`)} names a value for an embedding backend, but nothing answers ${answerSpelling("embedding.mode")} — without it the configured backend is left as it is and this value is discarded. Add the mode, or drop the value.`,
+            );
         }
         return;
     }
-    if (embedding?.gguf !== undefined && mode !== "local") {
-        problems.push(`${answerSpelling("embedding.gguf")} answers a local embedding model, but ${answerSpelling("embedding.mode")} resolves to ${mode}.`);
-    }
-    if (embedding?.baseURL !== undefined && mode !== "api-key") {
+    for (const leaf of keysOf(MODE_GATED_LEAVES.embedding)) {
+        const consumer = MODE_GATED_LEAVES.embedding[leaf];
+        if (embedding?.[leaf] === undefined || consumer === mode) continue;
         problems.push(
-            `${answerSpelling("embedding.baseURL")} answers an api-key embedding endpoint, but ${answerSpelling("embedding.mode")} resolves to ${mode}.`,
-        );
-    }
-    if (embedding?.model !== undefined && mode !== "api-key") {
-        problems.push(
-            `${answerSpelling("embedding.model")} answers an api-key embedding endpoint, but ${answerSpelling("embedding.mode")} resolves to ${mode}.`,
+            `${answerSpelling(`embedding.${leaf}`)} answers ${EMBEDDING_VALUE_ROLE[consumer]}, but ${answerSpelling("embedding.mode")} resolves to ${mode}.`,
         );
     }
     // The secret has exactly one channel — no flag, no file key — so batch must prove it is present before
@@ -939,7 +1228,7 @@ export function resolveSetupAnswers(
     file: SetupAnswers | undefined,
     context: SetupAnswersContext,
 ): Result<ResolvedSetupAnswers, SetupAnswersError> {
-    const answers = mergeAnswers(file ?? {}, flags);
+    const { answers, notes } = mergeAnswers(file ?? {}, flags);
     const batch = context.batch;
     // Batch resolves the connection default up front (cliproxy) so every mode-keyed rule below has a mode
     // to check against; an interactive run leaves it open for the wizard's first prompt.
@@ -976,21 +1265,18 @@ export function resolveSetupAnswers(
     validateEmbedding(answers, batch, context.embeddingApiKey ?? resolveEmbeddingApiKey, problems);
 
     if (problems.length > 0) return err({ type: "answers_invalid", path: undefined, problems });
-    return ok({ answers, batch, connectionMode });
+    return ok({ answers, batch, connectionMode, notes });
 }
 
 /**
  * One error's problem lines, attributed to the input they came from. Used where the two front-ends are
  * folded into ONE error: that error has no single `path`, so the header can no longer say which input a line
  * is about and each file problem carries its file inline instead.
- *
- * The file-boundary branch exists for totality over {@link SetupAnswersError}, not because a boundary error
- * reaches the fold — {@link loadSetupAnswers} returns those before any folding.
  */
 function attributedProblems(error: SetupAnswersError): readonly string[] {
-    if (error.type !== "answers_invalid") return [describeSetupAnswersError(error)];
-    const path = error.path;
-    return path === undefined ? error.problems : error.problems.map((problem) => `in \`${path}\`: ${problem}`);
+    const path = error.type === "answers_invalid" ? error.path : undefined;
+    const problems = problemsIn(error);
+    return path === undefined ? problems : problems.map((problem) => `in \`${path}\`: ${problem}`);
 }
 
 /**
