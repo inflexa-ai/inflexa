@@ -17,6 +17,7 @@ import { currentNotice, notify } from "./hooks/notice.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
 import { profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
 import { usePromptRecall } from "./hooks/prompt_recall.ts";
+import { watchOpenThread } from "./hooks/thread.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
@@ -36,7 +37,6 @@ import { listAnalysisInputs } from "../db/primary_query.ts";
 import type { Analysis } from "../types/analysis.ts";
 
 type AppProps = {
-    sessionId: string;
     workingDir: string;
     analysis: Analysis;
 };
@@ -372,11 +372,12 @@ export function App(props: AppProps) {
     // chat hot-state reset on an in-place swap is driven reactively by the `Chat` component (an
     // effect on `workspace.sessionId`), so App no longer passes an imperative reset hook. Seeded
     // once from props — App mounts a single time with fixed props — so the body-level reads are a
-    // deliberate one-time seed, hence the scoped disable.
+    // deliberate one-time seed, hence the scoped disable. The thread seeds `null`: it lives in
+    // Postgres, so nothing can resolve one before boot reaches `ready` (watchOpenThread binds it there).
     /* eslint-disable solid/reactivity -- seed-once: App mounts once with fixed props; the store is seeded from them and thereafter written only via openSession */
     const workspace = createWorkspace({
         analysis: props.analysis,
-        sessionId: props.sessionId,
+        sessionId: null,
         workingDir: props.workingDir,
         openDialog: dialogPush,
         closeDialog: dialogClose,
@@ -388,6 +389,11 @@ export function App(props: AppProps) {
     // in-place analysis swap, fire-and-forget, mapping the outcome to a notice. An app-level reactive
     // hook so the boot/analysis watch runs under App's reactive owner; never fires before `ready`.
     watchProfileParity(workspace);
+
+    // Bind the open chat's pg conversation thread once boot reaches `ready` (Postgres is its only
+    // source), and keep that thread's row snapshot — the sidebar SESSION section's title/age — in step
+    // with whatever is bound. An app-level reactive hook so the boot/scope watch runs under App's owner.
+    watchOpenThread(workspace);
 
     // Wire the sidebar's live-data lifecycle: lifecycle-edge refreshes + the bounded,
     // active-work-gated poll. One call, under App's reactive owner (the store holds the snapshots the
@@ -829,6 +835,15 @@ export function App(props: AppProps) {
             conversation.setError("No analysis is open — cannot start a turn.");
             return;
         }
+        // The thread is bound by a Postgres round-trip fired on the same `ready` edge that opened this
+        // gate, so a submit typed during the boot animation can land in the window before it resolves —
+        // with no thread id to append the turn to. Refuse with a notice (not the error banner: nothing
+        // failed) and keep the typed text, since the very next submit lands once the bind completes.
+        const threadId = workspace.sessionId;
+        if (threadId === null) {
+            notify({ kind: "info", text: `Opening the conversation${GLYPHS.ellipsis}` });
+            return;
+        }
         // A non-empty `text` was read off `textareaRef.editBuffer` above, so the ref is mounted.
         textareaRef!.setText("");
         // Only an accepted submit reaches here — every refusal above returned with focus and text intact.
@@ -839,7 +854,7 @@ export function App(props: AppProps) {
 
         // The conversation store owns the request lifecycle (the turn-scoped AbortController + the
         // shared turn engine); the harness emit adapter writes the stream, so App only hands off the text.
-        await conversation.send({ sessionId: workspace.sessionId, analysisId: analysis.id, userText: text });
+        await conversation.send({ sessionId: threadId, analysisId: analysis.id, userText: text });
     }
 
     // The failed message the boot gate surfaces in the chat column; `undefined` while merely booting.

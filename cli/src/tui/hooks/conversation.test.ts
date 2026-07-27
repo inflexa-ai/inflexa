@@ -762,8 +762,8 @@ describe("loadMessages windows the newest turns past one page", () => {
                 };
                 return okAsync(result);
             },
-            // Faithful reconstruction: each stored row (a fixture Row, cast through the StoredMessage
-            // seam type) becomes one CortexMsg carrying its text, so the trailing message cap is exercised.
+            // Faithful reconstruction: each stored row (a fixture Row, cast through the seam's harness
+            // message type) becomes one CortexMsg carrying its text, so the trailing message cap is exercised.
             toCortex: async (_pool, _analysisId, rows) =>
                 (rows as unknown as Row[]).map((r) => ({ id: `id-${r.seq}`, role: r.role, parts: [{ type: "text", text: r.text }] })) as unknown as CortexMsg[],
             fetched: () => fetched,

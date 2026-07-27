@@ -58,7 +58,7 @@ async function renderChat(target: ChatTarget): Promise<void> {
     }
 
     setTheme(readConfig().theme);
-    void render(() => <App sessionId={target.sessionId} workingDir={target.workingDir} analysis={target.analysis} />, {
+    void render(() => <App workingDir={target.workingDir} analysis={target.analysis} />, {
         exitOnCtrlC: false,
         // 60fps so the smooth streamed-text reveal (conversation.ts) repaints finely; the renderer is
         // on-demand, so an idle chat still costs no frames. Matches the opencode TUI cadence.

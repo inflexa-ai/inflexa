@@ -97,11 +97,6 @@ export function buildProgram(): Command {
         },
     );
 
-    registerAction(cli.command("sessions").description("List saved sessions"), { kind: "auto", safeFlags: [] }, async () => {
-        const { listSessions } = await import("../modules/analysis/sessions.ts");
-        await listSessions();
-    });
-
     registerAction(
         cli.command("config").description("View and change settings"),
         {

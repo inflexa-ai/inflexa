@@ -481,7 +481,7 @@ export const envDoc: Readonly<
         EnvDocEntry
     >
 > = Object.freeze({
-    dbPath: { kind: "path", label: "database", description: "saved sessions (SQLite)", baseVar: dataVar },
+    dbPath: { kind: "path", label: "database", description: "analyses, projects, and their input refs (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "log files, rotated daily, 7-day retention", baseVar: dataVar },
     refsDir: {
         kind: "path",

@@ -3,29 +3,10 @@ import { sep } from "node:path";
 import type { Result } from "neverthrow";
 import { tryMutation, withTransaction } from "./util.ts";
 import type { DbError } from "./errors.ts";
-import type { Session, Message, Part, TextPart } from "../types/session.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Project } from "../types/project.ts";
 import type { Analysis, AnalysisInput } from "../types/analysis.ts";
 import type { Str256 } from "../lib/types.ts";
-
-/**
- * Creates and persists a new chat session for an analysis, defaulting the title when omitted.
- * The analysis link lives in the `analysis_id` column (queried/joined by
- * `listSessionsByAnalysis`), not the Session JSON — so the Session type stays link-free.
- */
-export function createSession(opts: { title?: string; analysisId: string }): Result<Session, DbError> {
-    const session: Session = {
-        id: randomUUIDv7(),
-        title: opts.title ?? "New session",
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-    };
-    return tryMutation("createSession", (conn) => {
-        conn.query("INSERT INTO sessions (id, data, analysis_id) VALUES (?, ?, ?)").run(session.id, JSON.stringify(session), opts.analysisId);
-        return session;
-    });
-}
 
 /**
  * Mints and persists a new project. A duplicate `name` trips the `UNIQUE` constraint and
@@ -55,67 +36,9 @@ export function createProject(input: { name: Str256; description: string | null;
     });
 }
 
-/** Persists `session`, stamping a fresh `updatedAt` (mutates the argument). Returns rows changed — `0` when no such session exists. */
-export function updateSession(session: Session): Result<number, DbError> {
-    session.updatedAt = Date.now();
-    return tryMutation("updateSession", (conn) => {
-        return conn.query("UPDATE sessions SET data = ? WHERE id = ?").run(JSON.stringify(session), session.id).changes;
-    });
-}
-
-/** Creates and persists an empty message turn for `role` in the session. */
-export function createMessage(sessionId: string, role: "user" | "assistant"): Result<Message, DbError> {
-    const msg: Message = {
-        id: randomUUIDv7(),
-        sessionId,
-        role,
-        createdAt: Date.now(),
-    };
-
-    return tryMutation("createMessage", (conn) => {
-        conn.query("INSERT INTO messages (id, data, session_id) VALUES (?, ?, ?)").run(msg.id, JSON.stringify(msg), msg.sessionId);
-        return msg;
-    });
-}
-
-/** Persists `message`'s data blob (e.g. the assistant turn's stamped `durationMs`). Returns rows changed — `0` when no such message exists. */
-export function updateMessage(message: Message): Result<number, DbError> {
-    return tryMutation("updateMessage", (conn) => {
-        return conn.query("UPDATE messages SET data = ? WHERE id = ?").run(JSON.stringify(message), message.id).changes;
-    });
-}
-
-/** Creates and persists a text part under a message — the unit the assistant streams into. */
-export function createPart(sessionId: string, messageId: string, text: string): Result<TextPart, DbError> {
-    const part: TextPart = {
-        id: randomUUIDv7(),
-        sessionId,
-        messageId,
-        type: "text",
-        text,
-        createdAt: Date.now(),
-    };
-    return tryMutation("createPart", (conn) => {
-        conn.query("INSERT INTO parts (id, data, session_id, message_id) VALUES (?, ?, ?, ?)").run(
-            part.id,
-            JSON.stringify(part),
-            part.sessionId,
-            part.messageId,
-        );
-        return part;
-    });
-}
-
-/** Persists a part's current text — called once the stream into it completes. Returns rows changed — `0` when no such part exists. */
-export function updatePart(part: Part): Result<number, DbError> {
-    return tryMutation("updatePart", (conn) => {
-        return conn.query("UPDATE parts SET data = ? WHERE id = ?").run(JSON.stringify(part), part.id).changes;
-    });
-}
-
 /**
  * Inserts a fully-formed anchor row. The caller supplies the id — rather than this
- * minting one like the session helpers — because an anchor's id is its write-once
+ * minting one like {@link createProject} — because an anchor's id is its write-once
  * marker id, which may already exist on disk and must be preserved, not regenerated.
  */
 export function insertAnchor(anchor: Anchor): Result<Anchor, DbError> {
@@ -210,7 +133,7 @@ export function deleteAnalysesForAnchor(anchorId: string): Result<number, DbErro
     });
 }
 
-/** Deletes a single analysis by id. Its `analysis_inputs` and `sessions` cascade via FKs. Returns rows deleted from analyses — `0` when no such row exists. */
+/** Deletes a single analysis by id. Its `analysis_inputs` cascade via the FK. Returns rows deleted from analyses — `0` when no such row exists. */
 export function deleteAnalysis(id: string): Result<number, DbError> {
     return tryMutation("deleteAnalysis", (conn) => {
         return conn.query("DELETE FROM analyses WHERE id = ?").run(id).changes;
@@ -228,27 +151,6 @@ export function deleteProject(id: string): Result<number, DbError> {
             }),
         ),
     );
-}
-
-/** Deletes a session and its messages/parts (which cascade via FKs). Returns rows deleted — `0` when no such row exists. */
-export function deleteSession(id: string): Result<number, DbError> {
-    return tryMutation("deleteSession", (conn) => {
-        return conn.query("DELETE FROM sessions WHERE id = ?").run(id).changes;
-    });
-}
-
-/** Renames a session by rewriting its JSON `data` blob's `title` field. Returns rows changed — `0` when no such session exists. */
-export function renameSession(id: string, title: string): Result<number, DbError> {
-    return tryMutation("renameSession", (conn) => {
-        const row = conn.query("SELECT data FROM sessions WHERE id = ?").get(id) as { data: string } | null;
-        if (!row) return 0;
-        // Data written by our own JSON.stringify in createSession — parse failure means a corrupt
-        // DB blob, which tryMutation surfaces as mutation_failed (an appropriate severity).
-        const session = JSON.parse(row.data) as Session;
-        session.title = title;
-        session.updatedAt = Date.now();
-        return conn.query("UPDATE sessions SET data = ? WHERE id = ?").run(JSON.stringify(session), id).changes;
-    });
 }
 
 /** Renames an analysis and regenerates its slug. The caller provides the new name + slug. Returns rows changed — `0` when no such analysis exists. */

@@ -8,8 +8,10 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import { isInterruptedMessage, markInterruptedMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { countTokens } from "./count-tokens.js";
 import { __resetThreadHistoryMetricsForTest, createThreadHistory, EVICTION_BLOCK_TURNS, type ThreadHistory } from "./thread-history.js";
+import { createThreadStore } from "./thread-store.js";
 
 const THREAD = "analysis-thread-1";
+const ANALYSIS = "analysis-1";
 
 // --- message builders -------------------------------------------------------
 
@@ -143,6 +145,38 @@ describe("appendTurn / loadRecent round-trip", () => {
 
     it("returns an empty array for a thread with no messages", async () => {
         expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual([]);
+    });
+});
+
+// --- thread activity --------------------------------------------------------
+
+describe("appendTurn thread activity", () => {
+    it("bumps the thread's updated_at so the listing orders by activity, not by creation", async () => {
+        const store = createThreadStore(pool);
+        (await store.createThread({ threadId: "older", analysisId: ANALYSIS, title: "Older" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "newer", analysisId: ANALYSIS, title: "Newer" }))._unsafeUnwrap();
+
+        // Creation order alone puts "newer" on top — the precondition that makes
+        // the post-append order below a real reorder rather than a coincidence.
+        const before = (await store.listThreads({ analysisId: ANALYSIS }))._unsafeUnwrap();
+        expect(before.threads.map((t) => t.threadId)).toEqual(["newer", "older"]);
+        const newerUpdatedAt = before.threads.find((t) => t.threadId === "newer")!.updatedAt;
+
+        (await history.appendTurn("older", [userText("question one"), assistantText("answer one")]))._unsafeUnwrap();
+
+        const after = (await store.listThreads({ analysisId: ANALYSIS }))._unsafeUnwrap();
+        expect(after.threads.map((t) => t.threadId)).toEqual(["older", "newer"]);
+        expect(after.threads[0]!.updatedAt.getTime()).toBeGreaterThanOrEqual(newerUpdatedAt.getTime());
+    });
+
+    it("persists the turn for a thread that has no metadata row", async () => {
+        const turn = [userText("question one"), assistantText("answer one")];
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+
+        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn);
+
+        const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_analysis_threads WHERE thread_id = $1", [THREAD]);
+        expect(Number(rows[0]!.count)).toBe(0);
     });
 });
 

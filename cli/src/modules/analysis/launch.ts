@@ -1,11 +1,9 @@
-import { findProjectByRef, getSession, listSessionsByAnalysis } from "../../db/primary_query.ts";
-import { createSession } from "../../db/primary_mutation.ts";
+import { findProjectByRef } from "../../db/primary_query.ts";
 import { recoverAnchors, resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
 import { confirm, dieOn, fail, promptText, select } from "../../lib/cli.ts";
 import { getLogger } from "../../lib/log.ts";
 import { str256, type Str256, type IdOrName } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
-import type { Session } from "../../types/session.ts";
 import { createAnalysis, matchAnalysis } from "./analysis.ts";
 import { resolveContext, describeContext, type ContextFlags } from "./context.ts";
 import { resolveOutputDir } from "./output.ts";
@@ -17,10 +15,8 @@ import { resolveOutputDir } from "./output.ts";
 // tui/launch.tsx, which calls these resolvers and renders their result. The clack prompts run
 // in the normal-stdio phase, before the renderer takes over the terminal.
 
-/** What the renderer needs to open a chat: the resolved session, its working directory, and the analysis it belongs to. */
+/** What the renderer needs to open a chat: its working directory and the analysis it belongs to. */
 export type ChatTarget = {
-    /** The session to render — resumed, most-recent, or freshly created. */
-    sessionId: string;
     /** Absolute path the chat is rooted at (the analysis's resolved anchor path). */
     workingDir: string;
     /** The analysis the chat operates on. */
@@ -28,11 +24,16 @@ export type ChatTarget = {
 };
 
 /**
- * Resolve the chat target for an analysis: root it at the analysis's anchor path and pick the
- * session to open — the given one, the most-recent, or a fresh one linked to the analysis.
+ * Resolve the chat target for an analysis: root it at the analysis's anchor path, healing an anchor
+ * whose folder moved.
+ *
+ * Deliberately resolves NO conversation thread. Thread identity lives only in Postgres, which the
+ * launcher would have to auto-start and provision to reach — dragging container lifecycle into the
+ * pre-render phase of every launch, for a chat that is unusable until the runtime boots anyway. The
+ * TUI binds a thread once boot reaches `ready` instead, which also keeps this path free of any write
+ * (no-litter): a launch that opens a chat nobody types into persists nothing.
  */
-function resolveChatTarget(opts: { analysis: Analysis; resumeSessionId?: string }): ChatTarget {
-    const analysis = opts.analysis;
+function resolveChatTarget(analysis: Analysis): ChatTarget {
     const workingDir = resolveAnchor(analysis.anchorId).match(
         (resolved) => resolvedPathOrCached(resolved) ?? process.cwd(),
         () => process.cwd(),
@@ -49,22 +50,7 @@ function resolveChatTarget(opts: { analysis: Analysis; resumeSessionId?: string 
         (error) => log.warn({ err: error }, "anchor recovery failed"),
     );
 
-    let session: Session | null = null;
-    if (opts.resumeSessionId) {
-        session = getSession(opts.resumeSessionId).match((s) => s, dieOn("Failed to load session"));
-    }
-    if (!session) {
-        // listSessionsByAnalysis is unordered; pick the most recently active, else start fresh.
-        const existing = listSessionsByAnalysis(analysis.id).match(
-            (ss) => ss,
-            () => [],
-        );
-        existing.sort((a, b) => b.updatedAt - a.updatedAt);
-        const [mostRecent] = existing;
-        session = mostRecent ?? createSession({ title: `Chat — ${analysis.name}`, analysisId: analysis.id }).match((s) => s, dieOn("Failed to create session"));
-    }
-
-    return { sessionId: session.id, workingDir, analysis };
+    return { workingDir, analysis };
 }
 
 // Prompt for a valid analysis name, validating live and re-asking until one is given.
@@ -87,7 +73,7 @@ async function promptName(): Promise<Str256> {
 async function startNewTarget(cwd: string): Promise<ChatTarget> {
     const name = await promptName();
     const analysis = createAnalysis({ cwd, name }).match((a) => a, dieOn("Failed to start analysis"));
-    return resolveChatTarget({ analysis });
+    return resolveChatTarget(analysis);
 }
 
 // Numbered picker over existing analyses plus a trailing "start new" entry.
@@ -100,7 +86,7 @@ async function pickOrStartTarget(analyses: Analysis[], cwd: string): Promise<Cha
     if (choice === NEW) return startNewTarget(cwd);
     const chosen = analyses.find((a) => a.id === choice);
     if (!chosen) fail("No selection.");
-    return resolveChatTarget({ analysis: chosen });
+    return resolveChatTarget(chosen);
 }
 
 /** `inflexa new [name] [paths...]` — create an analysis (anchor = cwd) and resolve its chat target. */
@@ -134,7 +120,7 @@ export async function resolveNewTarget(opts: { name?: string; paths: string[]; p
     console.log(`\n  Created analysis "${analysis.name}"`);
     if (outDir) console.log(`  Workspace: ${outDir}\n`);
 
-    return resolveChatTarget({ analysis });
+    return resolveChatTarget(analysis);
 }
 
 /** `inflexa resume <id|name>` — resolve the chat target for an existing analysis. */
@@ -150,7 +136,7 @@ export function resolveResumeTarget(ref: IdOrName): ChatTarget {
         fail("Re-run `inflexa resume` with a specific id.");
     }
 
-    return resolveChatTarget({ analysis: match.analysis });
+    return resolveChatTarget(match.analysis);
 }
 
 /**
@@ -165,10 +151,10 @@ export async function resolveDefaultTarget(flags: ContextFlags): Promise<ChatTar
 
     switch (ctx.kind) {
         case "analysis":
-            return resolveChatTarget({ analysis: ctx.analysis });
+            return resolveChatTarget(ctx.analysis);
         case "anchor": {
             const [only] = ctx.analyses;
-            if (ctx.analyses.length === 1 && only) return resolveChatTarget({ analysis: only });
+            if (ctx.analyses.length === 1 && only) return resolveChatTarget(only);
             if (ctx.analyses.length === 0) {
                 if (await confirm(`No analyses here yet. Start one in ${ctx.anchorPath}?`)) return startNewTarget(cwd);
                 console.log("Cancelled.");
@@ -184,7 +170,7 @@ export async function resolveDefaultTarget(flags: ContextFlags): Promise<ChatTar
             );
             const chosen = ctx.analyses.find((a) => a.id === choice);
             if (!chosen) fail("No selection.");
-            return resolveChatTarget({ analysis: chosen });
+            return resolveChatTarget(chosen);
         }
         case "empty":
             if (await confirm(`Start a new analysis in ${ctx.cwd}?`)) return startNewTarget(cwd);

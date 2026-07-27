@@ -1,20 +1,4 @@
-export type Session = {
-    id: string;
-    title: string;
-    createdAt: number;
-    updatedAt: number;
-};
-
-export type Message = {
-    id: string;
-    sessionId: string;
-    role: "user" | "assistant";
-    createdAt: number;
-    /** Wall-clock duration of the turn, ms. Assistant turns only — stamped when the stream finishes; absent on user turns and on an assistant turn not yet completed. */
-    durationMs?: number;
-};
-
-/** A plain text part — the only kind the live engine produces and the only kind persisted. */
+/** A plain text part — the only kind the live engine produces. */
 export type TextPart = {
     id: string;
     sessionId: string;
@@ -237,16 +221,11 @@ export type FileEditPart = {
 };
 
 /**
- * A message part. `TextPart` is the only kind persisted to SQLite; `tool-call`,
- * `plan-card`, `run-card`, `presentation`, and `openable-card` are produced live by
- * the harness emit adapter (and reconstructed on transcript reload); `ask-card` is
- * produced live only (a live-turn-only visual, never reconstructed on reload — the
- * ledger is its durable record); `thinking`/`file-edit` remain MOCK (fixture-driven)
- * so the gallery can render every design-system state. Discriminated on `type`.
+ * A message part. `text`, `tool-call`, `plan-card`, `run-card`, `presentation`, and
+ * `openable-card` are produced live by the harness emit adapter (and reconstructed on
+ * transcript reload from the thread's stored turns); `ask-card` is produced live only (a
+ * live-turn-only visual, never reconstructed on reload — the ledger is its durable record);
+ * `thinking`/`file-edit` remain MOCK (fixture-driven) so the gallery can render every
+ * design-system state. Discriminated on `type`.
  */
 export type Part = TextPart | ThinkingPart | ToolCallPart | FileEditPart | PlanCardPart | RunCardPart | PresentationPart | OpenableCardPart | AskCardPart;
-
-export type StoredMessage = {
-    info: Message;
-    parts: Part[];
-};

@@ -92,6 +92,21 @@ export const migrations: Migration[] = [
             CREATE INDEX idx_parts_session ON parts(session_id);
         `,
     },
+    {
+        // A conversation is single-homed in the harness Postgres thread store: it owns the session's
+        // identity, its title, its activity timestamps, and every message. These three SQLite tables
+        // were the second home — frozen with no writer and no reader, their transcript rows
+        // unreachable from any surface — so the drop deliberately deletes that legacy data rather
+        // than leave dead schema inviting a new reader and reopening "which store is authoritative".
+        // Dropped child-first (parts → messages → sessions) because foreign keys are enforced on the
+        // app connection; each table's indexes go with it, so they need no statements of their own.
+        version: 2,
+        up: `
+            DROP TABLE parts;
+            DROP TABLE messages;
+            DROP TABLE sessions;
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

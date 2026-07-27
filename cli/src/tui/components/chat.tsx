@@ -31,20 +31,21 @@ export type ChatProps = {
 export function Chat(props: ChatProps) {
     const ws = useWorkspace();
 
-    // Load the transcript from the pg thread, reacting to BOTH the open session AND the runtime boot
-    // reaching `ready` — the pg thread read needs the booted pool, so a session opened while booting
-    // loads once boot flips to `ready`. On an in-place session swap, reset the hot state
-    // before loading the new thread. `on` runs once immediately, then on each session/phase change.
+    // Load the transcript from the pg thread, reacting to BOTH the bound thread AND the runtime boot
+    // reaching `ready` — the pg thread read needs the booted pool, and the thread itself is bound only
+    // at that same edge. On an in-place session swap, reset the hot state before loading the new
+    // thread. `on` runs once immediately, then on each thread/phase change.
     createEffect(
         on(
             () => [ws.sessionId, bootState().phase] as const,
             ([sessionId, phase], prev) => {
                 const prevSessionId = prev?.[0];
                 if (prevSessionId !== undefined && prevSessionId !== sessionId) resetHotState();
-                // Legacy/unscoped chats have no analysis to key the pg thread's card resolver on;
-                // they render empty (SQLite history is frozen, not shown here).
+                // No thread bound yet (pre-`ready`, or its resolution still in flight) means there is
+                // nothing to read; the chat renders empty until the bind lands and re-fires this effect.
+                // An unscoped chat likewise has no analysis to key the thread's card resolver on.
                 const analysis = ws.analysis;
-                if (phase === "ready" && analysis) void loadMessages(sessionId, analysis.id);
+                if (phase === "ready" && analysis && sessionId !== null) void loadMessages(sessionId, analysis.id);
             },
         ),
     );

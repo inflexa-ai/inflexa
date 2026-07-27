@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { runCli } from "../test_support/cli.ts";
 import { closeDb } from "../db/primary.ts";
 import { freshDb } from "../test_support/db.ts";
-import { createProject, createSession, insertAnalysis, insertAnchor } from "../db/primary_mutation.ts";
+import { createProject, insertAnalysis, insertAnchor } from "../db/primary_mutation.ts";
 import { asStr256 } from "../lib/types.ts";
 
 const created: string[] = [];
@@ -63,15 +63,6 @@ describe("read commands (e2e)", () => {
         const result = runCli(["project", "ls"]);
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("Acme");
-    });
-
-    test("inflexa sessions lists a seeded session", () => {
-        seedAnalysis();
-        createSession({ title: "My Chat", analysisId: "ana1" })._unsafeUnwrap();
-        closeDb();
-        const result = runCli(["sessions"]);
-        expect(result.exitCode).toBe(0);
-        expect(result.stdout).toContain("My Chat");
     });
 
     test("inflexa status in a marker-less directory reports empty context", () => {

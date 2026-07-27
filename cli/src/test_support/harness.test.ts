@@ -182,6 +182,6 @@ describe("runCli", () => {
         const result = runCli(["--help"]);
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("Usage: inflexa");
-        expect(result.stdout).toContain("sessions");
+        expect(result.stdout).toContain("status");
     });
 });

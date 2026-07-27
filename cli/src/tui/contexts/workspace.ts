@@ -23,8 +23,13 @@ import type { Project } from "../../types/project.ts";
 export type Workspace = {
     /** The open analysis, or `null` when the chat is not analysis-scoped (keeps the command `enabled` guards meaningful). */
     analysis: Analysis | null;
-    /** The currently-open chat session. */
-    sessionId: string;
+    /**
+     * The open chat's Postgres conversation thread id — the one session identity. `null` until it is
+     * resolved, which cannot happen before the harness boot reaches `ready` (the thread store has no
+     * pre-boot source); a non-null id may still have no row yet, since a freshly minted identity's row
+     * is created by the first turn. Every session-scoped surface treats `null` as "not bound yet".
+     */
+    sessionId: string | null;
     /** The open chat's resolved working directory. */
     workingDir: string;
     /** The analysis's linked project, resolved from `analysis.projectId`; `null` when unlinked. */
@@ -33,8 +38,8 @@ export type Workspace = {
     openDialog: (render: () => JSX.Element) => void;
     /** Pop the top modal. */
     closeDialog: () => void;
-    /** Swap the open chat in place — resume a different analysis/session without a restart. */
-    openSession: (sessionId: string, workingDir: string, analysis: Analysis) => void;
+    /** Swap the open chat in place — bind a different thread and/or analysis without a restart. */
+    openSession: (threadId: string | null, workingDir: string, analysis: Analysis) => void;
     /** Quit the app cleanly (restore the terminal, then exit). */
     quit: () => Promise<void>;
 };
@@ -46,7 +51,8 @@ export type Workspace = {
  */
 export type WorkspaceInit = {
     analysis: Analysis | null;
-    sessionId: string;
+    /** The thread id to seed the scope with — `null` on every launch, since nothing pre-boot can resolve one. */
+    sessionId: string | null;
     workingDir: string;
     openDialog: (render: () => JSX.Element) => void;
     closeDialog: () => void;
@@ -101,7 +107,7 @@ export function createWorkspace(init: WorkspaceInit, seams: WorkspaceSeams = rea
         // store exists. This is also the lock chokepoint: as the SOLE scope writer, re-keying the
         // analysis lock here means no in-process switch can bypass it. Invariant: acquire the target
         // BEFORE releasing the current, so a refused switch never strands us lockless.
-        openSession(sessionId, workingDir, analysis) {
+        openSession(threadId, workingDir, analysis) {
             const prev = store.analysis;
             // A same-analysis session switch (prev.id === analysis.id) needs no re-key — we already
             // hold this analysis's lock (acquire would re-entrantly succeed, release would drop the
@@ -126,7 +132,7 @@ export function createWorkspace(init: WorkspaceInit, seams: WorkspaceSeams = rea
                 seams.abortTurn();
                 if (prev) seams.releaseLock(prev.id);
             }
-            setStore({ analysis, sessionId, workingDir, project: projectForAnalysis(analysis) });
+            setStore({ analysis, sessionId: threadId, workingDir, project: projectForAnalysis(analysis) });
         },
     });
     return store;
