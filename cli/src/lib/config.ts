@@ -200,11 +200,89 @@ export function selectedRuntime(): ContainerRuntime | null {
     return id === undefined ? null : runtimes[id];
 }
 
+/**
+ * Peel the wrappers zod stacks around a declaration — `.optional()`, `.catch()`, `.default()`, and the
+ * pipe a `.transform()` builds — down to the `z.object` underneath, and yield its shape. `null` for
+ * anything that declares no keys: a scalar, a `z.record` (its keys are user data, not declarations), and
+ * the deliberately-opaque `z.unknown()` blocks (`harness`, `models`).
+ *
+ * A wrapper kind this ladder does not know degrades to `null` rather than to a wrong shape, so an
+ * unrecognized declaration costs schema POSITION for that block, never determinism (see
+ * {@link canonicalKeyOrder}, whose fallback is value-derived).
+ */
+function declaredShape(schema: z.core.$ZodType): Record<string, z.core.$ZodType> | null {
+    let current: z.core.$ZodType = schema;
+    // Terminates because each step strips exactly one wrapper off a finite declaration; the deepest
+    // here is `embedding`'s `.catch().default().transform()`.
+    for (;;) {
+        if (current instanceof z.ZodObject) return current.shape;
+        if (
+            current instanceof z.ZodOptional ||
+            current instanceof z.ZodNullable ||
+            current instanceof z.ZodDefault ||
+            current instanceof z.ZodCatch ||
+            current instanceof z.ZodReadonly
+        ) {
+            current = current.unwrap();
+            continue;
+        }
+        // `.transform()` produces a pipe; the INPUT side carries the declaration, the output side is
+        // the transform itself and declares nothing.
+        if (current instanceof z.ZodPipe) {
+            current = current.in;
+            continue;
+        }
+        return null;
+    }
+}
+
+/**
+ * Rebuild `value` with a canonical key order — every key `schema` declares first, in declaration order,
+ * then every remaining key sorted lexicographically — recursing into nested objects and array elements.
+ *
+ * The point is that the emitted bytes must be a function of the config's VALUES alone. Callers build
+ * configs by spreading (`{ ...readConfig(), runtime }`, setup's persist-only-explicit writers), so a
+ * top-level key the parsed config lacked — `harness`, created by setup's resource step — is APPENDED by
+ * the spread instead of landing in its schema position. Two runs that agree on every value would then
+ * produce byte-different config.json purely from insertion order.
+ *
+ * Undeclared keys sort lexicographically rather than keeping insertion order, because insertion order is
+ * exactly the input this function exists to eliminate. That covers `keybinds` (a record — its keys ARE
+ * user data), and the `harness`/`models` blocks, which cross this schema as `unknown` by design: lib/
+ * must not import the module that owns the harness contract, so there is no declared order here to
+ * follow. Alphabetical is the only order derivable from the value itself.
+ */
+function canonicalKeyOrder(value: unknown, schema: z.core.$ZodType | null): unknown {
+    // Array ORDER is data — only the elements' interior keys get reordered. No `configSchema` field is an
+    // array, so an element's own declaration is never reachable; its keys fall to the alphabetical rule.
+    if (Array.isArray(value)) return value.map((item) => canonicalKeyOrder(item, null));
+    if (typeof value !== "object" || value === null) return value;
+    // Sound: the guards above narrowed `value` to a non-null, non-array object.
+    const record = value as Record<string, unknown>;
+
+    const shape = schema === null ? null : declaredShape(schema);
+    const declared = shape === null ? [] : Object.keys(shape);
+    const declaredSet = new Set(declared);
+    // Own keys only — `in` walks the prototype chain and would invent `toString` & friends.
+    const own = Object.keys(record);
+    const ownSet = new Set(own);
+    const ordered = [...declared.filter((key) => ownSet.has(key)), ...own.filter((key) => !declaredSet.has(key)).sort()];
+
+    const canonical: Record<string, unknown> = {};
+    for (const key of ordered) canonical[key] = canonicalKeyOrder(record[key], shape?.[key] ?? null);
+    return canonical;
+}
+
+/**
+ * Persist the user config, serialized in a canonical key order derived from {@link configSchema} (see
+ * {@link canonicalKeyOrder}) so that a config with the same values always produces the same bytes — the
+ * property `inflexa setup --yes` idempotency rests on. Creates the parent directory if needed.
+ */
 export function writeConfig(config: Config): Result<void, ConfigError> {
     return Result.fromThrowable(
         () => {
             mkdirSync(dirname(env.configPath), { recursive: true });
-            writeFileSync(env.configPath, JSON.stringify(config, null, 4) + "\n");
+            writeFileSync(env.configPath, JSON.stringify(canonicalKeyOrder(config, configSchema), null, 4) + "\n");
         },
         (cause): ConfigError => ({ type: "config_write_failed", cause }),
     )();

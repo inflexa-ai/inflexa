@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
@@ -90,6 +90,80 @@ describe("writeConfig / readConfig round-trip", () => {
         const cfg: Config = { telemetry: true, theme: DEFAULT_THEME_ID, runtime: "podman", leaderTimeout: 500, embedding: { mode: "off" } };
         writeConfig(cfg)._unsafeUnwrap();
         expect(readConfig()).toEqual(cfg);
+    });
+});
+
+describe("writeConfig — canonical key order", () => {
+    // The emitted bytes must be a function of the config's VALUES alone. Every caller assembles a config by
+    // spreading (`{ ...readConfig(), harness }`), and a spread APPENDS a key the parsed config lacked
+    // instead of placing it in schema position — so without a canonical order, two `inflexa setup --yes`
+    // runs that agree on every answer still write byte-different config.json, which is exactly what the
+    // setup-answers spec forbids ("byte-identical resulting configuration").
+
+    /** Every field populated, so the assertions cover the nested blocks and the opaque ones alike. */
+    const values = {
+        telemetry: true,
+        theme: DEFAULT_THEME_ID,
+        runtime: "podman",
+        keybinds: { "app.command-palette": "ctrl+p", "app.abort": "ctrl+c" },
+        leaderTimeout: 500,
+        postgres: { host: "localhost", port: 6000, database: "inflexa", user: "inflexa", password: "s3cret" },
+        harness: { sandboxImage: "ghcr.io/x/sandbox:1", adminPort: 9000, resourceLimits: { budget: 40 } },
+        models: { connection: { mode: "cliproxy", provider: "anthropic" }, agents: { conversation: "m-1", sandbox: "m-1" } },
+        embedding: { mode: "api-key", apiKey: "sk-test", baseURL: "https://embeds.internal/v1", model: "text-embedding-3-small", dimensions: 1536 },
+    } as const satisfies Config;
+
+    function writeAndRead(cfg: Config): string {
+        writeConfig(cfg)._unsafeUnwrap();
+        return readFileSync(env.configPath, "utf8");
+    }
+
+    test("scrambled insertion order emits the same bytes as schema-ordered insertion", () => {
+        // Deliberately hostile insertion at BOTH levels: the top-level keys reversed, and the interiors of
+        // `postgres`/`embedding` (declared blocks) plus `harness`/`models` (opaque ones) shuffled too.
+        const scrambled: Config = {
+            embedding: {
+                dimensions: values.embedding.dimensions,
+                model: values.embedding.model,
+                baseURL: values.embedding.baseURL,
+                apiKey: values.embedding.apiKey,
+                mode: values.embedding.mode,
+            },
+            models: { agents: { sandbox: "m-1", conversation: "m-1" }, connection: { provider: "anthropic", mode: "cliproxy" } },
+            harness: { resourceLimits: { budget: 40 }, adminPort: 9000, sandboxImage: "ghcr.io/x/sandbox:1" },
+            postgres: { password: "s3cret", user: "inflexa", database: "inflexa", port: 6000, host: "localhost" },
+            leaderTimeout: values.leaderTimeout,
+            keybinds: { "app.abort": "ctrl+c", "app.command-palette": "ctrl+p" },
+            runtime: values.runtime,
+            theme: values.theme,
+            telemetry: values.telemetry,
+        };
+
+        expect(writeAndRead(scrambled)).toBe(writeAndRead(values));
+    });
+
+    test("declared keys land in schema order; undeclared ones follow, sorted", () => {
+        // Pins WHICH order is canonical — a stable-but-arbitrary order would satisfy the test above just as
+        // well, and the schema order is what makes a hand-edited config readable.
+        const document = JSON.parse(writeAndRead(values)) as Record<string, Record<string, unknown>>;
+
+        expect(Object.keys(document)).toEqual(["telemetry", "theme", "runtime", "keybinds", "leaderTimeout", "postgres", "harness", "models", "embedding"]);
+        expect(Object.keys(document.postgres!)).toEqual(["host", "port", "database", "user", "password"]);
+        // `modelPath` is declared between `mode` and `apiKey` but unset here — an absent key is skipped, never emitted as null.
+        expect(Object.keys(document.embedding!)).toEqual(["mode", "apiKey", "baseURL", "model", "dimensions"]);
+        // `keybinds` is a record and `harness`/`models` cross the schema as `unknown`: no declaration to
+        // follow, so their keys are sorted — the only order derivable from the value itself.
+        expect(Object.keys(document.keybinds!)).toEqual(["app.abort", "app.command-palette"]);
+        expect(Object.keys(document.harness!)).toEqual(["adminPort", "resourceLimits", "sandboxImage"]);
+        expect(Object.keys(document.models!)).toEqual(["agents", "connection"]);
+    });
+
+    test("a key appended by a spread lands in schema position, not at the end", () => {
+        // The concrete defect shape: setup's resource step writes `harness` onto a config parsed without it.
+        writeConfig({ telemetry: true, theme: DEFAULT_THEME_ID, leaderTimeout: 2000, embedding: { mode: "off" } })._unsafeUnwrap();
+        const appended = writeAndRead({ ...readConfig(), harness: { adminPort: 9000 } });
+
+        expect(Object.keys(JSON.parse(appended) as Record<string, unknown>)).toEqual(["telemetry", "theme", "leaderTimeout", "harness", "embedding"]);
     });
 });
 
