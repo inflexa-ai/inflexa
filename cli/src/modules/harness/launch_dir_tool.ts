@@ -81,7 +81,7 @@ export function createLaunchDirTool() {
             "(the launch, or anchor, folder), which lies OUTSIDE this analysis's workspace tree. " +
             "Reach for this whenever the user asks about 'the cwd', 'the current directory', 'this folder/directory', or " +
             "'where I ran/started/launched inflexa' — those phrasings mean THIS folder, not the analysis tree, and the " +
-            "workspace file tools (list_files / read_file / workspace_search) cannot see it; only this tool can. " +
+            "workspace file tools cannot see it; only this tool can. " +
             "Each file comes back with its path relative to the folder, its size, and whether it is ALREADY a registered " +
             "input — so this is also how you discover candidate files the user may want added as inputs (offer to add only " +
             "the un-registered ones). Read-only: it registers nothing — use the input-management tool to actually add files.",
