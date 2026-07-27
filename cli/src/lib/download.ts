@@ -75,13 +75,20 @@ function reportProgress(onProgress: ((event: DownloadProgress) => void) | undefi
 export async function downloadToFile(url: string, dest: string, options: DownloadToFileOptions = {}): Promise<Result<DownloadedFile, DownloadError>> {
     const doFetch = options.fetch ?? fetch;
     const partPath = `${dest}.part`;
-    let response: Response;
+    // Preparing the destination and reaching the upstream are separated so each reports as what it
+    // is: a full disk and an unreachable host are different problems with different remedies, and
+    // folding a connect failure into `io_failed` mislabels the commonest failure a download has.
     try {
         await rm(partPath, { force: true });
         await mkdir(dirname(dest), { recursive: true });
+    } catch (cause) {
+        return err({ type: "io_failed", message: `Could not prepare ${dest} for download.`, cause });
+    }
+    let response: Response;
+    try {
         response = await doFetch(url, options.signal === undefined ? {} : { signal: options.signal });
     } catch (cause) {
-        return err({ type: "io_failed", message: `Could not start the download of ${url}.`, cause });
+        return err({ type: "http_failed", message: `Could not reach ${url}.`, cause });
     }
 
     if (!response.ok || response.body === null) {

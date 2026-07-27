@@ -1,7 +1,7 @@
 ## 1. Shared download utility
 
 - [x] 1.1 Extract a generic HTTPS→file utility (`src/lib/download.ts`: `downloadToFile` + `declaredContentLength`) — HTTPS re-checked on the post-redirect URL, sha256, `.part`→atomic activation, progress events, injected `fetch`. Unit-tested (`download.test.ts`).
-- [ ] 1.2 Repoint `refs/store.ts` `downloadArtifact` at `downloadToFile` (thin wrapper: content-addressed dest, `assertOwnedPath`, progress/error remap); dedupe `declaredContentLength`. Keep the 43 refs store tests green. NOT a blind swap — refs treats the `.part` itself as the durable artifact in a separate downloads dir and reclaims it by name, so a naive repoint leaks a copy of every artifact.
+- [x] 1.2 `refs/store.ts`'s `downloadArtifact` is now a thin wrapper over `downloadToFile`, keeping only what is genuinely the installer's: the `assertOwnedPath` ownership check (the generic utility has no notion of an installer-owned tree, and this is what stops a symlinked ancestor redirecting a write outside the store) and the dataset/path attribution the generic progress events cannot carry. The private `declaredContentLength` is deleted in favour of the exported one, the inline `FetchLike` spellings in this file are replaced with the shared type, and the duplicated transfer body — stale-part discard, https-on-redirect, byte counter, `pipeline`, `stat`, `sha256File` — is gone along with its `createWriteStream`/`Transform`/`Readable`/`pipeline` imports. `lib/download.ts` now reports an unreachable host as `http_failed` rather than `io_failed`, which both fixes a misclassification (its own doc calls `io_failed` a local fs fault) and makes the installer's remap faithful: every wire fault becomes `download_failed`, only a local fs fault stays `io_failed`, so all three existing error-type assertions hold unchanged. The download cache entry is dropped as soon as it is staged rather than after activation — it is a second full copy of the artifact and nothing resumes from it — and the install test now asserts the WHOLE cache directory is empty afterwards, not just that no `*.part` remains, which is the assertion that actually catches a leak. 94 refs tests green.
 
 ## 2. GEO source module
 
@@ -40,5 +40,5 @@
 
 ## 6. Known gaps (not addressed)
 
-- [ ] 6.1 `refs/store.ts` still carries its own copy of the transfer primitive (task 1.2).
+- [x] 6.1 Closed by task 1.2 — `refs/store.ts` no longer carries its own transfer primitive, so `lib/download.ts` has two production callers and earns its place as a shared file.
 - [ ] 6.2 A cluster of `spawnInflexa` process-bounds tests fails only in a full-suite run — spawned children yield no captured output under 124-file parallel load, so every assertion on child output fails together. Pre-existing (identical set with this change stashed) and each file passes in isolation, but it now also masks the new idle-bound rearm test.
