@@ -93,7 +93,8 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
     // misleadingly (same guard `inflexa profile`/`inflexa run` open with).
     if (cfg.configError) fail(describeBootError({ type: "harness_config_invalid", issues: cfg.configError.issues }));
 
-    await ensureSandboxImage(cfg.sandboxImage);
+    const sandboxImage = await ensureSandboxImage(cfg.sandboxImage);
+    const bootConfig = sandboxImage === cfg.sandboxImage ? cfg : { ...cfg, sandboxImage };
 
     // Claim the per-analysis lock before boot, so this analysis stays
     // single-process for the whole chat — a coarse guard so only one provenance
@@ -106,7 +107,7 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
 
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");
-    const runtime = (await bootHarnessRuntime({ config: cfg })).match(
+    const runtime = (await bootHarnessRuntime({ config: bootConfig })).match(
         (r) => r,
         (e) => {
             s.error("Harness runtime boot failed");

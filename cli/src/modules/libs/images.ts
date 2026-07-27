@@ -14,6 +14,12 @@
 /** GHCR namespace: the inflexa-ai org's GitHub Packages (linked to the inflexa repo via the image's source label). */
 const GHCR_NAMESPACE = "ghcr.io/inflexa-ai";
 
+/** Strict release tag carried by every published selectable sandbox image. */
+export type SandboxVersion = string & { readonly __sandboxVersion: unique symbol };
+
+/** The OCI label carrying the image's human-readable published version. */
+export const SANDBOX_VERSION_LABEL = "org.opencontainers.image.version";
+
 /** The image variants a user can pull, in menu order (lightest first). */
 export const SANDBOX_VARIANTS = ["python", "python-r"] as const;
 
@@ -32,9 +38,27 @@ export const VARIANT_DESCRIPTIONS: Record<SandboxVariant, string> = {
     "python-r": "everything in python, plus the R libraries",
 };
 
-/** The multi-arch GHCR image reference (`:latest`) for a variant. */
+/** The first-party GHCR repository for a selectable variant, without a tag. */
+export function variantRepository(variant: SandboxVariant): string {
+    return `${GHCR_NAMESPACE}/sandbox-${variant}`;
+}
+
+/** The moving multi-arch discovery reference (`:latest`) for a variant. */
 export function variantImage(variant: SandboxVariant): string {
-    return `${GHCR_NAMESPACE}/sandbox-${variant}:latest`;
+    return `${variantRepository(variant)}:latest`;
+}
+
+/** Validate and brand a published `<YYYYMMDD>-<7-hex-revision>` version. */
+export function parseSandboxVersion(value: string): SandboxVersion | null {
+    // The regex proves the release-tag grammar before the string receives its
+    // domain brand; callers cannot construct repository or command text from
+    // unvalidated registry metadata.
+    return /^[0-9]{8}-[0-9a-f]{7}$/.test(value) ? (value as SandboxVersion) : null;
+}
+
+/** Build the immutable-by-policy execution reference for a validated version. */
+export function versionedVariantImage(variant: SandboxVariant, version: SandboxVersion): string {
+    return `${variantRepository(variant)}:${version}`;
 }
 
 /**
@@ -62,8 +86,18 @@ export function parseVariant(value: string | undefined): SandboxVariant | null {
  */
 export function variantOfImage(ref: string): SandboxVariant | null {
     for (const v of ["python-r", "python"] as const) {
-        const repo = `${GHCR_NAMESPACE}/sandbox-${v}`;
+        const repo = variantRepository(v);
         if (ref === repo || ref.startsWith(`${repo}:`) || ref.startsWith(`${repo}@`)) return v;
     }
     return null;
+}
+
+/** Parse a strict published version reference, excluding `latest`, digests, and custom tags. */
+export function publishedVersionOfImage(ref: string): { readonly variant: SandboxVariant; readonly version: SandboxVersion } | null {
+    const variant = variantOfImage(ref);
+    if (variant === null) return null;
+    const prefix = `${variantRepository(variant)}:`;
+    if (!ref.startsWith(prefix) || ref.includes("@")) return null;
+    const version = parseSandboxVersion(ref.slice(prefix.length));
+    return version === null ? null : { variant, version };
 }

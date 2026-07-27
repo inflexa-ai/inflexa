@@ -57,12 +57,12 @@ Analyses run inside a **sandbox image** that bakes the R / Python / conda / Node
 
 | Command | Does |
 |-|-|
-| `inflexa sandbox pull [variant]` | Pull a sandbox image (`python` = Python + bioconda CLI tools + Node; `python-r` = that plus R) from `ghcr.io/inflexa-ai/sandbox-<variant>` and configure sandboxes to use it |
-| `inflexa sandbox status` | Show the configured variant, its GHCR reference, whether the image is present locally, and its digest |
+| `inflexa sandbox pull [variant]` | Check a variant's `latest` channel, pin the resolved `<date>-<sha>` image in config, and remove unused older versions of that variant |
+| `inflexa sandbox status` | Show the configured variant and pinned version, its GHCR reference, local presence, and digest |
 
-`inflexa sandbox pull` also runs during `inflexa setup`. Before a sandbox launches, a missing image is offered and pulled (`inflexa profile` needs it). The published images are multi-arch manifests, so `docker pull` resolves the host architecture automatically — you pick only the variant, never the architecture. Flags: `--yes` skips the download confirmation.
+`inflexa sandbox pull` also runs during `inflexa setup`. `latest` is used only to discover an update; sandboxes execute the versioned reference recorded in config. Older version tags in the selected Inflexa variant repository are removed without force after the new pin is committed, so an image still used by a container is retained and unrelated Docker/Podman resources are never pruned. Before a sandbox launches, a missing pinned version is restored exactly; a missing bootstrap image is offered, pulled, and pinned. The published images are multi-arch manifests, so the runtime resolves the host architecture automatically — you pick only the variant, never the architecture. Flags: `--yes` skips the download confirmation.
 
-- **No local store** — the packages ship inside the pulled image, so there is no `~/.local/share/inflexa/libs` tree, no `/mnt/libs` bind mount, and no architecture-forcing. `harness.sandboxImage` (in `config.json`) records the pulled image tag; set it to a custom `FROM`-extended image to run your own.
+- **No local store** — the packages ship inside the pulled image, so there is no `~/.local/share/inflexa/libs` tree, no `/mnt/libs` bind mount, and no architecture-forcing. `harness.sandboxImage` (in `config.json`) records the resolved version tag; set it to a custom `FROM`-extended image to run your own.
 - **Extend it** — `FROM ghcr.io/inflexa-ai/sandbox-python-r` then `RUN pip install …` / `install.packages(…)` lands in the store automatically (the image exports `PIP_TARGET`/`R_LIBS_USER`/`INFLEXA_LIB_ROOT`); run `inflexa-libs-refresh` afterward so the additions show up in `list_available_packages`. See [`images/README.md`](../images/README.md).
 - **Managed deployments** still mount per-track tarballs read-only (cold-start friendly); those tarballs are extracted from these same images by the build pipeline and are infra-managed, not a CLI concern.
 

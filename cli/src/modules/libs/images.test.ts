@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
-import { DEFAULT_SANDBOX_IMAGE, SANDBOX_VARIANTS, parseVariant, variantImage, variantOfImage } from "./images.ts";
+import {
+    DEFAULT_SANDBOX_IMAGE,
+    SANDBOX_VARIANTS,
+    parseSandboxVersion,
+    parseVariant,
+    publishedVersionOfImage,
+    variantImage,
+    variantOfImage,
+    variantRepository,
+    versionedVariantImage,
+} from "./images.ts";
 
 describe("variantImage", () => {
     test("builds the GHCR reference for each variant", () => {
@@ -10,6 +20,33 @@ describe("variantImage", () => {
 
     test("DEFAULT_SANDBOX_IMAGE is the full python-r stack", () => {
         expect(DEFAULT_SANDBOX_IMAGE).toBe(variantImage("python-r"));
+    });
+});
+
+describe("published versions", () => {
+    test("builds channel and version references from the known repository", () => {
+        const version = parseSandboxVersion("20260727-def5678");
+        expect(version).not.toBeNull();
+        if (version === null) return;
+        expect(variantRepository("python")).toBe("ghcr.io/inflexa-ai/sandbox-python");
+        expect(versionedVariantImage("python", version)).toBe("ghcr.io/inflexa-ai/sandbox-python:20260727-def5678");
+    });
+
+    test("accepts only the publication grammar", () => {
+        expect(parseSandboxVersion("20260727-def5678")).not.toBeNull();
+        for (const value of ["latest", "2026-07-27-def5678", "20260727-DEF5678", "20260727-def567", "20260727-def56789", "20260727-abcdef0;rm"]) {
+            expect(parseSandboxVersion(value)).toBeNull();
+        }
+    });
+
+    test("parses exact first-party version refs but not channels, digests, or custom refs", () => {
+        const parsed = publishedVersionOfImage("ghcr.io/inflexa-ai/sandbox-python-r:20260727-def5678");
+        expect(parsed?.variant).toBe("python-r");
+        expect(parsed?.version === "20260727-def5678").toBe(true);
+        expect(publishedVersionOfImage("ghcr.io/inflexa-ai/sandbox-python-r:latest")).toBeNull();
+        expect(publishedVersionOfImage("ghcr.io/inflexa-ai/sandbox-python@sha256:deadbeef")).toBeNull();
+        expect(publishedVersionOfImage("localhost:5000/sandbox-python:20260727-def5678")).toBeNull();
+        expect(publishedVersionOfImage("my-registry/sandbox-python:20260727-def5678")).toBeNull();
     });
 });
 

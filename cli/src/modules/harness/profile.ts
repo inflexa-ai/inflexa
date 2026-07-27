@@ -19,6 +19,7 @@ import { ensureRuntime, resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { capture, inherit } from "../../lib/container.ts";
 import { variantOfImage } from "../libs/images.ts";
+import { isMovingTag, provisionPublishedVariant } from "../libs/pull.ts";
 import { getLogger } from "../../lib/log.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
@@ -34,6 +35,34 @@ import { bootHarnessRuntime, activeHarnessRuntime, type HarnessBootError } from 
 // here); the workflow itself is fire-and-forget and `--status` reads the ledger.
 
 type Spinner = ReturnType<typeof spinner>;
+
+/** Injectable preflight effects for daemon-free image restoration tests. */
+export type SandboxImagePreflightDeps = {
+    /** Resolve the configured container runtime. */
+    readonly ensureRuntime: typeof ensureRuntime;
+    /** Inspect a local image reference. */
+    readonly capture: typeof capture;
+    /** Pull an exact immutable/custom published tag with visible progress. */
+    readonly inherit: typeof inherit;
+    /** Resolve and commit a moving first-party channel. */
+    readonly provisionPublishedVariant: typeof provisionPublishedVariant;
+    /** Ask before a required multi-gigabyte download. */
+    readonly confirm: typeof confirm;
+    /** Bail out at the CLI boundary after a failed prerequisite. */
+    readonly fail: typeof fail;
+    /** Whether prompting is appropriate for this invocation. */
+    readonly isInteractive: () => boolean;
+};
+
+const realSandboxImagePreflightDeps: SandboxImagePreflightDeps = {
+    ensureRuntime,
+    capture,
+    inherit,
+    provisionPublishedVariant,
+    confirm,
+    fail,
+    isInteractive: () => process.stdin.isTTY,
+};
 
 /**
  * Each boot error variant, as one actionable line naming the remedy. Exported so
@@ -126,16 +155,16 @@ export function describeBootError(e: HarnessBootError): string {
  * CUSTOM local tag can't be pulled, so we hint the build. Never a silent dead-end.
  * Exported so `inflexa run` reuses profile's identical image check.
  */
-export async function ensureSandboxImage(image: string): Promise<void> {
-    const rtResult = await ensureRuntime();
-    if (rtResult.isErr()) fail(rtResult.error.message);
+export async function ensureSandboxImage(image: string, deps: SandboxImagePreflightDeps = realSandboxImagePreflightDeps): Promise<string> {
+    const rtResult = await deps.ensureRuntime();
+    if (rtResult.isErr()) deps.fail(rtResult.error.message);
     const rt = rtResult.value;
-    if ((await capture(rt, ["image", "inspect", image])).code === 0) return;
+    if ((await deps.capture(rt, ["image", "inspect", image])).code === 0) return image;
 
     const variant = variantOfImage(image);
     if (variant === null) {
         // A custom local tag (a user's `FROM` image) — we cannot pull it.
-        fail(
+        deps.fail(
             [
                 `Sandbox image "${image}" not found in ${rt.id}.`,
                 `Build it locally (e.g. \`${rt.bin} build -f images/sandbox-python-r/Dockerfile -t ${image} .\`),`,
@@ -146,15 +175,25 @@ export async function ensureSandboxImage(image: string): Promise<void> {
 
     // Published variant: offer + pull. The image is genuinely required to launch a
     // sandbox, so a decline is an actionable stop, not a silent dead-end.
-    if (process.stdin.isTTY) {
+    if (deps.isInteractive()) {
         console.log(`\n  Sandbox image "${image}" (${variant}) is not installed.`);
-        const proceed = await confirm("Pull it from GitHub Packages now? (may be a multi-GB download)");
-        if (!proceed) fail("A sandbox image is required to run a profile. Run `inflexa sandbox pull` and retry.");
+        const proceed = await deps.confirm("Pull it from GitHub Packages now? (may be a multi-GB download)");
+        if (!proceed) deps.fail("A sandbox image is required to run a profile. Run `inflexa sandbox pull` and retry.");
     } else {
         console.log(`  Sandbox image "${image}" not present — pulling ${variant} from GitHub Packages…`);
     }
-    const code = await inherit(rt, ["pull", image]);
-    if (code !== 0) fail(`Failed to pull ${image} (\`${rt.bin} pull\` exited ${code}). Check your network and that ghcr.io is reachable.`);
+    if (isMovingTag(image)) {
+        return (await deps.provisionPublishedVariant(rt, variant)).match(
+            (outcome) => outcome.image,
+            (error) => deps.fail(error.message),
+        );
+    }
+
+    // A configured published version is an execution identity, not an update
+    // channel. Restore that exact tag when local storage was cleared.
+    const code = await deps.inherit(rt, ["pull", image]);
+    if (code !== 0) deps.fail(`Failed to pull ${image} (\`${rt.bin} pull\` exited ${code}). Check your network and that ghcr.io is reachable.`);
+    return image;
 }
 
 /**
@@ -191,7 +230,8 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
     // the same error, but only after the image check it never reaches.
     if (cfg.configError) fail(describeBootError({ type: "harness_config_invalid", issues: cfg.configError.issues }));
 
-    await ensureSandboxImage(cfg.sandboxImage);
+    const sandboxImage = await ensureSandboxImage(cfg.sandboxImage);
+    const bootConfig = sandboxImage === cfg.sandboxImage ? cfg : { ...cfg, sandboxImage };
 
     // Gate the workspace root BEFORE booting — an unresolvable or non-writable
     // workspace fails like any other prerequisite (no fallback location exists).
@@ -212,7 +252,7 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
 
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");
-    const bootResult = await bootHarnessRuntime({ config: cfg });
+    const bootResult = await bootHarnessRuntime({ config: bootConfig });
     const runtime = bootResult.match(
         (r) => r,
         (e) => {

@@ -617,7 +617,7 @@ export function buildProgram(): Command {
     registerAction(
         sandbox
             .command("pull")
-            .description("Pull a sandbox image (python | python-r) from GitHub Packages and configure sandboxes to use it")
+            .description("Pull a sandbox image update and pin its published version")
             .argument("[variant]", "Image variant: python or python-r (prompted when omitted)")
             .option("--yes", "Skip the download confirmation"),
         { kind: "approval" },
@@ -646,7 +646,7 @@ export function buildProgram(): Command {
 
     // Read-only diagnostic: must not write config (pull.ts); runtime `image inspect` is a query subprocess.
     registerAction(
-        sandbox.command("status").description("Show the configured sandbox image variant, its GHCR reference, and whether it is present locally"),
+        sandbox.command("status").description("Show the configured sandbox image variant, pinned version, and local presence"),
         { kind: "auto", safeFlags: [] },
         async () => {
             const { sandboxStatus } = await import("../modules/libs/pull.ts");
