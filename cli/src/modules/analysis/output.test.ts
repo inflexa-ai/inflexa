@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { freshDb } from "../../test_support/db.ts";
 import {
+    anchorPathForAnalysisId,
     archivedOutputSubdir,
     disposeWorkspace,
     ensureOutputDir,
@@ -129,6 +130,28 @@ describe("workspaceDataDir", () => {
         insertAnchorAt("A1", gone);
         rmSync(gone, { recursive: true, force: true });
         expect(workspaceDataDir(analysis())._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+    });
+});
+
+describe("anchorPathForAnalysisId", () => {
+    test("resolves the folder the analysis lives in — its anchor, not its workspace", () => {
+        const home = anchoredHome();
+        insertAnalysis(analysis())._unsafeUnwrap();
+        // Deliberately the bare home folder: the caller spawns a child there, so it must NOT be the
+        // `.inflexa/analyses/<slug>` workspace the other resolver returns.
+        expect(anchorPathForAnalysisId("ana1")).toBe(home);
+    });
+
+    test("an unknown analysis is null, not a throw or an error — the caller has a fallback", () => {
+        expect(anchorPathForAnalysisId("ghost")).toBeNull();
+    });
+
+    test("an analysis whose folder is gone is null (routine desync, never a hard failure)", () => {
+        const gone = tmp();
+        insertAnchorAt("A1", gone);
+        insertAnalysis(analysis())._unsafeUnwrap();
+        rmSync(gone, { recursive: true, force: true }); // the folder can no longer be located
+        expect(anchorPathForAnalysisId("ana1")).toBeNull();
     });
 });
 

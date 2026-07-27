@@ -1,7 +1,6 @@
 import { join } from "node:path";
 
 import { dieOn, fail } from "../../lib/cli.ts";
-import { ambientAnalysisRef } from "../../lib/env.ts";
 import { resolveContext, type ContextFlags } from "../analysis/context.ts";
 import { isDirWritable } from "../anchor/marker.ts";
 import { downloadGeoSeries, parseByteSize, parseGseAccession, type GeoDownloadError, type GeoProgress } from "./geo.ts";
@@ -87,7 +86,8 @@ function reportProgress(event: GeoProgress): void {
  * file uses, so this command owns no part of enrollment.
  *
  * The target folder resolves through `resolveContext`, so an agent-driven run with no `--analysis`
- * lands in the chat analysis's folder via the injected ambient ref rather than the subprocess's cwd.
+ * lands in the chat analysis's folder — `run_inflexa` starts the child there, so the ordinary marker
+ * walk-up already points at it.
  */
 export async function runGeoAdd(rawGse: string, flags: ContextFlags, maxSize?: string): Promise<void> {
     const accession = parseGseAccession(rawGse).match(
@@ -96,7 +96,7 @@ export async function runGeoAdd(rawGse: string, flags: ContextFlags, maxSize?: s
     );
     const maxBytes = maxSize === undefined ? undefined : parseByteSize(maxSize);
     if (maxSize !== undefined && maxBytes === undefined) fail(`Not a size: "${maxSize}" (expected e.g. 500MB, 64GB, or a plain byte count).`);
-    const folder = resolveTargetFolder({ ...flags, ambientAnalysis: ambientAnalysisRef() });
+    const folder = resolveTargetFolder(flags);
     // Checked before the transfer rather than after: a read-only folder is a property of the user's
     // filesystem with an obvious remedy, and discovering it only once the bytes have moved wastes them.
     if (!isDirWritable(folder)) fail(`${folder} is not writable, so ${accession} cannot be downloaded there.`);
