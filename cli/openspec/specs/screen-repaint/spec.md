@@ -6,7 +6,7 @@ Keep the terminal surface truthful when something changes it behind the renderer
 
 OpenTUI writes diffs against a shadow buffer of what it believes is on screen, so an unchanged frame writes nothing. That makes any outside change to the surface both invisible and permanent: the shadow buffer now states something false, every surviving cell reads as already-correct, and no number of later frames repairs it. Terminals raise no damage notification — the offending action may send no bytes, no `SIGWINCH`, and no focus change — so recovery cannot be detected and must be driven by user input.
 
-This capability owns that recovery: the forced full repaint itself, the mode-less key that invokes it, the automatic heal on the first keystroke after an idle gap, the guard that keeps the repaint honest at the byte level, and an explicit statement of the damage this cannot reach. The motivating case is macOS Terminal.app's ⌘K ("Clear to Start"), but the exposure is structural to diff rendering rather than specific to one terminal.
+This capability owns that recovery: the forced full repaint itself, the mode-less key that invokes it, the automatic heal on the first input after an idle gap, the guard that keeps the repaint honest at the byte level, and an explicit statement of the damage this cannot reach. The motivating case is macOS Terminal.app's ⌘K ("Clear to Start"), but the exposure is structural to diff rendering rather than specific to one terminal.
 
 ## Requirements
 ### Requirement: A forced full repaint recovers a terminal surface changed behind the renderer
@@ -42,7 +42,7 @@ The chat SHALL bind a user-remappable `app.redraw` key (default `ctrl+l`, the co
 
 Mode-lessness is required, not incidental: screen damage is indifferent to whether a dialog is open, and the wiped surface may itself be a modal — a redraw key that modal capture suspends is unavailable exactly when it is most needed. Leaving the layer unsuspended is safe because the repaint is idempotent and mutates nothing.
 
-The binding SHALL also be reachable as a leader sequence so it is listed in the which-key panel, and SHALL carry a description, so the recovery is discoverable without documentation.
+The binding SHALL also be reachable as a leader sequence, and THAT sequence SHALL carry the description, so the recovery is discoverable without documentation. The description belongs on the sequence rather than the single-stroke chord because which-key lists only continuations of a pending sequence: metadata on a single stroke can never render, so placing it there would imply documentation that does not exist.
 
 #### Scenario: The redraw key repaints the screen
 
@@ -61,22 +61,33 @@ The binding SHALL also be reachable as a leader sequence so it is listed in the 
 - **WHEN** the leader sequence is half-typed and the which-key panel lists the reachable keys
 - **THEN** the redraw entry appears with its description, its label derived from the resolved chord
 
-### Requirement: Damage heals on the first keystroke after an idle gap
+### Requirement: Damage heals on the first input after an idle gap
 
-The chat SHALL force one full repaint on the first keystroke that arrives after the keyboard has been idle for a defined threshold, so that recovery requires no knowledge of a redraw key: the user presses anything and the display returns.
+The chat SHALL force one full repaint on the first input event that arrives after input has been idle for a defined threshold, so that recovery requires no knowledge of a redraw key: the user touches the keyboard and the display returns.
 
-The threshold exists to make the heal free rather than to detect anything. No terminal reports that it has changed the surface — the damaging action may send no bytes, raise no `SIGWINCH`, and change no focus state — so recovery cannot be detected and MUST be driven by user input. The idle gap exploits the shape of the failure instead: damage is necessarily followed by a pause, because the user has to notice the wrong display, whereas continuous typing has inter-key gaps far below the threshold. The threshold SHALL therefore sit above human typing cadence, so a typing burst forces no repaints and normal use pays nothing.
+Both keystrokes and pastes SHALL count. A paste arrives as its own event and emits no keystroke, so observing keystrokes alone would leave a user who pastes into the composer looking at a surface that stays wrong — a realistic first action, and incompatible with the promise that any input heals.
 
-The heal SHALL observe the key bus WITHOUT binding: it SHALL NOT inspect which key was pressed and SHALL NOT suppress it, so it is not a keybinding and does not belong to the keymap engine. It SHALL still run for keys that a binding also consumes, which holds as long as the engine suppresses matched keys only from the focused editor and never halts the other global key listeners.
+The threshold exists to make the heal affordable rather than to detect anything. No terminal reports that it has changed the surface — the damaging action may send no bytes, raise no `SIGWINCH`, and change no focus state — so recovery cannot be detected and MUST be driven by user input. The idle gap exploits the shape of the failure instead: damage is necessarily followed by a pause, because the user has to notice the wrong display, whereas continuous typing has inter-key gaps far below the threshold. The threshold SHALL therefore sit above human typing cadence, so a typing burst forces no repaints.
 
-The idle clock SHALL be injectable so the threshold behavior is testable without sleeping.
+The cost SHALL be understood as falling on every user, not only on those who hit the damage: each pause-then-type transition in ordinary use spends one full frame. That is imperceptible on a local terminal and is the accepted price of requiring no user knowledge; it is a perceptible hitch on a slow remote link. Raising the threshold trades heal latency for frequency.
+
+The heal SHALL observe the input bus WITHOUT binding: it SHALL NOT inspect what was pressed and SHALL NOT suppress it, so it is not a keybinding and does not belong to the keymap engine. It SHALL still run for keys that a binding also consumes, which holds as long as the engine suppresses matched keys only from the focused editor and never halts the other global input listeners.
+
+The elapsed interval SHALL be measured on a monotonic clock, not a wall clock, so a mid-session time step cannot suppress a heal or force a needless frame. The clock SHALL be injectable so the threshold behavior is testable without sleeping.
 
 #### Scenario: Any key restores a damaged screen
 
 - **GIVEN** the terminal surface was changed behind the renderer's back, leaving the display wrong
-- **AND** the keyboard has been idle for at least the threshold
+- **AND** input has been idle for at least the threshold
 - **WHEN** the user presses any key
 - **THEN** the next frame rewrites every cell and the display is correct again
+
+#### Scenario: A paste restores a damaged screen
+
+- **GIVEN** the terminal surface was changed behind the renderer's back, leaving the display wrong
+- **AND** input has been idle for at least the threshold
+- **WHEN** the user pastes text rather than typing
+- **THEN** the next frame rewrites every cell, because a paste is an input event like any other
 
 #### Scenario: Typing pays nothing
 
@@ -86,7 +97,7 @@ The idle clock SHALL be injectable so the threshold behavior is testable without
 
 #### Scenario: A consumed key still heals
 
-- **GIVEN** the keyboard has been idle for at least the threshold
+- **GIVEN** input has been idle for at least the threshold
 - **WHEN** the user presses a key that a keymap binding also handles
 - **THEN** the binding runs AND the forced repaint happens
 
@@ -98,13 +109,13 @@ The idle clock SHALL be injectable so the threshold behavior is testable without
 
 ### Requirement: Unhealed damage is a stated limitation
 
-The recovery SHALL be documented as incomplete where it is, rather than presented as total. Damage that is never followed by a keystroke SHALL remain unrepaired, and this SHALL be recorded with its reason at the implementation site.
+The recovery SHALL be documented as incomplete where it is, rather than presented as total. Damage that is never followed by an input event SHALL remain unrepaired, and this SHALL be recorded with its reason at the implementation site.
 
-Specifically: while a turn streams, output repaints only the cells it changes, so after damage the streamed text appears against a stale or blank background until the user touches the keyboard. Mouse input is likewise not a heal trigger. Closing either gap by polling was considered and rejected — a periodic repaint would defeat on-demand rendering, whose whole point is that an idle chat costs no frames — and the alternative, a terminal-side damage notification, does not exist.
+Specifically: while a turn streams, output repaints only the cells it changes, so after damage the streamed text appears against a stale or blank background until the user touches the keyboard. MOUSE input is not a heal trigger — a user who clicks before typing is not helped, which is the known gap most worth closing next (keyboard and paste input both are triggers). Closing either gap by polling was considered and rejected — a periodic repaint would defeat on-demand rendering, whose whole point is that an idle chat costs no frames — and the alternative, a terminal-side damage notification, does not exist.
 
 #### Scenario: Damage during a stream is not self-healing
 
 - **GIVEN** the terminal surface was changed behind the renderer's back while a turn is streaming
 - **WHEN** streamed output continues to render and the user presses nothing
-- **THEN** only the changed cells are written, leaving the rest of the surface wrong until a keystroke or the redraw key forces a repaint
+- **THEN** only the changed cells are written, leaving the rest of the surface wrong until an input event or the redraw key forces a repaint
 

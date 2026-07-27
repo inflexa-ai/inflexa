@@ -3,7 +3,7 @@ import { Writable } from "node:stream";
 import { testRender, useRenderer } from "@opentui/solid";
 
 import { forceFullRepaint, watchScreenDamage, REPAINT_IDLE_GAP_MS } from "./hooks/repaint.ts";
-import { useKeymapRoot, useBindings, resolveKeybind, pushMode, MODE_BASE, MODE_MODAL, __resetKeybindCache } from "./keymap.ts";
+import { useKeymapRoot, useBindings, resolveKeybind, pushMode, leaderSeq, reachableKeys, MODE_BASE, MODE_MODAL, __resetKeybindCache } from "./keymap.ts";
 
 // Guards the screen-damage recovery against a silent regression. The whole fix rests on ONE private
 // @opentui/core field (`forceFullRepaintRequested` — see hooks/repaint.ts for why no public
@@ -25,24 +25,32 @@ afterEach(() => {
 });
 
 /**
- * Mirrors app.tsx's redraw wiring: the single keymap root plus the MODELESS redraw layer. A modeless
- * layer is the load-bearing choice under test — a redraw key that a modal suspends is useless exactly
- * when a modal is the thing that got wiped. (Mounting the real App needs the whole
+ * Mirrors app.tsx's redraw wiring: the single keymap root, the MODELESS direct redraw layer (no
+ * desc/group, since which-key can never render metadata on a single stroke), and the `<leader>l` twin
+ * in a base-mode layer that DOES carry a desc — the pair the discoverability requirement rests on. A
+ * modeless direct layer is the load-bearing choice under test: a redraw key that a modal suspends is
+ * useless exactly when a modal is the thing that got wiped. (Mounting the real App needs the whole
  * workspace/DB/conversation stack; tsc covers that wiring, as in keymap_scroll.render.test.tsx.)
  */
-function RedrawHarness() {
+function RedrawHarness(props: { onBaseKey: () => void }) {
     const renderer = useRenderer();
     useKeymapRoot();
     useBindings(() => ({
         bindings: [{ chord: resolveKeybind("app.redraw"), run: () => forceFullRepaint(renderer) }],
     }));
-    // A base-mode layer that MODE_MODAL suspends, so the modal case below proves the redraw layer's
-    // modelessness rather than merely that the engine still dispatches at all.
-    useBindings(() => ({ mode: MODE_BASE, bindings: [{ chord: { key: "z" }, run: () => baseModeHits++ }] }));
+    useBindings(() => ({
+        mode: MODE_BASE,
+        bindings: [
+            { chord: leaderSeq("l"), run: () => forceFullRepaint(renderer), desc: REDRAW_DESC, group: "App" },
+            // A base-mode single stroke that MODE_MODAL suspends, so the modal case proves the direct
+            // redraw layer's modelessness rather than merely that the engine still dispatches at all.
+            { chord: { key: "z" }, run: () => props.onBaseKey() },
+        ],
+    }));
     return <box width="100%" height="100%" />;
 }
 
-let baseModeHits = 0;
+const REDRAW_DESC = "Redraw screen";
 
 /**
  * A TTY-shaped stdout that keeps what the renderer writes. `testRender`'s own stdout throws every
@@ -154,7 +162,8 @@ describe("forceFullRepaint", () => {
 
 describe("the app.redraw key through the real keymap engine", () => {
     test("ctrl+l forces a full repaint, and keeps working while a modal is open", async () => {
-        const setup = await testRender(() => <RedrawHarness />, { width: 40, height: 8 });
+        let baseKeyHits = 0;
+        const setup = await testRender(() => <RedrawHarness onBaseKey={() => baseKeyHits++} />, { width: 40, height: 8 });
         try {
             await setup.renderOnce();
             expect(repaintFlag(setup.renderer)).toBe(false);
@@ -166,18 +175,40 @@ describe("the app.redraw key through the real keymap engine", () => {
             // assertion below is about modelessness and not about the mode stack being inert. The
             // no-modal press first, or "0 hits under a modal" would pass even if `z` never dispatched.
             await setup.renderOnce();
-            baseModeHits = 0;
             setup.mockInput.pressKey("z");
-            expect(baseModeHits).toBe(1);
+            expect(baseKeyHits).toBe(1);
 
             const popModal = pushMode(MODE_MODAL);
             setup.mockInput.pressKey("z");
-            expect(baseModeHits).toBe(1);
+            expect(baseKeyHits).toBe(1);
 
             expect(repaintFlag(setup.renderer)).toBe(false);
             setup.mockInput.pressKey("l", { ctrl: true });
             expect(repaintFlag(setup.renderer)).toBe(true);
             popModal();
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    // The spec requires the redraw be reachable as a leader sequence AND listed in which-key, which is
+    // the ONLY place its description can surface (`reachableKeys` returns nothing until a sequence is
+    // pending, and matches only continuations). Both halves were previously unverified.
+    test("<leader>l forces a repaint and is listed in which-key with its description", async () => {
+        const setup = await testRender(() => <RedrawHarness onBaseKey={() => {}} />, { width: 40, height: 8 });
+        try {
+            await setup.renderOnce();
+            expect(reachableKeys()).toEqual([]);
+
+            // First stroke of the leader sequence: nothing runs yet, and which-key now offers `l`.
+            setup.mockInput.pressKey("x", { ctrl: true });
+            expect(repaintFlag(setup.renderer)).toBe(false);
+            expect(reachableKeys()).toContainEqual({ stroke: "l", desc: REDRAW_DESC, group: "App", continues: false });
+
+            setup.mockInput.pressKey("l");
+            expect(repaintFlag(setup.renderer)).toBe(true);
+            // The completed sequence clears the pending state, so which-key closes again.
+            expect(reachableKeys()).toEqual([]);
         } finally {
             setup.renderer.destroy();
         }
@@ -236,6 +267,21 @@ describe("watchScreenDamage", () => {
             expect(repaintFlag(setup.renderer)).toBe(false);
 
             setup.mockInput.pressKey("a");
+            expect(repaintFlag(setup.renderer)).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    // A paste arrives as its own event and emits no keypress, so subscribing to keypress alone would
+    // leave someone who pastes into the composer looking at a screen that stays wiped.
+    test("forces a repaint on a paste after an idle gap", async () => {
+        const setup = await harness([0, REPAINT_IDLE_GAP_MS]);
+        try {
+            await setup.renderOnce();
+            expect(repaintFlag(setup.renderer)).toBe(false);
+
+            await setup.mockInput.pasteBracketedText("pasted text");
             expect(repaintFlag(setup.renderer)).toBe(true);
         } finally {
             setup.renderer.destroy();

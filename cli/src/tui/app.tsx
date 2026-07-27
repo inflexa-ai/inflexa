@@ -672,9 +672,11 @@ export function App(props: AppProps) {
     // Redraw, deliberately WITHOUT a `mode`, so it stays live in every mode: screen damage does not
     // care whether a dialog is open, and a redraw key that a modal suspends is useless exactly when a
     // modal is the thing that got wiped. Safe to leave unsuspended because a full repaint is idempotent
-    // and touches no app state.
+    // and touches no app state. No desc/group: which-key lists only continuations of a pending sequence
+    // (`reachableKeys`), so metadata on a single-stroke chord can never render — the `<leader>l` twin
+    // below is what documents this key, matching the direct-chord bindings in the base layer.
     useBindings(() => ({
-        bindings: [{ chord: resolveKeybind("app.redraw"), run: () => forceFullRepaint(renderer), desc: "Redraw screen", group: "App" }],
+        bindings: [{ chord: resolveKeybind("app.redraw"), run: () => forceFullRepaint(renderer) }],
     }));
 
     // Base chat keys, live only in base mode: opening a dialog pushes MODE_MODAL (effect below),
