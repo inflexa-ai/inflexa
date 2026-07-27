@@ -116,6 +116,18 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.stderr).not.toContain("unknown option");
     });
 
+    // The other half of that trade-off: because the root also declares `--analysis`, commander binds
+    // the value THERE and a subcommand's own identically-named option stays empty. `registerAction`
+    // hands handlers `optsWithGlobals()` so the flag still reaches them. An unresolvable ref is the
+    // cheap proof — the message names the ref, which is only reachable if the flag arrived at all.
+    test("`--analysis` after a subcommand reaches the handler despite the root declaring it too", () => {
+        const result = runCli(["geo", "add", "GSE12345", "--analysis", "no-such-analysis-ref"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("no-such-analysis-ref");
+        // The bare-context message would mean the flag never arrived.
+        expect(result.stderr).not.toContain("No analysis here");
+    });
+
     // A fast `fail()` bail-out exits before the event loop turns, so the log file's fd must be
     // ready from construction (lib/log.ts opens it synchronously) or pino's exit-hook flushSync
     // throws "sonic boom is not ready yet" and sprays a stack trace after the command's real

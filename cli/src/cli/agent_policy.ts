@@ -59,6 +59,17 @@ export function getAgentPolicy(command: Command): AgentPolicy | undefined {
  * cast. Works for a subcommand (`registerAction(cli.command("x")…, policy, fn)`) and
  * for the root, whose action attaches after its own `.option(...)` chain
  * (`registerAction(cli.option(...)…, policy, fn)`).
+ *
+ * The options object the handler receives is `optsWithGlobals()`, not the command's own
+ * `opts()`. The root declares `--analysis`/`--project` for the bare-`inflexa` flow, and
+ * commander lets a program option appear anywhere on the line — so for `inflexa profile
+ * --analysis x` the value binds to the ROOT and the subcommand's identically-named option
+ * never receives it, handing the handler an empty object and dropping the flag in silence.
+ * Merging ancestors here fixes every command at once and keeps a subcommand's own value
+ * winning when it has one. The alternative, `enablePositionalOptions()`, was tried and
+ * reverted: it makes a root-style flag placed after a subcommand a hard "unknown option"
+ * error, breaking shapes like `inflexa sessions --project x` that users already rely on
+ * (see the regression test in `cli.test.ts`).
  */
 export function registerAction<Args extends readonly unknown[]>(
     command: Command,
@@ -66,5 +77,12 @@ export function registerAction<Args extends readonly unknown[]>(
     handler: (...args: Args) => void | Promise<void>,
 ): Command {
     setAgentPolicy(command, policy);
-    return command.action(handler);
+    // Commander invokes an action as (...declaredArguments, options, command), always passing both
+    // trailing values — so the options slot is at `length - 2` whatever the command's arity.
+    return command.action((...args: unknown[]) => {
+        const self = args[args.length - 1] as Command;
+        const merged = [...args];
+        merged[args.length - 2] = self.optsWithGlobals();
+        return handler(...(merged as unknown as Args));
+    });
 }
