@@ -81,7 +81,6 @@ Because focus is always on some widget, the dialog host's focus save/restore SHA
 - **WHEN** a turn finishes while the user is scrolling the stream in NORMAL mode
 - **THEN** focus stays on the pane and the next scroll key scrolls — nothing is typed into the composer
 
-
 ### Requirement: Persistent status bar
 
 `StatusBar` SHALL render a left region, an OPTIONAL middle region, and a right region. Left = `inflexa` in `theme().accent` plus a screen title or the active analysis name. The middle region is parameterized by the caller: in the chat it SHALL show the live session state (`ready`/`thinking`/`error`), each with a leading glyph (e.g. `● ready`), colored `theme().success`/`theme().warn`/`theme().error` and sourced from the shared chat-status store (see "Chat status lives in a shared reactive store"); in `config` it SHALL show the unsaved-changes indicator in `theme().warn` and SHALL render nothing when there are no unsaved changes. Right = affordance hint labels sourced from the central keymap. `StatusBar` SHALL import only `theme` (no `modules/`/`db/` imports) and SHALL be composed by both `app.tsx` and `app_config.tsx`, replacing their hand-rolled header boxes. All colors SHALL come from `theme()`; no hex is inlined.
@@ -119,7 +118,6 @@ The status bar SHALL NOT render the interrupt hint: that affordance is mode-scop
 
 - **WHEN** a turn is streaming in NORMAL mode
 - **THEN** the status bar's right hints region shows no interrupt hint — the input-bar footer carries it
-
 
 ### Requirement: Fixed-gutter message block
 
@@ -289,7 +287,6 @@ The chat's live status (`idle`/`busy`/`error`) SHALL be held in a shared reactiv
 - **WHEN** the textarea is blurred (NORMAL mode)
 - **THEN** the footer row shows `NORMAL` in bold accent color with `bgActive` background, signaling that vim scroll keys are live
 
-
 ### Requirement: Shared gutter marker set
 
 The system SHALL define the gutter marker set as a shared constant (`MARKERS`) in `src/lib/design_system.ts` (the merged design-system module — solid-js-free, importable by both the shell and the `components/` block widgets without a components→layout dependency) — one entry per kind: `you >`, `assistant <`, `thinking ◆`, `tool ▸`, `run ●`, `fileEdit ✎`, `ok ✓`, `error ✗` — each mapping to its glyph and an existing `ThemeColors` role (the `thinking` and `tool` kinds use the dedicated `thinking`/`tool` roles; `run` uses `warning`). The set is the single source for every block's marker: `MessageBlock` (shell) reads `you`/`assistant`, and the `components/` block widgets read the rest.
@@ -338,3 +335,60 @@ advertise a chord whose result could not be sent.
 
 - **WHEN** the runtime is still booting and the host reports a recallable history
 - **THEN** the placeholder shows only the booting explanation, with no recall affordance
+
+### Requirement: The chat shell composes a run-activity panel between stream and input
+
+The chat shell's main column SHALL compose, in order: the message stream's scroll region, the
+run-activity panel, then the input. The panel SHALL be part of the composition kit alongside the
+status bar, message block, chat bar, and sidebar.
+
+The panel SHALL contribute rows only when it has a run to show and has not been dismissed;
+otherwise the stream and input SHALL compose exactly as they do without it.
+
+The scroll region SHALL remain the flexible child that absorbs vertical pressure, so adding the
+panel reduces visible stream rows rather than squeezing the input or the panel itself.
+
+#### Scenario: The panel takes its place in the column
+
+- **WHEN** a run is active and the panel is not dismissed
+- **THEN** the shell renders the stream, then the panel, then the input, in that order
+
+#### Scenario: No active run leaves the layout unchanged
+
+- **WHEN** no run is active
+- **THEN** the shell's composition is identical to one with no panel at all
+
+#### Scenario: The stream absorbs the space
+
+- **WHEN** the panel appears during an active run
+- **THEN** the scroll region shrinks to make room and the input keeps its full height
+
+### Requirement: Fixed chrome below the scroll region is opaque and non-shrinking
+
+A fixed row placed directly beneath the message stream's scroll region SHALL render as a
+full-width box painted with the panel background, and SHALL declare that it does not shrink.
+This governs the run-activity panel and any future chrome in that position.
+
+Both properties are load-bearing rather than stylistic. A `flexGrow` scroll region renders one row
+taller than the height it contributes to the column, so the row beneath it overlaps the scroll
+region's last row; a bare text element paints only its own glyphs and lets scrolled content show
+through the gaps between them. Separately, a non-numeric width defaults to shrinking, so an
+unconstrained panel collapses below its own border on a short terminal.
+
+Layout SHALL be verified across a range of terminal heights, since this class of defect is
+size-dependent and passes at most single heights.
+
+#### Scenario: Scrolled content does not bleed through
+
+- **WHEN** the stream is scrolled so content sits at the boundary with the panel
+- **THEN** the panel's row is fully painted across the width and no stream content is visible within it
+
+#### Scenario: A short terminal does not collapse the panel
+
+- **WHEN** the terminal height is reduced until the layout is under pressure
+- **THEN** the panel retains its rows and the scroll region absorbs the reduction
+
+#### Scenario: The defect is checked at more than one size
+
+- **WHEN** the panel's layout is verified
+- **THEN** it is exercised across a sweep of terminal heights rather than a single size
