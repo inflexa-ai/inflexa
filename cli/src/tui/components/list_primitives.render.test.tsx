@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { testRender } from "@opentui/solid";
 
@@ -413,6 +413,46 @@ describe("initial cursor seeding", () => {
         try {
             await setup.renderOnce();
             await new Promise((r) => setTimeout(r, 5));
+            await setup.renderOnce();
+            const frame = setup.captureCharFrame();
+            expect(frame).toContain(`${GLYPHS.chevronRight} row-27`);
+            expect(frame).not.toContain("row-00");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    // The production race the seeded scroll has to survive. A running renderer schedules its next
+    // frame at `max(minTargetFrameTime - elapsed, 0)`, so it lays out immediately ONLY when a frame is
+    // already due; while anything is animating (a spinner, a streaming response) the first layout of a
+    // freshly-mounted list lands up to a frame-time later — well after the macrotask a one-shot retry
+    // would fire on. The test renderer paints on a live clock, so the race does not reproduce by
+    // waiting: the frames have to be suppressed. Suspending across the mount does exactly that, and is
+    // what makes this test discriminating — a single `setTimeout(…, 0)` retry measures the zero-height
+    // viewport here, no-ops, and never runs again, stranding the seeded row off screen.
+    test("a seeded row scrolls into view even when the first frame is deferred past the initial retry", async () => {
+        const many: SelectItem<number>[] = Array.from({ length: 30 }, (_, i) => ({ value: i, title: `row-${String(i).padStart(2, "0")}` }));
+        const [mounted, setMounted] = createSignal(false);
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <box width="100%" height={8}>
+                        <Show when={mounted()}>
+                            <FixedList items={many} initialValue={27} emptyText="none" />
+                        </Show>
+                    </box>
+                </Harness>
+            ),
+            { width: 40, height: 8 },
+        );
+        try {
+            await setup.renderOnce();
+            setup.renderer.suspend(); // no frames land from here, so nothing lays the list out
+            setMounted(true);
+            await new Promise((r) => setTimeout(r, 40)); // the one-shot retry's window, against zeros
+            setup.renderer.resume();
+            await setup.renderOnce(); // the list's first layout, only now
+            await new Promise((r) => setTimeout(r, 20)); // a later poll tick sees real geometry
             await setup.renderOnce();
             const frame = setup.captureCharFrame();
             expect(frame).toContain(`${GLYPHS.chevronRight} row-27`);
