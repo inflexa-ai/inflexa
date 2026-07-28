@@ -76,10 +76,15 @@ same shape as the existing retract binding, which lives in `key-bindings`.
     the existing `messages` store (user-role texts, newest first,
     consecutive-deduped), alongside the existing derived readers
     (`sessionOpenables`, `latestPlanCard`).
-  - `cli/src/tui/app.tsx` — a `historyRecallLayer` pure factory registered via
-    `useBindings`, sitting beside `retractLayer`/`paneRetractLayer` and reusing
-    their `seedComposerFromRetract` completion (set text, cursor to end). Stays
-    in `app.tsx` per the single-caller rule.
+  - `cli/src/tui/hooks/prompt_recall.ts` — the recall vertical as a hook:
+    `usePromptRecall(composer)` owns the position and registers the exported
+    `historyRecallLayer` factory, returning only the `canRecall` affordance state
+    its host renders. `app.tsx` composes it in one line rather than owning a
+    business layer (review request from @vivere-dally).
+  - `cli/src/tui/components/text_area.tsx` — `seedTextareaText`, the set-text +
+    caret-to-end pair now shared across modules by the retract seed and recall.
+  - `cli/src/tui/layout/chat_bar.tsx` — the `canRecall` prop and the placeholder
+    affordance it drives.
 - **Tests**: a dispatch/render test driving the same exported factory `App`
   installs (the `keymap_interrupt_retract.render.test.tsx` pattern), plus unit
   coverage of `promptHistory()` ordering and dedup.
