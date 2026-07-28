@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { testRender } from "@opentui/solid";
 
@@ -362,6 +362,175 @@ describe("cursor and navigation", () => {
             await setup.mockInput.pressKeys(["\x1b[5~"]); // pageUp
             frame = await settle(setup);
             expect(frame).toContain(`${GLYPHS.chevronRight} apple`);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
+// The seed exists so a picker can open ON the row a caller already committed to (the theme picker's
+// persisted theme). Its whole value is that the cursor is there BEFORE the mount-time effects run —
+// the callback report and the scroll are what a host observes, so both are asserted, not just the
+// chevron.
+describe("initial cursor seeding", () => {
+    test("a matching initialValue seeds the cursor and the mount-time onCursorChange reports it", async () => {
+        const reported: (string | undefined)[] = [];
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={FRUIT} initialValue="carrot" emptyText="none" onCursorChange={(v) => reported.push(v)} />
+                </Harness>
+            ),
+            { width: 40, height: 14 },
+        );
+        try {
+            const frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} carrot`);
+            expect(frame).not.toContain(`${GLYPHS.chevronRight} apple`);
+            // The FIRST report is the seeded row: a row-0 report followed by a correction would leave a
+            // host that acts on the callback (a live preview) flashing through the first row.
+            expect(reported[0]).toBe("carrot");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    // The seeded row's scroll can only land once the first frame has laid the tree out (the geometry
+    // scrollChildIntoView compares is all zeros before it), so this settles on a real clock — the same
+    // reason the dialog render tests do.
+    test("a seeded row below the fold is scrolled into view at mount", async () => {
+        const many: SelectItem<number>[] = Array.from({ length: 30 }, (_, i) => ({ value: i, title: `row-${String(i).padStart(2, "0")}` }));
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <box width="100%" height={8}>
+                        <FixedList items={many} initialValue={27} emptyText="none" />
+                    </box>
+                </Harness>
+            ),
+            { width: 40, height: 8 },
+        );
+        try {
+            await setup.renderOnce();
+            await new Promise((r) => setTimeout(r, 5));
+            await setup.renderOnce();
+            const frame = setup.captureCharFrame();
+            expect(frame).toContain(`${GLYPHS.chevronRight} row-27`);
+            expect(frame).not.toContain("row-00");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    // The production race the seeded scroll has to survive. A running renderer schedules its next
+    // frame at `max(minTargetFrameTime - elapsed, 0)`, so it lays out immediately ONLY when a frame is
+    // already due; while anything is animating (a spinner, a streaming response) the first layout of a
+    // freshly-mounted list lands up to a frame-time later — well after the macrotask a one-shot retry
+    // would fire on. The test renderer paints on a live clock, so the race does not reproduce by
+    // waiting: the frames have to be suppressed. Suspending across the mount does exactly that, and is
+    // what makes this test discriminating — a single `setTimeout(…, 0)` retry measures the zero-height
+    // viewport here, no-ops, and never runs again, stranding the seeded row off screen.
+    test("a seeded row scrolls into view even when the first frame is deferred past the initial retry", async () => {
+        const many: SelectItem<number>[] = Array.from({ length: 30 }, (_, i) => ({ value: i, title: `row-${String(i).padStart(2, "0")}` }));
+        const [mounted, setMounted] = createSignal(false);
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <box width="100%" height={8}>
+                        <Show when={mounted()}>
+                            <FixedList items={many} initialValue={27} emptyText="none" />
+                        </Show>
+                    </box>
+                </Harness>
+            ),
+            { width: 40, height: 8 },
+        );
+        try {
+            await setup.renderOnce();
+            setup.renderer.suspend(); // no frames land from here, so nothing lays the list out
+            setMounted(true);
+            await new Promise((r) => setTimeout(r, 40)); // the one-shot retry's window, against zeros
+            setup.renderer.resume();
+            await setup.renderOnce(); // the list's first layout, only now
+            await new Promise((r) => setTimeout(r, 20)); // a later poll tick sees real geometry
+            await setup.renderOnce();
+            const frame = setup.captureCharFrame();
+            expect(frame).toContain(`${GLYPHS.chevronRight} row-27`);
+            expect(frame).not.toContain("row-00");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("an initialValue no row carries falls back to row 0", async () => {
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={FRUIT} initialValue="eggplant" emptyText="none" />
+                </Harness>
+            ),
+            { width: 40, height: 14 },
+        );
+        try {
+            const frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} apple`);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    // The seed is a starting position, not a pin: the query reset still owns the cursor afterwards.
+    test("a query after a seeded mount still moves the cursor to the best match", async () => {
+        const reported: (string | undefined)[] = [];
+        const [query, setQuery] = createSignal("");
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={FRUIT} query={query()} initialValue="carrot" emptyText="none" onCursorChange={(v) => reported.push(v)} />
+                </Harness>
+            ),
+            { width: 40, height: 14 },
+        );
+        try {
+            let frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} carrot`);
+
+            setQuery("ban");
+            frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} banana`);
+            expect(reported.at(-1)).toBe("banana");
+
+            setQuery("zzz"); // no rows survive — the callback reports the empty cursor
+            frame = await settle(setup);
+            expect(frame).toContain("none");
+            expect(reported.at(-1)).toBeUndefined();
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    // DynamicList's contract is that a replaced items array restarts the listing at the top; the seed
+    // applies to the mount-time listing alone and must not resurrect itself on the new one.
+    test("DynamicList: the seed applies to the mount-time listing only", async () => {
+        const [items, setItems] = createSignal<SelectItem<string>[]>(FRUIT);
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <DynamicList items={items()} initialValue="carrot" emptyText="none" />
+                </Harness>
+            ),
+            { width: 40, height: 14 },
+        );
+        try {
+            let frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} carrot`);
+
+            setItems([
+                { value: "endive", title: "endive" },
+                { value: "carrot", title: "carrot" },
+            ]);
+            frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} endive`);
         } finally {
             setup.renderer.destroy();
         }

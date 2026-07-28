@@ -1,10 +1,4 @@
-# select-dialog Specification
-
-## Purpose
-
-The reusable picker dialog composing `DialogPanel` + filter `TextInput` + `FixedList` — the dialog form of the list primitives, serving every "choose one of these" command.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: SelectDialog composes panel, input, and FixedList
 
@@ -29,17 +23,3 @@ The system SHALL provide `SelectDialog<T>` in `src/tui/components/dialog/` (it i
 
 - **WHEN** a host passes `onCursorChange` and `initialValue` to `SelectDialog`
 - **THEN** the list opens with the cursor on the row whose value strict-equals `initialValue`, and every cursor move (including filter-driven moves and the list emptying) reaches the host's `onCursorChange`
-
-### Requirement: SelectDialog replaces SelectList at every call site
-
-All current `SelectList` consumers — the theme, analysis, session, project (set/list/delete), and input pickers in `src/tui/commands.tsx`, and the `CommandPalette` adapter — SHALL render `SelectDialog` instead. `src/tui/components/select_list.tsx` SHALL be deleted, with no compatibility shim or re-export left behind.
-
-#### Scenario: Call sites migrate
-
-- **WHEN** any picker command runs after the change
-- **THEN** it opens a `SelectDialog` with unchanged observable behavior (title, placeholder, filtering, selection, cancel)
-
-#### Scenario: SelectList is gone
-
-- **WHEN** the codebase is searched for `SelectList` or `select_list.tsx`
-- **THEN** no source references remain
