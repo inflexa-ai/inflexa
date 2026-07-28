@@ -151,7 +151,10 @@ export type { ThreadHistory, StoredMessage, MessagePage, RetractOutcome } from "
 // the marker key so a host can never hand-assemble a message that the turn-boundary predicates
 // (`isGenuineUserStart` and its SQL twin) would then fail to recognise; `isSyntheticUserMessage`
 // lets a host renderer tell such a message apart from a genuine user turn on the way back out.
-export { syntheticUserMessage, isSyntheticUserMessage } from "./memory/ai-sdk-message-storage.js";
+// `syntheticRecordMessage` is the one a HOST reaches for: equally non-turn-opening, but rendered —
+// the display reconstruction emits it as a `system` message rather than dropping it as loop
+// machinery, so an appended run outcome is visible in the transcript instead of silently absent.
+export { syntheticUserMessage, syntheticRecordMessage, isSyntheticUserMessage, isSyntheticRecordMessage } from "./memory/ai-sdk-message-storage.js";
 export { contentToCortexMessages } from "./memory/content-to-cortex.js";
 export { createCardResolver } from "./memory/reconstruct-cards.js";
 export type { ToolCardResolver, StoredToolCallForCard } from "./memory/reconstruct-cards.js";

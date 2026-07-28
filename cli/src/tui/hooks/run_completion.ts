@@ -1,5 +1,5 @@
 import { createEffect } from "solid-js";
-import { createThreadHistory, syntheticUserMessage, type CortexRunRow, type Pool, type RunStatus } from "@inflexa-ai/harness";
+import { createThreadHistory, syntheticRecordMessage, type CortexRunRow, type Pool, type RunStatus } from "@inflexa-ai/harness";
 
 import { getLogger } from "../../lib/log.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
@@ -122,12 +122,15 @@ export type RunCompletionSeams = {
 const realRunCompletionSeams: RunCompletionSeams = {
     runtime: harnessRuntime,
     appendRecord: (pool, threadId, text) =>
-        // Built through the harness's constructor, never by hand-assembling its marker: the key and
-        // namespace are shared with the turn-boundary predicates, and a local copy would fork them
-        // silently — the record would store fine and then be read as a genuine turn start, splitting
-        // one turn in two for the token window and handing tail retraction a mid-turn cut point.
+        // Built through the harness's constructor, never by hand-assembling its markers: the keys and
+        // namespace are shared with the turn-boundary and display predicates, and a local copy would
+        // fork them silently — the record would store fine and then be read as a genuine turn start,
+        // splitting one turn in two for the token window and handing tail retraction a mid-turn cut
+        // point. `syntheticRecordMessage`, not `syntheticUserMessage`: both are non-turn-opening, but
+        // only the record is RENDERED — the plain synthetic is loop machinery the display
+        // reconstruction drops, so using it here would store the outcome and show nothing.
         createThreadHistory(pool)
-            .appendTurn(threadId, [syntheticUserMessage(text)])
+            .appendTurn(threadId, [syntheticRecordMessage(text)])
             .match(
                 () => ({ ok: true }),
                 (e) => ({ ok: false, error: e.type }),

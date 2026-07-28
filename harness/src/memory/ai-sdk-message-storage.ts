@@ -40,8 +40,20 @@ export function parseStoredMessageEnvelope(value: unknown, identity: string): St
  */
 export const HARNESS_PROVIDER_NAMESPACE = "cortex";
 
-/** The {@link HARNESS_PROVIDER_NAMESPACE} key marking a message the loop synthesized rather than one a human sent. */
+/** The {@link HARNESS_PROVIDER_NAMESPACE} key marking a message the loop or host synthesized rather than one a human sent. */
 export const SYNTHETIC_MESSAGE_KEY = "synthetic";
+
+/**
+ * The {@link HARNESS_PROVIDER_NAMESPACE} key marking a synthetic message that is a RECORD OF FACT
+ * the reader is meant to see, as opposed to loop machinery they are not.
+ *
+ * Always accompanies {@link SYNTHETIC_MESSAGE_KEY} — a record is synthetic in the sense that matters
+ * to every turn-boundary reader, and must never open a turn. This key answers the one question
+ * `synthetic` alone cannot: whether the message should be RENDERED. The loop's truncation nudge must
+ * not be (it would show words nobody typed); an embedder's out-of-band record must be (it is the
+ * only trace in the conversation that the work happened at all).
+ */
+export const SYNTHETIC_RECORD_KEY = "syntheticRecord";
 
 /** The {@link HARNESS_PROVIDER_NAMESPACE} key marking an assistant message whose production a client abort cut off. */
 export const INTERRUPTED_MESSAGE_KEY = "interrupted";
@@ -75,10 +87,8 @@ export function isInterruptedMessage(message: ModelMessage): boolean {
 }
 
 /**
- * Build a `user` message that was synthesized rather than typed by a human. Two authors produce
- * them: the agent loop (the nudge that continues a reply the model truncated at its output-token
- * limit) and an **embedder** recording out-of-band work into a thread — an analysis run's outcome,
- * which the model should read on its next turn but which nobody said.
+ * Build a `user` message the LOOP synthesized rather than a human typing it — today, the nudge that
+ * continues a reply the model truncated at its output-token limit.
  *
  * It has to carry the `user` role because the wire format requires a user turn after a truncated
  * assistant message, but it is not user input, and the difference is load-bearing: a `user` message is
@@ -86,9 +96,9 @@ export function isInterruptedMessage(message: ModelMessage): boolean {
  * splitting one turn into two for the token window and, worse, giving a tail-turn removal a cut point in
  * the middle of a turn. Marking it is what lets {@link isSyntheticUserMessage} keep those readers honest.
  *
- * A host MUST build these here rather than assembling the `providerOptions` marker itself: the key
- * and namespace are shared with the turn-boundary predicates, and a hand-rolled copy would fork
- * them silently — the message would store fine and then be read as a genuine turn start.
+ * This one is loop MACHINERY and is not rendered: showing it would put words on screen nobody typed.
+ * An embedder recording out-of-band work — an analysis run's outcome — wants
+ * {@link syntheticRecordMessage} instead, which is equally non-turn-opening but IS displayed.
  */
 export function syntheticUserMessage(text: string): ModelMessage {
     return {
@@ -98,9 +108,37 @@ export function syntheticUserMessage(text: string): ModelMessage {
     };
 }
 
+/**
+ * Build a record of out-of-band work for an embedder to append between turns — an analysis run's
+ * outcome, which the model should read on its next turn but which nobody said.
+ *
+ * Synthetic in every sense that matters to a turn-boundary reader ({@link isSyntheticUserMessage} is
+ * true of it), so it cannot split a turn for the token window nor hand a tail retraction a mid-turn
+ * cut point. It differs from {@link syntheticUserMessage} in exactly one respect, and it is the
+ * decisive one: this is a fact the reader is entitled to see, so the display reconstruction emits it
+ * — as a `system` message, which is what it is — rather than dropping it as loop machinery.
+ *
+ * A host MUST build these here rather than assembling the `providerOptions` markers itself: the keys
+ * and namespace are shared with the turn-boundary and display predicates, and a hand-rolled copy
+ * would fork them silently — the message would store fine and then be read as a genuine turn start,
+ * or be dropped from the transcript with no indication why.
+ */
+export function syntheticRecordMessage(text: string): ModelMessage {
+    return {
+        role: "user",
+        content: text,
+        providerOptions: { [HARNESS_PROVIDER_NAMESPACE]: { [SYNTHETIC_MESSAGE_KEY]: true, [SYNTHETIC_RECORD_KEY]: true } },
+    };
+}
+
 /** Whether the loop or the host synthesized this message (see {@link syntheticUserMessage}) rather than a human sending it. */
 export function isSyntheticUserMessage(message: ModelMessage): boolean {
     return message.providerOptions?.[HARNESS_PROVIDER_NAMESPACE]?.[SYNTHETIC_MESSAGE_KEY] === true;
+}
+
+/** Whether this is a host-appended record of out-of-band work (see {@link syntheticRecordMessage}) — synthetic, but displayed. */
+export function isSyntheticRecordMessage(message: ModelMessage): boolean {
+    return message.providerOptions?.[HARNESS_PROVIDER_NAMESPACE]?.[SYNTHETIC_RECORD_KEY] === true;
 }
 
 type LegacyContent = string | Array<Record<string, unknown>>;

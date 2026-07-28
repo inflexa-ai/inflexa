@@ -53,11 +53,11 @@
 
 ## 6. Transcript rendering
 
-- [ ] 6.1 Make `run_card_block.tsx` resolve its run by the `runId` it carries and render live progress while active
-- [ ] 6.2 Settle the card on terminal: collapse the live chrome to a compact outcome line with status, counts, duration, and failure reason; never hide it, never keep a frozen meter
-- [ ] 6.3 Render an unavailable state for a card whose run cannot be resolved, rather than a fabricated status
-- [ ] 6.4 Teach `cortexToUiMessage` to recognise a harness synthetic message via the exported predicate and map it to an event entry — no user/assistant marker, not counted as a turn, not offered as retractable
-- [ ] 6.5 Test: a settled card renders correctly after a transcript reload; a synthetic entry never renders with the user marker even when its text resembles user prose
+- [x] 6.1 Make `run_card_block.tsx` resolve its run by the `runId` it carries and render live progress while active
+- [x] 6.2 Settle the card on terminal: collapse the live chrome to a compact outcome line with status, counts, duration, and failure reason; never hide it, never keep a frozen meter
+- [x] 6.3 Render an unavailable state for a card whose run cannot be resolved, rather than a fabricated status
+- [x] 6.4 Teach `cortexToUiMessage` to recognise a harness synthetic message via the exported predicate and map it to an event entry — no user/assistant marker, not counted as a turn, not offered as retractable
+- [x] 6.5 Test: a settled card renders correctly after a transcript reload; a synthetic entry never renders with the user marker even when its text resembles user prose
 
 ## 7. Sub-agent activity line
 

@@ -7,16 +7,48 @@ import { ThinkingBlock } from "../components/thinking_block.tsx";
 import { ToolBlock } from "../components/tool_block.tsx";
 import { DiffBlock } from "../components/diff_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
-import { RunCardBlock } from "../components/run_card_block.tsx";
+import { RunCardBlock, type RunCardState } from "../components/run_card_block.tsx";
 import { PresentationBlock } from "../components/presentation_block.tsx";
 import { OpenableCardBlock, type OpenableRowView } from "../components/openable_card_block.tsx";
 import { Bold, Fg, Italic } from "../components/emphasis.tsx";
 import { entryDegraded, resolveEntryPath } from "../../modules/harness/artifact_open.ts";
 import { openArtifact, openArtifactFolder } from "../hooks/artifacts.ts";
-import type { AskCardPart, OpenableCardPart, Part } from "../../types/session.ts";
+import { activeRunProgress, runsSnapshot, RUN_STATUS_TERMINAL } from "../hooks/sidebar_live.ts";
+import type { AskCardPart, MessageRole, OpenableCardPart, Part } from "../../types/session.ts";
 
-/** A chat turn's author. */
-export type MessageRole = "user" | "assistant";
+/**
+ * Resolve a run card's live state from the sidebar's ledger snapshots, by the `runId` the card
+ * already carries — no new persisted field, and nothing the card has to have been told at launch.
+ *
+ * Returns `undefined` when the run simply is not in what has been read. That is the common case for
+ * scroll-back: the runs snapshot holds only the newest few rows, so an older card's run was never
+ * fetched. Not-fetched is not the same as not-found, and rendering "unavailable" for it would put a
+ * false negative on every historical card. `unavailable` is reserved for a positive finding — the
+ * read itself failed — so the card says so only when there is something to say.
+ */
+export function resolveRunCardState(runId: string): RunCardState | undefined {
+    const live = activeRunProgress().get(runId);
+    if (live) return { kind: "live", done: live.done, total: live.total };
+
+    const snap = runsSnapshot();
+    if (snap.kind === "unavailable") return { kind: "unavailable" };
+    if (snap.kind !== "loaded") return undefined;
+
+    const row = snap.runs.find((r) => r.runId === runId);
+    if (!row || !RUN_STATUS_TERMINAL[row.status]) return undefined;
+
+    const start = Date.parse(row.startedAt);
+    const end = row.completedAt === null ? NaN : Date.parse(row.completedAt);
+    // Counts are deliberately absent: a terminal run has left `activeRunProgress`, taking its step
+    // counts with it, and a reloaded transcript never had them. The block omits the segment rather
+    // than printing a fabricated `0/0`.
+    return {
+        kind: "settled",
+        status: row.status,
+        durationMs: Number.isNaN(start) || Number.isNaN(end) ? null : end - start,
+        error: row.error,
+    };
+}
 
 /** Props for {@link MessageBlock}. */
 export type MessageBlockProps = {
@@ -108,7 +140,7 @@ export function MessageBlock(props: MessageBlockProps) {
                     case "plan-card":
                         return <PlanCardBlock planId={part.planId} title={part.title} steps={part.steps} />;
                     case "run-card":
-                        return <RunCardBlock runId={part.runId} title={part.title} stepCount={part.stepCount} />;
+                        return <RunCardBlock runId={part.runId} title={part.title} stepCount={part.stepCount} state={resolveRunCardState(part.runId)} />;
                     case "presentation":
                         return <PresentationBlock title={part.title} body={part.body} />;
                     case "openable-card":
@@ -126,26 +158,43 @@ export function MessageBlock(props: MessageBlockProps) {
     );
     return (
         <box width="100%" flexDirection="column" paddingBottom={space.sm}>
-            <text fg={theme()[props.role === "user" ? MARKERS.you.role : MARKERS.assistant.role]}>
-                <Bold>{props.role === "user" ? `${MARKERS.you.glyph} You` : `${MARKERS.assistant.glyph} Inflexa`}</Bold>
-                <Fg role="fgMuted">{meta()}</Fg>
-                {/* Muted suffix marking a turn the user interrupted after it began streaming. It rides the
-                header row, never the fixed gutter, so its separator can be the same registry middot the
-                meta uses; the enclosing <text> already resolves an explicit fg. */}
-                <Show when={props.interrupted}>
-                    <Fg role="fgMuted">{` ${GLYPHS.middot} interrupted`}</Fg>
-                </Show>
-            </text>
-            {props.role === "user" ? (
-                // The user turn's body rides a left border rule in the user color (the quoted-content idiom
-                // shared with the thinking / plan-card / run blocks). The header sits OUTSIDE this box so its
-                // gutter marker column never shifts; only the body is indented under the rule.
-                <box flexDirection="column" border={["left"]} borderColor={theme().user}>
+            {/* An event entry carries NEITHER turn marker and no turn number: it is not a turn, and the
+            transcript's turn-scoped affordances must not count it. Its whole body renders behind a
+            subtle rule — the visual register of "the system noted this", distinct at a glance from the
+            user's bordered quote and the assistant's unindented prose, so nobody can read it as either
+            party speaking. A `<Show>` rather than an early return: Solid components run once, and an
+            early return would break the block's reactivity outright. */}
+            <Show
+                when={props.role === "event"}
+                fallback={
+                    <>
+                        <text fg={theme()[props.role === "user" ? MARKERS.you.role : MARKERS.assistant.role]}>
+                            <Bold>{props.role === "user" ? `${MARKERS.you.glyph} You` : `${MARKERS.assistant.glyph} Inflexa`}</Bold>
+                            <Fg role="fgMuted">{meta()}</Fg>
+                            {/* Muted suffix marking a turn the user interrupted after it began streaming. It rides the
+                            header row, never the fixed gutter, so its separator can be the same registry middot the
+                            meta uses; the enclosing <text> already resolves an explicit fg. */}
+                            <Show when={props.interrupted}>
+                                <Fg role="fgMuted">{` ${GLYPHS.middot} interrupted`}</Fg>
+                            </Show>
+                        </text>
+                        {props.role === "user" ? (
+                            // The user turn's body rides a left border rule in the user color (the quoted-content idiom
+                            // shared with the thinking / plan-card / run blocks). The header sits OUTSIDE this box so its
+                            // gutter marker column never shifts; only the body is indented under the rule.
+                            <box flexDirection="column" border={["left"]} borderColor={theme().user}>
+                                {parts()}
+                            </box>
+                        ) : (
+                            parts()
+                        )}
+                    </>
+                }
+            >
+                <box flexDirection="column" border={["left"]} borderColor={theme().fgSubtle} paddingLeft={space.sm}>
                     {parts()}
                 </box>
-            ) : (
-                parts()
-            )}
+            </Show>
         </box>
     );
 }
