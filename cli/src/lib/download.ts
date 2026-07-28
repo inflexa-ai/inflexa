@@ -135,9 +135,14 @@ export async function downloadToFile(url: string, dest: string, options: Downloa
     if (response === undefined) return err({ type: "http_failed", message: `Could not reach ${url}.`, cause: lastCause });
 
     if (!response.ok || response.body === null) {
+        // A rejected response still owns its socket until the body is drained or cancelled, exactly
+        // as a retried one does — an error path that skipped this would hold the connection for as
+        // long as it took the runtime to collect the abandoned stream.
+        await response.body?.cancel().catch(() => undefined);
         return err({ type: "http_failed", message: `Download failed: HTTP ${response.status} ${response.statusText} (${url}).` });
     }
     if (response.url !== "" && !response.url.startsWith("https://")) {
+        await response.body.cancel().catch(() => undefined);
         return err({ type: "insecure_redirect", message: `Refusing ${url}: redirected to a non-https location (${response.url}).` });
     }
 
