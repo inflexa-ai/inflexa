@@ -37,7 +37,9 @@ binding must fire repeatedly and each press depends on where the previous one le
 - Fuzzy history search over the same entries (a `ctrl+r`-style picker). Additive later; the entry
   reader designed here is the surface it would consume.
 - Cross-session or cross-analysis recall, and paging past the mounted window.
-- Recall from the stream pane, or a footer hint advertising the chord.
+- Recall from the stream pane, and stashing a half-typed draft on entry (there is none — entry is
+  from an empty buffer).
+- A FOOTER hint for the chord. The affordance goes in the placeholder instead (decision 10).
 
 ## Decisions
 
@@ -156,6 +158,65 @@ prompt submitted there is intercepted by `askSubmitAction` and refused with a no
 any other non-`y`/`a`/`n` text. Gating recall off in that state was considered and rejected: it
 would add a condition to defend an outcome the submit path already handles correctly, and preparing
 the next message while an approval is pending is a legitimate thing to want.
+
+### 9. Multi-line prompts keep their caret keys — history steps only from the buffer edge
+
+The equality gate keeps recall live for as long as the entry sits unedited in the buffer. Applied to
+both chords unconditionally, that makes a recalled **multi-line** prompt un-navigable: `up` and
+`down` step history from every row, so the caret can never reach line one to fix a typo there. The
+user's only escape is to type a junk character (breaking equality), navigate, and delete it. On a
+composer sized `minHeight={3} maxHeight={8}` — built for multi-line input — that is not an edge case.
+
+The fix is the readline/shell rule every terminal user already has in their fingers: a chord steps
+history only from the buffer EDGE it moves away from. `up` recalls from the first row; `down` recalls
+from the last; on every row in between neither is bound, so both fall through to the textarea's own
+caret movement. A single-line entry is the first and last row simultaneously, so the common case
+still recalls in one press per direction and pays nothing for the rule.
+
+Row position comes from `editBuffer.getCursorPosition().row` against `editBuffer.getLineCount()` —
+logical rows, **not** wrapped display lines. A soft-wrapped long prompt is one row however narrow the
+terminal, because a chord that recalled at 120 columns and moved the caret at 60 would be
+indefensible.
+
+Consequence worth naming: stepping back through several multi-line entries now costs one keystroke
+per row of each entry traversed, since each seed lands the caret at the end. That is exactly how bash
+and zsh behave, and the alternative — seeding the caret at the top when travelling backwards —
+inverts the problem onto `down`.
+
+### 10. The chord is advertised in the empty-buffer placeholder, not the footer
+
+A reserved chord that now does something, announced nowhere, is a feature most users never find. The
+ChatBar footer is the obvious home and the wrong one: it already carries the mode word, the
+mode-scoped interrupt affordance, and the newline hint, and a fourth permanent item would crowd a row
+whose value is that it is scannable mid-turn.
+
+The placeholder is strictly better suited, because its visibility conditions already match the
+feature's: it renders only when the buffer is empty — exactly when a recall can be entered — and it
+disappears the instant the user types, so the hint cannot become furniture. `ChatBar` takes a
+`canRecall` boolean (host-derived, keeping its no-domain-imports rule) and appends the affordance,
+labelled from `RECALL_LABEL` in `keymap.ts` so the advertised key is derived from the bound chord
+rather than hand-written.
+
+Two honesty gates, mirroring the interrupt hint's: `canRecall` is false while the retract owns the
+chord, and a boot gate outranks the affordance entirely (that placeholder explains why typing goes
+nowhere; a recall hint on top would advertise a chord whose result could not be sent).
+
+### 11. The entry list is read only when it can matter
+
+`activeLayers` re-invokes **every** registered layer's config thunk on each keystroke *before* it
+filters by `enabled`/`mode`/`target`:
+
+```js
+return [...layers.values()].map((get) => get()).filter((c) => ...)
+```
+
+So an unguarded `deps.entries()` walks the whole mounted transcript on every key pressed anywhere in
+the app — including inside a dialog or the command palette, where this layer can never fire. The cost
+is small in absolute terms (≤200 messages), but it is pure waste on the hottest path in the UI.
+
+The guard is one expression: entries are needed only when the buffer is empty (to enter recall) or a
+position is set (to test the equality gate). The ordinary typing path — non-empty buffer, no recall in
+progress — reads nothing.
 
 ## Risks / Trade-offs
 

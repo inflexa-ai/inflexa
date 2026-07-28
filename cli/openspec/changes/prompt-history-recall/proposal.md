@@ -30,14 +30,24 @@ change cashes that reservation in. Resolves #242.
   entry, and goes inert the moment the user edits it — a derived condition
   re-read on each keystroke, matching how `retractLayer` re-reads the live
   buffer. No edit subscription, no flag to clear.
+- **A recalled prompt stays navigable.** The composer is multi-line, so a chord steps history only
+  from the buffer edge it moves away from — `up` from the first row, `down` from the last, caret
+  movement everywhere in between (the readline rule). Without it a recalled multi-line prompt would
+  hold both arrows for as long as it sat in the buffer, leaving every row but the last unreachable.
+- **The chord is advertised where advertising it is honest**: appended to the EMPTY-buffer
+  placeholder, which renders exactly when a recall can be entered and vanishes as soon as the user
+  types. No extra rows, nothing to find in a session with no history, and no claim while the retract
+  or a boot gate owns the chord.
 - **BREAKING (spec-level only, no user-visible regression)**: the pinned
   "Idle up-arrow does nothing" scenario is replaced, and the retract
   requirement's "the chord remains free for a future prompt-history recall when
   idle" prose stops being true. Both are corrected in the delta.
 
 Out of scope: fuzzy history search (a `ctrl+r`-style picker over the same
-entries), cross-session or cross-analysis recall, and recall from the stream
-pane. Each is additive on top of this and none is needed to close #242.
+entries), cross-session or cross-analysis recall, recall from the stream pane,
+and stashing a half-typed draft on entering recall (entry is from an empty
+buffer, so there is none). Each is additive on top of this and none is needed to
+close #242.
 
 ## Capabilities
 
@@ -54,6 +64,10 @@ same shape as the existing retract binding, which lives in `key-bindings`.
   "Up-arrow in an empty composer retracts the just-sent message" requirement,
   whose prose reserves the idle chord and whose "Idle up-arrow does nothing"
   scenario this change replaces.
+- `tui-layout`: add a requirement for the composer's `canRecall` prop and the
+  recall affordance it appends to the empty-buffer placeholder, including the
+  honesty gates (absent with no history, while the retract owns the chord, or
+  behind a boot gate) and the derived-label rule the existing footer hints follow.
 
 ## Impact
 

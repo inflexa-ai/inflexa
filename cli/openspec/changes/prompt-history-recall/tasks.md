@@ -33,3 +33,13 @@
 - [x] 4.3 Run `bun run format:file` on the changed `src/` files, then `bun run typecheck` and `bun run lint`.
 - [x] 4.4 Run the TUI test suite and confirm no existing retract/interrupt/scroll test regressed.
 - [ ] 4.5 `openspec validate prompt-history-recall --strict` PASSES. Archive is deliberately left for the user to run (`/opsx:archive`) — it rewrites the main `key-bindings` spec, which is worth a review beat.
+
+## 5. Review follow-ups (PR #249)
+
+- [x] 5.1 Multi-line navigability (review finding 1, HIGH): step history only from the buffer edge the chord moves away from — `up` from the first row, `down` from the last, caret movement in between. Read logical rows via `editBuffer.getCursorPosition()`/`getLineCount()`, never wrapped display lines (design decision 9).
+- [x] 5.2 Cover it: recall a multi-line entry and assert `up` walks the caret row-by-row before stepping history, `down` mirrors it, and a single-line entry still recalls in one press per direction.
+- [x] 5.3 Guard the entry read so `promptHistory()` is not walked on every keystroke app-wide — `activeLayers` evaluates every layer's thunk before filtering (design decision 11).
+- [x] 5.4 Replace the comma-operator ternary in the `down` handler with a statement body, and comment the redundant `index`/`target` checks as tsc narrowing.
+- [x] 5.5 Discoverability (review finding 4): add `ChatBar.canRecall`, append the affordance to the empty-buffer placeholder labelled from a new `RECALL_LABEL` in `keymap.ts`, and gate it behind history existing, the retract not owning the chord, and no boot gate (design decision 10).
+- [x] 5.6 Cover the placeholder: affordance present with history, absent without, and outranked by a boot gate.
+- [x] 5.7 Update the specs — `key-bindings` gains the caret rule and its scenarios; a new `tui-layout` delta owns the placeholder affordance.

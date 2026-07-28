@@ -222,6 +222,12 @@ export const NEWLINE_CHORD: Chord = { key: "j", ctrl: true };
 /** Pre-derived display label for the newline chord — single source for every footer/hint that shows it. */
 export const NEWLINE_LABEL: string = chordLabel(NEWLINE_CHORD);
 
+/**
+ * Pre-derived display label for the prompt-history recall chord — single source for the composer
+ * placeholder's affordance, so the advertised key can never drift from the one the layer binds.
+ */
+export const RECALL_LABEL: string = chordLabel(KEYS.up);
+
 // --- remappable app keybindings -------------------------------------------------------------
 
 /**
