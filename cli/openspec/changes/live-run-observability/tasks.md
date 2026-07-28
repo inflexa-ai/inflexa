@@ -40,16 +40,16 @@
 
 ## 5. Completion announcement
 
-- [ ] 5.1 Convert `src/tui/hooks/notice.ts` from a single slot to a FIFO queue that drops nothing, documenting why the replace-on-arrival model is wrong for unsolicited notices
-- [ ] 5.2 Raise a completion notice on every terminal run status, toned by outcome, carrying the run label, counts, duration, and — for a non-success — the reason
-- [ ] 5.3 Append the durable outcome record to the analysis thread using the harness's exported synthetic-message constructor; never hand-assemble the marker
-- [ ] 5.4 Key both reactions by `(runId, terminal status)` so a recovery re-delivery neither re-notifies nor re-appends
-- [ ] 5.5 Ensure an append failure still shows the notice and surfaces the record failure, and that neither can fail a turn or the run
-- [ ] 5.6 Serialize durable thread writes both ways: a user message submitted during an append is queued (composer accepts it, turn begins after), and a run terminating mid-turn defers its append until the turn's own append completes — implemented separately from the generation token, which drops losers rather than queueing them
-- [ ] 5.7 Test: two runs terminating within the display window both announce
-- [ ] 5.8 Test: a re-delivered terminal state produces exactly one notice and one record
-- [ ] 5.9 Test: the appended record is present in the thread after a reload, and appending starts no turn
-- [ ] 5.10 Test: a message submitted mid-append is queued and lands; a run terminating mid-turn leaves the turn's rows contiguous
+- [x] 5.1 Convert `src/tui/hooks/notice.ts` from a single slot to a FIFO queue that drops nothing, documenting why the replace-on-arrival model is wrong for unsolicited notices
+- [x] 5.2 Raise a completion notice on every terminal run status, toned by outcome, carrying the run label, counts, duration, and — for a non-success — the reason
+- [x] 5.3 Append the durable outcome record to the analysis thread using the harness's exported synthetic-message constructor; never hand-assemble the marker
+- [x] 5.4 Key both reactions by `(runId, terminal status)` so a recovery re-delivery neither re-notifies nor re-appends
+- [x] 5.5 Ensure an append failure still shows the notice and surfaces the record failure, and that neither can fail a turn or the run
+- [x] 5.6 Serialize durable thread writes both ways: a user message submitted during an append is queued (composer accepts it, turn begins after), and a run terminating mid-turn defers its append until the turn's own append completes — implemented separately from the generation token, which drops losers rather than queueing them
+- [x] 5.7 Test: two runs terminating within the display window both announce
+- [x] 5.8 Test: a re-delivered terminal state produces exactly one notice and one record
+- [x] 5.9 Test: the appended record is present in the thread after a reload, and appending starts no turn
+- [x] 5.10 Test: a message submitted mid-append is queued and lands; a run terminating mid-turn leaves the turn's rows contiguous
 
 ## 6. Transcript rendering
 

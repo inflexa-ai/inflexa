@@ -28,6 +28,7 @@ import {
     toggleRunPanel,
     watchRunPanel,
 } from "./hooks/run_panel.ts";
+import { watchRunCompletions } from "./hooks/run_completion.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
@@ -455,6 +456,11 @@ export function App(props: AppProps) {
     // Wire the run-activity panel: its focused run's activity read (cadenced off the sidebar refresh,
     // deliberately not a second timer) and its dismissal expiry. Under App's reactive owner.
     watchRunPanel();
+
+    // Announce every run that reaches a terminal status: a toast now, and a durable outcome record on
+    // the analysis thread queued behind whatever else is writing it. Deliberately independent of the
+    // sidebar and the run panel — either may be hidden when a run lands.
+    watchRunCompletions();
 
     // Mirror the live agent switch into the boot store's agentModels cell: the
     // status surface (sidebar MODELS section) renders each agent's active model + any pending switch. Seeds

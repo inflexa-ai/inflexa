@@ -20,7 +20,7 @@ import {
     type SendSeams,
 } from "./conversation.ts";
 import { chatStatus } from "./status.ts";
-import { currentNotice } from "./notice.ts";
+import { __resetNoticesForTest, currentNotice } from "./notice.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { RunChatTurnArgs, TurnOutcome } from "../../modules/harness/turn.ts";
 
@@ -99,8 +99,17 @@ function startBusyTurn(outcome: TurnOutcome, sessionId = SID, analysisId = AID):
     return { sendP, emit: () => emit, release };
 }
 
-beforeEach(() => resetHotState());
-afterEach(() => resetHotState());
+// The notice channel is a module singleton too, and it QUEUES rather than replacing — so a notice a
+// previous case left showing would sit in front of the one under test. Drained alongside the hot
+// state; the old replace-on-arrival channel hid the need for this by overwriting whatever was there.
+beforeEach(() => {
+    resetHotState();
+    __resetNoticesForTest();
+});
+afterEach(() => {
+    resetHotState();
+    __resetNoticesForTest();
+});
 
 describe("canRetract gates the retract window", () => {
     test("false before any turn, true during a busy no-output turn", async () => {
