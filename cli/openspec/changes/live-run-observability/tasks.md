@@ -1,10 +1,10 @@
 ## 1. Run-observation bus family
 
-- [ ] 1.1 Add the `run.*` members to `BusEvent` in `src/types/events.ts` — one member per run-lifecycle action, each carrying only the fields that action needs, no nullable-companion discrimination
-- [ ] 1.2 Add a run-observer realization beside `prov_bridge.ts`'s provenance emitter that maps the harness observation callback onto `run.*` bus emissions, sharing no code or payload with `createRunProvenanceEmitter`
-- [ ] 1.3 Inject the observer at the same composition root that supplies `emitProvenance` (`run_deps.ts`), keeping the provenance emitter untouched
-- [ ] 1.4 Test: a `run.*` subscriber receives run state without any `prov.*` event firing differently, and the provenance recorder's behaviour is unchanged
-- [ ] 1.5 Test: with no embedded run in-process (a run started elsewhere), no `run.*` event is observed and the change degrades to polling
+- [x] 1.1 Add the `run.*` members to `BusEvent` in `src/types/events.ts` — one member per run-lifecycle action, each carrying only the fields that action needs, no nullable-companion discrimination
+- [x] 1.2 Add a run-observer realization beside `prov_bridge.ts`'s provenance emitter that maps the harness observation callback onto `run.*` bus emissions, sharing no code or payload with `createRunProvenanceEmitter`
+- [x] 1.3 Inject the observer at the same composition root that supplies `emitProvenance` (`run_deps.ts`), keeping the provenance emitter untouched
+- [x] 1.4 Test: a `run.*` subscriber receives run state without any `prov.*` event firing differently, and the provenance recorder's behaviour is unchanged
+- [ ] 1.5 Test: with no embedded run in-process (a run started elsewhere), no `run.*` event is observed and the change degrades to polling — deferred to group 2, where the sidebar store exists to assert the polling fallback against; in isolation this asserts only that an uncalled function emits nothing
 
 ## 2. Keyed multi-run snapshot in sidebar-live
 

@@ -23,6 +23,7 @@ import {
 
 import type { ResolvedHarnessConfig } from "./config.ts";
 import type { SwappableSandboxEmitters } from "./prov_bridge.ts";
+import { emitRunObservation } from "./run_bridge.ts";
 
 /**
  * One user-facing agent's chat backend: the {@link ChatProvider} instance
@@ -235,6 +236,10 @@ export function buildExecuteAnalysisDeps(
         runCharge: createNoopRunCharge(),
         runAuthorizer,
         emitProvenance: comp.sandboxEmitters.emitProvenance,
+        // The run-observation seam, injected beside the provenance one and sharing nothing with it.
+        // Unlike `emitProvenance` this is NOT the swappable delegating handle: it binds no model and
+        // no boot-resolved state, so a live model switch has nothing to re-point here.
+        observeRun: emitRunObservation,
     };
 }
 

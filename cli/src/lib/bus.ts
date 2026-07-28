@@ -68,6 +68,17 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
             return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.file.path, producer: event.file.producer };
         case "prov.input_used":
             return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.input.path, source: event.input.source };
+        case "run.observed":
+            // The snapshot carries every step; telemetry keeps the shape as counts. A run of 40
+            // steps observed on every transition would otherwise write the whole DAG to the log
+            // dozens of times per run, which is the payload reduction this function exists for.
+            return {
+                analysisId: event.analysisId,
+                runId: event.snapshot.runId,
+                status: event.snapshot.status,
+                stepCount: event.snapshot.steps.length,
+                doneCount: event.snapshot.steps.filter((s) => s.status === "completed").length,
+            };
     }
 }
 
