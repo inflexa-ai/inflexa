@@ -301,8 +301,13 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
     // `Bun.spawn` needs its signal, but a controller with no timer costs nothing if the spawn fails.
     const totalTimer = setTimeout(expire, timeoutMs);
     let idleTimer: ReturnType<typeof setTimeout> | null = idleTimeoutMs === undefined ? null : setTimeout(expire, idleTimeoutMs);
+    // Latched once the child is reaped, because output outlives it: the pipes are still read
+    // during the flush grace below, and a chunk arriving there would otherwise rearm the idle
+    // timer AFTER the clears, leaving a timer nothing owns — one that holds the event loop open
+    // for the whole bound and then aborts a run that already returned.
+    let settled = false;
     const noteActivity = (): void => {
-        if (idleTimeoutMs === undefined || timedOut) return;
+        if (idleTimeoutMs === undefined || timedOut || settled) return;
         if (idleTimer !== null) clearTimeout(idleTimer);
         idleTimer = setTimeout(expire, idleTimeoutMs);
     };
@@ -322,6 +327,7 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
     const stdout = collectCapped(proc.stdout, budget, noteActivity);
     const stderr = collectCapped(proc.stderr, budget, noteActivity);
     const exitCode = await proc.exited;
+    settled = true;
     clearTimeout(totalTimer);
     if (idleTimer !== null) clearTimeout(idleTimer);
     if (killTimer !== null) clearTimeout(killTimer);
