@@ -28,6 +28,7 @@ import { harnessRuntime } from "./boot.ts";
 import { clearAsks, pushAsk, settleAsk } from "./asks.ts";
 import { notify } from "./notice.ts";
 import { chatStatus, setChatStatus } from "./status.ts";
+import { runTurnWrite } from "./thread_write.ts";
 import type { AskCardPart, OpenableCardPart, OpenableEntry, Part, PlanCardPart, PresentationPart, TextPart, ToolCallPart } from "../../types/session.ts";
 
 // The chat's hot state — the message list, the in-flight streaming buffer, and the last error —
@@ -1106,7 +1107,16 @@ const realSendSeams: SendSeams = { runtime: harnessRuntime, runChatTurn, healRet
  * status, error, or messages. Its `appendTurn` already ran (correctly) inside the engine on the old
  * thread; the only remaining work is UI-visible, so dropping it is exactly right.
  */
-export async function send(opts: { sessionId: string; analysisId: string; userText: string }, seams: SendSeams = realSendSeams): Promise<void> {
+export function send(opts: { sessionId: string; analysisId: string; userText: string }, seams: SendSeams = realSendSeams): Promise<void> {
+    // Held against run-outcome records for the WHOLE turn, not just its append, because the engine's
+    // `appendTurn` lands inside `runChatTurn`: releasing earlier would let a record splice between
+    // this turn's rows. Turns are NOT serialized against each other — that ordering already has an
+    // answer in the generation and abort tokens — and with no record pending the body runs
+    // synchronously, so the turn's hot state is armed before the first yield exactly as before.
+    return runTurnWrite(opts.sessionId, () => sendLocked(opts, seams));
+}
+
+async function sendLocked(opts: { sessionId: string; analysisId: string; userText: string }, seams: SendSeams): Promise<void> {
     setErrorMsg(null);
     setLastTurnFailure(null);
     const runtime = seams.runtime();
