@@ -413,8 +413,13 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             loadPlan: () => okAsync(null),
         };
         await refreshSidebarData("A", s);
-        // Same entry object carried forward — the blip did not blink a genuinely running run away.
-        expect(activeRunProgress().get("run-x")).toBe(first.get("run-x"));
+        // The previous entry's CONTENT is carried forward — the blip did not blink a genuinely
+        // running run away — but re-stamped `stale`, because freshness is a property of THIS refresh
+        // and the panel mutes itself on it.
+        const carried = activeRunProgress().get("run-x");
+        expect(carried).toEqual({ ...first.get("run-x")!, stale: true });
+        expect(carried!.stale).toBe(true);
+        expect(first.get("run-x")!.stale).toBe(false);
     });
 
     test("a step-read DbError for a DIFFERENT run never shows one run's progress under another", async () => {

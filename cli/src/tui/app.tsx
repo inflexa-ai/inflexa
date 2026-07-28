@@ -18,6 +18,16 @@ import { openArtifact } from "./hooks/artifacts.ts";
 import { profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
 import { usePromptRecall } from "./hooks/prompt_recall.ts";
 import { watchOpenThread } from "./hooks/thread.ts";
+import {
+    activeRunCount,
+    focusedRun,
+    focusedRunActivity,
+    focusedRunPosition,
+    focusNextRun,
+    runPanelVisible,
+    toggleRunPanel,
+    watchRunPanel,
+} from "./hooks/run_panel.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
@@ -29,6 +39,7 @@ import { BootIndicator } from "./components/boot_indicator.tsx";
 import { AskPrompt } from "./components/ask_prompt.tsx";
 import { seedTextareaText } from "./components/text_area.tsx";
 import { ChatBar } from "./layout/chat_bar.tsx";
+import { RunActivityPanel } from "./layout/run_activity_panel.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
@@ -441,6 +452,10 @@ export function App(props: AppProps) {
     // Sidebar renders and the details views below snapshot on open).
     watchSidebarData(workspace);
 
+    // Wire the run-activity panel: its focused run's activity read (cadenced off the sidebar refresh,
+    // deliberately not a second timer) and its dismissal expiry. Under App's reactive owner.
+    watchRunPanel();
+
     // Mirror the live agent switch into the boot store's agentModels cell: the
     // status surface (sidebar MODELS section) renders each agent's active model + any pending switch. Seeds
     // at the ready edge and follows every later swap/schedule. Under App's reactive owner.
@@ -723,6 +738,8 @@ export function App(props: AppProps) {
             { chord: resolveKeybind("app.command-palette"), run: () => dialogPush(() => <CommandPalette commands={commands} />) },
             { chord: resolveKeybind("app.toggle-sidebar"), run: () => setSidebarOpen((open) => !open) },
             { chord: resolveKeybind("plan.explore-steps"), run: () => runCommandById("plan.explore-steps") },
+            { chord: resolveKeybind("app.run-panel-next"), run: focusNextRun },
+            { chord: resolveKeybind("app.run-panel-toggle"), run: toggleRunPanel },
             {
                 chord: leaderSeq("k"),
                 run: () => dialogPush(() => <CommandPalette commands={commands} />),
@@ -730,6 +747,8 @@ export function App(props: AppProps) {
                 group: "App",
             },
             { chord: leaderSeq("b"), run: () => setSidebarOpen((open) => !open), desc: "Toggle sidebar", group: "App" },
+            { chord: leaderSeq("p"), run: toggleRunPanel, desc: "Toggle run panel", group: "View" },
+            { chord: leaderSeq("]"), run: focusNextRun, desc: "Next active run", group: "View" },
             { chord: leaderSeq("a"), run: () => runCommandById("analysis.switch"), desc: "Switch analysis", group: "Analysis" },
             { chord: leaderSeq("n"), run: () => runCommandById("analysis.new"), desc: "New analysis", group: "Analysis" },
             { chord: leaderSeq("d"), run: openProfile, desc: "Data profile", group: "Analysis" },
@@ -967,6 +986,25 @@ export function App(props: AppProps) {
                         Live run progress renders in the sidebar RUNS section (not chat chrome) — a hidden
                         sidebar deliberately shows no live progress. */}
                         <Chat onScrollPaneRef={(r: ScrollBoxRenderable) => (scrollPaneRef = r)} />
+
+                        {/* The run-activity panel: the focused active run's frontier, at chat width.
+                        Sits between the stream and the input, and contributes ZERO rows when no run is
+                        active or the user dismissed it — an idle chat composes exactly as it did before
+                        the panel existed. It paints its own full-width flexShrink={0} background row
+                        (the 1-cell scrollbox-bleed rule). Complements the sidebar RUNS section rather
+                        than repeating it: the rail owns the step list, this owns the frontier detail the
+                        rail's 40 columns cannot hold. */}
+                        <Show when={runPanelVisible()}>
+                            <RunActivityPanel
+                                progress={focusedRun() ?? undefined}
+                                activity={focusedRunActivity()}
+                                activeCount={activeRunCount()}
+                                position={focusedRunPosition()}
+                                nextKeyLabel={keybindLabel("app.run-panel-next")}
+                                dismissKeyLabel={keybindLabel("app.run-panel-toggle")}
+                                onNext={focusNextRun}
+                            />
+                        </Show>
 
                         {/* Boot animation / failed-boot message, shown until the runtime is ready. A
                         full-width box painted with the app background and flexShrink={0}: it sits

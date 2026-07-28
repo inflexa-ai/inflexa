@@ -248,6 +248,11 @@ export const KEYBIND_DEFAULTS = {
     // colliding with any other esc owner (dialog dismiss, selection-clear, the composer's INSERT→NORMAL).
     "app.interrupt": "esc",
     "app.leader": "ctrl+x",
+    // The run-activity panel's two actions. Ctrl chords (never Alt — terminals deliver it
+    // unreliably) chosen from the keys the composer's textarea does not consume: it claims only
+    // enter, ctrl+j, and shift+enter, so neither of these can be swallowed while typing.
+    "app.run-panel-next": "ctrl+n",
+    "app.run-panel-toggle": "ctrl+r",
     // Opens the most recent openable artifact card. A bare printable, so it lives in the NORMAL-mode
     // (scroll-pane-focused) layer only — never active while the composer holds focus.
     "artifact.open-latest": "o",

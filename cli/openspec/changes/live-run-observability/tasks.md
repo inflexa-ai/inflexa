@@ -29,14 +29,14 @@
 
 ## 4. Run-activity panel
 
-- [ ] 4.1 Build the panel in the layout composition kit: run label, completion count, elapsed, and the frontier step's name, agent, activity label, and running time — no step list
-- [ ] 4.2 Derive the activity label from the newest durable workflow step of the run family, reusing `readNewestWorkflowStep` / `friendlyStepLabel` from `modules/harness/profile.ts` (the reader is already generalized for a second caller)
-- [ ] 4.3 Mount it between the stream's scroll region and the chat bar as a full-width background-painted box with `flexShrink={0}`; contribute zero rows when there is no run to show
-- [ ] 4.4 Implement navigation across active runs — cycling, wrapping, with a position indicator — reachable by chord and by click
-- [ ] 4.5 Implement auto-advance on terminal, and empty the panel when no active run remains
-- [ ] 4.6 Implement dismiss and restore, leaving the run and its other surfaces untouched while dismissed
-- [ ] 4.7 Verify layout with the height-sweep harness, asserting no stream bleed at the panel boundary and no collapse on a short terminal
-- [ ] 4.8 Render tests for each state: no run, one run, several runs, focused run terminating and advancing, dismissed
+- [x] 4.1 Build the panel in the layout composition kit: run label, completion count, elapsed, and the frontier step's name, agent, activity label, and running time — no step list
+- [x] 4.2 Derive the activity label from the newest durable workflow step of the run family, reusing `readNewestWorkflowStep` / `friendlyStepLabel` from `modules/harness/profile.ts` (the reader is already generalized for a second caller)
+- [x] 4.3 Mount it between the stream's scroll region and the chat bar as a full-width background-painted box with `flexShrink={0}`; contribute zero rows when there is no run to show
+- [x] 4.4 Implement navigation across active runs — cycling, wrapping, with a position indicator — reachable by chord and by click
+- [x] 4.5 Implement auto-advance on terminal, and empty the panel when no active run remains
+- [x] 4.6 Implement dismiss and restore, leaving the run and its other surfaces untouched while dismissed
+- [x] 4.7 Verify layout with the height-sweep harness, asserting no stream bleed at the panel boundary and no collapse on a short terminal
+- [x] 4.8 Render tests for each state: no run, one run, several runs, focused run terminating and advancing, dismissed
 
 ## 5. Completion announcement
 
