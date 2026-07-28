@@ -28,6 +28,19 @@
 //     record is pending — the overwhelmingly common case — the turn's body is invoked
 //     SYNCHRONOUSLY, because `send` is relied upon to arm its hot state (assistant id, abort
 //     controller, busy status) before its first await returns.
+//
+// NOT every thread write passes through here, and the exclusion is deliberate. `runDurableRetract`
+// (`conversation.ts`) removes a thread's tail turn OUTSIDE this lock, and it must: it is the tail of
+// an abort the user just triggered, the comment at its call site explains why the durable removal is
+// awaited before any visible transition, and putting a queue wait in front of it would add a record
+// append's latency to the one path whose whole design is that the user sees a single instant
+// transition. `healTailOrphan` runs inside `send`, so it is already covered by the turn's own hold.
+//
+// What that admits: a record admitted before a retract, but landing after its cut, attaches to the
+// turn that is now the tail rather than the one it followed. Bounded and survivable — `seq` stays
+// monotonic, no row is lost or duplicated, and the harm is one outcome record reading as though it
+// arrived a turn earlier than it did. The alternative trades a visible, immediate interaction cost
+// for an invisible ordering nicety in a case that needs two durable writes to race a keystroke.
 
 /** Every in-flight turn per thread. A barrier records wait behind — NOT a queue turns wait on. */
 const turns = new Map<string, Set<Promise<unknown>>>();

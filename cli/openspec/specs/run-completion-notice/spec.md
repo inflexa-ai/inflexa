@@ -34,14 +34,23 @@ being undismissed.
 
 ### Requirement: Concurrent completions are queued, never overwritten
 
-The transient-notice channel SHALL queue notices rather than replace a showing one, so two
-runs terminating within the display window both reach the user. A replace-on-arrival
-channel would silently drop a completion, which is the defect this capability exists to fix.
+A completion notice SHALL NOT be destroyed by a later notice arriving: two runs terminating
+within one display window SHALL both reach the user. Replace-on-arrival delivery would
+silently drop a completion, which is the defect this capability exists to fix.
 
-The queue SHALL be first-in-first-out and SHALL NOT drop pending notices. Concurrency here
-is bounded by how many runs an analysis can have in flight, which is small, so a completion
-notice has no realistic path to a backlog worth discarding — and every notice also has a
-durable record, so the transient channel does not need a loss policy.
+Queueing SHALL be a per-notice choice rather than the channel's only discipline, and the
+completion notice SHALL select it. The same channel carries SOLICITED feedback — a copy
+confirmation, a theme change, a command error — which answers a keystroke the user just made.
+For those the newest is the one that matters, and queueing them would play two identical
+toasts for two presses of the same key, making the second press look like it did something
+different. The two kinds want opposite delivery, so the caller states which it is.
+
+The queue SHALL be first-in-first-out and SHALL NOT drop pending notices on arrival. A
+solicited notice MAY take the display slot from a showing notice, but SHALL NOT discard what
+is queued behind it. Concurrency here is bounded by how many runs an analysis can have in
+flight, which is small, so a completion notice has no realistic path to a backlog worth
+discarding — and every notice also has a durable record, so the transient channel does not
+need a loss policy.
 
 #### Scenario: Two runs finishing together both announce
 
@@ -52,6 +61,16 @@ durable record, so the transient channel does not need a loss policy.
 
 - **WHEN** several runs terminate in quick succession
 - **THEN** their notices are shown in completion order, and none is skipped
+
+#### Scenario: Repeated solicited feedback replaces rather than queues
+
+- **WHEN** the user triggers the same solicited notice twice in quick succession
+- **THEN** the second replaces the first, rather than playing two identical toasts in turn
+
+#### Scenario: Solicited feedback does not discard queued completions
+
+- **WHEN** a solicited notice is raised while completion notices are still queued
+- **THEN** it is shown immediately, and the queued completions are delivered after it
 
 ### Requirement: A run's outcome is recorded durably in the conversation thread
 
@@ -133,6 +152,14 @@ until the turn's own append has completed. A completion notice is not time-criti
 transient toast still fires immediately, so deferring the durable record costs the user
 nothing.
 
+Tail retraction is the one exclusion. The durable removal that follows a user's abort SHALL
+NOT wait on this serialization: it is awaited *before* the retract's visible transition
+precisely so the whole change lands as one step, and a queue wait would put a record append's
+latency inside a keystroke's response. The admitted consequence is that a record admitted
+before a retract but landing after its cut attaches to whichever turn is then the tail. That
+is bounded and survivable — no row is lost or duplicated and `seq` stays monotonic — and it
+requires two durable writes to race a single keypress.
+
 #### Scenario: A message sent at the moment a run lands is not lost
 
 - **WHEN** the user submits a message while the run-outcome append is in flight
@@ -152,6 +179,11 @@ nothing.
 
 - **WHEN** a user message and a run outcome contend for the same thread
 - **THEN** both are written, in the order they were admitted, and neither is dropped
+
+#### Scenario: A retract is not delayed by a queued record
+
+- **WHEN** the user aborts a turn while a run-outcome record is queued for that thread
+- **THEN** the durable tail removal runs without waiting for the record, and the visible transition is not delayed
 
 ### Requirement: Durable reactions are keyed against repeated delivery
 

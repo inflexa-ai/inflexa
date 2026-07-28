@@ -322,8 +322,13 @@ export function Sidebar(props: SidebarProps) {
         // terminal ones as plain rows. The cap applies only to the terminal tail: active runs are
         // bounded by real concurrency — one to three in practice — while finished runs accumulate
         // without limit, and capping the whole list would let a burst of completions push a running
-        // run off the rail entirely. Newest-first ordering is preserved so the section still reads
-        // chronologically; the runs picker carries the full history.
+        // run off the rail entirely.
+        //
+        // Order is the snapshot's own, which groups active runs above terminal ones and is
+        // newest-first only WITHIN each group — a run started an hour ago and still going sits above
+        // one that finished a minute ago. That is the useful reading for a rail (live work first, and
+        // it is the work that changes), not an accident to correct; the runs picker carries the full
+        // history in true chronological order.
         const active = s.runs.filter((r) => !RUN_STATUS_TERMINAL[r.status]);
         const terminal = s.runs.filter((r) => RUN_STATUS_TERMINAL[r.status]).slice(0, TERMINAL_RUN_ROWS);
         const keep = new Set([...active, ...terminal]);

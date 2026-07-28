@@ -454,22 +454,24 @@ function resetSnapshots(): void {
 }
 
 /**
- * Repopulate both snapshots (and the active-run progress snapshot) for `analysisId` from the booted
- * runtime's pool. No-ops to `not_ready` (both snapshots) and clears the progress snapshot when the runtime
+ * Repopulate both snapshots (and the active-run progress map) for `analysisId` from the booted
+ * runtime's pool. No-ops to `not_ready` (both snapshots) and clears the progress map when the runtime
  * is not booted — the sidebar renders a muted placeholder and no query runs (the no-op guard).
- * Otherwise the two ledger reads are awaited in turn and each `.match`es INDEPENDENTLY into its
- * snapshot: a `DbError` becomes `unavailable` (never a crash), a null profile row becomes `absent`,
- * and every write is a fresh object so Solid always reconciles.
  *
- * The progress snapshot is derived from the runs read: when the NEWEST run is non-terminal a third read
- * fetches its steps and publishes {@link activeRunProgress}; a terminal (or absent) newest run clears
- * it and fires NO step query — so an idle analysis stays at zero step reads. A failed step read keeps
- * the previous row only when it is THIS run's (avoiding a blink of a genuinely running run); if the
- * newest run changed on the same tick it clears instead, so one run's progress is never shown for another.
+ * The profile read `.match`es INDEPENDENTLY of the run reads: a profile `DbError` degrades the
+ * profile section to `unavailable` while the runs section still loads, and vice versa — the two
+ * sections never share a failure. A null profile row becomes `absent`, and every write is a fresh
+ * object so Solid always reconciles.
+ *
+ * The RUNS section is the merge of an uncapped non-terminal read (what is live) and a newest-N window
+ * (what to list); either failing degrades to the other, and only both failing yields `unavailable`.
+ * Every non-terminal run in the merge then gets a step read and publishes an {@link activeRunProgress}
+ * entry keyed by its run id — so a terminal-only analysis fires NO step query and stays at zero step
+ * reads. One run's failed step read carries that run's previous entry forward, marked `stale`, and
+ * cannot affect any other run's entry.
  *
  * Staleness: the refresh claims a {@link refreshGeneration} token at entry and re-checks it after
- * each read (including the step read); a refresh superseded by a newer swap silently drops rather than
- * writing stale rows.
+ * every await; a refresh superseded by a newer swap silently drops rather than writing stale rows.
  */
 export async function refreshSidebarData(analysisId: string, seams: RefreshSeams = realRefreshSeams): Promise<void> {
     // Bump BEFORE the runtime guard so even the not_ready path invalidates any in-flight older refresh
@@ -483,11 +485,11 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
         return;
     }
 
-    // Two awaited-inline reads (the `loadMessages` pattern — a `ResultAsync` handed to `Promise.all`
-    // reads to the `must-use-result` lint as an unconsumed Result). Each `.match`es INDEPENDENTLY, so
-    // a profile `DbError` can degrade the profile section to `unavailable` while the runs section
-    // still loads (and vice versa) — the two sections never share a failure. The generation token is
-    // re-checked after EACH await so a superseded refresh drops at the first opportunity.
+    // Three awaited-inline reads, kept serial where the fan-outs below are not: these are O(1) in the
+    // run count, so the round trips saved by racing them do not scale, and re-checking the generation
+    // token after EACH await lets a superseded refresh drop at the first opportunity instead of only
+    // after the slowest of the three. Each `.match`es INDEPENDENTLY, so a profile `DbError` degrades
+    // the profile section alone.
     const profileRes = await seams.loadProfile(runtime.pool, analysisId);
     if (myRefresh !== refreshGeneration) return;
     const runsRes = await seams.loadRuns(runtime.pool, analysisId);
@@ -500,114 +502,132 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
         () => setProfile({ kind: "unavailable" }),
     );
 
+    // The two run reads answer different questions, and the section survives EITHER failing.
+    //   - the uncapped non-terminal read is the AUTHORITY on what is live;
+    //   - the newest-N window decides only what the RUNS section LISTS.
+    // Merged active-first, then the window's rows minus anything already present, so a long-running
+    // analysis that has fallen off the window is still both listed and tracked. Each read degrades to
+    // the other's view rather than blanking the section — a read that adds coverage must never take
+    // coverage away, and that has to hold in BOTH directions: dropping a successful active read
+    // because the mere listing blipped would cost the rail block, the panel entry, AND the completion
+    // announcement (which returns early unless the snapshot is `loaded`) for a run known to be live.
+    // Only when BOTH reads fail is there nothing to show.
+    const live = activeRes.unwrapOr(null);
+    const listed = runsRes.unwrapOr(null);
+    if (live === null && listed === null) {
+        // A runs `DbError` is a transient degrade that itself re-arms the poll (`hasActiveWork`). Keep
+        // any existing progress entries so a blip does not flash the whole section away and back.
+        setRuns({ kind: "unavailable" });
+        return;
+    }
+    const seen = new Set((live ?? []).map((r) => r.runId));
+    const merged = [...(live ?? []), ...(listed ?? []).filter((r) => !seen.has(r.runId))];
+    setRuns({ kind: "loaded", runs: merged });
+
     // EVERY non-terminal run publishes a progress entry, keyed by its run id. A terminal run (or no
     // runs at all) publishes none, and only a non-terminal run fires a step read — so an idle
     // analysis still issues zero step queries, the property the poll's arming condition depends on.
-    await runsRes.match(
-        async (rows) => {
-            // The uncapped active read is the AUTHORITY on what is live; the windowed listing only
-            // decides what the RUNS section lists. Merging the two — active first, then the window's
-            // rows minus anything already present — means a long-running analysis that has fallen off
-            // the newest-N window is still both listed and tracked. A failed active read degrades to
-            // the window's own view rather than blanking the section: strictly the old behaviour.
-            const merged = activeRes.match(
-                (live) => {
-                    const seen = new Set(live.map((r) => r.runId));
-                    return [...live, ...rows.filter((r) => !seen.has(r.runId))];
-                },
-                () => rows,
-            );
-            setRuns({ kind: "loaded", runs: merged });
-            const active = merged.filter((r) => !RUN_STATUS_TERMINAL[r.status]);
-            if (active.length === 0) {
-                setActiveRun(new Map());
-                return;
-            }
+    const active = merged.filter((r) => !RUN_STATUS_TERMINAL[r.status]);
+    if (active.length === 0) {
+        setActiveRun(new Map());
+        return;
+    }
 
-            // Resolve each distinct plan ONCE per refresh. Re-runs of one plan share a `planId`, and
-            // a rail showing three runs of the same plan must not pay three plan reads for one title.
-            const planIds = [...new Set(active.map((r) => r.planId).filter((id): id is string => id !== null))];
-            const plans = new Map<string, unknown>();
-            for (const planId of planIds) {
-                const planRes = await seams.loadPlan(runtime.pool, planId, analysisId);
-                if (myRefresh !== refreshGeneration) return;
-                // A plan that cannot be read degrades that run's label to its workflow name / id tail.
-                // The rail must still render; a missing title is a poorer row, never an error.
-                planRes.match(
-                    (plan) => plans.set(planId, plan),
-                    () => {},
-                );
-            }
-
-            // Runs that read cleanly this tick. The published map is assembled from this in the
-            // setter below rather than written here, because a run whose read blipped must be carried
-            // forward from the PREVIOUS map — and reading that signal here would both track
-            // reactivity nothing wants and pin the value to loop-entry rather than write time.
-            const fresh = new Map<string, ActiveRunProgress>();
-            for (const run of active) {
-                const stepsRes = await seams.loadSteps(runtime.pool, run.runId);
-                if (myRefresh !== refreshGeneration) return;
-                stepsRes.match(
-                    (stepRows) => {
-                        const plan = run.planId === null ? undefined : plans.get(run.planId);
-                        const nameByStepId = planStepNames(plan);
-                        const steps: RunStepView[] = stepRows.map((r) => ({
-                            // The plan's human phrase for the step, falling back to the slug the ledger
-                            // keys on. This is the join that answers "what is being worked on" in words:
-                            // the step row itself carries only `T{track}S{step}`.
-                            label: nameByStepId.get(r.stepId) ?? r.stepId,
-                            state: stepStateOf(r.status),
-                            startedAt: r.startedAt,
-                            agent: r.agentId,
-                            blockedReason: r.blockedReason,
-                            attempts: r.attempts,
-                        }));
-                        fresh.set(run.runId, {
-                            runId: run.runId,
-                            name: runLabelOf(run, plan),
-                            tag: idTail(run.runId),
-                            startedAt: run.startedAt,
-                            done: steps.filter((s) => s.state === "done").length,
-                            total: steps.length,
-                            steps,
-                            stale: false,
-                        });
-                    },
-                    // This run is active but its steps could not be read (a transient DB blip). It is
-                    // simply absent from `fresh`, and the assembly below carries its previous entry
-                    // forward — so the bounded poll self-heals without blinking a genuinely running
-                    // run away. Keying by run id is what makes this safe: the old single-slot store
-                    // had to compare tags to avoid showing one run's steps under another's row, and
-                    // that mismatch is no longer representable.
-                    () => {},
-                );
-            }
-            setActiveRun((prev) => {
-                // Assembled in `active` order — the runs query's newest-first order — NOT in the order
-                // the reads happened to succeed. Map iteration order is what every consumer reads as
-                // run order: the rail's blocks, and the panel's position indicator and implicit focus.
-                // Appending carried-forward entries instead would let a transient blip on one run
-                // reorder the whole set, silently swapping which run the panel shows.
-                const next = new Map<string, ActiveRunProgress>();
-                for (const run of active) {
-                    const read = fresh.get(run.runId);
-                    if (read) {
-                        next.set(run.runId, read);
-                        continue;
-                    }
-                    const kept = prev.get(run.runId);
-                    // Re-stamped `stale` rather than reused verbatim: the entry's CONTENT is the last
-                    // known state, but its freshness is a property of THIS refresh, so a run that read
-                    // cleanly last tick and blipped this one must not keep advertising itself as fresh.
-                    if (kept) next.set(run.runId, { ...kept, stale: true });
-                }
-                return next;
-            });
-        },
-        // A runs `DbError` is a transient degrade that itself re-arms the poll (`hasActiveWork`). Keep
-        // any existing progress entries so a blip does not flash the whole section away and back.
-        async () => setRuns({ kind: "unavailable" }),
+    // Both fan-outs below are CONCURRENT, not sequential. Each item's read is independent of every
+    // other's, and this path re-runs on every run-observation event — serially it would cost
+    // (distinct plans + active runs) round trips per transition instead of two. `.match` rather than
+    // handing the `ResultAsync` straight to `Promise.all`: it consumes the Result into a plain
+    // promise, which is what keeps the `must-use-result` lint satisfied.
+    //
+    // Each distinct plan resolves ONCE. Re-runs of one plan share a `planId`, and a rail showing
+    // three runs of the same plan must not pay three plan reads for one title.
+    const planIds = [...new Set(active.map((r) => r.planId).filter((id): id is string => id !== null))];
+    const planReads = await Promise.all(
+        planIds.map((planId) =>
+            seams.loadPlan(runtime.pool, planId, analysisId).match(
+                (plan) => ({ planId, plan }),
+                // A plan that cannot be read degrades that run's label to its id tail. The rail must
+                // still render; a missing title is a poorer row, never an error.
+                () => null,
+            ),
+        ),
     );
+    if (myRefresh !== refreshGeneration) return;
+    const plans = new Map<string, unknown>();
+    for (const read of planReads) if (read) plans.set(read.planId, read.plan);
+
+    // A run whose step read blipped resolves to `null` and is simply absent from `fresh`; the
+    // assembly below carries its previous entry forward, so the bounded poll self-heals without
+    // blinking a genuinely running run away. Keying by run id is what makes that safe: the old
+    // single-slot store had to compare tags to avoid showing one run's steps under another's row,
+    // and that mismatch is no longer representable.
+    const stepReads = await Promise.all(
+        active.map((run) =>
+            seams.loadSteps(runtime.pool, run.runId).match(
+                (stepRows) => ({ run, stepRows }),
+                () => null,
+            ),
+        ),
+    );
+    if (myRefresh !== refreshGeneration) return;
+
+    // Built here rather than inside the setter because a run whose read blipped must be carried
+    // forward from the PREVIOUS map — and reading that signal here would both track reactivity
+    // nothing wants and pin the value to loop-entry rather than write time.
+    const fresh = new Map<string, ActiveRunProgress>();
+    for (const read of stepReads) {
+        if (!read) continue;
+        const { run, stepRows } = read;
+        const plan = run.planId === null ? undefined : plans.get(run.planId);
+        const nameByStepId = planStepNames(plan);
+        const steps: RunStepView[] = stepRows.map((r) => ({
+            // The plan's human phrase for the step, falling back to the slug the ledger keys on. This
+            // is the join that answers "what is being worked on" in words: the step row itself
+            // carries only `T{track}S{step}`.
+            label: nameByStepId.get(r.stepId) ?? r.stepId,
+            state: stepStateOf(r.status),
+            startedAt: r.startedAt,
+            agent: r.agentId,
+            blockedReason: r.blockedReason,
+            attempts: r.attempts,
+        }));
+        fresh.set(run.runId, {
+            runId: run.runId,
+            name: runLabelOf(run, plan),
+            tag: idTail(run.runId),
+            startedAt: run.startedAt,
+            done: steps.filter((s) => s.state === "done").length,
+            total: steps.length,
+            steps,
+            stale: false,
+        });
+    }
+
+    setActiveRun((prev) => {
+        // Assembled in `active` order — the runs query's newest-first order — NOT in the order the
+        // reads happened to succeed. Map iteration order is what every consumer reads as run order:
+        // the rail's blocks, and the panel's position indicator and implicit focus. Appending
+        // carried-forward entries instead would let a transient blip on one run reorder the whole
+        // set, silently swapping which run the panel shows.
+        const next = new Map<string, ActiveRunProgress>();
+        for (const run of active) {
+            const read = fresh.get(run.runId);
+            if (read) {
+                next.set(run.runId, read);
+                continue;
+            }
+            const kept = prev.get(run.runId);
+            if (!kept) continue;
+            // Re-stamped on the FRESH → STALE edge only. The entry's CONTENT is the last known state,
+            // but its freshness is a property of THIS refresh, so a run that read cleanly last tick
+            // must stop advertising itself as fresh. An already-stale entry is carried by IDENTITY
+            // instead: it asserts the same fact, and minting an equal-but-new object would re-fire
+            // every consumer memoized on it — the run panel's activity effect among them, which would
+            // then issue a DBOS read per blip for a value that cannot have changed.
+            next.set(run.runId, kept.stale ? kept : { ...kept, stale: true });
+        }
+        return next;
+    });
 }
 
 /**

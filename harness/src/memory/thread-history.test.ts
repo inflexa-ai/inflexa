@@ -5,7 +5,7 @@ import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type Met
 import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
-import { isInterruptedMessage, markInterruptedMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
+import { isInterruptedMessage, markInterruptedMessage, syntheticRecordMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { countTokens } from "./count-tokens.js";
 import { __resetThreadHistoryMetricsForTest, createThreadHistory, EVICTION_BLOCK_TURNS, type ThreadHistory } from "./thread-history.js";
 import { createThreadStore } from "./thread-store.js";
@@ -829,7 +829,14 @@ describe("host-appended synthetic records", () => {
     // The embedder's use of the marker: a record of work that happened OUTSIDE the conversation —
     // an analysis run finishing — appended between turns rather than mid-turn. It must reach the
     // model's next context without being mistaken for something the user said.
-    const runNotice = (): ModelMessage => syntheticUserMessage("Run GSEA cross-species comparison completed: 3/3 steps in 4m12s.");
+    //
+    // Built with `syntheticRecordMessage` — the constructor the HOST actually calls — not with
+    // `syntheticUserMessage`. The two are separate markers that agree today, and every invariant
+    // below rests on that agreement: if a record ever stopped carrying `SYNTHETIC_MESSAGE_KEY` it
+    // would read as a genuine turn start, splitting one turn in two for the token window and handing
+    // tail retraction a mid-turn cut point. Asserting against the loop's constructor instead would
+    // leave that regression green.
+    const runNotice = (): ModelMessage => syntheticRecordMessage("Run GSEA cross-species comparison completed: 3/3 steps in 4m12s.");
 
     it("does not open a turn for paging or the token window", async () => {
         const turn = [userText("kick off the analysis"), assistantText("launched — I'll report back")];

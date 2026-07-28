@@ -125,8 +125,9 @@ let activityGeneration = 0;
  *     refresh mints a fresh snapshot for it, which is deliberately the whole cadence: the refresh's
  *     lifecycle edges, its bounded poll, and its run-observation trigger already decide when run
  *     state is worth re-reading, and a second timer here would be a competing cadence for the same
- *     question. A carried-forward (stale) entry keeps its object identity, so a failed refresh
- *     correctly does NOT re-read — the label holds rather than flickering to null and back.
+ *     question. A run whose step read blips re-reads once, on the fresh → stale edge that re-stamps
+ *     its entry; every blip after that carries the SAME object (see the assembly in
+ *     `refreshSidebarData`), so a persistent outage costs one activity read, not one per tick.
  *
  *  2. **dismissal expiry** — clears a dismissal once no run is active. The dismissal meant "not this,
  *     not now"; once the work it referred to is over, keeping the panel suppressed would leave a
