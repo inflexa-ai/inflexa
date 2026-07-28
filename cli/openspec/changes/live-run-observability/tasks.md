@@ -4,20 +4,20 @@
 - [x] 1.2 Add a run-observer realization beside `prov_bridge.ts`'s provenance emitter that maps the harness observation callback onto `run.*` bus emissions, sharing no code or payload with `createRunProvenanceEmitter`
 - [x] 1.3 Inject the observer at the same composition root that supplies `emitProvenance` (`run_deps.ts`), keeping the provenance emitter untouched
 - [x] 1.4 Test: a `run.*` subscriber receives run state without any `prov.*` event firing differently, and the provenance recorder's behaviour is unchanged
-- [ ] 1.5 Test: with no embedded run in-process (a run started elsewhere), no `run.*` event is observed and the change degrades to polling — deferred to group 2, where the sidebar store exists to assert the polling fallback against; in isolation this asserts only that an uncalled function emits nothing
+- [x] 1.5 Test: with no embedded run in-process (a run started elsewhere), no `run.*` event is observed and the change degrades to polling — deferred to group 2, where the sidebar store exists to assert the polling fallback against; in isolation this asserts only that an uncalled function emits nothing
 
 ## 2. Keyed multi-run snapshot in sidebar-live
 
-- [ ] 2.1 Change the active-run progress store in `src/tui/hooks/sidebar_live.ts` from a single slot to a map keyed by run id
-- [ ] 2.2 Fetch steps for **every** non-terminal run in the refresh, inside the existing generation-token guard; remove a run's entry when it goes terminal
-- [ ] 2.3 Resolve the plan title per run (falling back to workflow name, then id tail) and the plan step name per step, caching by plan id so several runs of one plan read the plan once — reuse the runs picker's `loadPlan` join shape
-- [ ] 2.4 Widen the step view projection to carry the step name, owning agent, blocked reason, and attempt count; keep the status→view-state mapping defined once and shared with the run-detail dialog and the panel
-- [ ] 2.5 Make `skipped` distinguishable from `pending` in the view state rather than collapsing both to queued
-- [ ] 2.6 Subscribe the store to `run.*` as a refresh trigger only (never a data source), following the poll's skip rule rather than the lifecycle rule
-- [ ] 2.7 Verify the arming condition still disarms: an analysis with no active work issues zero queries and holds no interval
-- [ ] 2.8 Test: two concurrent runs each publish their own keyed entry; a terminal run's entry is removed while the other's survives
-- [ ] 2.9 Test: a step-read failure keeps a previous entry only when it belongs to the same run id, and drops it otherwise
-- [ ] 2.10 Test: an event burst arriving faster than reads complete still results in a completed refresh that writes
+- [x] 2.1 Change the active-run progress store in `src/tui/hooks/sidebar_live.ts` from a single slot to a map keyed by run id
+- [x] 2.2 Fetch steps for **every** non-terminal run in the refresh, inside the existing generation-token guard; remove a run's entry when it goes terminal
+- [x] 2.3 Resolve the plan title per run (falling back **directly to the id tail** — never to the workflow name, which is `"executeAnalysis"` on every row and so labels every unresolvable run identically) and the plan step name per step, caching by plan id so several runs of one plan read the plan once — reuse the runs picker's `loadPlan` join shape
+- [x] 2.4 Widen the step view projection to carry the step name, owning agent, blocked reason, and attempt count; keep the status→view-state mapping defined once and shared with the run-detail dialog and the panel
+- [x] 2.5 Make `skipped` distinguishable from `pending` in the view state rather than collapsing both to queued
+- [x] 2.6 Subscribe the store to `run.*` as a refresh trigger only (never a data source), following the poll's skip rule rather than the lifecycle rule
+- [x] 2.7 Verify the arming condition still disarms: an analysis with no active work issues zero queries and holds no interval
+- [x] 2.8 Test: two concurrent runs each publish their own keyed entry; a terminal run's entry is removed while the other's survives
+- [x] 2.9 Test: a step-read failure keeps a previous entry only when it belongs to the same run id, and drops it otherwise
+- [x] 2.10 Test: an event burst arriving faster than reads complete still results in a completed refresh that writes
 
 ## 3. Sidebar RUNS section
 

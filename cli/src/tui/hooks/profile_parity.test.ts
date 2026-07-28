@@ -285,7 +285,13 @@ function profileStatus(over: Partial<DataProfileStatus>): DataProfileStatus {
 }
 
 function refreshSeams(profile: DataProfileStatus | null): RefreshSeams {
-    return { runtime: () => fakeRuntime, loadProfile: () => okAsync(profile), loadRuns: () => okAsync([]), loadSteps: () => okAsync([]) };
+    return {
+        runtime: () => fakeRuntime,
+        loadProfile: () => okAsync(profile),
+        loadRuns: () => okAsync([]),
+        loadSteps: () => okAsync([]),
+        loadPlan: () => okAsync(null),
+    };
 }
 
 describe("watchProfileParity — live input-mutation edge", () => {

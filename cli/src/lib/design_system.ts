@@ -51,6 +51,8 @@ export const GLYPHS = {
     spinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
     /** U+25AE — filled vertical bar: one cell of a progress meter. */
     bar: "▮",
+    /** U+00D7 — multiplication sign: a repeat count (`×3` attempts on a retried run step). Not the ASCII `x`, which reads as a letter mid-label. */
+    multiply: "×",
     /** U+25C6 — filled diamond: the `thinking` gutter marker. */
     diamond: "◆",
     /** U+25B8 — small right triangle: the `tool` gutter marker (and a collapsed/disclosed affordance). */

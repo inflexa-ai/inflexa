@@ -130,7 +130,13 @@ describe("Sidebar input count follows the bus", () => {
 const fakeRuntime = { pool: {} } as unknown as HarnessRuntime;
 
 function seams(profile: DataProfileStatus | null, runs: CortexRunRow[], steps: StepExecutionRow[] = []): RefreshSeams {
-    return { runtime: () => fakeRuntime, loadProfile: () => okAsync(profile), loadRuns: () => okAsync(runs), loadSteps: () => okAsync(steps) };
+    return {
+        runtime: () => fakeRuntime,
+        loadProfile: () => okAsync(profile),
+        loadRuns: () => okAsync(runs),
+        loadSteps: () => okAsync(steps),
+        loadPlan: () => okAsync(null),
+    };
 }
 
 function stepRow(stepId: string, status: StepExecutionRow["status"]): StepExecutionRow {

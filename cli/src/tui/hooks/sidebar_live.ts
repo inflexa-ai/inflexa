@@ -2,6 +2,7 @@ import { createSignal, createEffect, createMemo, onCleanup } from "solid-js";
 import { ResultAsync } from "neverthrow";
 import {
     loadDataProfileStatus,
+    loadPlan,
     queryRunsByAnalysis,
     queryStepsByRun,
     type CortexRunRow,
@@ -12,9 +13,11 @@ import {
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
 
+import { Bus } from "../../lib/bus.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import type { StampedEvent } from "../../types/events.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { RunStepView } from "../components/run_block.tsx";
 import { bootState, harnessRuntime } from "./boot.ts";
@@ -48,15 +51,14 @@ export type ProfileSnapshot = { kind: "not_ready" } | { kind: "unavailable" } | 
 export type RunsSnapshot = { kind: "not_ready" } | { kind: "unavailable" } | { kind: "loaded"; runs: CortexRunRow[] };
 
 /**
- * Live progress of the analysis's NEWEST run, published ONLY while that run is non-terminal — the
- * feed for the sidebar RUNS section's progress embed (the run-block vocabulary: the segmented bar,
- * `done/total`, and the ordered steps). `null` means nothing is pinned: the analysis has no runs, its
- * newest run already reached a terminal state, or the runtime is not booted. Refreshed on the same
- * cadence as the sidebar sections (the same non-terminal newest run also arms {@link hasActiveWork}),
- * so the row and the poll rise and fall together.
+ * Live progress of ONE non-terminal run — the feed for that run's block in the sidebar RUNS section
+ * (the run-block vocabulary: the segmented bar, `done/total`, and the ordered steps) and for the
+ * run-activity panel's frontier.
  */
 export type ActiveRunProgress = {
-    /** The run's short label (see {@link shortRunName}). */
+    /** The run this progress belongs to — the map key, carried inline so a consumer holding one entry still knows whose it is. */
+    runId: string;
+    /** The run's human label (see {@link runLabelOf}). */
     name: string;
     /** The run's short id tail (see {@link idTail}). */
     tag: string;
@@ -68,15 +70,29 @@ export type ActiveRunProgress = {
     steps: RunStepView[];
 };
 
+/**
+ * Every active run's progress, keyed by run id. Empty when nothing is active: no runs, all runs
+ * terminal, or the runtime not booted.
+ *
+ * Keyed rather than the single newest-run slot it replaces. The old shape bought its
+ * "no run-row/progress mismatch is representable" guarantee from there being exactly one snapshot;
+ * this one buys the same guarantee from the KEY — a block renders under the row whose id it is
+ * keyed by, so attributing one run's steps to another is still not representable, and a second
+ * concurrent run stops being invisible.
+ */
+export type ActiveRunProgressMap = ReadonlyMap<string, ActiveRunProgress>;
+
 const [profile, setProfile] = createSignal<ProfileSnapshot>({ kind: "not_ready" });
 const [runs, setRuns] = createSignal<RunsSnapshot>({ kind: "not_ready" });
-const [activeRun, setActiveRun] = createSignal<ActiveRunProgress | null>(null);
+// A fresh Map object per publish: Solid's default equality is referential, so mutating one in place
+// would update no consumer.
+const [activeRun, setActiveRun] = createSignal<ActiveRunProgressMap>(new Map());
 
 /** The data-profile snapshot — read in a tracking scope to repaint on refresh. */
 export const profileSnapshot = profile;
 /** The runs snapshot — read in a tracking scope to repaint on refresh. */
 export const runsSnapshot = runs;
-/** The newest non-terminal run's progress, or `null` when nothing is active — read in a tracking scope. */
+/** Every active run's progress keyed by run id (empty when nothing is active) — read in a tracking scope. */
 export const activeRunProgress = activeRun;
 
 /**
@@ -223,6 +239,52 @@ export function shortRunName(run: CortexRunRow): string {
     return id.replace(/-/g, "").slice(-6);
 }
 
+/**
+ * The plan's human title, or `null` when the plan is absent, unreadable, or predates titles.
+ *
+ * Takes `unknown` because the persisted plan is a JSON blob whose schema types `title` as optional:
+ * the runtime shape is not guaranteed by the type, so it is checked rather than trusted.
+ */
+export function planTitleOf(plan: unknown): string | null {
+    if (typeof plan !== "object" || plan === null || !("title" in plan)) return null;
+    const title = plan.title;
+    return typeof title === "string" && title.trim().length > 0 ? title.trim() : null;
+}
+
+/**
+ * A run's display label: its plan's title when there is one, else the run's id tail.
+ *
+ * The fallback deliberately skips {@link shortRunName}. That returns `workflowName`, which is
+ * `"executeAnalysis"` on every row in the ledger and therefore distinguishes nothing — falling back
+ * to it would label every unresolvable run identically, which is strictly worse than the id tail
+ * the rail has always used for exactly this reason. The readable 3–8-word name the planner wrote
+ * lives on the plan, one join away, and is what this exists to surface when it is there.
+ */
+export function runLabelOf(run: CortexRunRow, plan: unknown): string {
+    return planTitleOf(plan) ?? idTail(run.runId);
+}
+
+/**
+ * Each plan step's human name, keyed by the step id the ledger rows carry.
+ *
+ * Same `unknown` discipline as {@link planTitleOf}: the plan is a stored blob, so every hop is
+ * checked. A plan that is missing, malformed, or whose steps carry no names yields an empty map and
+ * every step falls back to its slug — a poorer label, never a crash.
+ */
+export function planStepNames(plan: unknown): ReadonlyMap<string, string> {
+    const names = new Map<string, string>();
+    if (typeof plan !== "object" || plan === null || !("steps" in plan)) return names;
+    const steps = plan.steps;
+    if (!Array.isArray(steps)) return names;
+    for (const step of steps) {
+        if (typeof step !== "object" || step === null) continue;
+        const id = "id" in step ? step.id : undefined;
+        const name = "name" in step ? step.name : undefined;
+        if (typeof id === "string" && typeof name === "string" && name.trim().length > 0) names.set(id, name.trim());
+    }
+    return names;
+}
+
 /** A short, human-scannable tail of a uuid (dashes stripped) — the run tag the run-detail dialog + sidebar progress embed show. */
 export function idTail(id: string): string {
     return id.replace(/-/g, "").slice(-6);
@@ -233,11 +295,12 @@ export function idTail(id: string): string {
  * exhaustive over {@link StepExecutionRow.status} — a `never`-typed default breaks the build if the
  * harness enum grows, so a new status is classified honestly rather than silently mis-bucketed.
  *
- * The four buckets are `done | running | failed | queued`; the honest mapping of the seven harness
- * statuses:
- *  - `pending` / `skipped` → `queued` — neither ran: pending awaits its turn, skipped never will.
- *    The muted hollow glyph reads as "inactive", which is truthful for both (skipped is not a
- *    success and not an error).
+ * The five buckets are `done | running | failed | queued | skipped`; the honest mapping of the seven
+ * harness statuses:
+ *  - `pending` → `queued` — has not run and is still going to.
+ *  - `skipped` → `skipped` — never ran and never will, because an upstream step failed or blocked.
+ *    Kept distinct from `queued`: folding them made a doomed dependent read as work still ahead,
+ *    which is the opposite of what it is. Neither is a success or an error, so both stay muted.
  *  - `running` → `running`, `completed` → `done`, `failed` → `failed` — direct.
  *  - `canceled` → `failed` — a fail-fast sibling stopped mid-flight; a non-success terminal, shown
  *    error-toned to match the sidebar's run-level `canceled`.
@@ -251,8 +314,9 @@ export function idTail(id: string): string {
 export function stepStateOf(status: StepExecutionRow["status"]): RunStepView["state"] {
     switch (status) {
         case "pending":
-        case "skipped":
             return "queued";
+        case "skipped":
+            return "skipped";
         case "running":
             return "running";
         case "completed":
@@ -330,8 +394,10 @@ export type RefreshSeams = {
     readonly loadProfile: (pool: Pool, analysisId: string) => ResultAsync<DataProfileStatus | null, DbError>;
     /** Read the analysis's newest runs (newest-first, capped). Real: `queryRunsByAnalysis` @ {@link RUNS_LIMIT}. */
     readonly loadRuns: (pool: Pool, analysisId: string) => ResultAsync<CortexRunRow[], DbError>;
-    /** Read a run's step ledger — fired only for a non-terminal newest run. Real: `queryStepsByRun`. */
+    /** Read a run's step ledger — fired once per NON-TERMINAL run, never for a terminal one. Real: `queryStepsByRun`. */
     readonly loadSteps: (pool: Pool, runId: string) => ResultAsync<StepExecutionRow[], DbError>;
+    /** Read a stored plan — fired once per DISTINCT plan among the active runs. Real: `loadPlan`. */
+    readonly loadPlan: (pool: Pool, planId: string, analysisId: string) => ResultAsync<unknown | null, DbError>;
 };
 
 const realRefreshSeams: RefreshSeams = {
@@ -339,6 +405,7 @@ const realRefreshSeams: RefreshSeams = {
     loadProfile: loadDataProfileStatus,
     loadRuns: (pool, analysisId) => queryRunsByAnalysis(pool, analysisId, { limit: RUNS_LIMIT }),
     loadSteps: queryStepsByRun,
+    loadPlan: (pool, planId, analysisId) => loadPlan(pool, planId, { analysisId }),
 };
 
 // Monotonic token identifying the newest refresh. Two rapid analysis swaps interleave their async
@@ -358,7 +425,7 @@ function resetSnapshots(): void {
     refreshGeneration += 1;
     setProfile({ kind: "not_ready" });
     setRuns({ kind: "not_ready" });
-    setActiveRun(null);
+    setActiveRun(new Map());
 }
 
 /**
@@ -387,7 +454,7 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
     if (!runtime) {
         setProfile({ kind: "not_ready" });
         setRuns({ kind: "not_ready" });
-        setActiveRun(null);
+        setActiveRun(new Map());
         return;
     }
 
@@ -406,37 +473,84 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
         () => setProfile({ kind: "unavailable" }),
     );
 
-    // The RUNS section's progress embed pins the NEWEST run while it is non-terminal, fed by this same
-    // refresh. A terminal newest run (or no runs) clears it; only a non-terminal newest run fires the
-    // extra step read, so an idle analysis issues zero step queries.
+    // EVERY non-terminal run publishes a progress entry, keyed by its run id. A terminal run (or no
+    // runs at all) publishes none, and only a non-terminal run fires a step read — so an idle
+    // analysis still issues zero step queries, the property the poll's arming condition depends on.
     await runsRes.match(
         async (rows) => {
             setRuns({ kind: "loaded", runs: rows });
-            const newest = rows[0];
-            if (!newest || RUN_STATUS_TERMINAL[newest.status]) {
-                setActiveRun(null);
+            const active = rows.filter((r) => !RUN_STATUS_TERMINAL[r.status]);
+            if (active.length === 0) {
+                setActiveRun(new Map());
                 return;
             }
-            const stepsRes = await seams.loadSteps(runtime.pool, newest.runId);
-            if (myRefresh !== refreshGeneration) return;
-            stepsRes.match(
-                (stepRows) => {
-                    const steps: RunStepView[] = stepRows.map((r) => ({ label: r.stepId, state: stepStateOf(r.status), startedAt: r.startedAt }));
-                    const done = steps.filter((s) => s.state === "done").length;
-                    setActiveRun({ name: shortRunName(newest), tag: idTail(newest.runId), done, total: steps.length, steps });
-                },
-                // The run is active but its steps could not be read (a transient DB blip). Keep the
-                // previous row ONLY when it belongs to THIS run (its tag is the run's id tail) — the
-                // bounded poll then self-heals on the next tick without blinking a genuinely running run
-                // away. But when the newest run CHANGED on this same tick (the prior newest went terminal
-                // and a different run took its place), the previous row is a DIFFERENT run's progress;
-                // holding it would misattribute one run's steps to another, so drop to null — a briefly
-                // missing row is better than a confidently wrong one.
-                () => setActiveRun((prev) => (prev && prev.tag === idTail(newest.runId) ? prev : null)),
-            );
+
+            // Resolve each distinct plan ONCE per refresh. Re-runs of one plan share a `planId`, and
+            // a rail showing three runs of the same plan must not pay three plan reads for one title.
+            const planIds = [...new Set(active.map((r) => r.planId).filter((id): id is string => id !== null))];
+            const plans = new Map<string, unknown>();
+            for (const planId of planIds) {
+                const planRes = await seams.loadPlan(runtime.pool, planId, analysisId);
+                if (myRefresh !== refreshGeneration) return;
+                // A plan that cannot be read degrades that run's label to its workflow name / id tail.
+                // The rail must still render; a missing title is a poorer row, never an error.
+                planRes.match(
+                    (plan) => plans.set(planId, plan),
+                    () => {},
+                );
+            }
+
+            const next = new Map<string, ActiveRunProgress>();
+            // Runs whose step read blipped this tick. Their previous entry is carried forward inside
+            // the setter's updater below rather than read from the signal here — reading it would
+            // both track reactivity nothing wants and pin the value to loop-entry rather than
+            // write time.
+            const carryForward = new Set<string>();
+            for (const run of active) {
+                const stepsRes = await seams.loadSteps(runtime.pool, run.runId);
+                if (myRefresh !== refreshGeneration) return;
+                stepsRes.match(
+                    (stepRows) => {
+                        const plan = run.planId === null ? undefined : plans.get(run.planId);
+                        const nameByStepId = planStepNames(plan);
+                        const steps: RunStepView[] = stepRows.map((r) => ({
+                            // The plan's human phrase for the step, falling back to the slug the ledger
+                            // keys on. This is the join that answers "what is being worked on" in words:
+                            // the step row itself carries only `T{track}S{step}`.
+                            label: nameByStepId.get(r.stepId) ?? r.stepId,
+                            state: stepStateOf(r.status),
+                            startedAt: r.startedAt,
+                            agent: r.agentId,
+                            blockedReason: r.blockedReason,
+                            attempts: r.attempts,
+                        }));
+                        next.set(run.runId, {
+                            runId: run.runId,
+                            name: runLabelOf(run, plan),
+                            tag: idTail(run.runId),
+                            done: steps.filter((s) => s.state === "done").length,
+                            total: steps.length,
+                            steps,
+                        });
+                    },
+                    // This run is active but its steps could not be read (a transient DB blip). Carry
+                    // the previous entry for THIS run id forward so the bounded poll self-heals without
+                    // blinking a genuinely running run away. Keying by run id is what makes this safe:
+                    // the old single-slot store had to compare tags to avoid showing one run's steps
+                    // under another's row, and that mismatch is no longer representable.
+                    () => carryForward.add(run.runId),
+                );
+            }
+            setActiveRun((prev) => {
+                for (const runId of carryForward) {
+                    const kept = prev.get(runId);
+                    if (kept) next.set(runId, kept);
+                }
+                return next;
+            });
         },
         // A runs `DbError` is a transient degrade that itself re-arms the poll (`hasActiveWork`). Keep
-        // any existing progress row so a blip does not flash the progress embed away and back on recovery.
+        // any existing progress entries so a blip does not flash the whole section away and back.
         async () => setRuns({ kind: "unavailable" }),
     );
 }
@@ -531,6 +645,33 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
     // would be re-queried every 5s behind a permanently frozen section. Skipping degrades cadence
     // instead. Only the POLL skips: lifecycle edges carry new information and must supersede.
     let pollInFlight = false;
+
+    // Trigger 4 — the run-observation push. The embedded runtime reports a run's state change
+    // in-process, and this pokes the SAME refresh the lifecycle edges poke: the event is a TRIGGER,
+    // never a data source. The refresh already owns the generation-token ordering and the plan
+    // resolution, and rendering the pushed payload directly would give the store a second writer
+    // with its own staleness rules.
+    //
+    // It follows the POLL's skip rule rather than the lifecycle rule: events can arrive faster than
+    // a refresh completes, and without the skip every one would supersede the last, leaving the
+    // store with no write at all — the same failure the poll's flag prevents.
+    //
+    // Polling stays armed regardless. This channel is in-process only, so a run launched by a
+    // separate `inflexa run` never reaches it; the interval remains the backstop that makes such a
+    // run visible at all.
+    const onRunEvent = (event: StampedEvent): void => {
+        if (event.type !== "run.observed") return;
+        const analysisId = workspace.analysis?.id;
+        if (!analysisId || event.analysisId !== analysisId) return;
+        if (pollInFlight) return;
+        pollInFlight = true;
+        void seams.refresh(analysisId).finally(() => {
+            pollInFlight = false;
+        });
+    };
+    Bus.on("inflexa", onRunEvent);
+    onCleanup(() => Bus.off("inflexa", onRunEvent));
+
     createEffect(() => {
         const key = armKey();
         teardown();

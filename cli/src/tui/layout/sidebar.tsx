@@ -409,38 +409,40 @@ export function Sidebar(props: SidebarProps) {
                         <Match when={runsSnapshot().kind === "loaded"}>
                             <Show when={recentRuns().length > 0} fallback={<text fg={theme().fgMuted}>no runs</text>}>
                                 <For each={recentRuns()}>
-                                    {(run, index) => {
+                                    {(run) => {
                                         const m = runMark(run.status);
                                         // A finished run is a durable record, read long after "20h" meant anything —
                                         // pin its absolute finish time (terminal paths always stamp completedAt), in
                                         // the rail's compact form so name + anchor share the fixed-width row. Only a
                                         // still-live run keeps the relative age.
                                         const when = RUN_STATUS_TERMINAL[run.status] ? absTimeShort(run.completedAt) : relAge(run.startedAt);
+                                        // This run's own progress, or undefined when it is terminal. Looking it up by
+                                        // run id is what lets EVERY active run carry a block: the old store held one
+                                        // newest-run slot, so a second concurrent run had no live surface at all.
+                                        const progress = (): ActiveRunProgress | undefined => activeRunProgress().get(run.runId);
+                                        // The plan's human title while the run is active; the id tail once it is not.
+                                        // `shortRunName` is useless as a label — it resolves to "executeAnalysis" on
+                                        // every row — and a terminal run has no progress entry to carry a title, so its
+                                        // row keeps the id tail that at least distinguishes it.
+                                        const label = (): string => progress()?.name ?? idTail(run.runId);
                                         return (
                                             <>
                                                 <text>
                                                     <Fg role={m.role}>{`${m.glyph} `}</Fg>
-                                                    {/* The run's id tail, NOT shortRunName — the latter resolves to the
-                                                    workflow name "executeAnalysis" for every run (identical on every row).
-                                                    The id tail is the per-run distinguisher and fits the fixed-width rail;
-                                                    the plan's human title (up to 80 chars) would overflow it, so the title
-                                                    lives in the runs picker instead. */}
-                                                    <Fg role="fgMuted">{`${idTail(run.runId)} ${GLYPHS.middot} ${when}`}</Fg>
+                                                    <Fg role="fgMuted">{`${label()} ${GLYPHS.middot} ${when}`}</Fg>
                                                 </text>
-                                                {/* The newest run's live progress, directly under its row. The refresh
-                                                loop clears the snapshot whenever the newest run is terminal, so this
-                                                can never show one run's progress under another's row. NON-keyed Show:
-                                                each ~5s poll mints a fresh snapshot object, and keyed would tear down
-                                                and remount the RunBlock every tick — non-keyed updates props in place.
+                                                {/* This run's live progress, directly under its own row. NON-keyed Show:
+                                                each poll mints a fresh snapshot object, and keyed would tear down and
+                                                remount the RunBlock every tick — non-keyed updates props in place.
                                                 heading off: the run row above IS the heading. */}
-                                                <Show when={index() === 0 ? activeRunProgress() : null}>
-                                                    {(progress: Accessor<ActiveRunProgress>) => (
+                                                <Show when={progress()}>
+                                                    {(p: Accessor<ActiveRunProgress>) => (
                                                         <RunBlock
-                                                            name={progress().name}
-                                                            tag={progress().tag}
-                                                            done={progress().done}
-                                                            total={progress().total}
-                                                            steps={progress().steps}
+                                                            name={p().name}
+                                                            tag={p().tag}
+                                                            done={p().done}
+                                                            total={p().total}
+                                                            steps={p().steps}
                                                             maxSteps={size.railStepRows}
                                                             hint={false}
                                                             heading={false}
