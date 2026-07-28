@@ -1498,3 +1498,37 @@ export function latestPlanCard(): PlanCardPart | null {
     }
     return null;
 }
+
+/**
+ * The session's own sent prompts, NEWEST first — the entry list the composer's up/down history recall
+ * steps through. Walks the mounted transcript for `user` turns, joining each one's text parts in order
+ * (a live send makes exactly one; a thread replay through `cortexToUiMessage` can produce several) and
+ * skipping any turn whose text comes out empty.
+ *
+ * Runs of identical ADJACENT prompts collapse to a single entry, so re-sending the same text after a
+ * failed turn costs one recall step rather than two. Identical prompts separated by a different one stay
+ * DISTINCT — which is exactly why recall must address entries by a STORED position and never by searching
+ * this list for the buffer's text: a search resolves every occurrence to the newest one, so stepping back
+ * from an older duplicate would silently skip every entry between them.
+ *
+ * The exclusions are structural, not a filter kept here: {@link pushUserMessage} is called only by `send`,
+ * so docked-ask answers and the `/quit` aliases never become user messages, and a retract splices its turn
+ * out of the store. History therefore reaches exactly as far as the mounted window ({@link MESSAGE_CAP});
+ * older turns stay in the thread, unmounted. Read in a tracking scope — reactive on the message store.
+ */
+export function promptHistory(): string[] {
+    const out: string[] = [];
+    for (let mi = messages.length - 1; mi >= 0; mi--) {
+        const message = messages[mi];
+        if (!message || message.role !== "user") continue;
+        let text = "";
+        for (const part of message.parts) {
+            if (part.type === "text") text = text ? `${text}\n${part.text}` : part.text;
+        }
+        // Adjacency is over PROMPTS, not raw messages: consecutive user turns are separated by their
+        // assistant replies in the store, so the comparison is against the previously kept entry.
+        if (!text || out[out.length - 1] === text) continue;
+        out.push(text);
+    }
+    return out;
+}

@@ -14,6 +14,7 @@ import {
     type LoadSeams,
     messages,
     noteAskFeedback,
+    promptHistory,
     resetHotState,
     send,
     streamPartId,
@@ -1329,5 +1330,70 @@ describe("turnFailureMessage", () => {
         let chain: unknown = authCause;
         for (let i = 0; i < 10; i++) chain = new Error(`wrapper-${i}`, { cause: chain });
         expect(turnFailureMessage(chain)).toStartWith("The turn failed:");
+    });
+});
+
+describe("promptHistory", () => {
+    // Seeded through the REAL load path rather than a hand-built store, so the reader is exercised over
+    // the UIMessage shapes a thread replay actually produces (`cortexToUiMessage` emits one text Part per
+    // text part, which is what makes the multi-part join case reachable at all).
+    type Turn = { role: "user" | "assistant"; texts: string[] };
+
+    function seedSeams(fixture: Turn[]): LoadSeams {
+        return {
+            runtime: () => stubRuntime,
+            loadPage: (_pool, _threadId, _page, perPage) =>
+                okAsync({
+                    messages: fixture as unknown as MessagePage["messages"],
+                    total: fixture.length,
+                    page: 0,
+                    perPage,
+                    hasMore: false,
+                }),
+            toCortex: async (_pool, _analysisId, rows) =>
+                (rows as unknown as Turn[]).map((t, i) => ({
+                    id: `id-${i}`,
+                    role: t.role,
+                    parts: t.texts.map((text) => ({ type: "text", text })),
+                })) as unknown as CortexMsg[],
+        };
+    }
+
+    const user = (...texts: string[]): Turn => ({ role: "user", texts });
+    const assistant = (text: string): Turn => ({ role: "assistant", texts: [text] });
+
+    async function historyFor(fixture: Turn[]): Promise<string[]> {
+        await loadMessages(SID, AID, seedSeams(fixture));
+        return promptHistory();
+    }
+
+    test("an unloaded session has no history", () => {
+        expect(promptHistory()).toEqual([]);
+    });
+
+    test("sent prompts come back newest first, with assistant turns excluded", async () => {
+        expect(await historyFor([user("first"), assistant("a1"), user("second"), assistant("a2")])).toEqual(["second", "first"]);
+    });
+
+    test("a replayed turn's multiple text parts join in order", async () => {
+        expect(await historyFor([user("line one", "line two"), assistant("a1")])).toEqual(["line one\nline two"]);
+    });
+
+    test("a prompt re-sent right after a failed turn collapses to one entry", async () => {
+        expect(await historyFor([user("retry me"), assistant("boom"), user("retry me"), assistant("ok")])).toEqual(["retry me"]);
+    });
+
+    test("identical prompts separated by another stay DISTINCT entries", async () => {
+        // The non-adjacent-duplicate case the stored recall position exists for: searching this list for
+        // the buffer's text would resolve both "A"s to index 0 and skip "B" entirely on the way back.
+        expect(await historyFor([user("A"), assistant("a1"), user("B"), assistant("a2"), user("A"), assistant("a3")])).toEqual(["A", "B", "A"]);
+    });
+
+    test("a user turn carrying no text is skipped", async () => {
+        expect(await historyFor([user(), assistant("a1"), user("real"), assistant("a2")])).toEqual(["real"]);
+    });
+
+    test("a session with only assistant turns has no history", async () => {
+        expect(await historyFor([assistant("greeting")])).toEqual([]);
     });
 });
