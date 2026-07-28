@@ -4,7 +4,7 @@ import { testRender } from "@opentui/solid";
 import type { TextareaRenderable } from "@opentui/core";
 
 import { useKeymapRoot, useBindings, MODE_BASE, KEYS, __resetKeybindCache } from "./keymap.ts";
-import { historyRecallLayer, retractLayer } from "./app.tsx";
+import { historyRecallLayer, retractLayer, type RecallPosition } from "./app.tsx";
 
 // End-to-end verification of app.tsx's prompt-history recall layer through the REAL engine: mockInput
 // drives opentui's keyboard bus → useKeymapRoot → dispatchKey → the winning layer. Same contract as
@@ -29,27 +29,29 @@ function makeSettle(setup: { renderOnce: () => Promise<void> }): () => Promise<v
 
 type RecallControls = {
     readonly entries: () => string[];
+    readonly hasEntries: () => boolean;
     readonly canRetract: () => boolean;
     /** Records that a chord reached its fall-through destination instead of being claimed by recall. */
     readonly onFallthrough: (chord: "up" | "down") => void;
     readonly onRef: (ta: TextareaRenderable) => void;
     /** Observes the recall position so a test can assert the layer left recall, not just that text matches. */
-    readonly onIndex?: (index: number | null) => void;
+    readonly onPosition?: (position: RecallPosition | null) => void;
 };
 
 function RecallHarness(props: RecallControls) {
     useKeymapRoot();
     let ta: TextareaRenderable | null = null;
-    const [index, setIndex] = createSignal<number | null>(null);
+    const [position, setPosition] = createSignal<RecallPosition | null>(null);
 
     useBindings(() =>
         historyRecallLayer({
             target: ta,
             entries: props.entries,
-            index,
-            setIndex: (next) => {
-                setIndex(next);
-                props.onIndex?.(next);
+            hasEntries: props.hasEntries,
+            position,
+            setPosition: (next) => {
+                setPosition(next);
+                props.onPosition?.(next);
             },
             conversation: { canRetract: props.canRetract },
         }),
@@ -85,8 +87,14 @@ function RecallHarness(props: RecallControls) {
 async function mount(opts: { entries?: string[]; canRetract?: boolean } = {}) {
     let ta!: TextareaRenderable;
     const fell: ("up" | "down")[] = [];
+    // Counted so a test can pin that the transcript walk stays OFF the per-keystroke path.
+    let entryReads = 0;
     const controls: RecallControls = {
-        entries: () => opts.entries ?? ENTRIES,
+        entries: () => {
+            entryReads++;
+            return opts.entries ?? ENTRIES;
+        },
+        hasEntries: () => (opts.entries ?? ENTRIES).length > 0,
         canRetract: () => opts.canRetract ?? false,
         onFallthrough: (chord) => fell.push(chord),
         onRef: (r) => (ta = r),
@@ -94,7 +102,7 @@ async function mount(opts: { entries?: string[]; canRetract?: boolean } = {}) {
     const setup = await testRender(() => <RecallHarness {...controls} />, { width: 40, height: 10 });
     const settle = makeSettle(setup);
     await settle();
-    return { setup, settle, fell, composer: () => ta };
+    return { setup, settle, fell, composer: () => ta, entryReads: () => entryReads };
 }
 
 describe("prompt-history recall layer (rendered, real keyboard bus)", () => {
@@ -346,6 +354,38 @@ describe("prompt-history recall layer (rendered, real keyboard bus)", () => {
         }
     });
 
+    test("an abandoned recall does not leave the transcript walk armed on every keystroke", async () => {
+        // `activeLayers` re-invokes every layer's thunk on EVERY key, before filtering on `enabled`. A
+        // position outlives its recall — nothing clears it on an edit, a submit, a clear-input, or a session
+        // swap — so a liveness check that reached into the entry list would keep walking the whole mounted
+        // transcript on every keystroke in the app, dialogs included, for the rest of the session. The
+        // position carries its own text precisely so that check costs a string compare instead.
+        const { setup, settle, composer, entryReads } = await mount();
+        try {
+            setup.mockInput.pressArrow("up");
+            await settle();
+            expect(composer().plainText).toBe("newest");
+
+            // One press that actually stepped history — that is the only thing allowed to build the list.
+            const afterRecall = entryReads();
+            expect(afterRecall).toBe(1);
+
+            // Abandon the recall by editing, leaving a stale position behind, then type on.
+            await setup.mockInput.typeText("!");
+            await settle();
+            await setup.mockInput.typeText("more text here");
+            await settle();
+            setup.mockInput.pressArrow("up");
+            await settle();
+            setup.mockInput.pressArrow("down");
+            await settle();
+
+            expect(entryReads()).toBe(afterRecall);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
     test("an empty history leaves up to the editor", async () => {
         const { setup, settle, fell, composer } = await mount({ entries: [] });
         try {
@@ -387,7 +427,7 @@ describe("recall and retract never both claim the composer's up", () => {
         function BothHarness() {
             useKeymapRoot();
             let inner: TextareaRenderable | null = null;
-            const [index, setIndex] = createSignal<number | null>(null);
+            const [position, setPosition] = createSignal<RecallPosition | null>(null);
             const seam = {
                 canRetract: () => retractable(),
                 retract: (seed: (text: string) => void) => {
@@ -397,7 +437,16 @@ describe("recall and retract never both claim the composer's up", () => {
                 },
             };
             useBindings(() => retractLayer({ target: inner, conversation: seam }));
-            useBindings(() => historyRecallLayer({ target: inner, entries: () => ENTRIES, index, setIndex, conversation: seam }));
+            useBindings(() =>
+                historyRecallLayer({
+                    target: inner,
+                    entries: () => ENTRIES,
+                    hasEntries: () => ENTRIES.length > 0,
+                    position,
+                    setPosition,
+                    conversation: seam,
+                }),
+            );
             return (
                 <box flexDirection="column" width="100%" height="100%">
                     <textarea

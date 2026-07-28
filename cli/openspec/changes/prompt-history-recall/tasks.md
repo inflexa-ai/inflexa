@@ -43,3 +43,9 @@
 - [x] 5.5 Discoverability (review finding 4): add `ChatBar.canRecall`, append the affordance to the empty-buffer placeholder labelled from a new `RECALL_LABEL` in `keymap.ts`, and gate it behind history existing, the retract not owning the chord, and no boot gate (design decision 10).
 - [x] 5.6 Cover the placeholder: affordance present with history, absent without, and outranked by a boot gate.
 - [x] 5.7 Update the specs — `key-bindings` gains the caret rule and its scenarios; a new `tui-layout` delta owns the placeholder affordance.
+
+## 6. Second review pass (PR #249, bot reviewer)
+
+- [x] 6.1 Fix the stuck-position perf hole: the `index !== null` guard from 5.3 never goes false again once a recall is abandoned (a position deliberately outlives its recall — decision 3), so the transcript walk returned to every keystroke for the rest of the session. The position now carries its seeded text (`RecallPosition = { index, text }`) so liveness is an O(1) compare; `entries()` moved into the bindings' `run` (design decision 11, rewritten).
+- [x] 6.2 Add `hasPromptHistory()` to `conversation.ts` — the cheap config-time existence check that keeps `up` unbound (and falling through) when history is empty, returning at the first qualifying turn instead of building the list.
+- [x] 6.3 Cover it: a call-count test asserting that after a recall is abandoned by editing, further keystrokes never rebuild the entry list; plus unit tests pinning `hasPromptHistory()` in agreement with `promptHistory().length > 0`.

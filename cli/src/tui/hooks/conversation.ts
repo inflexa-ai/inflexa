@@ -1516,6 +1516,24 @@ export function latestPlanCard(): PlanCardPart | null {
  * out of the store. History therefore reaches exactly as far as the mounted window ({@link MESSAGE_CAP});
  * older turns stay in the thread, unmounted. Read in a tracking scope — reactive on the message store.
  */
+/**
+ * Whether {@link promptHistory} would return anything — the cheap existence check the recall binding asks
+ * at CONFIG time, on every keystroke, to decide whether `up` has somewhere to go or should be left to the
+ * editor. Returns at the first qualifying turn instead of building the whole list, so the common case costs
+ * a step or two from the tail rather than a walk of the mounted window. The full list is built only when a
+ * press actually moves the recall position. Read in a tracking scope — reactive on the message store.
+ */
+export function hasPromptHistory(): boolean {
+    for (let mi = messages.length - 1; mi >= 0; mi--) {
+        const message = messages[mi];
+        if (!message || message.role !== "user") continue;
+        for (const part of message.parts) {
+            if (part.type === "text" && part.text) return true;
+        }
+    }
+    return false;
+}
+
 export function promptHistory(): string[] {
     const out: string[] = [];
     for (let mi = messages.length - 1; mi >= 0; mi--) {

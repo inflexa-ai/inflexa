@@ -12,6 +12,7 @@ import {
     lastTurnFailure,
     loadMessages,
     type LoadSeams,
+    hasPromptHistory,
     messages,
     noteAskFeedback,
     promptHistory,
@@ -1395,5 +1396,64 @@ describe("promptHistory", () => {
 
     test("a session with only assistant turns has no history", async () => {
         expect(await historyFor([assistant("greeting")])).toEqual([]);
+    });
+});
+
+describe("hasPromptHistory", () => {
+    // The cheap config-time counterpart the recall binding asks on every keystroke: it must agree with
+    // `promptHistory().length > 0` in every case, while returning at the first qualifying turn rather than
+    // building the list. These pin the agreement — a drift between them would either eat `up` in a session
+    // with nothing to recall, or leave it unbound in one that has something.
+    type Turn = { role: "user" | "assistant"; texts: string[] };
+
+    function seedSeams(fixture: Turn[]): LoadSeams {
+        return {
+            runtime: () => stubRuntime,
+            loadPage: (_pool, _threadId, _page, perPage) =>
+                okAsync({
+                    messages: fixture as unknown as MessagePage["messages"],
+                    total: fixture.length,
+                    page: 0,
+                    perPage,
+                    hasMore: false,
+                }),
+            toCortex: async (_pool, _analysisId, rows) =>
+                (rows as unknown as Turn[]).map((t, i) => ({
+                    id: `id-${i}`,
+                    role: t.role,
+                    parts: t.texts.map((text) => ({ type: "text", text })),
+                })) as unknown as CortexMsg[],
+        };
+    }
+
+    async function agreementFor(fixture: Turn[]): Promise<{ has: boolean; list: number }> {
+        await loadMessages(SID, AID, seedSeams(fixture));
+        return { has: hasPromptHistory(), list: promptHistory().length };
+    }
+
+    const user = (...texts: string[]): Turn => ({ role: "user", texts });
+    const assistant = (text: string): Turn => ({ role: "assistant", texts: [text] });
+
+    test("an unloaded session has nothing to recall", () => {
+        expect(hasPromptHistory()).toBe(false);
+        expect(promptHistory().length).toBe(0);
+    });
+
+    test("a sent prompt makes it true, agreeing with the list", async () => {
+        const { has, list } = await agreementFor([user("a prompt"), assistant("a1")]);
+        expect(has).toBe(true);
+        expect(list).toBe(1);
+    });
+
+    test("assistant-only turns leave it false", async () => {
+        const { has, list } = await agreementFor([assistant("greeting"), assistant("more")]);
+        expect(has).toBe(false);
+        expect(list).toBe(0);
+    });
+
+    test("a text-less user turn does not count, matching the list's skip", async () => {
+        const { has, list } = await agreementFor([user(), assistant("a1")]);
+        expect(has).toBe(false);
+        expect(list).toBe(0);
     });
 });
