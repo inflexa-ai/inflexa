@@ -11,6 +11,7 @@
 import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
 
 import type { AskCardPart, TextPart, ThinkingPart, ToolCallPart, FileEditPart, PlanCardPart, PlanCardStepView, RunCardPart } from "../../types/session.ts";
+import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
 
 /** A run step's lifecycle state (mirrors `RunStepView.state`). */
 export type StepState = "done" | "running" | "failed" | "queued";
@@ -499,3 +500,36 @@ export const mockRunSteps: StepExecutionRow[] = [
         childWorkflowId: null,
     },
 ];
+
+/**
+ * MOCK: the run-card identity the lifecycle exhibits share, so every state in that block is visibly
+ * the SAME card changing rather than four unrelated cards.
+ */
+export const mockRunCardIds = { runId: "run-3c07-9f21-4a88" } as const;
+
+/**
+ * MOCK: an active run's progress, as the run-activity panel receives it. A factory rather than a
+ * constant because the panel's exhibits vary one field at a time (a stale read, a parallel frontier),
+ * and each needs its own object — the panel reads `steps` reactively, so sharing one array across
+ * exhibits would couple them.
+ */
+export function galleryRun(over: Partial<ActiveRunProgress> = {}): ActiveRunProgress {
+    return {
+        runId: mockRunCardIds.runId,
+        name: "Differential expression across conditions",
+        tag: "3c0794",
+        // Fixed rather than "now": the panel renders a relative age, and a live clock would make the
+        // gallery's frames differ run to run.
+        startedAt: "2026-07-28T10:00:00.000Z",
+        done: 1,
+        total: 4,
+        steps: [
+            { label: "quality control", state: "done", startedAt: null },
+            { label: "align reads", state: "running", startedAt: null, agent: "bioinformatician" },
+            { label: "call variants", state: "queued", startedAt: null },
+            { label: "summarize findings", state: "queued", startedAt: null },
+        ],
+        stale: false,
+        ...over,
+    };
+}
