@@ -81,6 +81,10 @@ export type ListProps<T> = {
      * cursor afterwards — a new `query` still jumps to the best match, and a replaced `DynamicList`
      * items array still restarts the listing at row 0.
      *
+     * `undefined` IS the "no seed" sentinel, so a list whose `T` admits `undefined` cannot seed onto
+     * that row. No caller keys rows that way (ids are strings), and a distinct sentinel would cost
+     * every call site a wrapper for a case none of them has.
+     *
      * Seeds a CURSOR, not a selection; multi mode's pre-checked values are {@link initialSelected}.
      */
     initialValue?: T;
@@ -133,6 +137,16 @@ type ListCoreProps<T> = ListProps<T> & {
 
 /** Flat position + the header this row must render above itself (it starts a category group). */
 type RowMeta = { index: number; header: string | null };
+
+/**
+ * How long a seeded cursor waits for the first layout before giving up on scrolling itself into
+ * view, as `SEEDED_SCROLL_ATTEMPTS × SEEDED_SCROLL_POLL_MS` (~96ms ≈ three frames at the TUI's
+ * 30fps). Sized to outlast a frame the renderer deferred rather than a specific number of frames —
+ * see the poll's rationale in `ListCore`. Every tick before the laid-out frame is a zero-height
+ * check, so the interval is cheap enough to keep short and the ceiling generous.
+ */
+const SEEDED_SCROLL_ATTEMPTS = 12;
+const SEEDED_SCROLL_POLL_MS = 8;
 
 export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
     // Unique per instance so row ids never collide across stacked/sibling lists.
@@ -224,16 +238,38 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
         scrollRef?.scrollChildIntoView(props.strategy === "for" ? (idOf().get(it) ?? "") : `${lid}-slot-${i}`);
     }
     createEffect(scrollCursorIntoView);
-    // A seeded cursor needs a SECOND scroll attempt. `scrollChildIntoView` decides by comparing the
-    // child's computed geometry against the viewport's, and at mount — before the first frame lays the
-    // tree out — both are still zero, so the effect above computes a zero delta and a seeded row below
-    // the fold silently stays off-screen: a cursor the user cannot see, which is worse than no seed at
-    // all. One macrotask later the first render has happened and the geometry is real (a microtask is
-    // too early — verified), so the retry lands. Registered ONLY when a seed matched, so no other list
-    // pays for a timer: an unseeded cursor starts at row 0, which is in view by construction.
+    // A seeded cursor needs a SECOND scroll attempt, and that attempt must WAIT FOR REAL GEOMETRY
+    // rather than fire at a guessed delay. `scrollChildIntoView` derives its delta by comparing the
+    // row's computed box against the viewport's; at mount — before the first frame lays the tree out —
+    // both are zero-height, so every "is it outside?" test is false, the delta comes out 0, and a
+    // seeded row below the fold silently stays off screen: a cursor the user cannot see, which is
+    // worse than no seed at all.
+    //
+    // A single macrotask does NOT guarantee that frame has happened. The renderer schedules its next
+    // frame at `max(minTargetFrameTime - elapsed, 0)`, so it is only immediate when a frame is already
+    // due; while anything is animating (a spinner, a streaming response) the first layout lands up to
+    // a frame-time AFTER a 0ms timer, and a one-shot retry would measure the same zeros and no-op.
+    // Polling for a laid-out viewport removes the race: whichever tick first sees real geometry does
+    // the scroll. Bounded, because a list that never gains height (a zero-height parent, a dialog
+    // dismissed mid-flight) must stop rather than tick forever — and giving up is safe, since it just
+    // leaves the off-screen cursor that not seeding at all would have produced.
+    //
+    // Registered ONLY when a seed matched, so no other list pays for a timer: an unseeded cursor
+    // starts at row 0, which is in view by construction.
     if (seeded >= 0) {
-        const retryScroll = setTimeout(scrollCursorIntoView, 0);
-        onCleanup(() => clearTimeout(retryScroll));
+        let attemptsLeft = SEEDED_SCROLL_ATTEMPTS;
+        let scrollPoll: ReturnType<typeof setTimeout>;
+        function attemptSeededScroll(): void {
+            // The viewport is the box `scrollChildIntoView` measures against, so a non-zero height is
+            // exactly the condition that makes its comparison meaningful — not a proxy for it.
+            if ((scrollRef?.viewport.height ?? 0) > 0) {
+                scrollCursorIntoView();
+                return;
+            }
+            if (--attemptsLeft > 0) scrollPoll = setTimeout(attemptSeededScroll, SEEDED_SCROLL_POLL_MS);
+        }
+        scrollPoll = setTimeout(attemptSeededScroll, 0);
+        onCleanup(() => clearTimeout(scrollPoll));
     }
     createEffect(() => props.onCursorChange?.(flat()[cursor()]?.value));
 

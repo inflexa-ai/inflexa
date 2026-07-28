@@ -5,7 +5,7 @@ import { testRender } from "@opentui/solid";
 
 import { env } from "../lib/env.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
-import { DEFAULT_THEME_ID, type ThemeId } from "../lib/design_system.ts";
+import { DEFAULT_THEME_ID, themeIds, type ThemeId } from "../lib/design_system.ts";
 import { useKeymapRoot } from "./keymap.ts";
 import { setTheme, themeId } from "./theme.ts";
 import { DialogOverlay, dialogClear, dialogPush } from "./components/dialog/dialog_host.tsx";
@@ -22,8 +22,15 @@ import { ThemePicker } from "./commands.tsx";
 // persisted row under tokyo-night and hide exactly the flash this change exists to remove. `nord` sits
 // mid-list, so a seed failure shows up as a visible cursor/preview on the first row.
 const PERSISTED: ThemeId = "nord";
-/** The row directly below {@link PERSISTED} in the picker's fixed listing order. */
-const NEXT_DOWN: ThemeId = "rose-pine";
+/**
+ * The row directly below {@link PERSISTED} in the picker's fixed listing order. Derived from the
+ * registry rather than written out: a theme inserted between the two would otherwise leave every case
+ * here asserting on the wrong row, failing as a confusing "wrong theme applied" rather than as the
+ * ordering change it actually is.
+ */
+// `!` is sound while PERSISTED is mid-list, which the choice above already requires for its own
+// reasons: `themeIds` is five dark then five light, and `nord` is the fourth of the dark five.
+const NEXT_DOWN: ThemeId = themeIds[themeIds.indexOf(PERSISTED) + 1]!;
 
 /** The theme id as it was actually written to disk — the ground truth for "persisted". */
 function persistedTheme(): string | undefined {
