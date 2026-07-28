@@ -12,6 +12,7 @@ import {
     loadMessages,
     type LoadSeams,
     messages,
+    promptHistory,
     resetHotState,
     retract,
     type RetractSeams,
@@ -171,6 +172,26 @@ describe("retract during the no-output window", () => {
         expect(seed.get()).toBe("original text");
         expect(chatStatus()).toBe("idle");
         expect(currentNotice()).toBe(noticeBefore);
+    });
+
+    test("a retracted prompt leaves no history entry behind", async () => {
+        // Prompt-history recall derives its entries from this same store, so an unsent message must not be
+        // recallable: retract means UNSEND, and the text is handed back to the composer anyway. Nothing in
+        // `promptHistory` filters retracts — this holds only because the splice below is a real removal.
+        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        expect(promptHistory()).toEqual(["original text"]);
+
+        const seed = seedCell();
+        const retractSeams: RetractSeams = {
+            runtime: () => stubRuntime,
+            retractTurn: () => okAsync({ kind: "retracted" as const, messages: 2 }),
+        };
+        const retractP = retract(seed.set, retractSeams);
+        release();
+        await retractP;
+        await sendP;
+
+        expect(promptHistory()).toEqual([]);
     });
 
     test("the visible transition lands as one step, after the durable removal — never split across it", async () => {

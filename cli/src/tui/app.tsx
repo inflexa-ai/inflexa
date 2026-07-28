@@ -20,7 +20,18 @@ import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
 import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
-import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, interruptHintLabel, leaderSeq, KEYS, type LayerConfig } from "./keymap.ts";
+import {
+    useKeymapRoot,
+    useBindings,
+    MODE_BASE,
+    resolveKeybind,
+    keybindLabel,
+    interruptHintLabel,
+    leaderSeq,
+    KEYS,
+    type BoundBinding,
+    type LayerConfig,
+} from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
 import { BootIndicator } from "./components/boot_indicator.tsx";
@@ -75,10 +86,23 @@ export type RetractLayerDeps = {
 };
 
 /**
+ * Write `text` into the composer with the caret at its end (`setText` alone leaves it at offset 0). The
+ * shared tail of BOTH paths that push text into the composer — the retract seed below and history recall
+ * — so a recovered or recalled multi-line prompt lands ready to append to in either. Deliberately just
+ * this pair: recall must NOT inherit the retract seed's focus grab (the recall layer is focus-gated to a
+ * composer that already holds focus) or its emptiness re-check (which guards an async window recall has
+ * no analogue of).
+ */
+function seedComposerText(composer: TextareaRenderable, text: string): void {
+    composer.setText(text);
+    composer.gotoBufferEnd();
+}
+
+/**
  * The completion half of every retract, shared by both retract layers so the pane- and composer-targeted
  * paths seed and focus identically. Returns the widget-seam callback the conversation hook invokes once
  * the durable removal lands: write the recovered text back into the composer and move the caret to its
- * end (`setText` leaves it at offset 0).
+ * end (via {@link seedComposerText}).
  *
  * Re-checks emptiness rather than trusting the gate that armed the retract: a retract spans an abort, a
  * turn settlement, and a durable removal, and the composer stays reachable across all of it, so the user
@@ -89,8 +113,7 @@ export type RetractLayerDeps = {
 function seedComposerFromRetract(composer: TextareaRenderable | null): (text: string) => void {
     return (t) => {
         if (!composer || composer.plainText !== "") return;
-        composer.setText(t);
-        composer.gotoBufferEnd();
+        seedComposerText(composer, t);
         // The resting state of a running turn is NORMAL (the pane holds focus); a completed retract is the
         // one deliberate hand-back to INSERT, so focus follows the recovered text into the composer to edit.
         composer.focus();
@@ -108,7 +131,8 @@ function seedComposerFromRetract(composer: TextareaRenderable | null): (text: st
  * disables the binding and `up` falls through to the textarea's own cursor movement. Its own layer (not
  * folded into the clear-input/scroll-mode layer) so the empty+retractable gate does not also disable
  * those. The completion — seed the composer, caret to end, focus it — is the shared
- * {@link seedComposerFromRetract}. Idle up-arrow stays inert here, leaving the chord free for future recall.
+ * {@link seedComposerFromRetract}. Outside the window the chord passes to {@link historyRecallLayer}, whose
+ * gate is this one's exact negation — so the two never contend for the composer's `up`.
  */
 export function retractLayer(deps: RetractLayerDeps): LayerConfig {
     const target = deps.target;
@@ -171,6 +195,105 @@ export function paneRetractLayer(deps: PaneRetractLayerDeps): LayerConfig {
                 group: "Chat",
             },
         ],
+    };
+}
+
+/** The seams the {@link historyRecallLayer} factory closes over — the composer it reads and seeds, the entry list, the recall position, and the retract gate it negates. */
+export type HistoryRecallLayerDeps = {
+    /**
+     * The chat composer this layer is focus-`target`-gated to. Doubles as the buffer whose contents decide
+     * whether a recall is still in progress and as the target each recalled entry is seeded into.
+     */
+    readonly target: TextareaRenderable | null;
+    /** The session's sent prompts, newest first. Real: {@link conversation.promptHistory}. */
+    readonly entries: () => string[];
+    /** The recall position: `null` when not in recall, else an index into `entries()`. */
+    readonly index: () => number | null;
+    /** Move the recall position (`null` leaves recall). */
+    readonly setIndex: (index: number | null) => void;
+    /** The retract seam — recall is live exactly when a retract is NOT on offer. */
+    readonly conversation: Pick<typeof conversation, "canRetract">;
+};
+
+/**
+ * The shell-style prompt-history recall layer: `up` walks back through the prompts already sent in this
+ * session, `down` walks forward, and `down` past the newest restores the empty composer. A pure factory
+ * over its deps for the same no-drift reason as the retract layers — `App` registers it with
+ * `useBindings(() => historyRecallLayer({ ... }))`, re-invoked each keystroke so the gate below re-reads
+ * the live buffer, entry list, and retract window. Composer-only: the pane's `up`/`down` stay scroll keys.
+ *
+ * **The gate is the negation of the retract's**, not a priority ordering. `up` has two claimants on this
+ * one focus target, and `!canRetract()` makes them mutually exclusive *by construction* — they cannot both
+ * be active whatever order the layers were registered in, which priority alone would not guarantee. It also
+ * reads as the intent: recall is what the composer's `up` means whenever a retract is not on offer,
+ * including mid-turn once the first output has closed the retract window.
+ *
+ * **Recall survives its own seed.** Entering from an empty buffer is only the first press; the seed then
+ * makes the buffer non-empty, so an emptiness-only gate would hand the very next `up` to cursor movement
+ * and strand the user one entry deep. The layer therefore also stays live while the buffer still EQUALS the
+ * entry it seeded, and goes inert the moment it differs — the user has edited the recalled text and wants
+ * their cursor keys back. That condition is DERIVED from the live buffer on each keystroke, never tracked
+ * through an edit subscription or an `inRecall` flag: a flag would have to be cleared correctly on submit,
+ * on clear-input, on session switch, and on a retract seeding the composer, and each of those is a place to
+ * forget. Being a function of the buffer, this is right in all of them for free.
+ *
+ * **A stale position is harmless rather than reset.** Entry from an empty buffer always resumes at the
+ * newest entry, discarding whatever index an abandoned recall left behind — which is what lets the layer
+ * carry no lifecycle wiring at all. The position is read ONLY once the equality check has confirmed the
+ * buffer still matches it.
+ *
+ * The position is a STORED index, never a search of `entries()` for the buffer's text. `promptHistory`
+ * collapses only ADJACENT duplicates, so identical prompts separated by another remain distinct entries;
+ * a search would resolve every occurrence to the newest and silently skip everything between them.
+ */
+export function historyRecallLayer(deps: HistoryRecallLayerDeps): LayerConfig {
+    const target = deps.target;
+    const buffer = target?.plainText ?? null;
+    const entries = deps.entries();
+    const index = deps.index();
+    // In recall exactly while the buffer still holds the entry the position addresses — see the derived-gate
+    // rationale above. `promptHistory` never yields an empty entry, so an empty buffer can never match one.
+    const inRecall = index !== null && buffer !== null && buffer === entries[index];
+
+    function step(to: number): void {
+        const text = entries[to];
+        if (text === undefined || !target) return;
+        deps.setIndex(to);
+        seedComposerText(target, text);
+    }
+
+    // The binding LIST is rebuilt per keystroke along with the rest of the config, so each chord is bound
+    // only when there is something for it to do — the engine `preventDefault`s whatever it matches, and a
+    // key swallowed to run a no-op is a key stolen from the editor underneath. `enabled` alone cannot make
+    // that distinction: the layer is live on an empty buffer so `up` can ENTER recall, which is exactly the
+    // state where `down` has nowhere to go.
+    const bindings: BoundBinding[] = [];
+
+    // Older. From an empty buffer that is the newest entry (index 0); already in recall, one further back,
+    // clamped so the oldest entry HOLDS rather than falling off the end. Unbound when the index it would
+    // land on has no entry — an empty history leaves `up` to the editor rather than eating it.
+    const older = inRecall ? Math.min(index + 1, entries.length - 1) : 0;
+    if (entries[older] !== undefined) {
+        bindings.push({ chord: KEYS.up, run: () => step(older), desc: "Recall previous prompt", group: "Chat" });
+    }
+
+    // Newer, and past the newest back to the empty composer the recall was entered from. Bound only while a
+    // recall is in progress, so outside one `down` stays ordinary cursor movement.
+    if (inRecall && index !== null && target) {
+        const at = index;
+        bindings.push({
+            chord: KEYS.down,
+            run: () => (at === 0 ? (deps.setIndex(null), seedComposerText(target, "")) : step(at - 1)),
+            desc: "Recall next prompt",
+            group: "Chat",
+        });
+    }
+
+    return {
+        mode: MODE_BASE,
+        target,
+        enabled: !deps.conversation.canRetract() && (buffer === "" || inRecall),
+        bindings,
     };
 }
 
@@ -716,6 +839,22 @@ export function App(props: AppProps) {
     // priority outranks the pane's scroll layer, so `up` retracts during the window and reverts to scroll
     // the moment the gate closes. The dispatch test installs the SAME factory, so the two can never drift.
     useBindings(() => paneRetractLayer({ pane: scrollPaneRef, composer: textareaRef, conversation }));
+
+    // Shell-style prompt-history recall on the composer's up/down — what `up` means whenever the retract
+    // window is not open (full rationale on the exported `historyRecallLayer`). The position lives here so
+    // the factory stays pure; it needs no reset wiring, because entering recall from an empty buffer always
+    // resumes at the newest entry and discards whatever an abandoned recall left behind. The dispatch test
+    // installs the SAME factory, so the two can never drift.
+    const [recallIndex, setRecallIndex] = createSignal<number | null>(null);
+    useBindings(() =>
+        historyRecallLayer({
+            target: textareaRef,
+            entries: conversation.promptHistory,
+            index: recallIndex,
+            setIndex: setRecallIndex,
+            conversation,
+        }),
+    );
 
     // NORMAL-mode companion layer, live while the stream's pane is focused: returning to INSERT is
     // chat-specific (dialog panes have no input to return to), so it lives here, not in ScrollPane.
