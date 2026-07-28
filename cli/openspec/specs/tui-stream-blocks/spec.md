@@ -58,8 +58,9 @@ Each block SHALL map to a single built-in opentui renderable (no custom drawing)
 (`part.type`) for each kind in the extended `Part` union — text, thinking, tool-call, file-edit,
 plan-card, run-card, presentation, openable-card — delegating to the matching block renderer. The
 harness-sourced kinds render live data: the tool-call block renders real tool activity (name,
-running/finished/error outcome, duration), and the run-card block renders run id, title, and step
-count (the fields the harness contract carries — it has no run-status field). The plan-card block
+running/finished/error outcome, duration), and the run-card block renders the run's identity
+together with its **live lifecycle state**, resolved by looking the run up by the `runId` the part
+already carries rather than from any new persisted field. The plan-card block
 renders plan id, title, and a hand-rolled ASCII dependency graph of its steps — steps laid out by
 topological depth, one box per step, edges drawn from each step's `depends_on` — composed as a
 string and rendered through a `<text>` renderable (no custom cell drawing); it falls back to a flat
@@ -110,6 +111,11 @@ fails compilation. New block visuals SHALL enter the design gallery.
 
 - **WHEN** the agent runs a tool during a turn
 - **THEN** the stream shows the tool block with the tool's name while running and its outcome (with duration) when finished
+
+#### Scenario: A run card tracks its run
+
+- **WHEN** a run card's run is active
+- **THEN** the card shows that run's live progress, updating as the run advances
 
 #### Scenario: A synthesized table renders inline
 
@@ -185,6 +191,7 @@ The system SHALL provide a `DesignGallery`, reachable via a `view.design-gallery
 
 - **WHEN** the `view.design-gallery` command opens the gallery
 - **THEN** every block state renders from the mock fixtures, and the live conversation store / event bus is not mutated
+
 ### Requirement: The openable card's marker column signals openability, not content kind
 
 The openable card's row marker SHALL answer exactly one question — does this row open, or is it broken — and SHALL NOT encode content kind.
@@ -244,4 +251,66 @@ opened), and the design-gallery exhibit.
 - **WHEN** the run block renders done, failed, or queued step views
 - **THEN** no age is rendered on those rows, whether or not a start time is
   present
+
+### Requirement: The run card settles into a terminal record
+
+When its run reaches a terminal status, the run-card block SHALL collapse its live chrome and
+render a compact outcome line — the run, its terminal status, its completion count, and its
+duration, with the failure reason when it did not succeed.
+
+The card SHALL NOT be hidden or removed on completion. Run cards are reconstructed when a
+transcript is reloaded, so a card that disappeared would erase the launch from the conversation's
+history; and signalling completion by making a widget vanish is the defect this work exists to
+remove. The card SHALL likewise not retain a live progress meter once the run is over — a
+progress bar frozen mid-run is a false claim in scroll-back.
+
+A card whose run cannot be resolved SHALL render its identity and say so, never a fabricated
+status.
+
+#### Scenario: A completed run's card becomes an outcome line
+
+- **WHEN** the run behind a rendered card completes
+- **THEN** the card's progress chrome collapses and a compact line states the run, its terminal status, its counts, and its duration
+
+#### Scenario: A failed run's card carries the reason
+
+- **WHEN** the run behind a rendered card fails
+- **THEN** the settled card is rendered in the error tone and carries the failure reason
+
+#### Scenario: The card survives reload as a truthful record
+
+- **WHEN** a transcript containing a finished run's card is reloaded
+- **THEN** the card renders its settled outcome, not a placeholder and not a live meter
+
+#### Scenario: An unresolvable run is not faked
+
+- **WHEN** a card's run cannot be found in the ledger
+- **THEN** the card shows its recorded identity and an unavailable state rather than inventing a status
+
+### Requirement: A running tool block shows its sub-agent's activity
+
+While a tool call is running, the tool block SHALL show a single subordinate line describing what
+the innermost sub-agent working inside that call is currently doing. When the tool call finishes,
+that line SHALL disappear, leaving the block's ordinary outcome and duration.
+
+Sub-agent events SHALL be routed to their originating tool block rather than rendered as
+transcript-level blocks. A sub-agent's iterations and tool calls are numerous, and emitting them
+into the transcript root would bury the conversation; suppressing them entirely — the current
+behaviour — makes a long tool call indistinguishable from a wedged one. Only the innermost
+activity SHALL be shown, one line at a time.
+
+#### Scenario: A long tool call reports what it is doing
+
+- **WHEN** a tool call spawns a sub-agent that runs for an extended period
+- **THEN** the tool block shows a subordinate activity line that updates as the sub-agent works
+
+#### Scenario: The activity line leaves on completion
+
+- **WHEN** the tool call finishes
+- **THEN** the subordinate line is gone and the block shows its outcome and duration
+
+#### Scenario: Sub-agent events do not enter the transcript root
+
+- **WHEN** a sub-agent emits iterations and tool events
+- **THEN** no transcript-level block is created for them
 
