@@ -21,11 +21,11 @@
 
 ## 3. Sidebar RUNS section
 
-- [ ] 3.1 Render a `RunBlock` per active run under its own run row (heading suppressed, `maxSteps` capped to the rail token); render terminal runs as one-line rows, capped as today
-- [ ] 3.2 Label run rows by plan title and step rows by plan step name plus owning agent
-- [ ] 3.3 Surface a blocked step's recorded reason rather than a bare failure glyph, and show a retried step's attempt count
-- [ ] 3.4 Confirm the rail's scroll container absorbs the added height across a sweep of terminal heights
-- [ ] 3.5 Render tests: two active runs each show a block; a terminal run collapses to a row; names replace ids
+- [x] 3.1 Render a `RunBlock` per active run under its own run row (heading suppressed, `maxSteps` capped to the rail token); render terminal runs as one-line rows, capped as today
+- [x] 3.2 Label run rows by plan title and step rows by plan step name; the owning agent renders only in the WIDE mounts (run-detail dialog, gallery) — measured, the rail's ~37 usable cells cannot hold name + agent + age, and the tag pushed both off the row
+- [x] 3.3 Surface a blocked step's recorded reason rather than a bare failure glyph, and show a retried step's attempt count
+- [x] 3.4 Confirm the rail's scroll container absorbs the added height across a sweep of terminal heights
+- [x] 3.5 Render tests: two active runs each show a block; a terminal run collapses to a row; names replace ids
 
 ## 4. Run-activity panel
 

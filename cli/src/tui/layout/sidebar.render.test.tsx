@@ -711,3 +711,134 @@ describe("Sidebar RUNS progress embed — window scroll containment", () => {
         }
     });
 });
+
+describe("Sidebar RUNS — concurrent runs", () => {
+    /** A seams bundle whose step read answers per run id, so two runs can differ. */
+    function perRunSeams(runs: CortexRunRow[], stepsByRunId: Record<string, StepExecutionRow[]>, plan: unknown = null): RefreshSeams {
+        return {
+            runtime: () => fakeRuntime,
+            loadProfile: () => okAsync(null),
+            loadRuns: () => okAsync(runs),
+            loadSteps: (_pool, runId) => okAsync(stepsByRunId[runId] ?? []),
+            loadPlan: () => okAsync(plan),
+        };
+    }
+
+    test("two active runs each render their own block — neither is invisible", async () => {
+        const runs = [runRow({ runId: "run-aaaaaaaaaaaa", status: "running" }), runRow({ runId: "run-bbbbbbbbbbbb", status: "running" })];
+        await refreshSidebarData(
+            "A",
+            perRunSeams(runs, {
+                "run-aaaaaaaaaaaa": [stepRow("alpha_step", "completed"), stepRow("alpha_next", "running")],
+                "run-bbbbbbbbbbbb": [stepRow("beta_step", "running"), stepRow("beta_next", "pending")],
+            }),
+        );
+        const frame = await renderFrame(liveNode(), { width: 44, height: 40 });
+
+        // Both runs' step lists are present: the old single-slot store showed only the newest.
+        expect(frame).toContain("alpha_step");
+        expect(frame).toContain("beta_step");
+        // And each carries its own meter, so the counts belong to their own run.
+        expect(frame).toContain("1/2");
+        expect(frame).toContain("0/2");
+    });
+
+    test("a terminal run collapses to a plain row while an active sibling keeps its block", async () => {
+        const runs = [
+            runRow({ runId: "run-aaaaaaaaaaaa", status: "running" }),
+            runRow({ runId: "run-bbbbbbbbbbbb", status: "completed", completedAt: "2026-07-08T00:01:00.000Z" }),
+        ];
+        await refreshSidebarData("A", perRunSeams(runs, { "run-aaaaaaaaaaaa": [stepRow("alpha_step", "running")] }));
+        const frame = await renderFrame(liveNode(), { width: 44, height: 40 });
+
+        expect(frame).toContain("alpha_step");
+        // The finished run is a row only — its id tail and absolute finish time, no step list.
+        expect(frame).toContain(idTail("run-bbbbbbbbbbbb"));
+        expect(frame).toContain(absTimeShort("2026-07-08T00:01:00.000Z"));
+    });
+
+    test("a plan title labels the run row and plan names label its steps", async () => {
+        const plan = { title: "GSEA cross-species comparison", steps: [{ id: "qc_gate", name: "quality control" }] };
+        await refreshSidebarData(
+            "A",
+            perRunSeams(
+                [runRow({ runId: "run-aaaaaaaaaaaa", status: "running", planId: "plan-1" })],
+                { "run-aaaaaaaaaaaa": [stepRow("qc_gate", "running")] },
+                plan,
+            ),
+        );
+        const frame = await renderFrame(liveNode(), { width: 44, height: 40 });
+
+        // The row stops showing an opaque id tail once the plan resolves...
+        expect(frame).toContain("GSEA");
+        // ...and the step shows its human name rather than its slug.
+        expect(frame).toContain("quality control");
+        expect(frame).not.toContain("qc_gate");
+    });
+
+    test("a blocked step shows its reason and a retried step its attempt count", async () => {
+        await refreshSidebarData(
+            "A",
+            perRunSeams([runRow({ runId: "run-aaaaaaaaaaaa", status: "running" })], {
+                "run-aaaaaaaaaaaa": [
+                    { ...stepRow("blocked_step", "blocked"), blockedReason: "reference panel unavailable" },
+                    { ...stepRow("retried_step", "running"), attempts: 3 },
+                ],
+            }),
+        );
+        const frame = await renderFrame(liveNode(), { width: 44, height: 40 });
+
+        // Without the reason a blocker is a bare ✗, indistinguishable from a crash.
+        expect(frame).toContain("reference panel");
+        // And a retried step reads as failing repeatedly rather than merely slow.
+        expect(frame).toContain(`${GLYPHS.multiply}3`);
+        // The agent stays out of the rail: at ~37 usable cells it would push the age and the retry
+        // count off the row. The run-detail dialog carries it.
+        expect(frame).not.toContain("[agent-x]");
+    });
+
+    test("a skipped step is visually distinct from a pending one", async () => {
+        await refreshSidebarData(
+            "A",
+            perRunSeams([runRow({ runId: "run-aaaaaaaaaaaa", status: "running" })], {
+                "run-aaaaaaaaaaaa": [stepRow("doomed_step", "skipped"), stepRow("waiting_step", "pending")],
+            }),
+        );
+        const frame = await renderFrame(liveNode(), { width: 44, height: 40 });
+
+        // A skipped step never will run; a pending one still might. Same glyph would say otherwise.
+        expect(lineContaining(frame, "doomed_step")).toContain(GLYPHS.emDash);
+        expect(lineContaining(frame, "waiting_step")).toContain(GLYPHS.circleHollow);
+    });
+
+    test("the rail absorbs several runs across a sweep of terminal heights without throwing", async () => {
+        // These layout defects are size-dependent — a single height hides them — and the rail now
+        // grows with the number of active runs rather than being a fixed three rows.
+        const runs = [
+            runRow({ runId: "run-aaaaaaaaaaaa", status: "running" }),
+            runRow({ runId: "run-bbbbbbbbbbbb", status: "running" }),
+            runRow({ runId: "run-cccccccccccc", status: "running" }),
+        ];
+        await refreshSidebarData(
+            "A",
+            perRunSeams(runs, {
+                "run-aaaaaaaaaaaa": [stepRow("a1", "running"), stepRow("a2", "pending")],
+                "run-bbbbbbbbbbbb": [stepRow("b1", "running"), stepRow("b2", "pending")],
+                "run-cccccccccccc": [stepRow("c1", "running"), stepRow("c2", "pending")],
+            }),
+        );
+        for (const height of [10, 14, 18, 24, 30, 40, 50]) {
+            const frame = await renderFrame(liveNode(), { width: 44, height });
+            // The rail renders at every height — it scrolls rather than clipping or throwing. The
+            // sections above RUNS are always in view; RUNS itself is legitimately below the fold on
+            // a short terminal, which is what the scroll container is for.
+            expect(frame).toContain("SESSION");
+        }
+        // Once there is room, every active run's steps are reachable.
+        const tall = await renderFrame(liveNode(), { width: 44, height: 50 });
+        expect(tall).toContain("RUNS");
+        expect(tall).toContain("a1");
+        expect(tall).toContain("b1");
+        expect(tall).toContain("c1");
+    });
+});

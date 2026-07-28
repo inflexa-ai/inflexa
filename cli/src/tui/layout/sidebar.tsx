@@ -153,6 +153,14 @@ function ConnectionLine(): JSX.Element {
 }
 
 // A single-line left border occupies exactly one terminal column; the rail draws one on its left edge.
+/**
+ * How many FINISHED runs the rail lists beneath the active ones. Active runs are never capped —
+ * they are bounded by real concurrency and each is live work the reader needs to see — so this
+ * bounds only the historical tail, which otherwise grows without limit. Three keeps the section
+ * scannable; the runs picker carries the full history.
+ */
+const TERMINAL_RUN_ROWS = 3;
+
 const RAIL_BORDER_COLS = 1;
 
 /**
@@ -309,9 +317,17 @@ export function Sidebar(props: SidebarProps) {
     const profileLine = createMemo(() => profileLineOf(profileSnapshot()));
     const recentRuns = createMemo((): CortexRunRow[] => {
         const s = runsSnapshot();
-        // ≤3 rows — the rail carries the summary (plus the newest run's progress embed below its
-        // row); the runs picker → detail dialogs carry the depth.
-        return s.kind === "loaded" ? s.runs.slice(0, 3) : [];
+        if (s.kind !== "loaded") return [];
+        // EVERY active run renders (each carries its own progress block), plus the newest few
+        // terminal ones as plain rows. The cap applies only to the terminal tail: active runs are
+        // bounded by real concurrency — one to three in practice — while finished runs accumulate
+        // without limit, and capping the whole list would let a burst of completions push a running
+        // run off the rail entirely. Newest-first ordering is preserved so the section still reads
+        // chronologically; the runs picker carries the full history.
+        const active = s.runs.filter((r) => !RUN_STATUS_TERMINAL[r.status]);
+        const terminal = s.runs.filter((r) => RUN_STATUS_TERMINAL[r.status]).slice(0, TERMINAL_RUN_ROWS);
+        const keep = new Set([...active, ...terminal]);
+        return s.runs.filter((r) => keep.has(r));
     });
 
     // The role models are present exactly once the runtime installs the live switch at boot (all roles
