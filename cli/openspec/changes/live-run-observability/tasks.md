@@ -67,10 +67,10 @@
 
 ## 8. Keymap and palette
 
-- [ ] 8.1 Declare the panel's navigation and dismiss/restore bindings as a reactive layer with descriptions and a group, using Ctrl-based chords and lowercase labels, with no unmodified printable keys
-- [ ] 8.2 Derive every displayed label from its chord rather than hand-writing it
-- [ ] 8.3 Add a palette command that restores the panel, mirroring how the sidebar toggle is exposed
-- [ ] 8.4 Test: bindings appear in the which-key overlay; typing in the composer triggers none of them
+- [x] 8.1 Declare the panel's navigation and dismiss/restore bindings as a reactive layer with descriptions and a group, using Ctrl-based chords and lowercase labels, with no unmodified printable keys
+- [x] 8.2 Derive every displayed label from its chord rather than hand-writing it
+- [x] 8.3 Add a palette command that restores the panel, mirroring how the sidebar toggle is exposed
+- [x] 8.4 Test: bindings appear in the which-key overlay; typing in the composer triggers none of them
 
 ## 9. Design gallery and close-out
 

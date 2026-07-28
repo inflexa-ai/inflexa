@@ -6,6 +6,7 @@ import {
     dispatchKey,
     keybindLabel,
     KEYBIND_DEFAULTS,
+    reachableKeys,
     leaderSeq,
     parseChord,
     resolveKeybind,
@@ -116,6 +117,26 @@ describe("run-activity panel bindings", () => {
         // absence of one is worth pinning: every default app chord must be distinct.
         const labels = (Object.keys(KEYBIND_DEFAULTS) as (keyof typeof KEYBIND_DEFAULTS)[]).map((id) => keybindLabel(id));
         expect(new Set(labels).size).toBe(labels.length);
+    });
+
+    test("the panel's leader sequences document themselves in the which-key overlay", () => {
+        withRoot(() => {
+            // The overlay lists whatever the bindings declare — the desc/group are the documentation,
+            // so a binding cannot exist without appearing there.
+            useBindings(() => ({
+                bindings: [
+                    { chord: leaderSeq("p"), run: () => {}, desc: "Toggle run panel", group: "View" },
+                    { chord: leaderSeq("]"), run: () => {}, desc: "Next active run", group: "View" },
+                ],
+            }));
+
+            expect(dispatchKey(key("x", { ctrl: true }))).toBe(true); // the leader → pending
+            const next = reachableKeys();
+            const byStroke = new Map(next.map((n) => [n.stroke, n]));
+            expect(byStroke.get("p")).toMatchObject({ desc: "Toggle run panel", group: "View" });
+            expect(byStroke.get("]")).toMatchObject({ desc: "Next active run", group: "View" });
+            dispatchKey(key("escape")); // abandon the pending sequence
+        });
     });
 
     test("end-to-end: the panel chords dispatch centrally, and typing a bare letter does not", () => {

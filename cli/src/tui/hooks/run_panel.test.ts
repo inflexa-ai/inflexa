@@ -197,6 +197,20 @@ describe("run panel dismissal", () => {
         expect(activeRunCount()).toBe(1);
     });
 
+    test("restore is not a toggle — twice in a row leaves the panel visible", async () => {
+        // This is what makes the palette entry safe to expose beside the chord. A user reaches the
+        // palette precisely because they lost the panel; if the command toggled, a second invocation
+        // (or one issued while the panel was already back) would hide it again and read as the
+        // command having done nothing.
+        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
+        toggleRunPanel();
+        expect(runPanelVisible()).toBe(false);
+        restoreRunPanel();
+        restoreRunPanel();
+        restoreRunPanel();
+        expect(runPanelVisible()).toBe(true);
+    });
+
     test("restore brings it back, and is idempotent when already visible", async () => {
         await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
         toggleRunPanel();

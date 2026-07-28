@@ -537,3 +537,25 @@ describe("session flows", () => {
         expect(w.opened).toEqual([{ threadId: "thread-bravo", analysisId: OTHER.id }]);
     });
 });
+
+// The panel's restore affordance is exposed BOTH ways — a chord and a palette command — mirroring how
+// the sidebar toggle is. A user who dismissed the panel and does not recall the chord needs the
+// palette entry, which is precisely why it is restore-only rather than a second toggle: a toggle
+// there could hide the panel a second time and read as the command having done nothing.
+describe("run-panel palette command", () => {
+    test("restore is reachable from the palette, in the View category", () => {
+        const cmd = commands.find((c) => c.id === "view.run-panel");
+        expect(cmd).toBeDefined();
+        expect(cmd!.category).toBe("View");
+        // Discoverable by what a user would actually type after losing the panel.
+        expect(`${cmd!.title} ${cmd!.description}`.toLowerCase()).toContain("run panel");
+    });
+
+    test("the command is restore-only, not a second toggle", () => {
+        const cmd = commands.find((c) => c.id === "view.run-panel")!;
+        // Behaviour is asserted in run_panel.test.ts, where an active run can be seeded; what matters
+        // here is that the palette entry calls the restore, never the toggle — a toggle in the palette
+        // could hide the panel a second time and read as the command having done nothing.
+        expect(cmd.run.toString()).toContain("restoreRunPanel");
+    });
+});
