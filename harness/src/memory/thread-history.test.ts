@@ -822,3 +822,62 @@ describe("interruption marker round-trip", () => {
         expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn1);
     });
 });
+
+// --- host-appended synthetic records ----------------------------------------
+
+describe("host-appended synthetic records", () => {
+    // The embedder's use of the marker: a record of work that happened OUTSIDE the conversation —
+    // an analysis run finishing — appended between turns rather than mid-turn. It must reach the
+    // model's next context without being mistaken for something the user said.
+    const runNotice = (): ModelMessage => syntheticUserMessage("Run GSEA cross-species comparison completed: 3/3 steps in 4m12s.");
+
+    it("does not open a turn for paging or the token window", async () => {
+        const turn = [userText("kick off the analysis"), assistantText("launched — I'll report back")];
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, [runNotice()]))._unsafeUnwrap();
+
+        // One turn, not two: the record rides the exchange it followed.
+        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
+        expect(page.total).toBe(1);
+        expect(page.messages.length).toBe(3);
+    });
+
+    it("is present in the window the next turn is assembled from", async () => {
+        // This is what lets the agent answer "are you done?" without a tool call.
+        const turn = [userText("kick off the analysis"), assistantText("launched — I'll report back")];
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        const notice = runNotice();
+        (await history.appendTurn(THREAD, [notice]))._unsafeUnwrap();
+
+        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        expect(loaded).toEqual([...turn, notice]);
+        assertValidSequence(loaded);
+    });
+
+    it("is removed with the turn it belongs to when that turn is retracted", async () => {
+        const turn1 = [userText("first question"), assistantText("first answer")];
+        const turn2 = [userText("kick off the analysis"), assistantText("launched")];
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, [runNotice()]))._unsafeUnwrap();
+
+        // Accepted consequence of opening no turn: the record folds into turn2 and comes off with
+        // it. The alternative — letting it open a turn — would hand retraction a mid-turn cut point.
+        const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(outcome).toEqual({ kind: "retracted", messages: 3 });
+        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn1);
+    });
+
+    it("survives a retraction when a later genuine turn insulates it", async () => {
+        const turn1 = [userText("kick off the analysis"), assistantText("launched")];
+        const notice = runNotice();
+        const turn2 = [userText("what did it find?"), assistantText("here is the summary")];
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, [notice]))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+
+        const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(outcome).toEqual({ kind: "retracted", messages: 2 });
+        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual([...turn1, notice]);
+    });
+});

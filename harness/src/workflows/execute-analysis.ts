@@ -246,6 +246,52 @@ export type RunProvenanceEvent =
       };
 
 /**
+ * A step's in-run display state. Wider than the ledger's `StepExecutionStatus`: `queued` is a
+ * scheduler-only condition (dependency-satisfied but held for budget capacity) that never reaches a
+ * database row, and `skipped` is asserted mid-run for a doomed dependent whose ledger row stays
+ * `pending` until the terminal sweep.
+ */
+export type StepRuntimeStatus = "pending" | "queued" | "running" | "completed" | "failed" | "skipped";
+
+/**
+ * One step's state inside a {@link RunObservation}. `id` is the plan slug the ledger and the
+ * dependency edges use; `name` is the human phrase the plan author wrote, which is the only field
+ * that says what the step is FOR. `durationMs` and `error` appear only once the step has settled
+ * in a way that produced them.
+ */
+export interface RunStepObservation {
+    readonly id: string;
+    readonly name: string;
+    readonly agent: string;
+    readonly status: StepRuntimeStatus;
+    readonly durationMs?: number;
+    readonly error?: string;
+}
+
+/**
+ * A whole-run snapshot handed to {@link ExecuteAnalysisDeps.observeRun}.
+ *
+ * Deliberately a SNAPSHOT rather than a transition event. The observer is invoked from the
+ * workflow body, so DBOS re-execution on recovery re-fires the whole sequence; a re-fired snapshot
+ * is idempotent for any consumer that renders from the newest one it has seen, whereas re-fired
+ * granular events would force every consumer to rebuild ordering and dedupe by identity. A
+ * consumer that misses an invocation loses nothing permanent — the next transition restates the
+ * full truth.
+ *
+ * Derived aggregates (completion counts, run duration) are deliberately ABSENT. They are
+ * computable from `steps` and recorded authoritatively on the run's ledger row; carrying them here
+ * would mint a second source that can disagree with the ledger a host also reads.
+ */
+export interface RunObservation {
+    readonly runId: string;
+    readonly analysisId: string;
+    /** `running` for every mid-flight snapshot; the derived terminal status on the last one. */
+    readonly status: ExecuteAnalysisFinalStatus;
+    /** Every plan step, including ones that have not started — never a delta. */
+    readonly steps: readonly RunStepObservation[];
+}
+
+/**
  * Construction-time deps for the parent workflow. The order-of-operations is
  * the body's own: it brackets the run, dispatches children, and synthesizes
  * directly via `DBOS.*` + the harness's helpers. Only the genuinely host-specific seams
@@ -284,6 +330,27 @@ export interface ExecuteAnalysisDeps {
      * guarded so a throwing observer never fails the run.
      */
     readonly emitProvenance?: (event: RunProvenanceEvent) => void;
+
+    /**
+     * Optional, fire-and-forget observation of the run's live shape, for a host driving a UI.
+     *
+     * Independent of {@link emitProvenance} in every direction: neither is implemented in terms of
+     * the other, they share no payload, and supplying one does not imply the other. They exist
+     * separately because provenance closes a signed, hash-chained record under a single-writer
+     * lock, while this is a lossy-tolerant display channel — coupling them would put a UI repaint
+     * behind the chain's write discipline and force provenance to carry step names and agent ids it
+     * has no reason to record.
+     *
+     * Invoked directly in the workflow body (NOT wrapped in `DBOS.runStep`) for the same reason
+     * `emitProvenance` is: body re-execution on recovery must re-fire it, and a cached step would
+     * suppress that. Idempotency comes free for rendering because the payload is a whole-run
+     * snapshot; a host taking a DURABLE side effect on one must key it by run id and status itself.
+     *
+     * Synchronous by signature (`void`, never a promise) so a host needing I/O has to dispatch it
+     * rather than await it inside the body's critical path. Every call site is guarded, so a
+     * throwing observer never fails the run.
+     */
+    readonly observeRun?: (observation: RunObservation) => void;
 }
 
 // ── In-body orchestration helpers ────────────────────────────────────
@@ -307,6 +374,63 @@ function emitProvenanceGuarded(deps: ExecuteAnalysisDeps, event: RunProvenanceEv
         deps.emitProvenance(event);
     } catch (err) {
         logger.error("emitProvenance threw", { runId: event.runId, event: event.type, ...logger.errorFields(err) });
+    }
+}
+
+/**
+ * The scheduler's live per-step state, keyed by step id. Named so the observation builder and the
+ * scheduler loop share one shape rather than restating the inline literal at each site.
+ */
+type StepRuntimeMap = Map<string, { status: StepRuntimeStatus; durationMs?: number; error?: string }>;
+
+/**
+ * Build the whole-run snapshot from the workflow input and the scheduler's live step state.
+ *
+ * Pure, so every emission point produces an identically-shaped payload from one place — a second
+ * construction path is exactly how "a transition happened" acquires two definitions that drift.
+ * The human `name` joins through `input.planStepById` because `input.steps` is the scheduler's
+ * narrow `{id, depends_on}` projection and carries no plan vocabulary.
+ */
+function buildRunObservation(args: {
+    input: ExecuteAnalysisInput;
+    runId: string;
+    status: ExecuteAnalysisFinalStatus;
+    stepStates: StepRuntimeMap;
+}): RunObservation {
+    const { input, runId, status, stepStates } = args;
+    return {
+        runId,
+        analysisId: input.analysisId,
+        status,
+        steps: input.steps.map((s) => {
+            const rt = stepStates.get(s.id);
+            return {
+                id: s.id,
+                name: input.planStepById[s.id]?.name ?? s.id,
+                agent: input.agentByStepId[s.id] ?? "unknown",
+                // A step absent from the map has not been reached yet; `pending` is its honest state.
+                status: rt?.status ?? "pending",
+                ...(rt?.durationMs !== undefined ? { durationMs: rt.durationMs } : {}),
+                ...(rt?.error !== undefined ? { error: rt.error } : {}),
+            };
+        }),
+    };
+}
+
+/**
+ * Fire the optional run observer, isolating a throwing host callback from the workflow.
+ *
+ * Deliberately a sibling of {@link emitProvenanceGuarded} rather than a shared helper: the two
+ * seams carry unrelated payloads and must stay independently removable, and one shared guard would
+ * have to pick a single logger namespace, making it lie about whichever seam it is not named for.
+ */
+function observeRunGuarded(deps: ExecuteAnalysisDeps, observation: RunObservation): void {
+    if (!deps.observeRun) return;
+    const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis.observe");
+    try {
+        deps.observeRun(observation);
+    } catch (err) {
+        logger.error("observeRun threw", { runId: observation.runId, status: observation.status, ...logger.errorFields(err) });
     }
 }
 
@@ -640,6 +764,10 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         stepCount: input.steps.length,
         atMs: startedAtMs,
     });
+    // Opening snapshot: every step pending. The scheduler's own map does not exist yet, and an
+    // empty one yields exactly that — so a host has the run's full shape before the first dispatch
+    // rather than learning the step list from whichever transition happens to land first.
+    observeRunGuarded(deps, buildRunObservation({ input, runId, status: "running", stepStates: new Map() }));
 
     // (2-4) Scheduler loop + failure isolation + pause cascade.
     const final = await runSchedulerLoop({
@@ -763,6 +891,12 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         deps,
     });
 
+    // Terminal snapshot, fired here rather than inside `collectAndComplete` because this is the
+    // first point where BOTH the derived final status and the scheduler's final step map are in
+    // hand. It precedes the budget self-cancel below on purpose: that branch raises out of the
+    // body, so an observer placed after it would never see a budget-paused run's last state.
+    observeRunGuarded(deps, buildRunObservation({ input, runId, status: result.status, stepStates: final.stepStates }));
+
     // Synthesis failure takes priority over the budget-exceeded cascade: a run
     // whose synthesis threw is definitively failed (ERROR), not a resumable
     // budget pause. Only self-cancel when synthesis succeeded.
@@ -852,6 +986,13 @@ interface SchedulerLoopOutcome {
     readonly canceled: Set<string>;
     readonly budgetExceeded: boolean;
     readonly failureReason: string | null;
+    /**
+     * The scheduler's final per-step state, handed back so the terminal run observation is built
+     * from the same map every mid-run snapshot used. Reconstructing it from the completed/failed/
+     * canceled sets would be a second definition of step state — the one thing the single builder
+     * exists to prevent, and the one most likely to disagree about `skipped`.
+     */
+    readonly stepStates: StepRuntimeMap;
 }
 
 async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopOutcome> {
@@ -871,10 +1012,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     // returns a graceful `{status:"canceled"}` is already handled.
     const canceledByParent = new Set<string>();
 
-    const stepRuntime = new Map<
-        string,
-        { status: "pending" | "queued" | "running" | "completed" | "failed" | "skipped"; durationMs?: number; error?: string }
-    >();
+    const stepRuntime: StepRuntimeMap = new Map();
     for (const step of input.steps) {
         stepRuntime.set(step.id, { status: "pending" });
     }
@@ -927,7 +1065,14 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 const rt = stepRuntime.get(s.id)!;
                 const entry: Record<string, unknown> = {
                     id: s.id,
-                    name: s.id,
+                    // `input.steps` is the SCHEDULER's projection — `{id, depends_on}` and nothing
+                    // else — so the human name has to be joined from the snapshotted plan step. A
+                    // consumer reading `name` is reading it to say what the step is FOR, which the
+                    // id (a `T{track}S{step}` slug) cannot answer. Falling back to the id keeps the
+                    // field populated for a step missing from the snapshot rather than emitting an
+                    // empty label; `planStepById` is complete by contract (dispatch throws on a
+                    // miss), so the fallback is unreachable in practice.
+                    name: input.planStepById[s.id]?.name ?? s.id,
                     agent: input.agentByStepId[s.id] ?? "unknown",
                     status: rt.status,
                     level: levels.get(s.id) ?? 0,
@@ -935,9 +1080,18 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 };
                 if (rt.durationMs !== undefined) entry.durationMs = rt.durationMs;
                 if (rt.error !== undefined) entry.error = rt.error;
+                // `artifactCount` and `summary` are declared on `DagStepState` and deliberately not
+                // set: the parent holds neither at snapshot time, and a placeholder would make a
+                // consumer's rendering confidently wrong rather than honestly incomplete.
                 return entry;
             }),
         });
+        // The host observer rides the DAG emission rather than getting its own instrumentation
+        // points: these call sites already ARE the complete set of run-state transitions, and a
+        // second set would drift from this one. Status is `running` here by construction — the
+        // scheduler loop only emits while it is still scheduling; the terminal snapshot is fired by
+        // the body once `collectAndComplete` has derived the final status.
+        observeRunGuarded(deps, buildRunObservation({ input, runId, status: "running", stepStates: stepRuntime }));
     };
 
     const dbosParentId = DBOS.workflowID ?? workflowId;
@@ -1166,7 +1320,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
 
     await drainBudgetExceededNotifications(budgetExceededChildIds);
 
-    return { completed, failed, canceled, budgetExceeded, failureReason };
+    return { completed, failed, canceled, budgetExceeded, failureReason, stepStates: stepRuntime };
 }
 
 async function drainBudgetExceededNotifications(childIds: Set<string>): Promise<void> {
