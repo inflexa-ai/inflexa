@@ -3,13 +3,15 @@ import { createSignal } from "solid-js";
 import { testRender } from "@opentui/solid";
 import type { TextareaRenderable } from "@opentui/core";
 
-import { useKeymapRoot, useBindings, MODE_BASE, KEYS, __resetKeybindCache } from "./keymap.ts";
-import { historyRecallLayer, retractLayer, type RecallPosition } from "./app.tsx";
+import { useKeymapRoot, useBindings, MODE_BASE, KEYS, __resetKeybindCache } from "../keymap.ts";
+import { retractLayer } from "../app.tsx";
+import { historyRecallLayer, type RecallPosition } from "./prompt_recall.ts";
 
-// End-to-end verification of app.tsx's prompt-history recall layer through the REAL engine: mockInput
+// End-to-end verification of the prompt-history recall layer through the REAL engine: mockInput
 // drives opentui's keyboard bus → useKeymapRoot → dispatchKey → the winning layer. Same contract as
 // keymap_interrupt_retract.render.test.tsx — the harness registers the ACTUAL exported factory over
-// injected seams, never a hand-copied replica, so these tests cannot drift from app.tsx's real config.
+// injected seams, never a hand-copied replica, so these tests cannot drift from the config `usePromptRecall`
+// installs.
 // The only stand-in is a lower-priority up/down pair giving each chord its real place to land when the
 // recall layer declines it (the textarea's own cursor movement in production).
 
@@ -49,7 +51,7 @@ function RecallHarness(props: RecallControls) {
             entries: props.entries,
             hasEntries: props.hasEntries,
             position,
-            setPosition: (next) => {
+            setPosition: (next: RecallPosition | null) => {
                 setPosition(next);
                 props.onPosition?.(next);
             },

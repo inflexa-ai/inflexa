@@ -55,3 +55,11 @@
 - [x] 7.1 Make the hold at history-top a true no-op: `step` short-circuits when the resolved index AND text match the live position, so a clamped `up` at the oldest entry no longer re-seeds and drags the caret to the buffer end. Gated on `inRecall` so a stale position cannot suppress a fresh entry addressing the same place (design decision 9, extended).
 - [x] 7.2 Cover it with a MULTI-LINE oldest entry — invisible on single-line fixtures, where the caret's end and its row-0 position coincide, which is why the existing oldest-entry test missed it. Written first and confirmed failing against the previous implementation (caret row 2, expected 0).
 - [x] 7.3 Strengthen the spec's "Up at the oldest entry stays put" scenario to pin the caret as well as the buffer.
+
+## 8. Review request: app.tsx composes, it does not own (@vivere-dally)
+
+- [x] 8.1 Extract the recall vertical into `src/tui/hooks/prompt_recall.ts` as a hook — `usePromptRecall(composer)` owns the position signal, registers the layer, and returns the `canRecall` affordance state — so `app.tsx` composes it in one line and holds no recall state, matching how `watchSidebarData`/`watchProfileParity` are consumed.
+- [x] 8.2 Keep `historyRecallLayer` exported from the hook module so the dispatch test still drives the SAME config the hook installs, over injected seams.
+- [x] 8.3 Move the shared set-text + caret-to-end pair to `seedTextareaText` in `components/text_area.tsx` — genuinely multi-caller across modules now (retract seed and recall), so a shared home is justified rather than a duplicated pair.
+- [x] 8.4 Move the render test to `src/tui/hooks/prompt_recall.render.test.tsx`, beside the code it covers.
+- [x] 8.5 Confirm no behavior change: full TUI suite green, `app.tsx` down from 1215 to 1003 lines.

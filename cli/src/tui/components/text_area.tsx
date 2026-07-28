@@ -8,6 +8,20 @@ import { SUBMIT_CHORD, NEWLINE_CHORD } from "../keymap.ts";
 /** Chrome tier for {@link TextArea}: controls border presence and mode indicator placement. */
 export type TextAreaChrome = "full" | "compact" | "bare";
 
+/**
+ * Write `text` into a textarea renderable with the caret at its end — `setText` alone leaves it at offset 0,
+ * which puts the cursor before a restored prompt rather than after it.
+ *
+ * Lives beside the component whose renderable it drives, because every host that pushes text INTO a textarea
+ * (rather than reading it out) needs exactly this pair: the chat's retract seed and its prompt-history
+ * recall both do, from different modules. Deliberately just the two calls — no focus grab and no
+ * emptiness check, since whether either is wanted is the caller's business, and they disagree.
+ */
+export function seedTextareaText(textarea: TextareaRenderable, text: string): void {
+    textarea.setText(text);
+    textarea.gotoBufferEnd();
+}
+
 /** Props for {@link TextArea}. */
 export type TextAreaProps = {
     /** Controls border presence and mode indicator placement. */
