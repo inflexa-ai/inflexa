@@ -32,7 +32,7 @@
 - [x] 4.2 Update the `src/tui/app.tsx:111` comment on `retractLayer` that says the idle chord is "free for future recall" — it now passes to `historyRecallLayer`.
 - [x] 4.3 Run `bun run format:file` on the changed `src/` files, then `bun run typecheck` and `bun run lint`.
 - [x] 4.4 Run the TUI test suite and confirm no existing retract/interrupt/scroll test regressed.
-- [ ] 4.5 `openspec validate prompt-history-recall --strict` PASSES. Archive is deliberately left for the user to run (`/opsx:archive`) — it rewrites the main `key-bindings` spec, which is worth a review beat.
+- [x] 4.5 `openspec validate prompt-history-recall --strict` PASSES; delta specs synced into `key-bindings` + `tui-layout` and the change archived.
 
 ## 5. Review follow-ups (PR #249)
 
