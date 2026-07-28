@@ -134,8 +134,23 @@ export async function refreshOpenThread(threadId: string | null, seams: ThreadSe
 
 // The analysis whose ready-edge resolution is in flight, so a repaint between the effect firing and
 // its listing resolving cannot start a second one — two mints would race and the loser's id would be
-// silently replaced. Cleared when that resolution settles.
+// silently replaced. Cleared by the resolution that OWNS it (see `clearResolutionOf`).
 let resolvingForAnalysisId: string | null = null;
+
+/**
+ * Release the in-flight marker only if it still names this resolution's analysis.
+ *
+ * An unconditional clear would let a settling resolution for analysis A drop a marker that a later
+ * effect run had since re-taken for analysis B, re-opening the double-mint this marker exists to
+ * close. Today nothing reaches that interleaving — the scope is never left unbound while `ready`,
+ * because `harnessRuntime()` is set before the phase flips (`hooks/boot.ts`), so every `openSession`
+ * under `ready` binds a non-null id and the effect short-circuits. That invariant lives in another
+ * module and is not this one's to assume: making the release conditional costs a comparison and
+ * removes the dependency outright.
+ */
+function clearResolutionOf(analysisId: string): void {
+    if (resolvingForAnalysisId === analysisId) resolvingForAnalysisId = null;
+}
 
 /**
  * Wire the open thread's lifecycle. Call once from `App` (inside its reactive root). Two effects over
@@ -164,7 +179,7 @@ export function watchOpenThread(workspace: Workspace, seams: ThreadSeams = realT
         resolvingForAnalysisId = analysisId;
         void resolveThreadId(analysisId, seams).then(
             (resolved) => {
-                resolvingForAnalysisId = null;
+                clearResolutionOf(analysisId);
                 if (resolved === null) return;
                 // The listing is a Postgres round-trip, during which the user can swap analyses or a
                 // palette command can bind a thread itself. Both make this resolution stale, and writing it
@@ -182,7 +197,7 @@ export function watchOpenThread(workspace: Workspace, seams: ThreadSeams = realT
             // The throw itself is absorbed rather than crashing the render root — the next ready edge is
             // the retry, and the scope simply stays unbound until then.
             () => {
-                resolvingForAnalysisId = null;
+                clearResolutionOf(analysisId);
             },
         );
     });

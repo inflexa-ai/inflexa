@@ -12,7 +12,7 @@ Code is grouped by feature, not by layer — a module owns its logic, its text c
 
 - **`auth/`** — Auth0 device flow + `login` / `logout` / `whoami`. Config seeded from `.env` (`INFLEXA_AUTH0_*`).
 - **`proxy/`** — the CLIProxyAPI model helpers (`models.ts`: client key discovery + default-model election — deterministic recency rank walked against the unbilled `count_tokens` accessibility check); the container lifecycle/provisioning lives in `infra/`.
-- **`analysis/`** — analysis lifecycle + the `sessions` command (live launch-identity rows; message history is frozen legacy data).
+- **`analysis/`** — analysis lifecycle (creation, resolution, the chat-target launcher). Session identity is not here: a conversation lives only in the harness Postgres thread store.
 - **`anchor/`** — invisible folder-identity markers (`.inflexa/id`) and lazy path reconciliation.
 - **`harness/`** — the harness embedder: boots the harness runtime (DBOS, sandbox, providers) and drives the chat turn, the model-free `run --plan` replay engine, data profiling, and the provenance bridge.
 - **`embedding/`** — config-driven embedding-provider resolution + the in-process bge-small local model (download, verify, lifecycle).

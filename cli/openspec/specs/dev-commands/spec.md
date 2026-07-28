@@ -9,7 +9,7 @@ The command-channel contract: which CLI commands are dev-only (`chat`, `profile`
 
 The CLI SHALL register its dev/E2E commands — `chat`, `profile`, and `run` — only when the
 development channel is active, so a production build's command surface is the product alone: bare
-`inflexa`, `new`, `ls`, `resume`, `open`, `status`, `sessions`, `analysis`, `project`, `prov`,
+`inflexa`, `new`, `ls`, `resume`, `open`, `status`, `analysis`, `project`, `prov`,
 `repair`, `relocate`, `prune`, `auth`, `up`, `down`, `setup`, `sandbox`, and `config`. Gating SHALL
 happen at registration — an absent command: not present in help, and invoking the name fails non-zero
 as an unrecognized argument (commander's root default action accepts no positionals, so an
