@@ -7,7 +7,7 @@ Defines the harness `messages` table — the single source of truth for conversa
 
 ### Requirement: A turn is appended atomically with monotonic sequence
 
-`appendTurn(threadId, messages)` SHALL write all messages of a turn in one transaction, assigning each a `seq` that is monotonically increasing per thread. Each row SHALL store its model content as an AI SDK model-message envelope and a `tokens` count computed at write time. The same transaction SHALL touch the thread's metadata row (`cortex_analysis_threads.updated_at = NOW()`), so thread listings ordered by `updated_at` reflect conversation activity; when no metadata row exists for the thread, the touch updates zero rows and the append SHALL still succeed.
+`appendTurn(threadId, messages)` SHALL write all messages of a turn in one transaction, assigning each a `seq` that is monotonically increasing per thread. Each row SHALL store its model content as an AI SDK model-message envelope and a `tokens` count computed at write time. The same transaction SHALL touch the live thread's metadata row so thread listings ordered by `updated_at` reflect conversation activity; the touch SHALL only move `updated_at` forward (never to an earlier value than the row already holds) and SHALL NOT touch a soft-deleted row; and the touch SHALL never cost the turn — when no metadata row exists for the thread, or the row is soft-deleted, the touch updates zero rows, and when the touch itself fails it SHALL be rolled back on its own without failing the append or the turn's message writes.
 
 #### Scenario: A turn round-trips
 
@@ -32,6 +32,18 @@ Defines the harness `messages` table — the single source of truth for conversa
 - **GIVEN** a thread with persisted messages but no `cortex_analysis_threads` row
 - **WHEN** `appendTurn` runs for that thread
 - **THEN** the turn's messages persist normally and the touch affects zero rows
+
+#### Scenario: A failing touch does not fail the append
+
+- **GIVEN** a thread whose metadata row cannot be updated
+- **WHEN** `appendTurn` runs for that thread
+- **THEN** the append succeeds and every message of the turn persists
+
+#### Scenario: A soft-deleted thread's tombstone is not touched
+
+- **GIVEN** a soft-deleted thread that receives an appended turn
+- **WHEN** `appendTurn` runs for that thread
+- **THEN** the turn's messages persist, the row stays soft-deleted, and its `updated_at` is unchanged
 
 ### Requirement: loadRecent windows by token budget
 

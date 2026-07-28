@@ -95,16 +95,28 @@ export const migrations: Migration[] = [
     {
         // A conversation is single-homed in the harness Postgres thread store: it owns the session's
         // identity, its title, its activity timestamps, and every message. These three SQLite tables
-        // were the second home — frozen with no writer and no reader, their transcript rows
-        // unreachable from any surface — so the drop deliberately deletes that legacy data rather
+        // were the second home — frozen with no writer and no reader — so the drop retires them rather
         // than leave dead schema inviting a new reader and reopening "which store is authoritative".
-        // Dropped child-first (parts → messages → sessions) because foreign keys are enforced on the
-        // app connection; each table's indexes go with it, so they need no statements of their own.
+        //
+        // What the drop achieves, stated exactly: the transcript rows become permanently unreachable
+        // and their pages return to the freelist for reuse. The bytes are NOT scrubbed, and reclaiming
+        // them is deliberately not attempted here — VACUUM cannot run inside the transaction this
+        // migration executes in, and it transiently needs roughly the database's size again in free
+        // space, a cost no upgrade should impose on a user's disk.
+        //
+        // IF EXISTS on all three: the database is a file the user owns and may hand-edit or restore, so
+        // a table they already removed must not hard-fail the migration on every launch and brick every
+        // command over data that is otherwise intact (CLAUDE.md → local state can desync).
+        //
+        // Dropped child-first (parts → messages → sessions), though nothing forces that order today:
+        // every foreign key on this set is ON DELETE CASCADE, so parent-first succeeds just as well.
+        // The child-first order is kept so the step stays correct if a future key ever declines to
+        // cascade. Each table's indexes go with it, so they need no statements of their own.
         version: 2,
         up: `
-            DROP TABLE parts;
-            DROP TABLE messages;
-            DROP TABLE sessions;
+            DROP TABLE IF EXISTS parts;
+            DROP TABLE IF EXISTS messages;
+            DROP TABLE IF EXISTS sessions;
         `,
     },
 ];

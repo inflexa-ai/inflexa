@@ -9,14 +9,17 @@ import type { Workspace } from "../contexts/workspace.ts";
 import type { Notice } from "../theme.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { __resetBootForTest, __setBootStateForTest, type BootState } from "./boot.ts";
+import { setChatStatus } from "./status.ts";
 import { __resetOpenThreadForTest, openThread, refreshOpenThread, resolveThreadId, watchOpenThread, type ThreadSeams } from "./thread.ts";
 
-// The open-thread store is a module singleton (one chat screen at a time) and so is the boot phase the
-// watch reads, so every case resets both — otherwise an in-flight resolution or a bound snapshot leaks
-// into the next test.
+// The open-thread store is a module singleton (one chat screen at a time) and so are the boot phase
+// and the chat status the watch reads, so every case resets all three — otherwise an in-flight
+// resolution, a bound snapshot, or a left-over `busy` leaks into the next test (the watch seeds its
+// down-edge from the status live at mount).
 afterEach(() => {
     __resetOpenThreadForTest();
     __resetBootForTest();
+    setChatStatus("idle");
 });
 
 // The seams read only `.pool` off the handle and the fake listings ignore it, so a partial stand-in
@@ -193,6 +196,58 @@ describe("refreshOpenThread — the snapshot ladder", () => {
         if (snap.kind === "loaded") expect(snap.thread.title).toBe("Newer thread");
     });
 
+    test("a read for a DIFFERENT thread blanks the rail synchronously, before the new row lands", async () => {
+        // The read is a full pg round-trip. Without a synchronous reset the SESSION rail would keep
+        // painting the thread the user swapped (or deleted) away from for that entire window.
+        const loaded = makeSeams({ getThread: () => okAsync(threadRow({ threadId: "thread-a", title: "Alpha conversation" })) });
+        await refreshOpenThread("thread-a", loaded.seams);
+        expect(openThread().kind).toBe("loaded");
+
+        let releaseNext!: () => void;
+        const gate = new Promise<void>((r) => {
+            releaseNext = r;
+        });
+        const gated = makeSeams({
+            getThread: () => ResultAsync.fromSafePromise(gate.then(() => threadRow({ threadId: "thread-b", title: "Beta conversation" }))),
+        });
+
+        const pending = refreshOpenThread("thread-b", gated.seams);
+        // Deliberately NOT awaited: the reset has to land in the same turn the swap is requested.
+        expect(openThread().kind).toBe("unresolved");
+
+        releaseNext();
+        await pending;
+        const snap = openThread();
+        expect(snap.kind).toBe("loaded");
+        if (snap.kind === "loaded") expect(snap.thread.title).toBe("Beta conversation");
+    });
+
+    test("a re-read of the SAME thread leaves the loaded row standing — no placeholder flicker", async () => {
+        // The rename poke and the post-turn re-read both target the bound thread; blanking there would
+        // flash "runtime not ready" over a row that is still correct.
+        const loaded = makeSeams({ getThread: () => okAsync(threadRow({ threadId: "thread-a", title: "Alpha conversation" })) });
+        await refreshOpenThread("thread-a", loaded.seams);
+
+        let releaseRename!: () => void;
+        const gate = new Promise<void>((r) => {
+            releaseRename = r;
+        });
+        const gated = makeSeams({
+            getThread: () => ResultAsync.fromSafePromise(gate.then(() => threadRow({ threadId: "thread-a", title: "Renamed conversation" }))),
+        });
+
+        const pending = refreshOpenThread("thread-a", gated.seams);
+        const during = openThread();
+        expect(during.kind).toBe("loaded");
+        if (during.kind === "loaded") expect(during.thread.title).toBe("Alpha conversation");
+
+        releaseRename();
+        await pending;
+        const after = openThread();
+        expect(after.kind).toBe("loaded");
+        if (after.kind === "loaded") expect(after.thread.title).toBe("Renamed conversation");
+    });
+
     test("a swap to an unbound scope is not later overwritten by the previous scope's slow read", async () => {
         // The unresolved path bumps the generation BEFORE its guards, so an in-flight older read that
         // resolves afterwards cannot repaint the rail with the thread the user just swapped away from.
@@ -357,6 +412,38 @@ describe("watchOpenThread — the ready-edge bind", () => {
         }
     });
 
+    test("a resolution that THROWS does not wedge the analysis — the next ready edge tries again", async () => {
+        // The store's expected failures ride the Result channel, so a rejection is an unexpected throw
+        // out of it. The in-flight marker must still clear: were it left set, every later ready edge
+        // would read this analysis as already resolving and skip, stranding the chat unbound forever.
+        let attempts = 0;
+        const t = makeSeams({
+            listThreads: () => {
+                attempts += 1;
+                return attempts === 1
+                    ? ResultAsync.fromSafePromise<ThreadPage, DbError>(Promise.reject(new Error("the pool blew up")))
+                    : okAsync(threadPage([threadRow({ threadId: "thread-second-try" })]));
+            },
+        });
+        const w = reactiveWorkspace(ANALYSIS, null);
+        const dispose = mountWatch(w.ws, t.seams);
+        try {
+            __setBootStateForTest(ready());
+            await settle();
+            expect(attempts).toBe(1);
+            expect(w.bound).toEqual([]); // nothing to bind — the throw carried no id
+
+            __setBootStateForTest({ phase: "booting" });
+            __setBootStateForTest(ready());
+            await settle();
+
+            expect(attempts).toBe(2);
+            expect(w.bound).toEqual(["thread-second-try"]);
+        } finally {
+            dispose();
+        }
+    });
+
     test("ready with no analysis open binds nothing", async () => {
         const t = makeSeams({ listThreads: () => okAsync(threadPage([threadRow()])) });
         const w = reactiveWorkspace(null, null);
@@ -401,6 +488,68 @@ describe("watchOpenThread — the row tracker", () => {
             const snap = openThread();
             expect(snap.kind).toBe("loaded");
             if (snap.kind === "loaded") expect(snap.thread.title).toBe("Pathway enrichment");
+        } finally {
+            dispose();
+        }
+    });
+
+    test("a completed turn re-reads the row, so the row the FIRST turn created reaches the rail", async () => {
+        // The first turn creates the row (and seeds its title from the message) under an unchanged bound
+        // id and boot phase — no other edge fires — so without the turn-completion re-read the SESSION
+        // section would read "new conversation" for the rest of the session.
+        let row: Thread | null = null;
+        const t = makeSeams({ getThread: () => okAsync(row) });
+        const w = reactiveWorkspace(ANALYSIS, "thread-1");
+        const dispose = mountWatch(w.ws, t.seams);
+        try {
+            __setBootStateForTest(ready());
+            await settle();
+            expect(openThread().kind).toBe("absent"); // the identity is bound; its row does not exist yet
+
+            row = threadRow({ threadId: "thread-1", title: "Kinase inhibitor screen" });
+            setChatStatus("busy");
+            setChatStatus("idle");
+            await settle();
+
+            const snap = openThread();
+            expect(snap.kind).toBe("loaded");
+            if (snap.kind === "loaded") expect(snap.thread.title).toBe("Kinase inhibitor screen");
+        } finally {
+            dispose();
+        }
+    });
+
+    test("only the busy→idle DOWN-edge re-reads, and only with a thread bound", async () => {
+        let reads = 0;
+        const t = makeSeams({
+            getThread: () => {
+                reads += 1;
+                return okAsync(threadRow());
+            },
+        });
+        // No analysis in scope, so the ready edge binds nothing and the scope stays genuinely unbound.
+        const w = reactiveWorkspace(null, null);
+        const dispose = mountWatch(w.ws, t.seams);
+        try {
+            __setBootStateForTest(ready());
+            await settle();
+            expect(reads).toBe(0);
+
+            // Unbound scope: a finished turn has no row to read, so the edge must issue no query.
+            setChatStatus("busy");
+            setChatStatus("idle");
+            await settle();
+            expect(reads).toBe(0);
+
+            w.ws.openSession("thread-1", "/work", ANALYSIS);
+            await settle();
+            const afterBind = reads;
+            expect(afterBind).toBeGreaterThan(0);
+
+            // The rising edge is not a completion — the turn's writes have not happened yet.
+            setChatStatus("busy");
+            await settle();
+            expect(reads).toBe(afterBind);
         } finally {
             dispose();
         }
