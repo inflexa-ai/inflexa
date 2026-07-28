@@ -328,6 +328,7 @@ export {
     insertRun,
     reserveRunById,
     queryActiveRun,
+    queryActiveRunsByAnalysis,
     updateRunStatus,
     queryRun,
     queryRunsByAnalysis,

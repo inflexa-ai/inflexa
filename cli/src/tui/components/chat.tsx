@@ -31,6 +31,22 @@ export type ChatProps = {
 export function Chat(props: ChatProps) {
     const ws = useWorkspace();
 
+    // Turn number per store position, computed ONCE per messages change rather than per row.
+    //
+    // It counts TURNS, so `event` entries — records this app appended for out-of-band work, which
+    // nobody said — take no number: numbering them would claim a turn happened where none did, and
+    // would renumber every turn after a run finished. They still occupy a slot here (holding their
+    // preceding turn's count) purely so the array can be indexed by store position; `MessageBlock`
+    // renders no number for them.
+    //
+    // A memo rather than the obvious per-row `slice().filter().length`: that form is O(n²) over
+    // MESSAGE_CAP rows AND makes every row's number depend on the whole array, so one append
+    // recomputes all of them.
+    const turnNumbers = createMemo((): number[] => {
+        let turns = 0;
+        return messages.map((m) => (m.role === "event" ? turns : ++turns));
+    });
+
     // Load the transcript from the pg thread, reacting to BOTH the bound thread AND the runtime boot
     // reaching `ready` — the pg thread read needs the booted pool, and the thread itself is bound only
     // at that same edge. On an in-place session swap, reset the hot state before loading the new
@@ -83,17 +99,14 @@ export function Chat(props: ChatProps) {
                         hints={["ctrl+k commands", "ctrl+j newline", "ctrl+x leader", "esc scroll mode"]}
                     />
                 </Show>
-                {/* The displayed number is the 1-based position within the mounted window (capped at
-                MESSAGE_CAP); for sessions under the cap it is the true turn number, and even past it
-                a running counter is what the numbering is for. It counts TURNS, so `event` entries —
-                records this app appended for out-of-band work, which nobody said — are skipped:
-                numbering them would claim a turn happened where none did, and would renumber every
-                turn after a run finished. `index()` cannot supply that, since it is the store
-                position; the count is derived from the entries before this one. */}
+                {/* The displayed number is the 1-based TURN position within the mounted window (capped
+                at MESSAGE_CAP); for sessions under the cap it is the true turn number, and even past
+                it a running counter is what the numbering is for. `index()` is the STORE position and
+                cannot supply it once event entries are interleaved — see `turnNumbers`. */}
                 <For each={messages}>
                     {(msg, index) => (
                         <MessageBlock
-                            index={messages.slice(0, index() + 1).filter((m) => m.role !== "event").length}
+                            index={turnNumbers()[index()] ?? 0}
                             role={msg.role}
                             durationMs={msg.durationMs}
                             interrupted={msg.interrupted}

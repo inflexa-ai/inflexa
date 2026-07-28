@@ -18,6 +18,24 @@ Because a block is keyed by the run id of the row it renders under, one run's pr
 another run's row is not representable. The rail scrolls, so its length tracks live work rather
 than history.
 
+Live work SHALL NOT be sourced from a windowed listing. The runs listing is capped to the newest
+few rows ordered by start time, which drops the OLDEST running run first — precisely the long
+analysis these surfaces exist to keep visible. The set of active runs SHALL therefore come from a
+separate, uncapped read, and the two SHALL be merged so a run that has fallen outside the listing
+window is still listed and still tracked. The uncapped read SHALL be bounded by live concurrency
+rather than by history, and its failure SHALL degrade to the listing's own view rather than
+removing runs the listing can see.
+
+#### Scenario: A long-running run outside the listing window stays observable
+
+- **WHEN** a run is still active but older than the newest N runs the listing returns
+- **THEN** it is still listed, still tracked for progress, and still announces when it terminates
+
+#### Scenario: A failed active read never subtracts coverage
+
+- **WHEN** the uncapped active read fails while the listing succeeds
+- **THEN** the section renders exactly what the listing alone would have shown
+
 Runs and steps SHALL be identified by name rather than by opaque id wherever a name exists. A run
 SHALL be labelled by its plan's title, resolved from the persisted plan, falling back to the
 workflow name and then the id tail when no title is available — the stored workflow name is

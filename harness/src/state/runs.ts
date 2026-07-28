@@ -170,6 +170,39 @@ export function queryActiveRun(pool: Querier, analysisId: string, planId: string
     });
 }
 
+/**
+ * Every NON-TERMINAL run of an analysis, newest-first and deliberately unbounded.
+ *
+ * The counterpart to {@link queryRunsByAnalysis}, which answers "the newest N runs" — a windowed
+ * question, and the wrong one for a host driving live surfaces. Ordering by `started_at DESC` and
+ * capping means the run most worth watching is the first to fall out: a long analysis still going
+ * while ten short ones start and finish after it leaves the window entirely, so a host reading only
+ * that window loses its progress AND never learns it terminated.
+ *
+ * Unbounded is safe here in a way it is not for the general listing: this result is capped by the
+ * analysis's live concurrency, not by its history, and a run leaves the set permanently when it
+ * finishes.
+ *
+ * The status set is the one {@link queryActiveRun} uses — non-terminal means still running, or
+ * suspended awaiting funds. Keep the two in step: a new non-terminal status added to one and not the
+ * other makes a live run invisible to exactly one of its readers.
+ */
+export function queryActiveRunsByAnalysis(pool: Querier, analysisId: string): ResultAsync<CortexRunRow[], DbError> {
+    return tryQuery("runs.queryActiveRunsByAnalysis", async () => {
+        const result = await pool.query({
+            text: `SELECT run_id, analysis_id, thread_id, workflow_name,
+                   status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
+                   mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+            FROM cortex_runs
+            WHERE analysis_id = $1
+              AND status IN ('running','suspended_insufficient_funds')
+            ORDER BY started_at DESC`,
+            values: [analysisId],
+        });
+        return result.rows.map(mapRunRow);
+    });
+}
+
 export function updateRunStatus(
     pool: Querier,
     runId: string,

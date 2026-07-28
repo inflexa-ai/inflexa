@@ -22,6 +22,7 @@ import {
     profileDetailLines,
     profileSnapshot,
     refreshSidebarData,
+    RUN_STATUS_TERMINAL,
     runsSnapshot,
     watchSidebarData,
     type ProfileSnapshot,
@@ -80,7 +81,17 @@ function seams(
     runtime: () => HarnessRuntime | null = () => fakeRuntime,
     steps: StepExecutionRow[] = [],
 ): RefreshSeams {
-    return { runtime, loadProfile: () => okAsync(profile), loadRuns: () => okAsync(runs), loadSteps: () => okAsync(steps), loadPlan: () => okAsync(null) };
+    return {
+        runtime,
+        loadProfile: () => okAsync(profile),
+        loadRuns: () => okAsync(runs),
+        // Derived from the same rows, filtered to the non-terminal ones — what the real uncapped
+        // active query returns. Echoing the whole list would let a fixture assert behaviour the
+        // production seam cannot produce.
+        loadActiveRuns: () => okAsync(runs.filter((r) => !RUN_STATUS_TERMINAL[r.status])),
+        loadSteps: () => okAsync(steps),
+        loadPlan: () => okAsync(null),
+    };
 }
 
 /** A minimal step-execution row keyed by id + status — the refresh maps rows → step views via `stepStateOf`. */
@@ -168,6 +179,10 @@ describe("refreshSidebarData — snapshot ladder", () => {
                 runReads += 1;
                 return okAsync([]);
             },
+            loadActiveRuns: () => {
+                runReads += 1;
+                return okAsync([]);
+            },
             loadSteps: () => {
                 stepReads += 1;
                 return okAsync([]);
@@ -192,6 +207,7 @@ describe("refreshSidebarData — snapshot ladder", () => {
             runtime: () => fakeRuntime,
             loadProfile: () => errAsync(dbErr),
             loadRuns: () => errAsync(dbErr),
+            loadActiveRuns: () => errAsync(dbErr),
             loadSteps: () => errAsync(dbErr),
             loadPlan: () => okAsync(null),
         };
@@ -231,6 +247,7 @@ describe("refreshSidebarData — staleness guard", () => {
             runtime: () => fakeRuntime,
             loadProfile: () => gatedA,
             loadRuns: () => okAsync([runRow({ status: "running" })]),
+            loadActiveRuns: () => okAsync([runRow({ status: "running" })]),
             loadSteps: () => okAsync([]),
             loadPlan: () => okAsync(null),
         };
@@ -253,6 +270,72 @@ describe("refreshSidebarData — staleness guard", () => {
     });
 });
 
+// The runs LISTING is windowed to the newest N by `started_at DESC`, which drops the OLDEST running
+// run first — precisely the long analysis these surfaces exist to keep visible. The uncapped active
+// read is what makes that impossible; these pin the merge that consumes it.
+describe("refreshSidebarData — an active run is never lost to the listing window", () => {
+    test("a running run outside the newest-N window is still listed and still tracked", async () => {
+        const longRunner = runRow({ runId: "run-old", status: "running", startedAt: "2026-07-28T09:00:00.000Z" });
+        // The window holds only newer, finished runs — `run-old` has fallen off it entirely.
+        const window = Array.from({ length: 10 }, (_, i) => runRow({ runId: `run-new-${i}`, status: "completed", startedAt: `2026-07-28T1${i}:00:00.000Z` }));
+        const s: RefreshSeams = {
+            runtime: () => fakeRuntime,
+            loadProfile: () => okAsync(null),
+            loadRuns: () => okAsync(window),
+            loadActiveRuns: () => okAsync([longRunner]),
+            loadSteps: () => okAsync([stepRow("s", "running")]),
+            loadPlan: () => okAsync(null),
+        };
+        await refreshSidebarData("A", s);
+
+        const snap = runsSnapshot();
+        expect(snap.kind).toBe("loaded");
+        if (snap.kind !== "loaded") return;
+        // Present in the listing despite being outside the window...
+        expect(snap.runs.map((r) => r.runId)).toContain("run-old");
+        // ...and, decisively, tracked — this is what the panel, the rail block, and the completion
+        // announcement all read. Without the uncapped read this map is empty.
+        expect(activeRunProgress().has("run-old")).toBe(true);
+    });
+
+    test("the merge does not duplicate a run present in both reads", async () => {
+        const live = runRow({ runId: "run-a", status: "running" });
+        const s: RefreshSeams = {
+            runtime: () => fakeRuntime,
+            loadProfile: () => okAsync(null),
+            loadRuns: () => okAsync([live, runRow({ runId: "run-b", status: "completed" })]),
+            loadActiveRuns: () => okAsync([live]),
+            loadSteps: () => okAsync([stepRow("s", "running")]),
+            loadPlan: () => okAsync(null),
+        };
+        await refreshSidebarData("A", s);
+
+        const snap = runsSnapshot();
+        if (snap.kind !== "loaded") throw new Error("expected loaded");
+        expect(snap.runs.filter((r) => r.runId === "run-a")).toHaveLength(1);
+        expect(snap.runs).toHaveLength(2);
+    });
+
+    test("a failed active read degrades to the window's own view rather than blanking the section", async () => {
+        const s: RefreshSeams = {
+            runtime: () => fakeRuntime,
+            loadProfile: () => okAsync(null),
+            loadRuns: () => okAsync([runRow({ runId: "run-a", status: "running" })]),
+            loadActiveRuns: () => errAsync(dbErr),
+            loadSteps: () => okAsync([stepRow("s", "running")]),
+            loadPlan: () => okAsync(null),
+        };
+        await refreshSidebarData("A", s);
+
+        // Strictly the pre-existing behaviour: the window still lists and tracks what it can see. A
+        // read that adds coverage must never be able to take coverage away.
+        const snap = runsSnapshot();
+        if (snap.kind !== "loaded") throw new Error("expected loaded");
+        expect(snap.runs.map((r) => r.runId)).toEqual(["run-a"]);
+        expect(activeRunProgress().has("run-a")).toBe(true);
+    });
+});
+
 describe("refreshSidebarData — sticky run-progress row", () => {
     test("a non-terminal newest run publishes its progress (name, tag, done/total, mapped steps)", async () => {
         const steps = [stepRow("qc", "completed"), stepRow("align", "running"), stepRow("call", "pending")];
@@ -260,6 +343,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
             loadRuns: () => okAsync([runRow({ runId: "11112222-3333-4444-5555-6666aabbccdd", status: "running", workflowName: "executeAnalysis" })]),
+            loadActiveRuns: () => okAsync([runRow({ runId: "11112222-3333-4444-5555-6666aabbccdd", status: "running", workflowName: "executeAnalysis" })]),
             loadSteps: () => okAsync(steps),
             loadPlan: () => okAsync(null),
         };
@@ -281,6 +365,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
             loadRuns: () => okAsync([runRow({ runId: "newest", status: "running" }), runRow({ runId: "older", status: "running" })]),
+            loadActiveRuns: () => okAsync([runRow({ runId: "newest", status: "running" }), runRow({ runId: "older", status: "running" })]),
             loadSteps: (_pool, runId) => {
                 asked.push(runId);
                 return okAsync([stepRow("s", "running")]);
@@ -298,6 +383,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
             loadRuns: () => okAsync([runRow({ runId: "live", status: "running" }), runRow({ runId: "older", status: olderStatus })]),
+            loadActiveRuns: () => okAsync([runRow({ runId: "live", status: "running" }), runRow({ runId: "older", status: olderStatus })]),
             loadSteps: () => okAsync([stepRow("s", "running")]),
             loadPlan: () => okAsync(null),
         });
@@ -314,6 +400,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
             loadRuns: () => okAsync([runRow({ runId: "run-1", status: "running", planId: "plan-1" })]),
+            loadActiveRuns: () => okAsync([runRow({ runId: "run-1", status: "running", planId: "plan-1" })]),
             loadSteps: () => okAsync([stepRow("qc", "running")]),
             loadPlan: () => okAsync(plan),
         };
@@ -331,6 +418,8 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
             loadRuns: () =>
+                okAsync([runRow({ runId: "r1", status: "running", planId: "shared" }), runRow({ runId: "r2", status: "running", planId: "shared" })]),
+            loadActiveRuns: () =>
                 okAsync([runRow({ runId: "r1", status: "running", planId: "shared" }), runRow({ runId: "r2", status: "running", planId: "shared" })]),
             loadSteps: () => okAsync([stepRow("s", "running")]),
             loadPlan: () => {
@@ -359,6 +448,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
             loadRuns: () => okAsync([runRow({ status: "completed" }), runRow({ status: "failed" })]),
+            loadActiveRuns: () => okAsync([runRow({ status: "completed" }), runRow({ status: "failed" })]),
             loadSteps: () => {
                 stepReads += 1;
                 return okAsync([]);
@@ -381,6 +471,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
             loadRuns: () => okAsync([]),
+            loadActiveRuns: () => okAsync([]),
             loadSteps: () => {
                 stepReads += 1;
                 return okAsync([]);
@@ -409,6 +500,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
             loadRuns: () => okAsync([runRow({ runId: "run-x", status: "running" })]),
+            loadActiveRuns: () => okAsync([runRow({ runId: "run-x", status: "running" })]),
             loadSteps: () => errAsync(dbErr),
             loadPlan: () => okAsync(null),
         };
@@ -437,6 +529,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
             loadRuns: () => okAsync([runRow({ runId: "run-b", status: "running" }), runRow({ runId: "run-a", status: "completed" })]),
+            loadActiveRuns: () => okAsync([runRow({ runId: "run-b", status: "running" }), runRow({ runId: "run-a", status: "completed" })]),
             loadSteps: () => errAsync(dbErr),
             loadPlan: () => okAsync(null),
         };
@@ -479,6 +572,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
                           runtime: () => fakeRuntime,
                           loadProfile: () => gatedB,
                           loadRuns: () => okAsync([]),
+                          loadActiveRuns: () => okAsync([]),
                           loadSteps: () => okAsync([]),
                           loadPlan: () => okAsync(null),
                       };
@@ -639,6 +733,7 @@ describe("watchSidebarData — swap resets the snapshots before the new analysis
                           runtime: () => fakeRuntime,
                           loadProfile: () => gatedB,
                           loadRuns: () => okAsync([]),
+                          loadActiveRuns: () => okAsync([]),
                           loadSteps: () => okAsync([]),
                           loadPlan: () => okAsync(null),
                       };

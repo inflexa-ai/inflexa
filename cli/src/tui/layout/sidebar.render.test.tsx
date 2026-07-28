@@ -134,6 +134,7 @@ function seams(profile: DataProfileStatus | null, runs: CortexRunRow[], steps: S
         runtime: () => fakeRuntime,
         loadProfile: () => okAsync(profile),
         loadRuns: () => okAsync(runs),
+        loadActiveRuns: () => okAsync(runs),
         loadSteps: () => okAsync(steps),
         loadPlan: () => okAsync(null),
     };
@@ -719,6 +720,7 @@ describe("Sidebar RUNS — concurrent runs", () => {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
             loadRuns: () => okAsync(runs),
+            loadActiveRuns: () => okAsync(runs),
             loadSteps: (_pool, runId) => okAsync(stepsByRunId[runId] ?? []),
             loadPlan: () => okAsync(plan),
         };
