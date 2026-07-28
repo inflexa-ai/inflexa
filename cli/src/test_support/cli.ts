@@ -30,11 +30,16 @@ export function runCli(args: string[], opts?: { cwd?: string }): CliResult {
     const dir = mkdtempSync(join(tmpdir(), `inflexa-cli-${randomUUIDv7()}-`));
     const outPath = join(dir, "stdout");
     const errPath = join(dir, "stderr");
-    const outFd = openSync(outPath, "w");
-    const errFd = openSync(errPath, "w");
     try {
+        // Opened inside the guard, and each closed independently: opening the second can fail once
+        // the first has succeeded, and an unguarded pair would leak that descriptor for the life of
+        // the test process.
+        let outFd: number | undefined;
+        let errFd: number | undefined;
         let exitCode: number;
         try {
+            outFd = openSync(outPath, "w");
+            errFd = openSync(errPath, "w");
             // Forward the full environment explicitly — crucially the test preload's sandboxed XDG_* dirs.
             // Bun.spawnSync's default env is a STARTUP SNAPSHOT that omits vars set at runtime (the preload
             // sets XDG after startup), so without this the child silently falls back to the real
@@ -44,8 +49,8 @@ export function runCli(args: string[], opts?: { cwd?: string }): CliResult {
         } finally {
             // Closed before the files are read: this end must be done with them for the child's writes
             // to be guaranteed visible, and a spawn that threw must not leak the descriptors either.
-            closeSync(outFd);
-            closeSync(errFd);
+            if (outFd !== undefined) closeSync(outFd);
+            if (errFd !== undefined) closeSync(errFd);
         }
         return { exitCode, stdout: readFileSync(outPath, "utf8"), stderr: readFileSync(errPath, "utf8") };
     } finally {
