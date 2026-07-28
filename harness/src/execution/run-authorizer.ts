@@ -1,7 +1,7 @@
 /**
  * RunAuthorizer — the async-edge run-authorization seam.
  *
- * Every async edge that starts durable work (`execute_plan`, `run_ephemeral`,
+ * Every async edge that starts durable work (`execute_plan`, `run_adhoc`,
  * data-profile) must turn the caller's opaque auth into a durable `RunSession`
  * before dispatching a workflow. That turning is the ONE place the credential
  * kind matters (a live caller credential → mint a fresh run credential Cortex

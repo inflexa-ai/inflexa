@@ -59,7 +59,7 @@ export interface RunCardPart {
     type: "data-run-card";
     id: string;
     runId: string;
-    planId: string;
+    planId: string | null;
     title: string;
     stepCount: number;
 }

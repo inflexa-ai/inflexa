@@ -57,7 +57,7 @@ function formatRun(r: CortexRunRow, verbose: boolean) {
         // outcome — surfaced as synthesisStatus (and synthesisReason when set) —
         // lets a consumer tell "produced" from "skipped/failed/unknown" without
         // reading a file.
-        synthesisPath: r.synthesisStatus === "produced" ? `runs/${r.runId}/synthesis.json` : null,
+        synthesisPath: r.planId !== null && r.synthesisStatus === "produced" ? `runs/${r.runId}/synthesis.json` : null,
         synthesisStatus: r.synthesisStatus,
         ...(r.synthesisReason !== null ? { synthesisReason: r.synthesisReason } : {}),
         ...(verbose ? { error: r.error } : {}),

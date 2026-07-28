@@ -71,7 +71,7 @@ export const RunCardPartSchema = z.object({
     type: z.literal("data-run-card"),
     id: z.string(),
     runId: z.string(),
-    planId: z.string(),
+    planId: z.string().nullable(),
     title: z.string(),
     stepCount: z.number(),
 });

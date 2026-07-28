@@ -12,8 +12,8 @@ describe("parseResourcePolicy", () => {
         expect(parseResourcePolicy(valid)).toEqual(valid);
     });
 
-    it("accepts an optional ephemeral spec", () => {
-        const policy = { ...valid, ephemeral: { cpu: 2, memoryGb: 4 } };
+    it("accepts an optional adhoc spec", () => {
+        const policy = { ...valid, adhoc: { cpu: 2, memoryGb: 4 } };
         expect(parseResourcePolicy(policy)).toEqual(policy);
     });
 

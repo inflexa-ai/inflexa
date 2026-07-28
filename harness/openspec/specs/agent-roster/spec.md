@@ -19,9 +19,7 @@ only — `AgentMeta` carries **no** `tier` and **no** `languages` field; an agen
 advertises itself solely through `capabilities` and `suitableFor`. There is no
 `report-renderer` agent: reports render in-process via the Nunjucks renderer,
 not as a sandbox agent.
-
 ## Requirements
-
 ### Requirement: The sandbox-agent catalog is the single source of truth
 
 `SANDBOX_AGENT_META` SHALL map every sandbox-agent id to its `AgentMeta`, and
@@ -33,7 +31,7 @@ fields `id`, `capabilities`, `suitableFor`, `skills`, `tools`, optional
 #### Scenario: Catalog contains all 22 agents
 
 - **WHEN** the `SANDBOX_AGENT_META` record is inspected
-- **THEN** it contains exactly 22 entries with the ids `data-profiler`, `bulk-transcriptomics-agent`, `single-cell-agent`, `multimodal-sc-agent`, `spatial-omics-agent`, `proteomics-agent`, `metabolomics-agent`, `genomic-variant-agent`, `dna-methylation-agent`, `chromatin-agent`, `microbiome-agent`, `enrichment-agent`, `network-agent`, `statistical-modeling-agent`, `multi-omics-integration-agent`, `cheminformatics-agent`, `translational-safety-agent`, `pkpd-clinical-response-agent`, `immune-profiling-agent`, `drug-repurposing-agent`, `scientific-executor`, and `ephemeral-executor`
+- **THEN** it contains exactly 22 entries with the ids `data-profiler`, `bulk-transcriptomics-agent`, `single-cell-agent`, `multimodal-sc-agent`, `spatial-omics-agent`, `proteomics-agent`, `metabolomics-agent`, `genomic-variant-agent`, `dna-methylation-agent`, `chromatin-agent`, `microbiome-agent`, `enrichment-agent`, `network-agent`, `statistical-modeling-agent`, `multi-omics-integration-agent`, `cheminformatics-agent`, `translational-safety-agent`, `pkpd-clinical-response-agent`, `immune-profiling-agent`, `drug-repurposing-agent`, `scientific-executor`, and `adhoc-executor`
 - **AND** `KNOWN_AGENT_IDS` equals `Object.keys(SANDBOX_AGENT_META)`
 
 #### Scenario: AgentMeta carries no tier or languages field
@@ -52,11 +50,11 @@ field, so the planner can only assign a plannable agent.
 #### Scenario: Plannable catalog has 19 entries
 
 - **WHEN** `PLANNABLE_AGENT_CATALOG` is inspected
-- **THEN** it contains exactly 19 entries — every agent except `data-profiler`, `scientific-executor`, and `ephemeral-executor`
+- **THEN** it contains exactly 19 entries — every agent except `data-profiler`, `scientific-executor`, and `adhoc-executor`
 
 #### Scenario: Infrastructure agents are flagged non-plannable
 
-- **WHEN** the metas for `data-profiler`, `scientific-executor`, and `ephemeral-executor` are inspected
+- **WHEN** the metas for `data-profiler`, `scientific-executor`, and `adhoc-executor` are inspected
 - **THEN** each declares `plannable: false`
 - **AND** none of them appears in `PLANNABLE_AGENT_CATALOG` or `PLANNABLE_AGENT_IDS`
 

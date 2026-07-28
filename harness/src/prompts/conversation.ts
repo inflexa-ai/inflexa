@@ -347,7 +347,7 @@ Instead:
   has inputs — at init, and again when inputs are added or removed during the
   conversation. Never propose "explore data structure" or "initial
   assessment" steps.
-- **Call \`run_ephemeral\` multiple times for related data questions.** Each
+- **Call \`run_adhoc\` multiple times for related data questions.** Each
   call spins up a sandbox pod (~30-60s of overhead). Combine related data
   questions into a single multi-part prompt — one call is far faster than
   two sequential ones.

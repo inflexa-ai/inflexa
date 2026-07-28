@@ -27,7 +27,7 @@ import {
     type ExecuteTargetAssessmentResult,
 } from "../workflows/execute-target-assessment.js";
 import { registerDataProfileWorkflow, type DataProfileDeps, type DataProfileWorkflowInput } from "../tasks/data-profile.js";
-import { registerEphemeralWorkflow, type EphemeralDeps, type EphemeralResult, type EphemeralWorkflowInput } from "../execution/ephemeral-runner.js";
+import { registerRunAdhoc, type RunAdhocDeps, type RunAdhocInput, type RunAdhocResult } from "../workflows/run-adhoc.js";
 
 /** Registered child sandbox-step callable the parent's child dispatch closes over. */
 export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -42,7 +42,7 @@ export interface CoreWorkflowDeps {
     readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => ExecuteAnalysisDeps;
     readonly executeTargetAssessment: ExecuteTargetAssessmentDeps;
     readonly dataProfile: DataProfileDeps;
-    readonly ephemeral: Omit<EphemeralDeps, "resourcePolicy">;
+    readonly runAdhoc: Omit<RunAdhocDeps, "sandboxStepCallable" | "resourcePolicy">;
 }
 
 /** The registered, callable workflow handles. */
@@ -51,7 +51,7 @@ export interface RegisteredWorkflows {
     readonly sandboxStep: SandboxStepCallable;
     readonly executeTargetAssessment: (input: ExecuteTargetAssessmentInput) => Promise<ExecuteTargetAssessmentResult>;
     readonly dataProfile: (input: DataProfileWorkflowInput) => Promise<void>;
-    readonly ephemeral: (input: EphemeralWorkflowInput) => Promise<EphemeralResult>;
+    readonly runAdhoc: (input: RunAdhocInput) => Promise<RunAdhocResult>;
 }
 
 /**
@@ -59,16 +59,15 @@ export interface RegisteredWorkflows {
  * policy — `assembleCoreRuntime` supplies those itself so a caller cannot wire
  * a stale callable or a policy that diverges from the one the workflows see.
  */
-export type ConversationAssemblyDeps = Omit<ConversationAgentDeps, "executeAnalysisWorkflow" | "ephemeralWorkflow" | "resourcePolicy">;
+export type ConversationAssemblyDeps = Omit<ConversationAgentDeps, "executeAnalysisWorkflow" | "runAdhocWorkflow" | "resourcePolicy">;
 
 export interface CoreRuntimeDeps {
     readonly conversation: ConversationAssemblyDeps;
     readonly workflows: CoreWorkflowDeps;
     /**
-     * Host resource policy — per-step ceilings, machine budget, ephemeral
+     * Host resource policy — per-step ceilings, machine budget, adhoc
      * sizing. One supply point: assembly distributes it to the planner tools,
-     * `execute_plan` (budget snapshot into workflow input), and the ephemeral
-     * runner. Absent, every consumer keeps its legacy behavior.
+     * `execute_plan` (budget snapshot into workflow input), and adhoc runs.
      */
     readonly resourcePolicy?: ResourcePolicy;
 }
@@ -85,12 +84,16 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const executeAnalysis = registerExecuteAnalysis(wf.buildExecuteAnalysis(sandboxStep));
     const executeTargetAssessment = registerExecuteTargetAssessment(wf.executeTargetAssessment);
     const dataProfile = registerDataProfileWorkflow(wf.dataProfile);
-    const ephemeral = registerEphemeralWorkflow({ ...wf.ephemeral, resourcePolicy });
+    const runAdhoc = registerRunAdhoc({
+        ...wf.runAdhoc,
+        sandboxStepCallable: sandboxStep,
+        resourcePolicy,
+    });
 
     const conversationAgent = createConversationAgent({
         ...conversation,
         executeAnalysisWorkflow: executeAnalysis,
-        ephemeralWorkflow: ephemeral,
+        runAdhocWorkflow: runAdhoc,
         resourcePolicy,
     });
 
@@ -101,7 +104,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             sandboxStep,
             executeTargetAssessment,
             dataProfile,
-            ephemeral,
+            runAdhoc,
         },
     };
 }

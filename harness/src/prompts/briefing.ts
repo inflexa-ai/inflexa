@@ -233,3 +233,14 @@ export function composeStepBriefing(briefing: StepBriefing): string {
         .filter(Boolean)
         .join("\n\n");
 }
+
+export interface AdhocBriefing {
+    readonly prompt: string;
+    readonly workspace: WorkspaceFrame;
+    readonly profile: DataProfileResult | null;
+}
+
+/** Compose the free-text briefing for a plan-less adhoc run. */
+export function composeAdhocBriefing(briefing: AdhocBriefing): string {
+    return [section("Task", briefing.prompt), renderWorkspace(briefing.workspace), renderOrientation(briefing.profile)].filter(Boolean).join("\n\n");
+}

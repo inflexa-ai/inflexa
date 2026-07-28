@@ -34,4 +34,14 @@ describe("runs: synthesis outcome", () => {
         expect(row?.synthesisStatus).toBeNull();
         expect(row?.synthesisReason).toBeNull();
     });
+
+    it("stores adhoc runs without a plan and permits concurrent runs in one analysis", async () => {
+        (await insertRun(pool, { runId: "adhoc-1", analysisId: "analysis-adhoc", threadId: "thread-1", workflowName: "runAdhoc" }))._unsafeUnwrap();
+        (await insertRun(pool, { runId: "adhoc-2", analysisId: "analysis-adhoc", threadId: "thread-1", workflowName: "runAdhoc" }))._unsafeUnwrap();
+
+        const first = (await queryRun(pool, "adhoc-1"))._unsafeUnwrap();
+        const second = (await queryRun(pool, "adhoc-2"))._unsafeUnwrap();
+        expect(first).toMatchObject({ workflowName: "runAdhoc", planId: null, status: "running" });
+        expect(second).toMatchObject({ workflowName: "runAdhoc", planId: null, status: "running" });
+    });
 });

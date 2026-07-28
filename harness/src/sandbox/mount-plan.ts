@@ -31,7 +31,7 @@ export interface MountPlanCoords {
     /**
      * Enforced read-only: emit no read-write step mount. The container sees only
      * the read-only analysis tree (plus container-local `/tmp`). Used by the
-     * ephemeral executor, whose prompt promises it physically cannot write files.
+     * a read-only consumer that must not receive a writable step mount.
      */
     readOnly?: boolean;
 }

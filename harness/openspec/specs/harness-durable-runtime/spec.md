@@ -130,9 +130,9 @@ is bound.
 
 #### Scenario: Tools reach the durability engine only through RunLauncher
 
-- **GIVEN** the `execute_plan` and `run_ephemeral` tools
+- **GIVEN** the `execute_plan` and `run_adhoc` tools
 - **WHEN** they start a durable run
-- **THEN** they call `RunLauncher` (`launch` / `launchAndAwait`) and never import the DBOS engine directly
+- **THEN** they call `RunLauncher.launch` and never import the DBOS engine directly
 
 #### Scenario: The OSS ArtifactRegistry realization never fails a registration
 
@@ -185,28 +185,6 @@ a host concern.
 - **GIVEN** a host process that crashed with pending workflows under `executorID = "core-worker-0"`
 - **WHEN** a new process launches under the same `executorID`
 - **THEN** DBOS can reclaim those pending workflows without any core-owned recovery route
-
-### Requirement: runEphemeral is a turn-scoped workflow
-
-`runEphemeral` SHALL run as a real DBOS workflow so its sandbox callbacks route
-through DBOS messaging, but it SHALL be turn-scoped: awaited inline by the
-`run_ephemeral` tool via `RunLauncher.launchAndAwait`, cancelled on chat
-disconnect (`DBOS.cancelWorkflow`), and never recovered. Because DBOS has no
-zero-recovery knob, the launch path SHALL cancel any `ephemeral:`-prefixed
-`PENDING` workflow owned by this executor BEFORE recovery runs, so a dead pod's
-ephemeral run never re-executes.
-
-#### Scenario: An ephemeral run is cancelled on chat disconnect
-
-- **GIVEN** a `run_ephemeral` call awaiting its workflow result inline
-- **WHEN** the chat turn's `AbortSignal` fires
-- **THEN** the launcher cancels the workflow and returns a `{ status: "cancelled" }` outcome
-
-#### Scenario: A dead pod's ephemeral workflow is never recovered
-
-- **GIVEN** an `ephemeral:`-prefixed `PENDING` workflow left by a crashed process
-- **WHEN** a new process launches under the same executor id
-- **THEN** the pre-launch sweep marks it `CANCELLED` before DBOS recovery selects it
 
 ### Requirement: Lifecycle flags are process-local
 
@@ -383,4 +361,20 @@ root releases whatever it acquired). Only `shutdown` swallows per-step failures.
 - **GIVEN** a `beforeLaunch` hook is supplied
 - **WHEN** `bootHarness` runs to launch
 - **THEN** `beforeLaunch` SHALL run after `assembleCoreRuntime` registers the workflow cohort and before `launchDbos`
+
+### Requirement: runAdhoc is a fire-and-forget durable run
+
+`runAdhoc` SHALL run as a real DBOS workflow started by the `run_adhoc` tool through `RunLauncher.launch` with `workflowId = runId`. It SHALL NOT be turn-scoped: the tool SHALL NOT await it inline, and a chat disconnect SHALL NOT cancel it. `runAdhoc` SHALL be recoverable like any durable run — a process that relaunches under the same `executorID` reclaims a pending `runAdhoc` workflow through the standard recovery path, with no special workflow-id prefix and no pre-recovery sweep.
+
+#### Scenario: An adhoc run survives chat disconnect
+
+- **GIVEN** a `run_adhoc` call that has returned `{ runId }`
+- **WHEN** the chat turn ends or the client disconnects
+- **THEN** the `runAdhoc` workflow keeps executing and its progress remains visible through the run/step ledger rows
+
+#### Scenario: A recovered process reclaims a pending adhoc run
+
+- **GIVEN** a `PENDING` `runAdhoc` workflow left by a crashed process under `executorID = "core-worker-0"`
+- **WHEN** a new process launches under the same `executorID`
+- **THEN** DBOS reclaims and resumes it through the standard recovery path — it is neither swept nor cancelled
 

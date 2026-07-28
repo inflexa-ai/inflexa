@@ -22,7 +22,7 @@
  *      builds the conversation agent (register-before-launch invariant).
  *   6. `beforeLaunch()` — embedder hook for host-specific pre-launch work that
  *      must attach before DBOS launch re-emits events (scheduled sweeps, an
- *      ephemeral-workflow reap, an agent-switch install). Runs after registration
+ *      scheduled maintenance or an agent-switch install). Runs after registration
  *      so it may close over the registered callables.
  *   7. `launchDbos(...)` — the last registration-dependent step.
  *
@@ -60,7 +60,7 @@ export interface BootHarnessDeps {
     readonly logger: Logger;
     /**
      * Host-specific work that must run AFTER workflow registration and BEFORE
-     * DBOS launch (scheduled sweeps, ephemeral reap, agent-switch install). The
+     * DBOS launch (scheduled sweeps, agent-switch install). The
      * booted runtime is not returned until after launch, so this hook captures
      * whatever it needs from the embedder's own composition root.
      */

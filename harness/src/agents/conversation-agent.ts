@@ -14,10 +14,9 @@
  * `executePlan` is wired here — it launches the DBOS `executeAnalysis` parent
  * workflow under `workflowId = runId` (the bare run UUID) through the
  * `RunLauncher` seam and returns the runId (results are pull-only via
- * `inspectRun` on a later turn). `run_ephemeral`
- * is wired here too — it mints a run authorization, starts the turn-scoped DBOS
- * `ephemeral` workflow, and awaits the result inline; chat disconnect cancels
- * the workflow and it is never recovered. Report authoring is wired here as the
+ * `inspectRun` on a later turn). `run_adhoc` is wired here too — it mints a run
+ * authorization, starts a durable plan-less run, and returns its run id
+ * immediately. Report authoring is wired here as the
  * pair `plan_report` (returns the report-brief schema + authoring rules
  * just-in-time as its result) + `submit_report` (validates the composed brief
  * and drives in-process Nunjucks rendering via the `report-builder` agent, no
@@ -87,11 +86,11 @@ import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import { createListAvailablePackagesTool } from "../tools/sandbox/list-available-packages.js";
 import { createListAvailableRefsTool } from "../tools/sandbox/list-available-refs.js";
 import { createExecutePlanTool } from "../tools/execute-plan.js";
-import { createRunEphemeralTool } from "../tools/run-ephemeral.js";
+import { createRunAdhocTool } from "../tools/run-adhoc.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import { planReportTool, createReportSubmitTool, type SubmitReportDeps } from "../tools/iterate-report.js";
-import type { EphemeralWorkflowInput, EphemeralResult } from "../execution/ephemeral-runner.js";
+import type { RunAdhocInput, RunAdhocResult } from "../workflows/run-adhoc.js";
 import type { Logger } from "../lib/logger.js";
 
 /** Canonical agent id — the single source of truth. */
@@ -126,21 +125,21 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
      */
     readonly executeAnalysisWorkflow: (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
     /**
-     * Registered `ephemeral` workflow — `run_ephemeral` mints a run authorization,
-     * starts it, and awaits the result inline within the chat turn.
+     * Registered `runAdhoc` workflow — `run_adhoc` mints a run authorization
+     * and starts it without awaiting completion.
      */
-    readonly ephemeralWorkflow: (input: EphemeralWorkflowInput) => Promise<EphemeralResult>;
+    readonly runAdhocWorkflow: (input: RunAdhocInput) => Promise<RunAdhocResult>;
     /** Workspace-root resolution seam (see workspace/paths.ts). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /**
      * Async-edge run-authorization seam — injected, not constructed here.
-     * `execute_plan` and `run_ephemeral` turn the caller's opaque auth into a
+     * `execute_plan` and `run_adhoc` turn the caller's opaque auth into a
      * durable `RunSession` through it. The managed root injects the platform
      * realization; the OSS root injects the local one.
      */
     readonly runAuthorizer: RunAuthorizer;
     /**
-     * Durable-run launch seam — `execute_plan` and `run_ephemeral` start their
+     * Durable-run launch seam — `execute_plan` and `run_adhoc` start their
      * workflows through it so the durability engine stays out of the tools.
      */
     readonly runLauncher: RunLauncher;
@@ -183,7 +182,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         workspaceFs,
         model,
         executeAnalysisWorkflow,
-        ephemeralWorkflow,
+        runAdhocWorkflow,
         resolveWorkspaceRoot,
         runAuthorizer,
         runLauncher,
@@ -237,7 +236,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createListAvailableRefsTool({ ...(refStorePath ? { refStorePath } : {}) }),
         // What is importable inside a sandbox. Reads the same manifest a sandbox agent
         // reads, host-side — so "is scanpy available?" is a manifest lookup here rather
-        // than a whole ephemeral container spun up to run one import.
+        // than a whole sandbox spun up to run one import.
         createListAvailablePackagesTool({ ...(packagesFile ? { packagesFile } : {}) }),
         // Execution.
         createInspectRunTool(pool),
@@ -251,8 +250,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             runLauncher,
             resourcePolicy,
         }),
-        createRunEphemeralTool({
-            workflow: ephemeralWorkflow,
+        createRunAdhocTool({
+            workflow: runAdhocWorkflow,
             runAuthorizer,
             runLauncher,
         }),

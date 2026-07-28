@@ -27,7 +27,7 @@ function buildAgent(hostTools?: readonly Tool[]) {
         executeAnalysisWorkflow: (async () => {
             throw new Error("not used at composition time");
         }) as never,
-        ephemeralWorkflow: (async () => {
+        runAdhocWorkflow: (async () => {
             throw new Error("not used at composition time");
         }) as never,
         resolveWorkspaceRoot: (id: string) => join("/sessions", id),
@@ -62,7 +62,7 @@ describe("createConversationAgent", () => {
     });
 
     // "Is Seurat installed?" is a manifest lookup, but without this tool the only way to
-    // answer it is `run_ephemeral` — a whole container spun up to run one import. The
+    // answer it is a whole container spun up to run one import. The
     // sandbox agents already read this manifest; the agent the user actually asks did not.
     test("carries package discovery, so an environment question costs no sandbox", () => {
         expect(buildAgent().tools.map((tool) => tool.id)).toContain("list_available_packages");
@@ -105,7 +105,7 @@ describe("createConversationAgent", () => {
             "inspect_run",
             "inspect_data_profile",
             "execute_plan",
-            "run_ephemeral",
+            "run_adhoc",
             "plan_report",
             "submit_report",
             "show_user",
@@ -114,6 +114,7 @@ describe("createConversationAgent", () => {
         ]) {
             expect(ids.has(expected)).toBe(true);
         }
+        expect(ids.has("run_ephemeral")).toBe(false);
     });
 
     test("tool ids are unique and definitions() emits valid AI SDK schemas", () => {

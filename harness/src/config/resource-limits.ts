@@ -33,7 +33,7 @@ export const MachineBudgetSchema = z.object({
 export const ResourcePolicySchema = z.object({
     perStep: ResourceLimitsSchema,
     budget: MachineBudgetSchema,
-    ephemeral: ResourceSpecSchema.optional(),
+    adhoc: ResourceSpecSchema.optional(),
 });
 
 export type GpuSpec = z.infer<typeof GpuSpecSchema>;

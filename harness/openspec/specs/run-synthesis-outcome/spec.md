@@ -14,9 +14,7 @@ is classified, logged when it is a skip, recorded on the run ledger
 consumers, which key on the recorded outcome rather than the presence of a
 mutable disk file. The disk `synthesis.json` remains the content store; the run
 row is the authority on whether that content exists.
-
 ## Requirements
-
 ### Requirement: Run synthesis resolves to a classified outcome
 
 Run synthesis SHALL resolve every terminal to a classified outcome instead of
@@ -206,3 +204,19 @@ stale-path failure the `synthesisPath` gating exists to prevent.
 - **GIVEN** a run whose `synthesis` row is `completed` alongside a completed DAG step
 - **WHEN** `inspect_run` formats the run's steps
 - **THEN** the DAG step carries `summaryPath = runs/{runId}/{stepId}/output/summary.md`, the `synthesis` row carries no `summaryPath`, and the run's `synthesisPath` is `runs/{runId}/synthesis.json`
+
+### Requirement: Plan-less runs have no synthesis phase or synthesis path
+
+A run with `plan_id IS NULL` (an adhoc run) SHALL NOT run a synthesis phase, SHALL NOT reserve a synthesis ledger row, and SHALL leave its `synthesis_status` unset (NULL). `inspect_run` SHALL report `synthesisPath = null` for such a run regardless of its `status`, consistent with the existing rule that a `synthesisPath` is advertised only when `synthesis_status = "produced"`. A plan-less run's deliverable is its single `adhoc` step's `summary.md`, surfaced via that step's `summaryPath`.
+
+#### Scenario: Completed adhoc run advertises no synthesis path
+
+- **GIVEN** a completed run with `plan_id = NULL` and `synthesis_status = NULL`
+- **WHEN** `inspect_run` formats that run
+- **THEN** `synthesisPath` is `null` and the run's `adhoc` step carries a `summaryPath`
+
+#### Scenario: Adhoc run reserves no synthesis row
+
+- **GIVEN** an adhoc run is seeded at start
+- **WHEN** its step-execution rows are queried
+- **THEN** exactly one row exists (`step_id = "adhoc"`) and no reserved `synthesis` phase row is present

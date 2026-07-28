@@ -13,7 +13,7 @@ describe("sandbox-catalog (derived from SANDBOX_AGENT_META)", () => {
         const ids = new Set(PLANNABLE_AGENT_CATALOG.map((m) => m.id));
         expect(ids.has("data-profiler")).toBe(false);
         expect(ids.has("scientific-executor")).toBe(false);
-        expect(ids.has("ephemeral-executor")).toBe(false);
+        expect(ids.has("adhoc-executor")).toBe(false);
     });
 
     it("PLANNABLE_AGENT_CATALOG includes the expected omics specialists", () => {

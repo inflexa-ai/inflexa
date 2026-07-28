@@ -51,7 +51,7 @@ Each seam is an interface the harness declares; an embedder binds one realizatio
 - **`ArtifactRegistry`** (`execution/artifact-registry.ts`) — post-step artifact recording (content-attested lineage): `register` the step's manifest + `sync` its bytes to permanent storage, both session-scoped (the adapter authenticates per-run off the session). OSS realization: `createNoopArtifactRegistry` — registers nothing externally and reports zero failures (the local `cortex_artifacts` ledger is written by the harness around the seam); `sync` is a no-op (bytes already live in the local workspace tree).
 - **`RunCharge`** (`billing/run-charge.ts`) — the run-level billing bracket `executeAnalysis` opens at init and closes on the terminal path (one of four reasons). Local realization: `createNoopRunCharge` — no-op.
 - **`PreviewPublisher`** (`tools/report/preview-publisher.ts`) — report preview URL publishing. Local realization: `UnavailablePreviewPublisher` — reports still build; preview URL minting is gated.
-- **`RunLauncher`** (`execution/run-launcher.ts`) — starts a registered workflow under a caller-chosen id (`launch` fire-and-forget, `launchAndAwait` inline with cancel-on-abort, cancellation hidden behind a discriminated `LaunchOutcome`). The DBOS quarantine seam: it is why `execute_plan` / `run_ephemeral` do not import the durability engine. Single host-neutral realization `createDbosRunLauncher` (`execution/dbos-run-launcher.ts`) shared by every embedder.
+- **`RunLauncher`** (`execution/run-launcher.ts`) — starts a registered workflow under a caller-chosen id through fire-and-forget `launch`. The DBOS quarantine seam: it is why `execute_plan` / `run_adhoc` do not import the durability engine. Single host-neutral realization `createDbosRunLauncher` (`execution/dbos-run-launcher.ts`) shared by every embedder.
 
 ### Embedder / composition roots
 
@@ -69,7 +69,7 @@ The program that embeds the harness and wires its seams. The harness exports `as
 
 - **Chat is in-process**, single host per turn. The agent loop runs synchronously in the embedder's request path. If the process dies mid-turn the caller resends — no DBOS workflow rows for chat. See [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md).
 - **DBOS workflows** are reserved for *durable operations*: `executeAnalysis`, `executeTargetAssessment`, and the background `runDataProfile`. **Every sandbox-backed run is a DBOS workflow** — there is no in-process sandbox consumer, and no in-memory exec transport. Sandbox exec callbacks route exclusively through `DBOS.send`/`recv`.
-- **Turn-scoped workflow** — `runEphemeral` is a DBOS workflow with a deliberately non-durable flavor: started by the `run_ephemeral` chat tool, **awaited inline** (`handle.getResult()` — the only chat tool that blocks on a workflow result), **cancelled** (`DBOS.cancelWorkflow`) when the chat turn disconnects, and **not recovered** after process death (the launch path cancels any `PENDING` `ephemeral:*` workflow for this executor before DBOS launch, so a re-run that would return its result to a dead turn never starts). It is a workflow only so its sandbox callbacks route via DBOS messaging like every other consumer; the **sandbox reaper** reaps its machine on cancel. See [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md).
+- **Adhoc run** — `runAdhoc` is a plan-less, one-step DBOS workflow started by the `run_adhoc` chat tool through fire-and-forget launch. It records a normal `cortex_runs` row with `plan_id = NULL`, seeds one `adhoc` step, and dispatches the shared sandbox-step workflow, so writable artifacts, provenance, summaries, recovery, and progress use the same machinery as planned steps. Its result is `runs/{runId}/adhoc/output/summary.md`; it has no synthesis phase.
 
 ### Application service layer
 
@@ -141,7 +141,7 @@ Two distinct lifetimes — do not conflate them:
 
 - The session is the compile-time obligation. `ChatProvider.chat(req, session, signal?)` and `EmbeddingProvider.embed(texts, session)` both require an `AgentSession` — you cannot construct a wire call without one. The provider resolves call attribution internally via its injected `resolveBilling(session)` seam at call time, then spreads whatever header map the seam returns onto the request. The OSS realization returns an empty map.
 - No ALS, no fetch-patch, no wrapper. Read-only routes never resolve attribution — the seam is lazy and fires only at the LLM/embedding call site.
-- Background tasks (data profile triggers, async memory writes) and the `run_ephemeral` chat tool construct an explicit `RunSession` via the `RunAuthorizer` seam and pass it through; the scope is whatever resource the task acts against. Ephemeral and data-profile both keep their synthetic `RunFrame` literals (`"ephemeral"` / `"data-profile"`) as the run/step tag while the unique DBOS `workflowID` does the routing.
+- Background tasks (data profile triggers, async memory writes) and the `run_adhoc` chat tool construct an explicit `RunSession` via the `RunAuthorizer` seam and pass it through; the scope is whatever resource the task acts against. Adhoc runs use the minted run id in their `RunFrame`; data-profile keeps its synthetic `"data-profile"` run/step tag while the unique DBOS `workflowID` does the routing.
 
 ### Budget-exceeded resume
 

@@ -134,7 +134,7 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
      * Per-run blocker cell (see the harness-sandbox-agents spec). When present, the agent gets a
      * `report_blocker` tool that records `{ kind: "blocker", reason }` into it;
      * the sandbox-step body reads `holder.outcome` after the loop. Omit for
-     * agents that have no terminal status to declare (ephemeral, data profiler).
+     * agents that have no terminal status to declare (for example, the data profiler).
      */
     readonly blockerHolder?: BlockerHolder;
 }
@@ -146,7 +146,7 @@ export interface SandboxAgentPromptOptions {
     /**
      * Enforced read-only: omit `write_file` + `edit_file` from the workspace
      * surface. `execute_command` and all read tools stay. Pair with a sandbox
-     * provisioned with no read-write mount (ephemeral) so no writable location
+     * provisioned with no read-write mount so no writable location
      * exists outside container-local `/tmp`. Defaults to false.
      */
     readonly readOnly?: boolean;
@@ -225,7 +225,7 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
     // writes are confined here. `allowedWritePrefix` is its host path; the
     // in-sandbox path (the `execute_command` default cwd, see the harness-workspace-tools spec) is the same
     // location under the `/{analysisId}` mount — derived from the host path so
-    // it is correct for non-step agents (data profiler, ephemeral) too.
+    // it is correct for non-step agents (such as the data profiler) too.
     const hostWorkingDir = step.allowedWritePrefix;
     const sandboxWorkingDir = toSandboxPath(step.workspaceRoot, step.analysisId, hostWorkingDir);
 

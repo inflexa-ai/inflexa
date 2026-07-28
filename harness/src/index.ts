@@ -45,7 +45,7 @@ export type { PreviewPublisher, PreviewMintResult } from "./tools/report/preview
 
 // Run launching.
 export { createDbosRunLauncher } from "./execution/dbos-run-launcher.js";
-export type { RunLauncher, LaunchOptions, LaunchRunOptions, LaunchOutcome } from "./execution/run-launcher.js";
+export type { RunLauncher, LaunchOptions } from "./execution/run-launcher.js";
 
 // Tool primitive.
 export { defineTool, isToolError } from "./tools/define-tool.js";
@@ -198,12 +198,8 @@ export type { CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } fr
 // workspace tree, and the exec-callback envelope pieces (the HTTP→DBOS-topic
 // ingress is the embedder's to host; see the sandbox-server callback protocol).
 
-// DBOS lifecycle. `sweepEphemeralWorkflows` is a pre-launch boot duty: once the
-// `ephemeral` workflow is registered, a host crash mid-run leaves a PENDING
-// `ephemeral:*` row that the next launch's recovery would re-dispatch (a sandbox
-// for a chat turn that no longer exists). The embedder sweeps it with a direct
-// system-DB UPDATE between state-init and `launchDbos` — the only race-free point.
-export { launchDbos, shutdownDbos, sweepEphemeralWorkflows } from "./runtime/dbos.js";
+// DBOS lifecycle.
+export { launchDbos, shutdownDbos } from "./runtime/dbos.js";
 export type { DbosConfig } from "./runtime/dbos.js";
 // DBOS workflow-status vocabulary. An embedder that reads its own
 // `dbos.workflow_status` rows must classify them against the SDK's status set,
@@ -282,6 +278,8 @@ export { registerExecuteAnalysis } from "./workflows/execute-analysis.js";
 export type { ExecuteAnalysisDeps, ExecuteAnalysisInput, ExecuteAnalysisResult, RunProvenanceEvent } from "./workflows/execute-analysis.js";
 export { registerSandboxStep } from "./workflows/sandbox-step.js";
 export type { SandboxStepDeps, SandboxStepInput, SandboxStepResult, SandboxAgentBuildContext } from "./workflows/sandbox-step.js";
+export { registerRunAdhoc } from "./workflows/run-adhoc.js";
+export type { RunAdhocDeps, RunAdhocInput, RunAdhocResult } from "./workflows/run-adhoc.js";
 
 // Sandbox-agent catalog. `buildAgent` maps a `SandboxAgentBuildContext` onto
 // `SandboxAgentDeps`, then selects the per-step agent by id from this record;

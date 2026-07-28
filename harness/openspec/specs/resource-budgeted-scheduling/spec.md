@@ -106,19 +106,19 @@ The `DagStepState.status` vocabulary in the `data-dag-state` part SHALL gain a `
 - **WHEN** capacity frees and its child workflow starts
 - **THEN** the next `data-dag-state` emit shows the step as `"running"`
 
-### Requirement: Ephemeral sandbox sizing comes from the policy
+### Requirement: Adhoc sandbox sizing comes from the policy
 
-`runEphemeral` SHALL size its sandbox from `policy.ephemeral` when the embedder supplies one, falling back to the built-in default `{ cpu: 4, memoryGb: 8 }`. The value remains subject to the existing per-step clamp at sandbox creation.
+`runAdhoc` SHALL size its sandbox from `policy.adhoc` when the embedder supplies one, falling back to the built-in default `{ cpu: 4, memoryGb: 8 }`. The value remains subject to the existing per-step clamp at sandbox creation.
 
-#### Scenario: Policy overrides the ephemeral default
+#### Scenario: Policy overrides the adhoc default
 
-- **GIVEN** a policy with `ephemeral: { cpu: 2, memoryGb: 4 }`
-- **WHEN** a `run_ephemeral` sandbox is created
+- **GIVEN** a policy with `adhoc: { cpu: 2, memoryGb: 4 }`
+- **WHEN** a `run_adhoc` sandbox is created
 - **THEN** the sandbox is requested with `{ cpu: 2, memoryGb: 4 }`
 
 #### Scenario: Absent policy falls back to the default
 
 - **GIVEN** no resource policy supplied at the composition root
-- **WHEN** a `run_ephemeral` sandbox is created
+- **WHEN** a `run_adhoc` sandbox is created
 - **THEN** the sandbox is requested with `{ cpu: 4, memoryGb: 8 }`
 

@@ -27,9 +27,6 @@ describe("createSandboxAgents", () => {
         // scratch tree is deleted on completion), so every agent must be able to pull it
         // rather than re-derive the dataset's facts from the raw bytes.
         const ALWAYS_ON_PROFILE = ["inspect_data_profile"];
-        // Writable agents also get the mutate pair. ephemeral-executor is read-only.
-        const READ_ONLY_AGENTS = new Set(["ephemeral-executor"]);
-
         for (const [id, def] of Object.entries(agents)) {
             const meta = SANDBOX_AGENT_META[id]!;
             const toolIds = new Set(def.tools.map((t) => t.id));
@@ -38,13 +35,12 @@ describe("createSandboxAgents", () => {
                 expect(toolIds.has(required), `${id} should have ${required}`).toBe(true);
             }
 
-            const writable = !READ_ONLY_AGENTS.has(id);
-            expect(toolIds.has("write_file"), `${id} write_file`).toBe(writable);
-            expect(toolIds.has("edit_file"), `${id} edit_file`).toBe(writable);
+            expect(toolIds.has("write_file"), `${id} write_file`).toBe(true);
+            expect(toolIds.has("edit_file"), `${id} edit_file`).toBe(true);
 
             // The fixture deps wire no blockerHolder / embedding / skillsDir, so the
             // resolved surface is exactly the always-on tools + meta.tools.
-            const alwaysOnCount = ALWAYS_ON_READ.length + ALWAYS_ON_PROFILE.length + (writable ? 2 : 0);
+            const alwaysOnCount = ALWAYS_ON_READ.length + ALWAYS_ON_PROFILE.length + 2;
             const expected = alwaysOnCount + new Set(meta.tools).size;
             expect(def.tools.length, `${id} tool count`).toBe(expected);
         }
@@ -69,11 +65,11 @@ describe("createSandboxAgents", () => {
         }
     });
 
-    it("appendAnalysisStepStandards=false agents omit the analysis-step layer", () => {
+    it("data-profiler omits standards while adhoc carries them", () => {
         const dataProfiler = agents["data-profiler"]!;
-        const ephemeral = agents["ephemeral-executor"]!;
+        const adhoc = agents["adhoc-executor"]!;
         expect(dataProfiler.systemPrompt.includes(sandboxAnalysisStepStandardsPrompt.trim())).toBe(false);
-        expect(ephemeral.systemPrompt.includes(sandboxAnalysisStepStandardsPrompt.trim())).toBe(false);
+        expect(adhoc.systemPrompt.includes(sandboxAnalysisStepStandardsPrompt.trim())).toBe(true);
     });
 
     it("standard agents include the analysis-step layer", () => {
@@ -101,6 +97,6 @@ describe("createSandboxAgents", () => {
     it("non-plannable agents flagged in meta carry plannable=false", () => {
         expect(SANDBOX_AGENT_META["data-profiler"]!.plannable).toBe(false);
         expect(SANDBOX_AGENT_META["scientific-executor"]!.plannable).toBe(false);
-        expect(SANDBOX_AGENT_META["ephemeral-executor"]!.plannable).toBe(false);
+        expect(SANDBOX_AGENT_META["adhoc-executor"]!.plannable).toBe(false);
     });
 });

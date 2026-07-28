@@ -24,7 +24,7 @@ import { createDataProfilerAgent, meta as dataProfilerMeta } from "./data-profil
 import { createDnaMethylationAgent, meta as dnaMethylationMeta } from "./dna-methylation-agent.js";
 import { createDrugRepurposingAgent, meta as drugRepurposingMeta } from "./drug-repurposing-agent.js";
 import { createEnrichmentAgent, meta as enrichmentMeta } from "./enrichment-agent.js";
-import { createEphemeralExecutorAgent, meta as ephemeralExecutorMeta } from "./ephemeral-executor.js";
+import { createAdhocExecutorAgent, meta as adhocExecutorMeta } from "./adhoc-executor.js";
 import { createGenomicVariantAgent, meta as genomicVariantMeta } from "./genomic-variant-agent.js";
 import { createImmuneProfilingAgent, meta as immuneProfilingMeta } from "./immune-profiling-agent.js";
 import { createMetabolomicsAgent, meta as metabolomicsMeta } from "./metabolomics-agent.js";
@@ -72,7 +72,7 @@ export const SANDBOX_AGENT_META: Readonly<Record<string, AgentMeta>> = {
     [immuneProfilingMeta.id]: immuneProfilingMeta,
     [drugRepurposingMeta.id]: drugRepurposingMeta,
     [scientificExecutorMeta.id]: scientificExecutorMeta,
-    [ephemeralExecutorMeta.id]: ephemeralExecutorMeta,
+    [adhocExecutorMeta.id]: adhocExecutorMeta,
 };
 
 /**
@@ -102,6 +102,6 @@ export function createSandboxAgents(deps: SandboxAgentDeps): Record<string, Agen
         [immuneProfilingMeta.id]: createImmuneProfilingAgent(deps),
         [drugRepurposingMeta.id]: createDrugRepurposingAgent(deps),
         [scientificExecutorMeta.id]: createScientificExecutorAgent(deps),
-        [ephemeralExecutorMeta.id]: createEphemeralExecutorAgent(deps),
+        [adhocExecutorMeta.id]: createAdhocExecutorAgent(deps),
     };
 }

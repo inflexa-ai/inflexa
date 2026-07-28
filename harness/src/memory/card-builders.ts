@@ -56,7 +56,7 @@ export interface PresentationCardData {
 export interface RunCardData {
     id: string;
     runId: string;
-    planId: string;
+    planId: string | null;
     title: string;
     stepCount: number;
 }
@@ -143,6 +143,17 @@ export function buildRunCardData(pool: Pool, opts: { planId: string; analysisId:
             return result.rows[0]?.run_id;
         }).map(finalize);
     });
+}
+
+/** Build the plan-less run card emitted by `run_adhoc`. */
+export function buildAdhocRunCardData(runId: string): RunCardData {
+    return {
+        id: `pres-${createHash("sha256").update(runId).digest("hex").slice(0, 16)}`,
+        runId,
+        planId: null,
+        title: "Adhoc run",
+        stepCount: 1,
+    };
 }
 
 /** Build the `data-presentation` payload from the `show_user` tool input.

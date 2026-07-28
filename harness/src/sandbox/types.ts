@@ -235,7 +235,7 @@ export interface CreateSandboxMeta {
      *  a sandbox with none. */
     resources: ResourceSpec;
     /** Enforced read-only: provision with no read-write step mount, only the
-     *  read-only analysis tree. Used by the ephemeral executor. */
+     *  read-only analysis tree. */
     readOnly?: boolean;
 }
 

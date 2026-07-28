@@ -31,9 +31,6 @@ function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
             launches.push({ workflowId: o.workflowId });
             inputs.push(input as ExecuteAnalysisInput);
         },
-        launchAndAwait: async () => {
-            throw new Error("launchAndAwait not used by execute_plan");
-        },
     };
     return { launcher, launches, inputs };
 }

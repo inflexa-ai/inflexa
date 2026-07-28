@@ -1,15 +1,12 @@
-/**
- * Ephemeral Executor — read-only sandbox agent for quick computations.
- * Cannot create files; step conventions don't apply.
- */
+/** Adhoc Executor — writable sandbox agent for focused, unplanned work. */
 
 import type { AgentDefinition } from "../../loop/types.js";
-import { ephemeralExecutorPrompt } from "../../prompts/sandbox/ephemeral-executor.js";
+import { adhocExecutorPrompt } from "../../prompts/sandbox/adhoc-executor.js";
 import { BASE_SANDBOX_TOOLS, createSandboxAgent, type SandboxAgentDeps } from "./shared.js";
 import type { AgentMeta } from "./types.js";
 
 export const meta: AgentMeta = {
-    id: "ephemeral-executor",
+    id: "adhoc-executor",
     capabilities: ["data inspection", "quick statistics", "data transformation", "table preview"],
     suitableFor: ["bulk-rna-seq", "single-cell", "proteomics", "metabolomics", "genomics", "transcriptomics", "general-omics"],
     skills: ["shared/omics-general"],
@@ -17,9 +14,6 @@ export const meta: AgentMeta = {
     plannable: false,
 };
 
-export function createEphemeralExecutorAgent(deps: SandboxAgentDeps): AgentDefinition {
-    return createSandboxAgent(deps, meta, ephemeralExecutorPrompt, {
-        appendAnalysisStepStandards: false,
-        readOnly: true,
-    });
+export function createAdhocExecutorAgent(deps: SandboxAgentDeps): AgentDefinition {
+    return createSandboxAgent(deps, meta, adhocExecutorPrompt);
 }

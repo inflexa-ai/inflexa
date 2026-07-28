@@ -283,14 +283,14 @@ describe("k8s createSandbox", () => {
         (
             await ops.createSandbox(
                 {
-                    runId: "ephemeral",
-                    stepId: "ephemeral",
+                    runId: "adhoc-run",
+                    stepId: "adhoc",
                     analysisId: "an-1",
-                    childWorkflowId: "ephemeral:x",
+                    childWorkflowId: "adhoc-run-adhoc",
                     resources: { cpu: 2, memoryGb: 4 },
                     readOnly: true,
                 },
-                mintSandboxIdentity("ephemeral"),
+                mintSandboxIdentity("adhoc-run"),
             )
         )._unsafeUnwrap();
 

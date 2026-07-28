@@ -14,7 +14,6 @@
  */
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
-import type { Pool } from "pg";
 
 import type { Logger } from "../lib/logger.js";
 import { DBOS_SYSTEM_POOL_SIZE } from "./pools.js";
@@ -142,52 +141,6 @@ export async function shutdownDbos({ logger: injected }: { logger: Logger }): Pr
     } finally {
         state.launched = false;
         state.recoveryStarted = false;
-    }
-}
-
-/**
- * Cancel any `ephemeral:`-prefixed PENDING workflow this executor owns —
- * called BEFORE `launchDbos`, whose recovery would otherwise re-dispatch them.
- *
- * Ephemeral runs are turn-scoped: a run whose pod died mid-flight has no live
- * awaiter and must never re-execute. DBOS has no "zero recovery" knob, and
- * `launch()` starts recovery itself, so there is no post-launch window to
- * cancel from — the only race-free point is a direct system-DB UPDATE before
- * launch. A CANCELLED row is excluded from the recovery query (which selects
- * `status='PENDING'`). The `dbos.workflow_status` coupling is the price of
- * pre-launch timing, and this is the sole module that owns DBOS. The system
- * DB is the same database as the app pool, so the pool reaches it directly.
- */
-export async function sweepEphemeralWorkflows({
-    pool,
-    logger: injectedLogger,
-    executorId,
-}: {
-    pool: Pool;
-    logger: Logger;
-    /** Stable per-pod executor id — must match `launchDbos`'s `executorId`. */
-    executorId: string;
-}): Promise<void> {
-    const logger = injectedLogger.named("dbos");
-    const executorID = executorId;
-    try {
-        const { rowCount } = await pool.query({
-            text: `UPDATE dbos.workflow_status
-                SET status = 'CANCELLED', updated_at = $1
-              WHERE status = 'PENDING'
-                AND executor_id = $2
-                AND workflow_uuid LIKE 'ephemeral:%'`,
-            values: [Date.now(), executorID],
-        });
-        if (rowCount && rowCount > 0) {
-            logger.info("swept orphaned ephemeral workflows", { executorID, swept: rowCount });
-        }
-    } catch (err) {
-        // First-ever boot: DBOS has not created its schema yet — nothing to sweep.
-        if (err && typeof err === "object" && "code" in err && err.code === "42P01") {
-            return;
-        }
-        logger.error("ephemeral sweep failed", { executorID, ...logger.errorFields(err) });
     }
 }
 

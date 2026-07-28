@@ -48,7 +48,7 @@ The sandbox client includes Docker and Kubernetes backends. The `SANDBOX_BACKEND
 ### Two-Layer Architecture
 
 - **Conversation Layer** — chat is regular HTTP, single-replica per turn ([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)). The Conversation Agent handles all interactive work: data discovery, analysis planning (via the `generatePlan` tool), workflow triggering, result interpretation, and hypothesis exploration. Has bio-lookup tools, workspace search, run event queries, `inspectDataProfile`, `generatePlan` + `executePlan`, and `showUser`. No sandbox access from the chat route; sandbox work happens inside workflows.
-- **Workflow Layer** — DBOS-durable. `executeAnalysis`, `executeTargetAssessment`, `runEphemeral` (when long-running), and the background `runDataProfile` run as DBOS workflows. Reports render in-process via `iterate_report`, not as a DBOS workflow. Streaming events flow back to the UI via the single DBOS-backed run-event stream.
+- **Workflow Layer** — DBOS-durable. `executeAnalysis`, `executeTargetAssessment`, `runAdhoc`, and the background `runDataProfile` run as DBOS workflows. Reports render in-process via `iterate_report`, not as a DBOS workflow. Streaming events flow back to the UI via the single DBOS-backed run-event stream.
 
 ### Design Principles
 
@@ -96,7 +96,7 @@ The harness declares five external seams as interfaces and ships trivial OSS rea
 - **`ArtifactRegistry`** (`execution/artifact-registry.ts`) — records + syncs produced artifacts (`register(input, session)` + `sync(input, session)`, session-scoped). OSS: `createNoopArtifactRegistry` (registers nothing externally — the harness writes the local `cortex_artifacts` ledger itself around the seam; `sync` no-op).
 - **`RunCharge`** (`billing/run-charge.ts`) — run-level billing bracket (`open`/`close`) around `executeAnalysis`. OSS: `createNoopRunCharge`.
 - **`PreviewPublisher`** (`tools/report/preview-publisher.ts`) — publishes report previews. OSS: `UnavailablePreviewPublisher`.
-- **`RunLauncher`** (`execution/run-launcher.ts`) — starts a registered workflow under a caller-chosen id (fire-and-forget `launch` / inline `launchAndAwait`). The DBOS-quarantine seam: tools and the loop never import the durability engine — `execute_plan` / `run_ephemeral` launch through this. Single shared realization `createDbosRunLauncher` (`execution/dbos-run-launcher.ts`).
+- **`RunLauncher`** (`execution/run-launcher.ts`) — starts a registered workflow under a caller-chosen id via fire-and-forget `launch`. The DBOS-quarantine seam: tools and the loop never import the durability engine — `execute_plan` / `run_adhoc` launch through this. Single shared realization `createDbosRunLauncher` (`execution/dbos-run-launcher.ts`).
 
 ### Sandbox Architecture
 
@@ -156,7 +156,7 @@ The submit + result protocol ([harness-sandbox-exec](openspec/specs/harness-sand
 
 ### Key Components
 
-- **Conversation Agent** (`agents/conversation-agent.ts`): Single user-facing agent. Has bio-lookup tools, workspace search, `inspectRun`, `inspectDataProfile`, `updateWorkingMemory`, `generatePlan`, `executePlan`, `runEphemeral`, `iterateReport`, `generateAnalogyReport`, and `showUser`. `createConversationAgent(deps)` is the composition root that wires every tool's deps.
+- **Conversation Agent** (`agents/conversation-agent.ts`): Single user-facing agent. Has bio-lookup tools, workspace search, `inspectRun`, `inspectDataProfile`, `updateWorkingMemory`, `generatePlan`, `executePlan`, `runAdhoc`, `iterateReport`, `generateAnalogyReport`, and `showUser`. `createConversationAgent(deps)` is the composition root that wires every tool's deps.
 - **Literature Reviewer** (`tools/research/literature-reviewer.ts`): Sub-agent exposed as a tool. Receives a research brief, investigates with bio-lookup tools, returns a structured evidence report.
 - **`generatePlan` Tool** (`tools/research/generate-plan.ts`): Internal-LLM tool. Captures the planner outcome via closure-state (`PlannerOutcome`); the planning prompt lives in `prompts/` with an `{{AGENT_CATALOG}}` placeholder populated from sandbox-agent metadata.
 - **`executeAnalysis` Workflow** (`workflows/execute-analysis.ts` + scheduler in `execute-analysis-scheduler.ts`): Validates the plan, gates steps on dependencies, starts one child workflow per step. Per child: sandbox-agent loop → `generateFileMetadata` → `generateStepSummary` → register artifacts (via `ArtifactRegistry`) → index in vector store. Parent's final step is literature-grounded synthesis.
