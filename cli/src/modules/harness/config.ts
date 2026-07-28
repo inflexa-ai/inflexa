@@ -36,13 +36,19 @@ const harnessConfigSchema = z.object({
                     memoryGb: z.number().positive().optional(),
                 })
                 .optional(),
-            ephemeral: z
+            adhoc: z
                 .object({
                     cpu: z.number().positive(),
                     memoryGb: z.number().positive(),
+                    gpu: z
+                        .object({
+                            count: z.number().int().positive(),
+                        })
+                        .optional(),
                 })
                 .optional(),
         })
+        .strict()
         .optional(),
     adminPort: z.number().int().positive().optional(),
     skillsDir: z.string().optional(),
@@ -70,7 +76,7 @@ export type ResolvedHarnessConfig = {
     readonly sandboxImage: string;
     /**
      * The harness's `ResourcePolicy`, resolved from `harness.resourceLimits`:
-     * the per-step ceilings plus the machine budget and optional ephemeral
+     * the per-step ceilings plus the machine budget and optional adhoc-run
      * sandbox size. What the fields mean and how they are enforced is the
      * harness's contract — this module only resolves the values it supplies
      * (see `resolvePolicy` for the derivation and its defaults).
@@ -158,7 +164,7 @@ function resolvePolicy(cfg: z.infer<typeof harnessConfigSchema> | undefined): Re
             cpu: Math.max(configured.cpu, perStep.maxCpu),
             memoryGb: Math.max(configured.memoryGb, perStep.maxMemoryGb),
         },
-        ...(limits?.ephemeral && { ephemeral: limits.ephemeral }),
+        ...(limits?.adhoc && { adhoc: limits.adhoc }),
     };
 }
 
@@ -208,7 +214,7 @@ export type ModelWireProtocol = "anthropic" | "openai-compatible";
 
 /**
  * The two user-facing model agents: `conversation` (the chat agent and its
- * sub-agents) and `sandbox` (the catalog step agents, data profiling, and the ephemeral runner).
+ * sub-agents) and `sandbox` (the catalog step agents, data profiling, and adhoc runs).
  * Internal agents — run synthesis, post-step metadata/summary, target assessment — follow `sandbox`.
  * Derived from the `models.agents` schema keys so the domain type can never drift from the config
  * surface it names.

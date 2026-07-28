@@ -1105,7 +1105,7 @@ async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPromp
  * Resolve the machine allowance — the total share of this host analyses may use —
  * and persist it as absolute values under `harness.resourceLimits.budget`.
  * One question: everything else about resource limits (per-step ceilings,
- * ephemeral sizing) is derived from the allowance or expert config, not setup
+ * adhoc-run sizing) is derived from the allowance or expert config, not setup
  * material. The default share reflects the currently-resolved budget (half the
  * machine on a fresh config), so re-running setup shows what already applies.
  *

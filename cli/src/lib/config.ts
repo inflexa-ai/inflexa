@@ -162,7 +162,7 @@ export const modelConnectionSchema = z.discriminatedUnion("mode", [
 /**
  * The top-level `models` block. `connection` selects the ONE shared chat backend; `agents` maps each
  * user-facing agent — `conversation` (the chat agent + its sub-agents) and `sandbox` (the step agents,
- * data profiling, the ephemeral runner) — to an optional model id served by that connection.
+ * data profiling, and adhoc runs) — to an optional model id served by that connection.
  * `connection` is a nested field (rather than a flat `modelConnection`
  * key) precisely so `agents` can live beside it. Both are optional: an `agents`-only block still
  * resolves to the default connection, and an absent `agents` map means both agents resolve to the

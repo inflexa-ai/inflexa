@@ -85,12 +85,10 @@ export function agentProviderInner(provider: ChatProvider): ChatProvider {
 // One token per discrete unit of in-flight agent work. Idle ⇔ empty. A Set keyed by a stable id makes
 // enter/leave idempotent, which is what lets DBOS recovery re-emit `run_started` for a reclaimed run
 // without double-counting it. Kinds and their tokens:
-//   chat turn      `chat-turn:<uuid>`     — bracketed in `runChatTurn` (covers ephemeral: `run_ephemeral`
-//                                            is `launchAndAwait`, so it settles inside the turn, and the
-//                                            boot ephemeral sweep cancels recovery-orphaned ones).
+//   chat turn      `chat-turn:<uuid>`     — bracketed in `runChatTurn`.
 //   analysis run   `run:<runId>`          — driven by the `prov.run_started`/`prov.run_completed` bus,
-//                                            which covers cli-launched, chat-launched (`execute_plan`,
-//                                            outliving its turn), AND DBOS-recovered runs (re-emitted).
+//                                            which covers cli-launched, chat-launched (`execute_plan`
+//                                            and `run_adhoc`), AND DBOS-recovered runs (re-emitted).
 //   data profile   `data-profile:<id>`    — fed by a host observer via `noteDataProfileState` (see its
 //                                            doc for why this channel is push-fed rather than self-owned).
 const inFlightWork = new Set<string>();

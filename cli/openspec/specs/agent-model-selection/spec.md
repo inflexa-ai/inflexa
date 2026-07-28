@@ -11,7 +11,7 @@ select-seat-models.
 
 The `models` config block SHALL carry an `agents` map with the two user-facing agents —
 `conversation` (the chat agent and its sub-agents) and `sandbox` (the catalog step agents, data
-profiling, and the ephemeral runner) — each an optional model id served by the ONE configured
+profiling, and adhoc runs) — each an optional model id served by the ONE configured
 connection (`model-connection`); agent entries SHALL NOT name their own provider or endpoint.
 Internal model consumers (run synthesis, post-step metadata/summary, target assessment) SHALL
 follow the `sandbox` agent. Each agent's model resolves in order: `models.agents.<agent>` →
@@ -127,8 +127,8 @@ immediately, independent of when the runtime applies it.
 
 ### Requirement: A switch applies live only when no agent work is in flight
 
-The runtime SHALL track in-flight agent work — analysis runs, data profiling, chat turns, and
-ephemeral workflows. A persisted agent-model selection SHALL apply to the live runtime
+The runtime SHALL track in-flight agent work — planned and adhoc analysis runs, data profiling,
+and chat turns. A persisted agent-model selection SHALL apply to the live runtime
 immediately when no agent work is in flight; otherwise it SHALL be recorded as pending and
 applied at the moment the last in-flight work settles. Application SHALL reconstruct the affected
 agent's provider instance and — for the sandbox agent — its provenance emitters (reconstructed
@@ -194,4 +194,3 @@ pending selections, and the connection identity.
 
 - **WHEN** a switch is scheduled behind a running analysis
 - **THEN** the TUI shows the pending selection and clears the pending state once applied
-

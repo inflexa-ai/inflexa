@@ -15,7 +15,6 @@ import {
     registerNotificationSweep,
     registerSandboxReaper,
     registerWatchdog,
-    sweepEphemeralWorkflows,
     UnavailablePreviewPublisher,
     type AgentDefinition,
     type AgentSession,
@@ -70,14 +69,7 @@ import { createRunInflexaTool } from "./inflexa_tool.ts";
 import { createLaunchDirTool } from "./launch_dir_tool.ts";
 import { createManageInputsTool } from "./inputs_tool.ts";
 import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
-import {
-    buildEphemeralDeps,
-    buildExecuteAnalysisDeps,
-    buildExecuteTargetAssessmentDeps,
-    buildSandboxStepDeps,
-    type RunEngineComposition,
-    type AgentBackend,
-} from "./run_deps.ts";
+import { buildExecuteAnalysisDeps, buildExecuteTargetAssessmentDeps, buildSandboxStepDeps, type RunEngineComposition, type AgentBackend } from "./run_deps.ts";
 import { clearAgentSwitch, createSwappableProvider, installAgentSwitch } from "./agent_switch.ts";
 
 /**
@@ -131,9 +123,9 @@ function pinoAsHarnessLogger(pino: pinoLib.Logger, names: readonly string[] = []
 // invariant: registration happens BEFORE `launchDbos`, because `DBOS.launch()`
 // runs recovery synchronously and resolves in-flight workflows by their
 // registered name, so a workflow not registered at launch cannot be reclaimed.
-// The CLI's host-specific pre-launch work (the ephemeral sweep, the agent-switch
-// install, the sandbox-hygiene crons) rides `bootHarness`'s `beforeLaunch` hook,
-// which runs after registration and before launch.
+// The CLI's host-specific pre-launch work (ask expiry, the agent-switch install,
+// and the sandbox-hygiene crons) rides `bootHarness`'s `beforeLaunch` hook, which
+// runs after registration and before launch.
 
 /**
  * Ready-to-use deps for the analysis-run trigger flow (`inflexa run`). Mirrors
@@ -170,7 +162,7 @@ export type HarnessRuntime = {
     readonly conversation: AgentBackend;
     /**
      * The sandbox agent's backend — the model id + chat-provider instance the run engine (step agents,
-     * data profile, ephemeral runner) drives. Referentially identical to {@link
+     * data profile, adhoc runs) drives. Referentially identical to {@link
      * HarnessRuntime.conversation} when both agents resolve to the same model (one provider instance).
      */
     readonly sandbox: AgentBackend;
@@ -346,20 +338,11 @@ export type BootSeams = {
      */
     readonly boot: typeof bootHarness;
     /**
-     * Cancel this executor's PENDING `ephemeral:*` rows BEFORE launch, run inside
-     * `bootHarness`'s `beforeLaunch` hook. Registering the ephemeral workflow (in
-     * the assemble step) makes a crashed turn's row re-dispatchable by launch-time
-     * recovery; the only race-free cancel point is a direct system-DB UPDATE that
-     * completes before launch — which `beforeLaunch` guarantees.
-     */
-    readonly sweepEphemeral: typeof sweepEphemeralWorkflows;
-    /**
      * Expire asks orphaned by a prior process, run inside `bootHarness`'s
      * `beforeLaunch` hook after state init has created the ask ledger — so a
      * crash-abandoned pending row is marked expired before any new turn can pend
-     * one. A seam, like {@link BootSeams.sweepEphemeral}, purely so the offline boot
-     * test drives `beforeLaunch` with no live ledger; the real pass is one
-     * {@link AskGateway.sweepExpired} query.
+     * one. A seam purely so the offline boot test drives `beforeLaunch` with no
+     * live ledger; the real pass is one {@link AskGateway.sweepExpired} query.
      */
     readonly sweepAsks: (gateway: AskGateway) => Promise<number>;
     /** Register the orphaned-container reaper scheduled workflow. */
@@ -382,7 +365,6 @@ const realSeams: BootSeams = {
     resolveModel: resolveModelId,
     resolveEmbedding: () => resolveEmbedder(readConfig()),
     boot: bootHarness,
-    sweepEphemeral: sweepEphemeralWorkflows,
     sweepAsks: (gateway) => gateway.sweepExpired(),
     registerReaper: registerSandboxReaper,
     registerWatchdog,
@@ -516,8 +498,8 @@ export function buildAuthInjectingFetch(source: CredentialSource, underlying: In
  * readiness → callback ingress → providers/models → instance lock → pool — then
  * hands them to the harness's `bootHarness` (via the `boot` seam), which owns the
  * ordered tail: validate skills → init state → connection budget → assemble the
- * cohort → the embedder's `beforeLaunch` hook (ephemeral sweep, agent-switch
- * install, sandbox-hygiene crons) → DBOS launch. The shutdown hook is registered
+ * cohort → the embedder's `beforeLaunch` hook (ask expiry, agent-switch install,
+ * sandbox-hygiene crons) → DBOS launch. The shutdown hook is registered
  * once, on success, and drives the boot handle's graceful-shutdown sequence.
  */
 async function bootHarnessRuntimeOnce(
@@ -742,7 +724,7 @@ async function bootHarnessRuntimeOnce(
             );
 
         // Shared backends built ONCE so the profile workflow, the sandbox-step
-        // child, the execute-analysis parent, the ephemeral runner, and the
+        // child, the execute-analysis parent, adhoc runs, and the
         // conversation agent all close over the SAME instances — EXCEPT the chat
         // provider, which splits per user-facing agent below. The embedding provider is
         // NOT built here — it was resolved up-front (`embedding`, via the
@@ -849,7 +831,7 @@ async function bootHarnessRuntimeOnce(
         const workspaceFs = createWorkspaceFilesystem({ resolveWorkspaceRoot });
         // One authorizer instance, shared by the parent workflow's terminal revoke,
         // the run-trigger flow's async-edge authorize, AND the conversation agent's
-        // execute_plan / run_ephemeral tools (the local realization is stateless, so
+        // execute_plan / run_adhoc tools (the local realization is stateless, so
         // sharing is purely to avoid duplication).
         const runAuthorizer = createLocalRunAuthorizer();
         // One launcher instance, shared by the conversation agent's execute_plan
@@ -927,7 +909,7 @@ async function bootHarnessRuntimeOnce(
                 refStorePath: env.refsDir,
                 ...(packagesFile ? { packagesFile } : {}),
             },
-            ephemeral: buildEphemeralDeps(composition),
+            runAdhoc: { pool, runAuthorizer },
         };
         // The conversation agent's dep surface minus the three fields
         // `assembleCoreRuntime` injects itself (both workflow callables + the resource
@@ -976,25 +958,20 @@ async function bootHarnessRuntimeOnce(
 
         // Host-specific pre-launch work, run by `bootHarness` AFTER it registers
         // the workflow cohort and BEFORE `DBOS.launch()`:
-        //   1. Cancel this executor's stale PENDING `ephemeral:*` rows. The assemble
-        //      step makes a prior crash's row re-dispatchable by launch-time
-        //      recovery; the only race-free cancel point is a direct system-DB
-        //      UPDATE that lands before launch — which `beforeLaunch` guarantees.
-        //   2. Expire asks orphaned by a prior process. State init (which `bootHarness`
+        //   1. Expire asks orphaned by a prior process. State init (which `bootHarness`
         //      runs before this hook) has created the ledger, so a crash-abandoned
         //      pending row is marked expired before any new turn can pend one.
-        //   3. Install the live-switch controller. Its run-bus subscription must be
+        //   2. Install the live-switch controller. Its run-bus subscription must be
         //      attached when launch-time recovery re-emits `run_started` for
         //      reclaimed runs, or the gauge would miss them and let a switch land
         //      mid-recovery.
-        //   4. Register the sandbox-hygiene crons (reaper tears down orphaned
+        //   3. Register the sandbox-hygiene crons (reaper tears down orphaned
         //      containers, watchdog converts a dead sandbox into a step failure,
         //      sweep clears stale notification rows) — the embedder's duty, acting
         //      only on rows/containers the harness created.
         // Every pool read uses `composition.pool` (typed `Pool`), not the
         // `Pool | null` local whose narrowing this deferred closure does not preserve.
         const beforeLaunch = async (): Promise<void> => {
-            await seams.sweepEphemeral({ pool: composition.pool, logger, executorId: "local" });
             await seams.sweepAsks(askGateway);
             installAgentSwitch({
                 swappable: { conversation: conversationProvider, sandbox: sandboxProvider },

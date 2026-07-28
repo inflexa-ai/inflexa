@@ -140,8 +140,9 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(workflows.dataProfile.skillsDir).toBe(skillsDir);
             expect(workflows.dataProfile.embedding.dimensions).toBe(1536);
             expect(workflows.dataProfile.embedding.embed).toBeInstanceOf(Function);
-            // The ephemeral + target-assessment bundles carry the shared backends.
-            expect(workflows.ephemeral.sandboxClient).toBeDefined();
+            // Adhoc runs share the app pool and local run authorizer.
+            expect(workflows.runAdhoc.pool).toBeDefined();
+            expect(workflows.runAdhoc.runAuthorizer.authorize).toBeInstanceOf(Function);
             expect(workflows.executeTargetAssessment.chatProvider).toBeDefined();
             // The conversation bundle carries the local realizations: the configured
             // templates tree, the read-only report-html skills tree, the
@@ -155,8 +156,8 @@ function recordingSeams(calls: string[]): BootSeams {
             // state init, the connection budget, assemble, and launch itself.
             expect(deps.skillsDir).toBe(skillsDir);
             expect(deps.initTelemetry).toBeInstanceOf(Function);
-            // Run the embedder's pre-launch hook so its sweep → agent-switch install →
-            // crons execute in order, exactly as the real `bootHarness` runs it after
+            // Run the embedder's pre-launch hook so ask expiry → agent-switch install
+            // → crons execute in order, exactly as the real `bootHarness` runs it after
             // registration and before launch.
             await deps.beforeLaunch?.();
             return {
@@ -174,17 +175,14 @@ function recordingSeams(calls: string[]): BootSeams {
                         sandboxStep: async () => ({ status: "complete", durationMs: 0, finishReason: null, error: null }),
                         executeTargetAssessment: async () => ({ assessmentId: "", status: "completed", bytes: 0 }),
                         dataProfile: async () => {},
-                        ephemeral: async () => ({ text: "", durationMs: 0, stepsUsed: 0 }),
+                        runAdhoc: async () => ({ runId: "", status: "completed" }),
                     },
                 },
                 shutdown: async () => {},
             };
         },
-        sweepEphemeral: async () => {
-            calls.push("sweepEphemeral");
-        },
-        // The ask-expiry sweep is a seam for the same reason `sweepEphemeral` is:
-        // it lets `beforeLaunch` run offline with no live ask ledger to query.
+        // The ask-expiry seam lets `beforeLaunch` run offline with no live ask
+        // ledger to query.
         sweepAsks: async () => {
             calls.push("sweepAsks");
             return 0;
@@ -225,7 +223,7 @@ afterEach(() => {
 });
 
 describe("bootHarnessRuntime", () => {
-    test("boots in the contract order: prereqs → postgres → bootHarness (which runs the embedder's beforeLaunch: sweep → crons)", async () => {
+    test("boots in the contract order: prereqs → postgres → bootHarness (which runs the embedder's beforeLaunch duties)", async () => {
         const calls: string[] = [];
         const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
@@ -235,10 +233,10 @@ describe("bootHarnessRuntime", () => {
         // `bootHarness` the deps; the harness owns skills validation, state init, the
         // connection budget, assemble, and launch (each proven by the harness's own
         // boot test, not re-asserted here). The embedder's `beforeLaunch` hook — which
-        // `bootHarness` runs after registration and before launch — cancels stale
-        // ephemeral rows, installs the agent switch, then registers the three
-        // sandbox-hygiene crons. The CLI is a poll-mode embedder, so it binds NO
-        // callback ingress — `startIngress` is never called.
+        // `bootHarness` runs after registration and before launch — expires stale
+        // asks, installs the agent switch, then registers the three sandbox-hygiene
+        // crons. The CLI is a poll-mode embedder, so it binds NO callback ingress —
+        // `startIngress` is never called.
         expect(calls).toEqual([
             "resolveEmbedding",
             "readKey",
@@ -249,7 +247,6 @@ describe("bootHarnessRuntime", () => {
             // AFTER the prereq gates: a boot about to fail on Postgres never pays for it.
             "resolvePackages",
             "boot",
-            "sweepEphemeral",
             "sweepAsks",
             "registerReaper",
             "registerWatchdog",
@@ -281,12 +278,12 @@ describe("bootHarnessRuntime", () => {
         expect(runtime.runTriggerDeps.pool).toBe(runtime.pool);
     });
 
-    test("delegates the boot tail to bootHarness once, and its beforeLaunch hook sweeps ephemerals before registering the crons", async () => {
+    test("delegates the boot tail to bootHarness once, with beforeLaunch duties ordered after boot entry", async () => {
         const calls: string[] = [];
         await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
         const boot = calls.indexOf("boot");
-        const sweep = calls.indexOf("sweepEphemeral");
+        const sweepAsks = calls.indexOf("sweepAsks");
         // The harness owns the whole boot tail (state init → connection budget →
         // assemble → beforeLaunch → launch), so this root calls `boot` exactly once
         // and never re-drives those steps itself. Schema init / assemble / launch are
@@ -294,12 +291,11 @@ describe("bootHarnessRuntime", () => {
         // in this offline seam.
         expect(boot).toBeGreaterThanOrEqual(0);
         expect(calls.filter((c) => c === "boot")).toHaveLength(1);
-        // The embedder's `beforeLaunch` hook (which `bootHarness` runs after
-        // registration and before launch) sweeps stale ephemeral rows FIRST, then
+        // The embedder's `beforeLaunch` hook expires stale asks first, then
         // registers the three sandbox-hygiene crons — all after `boot` is entered.
-        expect(boot).toBeLessThan(sweep);
+        expect(boot).toBeLessThan(sweepAsks);
         for (const name of ["registerReaper", "registerWatchdog", "registerNotificationSweep"]) {
-            expect(sweep).toBeLessThan(calls.indexOf(name));
+            expect(sweepAsks).toBeLessThan(calls.indexOf(name));
         }
     });
 
@@ -332,7 +328,7 @@ describe("bootHarnessRuntime", () => {
         expect(result.isErr()).toBe(true);
         // A failed prereq short-circuits before the harness boot is even entered, so
         // neither `bootHarness` nor anything its `beforeLaunch` hook drives runs.
-        for (const name of ["boot", "sweepEphemeral", "registerReaper", "registerWatchdog", "registerNotificationSweep"]) {
+        for (const name of ["boot", "sweepAsks", "registerReaper", "registerWatchdog", "registerNotificationSweep"]) {
             expect(calls).not.toContain(name);
         }
     });

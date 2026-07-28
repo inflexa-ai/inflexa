@@ -47,6 +47,18 @@ describe("resolveHarnessConfig — adminPort default", () => {
         writeConfigWithHarness({ adminPort: 9999 });
         expect(resolveHarnessConfig().adminPort).toBe(9999);
     });
+
+    test("maps harness.resourceLimits.adhoc to the harness resource policy", () => {
+        writeConfigWithHarness({ resourceLimits: { adhoc: { cpu: 2, memoryGb: 8, gpu: { count: 1 } } } });
+        expect(resolveHarnessConfig().resourcePolicy.adhoc).toEqual({ cpu: 2, memoryGb: 8, gpu: { count: 1 } });
+    });
+
+    test("rejects the retired harness.resourceLimits.ephemeral key", () => {
+        writeConfigWithHarness({ resourceLimits: { ephemeral: { cpu: 2, memoryGb: 8 } } });
+        const resolved = resolveHarnessConfig();
+        expect(resolved.configError?.issues).toContain("harness.resourceLimits");
+        expect(resolved.resourcePolicy).not.toHaveProperty("adhoc");
+    });
 });
 
 describe("resolveModelConnection — defaults", () => {

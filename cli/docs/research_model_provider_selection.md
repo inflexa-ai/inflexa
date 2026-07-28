@@ -324,7 +324,7 @@ not a harness spec.
 | Tier | Seat | Where |
 |-|-|-|
 | user-facing | **Conversation agent** (chat) | `runtime.ts:528-541` → `ConversationAgentDeps.model`; sub-agents inherit it: planner (`generate-plan.ts:480`), literature reviewer, analogy reasoner, report builder |
-| user-facing | **Sandbox/step agents** (~22 catalog agents + data profile + ephemeral runner) | `buildStepAgent` (`run_deps.ts:81-89`), `buildSandboxStepDeps` (:138-151), data-profile bundle (`runtime.ts:508-519`) |
+| user-facing | **Sandbox/step agents** (~22 catalog agents + data profile + adhoc runs) | `buildStepAgent` (`run_deps.ts:81-89`), `buildSandboxStepDeps` (:138-151), data-profile bundle (`runtime.ts:508-519`) |
 | internal | **Run synthesis** | `ExecuteAnalysisDeps.synthesisModel` (`run_deps.ts:167-184`) |
 | internal | **Post-step metadata/summary** | `SandboxStepDeps.model` → `post-step-pipeline.ts:81,104` |
 | internal (untriggerable in cli) | **Target assessment** decision+synthesis | `buildExecuteTargetAssessmentDeps` (`run_deps.ts:220-229`) |

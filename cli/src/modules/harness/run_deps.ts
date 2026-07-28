@@ -69,7 +69,7 @@ export type RunEngineComposition = {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** The conversation agent's backend — drives the chat agent and its sub-agents; not read by the run-engine bundles. */
     readonly conversation: AgentBackend;
-    /** The sandbox agent's backend — drives the step agents, data profile, ephemeral runner, run synthesis, and post-step metadata. */
+    /** The sandbox agent's backend — drives the step agents, data profile, adhoc runs, run synthesis, and post-step metadata. */
     readonly sandbox: AgentBackend;
     /**
      * The vendor slug naming every agent's provider (`anthropic`, `openai`, …) — an open vocabulary,
@@ -234,31 +234,6 @@ export function buildExecuteAnalysisDeps(
         runCharge: createNoopRunCharge(),
         runAuthorizer,
         emitProvenance: comp.sandboxEmitters.emitProvenance,
-    };
-}
-
-/**
- * Assemble the ephemeral-runner's construction deps. Every field is a straight
- * pass-through of the shared backends — an ephemeral chat-turn run needs the same
- * provider/pool/sandbox/workspace/embedding graph the durable workflows use.
- * `resourcePolicy` is omitted deliberately: `assembleCoreRuntime` injects the one
- * host policy so the ephemeral sandbox size can never diverge from what the
- * planner tools and `execute_plan` see. The return type is sourced from
- * {@link CoreWorkflowDeps} (barrel) rather than the harness-internal `EphemeralDeps`,
- * which is not part of the embedder surface.
- */
-export function buildEphemeralDeps(comp: RunEngineComposition): CoreWorkflowDeps["ephemeral"] {
-    return {
-        provider: comp.sandbox.provider,
-        pool: comp.pool,
-        sandboxClient: comp.sandboxClient,
-        workspaceFs: comp.workspaceFs,
-        embedding: comp.embedding,
-        resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
-        model: comp.sandbox.model,
-        bioKeys: comp.bioKeys,
-        refStorePath: comp.refStorePath,
-        ...(comp.packagesFile ? { packagesFile: comp.packagesFile } : {}),
     };
 }
 
