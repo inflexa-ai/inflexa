@@ -93,6 +93,42 @@ export function isSubAgentEvent(event: Parameters<EmitFn>[0]): boolean {
     return src !== undefined && Array.isArray(src.callPath) && src.callPath.length > 1;
 }
 
+/**
+ * How deep in the agent call chain `event` was emitted — 1 for the top-level chat agent, higher for
+ * a sub-agent. 0 when the event carries no source (stream deltas).
+ *
+ * The depth is what selects the INNERMOST sub-agent when several are nested: a consumer showing one
+ * activity line keeps the deepest, because that is the agent actually doing the work right now while
+ * its callers are merely waiting on it.
+ */
+export function eventDepth(event: Parameters<EmitFn>[0]): number {
+    const src = eventSource(event);
+    return src !== undefined && Array.isArray(src.callPath) ? src.callPath.length : 0;
+}
+
+/**
+ * A short human phrase for what a sub-agent event says its emitter is doing, or `null` for an event
+ * that describes no activity (a `done` marker, a data part, a text delta — prose the sub-agent is
+ * writing for its own caller, not a description of work).
+ *
+ * Shared by the REPL printer and the TUI reducer so the two narrate sub-agent work identically. The
+ * agent id leads because a nested call chain is otherwise unattributable: `tool bash` alone does not
+ * say who ran it.
+ */
+export function subAgentActivityLabel(event: Parameters<EmitFn>[0]): string | null {
+    const who = eventSource(event)?.agentId ?? "sub-agent";
+    switch (event.type) {
+        case "tool-started":
+            return `${who}: ${event.name}`;
+        case "tool-finished":
+            return `${who}: ${event.name} done`;
+        case "iteration":
+            return `${who}: thinking`;
+        default:
+            return null;
+    }
+}
+
 /** ms as a compact human string for the tool-chip completion line. */
 function formatMs(ms: number): string {
     return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
@@ -235,9 +271,20 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
     const openTools = new Map<string, { name: string; startedAt: number }>();
 
     const emit: EmitFn = (event) => {
-        // Rule 2: sub-agent traffic (planner, literature reviewer) stays out of the
-        // transcript — the shared depth filter, so the TUI adapter drops the same set.
-        if (isSubAgentEvent(event)) return;
+        // Rule 2: sub-agent traffic (planner, literature reviewer) never becomes a
+        // TRANSCRIPT entry — its iterations and tool calls are numerous, and emitting
+        // them at the root would bury the conversation. But dropping it outright made a
+        // long tool call indistinguishable from a wedged one, so it is now ROUTED
+        // instead: a subordinate line under the tool call it is running inside. The TUI
+        // adapter shares this predicate and does the same thing with its tool block.
+        if (isSubAgentEvent(event)) {
+            const label = subAgentActivityLabel(event);
+            // Only while a tool is actually open: a sub-agent event outside any tool
+            // call has nothing to be subordinate TO, and printing it at the root is the
+            // burial this rule exists to prevent.
+            if (label && openTools.size > 0) sink.out(`    ${label}\n`);
+            return;
+        }
 
         switch (event.type) {
             case "text-delta":

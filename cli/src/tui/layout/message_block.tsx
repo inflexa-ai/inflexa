@@ -133,6 +133,7 @@ export function MessageBlock(props: MessageBlockProps) {
                                 filetype={part.filetype}
                                 status={part.status}
                                 durationMs={part.durationMs}
+                                activity={part.activity}
                             />
                         );
                     case "file-edit":

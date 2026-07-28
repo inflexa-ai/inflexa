@@ -19,7 +19,7 @@ import { getLogger } from "../../lib/log.ts";
 import { resolveModelConnection } from "../../modules/harness/config.ts";
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
 import { workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
-import { isSubAgentEvent, readAskPart, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
+import { eventDepth, isSubAgentEvent, readAskPart, readPlanCard, readRunCard, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "../../modules/harness/artifact_open.ts";
 import { buildChatSession, healTailOrphan, retractTailTurn, runChatTurn, type HealOutcome, type TurnOutcome } from "../../modules/harness/turn.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
@@ -173,6 +173,16 @@ let currentSessionId: string | null = null;
 // against the right workspace root at open time (the card stores the reference, never a resolved path).
 let currentAnalysisId: string | null = null;
 const openTools = new Map<string, number>();
+// The deepest sub-agent call depth seen while the current tool call has been open. Only an event at
+// least that deep may write the activity line, which is what "show the INNERMOST sub-agent" means:
+// while a depth-3 agent is working, its depth-2 caller is merely waiting on it and should not
+// overwrite the line with its own state. Reset whenever a tool call opens.
+//
+// Trade-off accepted: when the deepest sub-agent finishes, the bar stays raised for the rest of the
+// call, so a shallower agent's later activity is not shown. The alternative — tracking each depth's
+// liveness — buys a more accurate line in the tail of a call whose line disappears moments later
+// anyway.
+let deepestSubAgentDepth = 0;
 
 /**
  * Flush the accumulated streamed text into the stored part and clear the streaming buffer. A fresh
@@ -291,7 +301,10 @@ function updateToolPart(toolUseId: string, name: string, status: "ok" | "error",
                 // The findIndex predicate already matched `type === "tool-call"`, so the part at idx is
                 // a ToolCallPart; the cast only restates that for the spread (findIndex widens it back
                 // to Part). Fresh object so Solid reconciles the status/duration edit.
-                msg.parts[idx] = { ...(msg.parts[idx] as ToolCallPart), status, durationMs };
+                // `activity` is dropped, not carried: it described work in flight, and a finished
+                // call has an outcome instead. Leaving it would strand "planner: bash" under a chip
+                // that already says `ok · 14ms`.
+                msg.parts[idx] = { ...(msg.parts[idx] as ToolCallPart), status, durationMs, activity: undefined };
             } else {
                 msg.parts.push({
                     id: toolUseId,
@@ -304,6 +317,46 @@ function updateToolPart(toolUseId: string, name: string, status: "ok" | "error",
                     createdAt: Date.now(),
                 });
             }
+        }),
+    );
+}
+
+/**
+ * Route a sub-agent event onto the activity line of the tool call it is running inside.
+ *
+ * ATTRIBUTION: the event carries `{agentId, callPath}` and no tool-use id, so which call a sub-agent
+ * belongs to is not stated on the wire. What is known is that a sub-agent runs INSIDE a tool call, so
+ * the newest still-open call is the answer — exact whenever one tool is open, which is the shape of
+ * every sub-agent-spawning tool today. With several open concurrently this attributes to the most
+ * recent, and is wrong only in the line's placement, never in its content. Widening `EventSource`
+ * with the originating tool-use id is the fix if that ever stops being good enough.
+ *
+ * A no-op when no tool is open: such an event has nothing to be subordinate to, and putting it at
+ * the transcript root is exactly the burial the routing rule exists to prevent.
+ */
+function applySubAgentActivity(event: EmitEventArg): void {
+    const id = currentAssistantId;
+    if (!id || openTools.size === 0) return;
+
+    const depth = eventDepth(event);
+    if (depth < deepestSubAgentDepth) return;
+    const label = subAgentActivityLabel(event);
+    if (label === null) return;
+    deepestSubAgentDepth = depth;
+
+    // The newest open call — `Map` preserves insertion order, and tools are inserted on start.
+    const toolUseId = [...openTools.keys()].pop();
+    if (toolUseId === undefined) return;
+
+    setMessages(
+        produce((msgs) => {
+            const msg = msgs.find((m) => m.id === id);
+            if (!msg) return;
+            const idx = msg.parts.findIndex((p) => p.id === toolUseId && p.type === "tool-call");
+            if (idx === -1) return;
+            // Fresh object so Solid reconciles the edit — the same rule every other part write here
+            // follows. `label` is a fresh string built at receipt, so no reference to the event survives.
+            msg.parts[idx] = { ...(msg.parts[idx] as ToolCallPart), activity: label };
         }),
     );
 }
@@ -392,7 +445,14 @@ type EmitEventArg = Parameters<EmitFn>[0];
  * its `data` (the same hazard the printer guards). The card readers copy every field they keep.
  */
 export function applyEmitEvent(event: EmitEventArg): void {
-    if (isSubAgentEvent(event)) return;
+    // Sub-agent traffic is ROUTED, not discarded. Its iterations and tool calls are far too numerous
+    // to become transcript blocks — that would bury the conversation — but dropping it entirely made
+    // a long tool call indistinguishable from a wedged one. It becomes one activity line on the tool
+    // block it is running inside, and never reaches the switch below.
+    if (isSubAgentEvent(event)) {
+        applySubAgentActivity(event);
+        return;
+    }
 
     switch (event.type) {
         case "text-delta":
@@ -418,6 +478,9 @@ export function applyEmitEvent(event: EmitEventArg): void {
             const toolUseId = event.toolUseId;
             const name = event.name;
             openTools.set(toolUseId, Date.now());
+            // A new call starts with no innermost agent known, so the depth bar drops. Without this
+            // reset the first call's deepest nesting would gate every later call's activity line.
+            deepestSubAgentDepth = 0;
             appendPart({
                 id: toolUseId,
                 sessionId: currentSessionId ?? "",
@@ -577,6 +640,7 @@ function startAssistantTurn(sessionId: string): string {
     currentAssistantId = assistantId;
     currentSessionId = sessionId;
     openTools.clear();
+    deepestSubAgentDepth = 0;
     setStreamPartId(textPartId);
     setStreamText("");
     setMessages(
@@ -619,6 +683,7 @@ function drainOpenTools(): void {
         updateToolPart(toolUseId, "", "error", Date.now() - startedAt);
     }
     openTools.clear();
+    deepestSubAgentDepth = 0;
 }
 
 /**
@@ -1064,6 +1129,7 @@ export function resetHotState(): void {
     currentSessionId = null;
     currentAnalysisId = null;
     openTools.clear();
+    deepestSubAgentDepth = 0;
     // Forget the superseded turn's settlement/duration bases; the send that owns them still resolves
     // its own local promise, so a retract already awaiting it is never stranded by this null.
     turnSettled = null;
@@ -1321,6 +1387,7 @@ function closeTurnState(): void {
     currentSessionId = null;
     currentAnalysisId = null;
     openTools.clear();
+    deepestSubAgentDepth = 0;
     turnSettled = null;
     turnStartedAt = 0;
 }

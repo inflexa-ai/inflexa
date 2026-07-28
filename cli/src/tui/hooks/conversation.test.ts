@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { okAsync, ResultAsync } from "neverthrow";
-import type { AskContext, AskRequest, MessagePage } from "@inflexa-ai/harness";
+import type { AskContext, AskRequest, EmitFn, MessagePage } from "@inflexa-ai/harness";
 
 import {
     applyEmitEvent,
@@ -150,6 +150,82 @@ describe("send() drives the adapter + engine", () => {
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
         const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
         expect(tool?.status).toBe("error");
+    });
+
+    // Sub-agent events used to be discarded outright, which made a long tool call indistinguishable
+    // from a wedged one. They are now ROUTED to the tool block they run inside — never to the
+    // transcript root, where their sheer number would bury the conversation.
+    describe("sub-agent activity routing", () => {
+        const SUB = { agentId: "planner", callPath: ["tui-chat", "planner"] };
+        const DEEPER = { agentId: "literature-reviewer", callPath: ["tui-chat", "planner", "literature-reviewer"] };
+
+        // The line is LIVE state: it exists only while the call is running, and a turn that ends with
+        // the call still open has it closed (and its activity cleared) by `drainOpenTools`. So these
+        // read the store from inside the drive, at the moment the sub-agent is working.
+        function activityDuring(drive: (emit: EmitFn) => void): Promise<string | undefined> {
+            let seen: string | undefined;
+            const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+                drive(emit);
+                seen = findPart((p): p is ToolCallPart => p.type === "tool-call")?.activity;
+            });
+            return send({ sessionId: SID, analysisId: AID, userText: "?" }, seams).then(() => seen);
+        }
+
+        test("a sub-agent's events update the running tool's activity line and create no block of their own", async () => {
+            const activity = await activityDuring((emit) => {
+                void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "plan_analysis", input: {} });
+                void emit({ type: "iteration", source: SUB, iteration: 1 } as never);
+                void emit({ type: "tool-started", source: SUB, toolUseId: "sub-1", name: "search_papers", input: {} });
+            });
+            // The activity carries the sub-agent's newest work, attributed to who is doing it.
+            expect(activity).toBe("planner: search_papers");
+
+            const tools = messages[1]?.parts.filter((p) => p.type === "tool-call") ?? [];
+            // Exactly ONE tool block: the top-level call. The sub-agent's own tool never became one.
+            expect(tools.length).toBe(1);
+            expect((tools[0] as ToolCallPart).name).toBe("plan_analysis");
+        });
+
+        test("the INNERMOST sub-agent owns the line — a shallower caller does not overwrite it", async () => {
+            const activity = await activityDuring((emit) => {
+                void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "plan_analysis", input: {} });
+                void emit({ type: "tool-started", source: DEEPER, toolUseId: "sub-2", name: "fetch_abstract", input: {} });
+                // The planner is merely WAITING on the reviewer; its state is not what is happening.
+                void emit({ type: "iteration", source: SUB, iteration: 2 } as never);
+            });
+            expect(activity).toBe("literature-reviewer: fetch_abstract");
+        });
+
+        test("the activity line is cleared when the call finishes", async () => {
+            const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+                void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "plan_analysis", input: {} });
+                void emit({ type: "tool-started", source: SUB, toolUseId: "sub-1", name: "search_papers", input: {} });
+                void emit({
+                    type: "tool-finished",
+                    source: { agentId: "tui-chat", callPath: ["tui-chat"] },
+                    toolUseId: "t1",
+                    name: "plan_analysis",
+                    isError: false,
+                });
+            });
+            await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+            const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+            expect(tool?.status).toBe("ok");
+            // A finished call has an outcome, which answers the same question better. Leaving the
+            // activity would strand "planner: search_papers" under a chip that already says ok.
+            expect(tool?.activity).toBeUndefined();
+        });
+
+        test("a sub-agent event outside any tool call is dropped, not rendered at the root", async () => {
+            const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+                void emit({ type: "tool-started", source: SUB, toolUseId: "sub-1", name: "search_papers", input: {} });
+                void emit({ type: "iteration", source: SUB, iteration: 1 } as never);
+            });
+            await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+            // Nothing to be subordinate TO — and putting it at the root is the burial the rule prevents.
+            expect(messages[1]?.parts.filter((p) => p.type === "tool-call").length).toBe(0);
+        });
     });
 
     test("an unpaired tool-finished appends a finished part (no prior tool-started)", async () => {
