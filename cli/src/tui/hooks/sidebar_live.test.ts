@@ -334,6 +334,40 @@ describe("refreshSidebarData — an active run is never lost to the listing wind
         expect(snap.runs.map((r) => r.runId)).toEqual(["run-a"]);
         expect(activeRunProgress().has("run-a")).toBe(true);
     });
+
+    test("a failed WINDOW read still lists and tracks what the active read found", async () => {
+        // The mirror of the case above, and the one that matters more: the active read is the
+        // AUTHORITY on what is live. Discarding it because the mere listing blipped would cost the
+        // rail block, the panel entry, AND the completion announcement — which returns early unless
+        // this snapshot is `loaded` — for a run positively known to be running.
+        const s: RefreshSeams = {
+            runtime: () => fakeRuntime,
+            loadProfile: () => okAsync(null),
+            loadRuns: () => errAsync(dbErr),
+            loadActiveRuns: () => okAsync([runRow({ runId: "run-a", status: "running" })]),
+            loadSteps: () => okAsync([stepRow("s", "running")]),
+            loadPlan: () => okAsync(null),
+        };
+        await refreshSidebarData("A", s);
+
+        const snap = runsSnapshot();
+        if (snap.kind !== "loaded") throw new Error("expected loaded, not unavailable");
+        expect(snap.runs.map((r) => r.runId)).toEqual(["run-a"]);
+        expect(activeRunProgress().has("run-a")).toBe(true);
+    });
+
+    test("only BOTH run reads failing degrades the section to unavailable", async () => {
+        const s: RefreshSeams = {
+            runtime: () => fakeRuntime,
+            loadProfile: () => okAsync(null),
+            loadRuns: () => errAsync(dbErr),
+            loadActiveRuns: () => errAsync(dbErr),
+            loadSteps: () => okAsync([]),
+            loadPlan: () => okAsync(null),
+        };
+        await refreshSidebarData("A", s);
+        expect(runsSnapshot().kind).toBe("unavailable");
+    });
 });
 
 describe("refreshSidebarData — sticky run-progress row", () => {
@@ -512,6 +546,13 @@ describe("refreshSidebarData — sticky run-progress row", () => {
         expect(carried).toEqual({ ...first.get("run-x")!, stale: true });
         expect(carried!.stale).toBe(true);
         expect(first.get("run-x")!.stale).toBe(false);
+
+        // A SECOND consecutive blip carries the same object by IDENTITY, not an equal copy. This is
+        // load-bearing, not an optimization detail: `focusedRun` is a memo over this map and the run
+        // panel's activity effect re-fires on its identity, so minting a new object per tick would
+        // issue a DBOS read every poll for a value that cannot have changed during an outage.
+        await refreshSidebarData("A", s);
+        expect(activeRunProgress().get("run-x")).toBe(carried!);
     });
 
     test("a step-read DbError for a DIFFERENT run never shows one run's progress under another", async () => {
