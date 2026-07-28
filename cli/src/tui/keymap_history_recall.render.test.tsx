@@ -55,13 +55,16 @@ function RecallHarness(props: RecallControls) {
         }),
     );
 
+    // `preventDefault: false` so the key ALSO reaches the textarea's own caret handling — these stand-ins
+    // observe the fall-through without suppressing what falls through, which is what lets the multi-line
+    // cases below assert real caret movement rather than only the absence of a history step.
     useBindings(() => ({
         mode: MODE_BASE,
         target: ta,
         priority: -10,
         bindings: [
-            { chord: KEYS.up, run: () => props.onFallthrough("up") },
-            { chord: KEYS.down, run: () => props.onFallthrough("down") },
+            { chord: KEYS.up, run: () => props.onFallthrough("up"), preventDefault: false },
+            { chord: KEYS.down, run: () => props.onFallthrough("down"), preventDefault: false },
         ],
     }));
 
@@ -256,6 +259,88 @@ describe("prompt-history recall layer (rendered, real keyboard bus)", () => {
             await settle();
 
             expect(composer().plainText).toBe("before");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("up inside a recalled multi-line prompt walks the caret before stepping history", async () => {
+        // The composer is multi-line and so are plenty of prompts. If recall held `up` for as long as the
+        // entry sat in the buffer, every row but the last would be unreachable — the caret could never get
+        // to line one to fix a typo there. History steps only from the FIRST row (the readline rule).
+        const { setup, settle, fell, composer } = await mount({ entries: ["line one\nline two\nline three", "older prompt"] });
+        try {
+            setup.mockInput.pressArrow("up");
+            await settle();
+            expect(composer().plainText).toBe("line one\nline two\nline three");
+            // Seeded with the caret at the end — the last of three rows.
+            expect(composer().editBuffer.getCursorPosition().row).toBe(2);
+
+            setup.mockInput.pressArrow("up");
+            await settle();
+            expect(composer().editBuffer.getCursorPosition().row).toBe(1);
+            expect(composer().plainText).toBe("line one\nline two\nline three");
+
+            setup.mockInput.pressArrow("up");
+            await settle();
+            expect(composer().editBuffer.getCursorPosition().row).toBe(0);
+            expect(composer().plainText).toBe("line one\nline two\nline three");
+
+            // Only now, with no row left above, does `up` mean history again.
+            setup.mockInput.pressArrow("up");
+            await settle();
+            expect(composer().plainText).toBe("older prompt");
+            expect(fell).toEqual(["up", "up"]);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("down inside a recalled multi-line prompt walks the caret before leaving recall", async () => {
+        const { setup, settle, composer } = await mount({ entries: ["line one\nline two\nline three"] });
+        try {
+            setup.mockInput.pressArrow("up");
+            await settle();
+            // Walk up to the first row so there is somewhere for `down` to travel.
+            setup.mockInput.pressArrow("up");
+            await settle();
+            setup.mockInput.pressArrow("up");
+            await settle();
+            expect(composer().editBuffer.getCursorPosition().row).toBe(0);
+
+            setup.mockInput.pressArrow("down");
+            await settle();
+            expect(composer().editBuffer.getCursorPosition().row).toBe(1);
+            expect(composer().plainText).toBe("line one\nline two\nline three");
+
+            setup.mockInput.pressArrow("down");
+            await settle();
+            expect(composer().editBuffer.getCursorPosition().row).toBe(2);
+            expect(composer().plainText).toBe("line one\nline two\nline three");
+
+            // Last row reached: `down` now leaves recall and restores the empty composer.
+            setup.mockInput.pressArrow("down");
+            await settle();
+            expect(composer().plainText).toBe("");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a single-line entry recalls in both directions with no extra keystrokes", async () => {
+        // A one-row buffer is the first AND last row at once, so the caret rule costs nothing in the common
+        // case — this is what keeps single-line recall a single press in each direction.
+        const { setup, settle, composer } = await mount();
+        try {
+            setup.mockInput.pressArrow("up");
+            await settle();
+            setup.mockInput.pressArrow("up");
+            await settle();
+            expect(composer().plainText).toBe("middle");
+
+            setup.mockInput.pressArrow("down");
+            await settle();
+            expect(composer().plainText).toBe("newest");
         } finally {
             setup.renderer.destroy();
         }

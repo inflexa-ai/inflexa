@@ -242,6 +242,13 @@ export type HistoryRecallLayerDeps = {
  * carry no lifecycle wiring at all. The position is read ONLY once the equality check has confirmed the
  * buffer still matches it.
  *
+ * **A recalled prompt stays navigable.** The composer is multi-line, and recalled prompts often are too, so
+ * recall must not hold both arrows hostage for as long as the entry sits in the buffer — that would leave
+ * every line but the last unreachable. The chords therefore step history only from the EDGE of the buffer
+ * the step moves away from: `up` recalls from the first row, `down` from the last, and anywhere in between
+ * both fall through to the textarea's own caret movement (the shell/readline rule). A single-line entry is
+ * both rows at once, so it recalls in either direction with no extra keystroke.
+ *
  * The position is a STORED index, never a search of `entries()` for the buffer's text. `promptHistory`
  * collapses only ADJACENT duplicates, so identical prompts separated by another remain distinct entries;
  * a search would resolve every occurrence to the newest and silently skip everything between them.
@@ -249,11 +256,23 @@ export type HistoryRecallLayerDeps = {
 export function historyRecallLayer(deps: HistoryRecallLayerDeps): LayerConfig {
     const target = deps.target;
     const buffer = target?.plainText ?? null;
-    const entries = deps.entries();
     const index = deps.index();
+    // The entry list is walked only when it can matter. `activeLayers` re-invokes EVERY layer's thunk on
+    // every keystroke before it filters, so an unguarded read would walk the whole transcript on each key
+    // typed anywhere in the app — including inside a dialog, where this layer can never fire. A non-empty
+    // buffer with no recall in progress (the ordinary typing path) needs no entries at all.
+    const entries = buffer === "" || index !== null ? deps.entries() : [];
     // In recall exactly while the buffer still holds the entry the position addresses — see the derived-gate
     // rationale above. `promptHistory` never yields an empty entry, so an empty buffer can never match one.
     const inRecall = index !== null && buffer !== null && buffer === entries[index];
+
+    // Which buffer edge the caret sits on, deciding whether a chord steps history or moves the caret. Read
+    // from the edit buffer rather than the plain text so a soft-wrapped long line still counts as one row —
+    // wrapping is presentation, and a chord that behaved differently at one terminal width than another
+    // would be indefensible.
+    const caret = target?.editBuffer.getCursorPosition();
+    const onFirstRow = caret === undefined || caret.row === 0;
+    const onLastRow = caret === undefined || !target || caret.row === target.editBuffer.getLineCount() - 1;
 
     function step(to: number): void {
         const text = entries[to];
@@ -266,24 +285,35 @@ export function historyRecallLayer(deps: HistoryRecallLayerDeps): LayerConfig {
     // only when there is something for it to do — the engine `preventDefault`s whatever it matches, and a
     // key swallowed to run a no-op is a key stolen from the editor underneath. `enabled` alone cannot make
     // that distinction: the layer is live on an empty buffer so `up` can ENTER recall, which is exactly the
-    // state where `down` has nowhere to go.
+    // state where `down` has nowhere to go; and it is live across a whole recalled entry, most rows of which
+    // must still take the caret.
     const bindings: BoundBinding[] = [];
 
     // Older. From an empty buffer that is the newest entry (index 0); already in recall, one further back,
-    // clamped so the oldest entry HOLDS rather than falling off the end. Unbound when the index it would
-    // land on has no entry — an empty history leaves `up` to the editor rather than eating it.
+    // clamped so the oldest entry HOLDS rather than falling off the end. Unbound when the caret has rows
+    // above it to reach, or when the index it would land on has no entry — an empty history leaves `up` to
+    // the editor rather than eating it.
     const older = inRecall ? Math.min(index + 1, entries.length - 1) : 0;
-    if (entries[older] !== undefined) {
+    if (onFirstRow && entries[older] !== undefined) {
         bindings.push({ chord: KEYS.up, run: () => step(older), desc: "Recall previous prompt", group: "Chat" });
     }
 
     // Newer, and past the newest back to the empty composer the recall was entered from. Bound only while a
-    // recall is in progress, so outside one `down` stays ordinary cursor movement.
-    if (inRecall && index !== null && target) {
+    // recall is in progress with the caret on the last row, so outside one — and on any earlier row — `down`
+    // stays ordinary caret movement. The `index`/`target` re-checks are for narrowing: `inRecall` already
+    // implies both, but only through a chain tsc does not follow.
+    if (inRecall && onLastRow && index !== null && target) {
         const at = index;
         bindings.push({
             chord: KEYS.down,
-            run: () => (at === 0 ? (deps.setIndex(null), seedComposerText(target, "")) : step(at - 1)),
+            run: () => {
+                if (at === 0) {
+                    deps.setIndex(null);
+                    seedComposerText(target, "");
+                    return;
+                }
+                step(at - 1);
+            },
             desc: "Recall next prompt",
             group: "Chat",
         });
@@ -846,6 +876,12 @@ export function App(props: AppProps) {
     // resumes at the newest entry and discards whatever an abandoned recall left behind. The dispatch test
     // installs the SAME factory, so the two can never drift.
     const [recallIndex, setRecallIndex] = createSignal<number | null>(null);
+
+    // Whether the composer's recall chord would actually bring something back right now — the ChatBar shows
+    // it in the empty-buffer placeholder, the one spot where advertising it is honest (see `canRecall` there).
+    // Both reads are reactive, so the affordance appears with the first sent prompt and steps aside for the
+    // retract's own claim on the chord, exactly as `interruptHint`'s gates do for the interrupt.
+    const canRecall = (): boolean => !conversation.canRetract() && conversation.promptHistory().length > 0;
     useBindings(() =>
         historyRecallLayer({
             target: textareaRef,
@@ -1080,6 +1116,7 @@ export function App(props: AppProps) {
                             // for its mode word.
                             onFocusChange={setComposerFocused}
                             interruptHint={interruptHint()}
+                            canRecall={canRecall()}
                         />
 
                         {/* Transient toast (single slot, auto-dismissed). Inside the chat column, not the

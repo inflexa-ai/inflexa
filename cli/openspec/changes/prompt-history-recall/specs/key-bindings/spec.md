@@ -43,6 +43,16 @@ older ones. `down` SHALL move toward newer entries; `down` from the newest entry
 buffer and leave recall, restoring the empty composer the user entered from. `down` while not in
 recall SHALL fall through to cursor movement.
 
+**Caret rule.** The composer is multi-line and recalled prompts frequently are, so a chord SHALL step
+history only from the buffer EDGE it would move away from: `up` recalls only while the caret is on the
+first row, `down` only while it is on the last row, and on every row in between both SHALL fall through
+to the textarea's own caret movement. Without this a recalled multi-line prompt would hold both arrows
+for as long as it sat in the buffer, leaving every row but the last unreachable — the caret could never
+be moved to the first line to correct it. A single-line entry occupies the first and last row at once,
+so it continues to recall in either direction from a single press. Row position SHALL be read from the
+edit buffer, not from wrapped display lines: soft wrapping is presentation, and a chord that behaved
+differently at two terminal widths would be indefensible.
+
 **Seeding.** A recalled entry SHALL be placed in the buffer with the cursor at the end, the same
 completion the retract seed uses, so a multi-line prompt lands ready to append to.
 
@@ -53,9 +63,29 @@ completion the retract seed uses, so a multi-line prompt lands ready to append t
 
 #### Scenario: Up again steps to the next-older prompt
 
-- **GIVEN** the composer holds a recalled entry, unedited
+- **GIVEN** the composer holds a recalled single-line entry, unedited
 - **WHEN** the user presses up
 - **THEN** the buffer holds the next-older prompt and no cursor movement occurs
+
+#### Scenario: Up inside a recalled multi-line prompt walks the caret first
+
+- **GIVEN** the composer holds a recalled three-row prompt with the caret on the last row
+- **WHEN** the user presses up
+- **THEN** the caret moves up one row and the buffer is unchanged
+- **AND** only once the caret reaches the first row does a further up recall the next-older prompt
+
+#### Scenario: Down inside a recalled multi-line prompt walks the caret first
+
+- **GIVEN** the composer holds a recalled multi-row prompt with the caret above the last row
+- **WHEN** the user presses down
+- **THEN** the caret moves down one row and the buffer is unchanged
+- **AND** only from the last row does a further down step toward the newer entries
+
+#### Scenario: A single-line entry recalls in one press per direction
+
+- **GIVEN** the composer holds a recalled single-line entry
+- **WHEN** the user presses up, and separately down
+- **THEN** each steps history immediately — the caret rule costs no extra keystroke when the entry is one row
 
 #### Scenario: Editing a recalled prompt leaves recall
 

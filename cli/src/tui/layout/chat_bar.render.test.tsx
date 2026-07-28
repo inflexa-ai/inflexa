@@ -4,6 +4,7 @@ import { parseColor, type RGBA } from "@opentui/core";
 
 import { DEFAULT_THEME_ID, themes } from "../../lib/design_system.ts";
 import { setTheme } from "../theme.ts";
+import { RECALL_LABEL } from "../keymap.ts";
 import { ChatBar } from "./chat_bar.tsx";
 
 // The footer interrupt hint carries its OWN color: muted for the resting esc / one-press abort forms, warn
@@ -78,6 +79,61 @@ describe("ChatBar footer interrupt hint", () => {
             expect(hint).toBeDefined();
             expect(hint && parseColor(themes[LIGHT].colors.fgMuted).equals(hint)).toBe(true);
             expect(setup.captureCharFrame()).toContain("INSERT");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
+describe("ChatBar recall affordance in the empty-buffer placeholder", () => {
+    afterEach(() => setTheme(DEFAULT_THEME_ID));
+
+    /** Render a bare ChatBar (no interrupt hint) with the recall affordance on or off. */
+    function renderPlaceholder(canRecall: boolean): Promise<Awaited<ReturnType<typeof testRender>>> {
+        setTheme(LIGHT);
+        return testRender(() => <ChatBar autoFocus onTextareaRef={() => {}} onSubmit={() => {}} canRecall={canRecall} />, { width: 80, height: 6 });
+    }
+
+    test("with something to recall, the placeholder names the chord", async () => {
+        const setup = await renderPlaceholder(true);
+        try {
+            await setup.renderOnce();
+            const frame = setup.captureCharFrame();
+            expect(frame).toContain("Type a message");
+            // The label is derived from the bound chord (RECALL_LABEL), never hand-written here.
+            expect(frame).toContain(`${RECALL_LABEL} for history`);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("with nothing to recall, the placeholder stays bare", async () => {
+        // A first-run session, or one where the retract owns the chord instead — advertising it would name a
+        // key that does something else, or nothing at all.
+        const setup = await renderPlaceholder(false);
+        try {
+            await setup.renderOnce();
+            const frame = setup.captureCharFrame();
+            expect(frame).toContain("Type a message");
+            expect(frame).not.toContain("for history");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a boot gate outranks the recall affordance", async () => {
+        // The gate explains why typing goes nowhere; a recall hint on top of it would be noise about a chord
+        // whose result could not be sent anyway.
+        setTheme(LIGHT);
+        const setup = await testRender(() => <ChatBar autoFocus onTextareaRef={() => {}} onSubmit={() => {}} canRecall gate="booting" />, {
+            width: 80,
+            height: 6,
+        });
+        try {
+            await setup.renderOnce();
+            const frame = setup.captureCharFrame();
+            expect(frame).toContain("Booting harness runtime");
+            expect(frame).not.toContain("for history");
         } finally {
             setup.renderer.destroy();
         }

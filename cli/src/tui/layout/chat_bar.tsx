@@ -3,7 +3,7 @@ import type { TextareaRenderable } from "@opentui/core";
 
 import { GLYPHS } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
-import { NEWLINE_LABEL } from "../keymap.ts";
+import { NEWLINE_LABEL, RECALL_LABEL } from "../keymap.ts";
 import { TextArea } from "../components/text_area.tsx";
 import { Bold, Fg } from "../components/emphasis.tsx";
 
@@ -46,6 +46,17 @@ export type ChatBarProps = {
      * The textarea stays editable in either state; only the host's submit is gated.
      */
     gate?: "booting" | "failed";
+    /**
+     * Whether pressing the recall chord right now would bring back a previously sent prompt — the host
+     * derives it from the live history and retract window and hands it down as data, keeping this
+     * component's no-domain-imports rule.
+     *
+     * Drives a suffix on the EMPTY-buffer placeholder, which is the only honest place to advertise the
+     * chord: the placeholder shows exactly when the buffer is empty, which is exactly when recall can be
+     * entered, and it vanishes the moment the user types — so the hint costs no rows, never lingers, and
+     * never appears in a session with nothing to recall. False whenever the retract owns the chord instead.
+     */
+    canRecall?: boolean;
 };
 
 /**
@@ -82,7 +93,9 @@ export function ChatBar(props: ChatBarProps) {
                         ? `Boot failed ${GLYPHS.emDash} see the message above`
                         : props.gate === "booting"
                           ? `Booting harness runtime${GLYPHS.ellipsis}`
-                          : `Type a message${GLYPHS.ellipsis}`
+                          : props.canRecall
+                            ? `Type a message${GLYPHS.ellipsis} ${GLYPHS.middot} ${RECALL_LABEL} for history`
+                            : `Type a message${GLYPHS.ellipsis}`
                 }
                 onRef={(r) => props.onTextareaRef(r)}
                 onSubmit={() => props.onSubmit()}
