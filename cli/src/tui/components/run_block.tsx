@@ -309,7 +309,12 @@ export function RunBlock(props: RunBlockProps) {
                                 <text>
                                     <Fg role={m.role}>{`${m.glyph} `}</Fg>
                                     <Fg role={step.state === "queued" || step.state === "skipped" ? "fgMuted" : "fg"}>{step.label}</Fg>
-                                    <Show when={step.agent}>{(a: Accessor<string>) => <Fg role="tool">{` [${a()}]`}</Fg>}</Show>
+                                    {/* The owning agent only where there is room. `maxSteps` marks the narrow
+                                        rail mount, whose ~37 usable cells cannot hold a step name AND an agent
+                                        AND an age — measured: the agent tag pushes the elapsed age and the
+                                        retry count off the row entirely. The rail answers "which step"; the
+                                        wide mounts (run-detail dialog, gallery) answer "and who is running it". */}
+                                    <Show when={props.maxSteps === undefined && step.agent}>{(a: Accessor<string>) => <Fg role="tool">{` [${a()}]`}</Fg>}</Show>
                                     <Show when={age()}>{(a: Accessor<string>) => <Fg role="fgMuted">{` ${a()}`}</Fg>}</Show>
                                     <Show when={retries()}>{(r: Accessor<string>) => <Fg role="warning">{` ${r()}`}</Fg>}</Show>
                                 </text>
