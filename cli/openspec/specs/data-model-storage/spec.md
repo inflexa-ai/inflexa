@@ -7,7 +7,7 @@ The SQLite schema for the local data model — the columnar `anchors`/`projects`
 ### Requirement: Single forward-only baseline migration
 
 
-The data-model schema SHALL be defined as the `version: 1` baseline in `src/db/primary_migrations.ts` plus subsequent forward-only versioned migrations, each applied in one transaction by the existing versioned runner. The baseline SHALL remain byte-stable (it keeps creating the historical chat tables so already-applied histories replay identically); migration `version: 2` SHALL drop the legacy chat tables (`sessions`, `messages`, `parts`) — a deliberate deletion of frozen legacy transcript rows that are unreachable from any surface. Tables SHALL be declared parent-before-child so every foreign key is a backward reference.
+The data-model schema SHALL be defined as the `version: 1` baseline in `src/db/primary_migrations.ts` plus subsequent forward-only versioned migrations, each applied in one transaction by the existing versioned runner. The baseline SHALL remain byte-stable (it keeps creating the historical chat tables so already-applied histories replay identically); migration `version: 2` SHALL drop the legacy chat tables (`sessions`, `messages`, `parts`) — the rows become permanently unreachable (their storage is freed for reuse, not scrubbed). Tables SHALL be declared parent-before-child so every foreign key is a backward reference.
 
 #### Scenario: Fresh database ends without chat tables
 
@@ -73,12 +73,12 @@ The system SHALL create an `analysis_inputs` table whose columns are the entire 
 ### Requirement: Lookup indexes
 
 
-The migrations SHALL leave exactly the indexes `idx_analyses_project` on `analyses(project_id)`, `idx_analyses_anchor` on `analyses(anchor_id)`, and `idx_analysis_inputs_analysis` on `analysis_inputs(analysis_id)`; the chat-table indexes are dropped with their tables by migration 2.
+The migrations SHALL leave exactly five explicitly-declared indexes: the FK lookup indexes `idx_analyses_project` on `analyses(project_id)`, `idx_analyses_anchor` on `analyses(anchor_id)`, and `idx_analysis_inputs_analysis` on `analysis_inputs(analysis_id)`, plus the two unique partial indexes that enforce input de-duplication — `uq_analysis_inputs_anchored` on `analysis_inputs(analysis_id, path, anchor_id)` where `anchor_id IS NOT NULL`, and `uq_analysis_inputs_unanchored` on `analysis_inputs(analysis_id, path)` where `anchor_id IS NULL`. The chat-table indexes are dropped with their tables by migration 2. SQLite's own `sqlite_autoindex_*` entries (backing the `PRIMARY KEY`/`UNIQUE` constraints) are outside this count — they are implicit, not declared.
 
 #### Scenario: FK lookup indexes exist
 
 - **WHEN** all migrations have been applied
-- **THEN** the three named indexes exist over their stated columns
+- **THEN** exactly those five named indexes exist over their stated columns, and no other explicitly-declared index does
 - **AND** `idx_sessions_analysis`, `idx_messages_session`, `idx_parts_message`, and `idx_parts_session` do not exist
 
 ### Requirement: Provenance integrity columns in the baseline schema

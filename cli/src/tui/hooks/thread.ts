@@ -8,6 +8,7 @@ import type { Workspace } from "../contexts/workspace.ts";
 import type { Notice } from "../theme.ts";
 import { bootState, harnessRuntime } from "./boot.ts";
 import { notify } from "./notice.ts";
+import { chatStatus, type ChatStatus } from "./status.ts";
 
 // The open chat's Postgres conversation thread — resolution plus the row's metadata — held here (not
 // inside `app.tsx` / `layout/sidebar.tsx`) so the holder is decoupled from its renderers, the same
@@ -15,8 +16,9 @@ import { notify } from "./notice.ts";
 // reachable only once boot reaches `ready`, so both jobs live behind that edge: `watchOpenThread`
 // binds a thread id into the workspace scope the moment a pool exists, and keeps a snapshot of that
 // thread's row for the sidebar's SESSION section. One chat screen is mounted at a time, so a module
-// singleton is correct; the snapshot is the only reactive cell (the generation token and the
-// in-flight-resolution marker are plain infrastructure, nothing reacts to them).
+// singleton is correct; the snapshot is the only reactive cell (the generation token, the
+// in-flight-resolution marker, and the id the snapshot describes are plain infrastructure, nothing
+// reacts to them).
 
 /**
  * The SESSION rail's render input for the open thread:
@@ -29,6 +31,14 @@ import { notify } from "./notice.ts";
 export type ThreadSnapshot = { kind: "unresolved" } | { kind: "unavailable" } | { kind: "absent" } | { kind: "loaded"; thread: Thread };
 
 const [threadState, setThreadState] = createSignal<ThreadSnapshot>({ kind: "unresolved" });
+
+// Which thread the CURRENT snapshot describes. A refresh for a DIFFERENT id must blank the rail
+// synchronously: the row read is a full Postgres round-trip, and until it lands the snapshot still
+// holds the thread the user just swapped (or deleted) away from — so the SESSION section would keep
+// painting the previous conversation's title for that whole window. A refresh for the SAME id must
+// NOT blank it: a rename poke or a post-turn re-read would otherwise flash the placeholder over a
+// row that is still correct. Plain infrastructure, not a reactive cell — only the refresh reads it.
+let snapshotThreadId: string | null = null;
 
 /** The open thread's row snapshot — read in a tracking scope to repaint on a bind/rename/refresh. */
 export const openThread = threadState;
@@ -92,7 +102,12 @@ let metadataGeneration = 0;
  * Re-read the bound thread's row into the {@link openThread} snapshot. `null` (or an unbooted
  * runtime) resets it to `unresolved` — the sidebar's placeholder — and issues no query.
  *
- * Called by {@link watchOpenThread} on every bind/boot edge, and directly by the rename command,
+ * A read for a thread the snapshot does not already describe resets it to `unresolved` SYNCHRONOUSLY,
+ * before the query, so a swap never paints the previous conversation's title across the round-trip;
+ * a read for the same thread leaves the snapshot standing, so a rename poke or a post-turn re-read
+ * never blinks a correct row away.
+ *
+ * Called by {@link watchOpenThread} on every bind/boot/turn edge, and directly by the rename command,
  * whose write changes the row without changing the bound id (so no reactive edge would fire).
  */
 export async function refreshOpenThread(threadId: string | null, seams: ThreadSeams = realThreadSeams): Promise<void> {
@@ -101,8 +116,13 @@ export async function refreshOpenThread(threadId: string | null, seams: ThreadSe
     const mine = ++metadataGeneration;
     const runtime = seams.runtime();
     if (!runtime || threadId === null) {
+        snapshotThreadId = null;
         setThreadState({ kind: "unresolved" });
         return;
+    }
+    if (snapshotThreadId !== threadId) {
+        snapshotThreadId = threadId;
+        setThreadState({ kind: "unresolved" });
     }
     const res = await seams.getThread(runtime.pool, threadId);
     if (mine !== metadataGeneration) return;
@@ -127,6 +147,11 @@ let resolvingForAnalysisId: string | null = null;
  *     its own thread (the palette's analysis/session commands) is never re-resolved on top of.
  *  2. **track the row** — re-read the bound thread's row whenever the bound id or the boot phase
  *     changes, so the sidebar's SESSION section shows the pg title and age of whatever is open.
+ *  3. **re-read after a turn** — re-read the bound thread's row on the `busy → idle` down-edge of
+ *     {@link chatStatus}. The FIRST turn is what creates that row (and seeds its title from the
+ *     message), and it does so under an unchanged bound id and boot phase — no edge above would fire,
+ *     so without this the rail would read "new conversation" for the rest of the session. Every later
+ *     turn rides the same edge, which is also what keeps the title and activity stamp current.
  */
 export function watchOpenThread(workspace: Workspace, seams: ThreadSeams = realThreadSeams): void {
     createEffect(() => {
@@ -137,18 +162,29 @@ export function watchOpenThread(workspace: Workspace, seams: ThreadSeams = realT
         if (resolvingForAnalysisId === analysis.id) return;
         const analysisId = analysis.id;
         resolvingForAnalysisId = analysisId;
-        void resolveThreadId(analysisId, seams).then((resolved) => {
-            resolvingForAnalysisId = null;
-            if (resolved === null) return;
-            // The listing is a Postgres round-trip, during which the user can swap analyses or a
-            // palette command can bind a thread itself. Both make this resolution stale, and writing it
-            // would swap the user off the chat they just opened — so drop it. The reads here are
-            // deliberately outside the tracking scope (this runs after the effect returned), so they
-            // are a plain snapshot of the live scope, not new dependencies.
-            const open = workspace.analysis;
-            if (!open || open.id !== analysisId || workspace.sessionId !== null) return;
-            workspace.openSession(resolved, workspace.workingDir, open);
-        });
+        void resolveThreadId(analysisId, seams).then(
+            (resolved) => {
+                resolvingForAnalysisId = null;
+                if (resolved === null) return;
+                // The listing is a Postgres round-trip, during which the user can swap analyses or a
+                // palette command can bind a thread itself. Both make this resolution stale, and writing it
+                // would swap the user off the chat they just opened — so drop it. The reads here are
+                // deliberately outside the tracking scope (this runs after the effect returned), so they
+                // are a plain snapshot of the live scope, not new dependencies.
+                const open = workspace.analysis;
+                if (!open || open.id !== analysisId || workspace.sessionId !== null) return;
+                workspace.openSession(resolved, workspace.workingDir, open);
+            },
+            // The marker clears on BOTH settlement paths. A throw out of the thread store (its expected
+            // failures ride the Result channel inside `resolveThreadId`, so a rejection here is an
+            // unexpected one) would otherwise leave the marker set forever: every later ready edge would
+            // see this analysis as already resolving and skip, stranding the chat permanently unbound.
+            // The throw itself is absorbed rather than crashing the render root — the next ready edge is
+            // the retry, and the scope simply stays unbound until then.
+            () => {
+                resolvingForAnalysisId = null;
+            },
+        );
     });
 
     createEffect(() => {
@@ -158,11 +194,24 @@ export function watchOpenThread(workspace: Workspace, seams: ThreadSeams = realT
         // showing a bound id's stale metadata from a previous boot.
         void refreshOpenThread(phase === "ready" ? bound : null, seams);
     });
+
+    // The turn-completion down-edge. `prev` is closure-local per watcher invocation; seeded to the
+    // current status so the effect's initial (synchronous) run never fires a false edge. Mirrors the
+    // sidebar's ledger refresh, which hangs off the same edge for the same reason: a turn writes rows
+    // nothing in the scope observes.
+    let prev: ChatStatus = chatStatus();
+    createEffect(() => {
+        const status = chatStatus();
+        const bound = workspace.sessionId;
+        if (prev === "busy" && status === "idle" && bound !== null) void refreshOpenThread(bound, seams);
+        prev = status;
+    });
 }
 
 /** Test hook: drop the open-thread snapshot and any in-flight resolution/read. Test-only. */
 export function __resetOpenThreadForTest(): void {
     metadataGeneration += 1;
     resolvingForAnalysisId = null;
+    snapshotThreadId = null;
     setThreadState({ kind: "unresolved" });
 }

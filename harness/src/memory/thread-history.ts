@@ -286,12 +286,44 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                     // it from here (a row the thread store otherwise owns) buys the
                     // guarantee for every host with no wiring, and inside the turn's own
                     // transaction there is no window where the rows exist but the thread
-                    // reads stale. Zero rows affected is a normal outcome: a thread with
-                    // no metadata row still gets its turn persisted, because losing a
-                    // turn over a missing breadcrumb is the worse failure.
-                    tryMutation("thread-history.appendTurn.touchThread", () =>
-                        client.query("UPDATE cortex_analysis_threads SET updated_at = NOW() WHERE thread_id = $1", [threadId]),
-                    ).map(() => undefined),
+                    // reads stale.
+                    //
+                    // The breadcrumb is never worth the turn: the touch may fail without
+                    // failing the append, and affecting zero rows is equally normal — a
+                    // thread with no metadata row, or a soft-deleted one this leaves
+                    // alone rather than reviving (every other writer of the table filters
+                    // the tombstone too). Tolerating the failure takes the savepoint, not
+                    // just the swallowed `err`: Postgres poisons a transaction at its
+                    // first failed statement and downgrades the eventual COMMIT to a
+                    // ROLLBACK — without a rewind point the turn's inserts would go with
+                    // it, and silently, since that COMMIT still reports success.
+                    //
+                    // `GREATEST(updated_at, clock_timestamp())` because `NOW()` is
+                    // transaction-START time while this transaction has since waited on
+                    // the advisory lock and spent a round trip per message: a title update
+                    // that began later can already have stamped a newer `updated_at`, and
+                    // a plain assignment would rewind it. Activity only ever moves the
+                    // timestamp forward.
+                    tryMutation("thread-history.appendTurn.touchThread.savepoint", () => client.query("SAVEPOINT touch_thread"))
+                        .andThen(() =>
+                            tryMutation("thread-history.appendTurn.touchThread", () =>
+                                client.query(
+                                    `UPDATE cortex_analysis_threads
+                        SET updated_at = GREATEST(updated_at, clock_timestamp())
+                      WHERE thread_id = $1 AND deleted_at IS NULL`,
+                                    [threadId],
+                                ),
+                            ),
+                        )
+                        .map(() => undefined)
+                        .orElse(() =>
+                            // Rewind to before the touch so the transaction is usable again
+                            // and the turn commits. Nothing follows in this chain, so COMMIT
+                            // releases the savepoint on the success path.
+                            tryMutation("thread-history.appendTurn.touchThread.rewind", () => client.query("ROLLBACK TO SAVEPOINT touch_thread"))
+                                .map(() => undefined)
+                                .orElse(() => okVoid<DbError>()),
+                        ),
                 ),
         );
     }

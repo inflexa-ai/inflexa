@@ -1,9 +1,24 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { errAsync, okAsync } from "neverthrow";
+import type { DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
 
 import { GLYPHS } from "../lib/design_system.ts";
 import { __setAgentModelsForTest, __setBootStateForTest } from "./hooks/boot.ts";
-import { commands, modelStatusLines, type CommandId } from "./commands.tsx";
+import {
+    commands,
+    commitSessionRename,
+    confirmSessionDelete,
+    deleteSessionFlow,
+    modelStatusLines,
+    openAnalysis,
+    openRenameSession,
+    openSwitchSession,
+    type CommandId,
+    type SessionSeams,
+} from "./commands.tsx";
 import type { Workspace } from "./contexts/workspace.ts";
+import type { Notice } from "./theme.ts";
+import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { Analysis } from "../types/analysis.ts";
 
 // modelStatusLines reads the module-level boot + agentModels stores, so each test seeds them via the
@@ -112,5 +127,229 @@ describe("session command gating", () => {
         const noAnalysis = scope(null, "thread-bound-1");
         expect(enabledOf("session.switch", noAnalysis)).toBe(false);
         expect(enabledOf("session.delete", noAnalysis)).toBe(false);
+    });
+});
+
+// The session flows (switch / rename / delete) and the in-place analysis open reach Postgres, the
+// booted runtime, and the toast channel through `SessionSeams`, so every case here runs offline: the
+// fakes resolve on the test's schedule, which is what makes the refusals, the degrades, and the
+// interleaving of two rapid opens assertable at all.
+describe("session flows", () => {
+    // Only `id`/`name` are load-bearing (the flows pass the row through to `openSession`), so a partial
+    // stand-in cast keeps the fixture flat.
+    const ANALYSIS = { id: "a1", name: "Alpha", projectId: null } as unknown as Analysis;
+    // The seams read only `.pool` off the handle and the fakes ignore it, so a partial stand-in cast
+    // keeps every case offline. Mirrors `thread.test.ts`.
+    const fakePool = {} as unknown as Pool;
+    const fakeRuntime = { pool: fakePool } as unknown as HarnessRuntime;
+    const dbErr: DbError = { type: "query_failed", op: "test", cause: new Error("boom") };
+    const READY = { phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } } as const;
+
+    function threadRow(over: Partial<Thread> = {}): Thread {
+        return {
+            threadId: "thread-1",
+            analysisId: ANALYSIS.id,
+            title: "Cohort survival questions",
+            createdAt: new Date("2026-07-08T00:00:00.000Z"),
+            updatedAt: new Date("2026-07-08T01:00:00.000Z"),
+            ...over,
+        };
+    }
+
+    function threadPage(threads: Thread[]): ThreadPage {
+        return { threads, total: threads.length, page: 0, perPage: 20, hasMore: false };
+    }
+
+    /** A workspace stand-in recording the two writes a session flow can make: dialogs and scope swaps. */
+    function sessionScope(
+        analysis: Analysis | null,
+        sessionId: string | null,
+    ): { ws: Workspace; dialogs: () => number; opened: { threadId: string | null; analysisId: string }[] } {
+        const opened: { threadId: string | null; analysisId: string }[] = [];
+        let dialogs = 0;
+        const ws = {
+            analysis,
+            sessionId,
+            workingDir: "/work",
+            project: null,
+            openDialog: () => {
+                dialogs += 1;
+            },
+            closeDialog: () => {},
+            openSession: (threadId: string | null, _workingDir: string, next: Analysis) => {
+                opened.push({ threadId, analysisId: next.id });
+            },
+            quit: async () => {},
+        } as unknown as Workspace;
+        return { ws, dialogs: () => dialogs, opened };
+    }
+
+    /** Seams plus recorders for the notices raised and the snapshot pokes issued. */
+    function makeSeams(over: Partial<SessionSeams> = {}): { seams: SessionSeams; notices: Notice[]; refreshed: string[] } {
+        const notices: Notice[] = [];
+        const refreshed: string[] = [];
+        const base: SessionSeams = {
+            runtime: () => fakeRuntime,
+            listThreads: () => okAsync(threadPage([])),
+            getThread: () => okAsync(null),
+            updateTitle: () => okAsync(null),
+            deleteThread: () => okAsync<void, DbError>(undefined),
+            resolveThreadId: async () => "thread-resolved",
+            workingDirFor: () => "/work",
+            refreshThread: (threadId) => {
+                refreshed.push(threadId);
+            },
+            notify: (n) => {
+                notices.push(n);
+            },
+        };
+        return { seams: { ...base, ...over }, notices, refreshed };
+    }
+
+    test("switch refuses before boot reaches ready, speaking rather than no-op'ing, and lists nothing", async () => {
+        // The palette hides the command pre-`ready`, but its leader chord dispatches by id and bypasses
+        // that predicate — so this path IS reachable while the runtime is still booting.
+        __setBootStateForTest({ phase: "booting" });
+        let listings = 0;
+        const t = makeSeams({
+            listThreads: () => {
+                listings += 1;
+                return okAsync(threadPage([]));
+            },
+        });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await openSwitchSession(w.ws, t.seams);
+
+        expect(listings).toBe(0);
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("info");
+        expect(t.notices[0]?.text).toContain("booting");
+    });
+
+    test("a failed listing warns and still opens the picker — a degrade, never a crash", async () => {
+        __setBootStateForTest(READY);
+        const t = makeSeams({ listThreads: () => errAsync(dbErr) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await openSwitchSession(w.ws, t.seams);
+
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("warn");
+        // The picker still opens (on an empty list): the user keeps a working surface, and its empty
+        // state is what tells them nothing could be listed.
+        expect(w.dialogs()).toBe(1);
+    });
+
+    test("rename refuses BEFORE the prompt opens when the thread has no row yet", async () => {
+        // The row is the first turn's job, so there is nothing to retitle until then — refusing up front
+        // costs nothing, where refusing on submit spends the user's typing on a write that cannot land.
+        const t = makeSeams({ getThread: () => okAsync(null) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await openRenameSession(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("warn");
+        expect(t.notices[0]?.text).toContain("Send a message first");
+    });
+
+    test("rename opens the prompt on a live row, pre-filled from the pg title", async () => {
+        const t = makeSeams({ getThread: () => okAsync(threadRow()) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await openRenameSession(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(1);
+        expect(t.notices).toEqual([]);
+    });
+
+    test("a rename whose row vanished between the prompt and the submit warns instead of reporting success", async () => {
+        // The concurrent-delete backstop: `updateTitle` is a no-op on a missing row, so a silent success
+        // would claim a title the sidebar will never show.
+        const t = makeSeams({ updateTitle: () => okAsync(null) });
+
+        await commitSessionRename(fakePool, "thread-1", "Variant burden sweep", t.seams);
+
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("warn");
+        expect(t.refreshed).toEqual([]); // nothing changed, so nothing to repaint
+    });
+
+    test("a committed rename pokes the open-thread snapshot, since the bound id never changed", async () => {
+        const t = makeSeams({ updateTitle: (_pool, threadId, title) => okAsync(threadRow({ threadId, title })) });
+
+        await commitSessionRename(fakePool, "thread-1", "  Variant burden sweep  ", t.seams);
+
+        expect(t.notices[0]?.kind).toBe("info");
+        expect(t.notices[0]?.text).toContain("Variant burden sweep"); // trimmed before it is written
+        expect(t.refreshed).toEqual(["thread-1"]);
+    });
+
+    test("a rename write failure surfaces the error and leaves the rail alone", async () => {
+        const t = makeSeams({ updateTitle: () => errAsync(dbErr) });
+
+        await commitSessionRename(fakePool, "thread-1", "Variant burden sweep", t.seams);
+
+        expect(t.notices[0]?.kind).toBe("error");
+        expect(t.refreshed).toEqual([]);
+    });
+
+    test("delete says there is nothing to delete when the conversation has no saved row", async () => {
+        // Confirming against a name we do not have would ask the user to type a fiction.
+        const t = makeSeams({ getThread: () => okAsync(null) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await deleteSessionFlow(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("info");
+        expect(t.notices[0]?.text).toContain("nothing to delete");
+    });
+
+    test("a confirmed delete re-lands the chat on the analysis's surviving thread", async () => {
+        const t = makeSeams({ resolveThreadId: async () => "thread-survivor" });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await confirmSessionDelete(w.ws, fakePool, ANALYSIS, "thread-1", t.seams);
+
+        expect(t.notices[0]?.kind).toBe("info");
+        // The chat is never left bound to a thread that no longer lists.
+        expect(w.opened).toEqual([{ threadId: "thread-survivor", analysisId: ANALYSIS.id }]);
+    });
+
+    test("a failed delete surfaces the error and leaves the user where they were", async () => {
+        const t = makeSeams({ deleteThread: () => errAsync(dbErr) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await confirmSessionDelete(w.ws, fakePool, ANALYSIS, "thread-1", t.seams);
+
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("error");
+        expect(w.opened).toEqual([]); // the thread still lists, so nothing is re-landed
+    });
+
+    test("two rapid opens: the one STARTED last wins, even when the older listing resolves last", async () => {
+        // Both resolutions are Postgres round-trips; without the generation token the slower (older) one
+        // would land last and drop the user back on the analysis they just moved off.
+        const OTHER = { id: "a2", name: "Bravo", projectId: null } as unknown as Analysis;
+        let releaseSlow!: () => void;
+        const gate = new Promise<void>((r) => {
+            releaseSlow = r;
+        });
+        const slow = makeSeams({ resolveThreadId: async () => gate.then(() => "thread-alpha") });
+        const fast = makeSeams({ resolveThreadId: async () => "thread-bravo" });
+        const w = sessionScope(ANALYSIS, null);
+
+        const stale = openAnalysis(w.ws, ANALYSIS, slow.seams); // parks on its gate
+        await openAnalysis(w.ws, OTHER, fast.seams); // starts later, settles first
+
+        releaseSlow();
+        await stale;
+
+        expect(w.opened).toEqual([{ threadId: "thread-bravo", analysisId: OTHER.id }]);
     });
 });

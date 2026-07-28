@@ -337,6 +337,47 @@ export function askSubmitAction(text: string, askDocked: boolean, answerBusy: bo
     return reply ? { kind: "answer", reply } : { kind: "refuse" };
 }
 
+/**
+ * The four outcomes of a NORMAL (non-ask) composer submit — the result of {@link turnSubmitAction},
+ * executed by `handleSubmit` once the ask-queue precedence has let the submit through.
+ *
+ * Only `send` clears the composer: every other outcome is a refusal, and `handleSubmit` returns on it
+ * BEFORE the buffer clear, so the typed text survives to be re-submitted the moment the blocking
+ * condition lifts. That retention is the whole point of the gates — a message typed during the boot
+ * animation, or into the window before the thread bind resolves, must not vanish.
+ */
+export type TurnSubmitAction =
+    /** A turn is already running, or the runtime has not finished booting: a silent no-op. */
+    | { readonly kind: "wait" }
+    /** No analysis is open — unreachable in practice, so it earns the error banner rather than a notice. */
+    | { readonly kind: "no-analysis" }
+    /** The thread bind has not resolved yet: an info notice, since nothing has failed. */
+    | { readonly kind: "unbound" }
+    /** Cleared to run: hand the turn to the conversation store with the ids it needs. */
+    | { readonly kind: "send"; readonly sessionId: string; readonly analysisId: string };
+
+/**
+ * The normal-turn submit gates, in precedence order: busy/booting → no analysis → no bound thread →
+ * send. Pure over the four inputs the gates actually read, so the whole precedence — in particular the
+ * unbound-thread refusal, which is otherwise reachable only inside a real race between the `ready` edge
+ * and the Postgres round-trip that binds the thread — is unit-testable without mounting the App, a
+ * runtime, or a database. `App`'s `handleSubmit` executes the verdict and owns the wording of each
+ * refusal, exactly as it does for {@link askSubmitAction}.
+ *
+ * `busy` and `booting` collapse into one outcome deliberately: both are silent no-ops at the call site
+ * (the chat status and the gated input affordance already explain why), so distinguishing them here
+ * would be a distinction the caller cannot act on.
+ *
+ * Takes `analysisId`/`sessionId` rather than the workspace object because the ids are all the decision
+ * (and all the send) needs — keeping the input primitive is what keeps this callable from a test.
+ */
+export function turnSubmitAction(opts: { busy: boolean; ready: boolean; analysisId: string | null; sessionId: string | null }): TurnSubmitAction {
+    if (opts.busy || !opts.ready) return { kind: "wait" };
+    if (opts.analysisId === null) return { kind: "no-analysis" };
+    if (opts.sessionId === null) return { kind: "unbound" };
+    return { kind: "send", sessionId: opts.sessionId, analysisId: opts.analysisId };
+}
+
 export function App(props: AppProps) {
     const dims = useTerminalDimensions();
     const renderer = useRenderer();
@@ -820,29 +861,39 @@ export function App(props: AppProps) {
             }
         }
 
-        if (chatStatus() === "busy") return;
-        // Gate normal turns behind a ready runtime: before boot completes there is no conversation
-        // agent to drive, so a submit is a no-op (return BEFORE clearing the buffer so a message typed
-        // while booting survives to send once ready). The boot animation + gated input affordance
-        // already tell the user why. Quit still works — the three-way ctrl+c chord and the /quit alias
-        // above both bypass this gate.
-        if (bootState().phase !== "ready") return;
-        // A ready runtime is always analysis-scoped (boot only fires for an analysis chat), so this
-        // guards an unreachable state rather than crashing on `analysis!.id`. Refuse the turn with an
-        // error banner and keep the typed text (return before clearing the buffer).
-        const analysis = workspace.analysis;
-        if (!analysis) {
-            conversation.setError("No analysis is open — cannot start a turn.");
-            return;
-        }
-        // The thread is bound by a Postgres round-trip fired on the same `ready` edge that opened this
-        // gate, so a submit typed during the boot animation can land in the window before it resolves —
-        // with no thread id to append the turn to. Refuse with a notice (not the error banner: nothing
-        // failed) and keep the typed text, since the very next submit lands once the bind completes.
-        const threadId = workspace.sessionId;
-        if (threadId === null) {
-            notify({ kind: "info", text: `Opening the conversation${GLYPHS.ellipsis}` });
-            return;
+        // The normal-turn gates live in the pure `turnSubmitAction`; this executes its verdict. Every
+        // refusal below returns BEFORE the buffer clear, so the typed text survives to be re-sent —
+        // that retention is why each gate is a `return` and not a fall-through.
+        const turn = turnSubmitAction({
+            busy: chatStatus() === "busy",
+            // Before boot completes there is no conversation agent to drive. The boot animation + gated
+            // input affordance already tell the user why, so the refusal is silent. Quit still works —
+            // the three-way ctrl+c chord and the /quit alias above both bypass this gate.
+            ready: bootState().phase === "ready",
+            analysisId: workspace.analysis?.id ?? null,
+            sessionId: workspace.sessionId,
+        });
+        switch (turn.kind) {
+            case "wait":
+                return;
+            case "no-analysis":
+                // A ready runtime is always analysis-scoped (boot only fires for an analysis chat), so
+                // this guards an unreachable state rather than crashing on a missing id.
+                conversation.setError("No analysis is open — cannot start a turn.");
+                return;
+            case "unbound":
+                // The thread is bound by a Postgres round-trip fired on the same `ready` edge that opened
+                // the gate above, so a submit typed during the boot animation can land in the window
+                // before it resolves — with no thread id to append the turn to. A notice, not the error
+                // banner: nothing failed, and the very next submit lands once the bind completes.
+                notify({ kind: "info", text: `Opening the conversation${GLYPHS.ellipsis}` });
+                return;
+            case "send":
+                break;
+            default: {
+                const _exhaustive: never = turn;
+                throw new Error(`unhandled turn-submit action: ${JSON.stringify(_exhaustive)}`);
+            }
         }
         // A non-empty `text` was read off `textareaRef.editBuffer` above, so the ref is mounted.
         textareaRef!.setText("");
@@ -854,7 +905,7 @@ export function App(props: AppProps) {
 
         // The conversation store owns the request lifecycle (the turn-scoped AbortController + the
         // shared turn engine); the harness emit adapter writes the stream, so App only hands off the text.
-        await conversation.send({ sessionId: threadId, analysisId: analysis.id, userText: text });
+        await conversation.send({ sessionId: turn.sessionId, analysisId: turn.analysisId, userText: text });
     }
 
     // The failed message the boot gate surfaces in the chat column; `undefined` while merely booting.

@@ -1,6 +1,7 @@
 import { createSignal, Show, type JSX } from "solid-js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { ResultAsync } from "neverthrow";
 // Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import type { VerifyResult } from "../types/prov.ts";
@@ -14,10 +15,10 @@ import { RunDetailDialog } from "./components/dialog/run_detail_dialog.tsx";
 import { FilePicker } from "./components/dialog/file_picker.tsx";
 import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
-import { setTheme, theme } from "./theme.ts";
+import { setTheme, theme, type Notice } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
 import { createThreadStore, loadPlan, queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
-import type { CortexRunRow, Thread } from "@inflexa-ai/harness";
+import type { CortexRunRow, DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
 
 import { agentModels, bootState, harnessRuntime } from "./hooks/boot.ts";
 import { refreshOpenThread, resolveThreadId } from "./hooks/thread.ts";
@@ -29,6 +30,7 @@ import { RUN_STATUS_TERMINAL, absTime, absTimeShort, idTail, shortRunName } from
 import { chatStatus } from "./hooks/status.ts";
 import { keybindLabel } from "./keymap.ts";
 import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
+import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { mkdirResult, writeFileResult } from "../lib/fs.ts";
@@ -123,14 +125,64 @@ async function workspaceBusyReason(analysisId: string): Promise<string | null> {
 }
 
 /**
+ * Injectable edges for the session flows (switch / rename / delete) and the in-place analysis open,
+ * so each is unit-testable offline — no Postgres, no booted runtime, no toast overlay. Mirrors
+ * `ThreadSeams` in `hooks/thread.ts`: production callers omit the argument and get the real booted
+ * runtime, the harness thread store, and the live notice channel.
+ */
+export type SessionSeams = {
+    /** The booted runtime handle, or `null` when boot is not ready. Real: {@link harnessRuntime}. */
+    readonly runtime: () => HarnessRuntime | null;
+    /** An analysis's live threads, most-recently-active first. Real: `createThreadStore(pool).listThreads`. */
+    readonly listThreads: (pool: Pool, analysisId: string) => ResultAsync<ThreadPage, DbError>;
+    /** One thread's row, or `null` when absent/soft-deleted. Real: `createThreadStore(pool).getThread`. */
+    readonly getThread: (pool: Pool, threadId: string) => ResultAsync<Thread | null, DbError>;
+    /** Retitle a thread; `null` when the row is gone. Real: `createThreadStore(pool).updateTitle`. */
+    readonly updateTitle: (pool: Pool, threadId: string, title: string) => ResultAsync<Thread | null, DbError>;
+    /** Soft-delete a thread (tombstone, not a reclaim). Real: `createThreadStore(pool).deleteThread`. */
+    readonly deleteThread: (pool: Pool, threadId: string) => ResultAsync<void, DbError>;
+    /** Pick the thread to open for an analysis — most recent, else a fresh mint. Real: {@link resolveThreadId}. */
+    readonly resolveThreadId: (analysisId: string) => Promise<string | null>;
+    /** An analysis's live working directory. Real: {@link workingDirFor}. */
+    readonly workingDirFor: (a: Analysis) => string;
+    /** Re-read the open thread's row into the sidebar snapshot. Real: {@link refreshOpenThread}. */
+    readonly refreshThread: (threadId: string) => void;
+    /** Raise a transient toast. Real: {@link notify}. Injected so refusals and degrades are observable. */
+    readonly notify: (notice: Notice) => void;
+};
+
+const realSessionSeams: SessionSeams = {
+    runtime: harnessRuntime,
+    listThreads: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId }),
+    getThread: (pool, threadId) => createThreadStore(pool).getThread(threadId),
+    updateTitle: (pool, threadId, title) => createThreadStore(pool).updateTitle(threadId, title),
+    deleteThread: (pool, threadId) => createThreadStore(pool).deleteThread(threadId),
+    resolveThreadId,
+    workingDirFor,
+    refreshThread: (threadId) => void refreshOpenThread(threadId),
+    notify,
+};
+
+// Monotonic token ordering the scope write below. Two rapid switches (palette, sidebar, a delete's
+// landing) interleave their thread listings and the OLDER can resolve last, dropping the user back on
+// the analysis they just moved off. Re-checking the token after the await makes the open STARTED last
+// the one that lands. Mirrors `metadataGeneration` in `hooks/thread.ts`.
+let openGeneration = 0;
+
+/**
  * Open an analysis's chat in place: bind its most-recently-active thread (else a freshly minted id
  * whose row the first turn creates) and swap the scope. Pre-`ready` the resolver hands back `null` —
  * Postgres is the thread store's only source — and the scope is left unbound, which the boot-edge
  * resolver (`hooks/thread.ts`) then fills in; binding a mint here instead would hide the analysis's
  * real threads behind an empty chat for the rest of the session.
+ *
+ * Exported for tests; the palette commands and the delete landings are the production callers.
  */
-async function openAnalysis(ws: Workspace, a: Analysis): Promise<void> {
-    ws.openSession(await resolveThreadId(a.id), workingDirFor(a), a);
+export async function openAnalysis(ws: Workspace, a: Analysis, seams: SessionSeams = realSessionSeams): Promise<void> {
+    const mine = ++openGeneration;
+    const threadId = await seams.resolveThreadId(a.id);
+    if (mine !== openGeneration) return;
+    ws.openSession(threadId, seams.workingDirFor(a), a);
 }
 
 /** Map a {@link VerifyResult} status to the appropriate notice severity. */
@@ -551,18 +603,18 @@ function threadLabel(thread: Thread): string {
  * its leader chord dispatches by id and bypasses that predicate, so this path IS reachable while the
  * runtime is still booting (the same shape as `analysis.reprofile`).
  */
-async function openSwitchSession(ctx: Workspace): Promise<void> {
-    const runtime = harnessRuntime();
+export async function openSwitchSession(ctx: Workspace, seams: SessionSeams = realSessionSeams): Promise<void> {
+    const runtime = seams.runtime();
     const analysis = ctx.analysis;
     if (!analysis) return;
     if (bootState().phase !== "ready" || !runtime) {
-        notify({ kind: "info", text: `Harness is still booting${GLYPHS.ellipsis}` });
+        seams.notify({ kind: "info", text: `Harness is still booting${GLYPHS.ellipsis}` });
         return;
     }
-    const threads = (await createThreadStore(runtime.pool).listThreads({ analysisId: analysis.id })).match(
+    const threads = (await seams.listThreads(runtime.pool, analysis.id)).match(
         (page) => page.threads,
-        () => {
-            notify({ kind: "warn", text: "Could not list this analysis's conversations." });
+        (): Thread[] => {
+            seams.notify({ kind: "warn", text: "Could not list this analysis's conversations." });
             return [];
         },
     );
@@ -959,20 +1011,32 @@ function RenameAnalysisDialog(): JSX.Element {
 /**
  * Open the session rename prompt, pre-filled with the thread's current pg title. The title is
  * pg-owned, so the current value is an async read taken before the dialog opens (as
- * {@link openSwitchSession} does); a row that has no title yet — one whose first turn has not seeded
- * it, or that has no row at all — simply opens on an empty field.
+ * {@link openSwitchSession} does).
+ *
+ * That read is also the refusal point: the row is created by the FIRST turn, so a conversation that
+ * has not had one has nothing to retitle — refusing here costs the user nothing, where opening an
+ * empty field and refusing on submit spends their typing on a write that can never land. A row that
+ * could not be READ refuses on the same line (as {@link deleteSessionFlow} does): with no title to
+ * pre-fill and no proof the write has a target, the honest move is to say so and leave the prompt shut.
  */
-async function openRenameSession(ctx: Workspace): Promise<void> {
-    const runtime = harnessRuntime();
+export async function openRenameSession(ctx: Workspace, seams: SessionSeams = realSessionSeams): Promise<void> {
+    const runtime = seams.runtime();
     const threadId = ctx.sessionId;
     // Reachable only through the palette, whose `enabled` already requires both — this restates the
     // gate for the narrowing rather than handling a state the user can actually reach.
     if (!runtime || threadId === null) return;
-    const store = createThreadStore(runtime.pool);
-    const current = (await store.getThread(threadId)).match(
-        (t) => t?.title ?? "",
-        () => "",
+    const pool = runtime.pool;
+    const row = (await seams.getThread(pool, threadId)).match(
+        (t) => t,
+        (): Thread | null => null,
     );
+    if (row === null) {
+        seams.notify({ kind: "warn", text: "Send a message first — this conversation has no saved title yet." });
+        return;
+    }
+    // A row can legitimately predate its title (pg seeds it from the first user message), so the
+    // field opens empty rather than on a placeholder the user would have to clear.
+    const current = row.title ?? "";
     ctx.openDialog(() => (
         <PromptDialog
             title="Rename session"
@@ -981,29 +1045,40 @@ async function openRenameSession(ctx: Workspace): Promise<void> {
             onCancel={() => ctx.closeDialog()}
             onSubmit={(raw) => {
                 ctx.closeDialog();
-                const title = raw.trim();
-                if (!title) {
-                    notify({ kind: "warn", text: "A title is required." });
-                    return;
-                }
-                void store.updateTitle(threadId, title).match(
-                    (thread) => {
-                        if (thread === null) {
-                            // The row is created by the first turn, so a rename before then has nothing to
-                            // write to. Say that rather than reporting a success the user will not see.
-                            notify({ kind: "warn", text: "Send a message first — this conversation has no saved title yet." });
-                            return;
-                        }
-                        notify({ kind: "info", text: `Session renamed to "${title}"` });
-                        // The write changes the row without changing the bound id, so no reactive edge
-                        // would re-read it — poke the snapshot so the sidebar shows the new title.
-                        void refreshOpenThread(threadId);
-                    },
-                    (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
-                );
+                void commitSessionRename(pool, threadId, raw, seams);
             }}
         />
     ));
+}
+
+/**
+ * Write a session's new title and report the outcome. Lives beside the prompt rather than inside its
+ * `onSubmit` so the whole decision ladder is testable headlessly (the {@link runModelCommit} shape);
+ * the dialog supplies only the raw text and owns its own close.
+ *
+ * A `null` row here is the concurrent-delete backstop, NOT the "no row yet" case
+ * ({@link openRenameSession} already refused that before the prompt opened): the thread was deleted
+ * between the prompt opening and this submit, so the write found nothing to land on.
+ */
+export async function commitSessionRename(pool: Pool, threadId: string, raw: string, seams: SessionSeams = realSessionSeams): Promise<void> {
+    const title = raw.trim();
+    if (!title) {
+        seams.notify({ kind: "warn", text: "A title is required." });
+        return;
+    }
+    await seams.updateTitle(pool, threadId, title).match(
+        (thread) => {
+            if (thread === null) {
+                seams.notify({ kind: "warn", text: "This conversation is no longer saved — its title was not changed." });
+                return;
+            }
+            seams.notify({ kind: "info", text: `Session renamed to "${title}"` });
+            // The write changes the row without changing the bound id, so no reactive edge
+            // would re-read it — poke the snapshot so the sidebar shows the new title.
+            seams.refreshThread(threadId);
+        },
+        (e) => seams.notify({ kind: "error", text: `Failed: ${e.type}` }),
+    );
 }
 
 /**
@@ -1016,41 +1091,52 @@ async function openRenameSession(ctx: Workspace): Promise<void> {
  * split is a separate piece of work, and until it lands a delete that reclaims nothing is strictly
  * less destructive than one that does.
  */
-async function deleteSessionFlow(ctx: Workspace): Promise<void> {
-    const runtime = harnessRuntime();
+export async function deleteSessionFlow(ctx: Workspace, seams: SessionSeams = realSessionSeams): Promise<void> {
+    const runtime = seams.runtime();
     const analysis = ctx.analysis;
     const threadId = ctx.sessionId;
     // Reachable only through the palette, whose `enabled` already requires all three — this restates
     // the gate for the narrowing rather than handling a state the user can actually reach.
     if (!runtime || !analysis || threadId === null) return;
-    const store = createThreadStore(runtime.pool);
-    const name = (await store.getThread(threadId)).match(
+    const pool = runtime.pool;
+    const name = (await seams.getThread(pool, threadId)).match(
         (t) => (t === null ? null : threadLabel(t)),
-        () => null,
+        (): string | null => null,
     );
     if (name === null) {
         // No row (or it could not be read): there is nothing to delete, and confirming against a name
         // we do not have would ask the user to type a fiction.
-        notify({ kind: "info", text: "This conversation has nothing saved yet — there is nothing to delete." });
+        seams.notify({ kind: "info", text: "This conversation has nothing saved yet — there is nothing to delete." });
         return;
     }
     ctx.openDialog(() => (
-        <ConfirmDeleteDialog
-            entityLabel="session"
-            entityName={name}
-            onConfirm={() => {
-                void store.deleteThread(threadId).match(
-                    () => {
-                        notify({ kind: "info", text: "Session deleted." });
-                        // Re-enter through the analysis-open path: it performs exactly the landing this
-                        // needs — bind the surviving most-recent thread, else a fresh mint.
-                        void openAnalysis(ctx, analysis);
-                    },
-                    (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
-                );
-            }}
-        />
+        <ConfirmDeleteDialog entityLabel="session" entityName={name} onConfirm={() => void confirmSessionDelete(ctx, pool, analysis, threadId, seams)} />
     ));
+}
+
+/**
+ * Tombstone the confirmed thread, then land the user on whatever the analysis has left. Lives beside
+ * the confirmation rather than inside its `onConfirm` so the post-confirm ladder is testable
+ * headlessly (the {@link runModelCommit} shape); the dialog owns only the name match and its close.
+ */
+export async function confirmSessionDelete(
+    ctx: Workspace,
+    pool: Pool,
+    analysis: Analysis,
+    threadId: string,
+    seams: SessionSeams = realSessionSeams,
+): Promise<void> {
+    await seams.deleteThread(pool, threadId).match(
+        async () => {
+            seams.notify({ kind: "info", text: "Session deleted." });
+            // Re-enter through the analysis-open path: it performs exactly the landing this
+            // needs — bind the surviving most-recent thread, else a fresh mint.
+            await openAnalysis(ctx, analysis, seams);
+        },
+        // The thread is still bound and still lists, so nothing is re-landed — leaving the user
+        // exactly where they were is the truthful outcome of a delete that did not happen.
+        async (e) => seams.notify({ kind: "error", text: `Failed: ${e.type}` }),
+    );
 }
 
 /** The single source of truth. Add a command = add an entry here. Ordered by category so the

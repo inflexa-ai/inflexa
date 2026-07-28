@@ -70,13 +70,23 @@ describe("runMigrations", () => {
     });
 
     test("leaves exactly the surviving lookup indexes", () => {
+        // The name claims exactness, so assert the COMPLETE set rather than containment: a sixth index
+        // appearing, or one of these quietly disappearing, has to fail here. `sql IS NOT NULL` excludes
+        // SQLite's implicit sqlite_autoindex_* entries — they back the PRIMARY KEY / UNIQUE constraints
+        // and are not indexes this schema declares.
         const indexes = migratedMemoryDb()
-            .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='index'")
+            .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL ORDER BY name")
             .all()
             .map((r) => r.name);
-        for (const index of ["idx_analyses_project", "idx_analyses_anchor", "idx_analysis_inputs_analysis"]) {
-            expect(indexes).toContain(index);
-        }
+        expect(indexes).toEqual([
+            "idx_analyses_anchor",
+            "idx_analyses_project",
+            "idx_analysis_inputs_analysis",
+            "uq_analysis_inputs_anchored",
+            "uq_analysis_inputs_unanchored",
+        ]);
+        // Redundant against the set equality above, but names the chat indexes so a regression that
+        // re-created one reads as exactly that rather than as an anonymous set mismatch.
         for (const index of ["idx_sessions_analysis", "idx_messages_session", "idx_parts_message", "idx_parts_session"]) {
             expect(indexes).not.toContain(index);
         }
@@ -128,6 +138,33 @@ describe("migration 2: dropping the chat tables", () => {
         const db = v1DbWithChatRows();
         runMigrations(db, migrations)._unsafeUnwrap();
         const tables = tableNames(db);
+        for (const table of ["anchors", "projects", "analyses", "analysis_inputs"]) {
+            expect(tables).toContain(table);
+            expect(db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n).toBe(1);
+        }
+    });
+
+    test("a chat table the user already dropped by hand does not brick the migration", () => {
+        // The database is a file the user owns and may hand-edit or restore from an older copy. SQLite's
+        // bare DROP TABLE is a hard error on a table that is already gone, and the runner never records
+        // version 2 for a transaction that threw — so the same error would re-fire on EVERY subsequent
+        // launch, taking down every command over entity data that is perfectly intact. IF EXISTS is what
+        // makes the migration converge from a mutilated schema instead.
+        const db = v1DbWithChatRows();
+        db.run("DROP TABLE parts");
+
+        expect(runMigrations(db, migrations).isOk()).toBe(true);
+
+        const versions = db
+            .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
+            .all()
+            .map((r) => r.version);
+        expect(versions).toEqual([1, 2]);
+
+        const tables = tableNames(db);
+        for (const table of ["sessions", "messages", "parts"]) {
+            expect(tables).not.toContain(table);
+        }
         for (const table of ["anchors", "projects", "analyses", "analysis_inputs"]) {
             expect(tables).toContain(table);
             expect(db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n).toBe(1);

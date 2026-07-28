@@ -362,6 +362,42 @@ describe("Sidebar SESSION section", () => {
         expect(sessionHas(frame, "runtime not ready")).toBe(false);
     });
 
+    test("the live message count rides the loaded row only — every degraded kind suppresses it", async () => {
+        // The count is a chat-store fact, not a thread-row one, so it would happily render beside a
+        // placeholder that says the conversation is unreadable. A distinctive count (no other rail
+        // number can produce `93 msgs`) keeps the assertion from matching an age or an input tally.
+        const COUNT = 93;
+        const token = `${COUNT} msgs`;
+
+        // unresolved — nothing bound yet
+        await refreshOpenThread(
+            null,
+            threadSeams(() => okAsync(threadRow())),
+        );
+        expect(sessionHas(await renderFrame(sessionNode(COUNT), { width: 44, height: 24 }), token)).toBe(false);
+
+        // unavailable — the row read failed
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams(() => errAsync(dbErr)),
+        );
+        expect(sessionHas(await renderFrame(sessionNode(COUNT), { width: 44, height: 24 }), token)).toBe(false);
+
+        // absent — a bound identity whose row the first turn has yet to create
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams(() => okAsync(null)),
+        );
+        expect(sessionHas(await renderFrame(sessionNode(COUNT), { width: 44, height: 24 }), token)).toBe(false);
+
+        // loaded — the count joins the age on the row's meta line
+        await refreshOpenThread(
+            THREAD_ID,
+            threadSeams(() => okAsync(threadRow())),
+        );
+        expect(sessionHas(await renderFrame(sessionNode(COUNT), { width: 44, height: 24 }), token)).toBe(true);
+    });
+
     test("a row whose title the first message has not seeded yet reads 'untitled', not a blank line", async () => {
         await refreshOpenThread(
             THREAD_ID,

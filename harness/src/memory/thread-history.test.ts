@@ -161,12 +161,68 @@ describe("appendTurn thread activity", () => {
         const before = (await store.listThreads({ analysisId: ANALYSIS }))._unsafeUnwrap();
         expect(before.threads.map((t) => t.threadId)).toEqual(["newer", "older"]);
         const newerUpdatedAt = before.threads.find((t) => t.threadId === "newer")!.updatedAt;
+        const olderBefore = before.threads.find((t) => t.threadId === "older")!.updatedAt;
 
         (await history.appendTurn("older", [userText("question one"), assistantText("answer one")]))._unsafeUnwrap();
 
         const after = (await store.listThreads({ analysisId: ANALYSIS }))._unsafeUnwrap();
         expect(after.threads.map((t) => t.threadId)).toEqual(["older", "newer"]);
-        expect(after.threads[0]!.updatedAt.getTime()).toBeGreaterThanOrEqual(newerUpdatedAt.getTime());
+        // Assert on the touched row itself. Reading the head of the listing
+        // instead compares "older" against a bound it already cleared before the
+        // append — a touch that did nothing at all would still satisfy it.
+        const olderAfter = after.threads.find((t) => t.threadId === "older")!.updatedAt;
+        expect(olderAfter.getTime()).toBeGreaterThan(olderBefore.getTime());
+        expect(olderAfter.getTime()).toBeGreaterThan(newerUpdatedAt.getTime());
+    });
+
+    it("persists the turn when the metadata touch itself fails", async () => {
+        const store = createThreadStore(pool);
+        (await store.createThread({ threadId: THREAD, analysisId: ANALYSIS, title: "Touch fails" }))._unsafeUnwrap();
+
+        // Every UPDATE on the metadata table now raises, so the touch fails while
+        // the turn's transaction is still open — the case that must cost nothing
+        // but the breadcrumb.
+        await pool.query(`CREATE FUNCTION boom() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'simulated update failure'; END; $$ LANGUAGE plpgsql`);
+        await pool.query("CREATE TRIGGER boom_trg BEFORE UPDATE ON cortex_analysis_threads FOR EACH ROW EXECUTE FUNCTION boom()");
+
+        const turn = [userText("question one"), assistantText("answer one")];
+        const appended = await history.appendTurn(THREAD, turn);
+        expect(appended.isOk()).toBe(true);
+
+        // The turn committed with the failed touch rolled back out of it, not
+        // alongside it: both rows are readable.
+        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn);
+        const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM messages WHERE thread_id = $1", [THREAD]);
+        expect(Number(rows[0]!.count)).toBe(turn.length);
+    });
+
+    it("leaves a soft-deleted thread's tombstone unmoved while persisting the turn", async () => {
+        const store = createThreadStore(pool);
+        (await store.createThread({ threadId: THREAD, analysisId: ANALYSIS, title: "Deleted" }))._unsafeUnwrap();
+        (await store.deleteThread(THREAD))._unsafeUnwrap();
+
+        // Read the timestamp as text: the driver parses `timestamptz` into a JS
+        // `Date`, and at millisecond resolution a bump this fast can land inside
+        // the same tick as the row's prior value.
+        const readTombstone = async () =>
+            (
+                await pool.query<{ deleted_at: Date | null; updated_at: string }>(
+                    "SELECT deleted_at, updated_at::text AS updated_at FROM cortex_analysis_threads WHERE thread_id = $1",
+                    [THREAD],
+                )
+            ).rows[0]!;
+        const before = await readTombstone();
+
+        const turn = [userText("question one"), assistantText("answer one")];
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+
+        // A deleted thread keeps its messages, so the turn still lands — but the
+        // tombstone is not a live row and the touch must neither revive it nor
+        // advance its activity clock.
+        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn);
+        const after = await readTombstone();
+        expect(after.deleted_at).not.toBeNull();
+        expect(after.updated_at).toBe(before.updated_at);
     });
 
     it("persists the turn for a thread that has no metadata row", async () => {
