@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ok, okAsync, errAsync, ResultAsync } from "neverthrow";
 import { createRoot } from "solid-js";
+
+import { Bus } from "../../lib/bus.ts";
 import { createStore } from "solid-js/store";
 
 // Side-effect import: installs `Date.relativeAge` (the loaded-profile timestamp lines call it) via the
@@ -78,7 +80,7 @@ function seams(
     runtime: () => HarnessRuntime | null = () => fakeRuntime,
     steps: StepExecutionRow[] = [],
 ): RefreshSeams {
-    return { runtime, loadProfile: () => okAsync(profile), loadRuns: () => okAsync(runs), loadSteps: () => okAsync(steps) };
+    return { runtime, loadProfile: () => okAsync(profile), loadRuns: () => okAsync(runs), loadSteps: () => okAsync(steps), loadPlan: () => okAsync(null) };
 }
 
 /** A minimal step-execution row keyed by id + status — the refresh maps rows → step views via `stepStateOf`. */
@@ -151,6 +153,7 @@ describe("refreshSidebarData — snapshot ladder", () => {
         let profileReads = 0;
         let runReads = 0;
         let stepReads = 0;
+        let planReads = 0;
         // Prime to a loaded state so the reset back to not_ready is observable.
         await refreshSidebarData("A", seams(profileStatus(), [runRow()]));
         expect(profileSnapshot().kind).toBe("loaded");
@@ -169,12 +172,17 @@ describe("refreshSidebarData — snapshot ladder", () => {
                 stepReads += 1;
                 return okAsync([]);
             },
+            loadPlan: () => {
+                planReads += 1;
+                return okAsync(null);
+            },
         };
         await refreshSidebarData("A", guarded);
 
         expect(profileSnapshot().kind).toBe("not_ready");
         expect(runsSnapshot().kind).toBe("not_ready");
         expect(profileReads).toBe(0);
+        expect(planReads).toBe(0);
         expect(runReads).toBe(0);
         expect(stepReads).toBe(0);
     });
@@ -185,6 +193,7 @@ describe("refreshSidebarData — snapshot ladder", () => {
             loadProfile: () => errAsync(dbErr),
             loadRuns: () => errAsync(dbErr),
             loadSteps: () => errAsync(dbErr),
+            loadPlan: () => okAsync(null),
         };
         await refreshSidebarData("A", failing);
         expect(profileSnapshot().kind).toBe("unavailable");
@@ -223,6 +232,7 @@ describe("refreshSidebarData — staleness guard", () => {
             loadProfile: () => gatedA,
             loadRuns: () => okAsync([runRow({ status: "running" })]),
             loadSteps: () => okAsync([]),
+            loadPlan: () => okAsync(null),
         };
         const seamsB = seams(profileStatus({ status: "completed" }), [runRow({ status: "completed" })]);
 
@@ -251,12 +261,13 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             loadProfile: () => okAsync(null),
             loadRuns: () => okAsync([runRow({ runId: "11112222-3333-4444-5555-6666aabbccdd", status: "running", workflowName: "executeAnalysis" })]),
             loadSteps: () => okAsync(steps),
+            loadPlan: () => okAsync(null),
         };
         await refreshSidebarData("A", s);
-        const p = activeRunProgress();
-        expect(p).not.toBeNull();
+        const p = activeRunProgress().get("11112222-3333-4444-5555-6666aabbccdd");
+        expect(p).toBeDefined();
         if (p) {
-            expect(p.name).toBe("executeAnalysis"); // shortRunName → the workflow name
+            expect(p.name).toBe("bbccdd"); // no plan title → the id tail, never the constant workflow name
             expect(p.tag).toBe("bbccdd"); // idTail of the runId (dashes stripped, last six)
             expect(p.total).toBe(3);
             expect(p.done).toBe(1); // only the completed step counts as done
@@ -264,7 +275,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
         }
     });
 
-    test("only the NEWEST run drives the row, and the step read fires exactly once", async () => {
+    test("EVERY active run gets its own entry and its own step read", async () => {
         const asked: string[] = [];
         const s: RefreshSeams = {
             runtime: () => fakeRuntime,
@@ -274,9 +285,63 @@ describe("refreshSidebarData — sticky run-progress row", () => {
                 asked.push(runId);
                 return okAsync([stepRow("s", "running")]);
             },
+            loadPlan: () => okAsync(null),
         };
         await refreshSidebarData("A", s);
-        expect(asked).toEqual(["newest"]);
+        // Both, because a second concurrent run having no live surface is the defect this replaces.
+        expect(asked.sort()).toEqual(["newest", "older"]);
+        expect([...activeRunProgress().keys()].sort()).toEqual(["newest", "older"]);
+    });
+
+    test("a terminal run's entry is removed while an active sibling's survives", async () => {
+        const s = (olderStatus: "running" | "completed"): RefreshSeams => ({
+            runtime: () => fakeRuntime,
+            loadProfile: () => okAsync(null),
+            loadRuns: () => okAsync([runRow({ runId: "live", status: "running" }), runRow({ runId: "older", status: olderStatus })]),
+            loadSteps: () => okAsync([stepRow("s", "running")]),
+            loadPlan: () => okAsync(null),
+        });
+        await refreshSidebarData("A", s("running"));
+        expect([...activeRunProgress().keys()].sort()).toEqual(["live", "older"]);
+
+        await refreshSidebarData("A", s("completed"));
+        expect([...activeRunProgress().keys()]).toEqual(["live"]);
+    });
+
+    test("runs and steps are labelled from the plan when one resolves", async () => {
+        const plan = { title: "GSEA cross-species comparison", steps: [{ id: "qc", name: "quality control" }] };
+        const s: RefreshSeams = {
+            runtime: () => fakeRuntime,
+            loadProfile: () => okAsync(null),
+            loadRuns: () => okAsync([runRow({ runId: "run-1", status: "running", planId: "plan-1" })]),
+            loadSteps: () => okAsync([stepRow("qc", "running")]),
+            loadPlan: () => okAsync(plan),
+        };
+        await refreshSidebarData("A", s);
+        const p = activeRunProgress().get("run-1")!;
+        // The plan title replaces "executeAnalysis", which is identical on every ledger row.
+        expect(p.name).toBe("GSEA cross-species comparison");
+        // And the step's human name replaces its T{track}S{step}-style slug.
+        expect(p.steps[0]!.label).toBe("quality control");
+    });
+
+    test("several runs of one plan resolve that plan exactly once", async () => {
+        let planReads = 0;
+        const s: RefreshSeams = {
+            runtime: () => fakeRuntime,
+            loadProfile: () => okAsync(null),
+            loadRuns: () =>
+                okAsync([runRow({ runId: "r1", status: "running", planId: "shared" }), runRow({ runId: "r2", status: "running", planId: "shared" })]),
+            loadSteps: () => okAsync([stepRow("s", "running")]),
+            loadPlan: () => {
+                planReads += 1;
+                return okAsync({ title: "shared plan" });
+            },
+        };
+        await refreshSidebarData("A", s);
+        expect(planReads).toBe(1);
+        expect(activeRunProgress().get("r1")!.name).toBe("shared plan");
+        expect(activeRunProgress().get("r2")!.name).toBe("shared plan");
     });
 
     test("all-terminal runs clear the row and fire NO step read (idle costs no step query)", async () => {
@@ -285,9 +350,11 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             "A",
             seams(null, [runRow({ status: "running" })], () => fakeRuntime, [stepRow("s", "running")]),
         );
-        expect(activeRunProgress()).not.toBeNull();
+        expect(activeRunProgress().size).toBeGreaterThan(0);
 
         let stepReads = 0;
+
+        let planReads = 0;
         const s: RefreshSeams = {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
@@ -296,14 +363,20 @@ describe("refreshSidebarData — sticky run-progress row", () => {
                 stepReads += 1;
                 return okAsync([]);
             },
+            loadPlan: () => {
+                planReads += 1;
+                return okAsync(null);
+            },
         };
         await refreshSidebarData("A", s);
-        expect(activeRunProgress()).toBeNull();
+        expect(activeRunProgress().size).toBe(0);
         expect(stepReads).toBe(0);
+        expect(planReads).toBe(0);
     });
 
     test("no runs at all → the row stays null, and no step read is issued", async () => {
         let stepReads = 0;
+        let planReads = 0;
         const s: RefreshSeams = {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
@@ -312,10 +385,15 @@ describe("refreshSidebarData — sticky run-progress row", () => {
                 stepReads += 1;
                 return okAsync([]);
             },
+            loadPlan: () => {
+                planReads += 1;
+                return okAsync(null);
+            },
         };
         await refreshSidebarData("A", s);
-        expect(activeRunProgress()).toBeNull();
+        expect(activeRunProgress().size).toBe(0);
         expect(stepReads).toBe(0);
+        expect(planReads).toBe(0);
     });
 
     test("a step-read DbError keeps the previous row rather than blinking it away", async () => {
@@ -332,31 +410,34 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             loadProfile: () => okAsync(null),
             loadRuns: () => okAsync([runRow({ runId: "run-x", status: "running" })]),
             loadSteps: () => errAsync(dbErr),
+            loadPlan: () => okAsync(null),
         };
         await refreshSidebarData("A", s);
-        expect(activeRunProgress()).toBe(first); // same reference — the blip did not clear it
+        // Same entry object carried forward — the blip did not blink a genuinely running run away.
+        expect(activeRunProgress().get("run-x")).toBe(first.get("run-x"));
     });
 
-    test("a step-read DbError for a DIFFERENT newest run clears the row rather than showing the old run's progress", async () => {
-        // Prime with run A pinned.
+    test("a step-read DbError for a DIFFERENT run never shows one run's progress under another", async () => {
+        // Prime with run A active.
         await refreshSidebarData(
             "A",
             seams(null, [runRow({ runId: "run-a", status: "running" })], () => fakeRuntime, [stepRow("s", "running")]),
         );
-        const first = activeRunProgress();
-        expect(first).not.toBeNull();
-        if (first) expect(first.tag).toBe(idTail("run-a"));
+        expect(activeRunProgress().get("run-a")!.tag).toBe(idTail("run-a"));
 
-        // The newest run is now B (A went terminal, B took its place) and B's step read blips. The kept
-        // row belongs to A, so holding it would misattribute A's progress to B — the row must clear.
+        // A goes terminal and B takes its place, and B's step read blips. Under the old single-slot
+        // store this was the misattribution hazard — the kept row belonged to A. Keying by run id
+        // makes it unrepresentable: B simply has no entry, and A's is gone because A is terminal.
         const s: RefreshSeams = {
             runtime: () => fakeRuntime,
             loadProfile: () => okAsync(null),
             loadRuns: () => okAsync([runRow({ runId: "run-b", status: "running" }), runRow({ runId: "run-a", status: "completed" })]),
             loadSteps: () => errAsync(dbErr),
+            loadPlan: () => okAsync(null),
         };
         await refreshSidebarData("A", s);
-        expect(activeRunProgress()).toBeNull();
+        expect(activeRunProgress().has("run-b")).toBe(false);
+        expect(activeRunProgress().has("run-a")).toBe(false);
     });
 
     test("the runtime-not-ready no-op clears the row", async () => {
@@ -364,13 +445,13 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             "A",
             seams(null, [runRow({ status: "running" })], () => fakeRuntime, [stepRow("s", "running")]),
         );
-        expect(activeRunProgress()).not.toBeNull();
+        expect(activeRunProgress().size).toBeGreaterThan(0);
 
         await refreshSidebarData(
             "A",
             seams(null, [], () => null),
         );
-        expect(activeRunProgress()).toBeNull();
+        expect(activeRunProgress().size).toBe(0);
     });
 
     test("an analysis swap clears the row synchronously, before the new analysis loads", async () => {
@@ -389,7 +470,13 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             const s: RefreshSeams =
                 id === "A"
                     ? seams(null, [runRow({ status: "running" })], () => fakeRuntime, [stepRow("s", "running")])
-                    : { runtime: () => fakeRuntime, loadProfile: () => gatedB, loadRuns: () => okAsync([]), loadSteps: () => okAsync([]) };
+                    : {
+                          runtime: () => fakeRuntime,
+                          loadProfile: () => gatedB,
+                          loadRuns: () => okAsync([]),
+                          loadSteps: () => okAsync([]),
+                          loadPlan: () => okAsync(null),
+                      };
             await refreshSidebarData(id, s);
         };
 
@@ -398,10 +485,10 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             const readyDriver: BootDriver = async () => ok({ conversation: { model: "m" }, pool: {} } as unknown as HarnessRuntime);
             await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver); // Trigger 1 fires refresh(A)
             await new Promise<void>((r) => setTimeout(r, 0)); // let A's reads settle
-            expect(activeRunProgress()).not.toBeNull(); // A's active run is pinned
+            expect(activeRunProgress().size).toBeGreaterThan(0); // A's active run is pinned
 
             setStore("analysis", { id: "B" }); // swap → Trigger 1 resets synchronously, refresh(B) parks on the gate
-            expect(activeRunProgress()).toBeNull(); // no stale A row during the swap window
+            expect(activeRunProgress().size).toBe(0); // no stale A entries during the swap window
 
             releaseB(profileStatus({ status: "completed" })); // let B settle so no read leaks past the test
             await new Promise<void>((r) => setTimeout(r, 0));
@@ -543,7 +630,13 @@ describe("watchSidebarData — swap resets the snapshots before the new analysis
             const s: RefreshSeams =
                 id === "A"
                     ? seams(profileStatus({ status: "completed" }), [runRow()])
-                    : { runtime: () => fakeRuntime, loadProfile: () => gatedB, loadRuns: () => okAsync([]), loadSteps: () => okAsync([]) };
+                    : {
+                          runtime: () => fakeRuntime,
+                          loadProfile: () => gatedB,
+                          loadRuns: () => okAsync([]),
+                          loadSteps: () => okAsync([]),
+                          loadPlan: () => okAsync(null),
+                      };
             await refreshSidebarData(id, s);
         };
 
@@ -706,5 +799,86 @@ describe("the bounded poll never overlaps itself", () => {
         } finally {
             dispose();
         }
+    });
+});
+
+describe("watchSidebarData — run-observation trigger", () => {
+    const runEvent = (analysisId: string): void => {
+        Bus.emit("inflexa", { type: "run.observed", analysisId, snapshot: { runId: "r1", status: "running", steps: [] } });
+    };
+
+    test("a run.observed event for the open analysis refreshes without waiting for the poll", async () => {
+        let refreshes = 0;
+        const dispose = mountWatch(wsFor("A"), { refresh: () => ((refreshes += 1), Promise.resolve()), arm: () => () => {} });
+        const before = refreshes;
+
+        runEvent("A");
+        await new Promise<void>((r) => setTimeout(r, 0));
+        expect(refreshes).toBe(before + 1);
+        dispose();
+    });
+
+    test("an event for a DIFFERENT analysis is ignored", async () => {
+        let refreshes = 0;
+        const dispose = mountWatch(wsFor("A"), { refresh: () => ((refreshes += 1), Promise.resolve()), arm: () => () => {} });
+        const before = refreshes;
+
+        runEvent("OTHER");
+        await new Promise<void>((r) => setTimeout(r, 0));
+        expect(refreshes).toBe(before);
+        dispose();
+    });
+
+    test("a burst arriving faster than a refresh completes is skipped, not queued", async () => {
+        // Same discipline as the poll: a superseding storm would leave the store with no write at
+        // all, because each refresh cancels the last via its generation token.
+        let refreshes = 0;
+        let release: () => void = () => {};
+        const dispose = mountWatch(wsFor("A"), {
+            refresh: () => {
+                refreshes += 1;
+                return new Promise<void>((r) => {
+                    release = r;
+                });
+            },
+            arm: () => () => {},
+        });
+        const before = refreshes;
+
+        runEvent("A");
+        expect(refreshes).toBe(before + 1);
+        runEvent("A");
+        runEvent("A");
+        expect(refreshes).toBe(before + 1); // both dropped while the first is in flight
+
+        release();
+        await new Promise<void>((r) => setTimeout(r, 0));
+        runEvent("A");
+        expect(refreshes).toBe(before + 2); // and it recovers once the in-flight one settles
+        dispose();
+    });
+
+    test("an event never disarms the poll — the bus is in-process, so an out-of-process run needs it", async () => {
+        // A run launched by a separate `inflexa run` emits nothing here; the interval is the only
+        // thing that makes it visible, so the push must not replace it.
+        let arms = 0;
+        const dispose = mountWatch(wsFor("A"), {
+            refresh: () => Promise.resolve(),
+            arm: () => {
+                arms += 1;
+                return () => {};
+            },
+        });
+        await refreshSidebarData(
+            "A",
+            seams(null, [runRow({ status: "running" })], () => fakeRuntime, [stepRow("s", "running")]),
+        );
+        const armedBefore = arms;
+        expect(armedBefore).toBeGreaterThan(0);
+
+        runEvent("A");
+        await new Promise<void>((r) => setTimeout(r, 0));
+        expect(arms).toBe(armedBefore); // still armed, not re-armed and not torn down
+        dispose();
     });
 });

@@ -9,8 +9,28 @@ import { Fg } from "./emphasis.tsx";
 export type RunStepView = {
     /** Human label shown in the step list. */
     label: string;
-    /** Lifecycle state, selecting the step glyph + color. */
-    state: "done" | "running" | "failed" | "queued";
+    /**
+     * Lifecycle state, selecting the step glyph + color. `skipped` is distinct from `queued`
+     * on purpose — see {@link stepMark}.
+     */
+    state: "done" | "running" | "failed" | "queued" | "skipped";
+    /**
+     * The agent that owns the step, shown beside the label where the mount has room. Absent for a
+     * view built from a source that does not record one (the design-gallery mock's simplest rows).
+     */
+    agent?: string;
+    /**
+     * Why an agent declared it could not produce its deliverable. Present only on a step the ledger
+     * recorded as `blocked` — which the state union folds into `failed`, since the run treats it as
+     * one. Rendering the reason is what keeps a blocker distinguishable from a crash: without it
+     * both are a bare `✗` and the reader cannot tell an honest "I can't do this" from a stack trace.
+     */
+    blockedReason?: string | null;
+    /**
+     * How many times the step was attempted. Rendered only when it exceeds one, so an ordinary
+     * first-try step carries no noise and a retried one stops looking like a slow first attempt.
+     */
+    attempts?: number;
     /**
      * ISO start time of a `running` step, from the ledger's `started_at`. Meaningful only while the step
      * is running — the block renders its elapsed age beside the label so a long step reads as live rather
@@ -94,11 +114,19 @@ function elisionLabel(count: number, word: "earlier" | "more"): string {
     return `${count} ${word} step${count === 1 ? "" : "s"}`;
 }
 
-/** The themed glyph + color role for a step's state. */
+/**
+ * The themed glyph + color role for a step's state.
+ *
+ * `skipped` and `queued` are both inactive and both muted, but they are NOT the same fact and must
+ * not share a glyph: a queued step is still going to run, a skipped one never will. Collapsing them
+ * makes a doomed dependent read as work still ahead. The em dash carries "not applicable" without
+ * borrowing the error tone — a skipped step is not a failure, it is a consequence of one.
+ */
 function stepMark(state: RunStepView["state"]): { glyph: string; role: "success" | "warning" | "error" | "fgSubtle" } {
     if (state === "done") return { glyph: GLYPHS.check, role: "success" };
     if (state === "running") return { glyph: GLYPHS.triangleRight, role: "warning" };
     if (state === "failed") return { glyph: GLYPHS.cross, role: "error" };
+    if (state === "skipped") return { glyph: GLYPHS.emDash, role: "fgSubtle" };
     return { glyph: GLYPHS.circleHollow, role: "fgSubtle" };
 }
 
@@ -272,12 +300,30 @@ export function RunBlock(props: RunBlockProps) {
                         // TEXT tier (not the fgSubtle decoration tier) — it is information and must clear
                         // the 4.5:1 floor.
                         const age = (): string | null => (step.state === "running" && step.startedAt ? step.startedAt.relativeAge() : null);
+                        // Retries are silent until they happen: a first-try step would otherwise carry a
+                        // permanent `×1` that means nothing, while a `×3` beside a long-running step is
+                        // the difference between "slow" and "failing repeatedly".
+                        const retries = (): string | null => (step.attempts !== undefined && step.attempts > 1 ? `${GLYPHS.multiply}${step.attempts}` : null);
                         return (
-                            <text>
-                                <Fg role={m.role}>{`${m.glyph} `}</Fg>
-                                <Fg role={step.state === "queued" ? "fgMuted" : "fg"}>{step.label}</Fg>
-                                <Show when={age()}>{(a: Accessor<string>) => <Fg role="fgMuted">{` ${a()}`}</Fg>}</Show>
-                            </text>
+                            <box flexDirection="column">
+                                <text>
+                                    <Fg role={m.role}>{`${m.glyph} `}</Fg>
+                                    <Fg role={step.state === "queued" || step.state === "skipped" ? "fgMuted" : "fg"}>{step.label}</Fg>
+                                    <Show when={step.agent}>{(a: Accessor<string>) => <Fg role="tool">{` [${a()}]`}</Fg>}</Show>
+                                    <Show when={age()}>{(a: Accessor<string>) => <Fg role="fgMuted">{` ${a()}`}</Fg>}</Show>
+                                    <Show when={retries()}>{(r: Accessor<string>) => <Fg role="warning">{` ${r()}`}</Fg>}</Show>
+                                </text>
+                                {/* The blocker's own line rather than a suffix: a reason is a sentence, and
+                                    appending it would push the label out of a 40-column rail on every
+                                    blocked step. Indented under its step so the association is visual. */}
+                                <Show when={step.blockedReason}>
+                                    {(reason: Accessor<string>) => (
+                                        <text>
+                                            <Fg role="fgMuted">{`  ${reason()}`}</Fg>
+                                        </text>
+                                    )}
+                                </Show>
+                            </box>
                         );
                     }}
                 </For>
