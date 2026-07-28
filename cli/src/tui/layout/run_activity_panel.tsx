@@ -114,8 +114,12 @@ export function RunActivityPanel(props: RunActivityPanelProps) {
                         )}
                     </Show>
 
+                    {/* `fgMuted`, not `fgSubtle`: a key hint is information-bearing text and holds the
+                        4.5:1 floor. `fgSubtle` is the decorative tier (3:1) — it measures 3.36:1 on
+                        github-light, which the contrast sweep correctly rejects for a line the reader
+                        is meant to act on. */}
                     <text>
-                        <Fg role="fgSubtle">
+                        <Fg role="fgMuted">
                             {props.activeCount > 1
                                 ? `${props.nextKeyLabel} next run ${GLYPHS.middot} ${props.dismissKeyLabel} hide`
                                 : `${props.dismissKeyLabel} hide`}

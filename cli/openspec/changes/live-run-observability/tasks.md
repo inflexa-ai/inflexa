@@ -74,8 +74,8 @@
 
 ## 9. Design gallery and close-out
 
-- [ ] 9.1 Add gallery exhibits for every panel state and for the run card's live and settled states, plus the tool block's sub-agent activity line
-- [ ] 9.2 Check every new or changed surface on a light theme, asserting span colors rather than character frames for any legibility claim
-- [ ] 9.3 Run `bun run format:file` on every changed file under `src/`, then `bun run typecheck`, `bun run lint`, and the test suite
-- [ ] 9.4 Run `openspec validate live-run-observability`
-- [ ] 9.5 Confirm nothing here reads the DBOS `"events"` stream, initiates an assistant turn, or cancels a run — keeping the #247, #248, and #250 boundaries intact
+- [x] 9.1 Add gallery exhibits for every panel state and for the run card's live and settled states, plus the tool block's sub-agent activity line
+- [x] 9.2 Check every new or changed surface on a light theme, asserting span colors rather than character frames for any legibility claim
+- [x] 9.3 Run `bun run format:file` on every changed file under `src/`, then `bun run typecheck`, `bun run lint`, and the test suite
+- [x] 9.4 Run `openspec validate live-run-observability`
+- [x] 9.5 Confirm nothing here reads the DBOS `"events"` stream, initiates an assistant turn, or cancels a run — keeping the #247, #248, and #250 boundaries intact

@@ -14,10 +14,21 @@ import { PlanCardBlock } from "./components/plan_card_block.tsx";
 import { PresentationBlock } from "./components/presentation_block.tsx";
 import { RunBlock } from "./components/run_block.tsx";
 import { RunCardBlock } from "./components/run_card_block.tsx";
+import { RunActivityPanel } from "./layout/run_activity_panel.tsx";
 import { ThinkingBlock } from "./components/thinking_block.tsx";
 import { ToolBlock } from "./components/tool_block.tsx";
 import { Welcome } from "./components/welcome.tsx";
-import { mockAskPrompts, mockFileEdit, mockLongRun, mockPlanCard, mockRun, mockRunCard, mockThinking, mockToolCall } from "./layout/design_gallery_fixtures.ts";
+import {
+    galleryRun,
+    mockAskPrompts,
+    mockFileEdit,
+    mockLongRun,
+    mockPlanCard,
+    mockRun,
+    mockRunCard,
+    mockThinking,
+    mockToolCall,
+} from "./layout/design_gallery_fixtures.ts";
 
 // End-to-end guard for RENDERED contrast. captureCharFrame() gives characters only, so it cannot see
 // this defect class — the failure is a COLOR, not a missing glyph. The test harness's captureSpans()
@@ -302,6 +313,66 @@ const BLOCKS: BlockCase[] = [
         name: "RunCardBlock",
         node: () => <RunCardBlock runId={mockRunCard.runId} title={mockRunCard.title} stepCount={mockRunCard.stepCount} />,
         until: "3c07",
+    },
+    // The card's three resolved states are separate entries, not one: each paints spans the others do
+    // not (the meter, the outcome glyph and its tone, the failure reason, the unavailable note), and a
+    // sweep that only ever rendered the launch record would never look at any of them.
+    {
+        name: "RunCardBlock (live)",
+        node: () => <RunCardBlock runId={mockRunCard.runId} title={mockRunCard.title} stepCount={4} state={{ kind: "live", done: 1, total: 4 }} />,
+        until: "1/4",
+    },
+    {
+        name: "RunCardBlock (settled, failed)",
+        node: () => (
+            <RunCardBlock
+                runId={mockRunCard.runId}
+                title={mockRunCard.title}
+                stepCount={4}
+                state={{ kind: "settled", status: "failed", durationMs: 32_000, error: "step T1S2 blocked" }}
+            />
+        ),
+        until: "blocked",
+    },
+    {
+        name: "RunCardBlock (unavailable)",
+        node: () => <RunCardBlock runId={mockRunCard.runId} title={mockRunCard.title} stepCount={4} state={{ kind: "unavailable" }} />,
+        until: "unavailable",
+    },
+    {
+        name: "ToolBlock (sub-agent activity)",
+        node: () => <ToolBlock name="plan_analysis" status="running" activity="literature-reviewer: fetch_abstract" inlineStatus={true} />,
+        until: "fetch_abstract",
+    },
+    {
+        name: "RunActivityPanel",
+        node: () => (
+            <RunActivityPanel
+                progress={galleryRun()}
+                activity="tool bash"
+                activeCount={3}
+                position={2}
+                nextKeyLabel="ctrl+n"
+                dismissKeyLabel="ctrl+r"
+                onNext={noop}
+            />
+        ),
+        until: "align reads",
+    },
+    {
+        name: "RunActivityPanel (degraded)",
+        node: () => (
+            <RunActivityPanel
+                progress={galleryRun({ stale: true })}
+                activity="tool bash"
+                activeCount={1}
+                position={1}
+                nextKeyLabel="ctrl+n"
+                dismissKeyLabel="ctrl+r"
+                onNext={noop}
+            />
+        ),
+        until: "unavailable",
     },
     {
         name: "PresentationBlock",

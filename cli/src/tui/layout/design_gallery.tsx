@@ -22,6 +22,7 @@ import { BootIndicator } from "../components/boot_indicator.tsx";
 import { ToolBlock } from "../components/tool_block.tsx";
 import { DiffBlock } from "../components/diff_block.tsx";
 import { RunBlock } from "../components/run_block.tsx";
+import { RunCardBlock } from "../components/run_card_block.tsx";
 import { ErrorBlock } from "../components/error_block.tsx";
 import { PresentationBlock } from "../components/presentation_block.tsx";
 import { OpenableCardBlock } from "../components/openable_card_block.tsx";
@@ -29,6 +30,7 @@ import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { AskPrompt } from "../components/ask_prompt.tsx";
 import { MessageBlock } from "./message_block.tsx";
 import { ChatBar } from "./chat_bar.tsx";
+import { RunActivityPanel } from "./run_activity_panel.tsx";
 import { Bold, Italic, Underline, Dim, Reverse, Fg } from "../components/emphasis.tsx";
 import { TextArea } from "../components/text_area.tsx";
 import { TextInput } from "../components/text_input.tsx";
@@ -50,6 +52,8 @@ import {
     mockPlanGraphExhibits,
     mockPlanStepDetail,
     mockRunCard,
+    mockRunCardIds,
+    galleryRun,
     mockAskPrompts,
     mockAskCards,
     mockCortexRuns,
@@ -105,6 +109,9 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
     // NORMAL, the one-press ctrl+c in INSERT) rather than hardcoded ones.
     const interruptKey = keybindLabel("app.interrupt");
     const abortKey = keybindLabel("app.abort");
+    // Derived, exactly as the real mount derives them — the exhibits must advertise the live chords.
+    const runPanelNextKey = keybindLabel("app.run-panel-next");
+    const runPanelToggleKey = keybindLabel("app.run-panel-toggle");
     return (
         <DialogPanel title="Design system — stream blocks" size="xl" footer={`${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
             <ScrollPane focusOnMount={false} onRef={(r) => dialog?.setInitialFocus(r)} flexGrow={1} width="100%" paddingTop={space.sm}>
@@ -598,6 +605,106 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     />
                     <text fg={theme().fgMuted}>footer hint — busy INSERT, advertising the one-press abort chord that interrupts while typing:</text>
                     <ChatBar autoFocus onTextareaRef={noop} onSubmit={noop} interruptHint={{ label: interruptHintLabel(abortKey, false), armed: false }} />
+                </State>
+                <State n="23" label="run-activity panel — frontier readout between the stream and the input">
+                    {/* The panel answers "what is happening right now" for ONE focused run; the sidebar
+                        RUNS section answers "what is the shape of the work". The only overlap is the
+                        completion count — bare text here, a meter there — so the two never read as the
+                        same widget shown twice. The key labels are passed literally in these exhibits;
+                        the real mount derives them from the bindings via keybindLabel. */}
+                    <text fg={theme().fgMuted}>one active run — the frontier step with its agent and live activity label:</text>
+                    <RunActivityPanel
+                        progress={galleryRun()}
+                        activity="tool bash"
+                        activeCount={1}
+                        position={1}
+                        nextKeyLabel={runPanelNextKey}
+                        dismissKeyLabel={runPanelToggleKey}
+                        onNext={noop}
+                    />
+                    <text fg={theme().fgMuted}>several active runs — position indicator and the cycling hint appear (the header row is click-to-advance):</text>
+                    <RunActivityPanel
+                        progress={galleryRun()}
+                        activity="model round 3"
+                        activeCount={3}
+                        position={2}
+                        nextKeyLabel={runPanelNextKey}
+                        dismissKeyLabel={runPanelToggleKey}
+                        onNext={noop}
+                    />
+                    <text fg={theme().fgMuted}>parallel frontier — a run genuinely running several steps at once shows all of them:</text>
+                    <RunActivityPanel
+                        progress={galleryRun({
+                            steps: [
+                                { label: "align reads", state: "running", startedAt: null, agent: "bioinformatician" },
+                                { label: "call variants", state: "running", startedAt: null, agent: "geneticist" },
+                            ],
+                        })}
+                        activeCount={1}
+                        position={1}
+                        nextKeyLabel={runPanelNextKey}
+                        dismissKeyLabel={runPanelToggleKey}
+                        onNext={noop}
+                    />
+                    <text fg={theme().fgMuted}>degraded — this run's step read blipped, so the last known frontier renders muted and marked:</text>
+                    <RunActivityPanel
+                        progress={galleryRun({ stale: true })}
+                        activity="tool bash"
+                        activeCount={1}
+                        position={1}
+                        nextKeyLabel={runPanelNextKey}
+                        dismissKeyLabel={runPanelToggleKey}
+                        onNext={noop}
+                    />
+                    <text fg={theme().fgMuted}>
+                        no activity label resolved — omitted, never substituted (a placeholder would claim knowledge the reader lacks):
+                    </text>
+                    <RunActivityPanel
+                        progress={galleryRun()}
+                        activity={null}
+                        activeCount={1}
+                        position={1}
+                        nextKeyLabel={runPanelNextKey}
+                        dismissKeyLabel={runPanelToggleKey}
+                        onNext={noop}
+                    />
+                    <text fg={theme().fgMuted}>no active run — the panel contributes ZERO rows (nothing renders between this line and the next):</text>
+                    <RunActivityPanel
+                        progress={undefined}
+                        activeCount={0}
+                        position={0}
+                        nextKeyLabel={runPanelNextKey}
+                        dismissKeyLabel={runPanelToggleKey}
+                        onNext={noop}
+                    />
+                </State>
+                <State n="24" label="run card lifecycle — live / settled / unavailable, and the sub-agent activity line">
+                    {/* A run card is the conversation's memory of a launch: never hidden, never removed,
+                        and never left holding a frozen meter. Signalling completion by making a widget
+                        vanish is the defect this whole surface exists to remove. */}
+                    <text fg={theme().fgMuted}>launch record — no live state resolved (an older card in scroll-back, outside the read window):</text>
+                    <RunCardBlock runId={mockRunCardIds.runId} title="Differential expression" stepCount={4} />
+                    <text fg={theme().fgMuted}>live — the run is going, and the card tracks it by the runId it already carries:</text>
+                    <RunCardBlock runId={mockRunCardIds.runId} title="Differential expression" stepCount={4} state={{ kind: "live", done: 1, total: 4 }} />
+                    <text fg={theme().fgMuted}>settled, success — the meter is GONE, replaced by a compact outcome line:</text>
+                    <RunCardBlock
+                        runId={mockRunCardIds.runId}
+                        title="Differential expression"
+                        stepCount={4}
+                        state={{ kind: "settled", status: "completed", durationMs: 150_000, error: null }}
+                    />
+                    <text fg={theme().fgMuted}>settled, failure — the reason rides the card, so scroll-back answers "why" without a lookup:</text>
+                    <RunCardBlock
+                        runId={mockRunCardIds.runId}
+                        title="Differential expression"
+                        stepCount={4}
+                        state={{ kind: "settled", status: "failed", durationMs: 32_000, error: "step T1S2 blocked: no counts matrix in the workspace" }}
+                    />
+                    <text fg={theme().fgMuted}>unavailable — the recorded identity and an honest note, never a fabricated status:</text>
+                    <RunCardBlock runId={mockRunCardIds.runId} title="Differential expression" stepCount={4} state={{ kind: "unavailable" }} />
+                    <text fg={theme().fgMuted}>sub-agent activity — one subordinate line on a RUNNING tool call, gone the moment it finishes:</text>
+                    <ToolBlock name="plan_analysis" status="running" activity="literature-reviewer: fetch_abstract" inlineStatus={true} />
+                    <ToolBlock name="plan_analysis" status="ok" durationMs={94_000} activity="literature-reviewer: fetch_abstract" inlineStatus={true} />
                 </State>
             </ScrollPane>
         </DialogPanel>
