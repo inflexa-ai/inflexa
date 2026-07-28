@@ -30,26 +30,27 @@ they are the contract.
 
 Rules the table encodes:
 
-- **`get` returns one, `list` returns many.** A many-row read is always `list*`, even when keyed by a parent (`listSessionMessages`).
+- **`get` returns one, `list` returns many.** A many-row read is always `list*`, even when keyed by a parent (`listAnalysisInputs`).
 - **Absence is not an error.** A missing single row is `ok(null)`; a mutation that matches nothing is `ok(0)`. `DbError` is reserved for genuine failures (connection, exec, constraint, migration) — never "not found".
 - **Mutations report rows changed.** `update*` / `delete*` / `touch*` return the `.changes` count from `.run()`, so a caller can detect a no-op (`n === 0`) without a follow-up read.
 - **`create` vs `insert` encodes id ownership.** `create*` mints the id inline with `randomUUIDv7()`; `insert*` takes an entity whose id is already fixed by the caller (e.g. `insertAnchor` — its id is the write-once on-disk marker UUID and must be preserved, not regenerated).
 
 ## Storage model: blob vs columnar
 
-Two table shapes coexist — choose by how the row is read; don't default to one.
+Two table shapes are available — choose by how the row is read; don't default to one.
 
 **JSON-blob `(id, data, + promoted columns)`** — when the row is always loaded whole by id (or an
 indexed FK) and you never filter/sort/aggregate on its inner fields. Store the entity as JSON in
-`data`; promote ONLY the columns you query (FKs, ordering keys) to real indexed columns. Sessions,
-messages, and parts use this.
+`data`; promote ONLY the columns you query (FKs, ordering keys) to real indexed columns. **No live
+table is shaped this way** — every table in the schema is columnar — so this is the shape to reach
+for when a new entity genuinely fits it, not a pattern to copy from existing code. A blob read parses
+the column and hands back `null` on a miss:
 
 ```ts
-/** Loads a session by id; `null` when there is no such row. */
-export function getSession(id: string): Result<Session | null, DbError> {
-    return tryQuery("getSession", (conn) => {
-        const row = conn.query("SELECT data FROM sessions WHERE id = ?").get(id) as { data: string } | null;
-        return row ? (JSON.parse(row.data) as Session) : null;
+export function getThing(id: string): Result<Thing | null, DbError> {
+    return tryQuery("getThing", (conn) => {
+        const row = conn.query("SELECT data FROM things WHERE id = ?").get(id) as { data: string } | null;
+        return row ? (JSON.parse(row.data) as Thing) : null;
     });
 }
 ```
@@ -79,12 +80,20 @@ Mint ids inline with `randomUUIDv7()` (`import { randomUUIDv7 } from "bun"`) at 
 via a helper. `create*` functions mint; `insert*` functions receive an entity whose id is already set.
 
 ```ts
-/** Creates and persists a new session, defaulting the title when omitted. */
-export function createSession(title?: string): Result<Session, DbError> {
-    const session: Session = { id: randomUUIDv7(), title: title ?? "New session", createdAt: Date.now(), updatedAt: Date.now() };
-    return tryMutation("createSession", (conn) => {
-        conn.query("INSERT INTO sessions (id, data) VALUES (?, ?)").run(session.id, JSON.stringify(session));
-        return session;
+/** Mints and persists a new project. A duplicate `name` trips the `UNIQUE` constraint. */
+export function createProject(input: { name: Str256; description: string | null; tags: string[] }): Result<Project, DbError> {
+    const now = Date.now();
+    const project: Project = { id: randomUUIDv7(), createdAt: now, updatedAt: now, ...input };
+    return tryMutation("createProject", (conn) => {
+        conn.query("INSERT INTO projects (id, created_at, updated_at, name, description, tags) VALUES (?, ?, ?, ?, ?, ?)").run(
+            project.id,
+            project.createdAt,
+            project.updatedAt,
+            project.name,
+            project.description,
+            project.tags.join(","),
+        );
+        return project;
     });
 }
 ```
@@ -95,21 +104,25 @@ the row back instead.
 
 ## Transactions
 
-When one logical change spans multiple writes (e.g. a message and its first part), wrap them in
-`withTransaction` so they commit together or roll back together — a mid-way failure must not leave a
-partial. The mutations inside run on the same connection and enlist automatically; returning an `err`
-from the callback triggers the rollback.
+When one logical change spans multiple writes (e.g. unlinking a project's analyses before deleting
+it), wrap them in `withTransaction` so they commit together or roll back together — a mid-way failure
+must not leave a partial. The mutations inside run on the same connection and enlist automatically;
+returning an `err` from the callback triggers the rollback.
 
 ```ts
-const turn = withTransaction("chat:userTurn", () =>
-    createMessage(sessionId, "user").andThen((msg) =>
-        createPart(sessionId, msg.id, text).map((part) => ({ msg, part })),
+return withTransaction("deleteProject", () =>
+    tryMutation("deleteProject.unlink", (conn) => {
+        conn.query("UPDATE analyses SET project_id = NULL, updated_at = ? WHERE project_id = ?").run(Date.now(), id);
+    }).andThen(() =>
+        tryMutation("deleteProject.delete", (conn) => {
+            return conn.query("DELETE FROM projects WHERE id = ?").run(id).changes;
+        }),
     ),
 );
 ```
 
 Emit events / invalidate caches AFTER the transaction commits (in the `.match` success branch), never
-inside the callback — otherwise a rollback leaves the UI believing in a turn that never landed.
+inside the callback — otherwise a rollback leaves the UI believing in a write that never landed.
 
 ## Errors
 
@@ -134,8 +147,8 @@ Always consume with `.match()` — the `neverthrow/must-use-result` ESLint rule 
 `isErr()`/`.value` is not recognized as consumption.
 
 ```ts
-getSession(id).match(
-    (session) => { /* session is Session | null */ },
+findProjectByRef(ref).match(
+    (project) => { /* project is Project | null */ },
     (error) => { /* error.type is "query_failed" | "constraint_violation" | … */ },
 );
 ```

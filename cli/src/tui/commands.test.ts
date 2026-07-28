@@ -256,6 +256,22 @@ describe("session flows", () => {
         expect(t.notices[0]?.text).toContain("Send a message first");
     });
 
+    test("rename distinguishes a FAILED read from an absent row — no false claim about the user's data", async () => {
+        // Both refuse, and both refuse before the prompt; the difference is what they assert. Collapsing
+        // the read failure into the branch above would tell a user whose Postgres blinked that they have
+        // no saved conversation, and hand them a remedy ("send a message first") that cannot help.
+        const t = makeSeams({ getThread: () => errAsync(dbErr) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await openRenameSession(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("error");
+        expect(t.notices[0]?.text).toContain("Could not read");
+        expect(t.notices[0]?.text).not.toContain("Send a message first");
+    });
+
     test("rename opens the prompt on a live row, pre-filled from the pg title", async () => {
         const t = makeSeams({ getThread: () => okAsync(threadRow()) });
         const w = sessionScope(ANALYSIS, "thread-1");
@@ -297,7 +313,7 @@ describe("session flows", () => {
         expect(t.refreshed).toEqual([]);
     });
 
-    test("delete says there is nothing to delete when the conversation has no saved row", async () => {
+    test("delete says there is nothing to remove when the conversation has no saved row", async () => {
         // Confirming against a name we do not have would ask the user to type a fiction.
         const t = makeSeams({ getThread: () => okAsync(null) });
         const w = sessionScope(ANALYSIS, "thread-1");
@@ -307,7 +323,20 @@ describe("session flows", () => {
         expect(w.dialogs()).toBe(0);
         expect(t.notices).toHaveLength(1);
         expect(t.notices[0]?.kind).toBe("info");
-        expect(t.notices[0]?.text).toContain("nothing to delete");
+        expect(t.notices[0]?.text).toContain("nothing to remove");
+    });
+
+    test("delete distinguishes a FAILED read from an absent row, and says nothing was removed", async () => {
+        const t = makeSeams({ getThread: () => errAsync(dbErr) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await deleteSessionFlow(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("error");
+        expect(t.notices[0]?.text).toContain("Could not read");
+        expect(t.notices[0]?.text).not.toContain("nothing saved yet");
     });
 
     test("a confirmed delete re-lands the chat on the analysis's surviving thread", async () => {
@@ -317,6 +346,10 @@ describe("session flows", () => {
         await confirmSessionDelete(w.ws, fakePool, ANALYSIS, "thread-1", t.seams);
 
         expect(t.notices[0]?.kind).toBe("info");
+        // The write is a tombstone, so the notice reports the reach it actually has. Claiming a
+        // deletion would be the one thing this flow cannot back up — the transcript stays in Postgres.
+        expect(t.notices[0]?.text).toContain("no longer appears");
+        expect(t.notices[0]?.text).not.toContain("deleted");
         // The chat is never left bound to a thread that no longer lists.
         expect(w.opened).toEqual([{ threadId: "thread-survivor", analysisId: ANALYSIS.id }]);
     });

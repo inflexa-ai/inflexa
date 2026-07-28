@@ -29,6 +29,9 @@ const dbErr: DbError = { type: "query_failed", op: "test", cause: new Error("boo
 
 // The watch reads only `analysis.id`, so a partial stand-in cast is sound and keeps the fixture flat.
 const ANALYSIS = { id: "analysis-alpha", name: "Alpha", projectId: null } as unknown as Analysis;
+// A second analysis, so a case that swaps the open scope can tell "resolved the new one" apart from
+// "resolved again".
+const OTHER_ANALYSIS = { id: "analysis-beta", name: "Beta", projectId: null } as unknown as Analysis;
 
 // UUIDv7 by construction: version nibble 7 and the RFC 4122 variant bits. `resolveThreadId` mints an
 // identity whose VALUE is random, so a fresh mint can only be asserted by SHAPE — and the shape is
@@ -277,8 +280,17 @@ type ScopeStore = {
     openSession: Workspace["openSession"];
 };
 
-/** A reactive workspace stand-in whose `openSession` writes the scope and records the bound ids. */
-function reactiveWorkspace(analysis: Analysis | null, sessionId: string | null): { ws: Workspace; bound: (string | null)[] } {
+/**
+ * A reactive workspace stand-in whose `openSession` writes the scope and records the bound ids.
+ *
+ * `setAnalysis` writes the analysis WITHOUT binding a thread — a state production never reaches
+ * (every `openSession` under `ready` carries a non-null id), so it exists only to drive the watch's
+ * in-flight marker into the interleaving that invariant currently rules out.
+ */
+function reactiveWorkspace(
+    analysis: Analysis | null,
+    sessionId: string | null,
+): { ws: Workspace; bound: (string | null)[]; setAnalysis: (next: Analysis) => void } {
     const bound: (string | null)[] = [];
     // The method references `setStore` from this destructuring — created now, invoked only later, the
     // same shape `createWorkspace` uses for its sole scope writer.
@@ -293,7 +305,7 @@ function reactiveWorkspace(analysis: Analysis | null, sessionId: string | null):
     });
     // The watch reads `analysis`/`sessionId` and calls `openSession`; the rest of `Workspace` is
     // dialog/quit capability it never touches, so a partial stand-in cast is sound.
-    return { ws: store as unknown as Workspace, bound };
+    return { ws: store as unknown as Workspace, bound, setAnalysis: (next) => setStore({ analysis: next }) };
 }
 
 /** Mount `watchOpenThread` in a disposable reactive root; returns the dispose so the test tears it down. */
@@ -407,6 +419,52 @@ describe("watchOpenThread — the ready-edge bind", () => {
             await settle();
 
             expect(w.bound).toEqual(["thread-once"]);
+        } finally {
+            dispose();
+        }
+    });
+
+    test("a settling resolution releases only its OWN in-flight marker", async () => {
+        // The marker is a single slot. An unconditional clear would let analysis A's resolution drop a
+        // marker a later effect run had re-taken for B, and B could then resolve twice — two mints
+        // racing, the loser's id silently replaced. Production cannot reach this interleaving (the scope
+        // is never left unbound while `ready`, because the runtime handle is set before the phase flips),
+        // but that invariant lives in `hooks/boot.ts`, so the guard is pinned here rather than inherited.
+        const gates = new Map<string, () => void>();
+        const listed: string[] = [];
+        const t = makeSeams({
+            listThreads: (_pool, analysisId) => {
+                listed.push(analysisId);
+                return ResultAsync.fromSafePromise(
+                    new Promise<void>((r) => gates.set(analysisId, r)).then(() => threadPage([threadRow({ threadId: `thread-${analysisId}` })])),
+                );
+            },
+        });
+        const w = reactiveWorkspace(ANALYSIS, null);
+        const dispose = mountWatch(w.ws, t.seams);
+        try {
+            __setBootStateForTest(ready());
+            await settle();
+            expect(listed).toEqual([ANALYSIS.id]);
+
+            // The open analysis changes before its listing lands, with no thread bound — so the effect
+            // re-fires and the marker is re-taken for the new analysis.
+            w.setAnalysis(OTHER_ANALYSIS);
+            await settle();
+            expect(listed).toEqual([ANALYSIS.id, OTHER_ANALYSIS.id]);
+
+            gates.get(ANALYSIS.id)!(); // the stale resolution settles
+            await settle();
+
+            // Any repaint while the live resolution is still in flight must find the marker intact.
+            __setBootStateForTest({ phase: "booting" });
+            __setBootStateForTest(ready());
+            await settle();
+            expect(listed).toEqual([ANALYSIS.id, OTHER_ANALYSIS.id]);
+
+            gates.get(OTHER_ANALYSIS.id)!();
+            await settle();
+            expect(w.bound).toEqual([`thread-${OTHER_ANALYSIS.id}`]);
         } finally {
             dispose();
         }

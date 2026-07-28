@@ -594,6 +594,24 @@ function threadLabel(thread: Thread): string {
 }
 
 /**
+ * The open thread's row as a THREE-way outcome — the row, no row, or the read itself failing.
+ *
+ * The third case is why this exists. "No row yet" is a normal state (the first turn creates it) and
+ * the flows below refuse it with advice — send a message first, there is nothing to remove. Folding a
+ * `DbError` into that same branch would hand a user whose Postgres blinked a claim about their data
+ * that is false, and a remedy that cannot work. Absence and unreadability are different facts, so the
+ * caller gets to say different things about them.
+ */
+type ThreadRead = { kind: "row"; thread: Thread } | { kind: "none" } | { kind: "unreadable" };
+
+async function readOpenThread(pool: Pool, threadId: string, seams: SessionSeams): Promise<ThreadRead> {
+    return (await seams.getThread(pool, threadId)).match(
+        (t): ThreadRead => (t === null ? { kind: "none" } : { kind: "row", thread: t }),
+        (): ThreadRead => ({ kind: "unreadable" }),
+    );
+}
+
+/**
  * Open the session picker over the analysis's live threads (most-recently-active first). Fetched
  * BEFORE the dialog opens — the thread store is an async Postgres read, so the dialog cannot pull it
  * from its own body — mirroring `openRunsPicker`. A read failure degrades to an empty picker rather
@@ -715,18 +733,36 @@ function SettingsDialog(): JSX.Element {
     return <ConfigApp onClose={() => ws.closeDialog()} />;
 }
 
-/** Confirm-to-delete: type the entity name to proceed. Prevents accidental destructive deletes. */
-function ConfirmDeleteDialog(props: { entityLabel: string; entityName: string; onConfirm: () => void }): JSX.Element {
+/**
+ * Confirm-to-destroy: type the entity name to proceed. Prevents accidental destructive actions.
+ *
+ * `verb` exists because this ritual — danger chrome plus typing the name back — is the app's
+ * strongest "this cannot be undone" signal, and it must not be spent on an action that keeps the
+ * data. A caller whose removal is recoverable says so in the verb (and spells out what survives in
+ * `description`), so the words the user reads match what the store actually does.
+ */
+function ConfirmDeleteDialog(props: {
+    entityLabel: string;
+    entityName: string;
+    /** The action as the user should understand it. Defaults to `Delete` — the irreversible one. */
+    verb?: string;
+    /** Optional line between the title and the field, for stating what a removal does and does not reclaim. */
+    description?: () => JSX.Element;
+    onConfirm: () => void;
+}): JSX.Element {
     const ws = useWorkspace();
     return (
         <PromptDialog
-            title={`Delete ${props.entityLabel}?`}
+            title={`${props.verb ?? "Delete"} ${props.entityLabel}?`}
             tone="danger"
+            description={props.description}
             placeholder={`Type "${props.entityName}" to confirm`}
             onCancel={() => ws.closeDialog()}
             onSubmit={(raw) => {
                 if (raw.trim() !== props.entityName) {
-                    notify({ kind: "warn", text: "Name does not match — deletion cancelled." });
+                    // Names the mismatch, not the action: the title above already said which action
+                    // was being confirmed, and this dialog now serves both deletes and removals.
+                    notify({ kind: "warn", text: "Name does not match — cancelled." });
                     ws.closeDialog();
                     return;
                 }
@@ -1015,9 +1051,9 @@ function RenameAnalysisDialog(): JSX.Element {
  *
  * That read is also the refusal point: the row is created by the FIRST turn, so a conversation that
  * has not had one has nothing to retitle — refusing here costs the user nothing, where opening an
- * empty field and refusing on submit spends their typing on a write that can never land. A row that
- * could not be READ refuses on the same line (as {@link deleteSessionFlow} does): with no title to
- * pre-fill and no proof the write has a target, the honest move is to say so and leave the prompt shut.
+ * empty field and refusing on submit spends their typing on a write that can never land. A read that
+ * FAILED refuses too, with no title to pre-fill and no proof the write has a target — but in its own
+ * words, per {@link ThreadRead}: a transient fault is not the user's cue to go send a message.
  */
 export async function openRenameSession(ctx: Workspace, seams: SessionSeams = realSessionSeams): Promise<void> {
     const runtime = seams.runtime();
@@ -1026,17 +1062,18 @@ export async function openRenameSession(ctx: Workspace, seams: SessionSeams = re
     // gate for the narrowing rather than handling a state the user can actually reach.
     if (!runtime || threadId === null) return;
     const pool = runtime.pool;
-    const row = (await seams.getThread(pool, threadId)).match(
-        (t) => t,
-        (): Thread | null => null,
-    );
-    if (row === null) {
+    const read = await readOpenThread(pool, threadId, seams);
+    if (read.kind === "unreadable") {
+        seams.notify({ kind: "error", text: "Could not read this conversation — its title was not changed." });
+        return;
+    }
+    if (read.kind === "none") {
         seams.notify({ kind: "warn", text: "Send a message first — this conversation has no saved title yet." });
         return;
     }
     // A row can legitimately predate its title (pg seeds it from the first user message), so the
     // field opens empty rather than on a placeholder the user would have to clear.
-    const current = row.title ?? "";
+    const current = read.thread.title ?? "";
     ctx.openDialog(() => (
         <PromptDialog
             title="Rename session"
@@ -1082,14 +1119,16 @@ export async function commitSessionRename(pool: Pool, threadId: string, raw: str
 }
 
 /**
- * Delete the open session: confirm by name, soft-delete the thread, then land the user on whatever
- * this analysis has left (its next most-recent thread, else a freshly minted empty chat) so the chat
- * is never left bound to a conversation that no longer lists.
+ * Remove the open session: confirm by name, tombstone the thread, then land the user on whatever this
+ * analysis has left (its next most-recent thread, else a freshly minted empty chat) so the chat is
+ * never left bound to a conversation that no longer lists.
  *
- * The removal is a TOMBSTONE — `deleteThread` sets `deleted_at`, so the row and its messages survive
- * and the thread merely stops appearing anywhere. That is deliberate for now: the archive-vs-purge
- * split is a separate piece of work, and until it lands a delete that reclaims nothing is strictly
- * less destructive than one that does.
+ * `deleteThread` sets `deleted_at`, so the row and every message survive and the thread merely stops
+ * appearing anywhere. That is deliberate for now: the archive-vs-purge split is separate work, and
+ * until it lands a removal that reclaims nothing is strictly less destructive than one that does.
+ * Every word the user reads therefore says REMOVE, not delete — the confirm ritual (danger chrome,
+ * type the name back) is the app's strongest irreversibility signal, and spending it on an action
+ * that keeps the transcript would teach the user to distrust it where it is telling the truth.
  */
 export async function deleteSessionFlow(ctx: Workspace, seams: SessionSeams = realSessionSeams): Promise<void> {
     const runtime = seams.runtime();
@@ -1099,18 +1138,26 @@ export async function deleteSessionFlow(ctx: Workspace, seams: SessionSeams = re
     // the gate for the narrowing rather than handling a state the user can actually reach.
     if (!runtime || !analysis || threadId === null) return;
     const pool = runtime.pool;
-    const name = (await seams.getThread(pool, threadId)).match(
-        (t) => (t === null ? null : threadLabel(t)),
-        (): string | null => null,
-    );
-    if (name === null) {
-        // No row (or it could not be read): there is nothing to delete, and confirming against a name
-        // we do not have would ask the user to type a fiction.
-        seams.notify({ kind: "info", text: "This conversation has nothing saved yet — there is nothing to delete." });
+    // Both refusals below share one cause — no name to confirm against, and asking the user to type a
+    // fiction is not a confirmation — but they are not the same fact, so they do not get the same words.
+    const read = await readOpenThread(pool, threadId, seams);
+    if (read.kind === "unreadable") {
+        seams.notify({ kind: "error", text: "Could not read this conversation — nothing was removed." });
         return;
     }
+    if (read.kind === "none") {
+        seams.notify({ kind: "info", text: "This conversation has nothing saved yet — there is nothing to remove." });
+        return;
+    }
+    const name = threadLabel(read.thread);
     ctx.openDialog(() => (
-        <ConfirmDeleteDialog entityLabel="session" entityName={name} onConfirm={() => void confirmSessionDelete(ctx, pool, analysis, threadId, seams)} />
+        <ConfirmDeleteDialog
+            entityLabel="session"
+            entityName={name}
+            verb="Remove"
+            description={() => <text fg={theme().fgMuted}>It stops appearing in this analysis. The transcript is kept — nothing is erased.</text>}
+            onConfirm={() => void confirmSessionDelete(ctx, pool, analysis, threadId, seams)}
+        />
     ));
 }
 
@@ -1118,6 +1165,9 @@ export async function deleteSessionFlow(ctx: Workspace, seams: SessionSeams = re
  * Tombstone the confirmed thread, then land the user on whatever the analysis has left. Lives beside
  * the confirmation rather than inside its `onConfirm` so the post-confirm ladder is testable
  * headlessly (the {@link runModelCommit} shape); the dialog owns only the name match and its close.
+ *
+ * The success notice reports the reach of the write and stops there. Claiming a deletion would be the
+ * one statement this flow cannot back up: the transcript is still in Postgres (see {@link deleteSessionFlow}).
  */
 export async function confirmSessionDelete(
     ctx: Workspace,
@@ -1128,13 +1178,13 @@ export async function confirmSessionDelete(
 ): Promise<void> {
     await seams.deleteThread(pool, threadId).match(
         async () => {
-            seams.notify({ kind: "info", text: "Session deleted." });
+            seams.notify({ kind: "info", text: "Session removed — it no longer appears in this analysis." });
             // Re-enter through the analysis-open path: it performs exactly the landing this
             // needs — bind the surviving most-recent thread, else a fresh mint.
             await openAnalysis(ctx, analysis, seams);
         },
         // The thread is still bound and still lists, so nothing is re-landed — leaving the user
-        // exactly where they were is the truthful outcome of a delete that did not happen.
+        // exactly where they were is the truthful outcome of a removal that did not happen.
         async (e) => seams.notify({ kind: "error", text: `Failed: ${e.type}` }),
     );
 }
@@ -1540,8 +1590,10 @@ export const commands: Command[] = [
     },
     {
         id: "session.delete",
-        title: "Delete session",
-        description: "Remove the current session from this analysis's conversations",
+        // Titled for what it does, while the id stays `session.delete` — the id is the stable handle
+        // keybinds and tests bind to, and re-keying it to match the copy would break them for nothing.
+        title: "Remove session",
+        description: "Remove the current session from this analysis's conversations (the transcript is kept)",
         category: "Session",
         enabled: (ctx) => ctx.analysis !== null && ctx.sessionId !== null && bootState().phase === "ready",
         run: (ctx) => deleteSessionFlow(ctx),

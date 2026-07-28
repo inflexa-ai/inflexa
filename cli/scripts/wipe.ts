@@ -63,7 +63,9 @@ const REPO_ARTIFACTS = [join(import.meta.dir, "..", "node_modules"), join(import
 // config file plus the provider-credential dir, per the spec; `infra` is the generated compose file plus
 // the Postgres data dir, so a wipe can reset the container substrate that `inflexa setup` regenerates.
 const TARGETS = {
-    db: { label: "database — analyses and projects (SQLite + WAL/SHM)", paths: [env.dbPath, `${env.dbPath}-wal`, `${env.dbPath}-shm`] },
+    // Names anchors first: they are the folder-identity rows, and losing them orphans the `.inflexa/id`
+    // markers still on disk — the one part of this target whose loss is not recoverable by re-creating work.
+    db: { label: "database — anchors, analyses, projects (SQLite + WAL/SHM)", paths: [env.dbPath, `${env.dbPath}-wal`, `${env.dbPath}-shm`] },
     logs: { label: "logs", paths: [env.logDir] },
     proxy: { label: "proxy config + provider auth", paths: [env.cliproxyConfigPath, env.cliproxyAuthDir] },
     infra: { label: "infra (compose file + Postgres data)", paths: [env.composeFilePath, env.postgresDataDir] },
