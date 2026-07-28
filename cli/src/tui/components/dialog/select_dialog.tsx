@@ -26,6 +26,15 @@ export type SelectDialogProps<T> = {
     mode?: SelectMode;
     /** Multi mode: values pre-selected on open. */
     initialSelected?: ReadonlySet<T>;
+    /** Row the cursor opens on (matched by `===` against row values); absent/unmatched opens on row 0. */
+    initialValue?: T;
+    /**
+     * The highlighted row changed — including the filter-driven jump to the best match, and
+     * `undefined` once the query matches nothing. Forwarded verbatim to the list; the dialog itself
+     * stays domain-agnostic, so what a host does with the row (the theme picker previews it live) is
+     * entirely the host's business.
+     */
+    onCursorChange?: (value: T | undefined) => void;
     /** Single mode: a row was picked (enter). The caller closes the dialog. */
     onSelect?: (value: T) => void;
     /** Multi mode: the batch was confirmed (enter). The caller closes the dialog. */
@@ -113,8 +122,10 @@ export function SelectDialog<T>(props: SelectDialogProps<T>): JSX.Element {
                 emptyText={props.emptyText}
                 mode={props.mode}
                 initialSelected={props.initialSelected}
+                initialValue={props.initialValue}
                 onSelect={props.onSelect}
                 onConfirm={props.onConfirm}
+                onCursorChange={props.onCursorChange}
                 onSelectionChange={(s) => setSelCount(s.size)}
                 bareKeysEnabled={!inputFocused()}
             />
