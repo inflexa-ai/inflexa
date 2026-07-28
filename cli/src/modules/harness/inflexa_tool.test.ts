@@ -551,6 +551,60 @@ describe("spawnInflexa — process bounds", () => {
     });
 });
 
+describe("spawnInflexa — the idle bound leaves nothing armed behind it", () => {
+    const bun = process.execPath;
+    function live(): AbortSignal {
+        return new AbortController().signal;
+    }
+
+    test("output arriving during the flush grace does not rearm a timer nothing will clear", async () => {
+        // A grandchild that inherits the pipes writes AFTER the child is reaped — the case the flush
+        // grace exists for. Rearming there would schedule an idle timer past the clears: one that
+        // holds the event loop open for the whole bound and then aborts a run that already returned.
+        const script =
+            `Bun.spawn({ cmd: [${JSON.stringify(bun)}, "-e", "await Bun.sleep(150); console.log('late')"], stdout: "inherit", stderr: "inherit" }); ` +
+            `console.log("early"); process.exit(0);`;
+
+        const armed = new Set<unknown>();
+        const realSet = globalThis.setTimeout;
+        const realClear = globalThis.clearTimeout;
+        // Counting timers is the only way to observe this: a leaked timer changes nothing about the
+        // returned result, which is exactly why it survived review of the result-shape assertions.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a probe must accept whatever overload the caller used; the ids flow straight back to the real timer functions.
+        globalThis.setTimeout = ((fn: any, ms?: any, ...rest: any[]) => {
+            const id = realSet(fn, ms, ...rest);
+            armed.add(id);
+            return id;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- as above.
+        }) as any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- as above.
+        globalThis.clearTimeout = ((id: any) => {
+            armed.delete(id);
+            return realClear(id);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- as above.
+        }) as any;
+
+        try {
+            const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 30_000, idleTimeoutMs: 20_000, flushGraceMs: 1_500 });
+            expect(r.endedBy).toBe("exit");
+            // Unconditional, so this never goes spuriously red: with no late output there is nothing to
+            // rearm from and an empty set is still the correct answer.
+            expect([...armed]).toEqual([]);
+            // What actually exercises the guard is late output existing at all, and that is the part a
+            // full-suite run cannot promise — under 125-file parallel load a spawned child's pipes yield
+            // nothing, which is why this whole describe block's neighbours fail together there (gap 6.2).
+            // Stated as its own assertion so a green FULL-SUITE run is never mistaken for coverage: read
+            // this file in isolation, where the cluster is meaningful, to see the guard genuinely tested.
+            if (r.stdout.includes("late")) expect([...armed]).toEqual([]);
+            else expect(r.stdout).toBe("");
+        } finally {
+            globalThis.setTimeout = realSet;
+            globalThis.clearTimeout = realClear;
+            for (const id of armed) realClear(id as Parameters<typeof realClear>[0]);
+        }
+    });
+});
+
 describe("run_inflexa — the child's working directory", () => {
     /** Build the tool with both seams stubbed: the recorder observes the cwd, the resolver supplies it. */
     function toolWithFolder(sub: RunSubprocess, folders: Record<string, string>) {
