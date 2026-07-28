@@ -72,6 +72,46 @@ describe("downloadToFile", () => {
         expect(events.at(-1)).toEqual({ type: "completed", bytes: Buffer.byteLength(body) });
     });
 
+    test("cancels the body of a response it refuses, so the socket is not held", async () => {
+        // A rejected response still owns its connection until the body is drained or cancelled. Both
+        // refusal arms are covered because they return from different points and each could forget.
+        for (const refused of [{ status: 503, statusText: "Service Unavailable" } as const, { url: "http://downgraded.test/f" } as const]) {
+            let cancelled = 0;
+            const stream = new ReadableStream({
+                start: (c) => c.enqueue(new TextEncoder().encode("body")),
+                cancel: () => void (cancelled += 1),
+            });
+            const response = "url" in refused ? new Response(stream) : new Response(stream, refused);
+            if ("url" in refused) Object.defineProperty(response, "url", { value: refused.url });
+            const result = await downloadToFile(URL_OK, join(root(), "out.bin"), { fetch: async () => response });
+            expect(result.isErr()).toBe(true);
+            expect(cancelled).toBe(1);
+        }
+    });
+
+    test("cancels a retried response's body before the attempt that needs its connection", async () => {
+        let cancelled = 0;
+        let calls = 0;
+        const dest = join(root(), "out.bin");
+        const result = await downloadToFile(URL_OK, dest, {
+            retry: { attempts: 2, baseMs: 0, shouldRetry: (status) => status === 429 },
+            fetch: async () => {
+                calls += 1;
+                if (calls > 1) return new Response("payload");
+                return new Response(
+                    new ReadableStream({
+                        start: (c) => c.enqueue(new TextEncoder().encode("slow down")),
+                        cancel: () => void (cancelled += 1),
+                    }),
+                    { status: 429, statusText: "Too Many Requests" },
+                );
+            },
+        });
+        expect(result.isOk()).toBe(true);
+        expect(readFileSync(dest, "utf8")).toBe("payload");
+        expect(cancelled).toBe(1);
+    });
+
     test("a progress observer throw never aborts the transfer", async () => {
         const dest = join(root(), "out.bin");
         const result = await downloadToFile(URL_OK, dest, {
