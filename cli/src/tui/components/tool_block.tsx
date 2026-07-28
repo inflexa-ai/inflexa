@@ -1,4 +1,5 @@
 import { Show } from "solid-js";
+import type { Accessor } from "solid-js";
 
 import { syntaxStyle, theme } from "../theme.ts";
 import { GLYPHS, space, stroke, MARKERS } from "../../lib/design_system.ts";
@@ -18,6 +19,15 @@ export type ToolBlockProps = {
     status: "running" | "ok" | "error";
     /** Wall-clock duration in ms, shown beside a finished outcome; absent while running. */
     durationMs?: number;
+    /**
+     * What the innermost sub-agent working inside this call is doing right now.
+     *
+     * Rendered as ONE subordinate line, and only while the call is `running` — a finished call has an
+     * outcome, which is a better answer to the same question. Without it a long tool call is
+     * indistinguishable from a wedged one; with the sub-agent's own events as blocks instead, they
+     * would bury the conversation.
+     */
+    activity?: string;
     /**
      * Whether the outcome is folded onto the name line (`▸ name target  ✓ ok · 14ms`) instead of a
      * standalone completion line below the result panel. Defaults to `props.result === undefined`: a
@@ -72,6 +82,16 @@ export function ToolBlock(props: ToolBlockProps) {
                     <Fg role="fgMuted">{duration()}</Fg>
                 </Show>
             </text>
+            {/* The sub-agent activity line: one line, indented under the call it belongs to, and gone
+                the moment the call finishes. Gated on `running` here rather than only at the source,
+                so a block handed a stale activity with a terminal status still renders honestly. */}
+            <Show when={props.status === "running" && props.activity}>
+                {(activity: Accessor<string>) => (
+                    <text paddingLeft={space.md}>
+                        <Fg role="fgMuted">{`${GLYPHS.arrowRight} ${activity()}`}</Fg>
+                    </text>
+                )}
+            </Show>
             <Show when={props.result}>
                 <box
                     marginTop={space.sm}

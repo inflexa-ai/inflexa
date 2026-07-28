@@ -58,6 +58,15 @@ export type ToolCallPart = {
     filetype?: string;
     /** Lifecycle of the call — `running` on start, `ok`/`error` on finish. */
     status: "running" | "ok" | "error";
+    /**
+     * What the innermost sub-agent working inside this call is doing right now, or absent.
+     *
+     * Live-only and never persisted: it is a description of work in flight, meaningless once the call
+     * has an outcome, so it is cleared when the call finishes. A sub-agent's own iterations and tool
+     * calls are far too numerous to enter the transcript as blocks — this one line is what makes a
+     * long tool call legible instead of indistinguishable from a wedged one.
+     */
+    activity?: string;
     /** Wall-clock duration in ms, stamped when the call finishes; absent while running. */
     durationMs?: number;
     createdAt: number;

@@ -61,9 +61,9 @@
 
 ## 7. Sub-agent activity line
 
-- [ ] 7.1 Turn `isSubAgentEvent` from a discard into a routing predicate, directing sub-agent events to their originating tool block instead of the transcript root — in both the REPL printer and the TUI reducer, which share the predicate
-- [ ] 7.2 Render a single subordinate activity line on a running `ToolBlock` showing the innermost sub-agent's current activity (selected by `callPath` depth), removed when the call finishes
-- [ ] 7.3 Test: a long tool call shows an updating activity line and no transcript-level block is created for sub-agent events
+- [x] 7.1 Turn `isSubAgentEvent` from a discard into a routing predicate, directing sub-agent events to their originating tool block instead of the transcript root — in both the REPL printer and the TUI reducer, which share the predicate
+- [x] 7.2 Render a single subordinate activity line on a running `ToolBlock` showing the innermost sub-agent's current activity (selected by `callPath` depth), removed when the call finishes
+- [x] 7.3 Test: a long tool call shows an updating activity line and no transcript-level block is created for sub-agent events
 
 ## 8. Keymap and palette
 

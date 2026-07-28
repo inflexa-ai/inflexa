@@ -31,13 +31,35 @@ describe("createChatPrinter", () => {
         expect(h.out()).toBe("hello world");
     });
 
-    test("sub-agent traffic (callPath deeper than top level) is dropped", () => {
+    test("sub-agent traffic outside any tool call is dropped — it has nothing to be subordinate to", () => {
         const h = harness();
         h.emit({ type: "tool-started", source: SUB, toolUseId: "t1", name: "grep", input: {} });
         h.emit({ type: "tool-finished", source: SUB, toolUseId: "t1", name: "grep", isError: false });
         h.emit({ type: "data-plan", source: SUB, data: { planId: "pln-deadbeef", title: "hidden", steps: [] } });
         expect(h.out()).toBe("");
         expect(h.errs).toEqual([]);
+    });
+
+    test("sub-agent traffic INSIDE a tool call renders as a subordinate line, never a transcript entry", () => {
+        // Dropping it outright made a long tool call indistinguishable from a wedged one; emitting it
+        // at the root would bury the conversation. Routed under its call, it is neither.
+        const h = harness();
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "plan_analysis", input: {} });
+        h.emit({ type: "tool-started", source: SUB, toolUseId: "s1", name: "search_papers", input: {} });
+        const out = h.out();
+        expect(out).toContain("[tool] plan_analysis running...");
+        expect(out).toContain("planner: search_papers");
+        // The sub-agent's own call did NOT open a transcript-level chip of its own.
+        expect(out).not.toContain("[tool] search_papers");
+    });
+
+    test("a sub-agent data part still renders nothing — only activity is routed", () => {
+        const h = harness();
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "plan_analysis", input: {} });
+        h.emit({ type: "data-plan", source: SUB, data: { planId: "pln-deadbeef", title: "hidden", steps: [] } });
+        // A sub-agent's plan card is content for its own caller, not activity — it must not surface.
+        expect(h.out()).not.toContain("hidden");
+        expect(h.out()).not.toContain("pln-deadbeef");
     });
 
     test("tool chip: one line on start, outcome on finish", () => {
