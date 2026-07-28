@@ -1,7 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 
-import { __resetKeybindCache, dispatchKey, keybindLabel, leaderSeq, parseChord, resolveKeybind, useBindings, type KeyLike } from "./keymap.ts";
+import {
+    __resetKeybindCache,
+    dispatchKey,
+    keybindLabel,
+    KEYBIND_DEFAULTS,
+    leaderSeq,
+    parseChord,
+    resolveKeybind,
+    useBindings,
+    type KeyLike,
+} from "./keymap.ts";
 import { withRoot } from "../test_support/solid.ts";
 import { assertTestSandbox } from "../test_support/sandbox.ts";
 import { writeConfig } from "../lib/config.ts";
@@ -73,6 +83,62 @@ describe("keybind resolution — config override", () => {
             expect(ran).toBe(0);
             expect(dispatchKey(key("p", { ctrl: true }))).toBe(true); // the remapped chord does
             expect(ran).toBe(1);
+        });
+    });
+});
+
+describe("run-activity panel bindings", () => {
+    // The panel's two actions are ordinary remappable app keybindings — the point of this block is
+    // that nothing about them is special-cased: they resolve, they relabel, and they remap like any
+    // other, which is what lets the panel derive its displayed hints from the chords.
+    test("both panel actions resolve to Ctrl chords — never Alt, which terminals deliver unreliably", () => {
+        for (const id of ["app.run-panel-next", "app.run-panel-toggle"] as const) {
+            const chord = resolveKeybind(id);
+            expect(chord.ctrl).toBe(true);
+            expect(chord.alt).toBe(false);
+            // A bare printable would fire while the composer has focus; a modifier is what prevents it.
+            expect(chord.key.length).toBe(1);
+        }
+    });
+
+    test("the panel's labels are lowercase and derived, so a remap re-advertises itself", () => {
+        expect(keybindLabel("app.run-panel-next")).toBe("ctrl+n");
+        expect(keybindLabel("app.run-panel-toggle")).toBe("ctrl+r");
+
+        writeKeybinds({ "app.run-panel-next": "ctrl+9", "app.run-panel-toggle": "ctrl+0" });
+        // The panel renders exactly these strings — it never hand-writes a key beside an action.
+        expect(keybindLabel("app.run-panel-next")).toBe("ctrl+9");
+        expect(keybindLabel("app.run-panel-toggle")).toBe("ctrl+0");
+    });
+
+    test("the panel's chords collide with no other app binding", () => {
+        // A collision would be silently arbitrated by layer priority rather than reported, so the
+        // absence of one is worth pinning: every default app chord must be distinct.
+        const labels = (Object.keys(KEYBIND_DEFAULTS) as (keyof typeof KEYBIND_DEFAULTS)[]).map((id) => keybindLabel(id));
+        expect(new Set(labels).size).toBe(labels.length);
+    });
+
+    test("end-to-end: the panel chords dispatch centrally, and typing a bare letter does not", () => {
+        withRoot(() => {
+            let next = 0;
+            let toggled = 0;
+            useBindings(() => ({
+                bindings: [
+                    { chord: resolveKeybind("app.run-panel-next"), run: () => next++ },
+                    { chord: resolveKeybind("app.run-panel-toggle"), run: () => toggled++ },
+                ],
+            }));
+
+            expect(dispatchKey(key("n", { ctrl: true }))).toBe(true);
+            expect(next).toBe(1);
+            expect(dispatchKey(key("r", { ctrl: true }))).toBe(true);
+            expect(toggled).toBe(1);
+
+            // The composer's own keys are untouched: the unmodified letters fall through.
+            expect(dispatchKey(key("n"))).toBe(false);
+            expect(dispatchKey(key("r"))).toBe(false);
+            expect(next).toBe(1);
+            expect(toggled).toBe(1);
         });
     });
 });

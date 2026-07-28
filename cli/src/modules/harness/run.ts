@@ -56,7 +56,7 @@ import { workspaceDataDir } from "../analysis/output.ts";
 import { stageInputs } from "../staging/staging.ts";
 import { resolveHarnessConfig } from "./config.ts";
 import { validatePlanFile, persistPlan, type PlanIntakeError } from "./plan_intake.ts";
-import { describeBootError, ensureSandboxImage, formatElapsed, readNewestWorkflowStep, withStatusPool } from "./profile.ts";
+import { describeBootError, ensureSandboxImage, formatElapsed, readNewestWorkflowStep, runWorkflowFamily, withStatusPool } from "./profile.ts";
 import { bootHarnessRuntime, type RunTriggerDeps } from "./runtime.ts";
 
 type Spinner = ReturnType<typeof spinner>;
@@ -593,15 +593,7 @@ async function waitForRunTerminal(pool: Pool, runId: string, s: Spinner): Promis
         }
 
         const steps = (await queryStepsByRun(pool, runId)).unwrapOr([]);
-        // Newest workflow of the run family: the parent (`workflow_uuid = runId`) or
-        // a child (`runId-N`). A UUID contains no LIKE wildcards, so the pattern is
-        // literal apart from the trailing `%`.
-        const detail = await readNewestWorkflowStep(pool, {
-            text: `SELECT workflow_uuid FROM dbos.workflow_status
-                     WHERE workflow_uuid = $1 OR workflow_uuid LIKE $1 || '-%'
-                     ORDER BY created_at DESC LIMIT 1`,
-            values: [runId],
-        });
+        const detail = await readNewestWorkflowStep(pool, runWorkflowFamily(runId));
         s.message(renderRunProgress(steps, detail, startedAt));
         await Promise.sleep(2000);
     }

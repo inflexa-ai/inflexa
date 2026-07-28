@@ -62,12 +62,24 @@ export type ActiveRunProgress = {
     name: string;
     /** The run's short id tail (see {@link idTail}). */
     tag: string;
+    /** When the run started (ISO), for the elapsed readout. */
+    startedAt: string;
     /** Completed step count (bar numerator). */
     done: number;
     /** Total step count (bar denominator). */
     total: number;
     /** The run's ordered step views. */
     steps: RunStepView[];
+    /**
+     * True when this entry was carried forward from a previous refresh because THIS run's step read
+     * failed — the run is still active, but what is shown is the last known state rather than the
+     * current one.
+     *
+     * Carried here rather than inferred by a consumer because the carry-forward is invisible from
+     * outside: a stale entry and a fresh one are the same shape, so a surface that must mute itself
+     * on a blip (the run-activity panel) has no other way to tell them apart.
+     */
+    stale: boolean;
 };
 
 /**
@@ -500,12 +512,11 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
                 );
             }
 
-            const next = new Map<string, ActiveRunProgress>();
-            // Runs whose step read blipped this tick. Their previous entry is carried forward inside
-            // the setter's updater below rather than read from the signal here — reading it would
-            // both track reactivity nothing wants and pin the value to loop-entry rather than
-            // write time.
-            const carryForward = new Set<string>();
+            // Runs that read cleanly this tick. The published map is assembled from this in the
+            // setter below rather than written here, because a run whose read blipped must be carried
+            // forward from the PREVIOUS map — and reading that signal here would both track
+            // reactivity nothing wants and pin the value to loop-entry rather than write time.
+            const fresh = new Map<string, ActiveRunProgress>();
             for (const run of active) {
                 const stepsRes = await seams.loadSteps(runtime.pool, run.runId);
                 if (myRefresh !== refreshGeneration) return;
@@ -524,27 +535,44 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
                             blockedReason: r.blockedReason,
                             attempts: r.attempts,
                         }));
-                        next.set(run.runId, {
+                        fresh.set(run.runId, {
                             runId: run.runId,
                             name: runLabelOf(run, plan),
                             tag: idTail(run.runId),
+                            startedAt: run.startedAt,
                             done: steps.filter((s) => s.state === "done").length,
                             total: steps.length,
                             steps,
+                            stale: false,
                         });
                     },
-                    // This run is active but its steps could not be read (a transient DB blip). Carry
-                    // the previous entry for THIS run id forward so the bounded poll self-heals without
-                    // blinking a genuinely running run away. Keying by run id is what makes this safe:
-                    // the old single-slot store had to compare tags to avoid showing one run's steps
-                    // under another's row, and that mismatch is no longer representable.
-                    () => carryForward.add(run.runId),
+                    // This run is active but its steps could not be read (a transient DB blip). It is
+                    // simply absent from `fresh`, and the assembly below carries its previous entry
+                    // forward — so the bounded poll self-heals without blinking a genuinely running
+                    // run away. Keying by run id is what makes this safe: the old single-slot store
+                    // had to compare tags to avoid showing one run's steps under another's row, and
+                    // that mismatch is no longer representable.
+                    () => {},
                 );
             }
             setActiveRun((prev) => {
-                for (const runId of carryForward) {
-                    const kept = prev.get(runId);
-                    if (kept) next.set(runId, kept);
+                // Assembled in `active` order — the runs query's newest-first order — NOT in the order
+                // the reads happened to succeed. Map iteration order is what every consumer reads as
+                // run order: the rail's blocks, and the panel's position indicator and implicit focus.
+                // Appending carried-forward entries instead would let a transient blip on one run
+                // reorder the whole set, silently swapping which run the panel shows.
+                const next = new Map<string, ActiveRunProgress>();
+                for (const run of active) {
+                    const read = fresh.get(run.runId);
+                    if (read) {
+                        next.set(run.runId, read);
+                        continue;
+                    }
+                    const kept = prev.get(run.runId);
+                    // Re-stamped `stale` rather than reused verbatim: the entry's CONTENT is the last
+                    // known state, but its freshness is a property of THIS refresh, so a run that read
+                    // cleanly last tick and blipped this one must not keep advertising itself as fresh.
+                    if (kept) next.set(run.runId, { ...kept, stale: true });
                 }
                 return next;
             });

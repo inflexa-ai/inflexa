@@ -363,6 +363,26 @@ export async function readNewestWorkflowStep(
 }
 
 /**
+ * The scalar subquery selecting a run's newest workflow — the parent
+ * (`workflow_uuid = runId`) or one of its children (`runId-N`) — for
+ * {@link readNewestWorkflowStep}. A UUID contains no LIKE wildcards, so the
+ * pattern is literal apart from the trailing `%`.
+ *
+ * Shared by the headless run wait (`run.ts`) and the TUI's run-activity panel
+ * rather than written twice: the `runId-N` child-id scheme is a contract with
+ * the harness's workflow naming, and two copies of it would drift the moment
+ * that scheme changes, leaving one surface silently reading only the parent.
+ */
+export function runWorkflowFamily(runId: string): { text: string; values: unknown[] } {
+    return {
+        text: `SELECT workflow_uuid FROM dbos.workflow_status
+                 WHERE workflow_uuid = $1 OR workflow_uuid LIKE $1 || '-%'
+                 ORDER BY created_at DESC LIMIT 1`,
+        values: [runId],
+    };
+}
+
+/**
  * Latest step of the newest profile workflow for this analysis, read from the
  * DBOS step record. Returns `null` on any miss or error: progress is a
  * cosmetic channel, and a hiccup here must never abort a live run's wait.
