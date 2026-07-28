@@ -160,7 +160,12 @@ function noticeKindFor(result: VerifyResult): "info" | "warn" | "error" {
     }
 }
 
-function ThemePicker(): JSX.Element {
+/**
+ * The theme picker, previewing live: the highlighted theme is applied to the running render root as
+ * the cursor moves, and only a selection persists it. Exported for its render test, which drives the
+ * preview/revert/persist contract through the real dialog host.
+ */
+export function ThemePicker(): JSX.Element {
     const ws = useWorkspace();
     const current = readConfig().theme;
     const items = themeIds.map((id) => ({ value: id, title: themes[id].name, hint: id === current ? "current" : undefined }));
@@ -170,7 +175,22 @@ function ThemePicker(): JSX.Element {
             placeholder={`Search themes${GLYPHS.ellipsis}`}
             items={items}
             emptyText="No themes"
-            onCancel={() => ws.closeDialog()}
+            // Open ON the persisted theme. At row 0 the mount-time cursor callback would fire with the
+            // first listed theme instead, so merely opening the picker would flash anyone on another
+            // theme over to that one.
+            initialValue={current}
+            // Live preview: apply, never persist. The mount-time fire is a deliberate no-op — it
+            // re-applies the theme that is already active. `undefined` means the filter matched nothing,
+            // so enter would pick nothing; the preview means "what enter would apply now", so it reverts
+            // to the persisted theme rather than freezing the last previewed one.
+            onCursorChange={(id) => setTheme(id ?? current)}
+            // The ONE revert site: the dialog host funnels every non-commit dismissal (esc,
+            // click-outside, ctrl+c) into the cancel callback, so undoing the preview here covers all of
+            // them. A selection closes with a commit reason, which fires no cancel.
+            onCancel={() => {
+                setTheme(current);
+                ws.closeDialog();
+            }}
             onSelect={(id: ThemeId) => {
                 setTheme(id); // live recolor of the running render root
                 writeConfig({ ...readConfig(), theme: id }).match(

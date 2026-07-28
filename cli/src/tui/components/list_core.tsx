@@ -1,5 +1,5 @@
 import { randomUUIDv7 } from "bun";
-import { createEffect, createMemo, createSignal, For, Index, on, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Index, on, onCleanup, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 
@@ -72,6 +72,18 @@ export type ListProps<T> = {
     mode?: SelectMode;
     /** Multi mode: values rendered pre-selected (●) on mount. Read once. */
     initialSelected?: ReadonlySet<T>;
+    /**
+     * Mount-time cursor seed: the cursor starts on the row whose `value` strict-equals (`===`) this,
+     * instead of row 0. Matching is by `===` alone — callers key rows by primitive ids (a theme id, a
+     * model id), so an object-valued row only matches the very reference it was built from.
+     *
+     * Read ONCE, at mount: a later change to this prop moves nothing, and the seed does NOT pin the
+     * cursor afterwards — a new `query` still jumps to the best match, and a replaced `DynamicList`
+     * items array still restarts the listing at row 0.
+     *
+     * Seeds a CURSOR, not a selection; multi mode's pre-checked values are {@link initialSelected}.
+     */
+    initialValue?: T;
     /** Single mode: the cursor row was chosen (enter) — select-and-submit in one stroke. */
     onSelect?: (value: T) => void;
     /** Multi mode: the batch was confirmed (enter). */
@@ -125,7 +137,6 @@ type RowMeta = { index: number; header: string | null };
 export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
     // Unique per instance so row ids never collide across stacked/sibling lists.
     const lid = randomUUIDv7();
-    const [cursor, setCursor] = createSignal(0);
     // Seed-once: initialSelected is a mount-time seed; the live set is owned here.
     const [selected, setSelected] = createSignal<ReadonlySet<T>>(new Set<T>(props.initialSelected ?? []));
     let scrollRef: ScrollBoxRenderable | null = null;
@@ -164,6 +175,17 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
     // What the cursor indexes. Same-category rows are contiguous here by construction.
     const flat = createMemo<SelectItem<T>[]>(() => grouped().flatMap(([, items]) => items));
 
+    // The cursor lives HERE, below `flat`, because its initial position is derived from that
+    // projection: `initialValue` names a row VALUE, and the position it maps to is a flat index —
+    // ranking and grouping can interleave categories, so the raw `items` index would be the wrong
+    // number. Resolved synchronously in the component body (not in an effect) so the seed is already
+    // in place when the mount-time effects below run: the first `onCursorChange` then reports the
+    // seeded row rather than row 0, and scrollChildIntoView brings it on screen. The query/items
+    // reset effect is `defer: true`, so it stays silent at mount and does not clobber this.
+    // eslint-disable-next-line solid/reactivity -- seed-once by contract: `initialValue` is documented as a mount-time-only seed, so an untracked read is the intent
+    const seeded = props.initialValue === undefined ? -1 : flat().findIndex((it) => it.value === props.initialValue);
+    const [cursor, setCursor] = createSignal(seeded < 0 ? 0 : seeded);
+
     // Per-row flat position + group-start header, one O(n) pass instead of per-row indexOf. The
     // header renders INSIDE the row's own box, so scrollChildIntoView on the row brings its
     // header along — no separate header-visibility dance.
@@ -195,12 +217,24 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
         const n = flat().length;
         setCursor((i) => (n === 0 ? 0 : Math.min(i, n - 1)));
     });
-    createEffect(() => {
+    function scrollCursorIntoView(): void {
         const i = cursor();
         const it = flat()[i];
         if (!it) return;
         scrollRef?.scrollChildIntoView(props.strategy === "for" ? (idOf().get(it) ?? "") : `${lid}-slot-${i}`);
-    });
+    }
+    createEffect(scrollCursorIntoView);
+    // A seeded cursor needs a SECOND scroll attempt. `scrollChildIntoView` decides by comparing the
+    // child's computed geometry against the viewport's, and at mount — before the first frame lays the
+    // tree out — both are still zero, so the effect above computes a zero delta and a seeded row below
+    // the fold silently stays off-screen: a cursor the user cannot see, which is worse than no seed at
+    // all. One macrotask later the first render has happened and the geometry is real (a microtask is
+    // too early — verified), so the retry lands. Registered ONLY when a seed matched, so no other list
+    // pays for a timer: an unseeded cursor starts at row 0, which is in view by construction.
+    if (seeded >= 0) {
+        const retryScroll = setTimeout(scrollCursorIntoView, 0);
+        onCleanup(() => clearTimeout(retryScroll));
+    }
     createEffect(() => props.onCursorChange?.(flat()[cursor()]?.value));
 
     function up(): void {
