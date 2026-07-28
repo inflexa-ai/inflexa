@@ -625,8 +625,15 @@ export async function openSwitchSession(ctx: Workspace, seams: SessionSeams = re
     const runtime = seams.runtime();
     const analysis = ctx.analysis;
     if (!analysis) return;
-    if (bootState().phase !== "ready" || !runtime) {
-        seams.notify({ kind: "info", text: `Harness is still booting${GLYPHS.ellipsis}` });
+    const phase = bootState().phase;
+    if (phase !== "ready" || !runtime) {
+        // `failed` is terminal, so "still booting" would promise a wait that never ends and contradict
+        // the status bar the user is looking at. Every other non-ready phase IS a wait.
+        seams.notify(
+            phase === "failed"
+                ? { kind: "warn", text: "The harness did not start — conversations are unavailable." }
+                : { kind: "info", text: `Harness is still booting${GLYPHS.ellipsis}` },
+        );
         return;
     }
     const threads = (await seams.listThreads(runtime.pool, analysis.id)).match(
@@ -636,6 +643,15 @@ export async function openSwitchSession(ctx: Workspace, seams: SessionSeams = re
             return [];
         },
     );
+    // The listing is a Postgres round trip and NOTHING is modal across it — the picker has not opened
+    // yet, so the analysis-switch keys are still live. Opening the picker anyway would list the
+    // previous analysis's conversations, and selecting one would bind that thread beside the working
+    // directory of the analysis now open: a scope naming two different analyses at once. Once the
+    // picker IS open it holds the modal mode, which is what freezes the scope for as long as it lives.
+    if (ctx.analysis?.id !== analysis.id) {
+        seams.notify({ kind: "info", text: "Analysis changed — reopen the session picker for this one." });
+        return;
+    }
     ctx.openDialog(() => (
         <SelectDialog
             title="Switch session"
@@ -1071,6 +1087,14 @@ export async function openRenameSession(ctx: Workspace, seams: SessionSeams = re
         seams.notify({ kind: "warn", text: "Send a message first — this conversation has no saved title yet." });
         return;
     }
+    // Same window as {@link openSwitchSession}: the row read precedes the prompt, so the session-switch
+    // keys are live across it. "Rename session" means the one the user is looking at — opening a prompt
+    // pre-filled from the conversation they just left would retitle it under a heading claiming to be
+    // about the current one.
+    if (ctx.sessionId !== threadId) {
+        seams.notify({ kind: "info", text: "Session changed — reopen rename for this one." });
+        return;
+    }
     // A row can legitimately predate its title (pg seeds it from the first user message), so the
     // field opens empty rather than on a placeholder the user would have to clear.
     const current = read.thread.title ?? "";
@@ -1082,7 +1106,7 @@ export async function openRenameSession(ctx: Workspace, seams: SessionSeams = re
             onCancel={() => ctx.closeDialog()}
             onSubmit={(raw) => {
                 ctx.closeDialog();
-                void commitSessionRename(pool, threadId, raw, seams);
+                void commitSessionRename(ctx, pool, threadId, raw, seams);
             }}
         />
     ));
@@ -1096,8 +1120,12 @@ export async function openRenameSession(ctx: Workspace, seams: SessionSeams = re
  * A `null` row here is the concurrent-delete backstop, NOT the "no row yet" case
  * ({@link openRenameSession} already refused that before the prompt opened): the thread was deleted
  * between the prompt opening and this submit, so the write found nothing to land on.
+ *
+ * Takes the workspace only to re-check what is bound when the write lands — the rename targets a
+ * thread id captured when the prompt opened, and the user is free to move off it while the write is
+ * in flight.
  */
-export async function commitSessionRename(pool: Pool, threadId: string, raw: string, seams: SessionSeams = realSessionSeams): Promise<void> {
+export async function commitSessionRename(ctx: Workspace, pool: Pool, threadId: string, raw: string, seams: SessionSeams = realSessionSeams): Promise<void> {
     const title = raw.trim();
     if (!title) {
         seams.notify({ kind: "warn", text: "A title is required." });
@@ -1110,9 +1138,16 @@ export async function commitSessionRename(pool: Pool, threadId: string, raw: str
                 return;
             }
             seams.notify({ kind: "info", text: `Session renamed to "${title}"` });
-            // The write changes the row without changing the bound id, so no reactive edge
-            // would re-read it — poke the snapshot so the sidebar shows the new title.
-            seams.refreshThread(threadId);
+            // The write changes the row without changing the bound id, so no reactive edge would
+            // re-read it — poke the snapshot so the sidebar shows the new title.
+            //
+            // Only while that id is still the bound one. A session switch during the write (the
+            // prompt closes on submit, so the palette is reachable again immediately) leaves this
+            // poke aimed at a thread the rail no longer describes, and `refreshOpenThread` would
+            // dutifully load it — painting the renamed conversation's title over the open one until
+            // some later edge happened to correct it. The rename itself still landed, so the notice
+            // above stands either way.
+            if (ctx.sessionId === threadId) seams.refreshThread(threadId);
         },
         (e) => seams.notify({ kind: "error", text: `Failed: ${e.type}` }),
     );
@@ -1149,6 +1184,14 @@ export async function deleteSessionFlow(ctx: Workspace, seams: SessionSeams = re
         seams.notify({ kind: "info", text: "This conversation has nothing saved yet — there is nothing to remove." });
         return;
     }
+    // Same window as {@link openSwitchSession}, and the costliest of the three to get wrong: the
+    // confirmation would name the conversation the user just left, and confirming it both tombstones
+    // that one and re-lands the chat — yanking the user off the session they had switched to, for a
+    // removal they did not ask for there.
+    if (ctx.sessionId !== threadId) {
+        seams.notify({ kind: "info", text: "Session changed — reopen remove for this one." });
+        return;
+    }
     const name = threadLabel(read.thread);
     ctx.openDialog(() => (
         <ConfirmDeleteDialog
@@ -1179,6 +1222,17 @@ export async function confirmSessionDelete(
     await seams.deleteThread(pool, threadId).match(
         async () => {
             seams.notify({ kind: "info", text: "Session removed — it no longer appears in this analysis." });
+            // Unbind BEFORE the landing, which is another Postgres round trip. Across that window the
+            // scope would otherwise still name the tombstone, and a turn submitted into it passes every
+            // gate: the id is non-null, the thread store's create is a no-op against the existing
+            // (soft-deleted) row, and the messages persist onto a thread that lists nowhere — the user's
+            // message lands where they can never see it again. `null` routes that same submit through
+            // the existing `unbound` refusal instead, which keeps the typed text for the next send.
+            //
+            // The cost is that the ready-edge watcher sees an unbound scope and starts a resolution of
+            // its own beside this one. They converge — both pick the surviving thread, or both mint an
+            // identity that nothing has written — so the loser is discarded at no charge but one listing.
+            ctx.openSession(null, ctx.workingDir, analysis);
             // Re-enter through the analysis-open path: it performs exactly the landing this
             // needs — bind the surviving most-recent thread, else a fresh mint.
             await openAnalysis(ctx, analysis, seams);

@@ -52,7 +52,7 @@ export function getAgentPolicy(command: Command): AgentPolicy | undefined {
  * code and nothing reports that it was ignored.
  *
  * The alternative, `enablePositionalOptions()`, was tried and reverted: it makes a root-style flag
- * placed AFTER a subcommand a hard "unknown option" error, breaking shapes like `inflexa sessions
+ * placed AFTER a subcommand a hard "unknown option" error, breaking shapes like `inflexa project ls
  * --project x` that already work. `cli.test.ts` pins both halves.
  *
  * Runs as a `preAction` hook rather than by rewriting the handler's arguments, because commander
