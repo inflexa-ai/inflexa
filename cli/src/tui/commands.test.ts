@@ -160,16 +160,32 @@ describe("session flows", () => {
         return { threads, total: threads.length, page: 0, perPage: 20, hasMore: false };
     }
 
-    /** A workspace stand-in recording the two writes a session flow can make: dialogs and scope swaps. */
+    /**
+     * A workspace stand-in recording the two writes a session flow can make: dialogs and scope swaps.
+     *
+     * `swapTo` moves the open scope the way the user's own switch keys would. Each flow reads the scope
+     * once, awaits Postgres, then acts — and nothing is modal across that await, so the switch keys stay
+     * live. Driving the swap from inside a seam is how a test lands in that window deterministically.
+     */
     function sessionScope(
         analysis: Analysis | null,
         sessionId: string | null,
-    ): { ws: Workspace; dialogs: () => number; opened: { threadId: string | null; analysisId: string }[] } {
+    ): {
+        ws: Workspace;
+        dialogs: () => number;
+        opened: { threadId: string | null; analysisId: string }[];
+        swapTo: (next: { analysis?: Analysis; sessionId?: string | null }) => void;
+    } {
         const opened: { threadId: string | null; analysisId: string }[] = [];
         let dialogs = 0;
+        const scope: { analysis: Analysis | null; sessionId: string | null } = { analysis, sessionId };
         const ws = {
-            analysis,
-            sessionId,
+            get analysis() {
+                return scope.analysis;
+            },
+            get sessionId() {
+                return scope.sessionId;
+            },
             workingDir: "/work",
             project: null,
             openDialog: () => {
@@ -181,7 +197,15 @@ describe("session flows", () => {
             },
             quit: async () => {},
         } as unknown as Workspace;
-        return { ws, dialogs: () => dialogs, opened };
+        return {
+            ws,
+            dialogs: () => dialogs,
+            opened,
+            swapTo: (next) => {
+                if (next.analysis !== undefined) scope.analysis = next.analysis;
+                if (next.sessionId !== undefined) scope.sessionId = next.sessionId;
+            },
+        };
     }
 
     /** Seams plus recorders for the notices raised and the snapshot pokes issued. */
@@ -228,6 +252,22 @@ describe("session flows", () => {
         expect(t.notices[0]?.text).toContain("booting");
     });
 
+    test("switch on a FAILED boot says the harness did not start, not that it is still booting", async () => {
+        // `failed` is terminal. "Still booting" would promise a wait that never ends, and contradict the
+        // failure the status bar is already showing.
+        __setBootStateForTest({ phase: "failed", message: "postgres unreachable" });
+        const t = makeSeams();
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await openSwitchSession(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("warn");
+        expect(t.notices[0]?.text).toContain("did not start");
+        expect(t.notices[0]?.text).not.toContain("booting");
+    });
+
     test("a failed listing warns and still opens the picker — a degrade, never a crash", async () => {
         __setBootStateForTest(READY);
         const t = makeSeams({ listThreads: () => errAsync(dbErr) });
@@ -254,6 +294,70 @@ describe("session flows", () => {
         expect(t.notices).toHaveLength(1);
         expect(t.notices[0]?.kind).toBe("warn");
         expect(t.notices[0]?.text).toContain("Send a message first");
+    });
+
+    test("switch refuses to open a picker built for an analysis the user has since left", async () => {
+        // Nothing is modal across the listing round trip, so the analysis-switch keys are live. A picker
+        // opened anyway lists the previous analysis's conversations, and selecting one binds that thread
+        // beside the CURRENT analysis's working directory — one scope naming two analyses.
+        __setBootStateForTest(READY);
+        const OTHER = { id: "a2", name: "Beta", projectId: null } as unknown as Analysis;
+        const w = sessionScope(ANALYSIS, "thread-1");
+        const t = makeSeams({
+            listThreads: () => {
+                w.swapTo({ analysis: OTHER });
+                return okAsync(threadPage([threadRow()]));
+            },
+        });
+
+        await openSwitchSession(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.text).toContain("Analysis changed");
+    });
+
+    test("rename refuses to open a prompt for the session the user has since left", async () => {
+        // "Rename session" means the one in front of you. A prompt pre-filled from the conversation just
+        // navigated away from would retitle THAT one under a heading claiming to be about this one.
+        const w = sessionScope(ANALYSIS, "thread-1");
+        const t = makeSeams({
+            getThread: () => {
+                w.swapTo({ sessionId: "thread-2" });
+                return okAsync(threadRow());
+            },
+        });
+
+        await openRenameSession(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.text).toContain("Session changed");
+    });
+
+    test("remove refuses to confirm against the session the user has since left", async () => {
+        // The costliest of the three: the confirmation would name the conversation just left, and
+        // confirming it tombstones that one AND re-lands the chat — yanking the user off the session
+        // they switched to, for a removal they never asked for there.
+        const w = sessionScope(ANALYSIS, "thread-1");
+        let deletes = 0;
+        const t = makeSeams({
+            getThread: () => {
+                w.swapTo({ sessionId: "thread-2" });
+                return okAsync(threadRow());
+            },
+            deleteThread: () => {
+                deletes += 1;
+                return okAsync<void, DbError>(undefined);
+            },
+        });
+
+        await deleteSessionFlow(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(deletes).toBe(0);
+        expect(w.opened).toEqual([]); // nothing tombstoned, so nothing re-landed
+        expect(t.notices[0]?.text).toContain("Session changed");
     });
 
     test("rename distinguishes a FAILED read from an absent row — no false claim about the user's data", async () => {
@@ -286,8 +390,9 @@ describe("session flows", () => {
         // The concurrent-delete backstop: `updateTitle` is a no-op on a missing row, so a silent success
         // would claim a title the sidebar will never show.
         const t = makeSeams({ updateTitle: () => okAsync(null) });
+        const w = sessionScope(ANALYSIS, "thread-1");
 
-        await commitSessionRename(fakePool, "thread-1", "Variant burden sweep", t.seams);
+        await commitSessionRename(w.ws, fakePool, "thread-1", "Variant burden sweep", t.seams);
 
         expect(t.notices).toHaveLength(1);
         expect(t.notices[0]?.kind).toBe("warn");
@@ -296,18 +401,35 @@ describe("session flows", () => {
 
     test("a committed rename pokes the open-thread snapshot, since the bound id never changed", async () => {
         const t = makeSeams({ updateTitle: (_pool, threadId, title) => okAsync(threadRow({ threadId, title })) });
+        const w = sessionScope(ANALYSIS, "thread-1");
 
-        await commitSessionRename(fakePool, "thread-1", "  Variant burden sweep  ", t.seams);
+        await commitSessionRename(w.ws, fakePool, "thread-1", "  Variant burden sweep  ", t.seams);
 
         expect(t.notices[0]?.kind).toBe("info");
         expect(t.notices[0]?.text).toContain("Variant burden sweep"); // trimmed before it is written
         expect(t.refreshed).toEqual(["thread-1"]);
     });
 
+    test("a rename that lands after the user swapped sessions reports success but does NOT repaint the rail", async () => {
+        // The prompt closes on submit, so the palette is reachable again while the write is in flight.
+        // Poking the snapshot for the renamed thread would then load it over the conversation the user
+        // actually has open — the exact cross-thread repaint the snapshot's id check exists to stop.
+        const t = makeSeams({ updateTitle: (_pool, threadId, title) => okAsync(threadRow({ threadId, title })) });
+        const w = sessionScope(ANALYSIS, "thread-moved-on");
+
+        await commitSessionRename(w.ws, fakePool, "thread-1", "Variant burden sweep", t.seams);
+
+        // The write DID land, so the user is told so.
+        expect(t.notices[0]?.kind).toBe("info");
+        expect(t.notices[0]?.text).toContain("Variant burden sweep");
+        expect(t.refreshed).toEqual([]);
+    });
+
     test("a rename write failure surfaces the error and leaves the rail alone", async () => {
         const t = makeSeams({ updateTitle: () => errAsync(dbErr) });
+        const w = sessionScope(ANALYSIS, "thread-1");
 
-        await commitSessionRename(fakePool, "thread-1", "Variant burden sweep", t.seams);
+        await commitSessionRename(w.ws, fakePool, "thread-1", "Variant burden sweep", t.seams);
 
         expect(t.notices[0]?.kind).toBe("error");
         expect(t.refreshed).toEqual([]);
@@ -350,8 +472,34 @@ describe("session flows", () => {
         // deletion would be the one thing this flow cannot back up — the transcript stays in Postgres.
         expect(t.notices[0]?.text).toContain("no longer appears");
         expect(t.notices[0]?.text).not.toContain("deleted");
-        // The chat is never left bound to a thread that no longer lists.
-        expect(w.opened).toEqual([{ threadId: "thread-survivor", analysisId: ANALYSIS.id }]);
+        // Unbound FIRST, then landed. The scope is never left naming the tombstone across the landing's
+        // round trip: a turn submitted there would append onto a thread that lists nowhere, putting the
+        // user's message somewhere they can never read it. `null` refuses that submit and keeps the text.
+        expect(w.opened).toEqual([
+            { threadId: null, analysisId: ANALYSIS.id },
+            { threadId: "thread-survivor", analysisId: ANALYSIS.id },
+        ]);
+    });
+
+    test("the unbind precedes the landing round trip, not just its result", async () => {
+        // Asserting the ORDER of the two writes is not enough — both land by the time the flow returns
+        // either way. What matters is that the unbind is already visible while the landing's listing is
+        // still in flight, because that is the whole window a submit could slip into.
+        let release!: () => void;
+        const gate = new Promise<void>((r) => {
+            release = r;
+        });
+        const t = makeSeams({ resolveThreadId: async () => (await gate, "thread-survivor") });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        const flow = confirmSessionDelete(w.ws, fakePool, ANALYSIS, "thread-1", t.seams);
+        await Promise.resolve(); // let the delete settle and the unbind land
+
+        expect(w.opened).toEqual([{ threadId: null, analysisId: ANALYSIS.id }]);
+
+        release();
+        await flow;
+        expect(w.opened.at(-1)).toEqual({ threadId: "thread-survivor", analysisId: ANALYSIS.id });
     });
 
     test("a failed delete surfaces the error and leaves the user where they were", async () => {

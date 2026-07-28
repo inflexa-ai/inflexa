@@ -214,11 +214,17 @@ export function watchOpenThread(workspace: Workspace, seams: ThreadSeams = realT
     // current status so the effect's initial (synchronous) run never fires a false edge. Mirrors the
     // sidebar's ledger refresh, which hangs off the same edge for the same reason: a turn writes rows
     // nothing in the scope observes.
+    //
+    // Leaving `busy` at all is the edge, not reaching `idle`. A turn's thread row and its title are
+    // created up front, before the agent runs, so a turn that fails afterwards has still written
+    // exactly what this refresh exists to collect — and it settles on `error`, not `idle`. Keying on
+    // `idle` would leave the rail reading "new conversation" for the rest of the session whenever a
+    // chat's FIRST turn was the one that failed.
     let prev: ChatStatus = chatStatus();
     createEffect(() => {
         const status = chatStatus();
         const bound = workspace.sessionId;
-        if (prev === "busy" && status === "idle" && bound !== null) void refreshOpenThread(bound, seams);
+        if (prev === "busy" && status !== "busy" && bound !== null) void refreshOpenThread(bound, seams);
         prev = status;
     });
 }

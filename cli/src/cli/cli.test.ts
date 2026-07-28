@@ -14,9 +14,15 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("Usage: inflexa");
         expect(result.stdout).toContain("project");
-        expect(result.stdout).toContain("status");
         expect(result.stdout).toContain("refs");
         expect(result.stdout).toContain("reference data mounted read-only in sandboxes at /mnt/refs");
+        // Assert the DESCRIPTION, not the bare name: "status" is a substring of `sandbox status` and of
+        // several option blurbs, so a containment check on the word alone passes even when the command
+        // is gone. Its own line is what proves it is registered.
+        expect(result.stdout).toContain("Print what `inflexa` resolves to right now");
+        // The retired `sessions` command must not come back by accident — the whole point of the
+        // single-homed thread store is that there is no second session surface.
+        expect(result.stdout).not.toContain("sessions");
     });
 
     test("refs path prints the exact public path without creating it", async () => {

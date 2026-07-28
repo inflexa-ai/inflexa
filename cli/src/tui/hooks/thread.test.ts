@@ -577,6 +577,40 @@ describe("watchOpenThread — the row tracker", () => {
         }
     });
 
+    test("a turn that FAILS still re-reads: the row it created is the one the rail is missing", async () => {
+        // The thread row and its title are written up front, before the agent runs, so a turn that fails
+        // afterwards has still created exactly what this refresh collects — and it settles on `error`,
+        // never `idle`. Keying the edge on `idle` alone leaves a chat whose FIRST turn failed reading
+        // "new conversation" for the rest of the session, with a real titled row sitting in Postgres.
+        // An overridden `getThread` records nothing in the base recorder, so count here.
+        let reads = 0;
+        const t = makeSeams({
+            getThread: () => {
+                reads += 1;
+                return okAsync(threadRow({ title: "Seeded by the failed turn" }));
+            },
+        });
+        const w = reactiveWorkspace(ANALYSIS, "thread-1");
+        const dispose = mountWatch(w.ws, t.seams);
+        try {
+            __setBootStateForTest(ready());
+            await settle();
+            const afterBind = reads;
+            expect(afterBind).toBeGreaterThan(0);
+
+            setChatStatus("busy");
+            setChatStatus("error");
+            await settle();
+
+            expect(reads).toBe(afterBind + 1);
+            const snap = openThread();
+            expect(snap.kind).toBe("loaded");
+            if (snap.kind === "loaded") expect(snap.thread.title).toBe("Seeded by the failed turn");
+        } finally {
+            dispose();
+        }
+    });
+
     test("only the busy→idle DOWN-edge re-reads, and only with a thread bound", async () => {
         let reads = 0;
         const t = makeSeams({
