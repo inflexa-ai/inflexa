@@ -49,3 +49,9 @@
 - [x] 6.1 Fix the stuck-position perf hole: the `index !== null` guard from 5.3 never goes false again once a recall is abandoned (a position deliberately outlives its recall — decision 3), so the transcript walk returned to every keystroke for the rest of the session. The position now carries its seeded text (`RecallPosition = { index, text }`) so liveness is an O(1) compare; `entries()` moved into the bindings' `run` (design decision 11, rewritten).
 - [x] 6.2 Add `hasPromptHistory()` to `conversation.ts` — the cheap config-time existence check that keeps `up` unbound (and falling through) when history is empty, returning at the first qualifying turn instead of building the list.
 - [x] 6.3 Cover it: a call-count test asserting that after a recall is abandoned by editing, further keystrokes never rebuild the entry list; plus unit tests pinning `hasPromptHistory()` in agreement with `promptHistory().length > 0`.
+
+## 7. Third review pass (PR #249, bot reviewer)
+
+- [x] 7.1 Make the hold at history-top a true no-op: `step` short-circuits when the resolved index AND text match the live position, so a clamped `up` at the oldest entry no longer re-seeds and drags the caret to the buffer end. Gated on `inRecall` so a stale position cannot suppress a fresh entry addressing the same place (design decision 9, extended).
+- [x] 7.2 Cover it with a MULTI-LINE oldest entry — invisible on single-line fixtures, where the caret's end and its row-0 position coincide, which is why the existing oldest-entry test missed it. Written first and confirmed failing against the previous implementation (caret row 2, expected 0).
+- [x] 7.3 Strengthen the spec's "Up at the oldest entry stays put" scenario to pin the caret as well as the buffer.

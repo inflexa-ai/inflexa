@@ -335,6 +335,35 @@ describe("prompt-history recall layer (rendered, real keyboard bus)", () => {
         }
     });
 
+    test("up at the oldest MULTI-LINE entry is a true no-op, caret included", async () => {
+        // The hold at history-top must not move the caret either. Reaching row 0 of the oldest entry is the
+        // whole point of the edge rule — the user walked there to fix line one — so a further `up` (out of
+        // habit, or having forgotten this is the oldest) re-seeding the same text and jumping the caret back
+        // to the end would undo exactly the positioning the rule exists to allow. readline holds both.
+        const { setup, settle, composer } = await mount({ entries: ["only entry\nline two\nline three"] });
+        try {
+            setup.mockInput.pressArrow("up");
+            await settle();
+            expect(composer().plainText).toBe("only entry\nline two\nline three");
+
+            // Walk the caret to the first row, as a user correcting line one would.
+            setup.mockInput.pressArrow("up");
+            await settle();
+            setup.mockInput.pressArrow("up");
+            await settle();
+            expect(composer().editBuffer.getCursorPosition().row).toBe(0);
+
+            // Nothing older to reach: the buffer holds, and so does the caret.
+            setup.mockInput.pressArrow("up");
+            await settle();
+
+            expect(composer().plainText).toBe("only entry\nline two\nline three");
+            expect(composer().editBuffer.getCursorPosition().row).toBe(0);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
     test("a single-line entry recalls in both directions with no extra keystrokes", async () => {
         // A one-row buffer is the first AND last row at once, so the caret rule costs nothing in the common
         // case — this is what keeps single-line recall a single press in each direction.
