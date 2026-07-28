@@ -59,6 +59,12 @@ export function describeGeoDownloadError(error: GeoDownloadError, accession: str
 /** Print one line per transfer phase — a captured subprocess has nowhere to paint a live meter. */
 function reportProgress(event: GeoProgress): void {
     switch (event.type) {
+        case "skipped":
+            // On stderr, and never silently: the closing line claims the Series was downloaded, and a
+            // name GEO published that this machine cannot reproduce is the one way that claim overstates
+            // what landed. The user gets the name and the directory, which is enough to fetch it by hand.
+            console.warn(`  ! skipping ${event.fileName} — its name cannot be written to disk (${event.dirUrl})`);
+            return;
         case "resolved": {
             const total = event.size.sized === 0 ? "size unknown" : `${event.size.declaredBytes.formatBytes()}${event.size.unsized > 0 ? "+" : ""}`;
             console.log(`Resolved ${event.files} file(s), ${total}.`);

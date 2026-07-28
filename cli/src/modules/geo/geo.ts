@@ -1,6 +1,7 @@
 import { randomUUIDv7 } from "bun";
-import { mkdir, rename, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { existsSync } from "node:fs";
+import { readdir, rename, rm } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
 import PQueue from "p-queue";
@@ -98,6 +99,14 @@ export type GeoSeriesUrls = {
 /** One downloadable GEO artifact: its absolute URL and the file name it should land under. */
 export type GeoArtifact = { readonly url: string; readonly fileName: string };
 
+/** Progress over a whole Series operation — one event per phase, per file, and per heartbeat. */
+export type GeoProgress =
+    | { readonly type: "skipped"; readonly dirUrl: string; readonly fileName: string }
+    | { readonly type: "resolved"; readonly files: number; readonly size: GeoSeriesSize }
+    | { readonly type: "file_started"; readonly fileName: string; readonly index: number; readonly total: number; readonly declaredBytes?: number }
+    | { readonly type: "file_progress"; readonly fileName: string; readonly bytes: number; readonly declaredBytes?: number }
+    | { readonly type: "file_completed"; readonly fileName: string; readonly bytes: number };
+
 /** Why resolving a Series' artifact set failed. `no_processed_files` is a resolvable series that exposes nothing to download. */
 export type GeoResolveError = { readonly type: "unreachable"; readonly message: string } | { readonly type: "no_processed_files"; readonly accession: string };
 
@@ -111,6 +120,11 @@ export type GeoFetchOptions = {
     readonly spacingMs?: number;
     /** Budget for a whole size sweep; defaults to {@link GEO_SIZE_PROBE_BUDGET_MS}. */
     readonly budgetMs?: number;
+};
+
+/** How a Series' artifact set is resolved: the fetch seams, plus the channel a skipped name is reported on. */
+export type GeoResolveOptions = GeoFetchOptions & {
+    readonly onProgress?: (event: GeoProgress) => void;
 };
 
 /** The Series' declared transfer cost exceeds {@link GEO_SERIES_MAX_BYTES}; nothing was fetched. */
@@ -203,8 +217,15 @@ function isSafeSegment(name: string): boolean {
  * `https://www.hhs.gov/vulnerability-disclosure-policy/…` footer link — present on every autoindex
  * page — is off-origin. It also disposes of traversal for free: `a/../../etc/passwd` normalizes
  * during resolution and lands outside the directory, so it never reaches the name check.
+ *
+ * `onSkipped` is notified for an href that IS a file in this directory but whose name cannot be
+ * reproduced on disk — an unusable percent-escape, or a segment {@link isSafeSegment} refuses.
+ * Page furniture is not reported: a sort link or the footer was never a file, whereas a dropped
+ * name means the set no longer matches what GEO published, and a caller that promises a complete
+ * Series has to be able to say so. Reporting rather than failing keeps one odd supplementary file
+ * from costing the user the rest of the download.
  */
-export function parseAutoindex(html: string, dirUrl: string): string[] {
+export function parseAutoindex(html: string, dirUrl: string, onSkipped?: (fileName: string) => void): string[] {
     let dir: URL;
     try {
         dir = new URL(dirUrl);
@@ -230,9 +251,15 @@ export function parseAutoindex(html: string, dirUrl: string): string[] {
         try {
             name = decodeURIComponent(segment);
         } catch {
-            continue; // A malformed escape sequence is not a name we can reproduce on disk.
+            // A malformed escape sequence is not a name we can reproduce on disk. Reported under
+            // its raw spelling, the only one we have.
+            onSkipped?.(segment);
+            continue;
         }
-        if (!isSafeSegment(name)) continue;
+        if (!isSafeSegment(name)) {
+            onSkipped?.(name);
+            continue;
+        }
         if (!names.includes(name)) names.push(name);
     }
     return names;
@@ -266,6 +293,10 @@ async function fetchGeo(url: string, options: GeoFetchOptions, init: RequestInit
         }
         if (!isSheddingStatus(response.status) || attempt === GEO_RETRY_ATTEMPTS - 1) return ok(response);
         lastFailure = `${url} answered HTTP ${response.status} ${response.statusText}`;
+        // A discarded response still owns its socket until the body is drained or cancelled, and an
+        // abandoned one would hold the connection the imminent retry needs — the same reason the
+        // transfer primitive drains before its own retry.
+        await response.body?.cancel().catch(() => undefined);
     }
     return err({ type: "unreachable", message: `${lastFailure} after ${GEO_RETRY_ATTEMPTS} attempts.` });
 }
@@ -280,14 +311,15 @@ async function fetchGeo(url: string, options: GeoFetchOptions, init: RequestInit
  * download whose other directories listed perfectly well. {@link fetchGeo} has already retried it, so
  * a 403 arriving here is the settled answer, not a throttle.
  */
-async function listDirectory(dirUrl: string, options: GeoFetchOptions): Promise<Result<GeoArtifact[], GeoResolveError>> {
+async function listDirectory(dirUrl: string, options: GeoResolveOptions): Promise<Result<GeoArtifact[], GeoResolveError>> {
     const response = await fetchGeo(dirUrl, options);
     if (response.isErr()) return err(response.error);
     if (response.value.status === 404 || response.value.status === 403) return ok([]);
     if (!response.value.ok)
         return err({ type: "unreachable", message: `Listing ${dirUrl} failed: HTTP ${response.value.status} ${response.value.statusText}.` });
     const html = await response.value.text();
-    return ok(parseAutoindex(html, dirUrl).map((fileName) => ({ url: `${dirUrl}${encodeURIComponent(fileName)}`, fileName })));
+    const names = parseAutoindex(html, dirUrl, (fileName) => options.onProgress?.({ type: "skipped", dirUrl, fileName }));
+    return ok(names.map((fileName) => ({ url: `${dirUrl}${encodeURIComponent(fileName)}`, fileName })));
 }
 
 /**
@@ -304,7 +336,7 @@ async function listDirectory(dirUrl: string, options: GeoFetchOptions): Promise<
  * shed listing does not fail the command — it silently subtracts a directory from the Series. Landing on
  * `suppl/` that way yields an exit-zero download of a Series missing its supplementary files.
  */
-export async function resolveGeoArtifacts(accession: string, options: GeoFetchOptions = {}): Promise<Result<GeoArtifact[], GeoResolveError>> {
+export async function resolveGeoArtifacts(accession: string, options: GeoResolveOptions = {}): Promise<Result<GeoArtifact[], GeoResolveError>> {
     const urls = geoSeriesUrls(accession);
     const spacing = options.spacingMs ?? GEO_REQUEST_SPACING_MS;
     const artifacts: GeoArtifact[] = [];
@@ -376,16 +408,8 @@ export type GeoDownloadError = GeoResolveError | GeoSizeError | DownloadError;
  */
 const PROGRESS_HEARTBEAT_MS = 5_000;
 
-/** Progress over a whole Series transfer — one event per phase, per file, and per heartbeat. */
-export type GeoProgress =
-    | { readonly type: "resolved"; readonly files: number; readonly size: GeoSeriesSize }
-    | { readonly type: "file_started"; readonly fileName: string; readonly index: number; readonly total: number; readonly declaredBytes?: number }
-    | { readonly type: "file_progress"; readonly fileName: string; readonly bytes: number; readonly declaredBytes?: number }
-    | { readonly type: "file_completed"; readonly fileName: string; readonly bytes: number };
-
 /** Options for {@link downloadGeoSeries}. */
-export type DownloadGeoSeriesOptions = GeoFetchOptions & {
-    readonly onProgress?: (event: GeoProgress) => void;
+export type DownloadGeoSeriesOptions = GeoResolveOptions & {
     /** Declared-bytes ceiling; defaults to {@link GEO_SERIES_MAX_BYTES}. */
     readonly maxBytes?: number;
     /** Minimum gap between `file_progress` events; defaults to {@link PROGRESS_HEARTBEAT_MS}. */
@@ -393,20 +417,62 @@ export type DownloadGeoSeriesOptions = GeoFetchOptions & {
 };
 
 /**
+ * Discard the staging directories earlier runs left behind, and recover an interrupted swap.
+ *
+ * The `finally` that removes staging does not run when the process is signalled, and this command's
+ * commonest abort IS a signal: `run_inflexa` escalates SIGTERM→SIGKILL on its deadline, and a user's
+ * ctrl-c does the same. Without a sweep every killed download deposits a partial `.incoming-…`
+ * directory in the user's own data folder, permanently and cumulatively. Nothing else reclaims them,
+ * so the next run does.
+ *
+ * `.replaced-…` is the previous copy held during the swap below, and is NOT unconditionally discarded:
+ * if the process died between the two renames, that directory is the user's ONLY copy of the Series,
+ * so an absent `destDir` means restore it rather than delete it.
+ *
+ * Accepted: two concurrent downloads of the same accession into the same folder would sweep each
+ * other's staging. They already collide on `destDir` itself, so this adds no new failure class.
+ */
+async function sweepStaleStaging(destDir: string): Promise<void> {
+    const parent = dirname(destDir);
+    const prefix = basename(destDir);
+    const entries = await readdir(parent).catch(() => [] as string[]);
+    // Descending, so the first `.replaced-` seen is the newest: the suffix is a v7 uuid, which sorts
+    // lexicographically by mint time.
+    for (const entry of entries.sort().reverse()) {
+        const path = join(parent, entry);
+        if (entry.startsWith(`${prefix}.incoming-`)) await rm(path, { recursive: true, force: true }).catch(() => undefined);
+        else if (entry.startsWith(`${prefix}.replaced-`)) {
+            if (existsSync(destDir)) await rm(path, { recursive: true, force: true }).catch(() => undefined);
+            else await rename(path, destDir).catch(() => undefined);
+        }
+    }
+}
+
+/**
  * Download a GEO Series' processed + supplementary artifact set into `destDir`.
  *
- * The bytes land in a sibling staging directory and are moved into `destDir` only once every artifact
+ * The bytes land in a sibling staging directory, which is swapped in as a WHOLE once every artifact
  * has transferred, so `destDir` either holds the complete published Series or does not exist at all —
- * a half-set can never be mistaken for a finished download, and an aborted run leaves no debris in
- * what is the user's own data folder. A single failed transfer aborts the set: the artifact list is
- * what GEO published for the Series, so a missing member means the local copy is not that Series.
- * Returns the destination paths in resolution order.
+ * a half-set can never be mistaken for a finished download. Swapping the directory rather than moving
+ * files into an existing one is what makes a re-download a replacement: a per-file move merges into
+ * whatever the previous run left, so a Series that dropped a file upstream would keep a stale copy
+ * locally and still report complete. A single failed transfer aborts the set: the artifact list is
+ * what GEO published for the Series, so a missing member means the local copy is not that Series, and
+ * any previous copy is left exactly as it was. Returns the destination paths in resolution order.
+ *
+ * Debris in the user's own data folder is swept rather than merely avoided — the cleanup here cannot
+ * run when the process is signalled, so {@link sweepStaleStaging} reclaims what earlier runs left.
  */
 export async function downloadGeoSeries(
     accession: string,
     destDir: string,
     options: DownloadGeoSeriesOptions = {},
 ): Promise<Result<string[], GeoDownloadError>> {
+    // Before anything is fetched, so a folder littered by earlier kills is clean even on a run that
+    // then fails its own resolve — and so the disk the size cap is about to be judged against is the
+    // one the transfer will actually use.
+    await sweepStaleStaging(destDir);
+
     const resolved = await resolveGeoArtifacts(accession, options);
     if (resolved.isErr()) return err(resolved.error);
     const artifacts = resolved.value;
@@ -421,7 +487,6 @@ export async function downloadGeoSeries(
     // mistake for a completed download.
     const staging = `${destDir}.incoming-${randomUUIDv7()}`;
     const spacing = options.spacingMs ?? GEO_REQUEST_SPACING_MS;
-    const staged: { readonly from: string; readonly to: string }[] = [];
     try {
         for (const [index, artifact] of artifacts.entries()) {
             const to = join(destDir, artifact.fileName);
@@ -473,11 +538,22 @@ export async function downloadGeoSeries(
             });
             if (downloaded.isErr()) return err(downloaded.error);
             options.onProgress?.({ type: "file_completed", fileName: artifact.fileName, bytes: downloaded.value.bytes });
-            staged.push({ from, to });
         }
-        await mkdir(destDir, { recursive: true });
-        for (const { from, to } of staged) await rename(from, to);
-        return ok(staged.map((s) => s.to));
+        // `rename` refuses a non-empty destination, so an existing copy steps aside first and is
+        // discarded only once the new one is in place. The window between the two renames is where a
+        // signalled process would leave no `destDir` at all — which is exactly what `sweepStaleStaging`
+        // restores from on the next run, so the pair is recoverable rather than merely narrow.
+        const replaced = `${destDir}.replaced-${randomUUIDv7()}`;
+        const hadPrevious = existsSync(destDir);
+        if (hadPrevious) await rename(destDir, replaced);
+        try {
+            await rename(staging, destDir);
+        } catch (cause) {
+            if (hadPrevious) await rename(replaced, destDir).catch(() => undefined);
+            throw cause;
+        }
+        if (hadPrevious) await rm(replaced, { recursive: true, force: true }).catch(() => undefined);
+        return ok(artifacts.map((artifact) => join(destDir, artifact.fileName)));
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not move the downloaded ${accession} files into ${destDir}.`, cause });
     } finally {
