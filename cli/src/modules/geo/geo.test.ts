@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -153,6 +153,27 @@ describe("parseAutoindex", () => {
     test("de-duplicates a name Apache links twice and tolerates single-quoted, uppercase attributes", () => {
         const html = `<A HREF='GSE12345_counts.txt.gz'>x</A><a href="GSE12345_counts.txt.gz">x again</a>`;
         expect(parseAutoindex(html, "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE12nnn/GSE12345/suppl/")).toEqual(["GSE12345_counts.txt.gz"]);
+    });
+
+    test("reports a published name it cannot reproduce on disk, rather than dropping it silently", () => {
+        // Each of these IS a file in this directory — unlike a sort link or the footer, which were never
+        // files — so a caller that promises the complete Series has to be told the set is short.
+        const html = `<a href="-rf.txt">leading dash</a>
+            <a href="a%2Fb.txt">embedded separator</a>
+            <a href="%zz.txt">unusable escape</a>
+            <a href="GSE12345_counts.txt.gz">fine</a>`;
+        const skipped: string[] = [];
+        const names = parseAutoindex(html, "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE12nnn/GSE12345/suppl/", (n) => skipped.push(n));
+        expect(names).toEqual(["GSE12345_counts.txt.gz"]);
+        expect(skipped).toEqual(["-rf.txt", "a/b.txt", "%zz.txt"]);
+    });
+
+    test("page furniture is dropped without being reported — it was never a file", () => {
+        const html = `<a href="?C=N;O=D">sort</a><a href="../">up</a><a href="soft/">subdir</a>
+            <a href="https://www.hhs.gov/vulnerability-disclosure-policy/index.html">HHS</a>`;
+        const skipped: string[] = [];
+        parseAutoindex(html, "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE12nnn/GSE12345/suppl/", (n) => skipped.push(n));
+        expect(skipped).toEqual([]);
     });
 });
 
@@ -372,6 +393,106 @@ describe("downloadGeoSeries", () => {
     test("propagates a no_processed_files series as an error", async () => {
         const result = await downloadGeoSeries("GSE12345", join(geoRoot(), "GSE12345"), { fetch: serveSeries("GSE12345", {}), ...FAST });
         expect(result._unsafeUnwrapErr().type).toBe("no_processed_files");
+    });
+
+    test("a re-download REPLACES the previous copy instead of merging into it", async () => {
+        const dest = join(geoRoot(), "GSE12345");
+        const before = serveSeries("GSE12345", { soft: ["GSE12345_family.soft.gz"], suppl: ["GSE12345_old.txt.gz"] });
+        (await downloadGeoSeries("GSE12345", dest, { fetch: before, ...FAST }))._unsafeUnwrap();
+        expect(readdirSync(dest).sort()).toEqual(["GSE12345_family.soft.gz", "GSE12345_old.txt.gz"]);
+
+        // The Series dropped a supplementary file upstream. A per-file move would leave the stale copy
+        // behind and still report success, so the folder would claim to be a Series it is not.
+        const after = serveSeries("GSE12345", { soft: ["GSE12345_family.soft.gz"] });
+        const paths = (await downloadGeoSeries("GSE12345", dest, { fetch: after, ...FAST }))._unsafeUnwrap();
+        expect(paths.map((p) => p.split("/").pop())).toEqual(["GSE12345_family.soft.gz"]);
+        expect(readdirSync(dest)).toEqual(["GSE12345_family.soft.gz"]);
+    });
+
+    test("a failed re-download leaves the previous copy exactly as it was", async () => {
+        const root = geoRoot();
+        const dest = join(root, "GSE12345");
+        (await downloadGeoSeries("GSE12345", dest, { fetch: serveSeries("GSE12345", { soft: ["GSE12345_family.soft.gz"] }), ...FAST }))._unsafeUnwrap();
+
+        const broken = serveSeries("GSE12345", { soft: ["GSE12345_family.soft.gz"], suppl: ["GSE12345_counts.txt.gz"] }, { breakOn: "GSE12345_counts.txt.gz" });
+        expect((await downloadGeoSeries("GSE12345", dest, { fetch: broken, ...FAST }))._unsafeUnwrapErr().type).toBe("http_failed");
+        expect(readdirSync(dest)).toEqual(["GSE12345_family.soft.gz"]);
+        expect(readdirSync(root)).toEqual(["GSE12345"]);
+    });
+
+    test("staging a previous run was killed before cleaning up is swept, not accumulated", async () => {
+        const root = geoRoot();
+        const dest = join(root, "GSE12345");
+        // What a SIGKILL leaves: the `finally` never ran, so a partial staging dir sits in the user's
+        // own data folder. Nothing else reclaims it.
+        mkdirSync(join(root, "GSE12345.incoming-019abc"), { recursive: true });
+        writeFileSync(join(root, "GSE12345.incoming-019abc", "half.gz"), "partial");
+
+        const stub = serveSeries("GSE12345", { soft: ["GSE12345_family.soft.gz"] });
+        (await downloadGeoSeries("GSE12345", dest, { fetch: stub, ...FAST }))._unsafeUnwrap();
+        expect(readdirSync(root)).toEqual(["GSE12345"]);
+    });
+
+    test("a swap interrupted mid-rename is recovered — the previous copy is restored, not deleted", async () => {
+        const root = geoRoot();
+        const dest = join(root, "GSE12345");
+        // The one window where `destDir` does not exist and `.replaced-` holds the user's ONLY copy.
+        // Sweeping it as debris would destroy the Series a completed earlier run had left.
+        mkdirSync(join(root, "GSE12345.replaced-019abc"), { recursive: true });
+        writeFileSync(join(root, "GSE12345.replaced-019abc", "GSE12345_family.soft.gz"), "the only copy");
+
+        // Fails after the sweep, so the assertion is about what the sweep recovered, not what this run wrote.
+        const stub = serveSeries("GSE12345", { soft: ["GSE12345_family.soft.gz"] }, { breakOn: "GSE12345_family.soft.gz" });
+        expect((await downloadGeoSeries("GSE12345", dest, { fetch: stub, ...FAST }))._unsafeUnwrapErr().type).toBe("http_failed");
+        expect(readdirSync(root)).toEqual(["GSE12345"]);
+        expect(readFileSync(join(dest, "GSE12345_family.soft.gz"), "utf8")).toBe("the only copy");
+    });
+
+    test("a name that cannot be written to disk is reported, not silently dropped from the set", async () => {
+        const dest = join(geoRoot(), "GSE12345");
+        const u = geoSeriesUrls("GSE12345");
+        const stub: FetchLike = async (input, init) => {
+            const url = String(input);
+            if (url === u.softDir) return new Response(`<a href="-rf.txt">bad</a><a href="GSE12345_family.soft.gz">good</a>`);
+            if (url === `${u.softDir}GSE12345_family.soft.gz`) return new Response(init?.method === "HEAD" ? null : "soft");
+            return new Response("missing", { status: 404, statusText: "Not Found" });
+        };
+        const skipped: Extract<GeoProgress, { type: "skipped" }>[] = [];
+        const paths = (
+            await downloadGeoSeries("GSE12345", dest, {
+                fetch: stub,
+                ...FAST,
+                onProgress: (e) => {
+                    if (e.type === "skipped") skipped.push(e);
+                },
+            })
+        )._unsafeUnwrap();
+        expect(paths.map((p) => p.split("/").pop())).toEqual(["GSE12345_family.soft.gz"]);
+        expect(skipped).toEqual([{ type: "skipped", dirUrl: u.softDir, fileName: "-rf.txt" }]);
+    });
+});
+
+describe("fetchGeo — connection hygiene", () => {
+    test("a shed listing's body is cancelled before the retry that needs its connection", async () => {
+        const u = geoSeriesUrls("GSE12345");
+        let cancels = 0;
+        let calls = 0;
+        const stub: FetchLike = async (input) => {
+            if (String(input) !== u.softDir) return new Response("missing", { status: 404, statusText: "Not Found" });
+            calls += 1;
+            if (calls > 1) return new Response(renderIndex("/", ["GSE12345_family.soft.gz"]));
+            // A discarded response still owns its socket until the body is drained or cancelled.
+            return new Response(
+                new ReadableStream({
+                    start: (controller) => controller.enqueue(new TextEncoder().encode("shed")),
+                    cancel: () => void (cancels += 1),
+                }),
+                { status: 403, statusText: "Forbidden" },
+            );
+        };
+        const artifacts = (await resolveGeoArtifacts("GSE12345", { fetch: stub, ...FAST }))._unsafeUnwrap();
+        expect(artifacts.map((a) => a.fileName)).toEqual(["GSE12345_family.soft.gz"]);
+        expect(cancels).toBe(1);
     });
 });
 

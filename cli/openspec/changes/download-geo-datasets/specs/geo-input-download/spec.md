@@ -80,13 +80,24 @@ download directory; anything else SHALL be discarded rather than rewritten.
 - **WHEN** the command resolves the directory's files
 - **THEN** the entry is discarded and no file is written outside the download directory
 
+#### Scenario: A published name that cannot be written to disk is reported
+
+- **GIVEN** a listing entry that names a file in the directory but whose name this host cannot reproduce
+- **WHEN** the command resolves the directory's files
+- **THEN** the entry is excluded AND the exclusion is reported, so the completion message is never read as covering it
+
 ### Requirement: The fetch is host-side, HTTPS-only, size-bounded, and all-or-nothing
 
 The command SHALL fetch every artifact from the CLI host process over HTTPS,
 re-verifying the scheme on the post-redirect URL, and SHALL obtain a size estimate
 before transferring and honor a size cap the caller MAY raise. It SHALL transfer to a
 staging location and place the files in their destination only on full success, so a
-failed or interrupted download leaves no partial set on disk. It SHALL report progress
+failed or interrupted download leaves no partial set on disk. The destination SHALL be
+replaced as a whole rather than merged into, so a re-download of a Series that has since
+dropped an artifact does not retain the stale copy while reporting the set complete, and
+a failed re-download leaves any previous copy untouched. Because a signalled process runs
+no cleanup of its own, the command SHALL also reclaim the staging left by an earlier
+interrupted run rather than accumulating it in the user's data folder. It SHALL report progress
 periodically while a single artifact transfers, not only between artifacts, so a long
 transfer is distinguishable from a stalled one by an observer that sees only its output.
 
@@ -113,6 +124,24 @@ happen — including by holding the command silent long enough to be mistaken fo
 - **GIVEN** a download that fails partway through the artifact set
 - **WHEN** the command aborts
 - **THEN** no destination directory is created and no transferred file is retained
+
+#### Scenario: A re-download replaces the previous copy
+
+- **GIVEN** a folder holding an earlier download of a Series that has since dropped an artifact
+- **WHEN** the command downloads that Series again and succeeds
+- **THEN** the folder holds exactly the currently published set, with the dropped artifact gone
+
+#### Scenario: A failed re-download preserves the previous copy
+
+- **GIVEN** a folder holding an earlier download of a Series
+- **WHEN** a later download of that Series fails partway through
+- **THEN** the earlier copy is left exactly as it was
+
+#### Scenario: Staging from an interrupted run is reclaimed
+
+- **GIVEN** a staging location an earlier run was killed before it could clean up
+- **WHEN** the command runs again for that Series
+- **THEN** the abandoned staging is discarded rather than accumulating in the user's folder
 
 #### Scenario: A Series above the size cap is refused before transferring
 
