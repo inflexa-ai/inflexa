@@ -43,6 +43,43 @@ export function getAgentPolicy(command: Command): AgentPolicy | undefined {
 }
 
 /**
+ * Give `command` the value of an option IT DECLARES that an ancestor parsed instead.
+ *
+ * The root declares `--analysis`/`--project` for the bare-`inflexa` flow, and commander binds a
+ * program option to the command that DECLARED it wherever it appears on the line — so `inflexa
+ * profile --analysis x` binds the value to the root, the subcommand's identically-named option
+ * never receives it, and its handler is called with an empty options object. The flag reaches no
+ * code and nothing reports that it was ignored.
+ *
+ * The alternative, `enablePositionalOptions()`, was tried and reverted: it makes a root-style flag
+ * placed AFTER a subcommand a hard "unknown option" error, breaking shapes like `inflexa sessions
+ * --project x` that already work. `cli.test.ts` pins both halves.
+ *
+ * Runs as a `preAction` hook rather than by rewriting the handler's arguments, because commander
+ * builds those arguments from `command.opts()` at invocation time — which is after hooks — so
+ * seeding the values here means the handler is called with its ordinary, correctly-typed options
+ * object and nothing downstream has to know this happened.
+ *
+ * Only options `command` itself declares are filled, never every option an ancestor happens to
+ * hold: the contract is "the flag this command offers reaches its handler", not "every ancestor
+ * flag is visible everywhere". A command that deliberately does not offer `--project` (see `geo
+ * download`) must not receive one, or the omission is undone by the plumbing that was meant to
+ * honour it. A value the command parsed itself always wins, so an explicit `inflexa profile
+ * --analysis x` still beats anything an ancestor holds. Idempotent, which matters because the root
+ * registers this hook too and ancestor hooks fire for a subcommand's action as well — the second
+ * pass finds every key already set.
+ */
+function hydrateFromAncestors(command: Command): void {
+    const own = command.opts();
+    const inherited = command.optsWithGlobals();
+    for (const option of command.options) {
+        const key = option.attributeName();
+        const value = inherited[key];
+        if (value !== undefined && own[key] === undefined) command.setOptionValue(key, value);
+    }
+}
+
+/**
  * Register an action handler on `command` together with its {@link AgentPolicy} — the
  * ONLY sanctioned way to give a command an action, replacing a bare `command.action(fn)`.
  *
@@ -60,37 +97,9 @@ export function getAgentPolicy(command: Command): AgentPolicy | undefined {
  * for the root, whose action attaches after its own `.option(...)` chain
  * (`registerAction(cli.option(...)…, policy, fn)`).
  *
- * Registration also makes a command see the options its ancestors parsed. The root declares
- * `--analysis`/`--project` for the bare-`inflexa` flow, and commander binds a program option
- * to the command that DECLARED it wherever it appears on the line — so `inflexa profile
- * --analysis x` binds the value to the root, the subcommand's identically-named option never
- * receives it, and its handler is called with an empty options object. The flag reaches no
- * code and nothing reports that it was ignored. See {@link hydrateFromAncestors}.
- *
- * The alternative, `enablePositionalOptions()`, was tried and reverted: it makes a root-style
- * flag placed AFTER a subcommand a hard "unknown option" error, breaking shapes like
- * `inflexa sessions --project x` that already work. `cli.test.ts` pins both halves.
+ * Registration also makes a command see the options its ancestors parsed —
+ * see {@link hydrateFromAncestors}.
  */
-/**
- * Copy the options an ancestor parsed onto `command`, for the ones `command` did not receive itself.
- *
- * Runs as a `preAction` hook rather than by rewriting the handler's arguments, because commander
- * builds those arguments from `command.opts()` at invocation time — which is after hooks — so
- * seeding the values here means the handler is called with its ordinary, correctly-typed options
- * object and nothing downstream has to know this happened.
- *
- * A value the command parsed itself always wins: only keys it has no value for are filled, so an
- * explicit `inflexa profile --analysis x` still beats anything an ancestor holds. Idempotent, which
- * matters because the root registers this hook too and ancestor hooks fire for a subcommand's action
- * as well — the second pass finds every key already set.
- */
-function hydrateFromAncestors(command: Command): void {
-    const own = command.opts();
-    for (const [key, value] of Object.entries(command.optsWithGlobals())) {
-        if (value !== undefined && own[key] === undefined) command.setOptionValue(key, value);
-    }
-}
-
 export function registerAction<Args extends readonly unknown[]>(
     command: Command,
     policy: AgentPolicy,

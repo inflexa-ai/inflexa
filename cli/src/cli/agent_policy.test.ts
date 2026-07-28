@@ -50,6 +50,44 @@ describe("agent_policy — registerAction couples handler and policy", () => {
     });
 });
 
+describe("agent_policy — a subcommand sees the options its ancestors parsed", () => {
+    /** A root + child shaped like the real registry: both declare `--analysis`, only the root declares `--project`. */
+    function tree(record: (options: Record<string, unknown>) => void): Command {
+        const program = new Command();
+        program.exitOverride();
+        program.option("--analysis <id|name>", "root scope").option("--project <name>", "root scope");
+        registerAction(program.command("go").option("--analysis <id|name>", "child scope"), { kind: "approval" }, (options: Record<string, unknown>) =>
+            record(options),
+        );
+        return program;
+    }
+
+    test("a flag the root greedily consumed still reaches the subcommand that declares it", async () => {
+        // Commander binds a program option to the command that DECLARED it wherever it sits on the line,
+        // so without the hook the child's identically-named option stays empty and the flag reaches no code.
+        let seen: Record<string, unknown> = {};
+        await tree((o) => (seen = o)).parseAsync(["go", "--analysis", "from-root"], { from: "user" });
+        expect(seen["analysis"]).toBe("from-root");
+    });
+
+    test("an ancestor option the subcommand does not declare is NOT injected into its handler", async () => {
+        // The contract is "the flag this command offers reaches its handler", not "every ancestor flag is
+        // visible everywhere" — a command that deliberately declines an option (`geo download` and
+        // `--project`) must not be handed one anyway.
+        let seen: Record<string, unknown> = {};
+        await tree((o) => (seen = o)).parseAsync(["go", "--project", "acme"], { from: "user" });
+        expect(seen).not.toHaveProperty("project");
+    });
+
+    test("a value the subcommand parsed itself beats the ancestor's", async () => {
+        let seen: Record<string, unknown> = {};
+        const program = tree((o) => (seen = o));
+        // `--analysis` before the subcommand binds on the root; after it, on the child. The child wins.
+        await program.parseAsync(["--analysis", "root-one", "go", "--analysis", "child-one"], { from: "user" });
+        expect(seen["analysis"]).toBe("child-one");
+    });
+});
+
 describe("agent_policy — buildProgram instances do not share stamps", () => {
     test("the same-named leaf in two trees is a distinct, independently-stamped Command", () => {
         const a = buildProgram();
