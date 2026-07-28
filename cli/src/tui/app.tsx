@@ -205,15 +205,36 @@ export type HistoryRecallLayerDeps = {
      * whether a recall is still in progress and as the target each recalled entry is seeded into.
      */
     readonly target: TextareaRenderable | null;
-    /** The session's sent prompts, newest first. Real: {@link conversation.promptHistory}. */
+    /**
+     * The session's sent prompts, newest first. Real: {@link conversation.promptHistory}. Called ONLY from a
+     * binding's `run` — never while merely building the config — so the transcript walk costs a keystroke
+     * that actually steps history, not every keystroke in the app. See {@link HistoryRecallLayerDeps.hasEntries}.
+     */
     readonly entries: () => string[];
-    /** The recall position: `null` when not in recall, else an index into `entries()`. */
-    readonly index: () => number | null;
+    /**
+     * Whether there is any prompt to recall — the cheap config-time counterpart to `entries`, asked on every
+     * keystroke so `up` can be left unbound (and thus fall through to the editor) when history is empty.
+     * Real: {@link conversation.hasPromptHistory}.
+     */
+    readonly hasEntries: () => boolean;
+    /** Where the recall sits: `null` when not in recall, else the addressed index WITH the text it seeded. */
+    readonly position: () => RecallPosition | null;
     /** Move the recall position (`null` leaves recall). */
-    readonly setIndex: (index: number | null) => void;
+    readonly setPosition: (position: RecallPosition | null) => void;
     /** The retract seam — recall is live exactly when a retract is NOT on offer. */
     readonly conversation: Pick<typeof conversation, "canRetract">;
 };
+
+/**
+ * A live recall position: which entry the user is on, and the exact text that was seeded from it.
+ *
+ * The two travel together in one value because they must never disagree — a index/text pair updated
+ * separately could address one entry while holding another's text, which is precisely the confusion the
+ * stored-index rule exists to prevent. `index` is what steps (the entry list has non-unique texts, so only
+ * a position can walk it correctly); `text` is what the liveness gate compares the buffer against, in O(1),
+ * without needing the entry list in hand.
+ */
+export type RecallPosition = { readonly index: number; readonly text: string };
 
 /**
  * The shell-style prompt-history recall layer: `up` walks back through the prompts already sent in this
@@ -238,9 +259,11 @@ export type HistoryRecallLayerDeps = {
  * forget. Being a function of the buffer, this is right in all of them for free.
  *
  * **A stale position is harmless rather than reset.** Entry from an empty buffer always resumes at the
- * newest entry, discarding whatever index an abandoned recall left behind — which is what lets the layer
- * carry no lifecycle wiring at all. The position is read ONLY once the equality check has confirmed the
- * buffer still matches it.
+ * newest entry, discarding whatever an abandoned recall left behind — which is what lets the layer carry no
+ * lifecycle wiring at all. The position's `index` is read ONLY once its `text` has confirmed the buffer
+ * still matches it. Nothing clears a position when a recall is abandoned, so anything this layer does per
+ * keystroke must stay cheap for a position that outlives its recall — which is why the liveness check
+ * compares against the position's own text rather than looking the index up in the entry list.
  *
  * **A recalled prompt stays navigable.** The composer is multi-line, and recalled prompts often are too, so
  * recall must not hold both arrows hostage for as long as the entry sits in the buffer — that would leave
@@ -256,15 +279,16 @@ export type HistoryRecallLayerDeps = {
 export function historyRecallLayer(deps: HistoryRecallLayerDeps): LayerConfig {
     const target = deps.target;
     const buffer = target?.plainText ?? null;
-    const index = deps.index();
-    // The entry list is walked only when it can matter. `activeLayers` re-invokes EVERY layer's thunk on
-    // every keystroke before it filters, so an unguarded read would walk the whole transcript on each key
-    // typed anywhere in the app — including inside a dialog, where this layer can never fire. A non-empty
-    // buffer with no recall in progress (the ordinary typing path) needs no entries at all.
-    const entries = buffer === "" || index !== null ? deps.entries() : [];
-    // In recall exactly while the buffer still holds the entry the position addresses — see the derived-gate
-    // rationale above. `promptHistory` never yields an empty entry, so an empty buffer can never match one.
-    const inRecall = index !== null && buffer !== null && buffer === entries[index];
+    const position = deps.position();
+    // In recall exactly while the buffer still holds the text the position seeded — an O(1) comparison
+    // against the position's OWN text, deliberately not a lookup into `entries()`. `activeLayers` re-invokes
+    // every layer's thunk on every keystroke BEFORE it filters on `enabled`, so anything read here is read
+    // on each key typed anywhere in the app, dialogs included. Reading the entry list here would therefore
+    // walk the whole mounted transcript per keystroke for as long as a position happened to be set — and a
+    // position outlives its recall (nothing clears it on an edit, a submit, a clear-input, or a session
+    // swap; it is simply overwritten on the next entry). Carrying the text in the position removes the need
+    // for the list at all, so the walk now costs only a press that actually steps history.
+    const inRecall = position !== null && buffer !== null && buffer === position.text;
 
     // Which buffer edge the caret sits on, deciding whether a chord steps history or moves the caret. Read
     // from the edit buffer rather than the plain text so a soft-wrapped long line still counts as one row —
@@ -274,10 +298,16 @@ export function historyRecallLayer(deps: HistoryRecallLayerDeps): LayerConfig {
     const onFirstRow = caret === undefined || caret.row === 0;
     const onLastRow = caret === undefined || !target || caret.row === target.editBuffer.getLineCount() - 1;
 
-    function step(to: number): void {
+    // Press-time only: this is where the entry list is finally built. `to` is resolved against the freshly
+    // read list so a clamp always reflects the history as it stands at the press, not as it stood when the
+    // config was assembled.
+    function step(resolve: (entries: string[]) => number): void {
+        if (!target) return;
+        const entries = deps.entries();
+        const to = resolve(entries);
         const text = entries[to];
-        if (text === undefined || !target) return;
-        deps.setIndex(to);
+        if (text === undefined) return;
+        deps.setPosition({ index: to, text });
         seedComposerText(target, text);
     }
 
@@ -291,28 +321,33 @@ export function historyRecallLayer(deps: HistoryRecallLayerDeps): LayerConfig {
 
     // Older. From an empty buffer that is the newest entry (index 0); already in recall, one further back,
     // clamped so the oldest entry HOLDS rather than falling off the end. Unbound when the caret has rows
-    // above it to reach, or when the index it would land on has no entry — an empty history leaves `up` to
-    // the editor rather than eating it.
-    const older = inRecall ? Math.min(index + 1, entries.length - 1) : 0;
-    if (onFirstRow && entries[older] !== undefined) {
-        bindings.push({ chord: KEYS.up, run: () => step(older), desc: "Recall previous prompt", group: "Chat" });
+    // above it to reach, or when there is no history at all — an empty history leaves `up` to the editor
+    // rather than eating it. `hasEntries` answers that last question without building the list.
+    if (onFirstRow && (inRecall || (buffer === "" && deps.hasEntries()))) {
+        const at = inRecall ? position.index : null;
+        bindings.push({
+            chord: KEYS.up,
+            run: () => step((entries) => (at === null ? 0 : Math.min(at + 1, entries.length - 1))),
+            desc: "Recall previous prompt",
+            group: "Chat",
+        });
     }
 
     // Newer, and past the newest back to the empty composer the recall was entered from. Bound only while a
     // recall is in progress with the caret on the last row, so outside one — and on any earlier row — `down`
-    // stays ordinary caret movement. The `index`/`target` re-checks are for narrowing: `inRecall` already
-    // implies both, but only through a chain tsc does not follow.
-    if (inRecall && onLastRow && index !== null && target) {
-        const at = index;
+    // stays ordinary caret movement. The `position`/`target` re-checks are for narrowing: `inRecall` already
+    // implies both, but only through a chain tsc does not follow. Leaving recall needs no entry list.
+    if (inRecall && onLastRow && position !== null && target) {
+        const at = position.index;
         bindings.push({
             chord: KEYS.down,
             run: () => {
                 if (at === 0) {
-                    deps.setIndex(null);
+                    deps.setPosition(null);
                     seedComposerText(target, "");
                     return;
                 }
-                step(at - 1);
+                step(() => at - 1);
             },
             desc: "Recall next prompt",
             group: "Chat",
@@ -875,7 +910,7 @@ export function App(props: AppProps) {
     // the factory stays pure; it needs no reset wiring, because entering recall from an empty buffer always
     // resumes at the newest entry and discards whatever an abandoned recall left behind. The dispatch test
     // installs the SAME factory, so the two can never drift.
-    const [recallIndex, setRecallIndex] = createSignal<number | null>(null);
+    const [recallPosition, setRecallPosition] = createSignal<RecallPosition | null>(null);
 
     // Whether the composer's recall chord would actually bring something back right now — the ChatBar shows
     // it in the empty-buffer placeholder, the one spot where advertising it is honest (see `canRecall` there).
@@ -886,8 +921,9 @@ export function App(props: AppProps) {
         historyRecallLayer({
             target: textareaRef,
             entries: conversation.promptHistory,
-            index: recallIndex,
-            setIndex: setRecallIndex,
+            hasEntries: conversation.hasPromptHistory,
+            position: recallPosition,
+            setPosition: setRecallPosition,
             conversation,
         }),
     );

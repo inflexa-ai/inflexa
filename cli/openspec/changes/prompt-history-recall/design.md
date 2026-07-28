@@ -201,7 +201,7 @@ Two honesty gates, mirroring the interrupt hint's: `canRecall` is false while th
 chord, and a boot gate outranks the affordance entirely (that placeholder explains why typing goes
 nowhere; a recall hint on top would advertise a chord whose result could not be sent).
 
-### 11. The entry list is read only when it can matter
+### 11. The entry list leaves the keystroke path entirely; the position carries its own text
 
 `activeLayers` re-invokes **every** registered layer's config thunk on each keystroke *before* it
 filters by `enabled`/`mode`/`target`:
@@ -210,13 +210,33 @@ filters by `enabled`/`mode`/`target`:
 return [...layers.values()].map((get) => get()).filter((c) => ...)
 ```
 
-So an unguarded `deps.entries()` walks the whole mounted transcript on every key pressed anywhere in
-the app — including inside a dialog or the command palette, where this layer can never fire. The cost
-is small in absolute terms (≤200 messages), but it is pure waste on the hottest path in the UI.
+So anything the factory reads is read on every key pressed anywhere in the app — inside a dialog or
+the command palette included, where this layer can never fire. An unguarded `deps.entries()` therefore
+walks the whole mounted transcript per keystroke.
 
-The guard is one expression: entries are needed only when the buffer is empty (to enter recall) or a
-position is set (to test the equality gate). The ordinary typing path — non-empty buffer, no recall in
-progress — reads nothing.
+A first attempt guarded that read with `buffer === "" || index !== null`. **That guard does not hold**,
+and the reason is decision 3: a position deliberately *outlives* its recall. Nothing clears it on an
+edit, a submit, a clear-input, or a session swap — it is simply overwritten at the next entry, which is
+what buys the design its freedom from lifecycle wiring. So the very first recall-then-edit leaves
+`index` non-null for the rest of the session, and `index !== null` is true forever after: the walk is
+back on every keystroke, permanently. The two decisions are individually sound and jointly wrong, which
+is exactly the kind of interaction a guard expressed in terms of the wrong variable hides.
+
+The fix removes the need for the list at config time rather than guarding the read. The position now
+carries **the text it seeded** alongside its index (`RecallPosition = { index, text }`), so the
+liveness check is an O(1) comparison against that text instead of a lookup into `entries()`. The list
+is built only inside a binding's `run` — a press that actually steps history — and the one question
+left at config time ("is there anything at all to recall?", needed so an empty history leaves `up`
+unbound and falling through) is answered by a separate `hasPromptHistory()` that returns at the first
+qualifying turn instead of building the list.
+
+Index and text travel in one value because they must never disagree: separately-updated signals could
+address one entry while holding another's text, which is the confusion the stored-index rule of
+decision 1 exists to prevent. The index is still what *steps* — entry texts are non-unique, so only a
+position can walk the list correctly — and the text is only what *gates*.
+
+A call-count test pins the property, since nothing else would catch its regression: after a recall is
+abandoned by editing, further keystrokes must not build the list again.
 
 ## Risks / Trade-offs
 
