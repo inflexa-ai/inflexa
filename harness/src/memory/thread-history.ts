@@ -135,11 +135,18 @@ export interface ThreadHistory {
  *
  * - a tool result, which in AI SDK terms is a `tool`-role message, so a mid-turn
  *   tool continuation never matches in the first place;
- * - a message the LOOP synthesized mid-turn — the truncated-reply nudge
- *   (`syntheticUserMessage`) — which must carry the `user` role for the wire
- *   format but is not user input. Reading it as a boundary would split one turn
- *   into two: the token window would evict half a turn, and `retractLastTurn`
- *   would cut its tail in the middle of a turn rather than at its head.
+ * - a message the LOOP or the HOST synthesized (`syntheticUserMessage`) — the
+ *   truncated-reply nudge the loop inserts mid-turn, and the record an embedder
+ *   appends between turns for work that happened outside the conversation, such as
+ *   an analysis run's outcome. Both carry the `user` role for the wire format and
+ *   neither is user input. Reading one as a boundary would split one turn into
+ *   two: the token window would evict half a turn, and `retractLastTurn` would cut
+ *   its tail in the middle of a turn rather than at its head.
+ *
+ *   A host-appended record therefore belongs to the turn preceding it, so a tail
+ *   retraction that removes that turn removes the record with it. That is the
+ *   accepted consequence of the exclusion, not a defect — the alternative, letting
+ *   it open a turn, is the exact failure the marker exists to prevent.
  *
  * {@link GENUINE_USER_START_SQL} is the twin of this predicate over stored
  * envelopes; the two are built from the same constants so they cannot drift.

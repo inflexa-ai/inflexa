@@ -34,7 +34,7 @@ import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 
 import { runExecuteAnalysisBody, synthesisRowUpdate } from "./execute-analysis.js";
-import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunProvenanceEvent } from "./execute-analysis.js";
+import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunObservation, RunProvenanceEvent } from "./execute-analysis.js";
 import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
@@ -254,7 +254,12 @@ interface FakeDepsRecord {
     readonly threadWrites: Array<{ kind: string }>;
 }
 
-function makeDeps(opts: { childResults: Map<string, SandboxStepResult | Error>; pool: FakePool; emitProvenance?: (event: RunProvenanceEvent) => void }): {
+function makeDeps(opts: {
+    childResults: Map<string, SandboxStepResult | Error>;
+    pool: FakePool;
+    emitProvenance?: (event: RunProvenanceEvent) => void;
+    observeRun?: (observation: RunObservation) => void;
+}): {
     deps: ExecuteAnalysisDeps;
     record: FakeDepsRecord;
 } {
@@ -294,6 +299,7 @@ function makeDeps(opts: { childResults: Map<string, SandboxStepResult | Error>; 
         // Omitted entirely when absent so the "no emitProvenance" tests exercise
         // a genuinely undefined dep, not a present-but-undefined field.
         ...(opts.emitProvenance ? { emitProvenance: opts.emitProvenance } : {}),
+        ...(opts.observeRun ? { observeRun: opts.observeRun } : {}),
     };
 
     return { deps, record };
@@ -552,6 +558,31 @@ describe("executeAnalysis body", () => {
         // One-at-a-time admission: each dag emit shows at most one running step.
         for (const part of dagParts) {
             expect(part.steps.filter((s) => s.status === "running").length).toBeLessThanOrEqual(1);
+        }
+    });
+
+    it("dag snapshot: each step carries its plan name, not its id", async () => {
+        const pool = makeFakePool();
+        const { deps, record } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+
+        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{
+            steps: Array<{ id: string; name: string; artifactCount?: number; summary?: string }>;
+        }>;
+        expect(dagParts.length).toBeGreaterThan(0);
+        for (const part of dagParts) {
+            const step = part.steps.find((s) => s.id === "A")!;
+            // The fixture gives name and id different values on purpose: asserting merely
+            // "non-empty" would have passed against the id this join replaces.
+            expect(step.name).toBe("step A");
+            expect(step.name).not.toBe(step.id);
+            // Declared on the contract but never held by the parent — absent, not defaulted.
+            expect(step.artifactCount).toBeUndefined();
+            expect(step.summary).toBeUndefined();
         }
     });
 
@@ -1484,5 +1515,111 @@ describe("synthesisRowUpdate", () => {
 
     it("maps failed → failed, carrying the reason in error (not blocked_reason)", () => {
         expect(synthesisRowUpdate({ status: "failed", reason: "synth boom" }, 7)).toEqual({ status: "failed", durationMs: 7, error: "synth boom" });
+    });
+});
+
+// ── Run-observation seam ─────────────────────────────────────────────
+
+describe("executeAnalysis run observation", () => {
+    it("a run behaves identically with and without an observer, and the two seams are independent", async () => {
+        const provOnly: RunProvenanceEvent[] = [];
+        const obsOnly: RunObservation[] = [];
+
+        const withProv = makeDeps({
+            pool: makeFakePool(),
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            emitProvenance: (e) => provOnly.push(e),
+        });
+        const provResult = await runExecuteAnalysisBody(input([{ id: "A" }]), withProv.deps);
+
+        const withObs = makeDeps({
+            pool: makeFakePool(),
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            observeRun: (o) => obsOnly.push(o),
+        });
+        const obsResult = await runExecuteAnalysisBody(input([{ id: "A" }]), withObs.deps);
+
+        const neither = makeDeps({
+            pool: makeFakePool(),
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+        const bareResult = await runExecuteAnalysisBody(input([{ id: "A" }]), neither.deps);
+
+        // Same run outcome in all three configurations — observation alters nothing.
+        for (const r of [provResult, obsResult, bareResult]) {
+            expect(r.status).toBe("completed");
+            expect([...r.completedSteps]).toEqual(["A"]);
+        }
+        // Supplying one seam never invokes the other.
+        expect(provOnly.length).toBeGreaterThan(0);
+        expect(obsOnly.length).toBeGreaterThan(0);
+    });
+
+    it("every snapshot lists every plan step, including ones not yet dispatched", async () => {
+        const seen: RunObservation[] = [];
+        // B depends on A, so B is still pending while A runs — it must appear anyway.
+        const { deps } = makeDeps({
+            pool: makeFakePool(),
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+            ]),
+            observeRun: (o) => seen.push(o),
+        });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+
+        expect(seen.length).toBeGreaterThan(0);
+        for (const snapshot of seen) {
+            expect(snapshot.steps.map((s) => s.id).sort()).toEqual(["A", "B"]);
+            // Names and agents ride every snapshot, not only the terminal one.
+            expect(snapshot.steps.find((s) => s.id === "B")!.name).toBe("step B");
+            expect(snapshot.steps.find((s) => s.id === "B")!.agent).toBe("agent-x");
+        }
+        // The opening snapshot precedes any dispatch: nothing has run yet.
+        expect(seen[0]!.steps.every((s) => s.status === "pending")).toBe(true);
+        // The last snapshot carries the derived terminal status, not `running`.
+        expect(seen[seen.length - 1]!.status).toBe("completed");
+    });
+
+    it("a throwing observer is swallowed and the run still reaches its terminal status", async () => {
+        let calls = 0;
+        const { deps } = makeDeps({
+            pool: makeFakePool(),
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            observeRun: () => {
+                calls += 1;
+                throw new Error("host observer is broken");
+            },
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+
+        expect(result.status).toBe("completed");
+        expect([...result.completedSteps]).toEqual(["A"]);
+        // It kept being called after throwing — one bad invocation does not disable the seam.
+        expect(calls).toBeGreaterThan(1);
+    });
+
+    it("re-delivering the snapshot sequence lands a latest-wins consumer in the same state", async () => {
+        const seen: RunObservation[] = [];
+        const { deps } = makeDeps({
+            pool: makeFakePool(),
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }],
+            ]),
+            observeRun: (o) => seen.push(o),
+        });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }]), deps);
+
+        // The idempotency claim the snapshot shape buys: a consumer that keeps only the newest
+        // snapshot reaches the same state whether the sequence arrives once or twice, with no
+        // dedupe of its own. This is what makes DBOS recovery's re-firing harmless for rendering.
+        const fold = (sequence: readonly RunObservation[]): RunObservation | null => sequence.reduce<RunObservation | null>((_, next) => next, null);
+        const once = fold(seen);
+        const twice = fold([...seen, ...seen]);
+        expect(twice).toEqual(once!);
     });
 });

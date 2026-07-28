@@ -145,6 +145,13 @@ export { createThreadStore } from "./memory/thread-store.js";
 export type { ThreadStore, Thread, CreateThreadInput, ListThreadsInput, ThreadPage } from "./memory/thread-store.js";
 export { createThreadHistory } from "./memory/thread-history.js";
 export type { ThreadHistory, StoredMessage, MessagePage, RetractOutcome } from "./memory/thread-history.js";
+// The synthetic-message primitives. A host appends a record of out-of-band work (an analysis run's
+// outcome) into a thread through `appendTurn`, and needs a message the model reads but that is not
+// user input — which is exactly what the marker denotes. The constructor is exported rather than
+// the marker key so a host can never hand-assemble a message that the turn-boundary predicates
+// (`isGenuineUserStart` and its SQL twin) would then fail to recognise; `isSyntheticUserMessage`
+// lets a host renderer tell such a message apart from a genuine user turn on the way back out.
+export { syntheticUserMessage, isSyntheticUserMessage } from "./memory/ai-sdk-message-storage.js";
 export { contentToCortexMessages } from "./memory/content-to-cortex.js";
 export { createCardResolver } from "./memory/reconstruct-cards.js";
 export type { ToolCardResolver, StoredToolCallForCard } from "./memory/reconstruct-cards.js";
@@ -277,7 +284,15 @@ export type { ExecEventMessage, DoneMarker } from "./sandbox/types.js";
 // close over the registered child callable). `assembleCoreRuntime` also wires
 // these, but an embedder running only the run engine registers them directly.
 export { registerExecuteAnalysis } from "./workflows/execute-analysis.js";
-export type { ExecuteAnalysisDeps, ExecuteAnalysisInput, ExecuteAnalysisResult, RunProvenanceEvent } from "./workflows/execute-analysis.js";
+export type {
+    ExecuteAnalysisDeps,
+    ExecuteAnalysisInput,
+    ExecuteAnalysisResult,
+    RunObservation,
+    RunProvenanceEvent,
+    RunStepObservation,
+    StepRuntimeStatus,
+} from "./workflows/execute-analysis.js";
 export { registerSandboxStep } from "./workflows/sandbox-step.js";
 export type { SandboxStepDeps, SandboxStepInput, SandboxStepResult, SandboxAgentBuildContext } from "./workflows/sandbox-step.js";
 

@@ -75,14 +75,20 @@ export function isInterruptedMessage(message: ModelMessage): boolean {
 }
 
 /**
- * Build a `user` message the agent loop synthesized — today, the nudge that continues a reply the model
- * truncated at its output-token limit.
+ * Build a `user` message that was synthesized rather than typed by a human. Two authors produce
+ * them: the agent loop (the nudge that continues a reply the model truncated at its output-token
+ * limit) and an **embedder** recording out-of-band work into a thread — an analysis run's outcome,
+ * which the model should read on its next turn but which nobody said.
  *
  * It has to carry the `user` role because the wire format requires a user turn after a truncated
  * assistant message, but it is not user input, and the difference is load-bearing: a `user` message is
  * what OPENS a conversation turn, so an unmarked synthetic one reads as a spurious turn boundary —
  * splitting one turn into two for the token window and, worse, giving a tail-turn removal a cut point in
  * the middle of a turn. Marking it is what lets {@link isSyntheticUserMessage} keep those readers honest.
+ *
+ * A host MUST build these here rather than assembling the `providerOptions` marker itself: the key
+ * and namespace are shared with the turn-boundary predicates, and a hand-rolled copy would fork
+ * them silently — the message would store fine and then be read as a genuine turn start.
  */
 export function syntheticUserMessage(text: string): ModelMessage {
     return {
@@ -92,7 +98,7 @@ export function syntheticUserMessage(text: string): ModelMessage {
     };
 }
 
-/** Whether the loop synthesized this message (see {@link syntheticUserMessage}) rather than a human sending it. */
+/** Whether the loop or the host synthesized this message (see {@link syntheticUserMessage}) rather than a human sending it. */
 export function isSyntheticUserMessage(message: ModelMessage): boolean {
     return message.providerOptions?.[HARNESS_PROVIDER_NAMESPACE]?.[SYNTHETIC_MESSAGE_KEY] === true;
 }
