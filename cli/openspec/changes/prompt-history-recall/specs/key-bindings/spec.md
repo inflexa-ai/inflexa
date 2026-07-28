@@ -39,7 +39,8 @@ way the retract layer re-reads it — never tracked through edit events or a fla
 clearing.
 
 **Stepping.** `up` SHALL move toward older entries and SHALL stay at the oldest when there are no
-older ones. `down` SHALL move toward newer entries; `down` from the newest entry SHALL clear the
+older ones — and that hold SHALL be a true no-op, leaving the buffer AND the caret untouched rather
+than re-seeding identical text (which would move the caret to the end). `down` SHALL move toward newer entries; `down` from the newest entry SHALL clear the
 buffer and leave recall, restoring the empty composer the user entered from. `down` while not in
 recall SHALL fall through to cursor movement.
 
@@ -104,6 +105,7 @@ completion the retract seed uses, so a multi-line prompt lands ready to append t
 - **GIVEN** the composer holds the oldest available entry, unedited
 - **WHEN** the user presses up
 - **THEN** the buffer is unchanged
+- **AND** the caret is unchanged — a hold at history-top SHALL touch neither, so a caret deliberately placed on an earlier row is not returned to the end
 
 #### Scenario: Entering recall again resumes at the newest
 

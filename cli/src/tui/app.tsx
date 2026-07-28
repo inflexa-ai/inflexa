@@ -307,6 +307,15 @@ export function historyRecallLayer(deps: HistoryRecallLayerDeps): LayerConfig {
         const to = resolve(entries);
         const text = entries[to];
         if (text === undefined) return;
+        // A clamped step that resolves back to the entry already showing is a HOLD, and a hold must touch
+        // NOTHING — not the buffer, and not the caret. Re-seeding identical text looks free but ends in
+        // `gotoBufferEnd`, which on a multi-line entry yanks the caret from wherever the user put it to the
+        // end. That is worst exactly where it is most reachable: the edge rule sends a user to row 0 of the
+        // oldest entry to correct its first line, and one more `up` there — out of habit, or not knowing it
+        // is the oldest — would undo the positioning the rule exists to allow. readline holds both at
+        // history-top; so does this. Gated on `inRecall` so a STALE position (one abandoned by an edit, kept
+        // deliberately — see above) can never suppress a fresh entry that happens to address the same place.
+        if (inRecall && position !== null && to === position.index && text === position.text) return;
         deps.setPosition({ index: to, text });
         seedComposerText(target, text);
     }

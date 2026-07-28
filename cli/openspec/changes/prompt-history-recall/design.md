@@ -183,6 +183,20 @@ per row of each entry traversed, since each seed lands the caret at the end. Tha
 and zsh behave, and the alternative — seeding the caret at the top when travelling backwards —
 inverts the problem onto `down`.
 
+**The hold at history-top must be a true no-op.** `up` at the oldest entry clamps back to the entry
+already showing, and a step that resolves to where it already is must touch NOTHING — not the buffer,
+and not the caret. Re-seeding identical text reads as free but ends in `gotoBufferEnd`, and on a
+multi-line entry that yanks the caret from wherever the user put it to the end. The damage lands
+precisely where the edge rule is most useful: it exists to let a user reach row 0 of a recalled entry
+to fix its first line, and at the oldest entry one more `up` — pressed out of habit, or without
+knowing this is the oldest — would undo that positioning. readline holds both at history-top; so does
+this. The check is gated on the recall being live, so a stale position (one an edit abandoned, kept
+deliberately per decision 3) can never suppress a fresh entry that happens to address the same place.
+
+Note this is invisible for single-line entries, where the caret's "end" and its row-0 position
+coincide — which is why it needs a multi-line test of its own rather than riding on the existing
+oldest-entry coverage.
+
 ### 10. The chord is advertised in the empty-buffer placeholder, not the footer
 
 A reserved chord that now does something, announced nowhere, is a feature most users never find. The
