@@ -69,6 +69,7 @@ function seamsFor(runs: CortexRunRow[], opts: { failStepsFor?: Set<string> } = {
         runtime: () => fakeRuntime,
         loadProfile: () => okAsync<DataProfileStatus | null, never>(null),
         loadRuns: () => okAsync(runs),
+        loadActiveRuns: () => okAsync(runs),
         loadSteps: (_pool, runId) => (opts.failStepsFor?.has(runId) ? errAsync({ type: "query_failed", cause: "boom" } as never) : okAsync([stepRow(runId)])),
         loadPlan: () => okAsync<unknown | null, never>(null),
     };

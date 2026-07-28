@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import {
     insertRun,
+    queryActiveRunsByAnalysis,
     queryNonTerminalRunsByAnalysis,
     queryRun,
     queryRunsForInspection,
@@ -172,5 +173,53 @@ describe("runs: conversation and inspection projections", () => {
         expect(activity.runs).toHaveLength(20);
         expect(activity.runs.every((run) => run.status === "running")).toBe(true);
         expect(activity.runs.some((run) => run.runId === "run-terminal")).toBe(false);
+    });
+});
+
+// `queryRunsByAnalysis` is windowed by `started_at DESC LIMIT`, which drops the OLDEST running run
+// first — precisely the long analysis a host's live surfaces most need. This query exists so live
+// work is never a function of how many runs started after it.
+describe("runs: active-run query", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("runs-active");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("returns only non-terminal runs, and finds one buried under newer finished runs", async () => {
+        (await insertRun(pool, { runId: "run-long", analysisId: "a-active", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        // Twenty newer runs, all finished — far past any window a listing would apply.
+        for (let i = 0; i < 20; i++) {
+            const id = `run-new-${i}`;
+            (await insertRun(pool, { runId: id, analysisId: "a-active", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+            (await updateRunStatus(pool, id, "completed"))._unsafeUnwrap();
+        }
+
+        const active = (await queryActiveRunsByAnalysis(pool, "a-active"))._unsafeUnwrap();
+        expect(active.map((r) => r.runId)).toEqual(["run-long"]);
+    });
+
+    it("treats a fund-suspended run as active, and a canceled one as not", async () => {
+        (await insertRun(pool, { runId: "run-susp", analysisId: "a-susp", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        (await updateRunStatus(pool, "run-susp", "suspended_insufficient_funds"))._unsafeUnwrap();
+        (await insertRun(pool, { runId: "run-cancel", analysisId: "a-susp", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        (await updateRunStatus(pool, "run-cancel", "canceled"))._unsafeUnwrap();
+
+        const active = (await queryActiveRunsByAnalysis(pool, "a-susp"))._unsafeUnwrap();
+        // Suspended work can still resume, so a host must keep watching it; canceled cannot.
+        expect(active.map((r) => r.runId)).toEqual(["run-susp"]);
+    });
+
+    it("scopes to the analysis and returns empty when nothing is live", async () => {
+        (await insertRun(pool, { runId: "run-other", analysisId: "a-other", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        expect((await queryActiveRunsByAnalysis(pool, "a-empty"))._unsafeUnwrap()).toEqual([]);
+        expect((await queryActiveRunsByAnalysis(pool, "a-other"))._unsafeUnwrap().map((r) => r.runId)).toEqual(["run-other"]);
     });
 });

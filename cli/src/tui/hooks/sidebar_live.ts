@@ -3,6 +3,7 @@ import { ResultAsync } from "neverthrow";
 import {
     loadDataProfileStatus,
     loadPlan,
+    queryActiveRunsByAnalysis,
     queryRunsByAnalysis,
     queryStepsByRun,
     type CortexRunRow,
@@ -406,6 +407,17 @@ export type RefreshSeams = {
     readonly loadProfile: (pool: Pool, analysisId: string) => ResultAsync<DataProfileStatus | null, DbError>;
     /** Read the analysis's newest runs (newest-first, capped). Real: `queryRunsByAnalysis` @ {@link RUNS_LIMIT}. */
     readonly loadRuns: (pool: Pool, analysisId: string) => ResultAsync<CortexRunRow[], DbError>;
+    /**
+     * Read EVERY non-terminal run, uncapped. Real: `queryActiveRunsByAnalysis`.
+     *
+     * Separate from {@link loadRuns} because the two answer different questions and only one of them
+     * may be windowed. `loadRuns` answers "the newest N" — right for a listing. Live work cannot be
+     * windowed at all: ordering by start time and capping drops the OLDEST running run first, which
+     * is the long analysis this whole surface exists to keep visible. Ten short runs starting after
+     * it would push it off the list, taking its rail block, its panel entry, its completion notice,
+     * and its durable outcome record with it.
+     */
+    readonly loadActiveRuns: (pool: Pool, analysisId: string) => ResultAsync<CortexRunRow[], DbError>;
     /** Read a run's step ledger — fired once per NON-TERMINAL run, never for a terminal one. Real: `queryStepsByRun`. */
     readonly loadSteps: (pool: Pool, runId: string) => ResultAsync<StepExecutionRow[], DbError>;
     /** Read a stored plan — fired once per DISTINCT plan among the active runs. Real: `loadPlan`. */
@@ -416,6 +428,7 @@ const realRefreshSeams: RefreshSeams = {
     runtime: harnessRuntime,
     loadProfile: loadDataProfileStatus,
     loadRuns: (pool, analysisId) => queryRunsByAnalysis(pool, analysisId, { limit: RUNS_LIMIT }),
+    loadActiveRuns: queryActiveRunsByAnalysis,
     loadSteps: queryStepsByRun,
     loadPlan: (pool, planId, analysisId) => loadPlan(pool, planId, { analysisId }),
 };
@@ -479,6 +492,8 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
     if (myRefresh !== refreshGeneration) return;
     const runsRes = await seams.loadRuns(runtime.pool, analysisId);
     if (myRefresh !== refreshGeneration) return;
+    const activeRes = await seams.loadActiveRuns(runtime.pool, analysisId);
+    if (myRefresh !== refreshGeneration) return;
 
     profileRes.match(
         (row) => setProfile(row === null ? { kind: "absent" } : { kind: "loaded", profile: row }),
@@ -490,8 +505,20 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
     // analysis still issues zero step queries, the property the poll's arming condition depends on.
     await runsRes.match(
         async (rows) => {
-            setRuns({ kind: "loaded", runs: rows });
-            const active = rows.filter((r) => !RUN_STATUS_TERMINAL[r.status]);
+            // The uncapped active read is the AUTHORITY on what is live; the windowed listing only
+            // decides what the RUNS section lists. Merging the two — active first, then the window's
+            // rows minus anything already present — means a long-running analysis that has fallen off
+            // the newest-N window is still both listed and tracked. A failed active read degrades to
+            // the window's own view rather than blanking the section: strictly the old behaviour.
+            const merged = activeRes.match(
+                (live) => {
+                    const seen = new Set(live.map((r) => r.runId));
+                    return [...live, ...rows.filter((r) => !seen.has(r.runId))];
+                },
+                () => rows,
+            );
+            setRuns({ kind: "loaded", runs: merged });
+            const active = merged.filter((r) => !RUN_STATUS_TERMINAL[r.status]);
             if (active.length === 0) {
                 setActiveRun(new Map());
                 return;

@@ -289,6 +289,7 @@ function refreshSeams(profile: DataProfileStatus | null): RefreshSeams {
         runtime: () => fakeRuntime,
         loadProfile: () => okAsync(profile),
         loadRuns: () => okAsync([]),
+        loadActiveRuns: () => okAsync([]),
         loadSteps: () => okAsync([]),
         loadPlan: () => okAsync(null),
     };

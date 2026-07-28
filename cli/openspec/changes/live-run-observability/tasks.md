@@ -79,3 +79,13 @@
 - [x] 9.3 Run `bun run format:file` on every changed file under `src/`, then `bun run typecheck`, `bun run lint`, and the test suite
 - [x] 9.4 Run `openspec validate live-run-observability`
 - [x] 9.5 Confirm nothing here reads the DBOS `"events"` stream, initiates an assistant turn, or cancels a run — keeping the #247, #248, and #250 boundaries intact
+
+## 10. Review follow-ups (PR #251)
+
+- [x] 10.1 Add an uncapped active-run read (`queryActiveRunsByAnalysis`) and merge it with the windowed listing, so a run older than the newest N is still listed, tracked, and announced
+- [x] 10.2 Bound the failure message the durable record carries, marking a clipped message as clipped
+- [x] 10.3 Delimit that message as verbatim machine output rather than interpolating it into the record's prose
+- [x] 10.4 Replace the per-row O(n²) turn numbering with a single memo; event entries stay unnumbered
+- [x] 10.5 Document the dismissal's scope — it lasts until no run is active, not for the session
+- [x] 10.6 Add a mount-level test driving the real `App`: panel placement, zero rows when idle, dismissal, and the completion watcher's wiring
+- [x] 10.7 Run the harness suite against a real container runtime (podman), closing the previously unverified Docker-gated tests

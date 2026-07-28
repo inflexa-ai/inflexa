@@ -85,6 +85,29 @@ Appending the record SHALL NOT itself start a turn or cause the agent to respond
 - **WHEN** a run completes while the conversation is idle
 - **THEN** the record is appended and no assistant turn begins
 
+### Requirement: A run's failure message is bounded and delimited in the record
+
+The failure message a record carries SHALL be length-bounded, and a clipped message SHALL be marked
+as clipped. The message is unbounded workflow output and the record enters the token window every
+subsequent turn is assembled from, so one verbose failure would otherwise consume the conversation's
+context budget permanently.
+
+The message SHALL be delimited and labelled as verbatim machine output rather than interpolated into
+the record's prose. It can carry text produced by code running in the sandbox, so it is content of
+unknown provenance placed beside the user's own words; delimiting does not make it trustworthy, it
+makes its boundary legible, so instruction-shaped text inside it reads as a quoted failure message
+rather than as something the conversation said.
+
+#### Scenario: A verbose failure does not consume the context budget
+
+- **WHEN** a run fails with a very long message
+- **THEN** the appended record is bounded and states that the message was truncated
+
+#### Scenario: Instruction-shaped failure text stays quoted
+
+- **WHEN** a failure message contains text shaped like an instruction
+- **THEN** it appears inside the record's delimited machine-output section, not in its prose
+
 ### Requirement: Thread writes are serialized, and a racing user message queues
 
 Durable writes to one analysis thread SHALL be serialized: the run-outcome append and a

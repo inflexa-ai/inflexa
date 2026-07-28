@@ -80,6 +80,13 @@ export function focusNextRun(): void {
 /**
  * Hide or restore the panel. Dismissal is a view state ONLY: the run keeps running, the sidebar keeps
  * showing it, and its completion still announces — nothing here reaches the run.
+ *
+ * SCOPE: a dismissal lasts until no run is active, then clears (see {@link watchRunPanel}). It means
+ * "not this, not now", not "never again" — it is scoped to the work that was on screen when it was
+ * issued, so a later, unrelated run brings the panel back rather than being silently invisible with
+ * no indication why. The alternative, a dismissal that persists for the session, makes the panel
+ * disappear permanently on a keystroke a user may not remember pressing; that failure is silent and
+ * self-reinforcing, whereas this one is merely a panel reappearing, which is visible and re-dismissable.
  */
 export function toggleRunPanel(): void {
     setDismissed((d) => !d);
