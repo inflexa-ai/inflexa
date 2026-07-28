@@ -24,7 +24,7 @@
 import type { ModelMessage } from "ai";
 import type { CortexMessage, CortexPart } from "@inflexa-ai/harness/contracts/message.js";
 
-import { isInterruptedMessage, isSyntheticUserMessage } from "./ai-sdk-message-storage.js";
+import { isInterruptedMessage, isSyntheticRecordMessage, isSyntheticUserMessage } from "./ai-sdk-message-storage.js";
 import type { ToolCardResolver } from "./reconstruct-cards.js";
 import type { StoredMessage } from "./thread-history.js";
 
@@ -92,7 +92,15 @@ export async function contentToCortexMessages(messages: readonly StoredMessage[]
         // interruption marker — that rides assistant rows — so this cannot interact
         // with the marker-fold logic below. The assistant rows it separated then
         // become adjacent and coalesce into one bubble, which is the shape we want.
-        if (isSyntheticUserMessage(message.message)) continue;
+        //
+        // A host-appended RECORD is the exception, and the distinction is exactly why the
+        // two markers exist separately: it is equally synthetic for every turn-boundary
+        // reader, but it is a fact the reader is entitled to see — the only trace in the
+        // conversation that out-of-band work happened at all. Dropping it here would make
+        // an embedder's durable record write successfully and then be invisible, with
+        // nothing to indicate why.
+        const isRecord = isSyntheticRecordMessage(message.message);
+        if (isSyntheticUserMessage(message.message) && !isRecord) continue;
         const parts = await rowToParts(message.message, resolveCard);
         // The marker is read before the zero-parts drop so the flag can never be lost to it:
         // a marked row carries an interruption fact regardless of whether it renders any parts.
@@ -106,7 +114,15 @@ export async function contentToCortexMessages(messages: readonly StoredMessage[]
             }
             continue;
         }
-        const role = message.message.role === "tool" ? "assistant" : (message.message.role as CortexMessage["role"]);
+        // A record carries the `user` role for the wire format and for the turn-boundary
+        // predicates, but nobody said it. Emitting it AS `user` would attribute
+        // system-authored text to the reader — a lie about who spoke, and one that would
+        // also mislead them about what they can retract. `system` is what it actually is.
+        const role: CortexMessage["role"] = isRecord
+            ? "system"
+            : message.message.role === "tool"
+              ? "assistant"
+              : (message.message.role as CortexMessage["role"]);
 
         const prev = out[out.length - 1];
         if (prev && prev.role === role && role === "assistant") {

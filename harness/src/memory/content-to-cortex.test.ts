@@ -9,7 +9,7 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import { insertPlan, upsertPlan } from "../state/plans.js";
 import { insertRun } from "../state/runs.js";
 import { adHocPlanId, adHocRunId } from "../tools/analysis-invocation.js";
-import { envelopeMessage, markInterruptedMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
+import { envelopeMessage, markInterruptedMessage, syntheticRecordMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { contentToCortexMessages } from "./content-to-cortex.js";
 import { createCardResolver } from "./reconstruct-cards.js";
 import { createThreadHistory, type StoredMessage, type ThreadHistory } from "./thread-history.js";
@@ -155,6 +155,44 @@ describe("contentToCortexMessages", () => {
             { type: "text", text: "second half" },
         ]);
         expect(cortex.some((m) => m.role === "user")).toBe(false);
+    });
+
+    it("renders a host-appended record as a system message rather than dropping it", async () => {
+        // The counterpart to the nudge above, and the reason the two markers exist separately. A
+        // record is equally synthetic for every turn-boundary reader, but it is a FACT the reader is
+        // entitled to see — the only trace in the conversation that out-of-band work happened. It
+        // must not be dropped as loop machinery, and must not be attributed to the user either.
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "user", content: "run the plan" }),
+            stored(1, { role: "assistant", content: [{ type: "text", text: "launched" }] }),
+            stored(2, syntheticRecordMessage('Analysis run "DE" (run-a) completed after 2m30s.')),
+        ]);
+
+        expect(cortex).toHaveLength(3);
+        expect(cortex[2]!.role).toBe("system");
+        expect(cortex[2]!.parts).toEqual([{ type: "text", text: 'Analysis run "DE" (run-a) completed after 2m30s.' }]);
+        // Emphatically not the user: rendering it as one would attribute system-authored text to the
+        // reader and mislead them about what they can retract.
+        expect(cortex.filter((m) => m.role === "user")).toHaveLength(1);
+    });
+
+    it("recognises a record structurally, even when its prose reads like a user message", async () => {
+        // Recognition reads the harness marker, never the text — so a record whose wording happens to
+        // resemble ordinary user prose is still a record.
+        const cortex = await contentToCortexMessages([stored(0, syntheticRecordMessage("did the run finish yet?"))]);
+        expect(cortex).toHaveLength(1);
+        expect(cortex[0]!.role).toBe("system");
+    });
+
+    it("a record does not coalesce into an adjacent assistant run", async () => {
+        // Only assistant rows coalesce; a record standing between two of them keeps them apart, which
+        // is right — the outcome happened between those replies, and folding it away would lose that.
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "assistant", content: [{ type: "text", text: "before" }] }),
+            stored(1, syntheticRecordMessage("run finished")),
+            stored(2, { role: "assistant", content: [{ type: "text", text: "after" }] }),
+        ]);
+        expect(cortex.map((m) => m.role)).toEqual(["assistant", "system", "assistant"]);
     });
 
     it("sets interrupted:true on a coalesced assistant run when any row carries the marker", async () => {

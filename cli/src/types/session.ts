@@ -1,3 +1,14 @@
+/**
+ * Who a transcript entry is from.
+ *
+ * `event` is the third kind and is NOT a turn: a record of out-of-band work that the host appended
+ * to the thread — an analysis run's outcome, which the model should read on its next turn but which
+ * nobody said. It gets its own value rather than borrowing `user` or `assistant` because such a
+ * record is stored under the `user` role for the wire format, and rendering it as one would both
+ * attribute system-authored text to the reader and mislead them about what they can retract.
+ */
+export type MessageRole = "user" | "assistant" | "event";
+
 /** A plain text part — the only kind the live engine produces. */
 export type TextPart = {
     id: string;

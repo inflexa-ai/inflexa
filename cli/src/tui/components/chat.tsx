@@ -83,13 +83,17 @@ export function Chat(props: ChatProps) {
                         hints={["ctrl+k commands", "ctrl+j newline", "ctrl+x leader", "esc scroll mode"]}
                     />
                 </Show>
-                {/* index() is the 1-based position within the mounted window (capped at MESSAGE_CAP);
-                for sessions under the cap it is the true turn number, and even past it a running
-                counter is what the numbering is for. */}
+                {/* The displayed number is the 1-based position within the mounted window (capped at
+                MESSAGE_CAP); for sessions under the cap it is the true turn number, and even past it
+                a running counter is what the numbering is for. It counts TURNS, so `event` entries —
+                records this app appended for out-of-band work, which nobody said — are skipped:
+                numbering them would claim a turn happened where none did, and would renumber every
+                turn after a run finished. `index()` cannot supply that, since it is the store
+                position; the count is derived from the entries before this one. */}
                 <For each={messages}>
                     {(msg, index) => (
                         <MessageBlock
-                            index={index() + 1}
+                            index={messages.slice(0, index() + 1).filter((m) => m.role !== "event").length}
                             role={msg.role}
                             durationMs={msg.durationMs}
                             interrupted={msg.interrupted}

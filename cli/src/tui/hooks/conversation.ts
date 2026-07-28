@@ -29,7 +29,17 @@ import { clearAsks, pushAsk, settleAsk } from "./asks.ts";
 import { notify } from "./notice.ts";
 import { chatStatus, setChatStatus } from "./status.ts";
 import { runTurnWrite } from "./thread_write.ts";
-import type { AskCardPart, OpenableCardPart, OpenableEntry, Part, PlanCardPart, PresentationPart, TextPart, ToolCallPart } from "../../types/session.ts";
+import type {
+    AskCardPart,
+    MessageRole,
+    OpenableCardPart,
+    OpenableEntry,
+    Part,
+    PlanCardPart,
+    PresentationPart,
+    TextPart,
+    ToolCallPart,
+} from "../../types/session.ts";
 
 // The chat's hot state — the message list, the in-flight streaming buffer, and the last error —
 // held here (not inside `app.tsx`) so the holder of the state is decoupled from its renderer, the
@@ -43,7 +53,13 @@ import type { AskCardPart, OpenableCardPart, OpenableEntry, Part, PlanCardPart, 
 /** One chat turn as the UI holds it: the message identity plus its parts. */
 export type UIMessage = {
     id: string;
-    role: "user" | "assistant";
+    /**
+     * Who the entry is from. `event` is not a turn: a record of out-of-band work this app appended
+     * to the thread (an analysis run's outcome). It is kept out of `user`/`assistant` deliberately —
+     * a run outcome stored under the `user` role for the wire format would otherwise be rendered as
+     * something the reader said, and offered to them as retractable.
+     */
+    role: MessageRole;
     parts: Part[];
     /** Assistant-only turn duration in ms, set when the turn finishes; undefined otherwise. */
     durationMs?: number;
@@ -803,11 +819,13 @@ export type CortexMsg = Awaited<ReturnType<typeof contentToCortexMessages>>[numb
  * so a reloaded transcript renders exactly what the live abort showed.
  */
 export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = ""): UIMessage {
-    // TODO(extend): content-fidelity gap, deliberately deferred. Any non-user role collapses onto
-    // "assistant" here because UIMessage.role is a two-value union — a `system` turn loses its framing
-    // and reads as the assistant. Widen UIMessage.role (and MessageBlock) to carry system turns
-    // honestly when the transcript needs to distinguish them.
-    const role: "user" | "assistant" = m.role === "user" ? "user" : "assistant";
+    // A `system` row is the harness's reconstruction of a host-appended RECORD — a run's outcome,
+    // written into the thread by this app rather than said by anyone. It carries the `user` role in
+    // storage for the wire format, and the harness re-roles it here off its own marker, never off a
+    // guess about its text: a record whose prose happens to read like a question would otherwise be
+    // attributed to the user, which is both a lie about who spoke and a lie about what is retractable.
+    // Rendered as `event` — neither party's turn.
+    const role: MessageRole = m.role === "user" ? "user" : m.role === "system" ? "event" : "assistant";
     const parts: Part[] = [];
     for (const part of m.parts) {
         switch (part.type) {
