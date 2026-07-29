@@ -161,18 +161,19 @@ export const modelConnectionSchema = z.discriminatedUnion("mode", [
 
 /**
  * The top-level `models` block. `connection` selects the ONE shared chat backend; `agents` maps each
- * user-facing agent — `conversation` (the chat agent + its sub-agents) and `sandbox` (the step agents,
- * data profiling, the ephemeral runner) — to an optional model id served by that connection.
+ * model role — `conversation` (the chat agent + its sub-agents), `sandbox`
+ * (durable analysis workers), and `utility` (small bounded routing/classification
+ * calls) — to an optional model id served by that connection.
  * `connection` is a nested field (rather than a flat `modelConnection`
  * key) precisely so `agents` can live beside it. Both are optional: an `agents`-only block still
- * resolves to the default connection, and an absent `agents` map means both agents resolve to the
+ * resolves to the default connection, and an absent `agents` map means all roles resolve to the
  * single configured model — today's behavior verbatim. Per-agent model RESOLUTION
  * (`models.agents.<agent>` → `harness.model` → connection default) lives in `resolveModelConnection`
  * + boot, not in the schema.
  */
 export const modelsConfigSchema = z.object({
     connection: modelConnectionSchema.optional(),
-    agents: z.object({ conversation: z.string().optional(), sandbox: z.string().optional() }).optional(),
+    agents: z.object({ conversation: z.string().optional(), sandbox: z.string().optional(), utility: z.string().optional() }).optional(),
 });
 
 export type ConfigError = { type: "config_write_failed"; cause: unknown };

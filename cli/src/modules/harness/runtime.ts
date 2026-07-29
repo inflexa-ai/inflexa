@@ -70,14 +70,7 @@ import { createRunInflexaTool } from "./inflexa_tool.ts";
 import { createLaunchDirTool } from "./launch_dir_tool.ts";
 import { createManageInputsTool } from "./inputs_tool.ts";
 import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
-import {
-    buildEphemeralDeps,
-    buildExecuteAnalysisDeps,
-    buildExecuteTargetAssessmentDeps,
-    buildSandboxStepDeps,
-    type RunEngineComposition,
-    type AgentBackend,
-} from "./run_deps.ts";
+import { buildExecuteAnalysisDeps, buildExecuteTargetAssessmentDeps, buildSandboxStepDeps, type RunEngineComposition, type AgentBackend } from "./run_deps.ts";
 import { clearAgentSwitch, createSwappableProvider, installAgentSwitch } from "./agent_switch.ts";
 
 /**
@@ -170,10 +163,11 @@ export type HarnessRuntime = {
     readonly conversation: AgentBackend;
     /**
      * The sandbox agent's backend — the model id + chat-provider instance the run engine (step agents,
-     * data profile, ephemeral runner) drives. Referentially identical to {@link
-     * HarnessRuntime.conversation} when both agents resolve to the same model (one provider instance).
+     * data profile, and synthesis) drives.
      */
     readonly sandbox: AgentBackend;
+    /** The utility backend used for bounded routing/classification calls. */
+    readonly utility: AgentBackend;
     /** App pool over the provisioned Postgres — shared with the harness ledger queries. */
     readonly pool: Pool;
     /**
@@ -191,7 +185,7 @@ export type HarnessRuntime = {
      * The assembled conversation `AgentDefinition` — the `chat` command drives it
      * with {@link HarnessRuntime.conversation}'s provider via `runAgent`. Built by
      * `assembleCoreRuntime` over the same registered workflow callables the
-     * trigger deps expose, so its `execute_plan` tool launches the identical
+     * trigger deps expose, so its `execute_analysis` tool launches the identical
      * `executeAnalysis` parent.
      */
     readonly conversationAgent: AgentDefinition;
@@ -346,11 +340,9 @@ export type BootSeams = {
      */
     readonly boot: typeof bootHarness;
     /**
-     * Cancel this executor's PENDING `ephemeral:*` rows BEFORE launch, run inside
-     * `bootHarness`'s `beforeLaunch` hook. Registering the ephemeral workflow (in
-     * the assemble step) makes a crashed turn's row re-dispatchable by launch-time
-     * recovery; the only race-free cancel point is a direct system-DB UPDATE that
-     * completes before launch — which `beforeLaunch` guarantees.
+     * Cancel this executor's legacy PENDING `ephemeral:*` rows BEFORE launch.
+     * No current workflow registers that prefix; this is an upgrade migration
+     * for rows created by older releases.
      */
     readonly sweepEphemeral: typeof sweepEphemeralWorkflows;
     /**
@@ -615,7 +607,7 @@ async function bootHarnessRuntimeOnce(
     // explicit `harness.model`. `modelMatchesProvider` reads the family table provider→family ONLY (a
     // sanity check, never id→provider identity); with the default provider `anthropic` only Claude-family
     // ids pass.
-    // Memoize the PROMISE so two agents falling through to the default share ONE `/models` fetch and one
+    // Memoize the PROMISE so all roles falling through to the default share ONE `/models` fetch and one
     // family-guard evaluation — even when they resolve concurrently. `.match` consumes the resolve
     // Result and maps both arms back to a boot Result.
     let cliproxyAutoDefault: Promise<Result<string, HarnessBootError>> | null = null;
@@ -651,8 +643,11 @@ async function bootHarnessRuntimeOnce(
     if (conversationResolved.isErr()) return err(conversationResolved.error);
     const sandboxResolved = await resolveAgentModel("sandbox");
     if (sandboxResolved.isErr()) return err(sandboxResolved.error);
+    const utilityResolved = await resolveAgentModel("utility");
+    if (utilityResolved.isErr()) return err(utilityResolved.error);
     const conversationModel = conversationResolved.value;
     const sandboxModel = sandboxResolved.value;
+    const utilityModel = utilityResolved.value;
 
     // Resolve the pinned container runtime and the Docker-API socket the sandbox
     // client will dial, BEFORE Postgres (which is provisioned on that same runtime)
@@ -742,8 +737,8 @@ async function bootHarnessRuntimeOnce(
             );
 
         // Shared backends built ONCE so the profile workflow, the sandbox-step
-        // child, the execute-analysis parent, the ephemeral runner, and the
-        // conversation agent all close over the SAME instances — EXCEPT the chat
+        // child, the execute-analysis parent, and the conversation agent all close
+        // over the SAME instances — EXCEPT the chat
         // provider, which splits per user-facing agent below. The embedding provider is
         // NOT built here — it was resolved up-front (`embedding`, via the
         // resolveEmbedding seam) and is threaded through unchanged, so every path shares
@@ -752,8 +747,8 @@ async function bootHarnessRuntimeOnce(
         //
         // One provider instance per DISTINCT resolved agent model over the SHARED
         // connection: the wire model is baked into each `ChatProvider`
-        // at construction (`ChatRequest` carries no model), so two agents on different
-        // models mean two instances — but two agents on the SAME model share ONE instance
+        // at construction (`ChatRequest` carries no model), so roles on different
+        // models mean distinct instances — while coincident roles share one inner
         // referentially, which is the common no-`agents` config (one provider). One
         // construction path for both connection modes: the
         // resolved connection + a bound model becomes an `AiSdkProviderConfig`. cliproxy
@@ -789,19 +784,29 @@ async function bootHarnessRuntimeOnce(
                         capabilities: { toolCalling: true },
                     };
         const buildProvider = (agentModel: string): ChatProvider => createConfiguredAiSdkProvider({ resolveBilling, config: providerConfigFor(agentModel) });
-        // Coincident agent models share the one INNER instance; only a genuinely distinct sandbox model
-        // constructs a second inner over the same shared connection (one connection, one instance per
-        // DISTINCT model).
-        const conversationInner = buildProvider(conversationModel);
-        const sandboxInner = sandboxModel === conversationModel ? conversationInner : buildProvider(sandboxModel);
+        // Coincident role models share one INNER instance. Each role still gets
+        // its own swappable handle below, so switching one never repoints another.
+        const providerByModel = new Map<string, ChatProvider>();
+        const innerFor = (model: string): ChatProvider => {
+            const existing = providerByModel.get(model);
+            if (existing) return existing;
+            const created = buildProvider(model);
+            providerByModel.set(model, created);
+            return created;
+        };
+        const conversationInner = innerFor(conversationModel);
+        const sandboxInner = innerFor(sandboxModel);
+        const utilityInner = innerFor(utilityModel);
         // Each agent gets its OWN swappable handle even when the inners coincide, so a later switch of one
         // agent re-points only that agent. The handle is the stable reference every
         // consumer captures — the run-engine deps bundles, the conversation agent's sub-agents, and the
         // streaming chat wrapper — so swapping its inner at the idle transition reaches them all at once.
         const conversationProvider = createSwappableProvider(conversationInner);
         const sandboxProvider = createSwappableProvider(sandboxInner);
+        const utilityProvider = createSwappableProvider(utilityInner);
         const conversationBackend: AgentBackend = { provider: conversationProvider, model: conversationModel };
         const sandboxBackend: AgentBackend = { provider: sandboxProvider, model: sandboxModel };
+        const utilityBackend: AgentBackend = { provider: utilityProvider, model: utilityModel };
         const sandboxClient = seams.createSandbox({
             pool,
             // Podman speaks the Docker API, so the harness's dockerode-based `docker`
@@ -849,10 +854,10 @@ async function bootHarnessRuntimeOnce(
         const workspaceFs = createWorkspaceFilesystem({ resolveWorkspaceRoot });
         // One authorizer instance, shared by the parent workflow's terminal revoke,
         // the run-trigger flow's async-edge authorize, AND the conversation agent's
-        // execute_plan / run_ephemeral tools (the local realization is stateless, so
+        // execute_analysis tool (the local realization is stateless, so
         // sharing is purely to avoid duplication).
         const runAuthorizer = createLocalRunAuthorizer();
-        // One launcher instance, shared by the conversation agent's execute_plan
+        // One launcher instance, shared by the conversation agent's execute_analysis
         // tool (wired through the conversation bundle) and the file-replay run
         // trigger (`runTriggerDeps`) — same reasoning as the shared authorizer: a
         // single seam realization drives every durable-run launch on this analysis.
@@ -883,6 +888,7 @@ async function bootHarnessRuntimeOnce(
             // from the sandbox agent's model and the CONFIGURED provider slug below.
             conversation: conversationBackend,
             sandbox: sandboxBackend,
+            utility: utilityBackend,
             // The connection's configured provider slug — the attested fact provenance records,
             // shared across agents, never derived from a model id.
             modelProvider: connection.provider,
@@ -927,7 +933,6 @@ async function bootHarnessRuntimeOnce(
                 refStorePath: env.refsDir,
                 ...(packagesFile ? { packagesFile } : {}),
             },
-            ephemeral: buildEphemeralDeps(composition),
         };
         // The conversation agent's dep surface minus the three fields
         // `assembleCoreRuntime` injects itself (both workflow callables + the resource
@@ -938,10 +943,12 @@ async function bootHarnessRuntimeOnce(
         // any Chrome connection.
         const conversation: ConversationAssemblyDeps = {
             provider: conversationProvider,
+            utilityProvider,
             pool,
             embedding,
             workspaceFs,
             model: conversationModel,
+            utilityModel,
             resolveWorkspaceRoot,
             runAuthorizer,
             runLauncher,
@@ -954,7 +961,7 @@ async function bootHarnessRuntimeOnce(
             // mounts, so a plan can name what this install actually holds.
             refStorePath: env.refsDir,
             // Same manifest the sandbox agents read. Without it, answering "is this package
-            // installed?" costs an ephemeral sandbox run — a container spun up to import one name.
+            // installed?" would otherwise cost a durable analysis run just to import one name.
             ...(packagesFile ? { packagesFile } : {}),
             chrome: {},
             // Host-supplied conversation tools: drive the local `inflexa` CLI as a subprocess
@@ -980,6 +987,7 @@ async function bootHarnessRuntimeOnce(
         //      step makes a prior crash's row re-dispatchable by launch-time
         //      recovery; the only race-free cancel point is a direct system-DB
         //      UPDATE that lands before launch — which `beforeLaunch` guarantees.
+        //      This is a legacy upgrade migration only; no current workflow registers that prefix.
         //   2. Expire asks orphaned by a prior process. State init (which `bootHarness`
         //      runs before this hook) has created the ledger, so a crash-abandoned
         //      pending row is marked expired before any new turn can pend one.
@@ -997,11 +1005,11 @@ async function bootHarnessRuntimeOnce(
             await seams.sweepEphemeral({ pool: composition.pool, logger, executorId: "local" });
             await seams.sweepAsks(askGateway);
             installAgentSwitch({
-                swappable: { conversation: conversationProvider, sandbox: sandboxProvider },
+                swappable: { conversation: conversationProvider, sandbox: sandboxProvider, utility: utilityProvider },
                 rebuildProvider: buildProvider,
                 swapSandboxEmitters,
                 modelProvider: connection.provider,
-                initialModels: { conversation: conversationModel, sandbox: sandboxModel },
+                initialModels: { conversation: conversationModel, sandbox: sandboxModel, utility: utilityModel },
             });
             seams.registerReaper({ pool: composition.pool, sandboxClient, logger });
             seams.registerWatchdog({ queryActiveSandboxes: () => queryActiveSandboxes(composition.pool), sandboxClient, logger });
@@ -1052,13 +1060,14 @@ async function bootHarnessRuntimeOnce(
         const runtime: HarnessRuntime = {
             conversation: conversationBackend,
             sandbox: sandboxBackend,
+            utility: utilityBackend,
             pool,
             askGateway,
             triggerDeps: { pool, runAuthorizer, workflow: core.workflows.dataProfile },
             runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer, budget: cfg.resourcePolicy.budget },
             conversationAgent: core.conversationAgent,
             // The connection's identity the boot resolved — surfaced by the status UI, immutable across
-            // live agent-model swaps (the connection is shared by both agents, so a swap changes only a
+            // live role-model swaps (the connection is shared by all roles, so a swap changes only a
             // model), so `provider`/`mode` are read straight off the connection.
             connection: { provider: connection.provider, mode: connection.mode },
             ingress,

@@ -25,7 +25,7 @@ import { currentAgentModels, onAgentStateChange, pendingAgentSelections, type Ag
  *   TERMINAL state (never a hang): the user reads the remedy and quits cleanly.
  *
  * The connection rides the `ready` variant — not the swap-tracking {@link agentModels} store — because it
- * is a boot-resolved, immutable fact (a live agent-model swap never changes the connection — both agents
+ * is a boot-resolved, immutable fact (a live role-model swap never changes the connection — all roles
  * share one connection, so a swap changes only a model), so it is seeded ONCE at the ready edge, exactly
  * matching this variant's set-once-and-never-mutate lifecycle.
  */
@@ -72,7 +72,7 @@ export async function startHarnessBoot(config: ResolvedHarnessConfig, driver: Bo
     result.match(
         (rt) => {
             runtime = rt;
-            // `model` snapshots the conversation agent's boot model; both agents' LIVE models render from the
+            // `model` snapshots the conversation agent's boot model; all roles' LIVE models render from the
             // `agentModels` store. `connection` is the shared connection's identity, seeded here at
             // the ready edge and immutable thereafter (a swap changes only a model, never the shared
             // connection), so the sidebar surfaces it beside the agents.
@@ -111,7 +111,7 @@ export type AgentModelsState = {
     readonly pending: ReadonlyMap<AgentName, string>;
 };
 
-const EMPTY_AGENT_MODELS: AgentModelsState = { current: { conversation: "", sandbox: "" }, pending: new Map() };
+const EMPTY_AGENT_MODELS: AgentModelsState = { current: { conversation: "", sandbox: "", utility: "" }, pending: new Map() };
 
 const [agentModelsState, setAgentModels] = createSignal<AgentModelsState>(EMPTY_AGENT_MODELS);
 

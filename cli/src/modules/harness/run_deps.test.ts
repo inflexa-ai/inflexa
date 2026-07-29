@@ -21,7 +21,7 @@ import {
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
 import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
-import { buildEphemeralDeps, buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
+import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
 
 // All factories below construct lazily (pg pools connect on first query; the
 // SDK clients open no socket at construction), so the whole module builds
@@ -55,6 +55,7 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         resolveWorkspaceRoot,
         conversation: { provider: makeProvider("claude-test"), model: "claude-test" },
         sandbox: { provider: makeProvider(sandboxModel), model: sandboxModel },
+        utility: { provider: makeProvider("claude-utility"), model: "claude-utility" },
         // The connection's configured provider slug (boot feeds it verbatim), shared across agents.
         modelProvider,
         // The REAL swappable holder stamped with the boot name — the same stable handles boot injects, so
@@ -295,15 +296,5 @@ describe("buildSandboxStepDeps", () => {
         for (const id of Object.keys(SANDBOX_AGENT_META)) {
             expect(thrown?.message).toContain(id);
         }
-    });
-});
-
-// Every agent that carries reference discovery needs the store path, or it reports an
-// installed store as absent. The tool reads the store host-side now, so an unwired
-// consumer fails silently as "nothing provisioned" rather than erroring — which is
-// exactly the shape of bug this asserts against.
-describe("reference store reaches every consumer", () => {
-    test("buildEphemeralDeps carries the reference store path", () => {
-        expect(buildEphemeralDeps(testComposition()).refStorePath).toBe("/tmp/refs");
     });
 });

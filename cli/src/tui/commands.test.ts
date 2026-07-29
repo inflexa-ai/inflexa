@@ -25,7 +25,7 @@ import type { Analysis } from "../types/analysis.ts";
 // test hooks and the reset below keeps one test's seed from bleeding into the next (the same pairing
 // sidebar.render.test.tsx uses for the rail's MODELS section).
 afterEach(() => {
-    __setAgentModelsForTest({ current: { conversation: "", sandbox: "" }, pending: new Map() });
+    __setAgentModelsForTest({ current: { conversation: "", sandbox: "", utility: "" }, pending: new Map() });
     __setBootStateForTest({ phase: "idle" });
 });
 
@@ -43,7 +43,10 @@ describe("modelStatusLines", () => {
 
     test("ready: spells out the cliproxy connection and each agent's live model", () => {
         __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
-        __setAgentModelsForTest({ current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" }, pending: new Map() });
+        __setAgentModelsForTest({
+            current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" },
+            pending: new Map(),
+        });
         const lines = modelStatusLines();
         expect(lines[0]).toContain("anthropic");
         expect(lines[0]).toContain("cliproxy (managed local proxy)");
@@ -53,14 +56,14 @@ describe("modelStatusLines", () => {
 
     test("ready: a direct connection glosses the user-configured endpoint", () => {
         __setBootStateForTest({ phase: "ready", model: "deepseek-chat", connection: { provider: "deepseek", mode: "direct" } });
-        __setAgentModelsForTest({ current: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner" }, pending: new Map() });
+        __setAgentModelsForTest({ current: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner", utility: "deepseek-reasoner" }, pending: new Map() });
         expect(modelStatusLines()[0]).toContain("direct (user-configured endpoint)");
     });
 
     test("a scheduled switch renders as current → pending on the agent's line", () => {
         __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
         __setAgentModelsForTest({
-            current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" },
+            current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" },
             pending: new Map([["sandbox", "claude-haiku-4-5"]]),
         });
         expect(modelStatusLines()[2]).toContain(`claude-sonnet-4-5 ${GLYPHS.arrowRight} claude-haiku-4-5 (pending)`);

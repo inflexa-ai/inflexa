@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import { readFileSync } from "node:fs";
 
 import { env } from "../../lib/env.ts";
+import { readConfig, writeConfig } from "../../lib/config.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { resolveHarnessConfig, resolveModelConnection, writeAgentModel } from "./config.ts";
 
@@ -46,6 +47,29 @@ describe("resolveHarnessConfig — adminPort default", () => {
     test("an explicit harness.adminPort still wins over the channel-aware default", () => {
         writeConfigWithHarness({ adminPort: 9999 });
         expect(resolveHarnessConfig().adminPort).toBe(9999);
+    });
+});
+
+describe("resolveHarnessConfig — retired ephemeral resources", () => {
+    test("a stale resourceLimits.ephemeral field has no runtime effect", () => {
+        expect(
+            writeConfig({
+                ...readConfig(),
+                harness: {
+                    resourceLimits: {
+                        maxCpu: 2,
+                        maxMemoryGb: 4,
+                        budget: { cpu: 2, memoryGb: 4 },
+                        ephemeral: { cpu: 99, memoryGb: 99 },
+                    },
+                },
+            }).isOk(),
+        ).toBe(true);
+
+        expect(resolveHarnessConfig().resourcePolicy).toEqual({
+            perStep: { maxCpu: 2, maxMemoryGb: 4, maxGpuCount: 0 },
+            budget: { cpu: 2, memoryGb: 4 },
+        });
     });
 });
 
@@ -110,12 +134,12 @@ describe("resolveModelConnection — agent overrides ride through", () => {
     test("a full agents map is carried verbatim onto the resolved connection", () => {
         writeConfigWithModels({
             connection: { mode: "cliproxy", provider: "anthropic" },
-            agents: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" },
+            agents: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-haiku-4-5" },
         });
         expect(resolveModelConnection()).toEqual({
             mode: "cliproxy",
             provider: "anthropic",
-            agents: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" },
+            agents: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-haiku-4-5" },
         });
     });
 
@@ -132,14 +156,14 @@ describe("resolveModelConnection — agent overrides ride through", () => {
     test("a direct connection carries its agent overrides beside the endpoint facts", () => {
         writeConfigWithModels({
             connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1" },
-            agents: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner" },
+            agents: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner", utility: "deepseek-chat" },
         });
         expect(resolveModelConnection()).toEqual({
             mode: "direct",
             provider: "deepseek",
             baseURL: "https://api.deepseek.com/v1",
             protocol: "openai-compatible",
-            agents: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner" },
+            agents: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner", utility: "deepseek-chat" },
         });
     });
 
@@ -253,6 +277,13 @@ describe("writeAgentModel — persists models.agents spread-preserving", () => {
         expect(writeAgentModel("sandbox", "claude-sonnet-4-5").isOk()).toBe(true);
         expect(readModelsBlock()).toEqual({ agents: { sandbox: "claude-sonnet-4-5" } });
         expect(resolveModelConnection().agents).toEqual({ sandbox: "claude-sonnet-4-5" });
+    });
+
+    test("writes utility alone without manufacturing conversation or sandbox overrides", () => {
+        writeConfigWithModels(undefined);
+        expect(writeAgentModel("utility", "claude-haiku-4-5").isOk()).toBe(true);
+        expect(readModelsBlock()).toEqual({ agents: { utility: "claude-haiku-4-5" } });
+        expect(resolveModelConnection().agents).toEqual({ utility: "claude-haiku-4-5" });
     });
 
     test("keeps the connection block and the OTHER agent when rewriting one agent", () => {
