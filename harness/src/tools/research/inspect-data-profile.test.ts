@@ -96,7 +96,7 @@ async function resetLedger(): Promise<void> {
 }
 
 describe("the tool contract", () => {
-    it("declares a bounded, paged input surface — the truncation lever inspect_run lacks", () => {
+    it("declares a bounded, paged input surface", () => {
         const schema = tool.jsonSchema as { properties: Record<string, unknown> };
         expect(tool.id).toBe("inspect_data_profile");
         expect(Object.keys(schema.properties).sort()).toEqual(["page", "pageSize", "scope"]);

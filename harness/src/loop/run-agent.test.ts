@@ -357,6 +357,21 @@ describe("runAgent — tool-error boundary", () => {
             ),
         ).rejects.toBe(fatal);
     });
+
+    it("always re-raises AbortError as cancellation control flow", async () => {
+        const aborted = new DOMException("The operation was aborted", "AbortError");
+        const tool = defineTool({
+            id: "abort",
+            description: "Aborts.",
+            inputSchema: z.object({}),
+            execute: async () => {
+                throw aborted;
+            },
+        });
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "abort", {})], "tool_use")]);
+
+        await expect(runAgent(agentDef([tool]), GO, makeSession(), opts(provider))).rejects.toBe(aborted);
+    });
 });
 
 // ── max_tokens is a recoverable soft-error (see the harness-agent-loop spec) ───────────────

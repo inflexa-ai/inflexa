@@ -20,8 +20,9 @@ import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
-import { loadAnalysisStatus } from "../state/index.js";
+import { loadAnalysisStatus, queryNonTerminalRunsByAnalysis } from "../state/index.js";
 import { assembleMessages, type AssembledMessages } from "./message-assembly.js";
+import { renderRunActivity, renderRunActivityUnavailable, RUN_ACTIVITY_DETAIL_LIMIT } from "./run-activity.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 
@@ -75,6 +76,10 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
     }
 
     const analysisState = await loadAnalysisStatus(pool, analysisId).unwrapOr(null);
+    const runActivityContext = await queryNonTerminalRunsByAnalysis(pool, analysisId, RUN_ACTIVITY_DETAIL_LIMIT).match(
+        (activity) => renderRunActivity(activity),
+        () => renderRunActivityUnavailable(),
+    );
 
     const history = createThreadHistory(pool);
     const { messages, userMessage } = await assembleMessages({
@@ -82,6 +87,7 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
         analysisId,
         userInput,
         analysisContext: analysisState?.context ?? null,
+        runActivityContext,
         history,
         workingMemory: createWorkingMemory(pool),
     });

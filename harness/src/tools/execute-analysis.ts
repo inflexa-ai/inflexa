@@ -201,7 +201,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
             "Launch analysis computation asynchronously. Use mode=plan with the planId only after the user approved that stored plan. " +
             "Use mode=adhoc with the user's exact targeted computational request when they explicitly asked to run/compute/test/compare it; " +
             "that explicit request is consent and needs no synthetic-plan approval. If computation is merely your suggestion, ask first. " +
-            "You never choose the sandbox specialist: ad hoc routing does that automatically. Returns runId; inspect results on a later turn.",
+            "You never choose the sandbox specialist: ad hoc routing does that automatically. Returns runId with status=in_progress; inspect results on a later turn.",
         inputSchema,
         execute: async (input, ctx) => {
             if (ctx.session.scope.kind !== "analysis") throw new Error("execute_analysis requires an analysis-scoped session");
@@ -222,7 +222,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
                 const active = unwrapOrThrow(await queryActiveRun(deps.pool, analysisId, planId));
                 if (active) {
                     await emitRunCard(active.runId);
-                    return ok({ runId: active.runId });
+                    return ok({ runId: active.runId, status: "in_progress" as const });
                 }
             } else {
                 plan = await persistedAdHocPlan(deps, { analysisId, request: input.request!, ctx, planId });
@@ -245,7 +245,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
                         const active = unwrapOrThrow(await queryActiveRun(deps.pool, analysisId, planId));
                         if (active) {
                             await emitRunCard(active.runId);
-                            return ok({ runId: active.runId });
+                            return ok({ runId: active.runId, status: "in_progress" as const });
                         }
                     }
                     throw error;
@@ -262,7 +262,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
                 );
                 if (!reservation.inserted) {
                     await emitRunCard(reservation.row.runId);
-                    return ok({ runId: reservation.row.runId });
+                    return ok({ runId: reservation.row.runId, status: "in_progress" as const });
                 }
             }
 
@@ -303,7 +303,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
 
             logger.info("analysis launched", { analysisId, runId, planId, mode: input.mode });
             await emitRunCard(runId);
-            return ok({ runId });
+            return ok({ runId, status: "in_progress" as const });
         },
     });
 }

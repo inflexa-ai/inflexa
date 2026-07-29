@@ -8,6 +8,7 @@ import type { WorkingMemoryStore } from "../memory/working-memory.js";
 import { emptyWorkingMemory } from "../memory/working-memory.js";
 
 const WM_RENDER = "# Working Memory\n\n## Goal\n\n_none yet_\n";
+const RUN_ACTIVITY = "[Run Activity]\nNo runs are currently running or suspended.";
 
 function stubHistory(window: MessageParam[]): ThreadHistory {
     return {
@@ -37,7 +38,7 @@ function contentText(m: MessageParam): string {
 }
 
 describe("assembleMessages", () => {
-    test("places analysis context, working memory, and user input in the tail", async () => {
+    test("places analysis context, run activity, working memory, and user input in the tail", async () => {
         const window: MessageParam[] = [
             { role: "user", content: "earlier question" },
             { role: "assistant", content: "earlier answer" },
@@ -47,18 +48,20 @@ describe("assembleMessages", () => {
             analysisId: "analysis-1",
             userInput: "what is BRCA1?",
             analysisContext: "RNA-seq of tumor vs normal.",
+            runActivityContext: RUN_ACTIVITY,
             history: stubHistory(window),
             workingMemory: stubWorkingMemory(),
         });
 
         // history window stays the cacheable prefix, untouched.
         expect(messages.slice(0, 2)).toEqual(window);
-        // tail order: analysis context, working memory, user input.
-        expect(messages.length).toBe(5);
+        // tail order: analysis context, run activity, working memory, user input.
+        expect(messages.length).toBe(6);
         expect(contentText(messages[2]!)).toContain("[Analysis Context]");
         expect(contentText(messages[2]!)).toContain("RNA-seq of tumor vs normal.");
-        expect(contentText(messages[3]!)).toBe(WM_RENDER);
-        expect(messages[4]).toEqual(userMessage);
+        expect(contentText(messages[3]!)).toBe(RUN_ACTIVITY);
+        expect(contentText(messages[4]!)).toBe(WM_RENDER);
+        expect(messages[5]).toEqual(userMessage);
         expect(userMessage.content).toBe("what is BRCA1?");
     });
 
@@ -68,13 +71,14 @@ describe("assembleMessages", () => {
             analysisId: "analysis-1",
             userInput: "hello",
             analysisContext: null,
+            runActivityContext: RUN_ACTIVITY,
             history: stubHistory([]),
             workingMemory: stubWorkingMemory(),
         });
         // First message is a genuine user message; no tool_use/tool_result split.
         expect(messages[0]!.role).toBe("user");
-        // With no analysis context, the tail is working memory + user input only.
-        expect(messages.length).toBe(2);
+        // With no analysis context, the tail is run activity + working memory + user input.
+        expect(messages.length).toBe(3);
         expect(messages.every((m) => m.role === "user" || m.role === "assistant")).toBe(true);
     });
 
@@ -84,6 +88,7 @@ describe("assembleMessages", () => {
             analysisId: "a",
             userInput: "my key is AKIAIOSFODNN7EXAMPLE keep it safe",
             analysisContext: null,
+            runActivityContext: RUN_ACTIVITY,
             history: stubHistory([]),
             workingMemory: stubWorkingMemory(),
         });
@@ -99,6 +104,7 @@ describe("assembleMessages", () => {
             analysisId: "a",
             userInput: `align this sequence ${fortyMer} please`,
             analysisContext: null,
+            runActivityContext: RUN_ACTIVITY,
             history: stubHistory([]),
             workingMemory: stubWorkingMemory(),
         });
@@ -113,6 +119,7 @@ describe("assembleMessages", () => {
             analysisId: "a",
             userInput: "continue",
             analysisContext: `context references ${secret}`,
+            runActivityContext: RUN_ACTIVITY,
             history: stubHistory(window),
             workingMemory: stubWorkingMemory(),
         });
