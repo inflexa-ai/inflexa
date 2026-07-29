@@ -60,10 +60,22 @@ if [ "$check_only" = true ]; then
   exit 0
 fi
 
-# Stamped in UTC so the value does not depend on the contributor's timezone.
-# This is the bump date, which may precede the release by the PR's review time —
-# accepted, because the alternative (writing it after the release publishes)
-# means committing to main from the release workflow.
+# Version already in step: leave the file — date-released included — untouched.
+# The sync fires on ANY cli/package.json push to main; its paths filter cannot
+# tell whether the version field itself moved, so re-stamping the date from the
+# clock here would drift the file on every unrelated change (a script edit, a
+# devDependency bump) and emit a spurious "release" commit on each new calendar
+# day. date-released records when the CURRENT version shipped, so only a real
+# version change re-stamps it, below. (--check ignores date for the same reason.)
+if [ "$current" = "$version" ]; then
+  echo "CITATION.cff already at $version — date-released left unchanged"
+  exit 0
+fi
+
+# Version changed. Stamp date-released in UTC so the value does not depend on the
+# contributor's timezone. This is the bump date, which may precede the release by
+# the PR's review time — accepted, because the alternative (writing it after the
+# release publishes) means committing to main from the release workflow.
 today=$(date -u +%F)
 
 # -i.bak, not a bare -i: BSD sed (macOS, where this is run by hand) requires an
@@ -75,8 +87,4 @@ sed -E -i.bak \
   "$citation"
 rm -f "$citation.bak"
 
-if [ "$current" = "$version" ]; then
-  echo "CITATION.cff already at $version (date-released stamped $today)"
-else
-  echo "CITATION.cff: $current -> $version (date-released $today)"
-fi
+echo "CITATION.cff: $current -> $version (date-released $today)"
