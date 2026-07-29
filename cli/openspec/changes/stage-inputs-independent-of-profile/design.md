@@ -68,7 +68,7 @@ A live sandbox is reading the tree `stageInputs` would reconcile-delete. The ski
 
 ### 5. The outcome union separates the staging fact from the profile decision
 
-`ProfileParityOutcome.kind` keeps its current meaning — what happened to the *profile* — and gains an orthogonal `staged: boolean`. Adding kinds for each staging×profile combination would multiply the union and every consumer's switch for no gain, and the two facts are genuinely independent now. Both drivers switch on `kind` alone, so the addition is non-breaking for them.
+`ProfileParityOutcome.kind` keeps its current meaning — what happened to the *profile* — and gains an orthogonal `materialized` flag: whether the current input set is on disk when the check returns, independent of whether this drive did the writing (so a completed-at-parity row and a `failed` row the predicate found on disk both report it true having written nothing). It is pinned to a literal (`true`/`false`) on the five kinds whose materialization state is fixed and left `boolean` only on `already_running` and `failed`, the two that genuinely occur both ways — so the union states which states are bivalent rather than a comment claiming it. Adding kinds for each staging×profile combination would multiply the union and every consumer's switch for no gain, and the two facts are genuinely independent now. Both drivers switch on `kind` alone, so the addition is non-breaking for them.
 
 A staging failure is reported as the existing `failed` outcome with its reason, and the profile decision is not reached — staging is a precondition for seeding, so there is nothing coherent to decide once it fails.
 
