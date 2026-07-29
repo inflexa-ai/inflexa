@@ -128,8 +128,10 @@ const realParityWatchSeams: ParityWatchSeams = {
  *     it off its profiled set, but edge 1 only fires on open/swap, so without this an edit mid-session
  *     would never re-check. Debounced (trailing edge) to one check per burst; the timer's fire re-reads
  *     live state so a swap or teardown during the debounce window is a no-op.
- *  3. **profile run completion** — edits made WHILE a profile ran were skipped (`already_running`), so
- *     re-check on the running→completed transition. Free: the sidebar already polls a running profile.
+ *  3. **profile run reaching a terminal state** — everything a live run deferred (staging included, since
+ *     its sandbox was reading the tree) was skipped as `already_running`, so re-check when the run
+ *     settles — on `failed` as well as `completed`, or a run that dies leaves the deferred work stranded
+ *     until the next open. Free: the sidebar already polls a running profile.
  *
  * Called once from App's setup body (inside its reactive owner). `seams` is injected only by tests.
  */
@@ -194,7 +196,7 @@ export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams
         cancelDrift();
     });
 
-    // Edge 3 — a profile run completing (the running→completed down-edge).
+    // Edge 3 — a profile run reaching a terminal state (the running→completed/failed down-edge).
     // Keyed by analysis id, not just status: the profile snapshot is a SHARED store, so an analysis
     // swap can transition it A-running → B-completed (B's ledger, freshly refreshed) — a status pair
     // that reads as a completion but is not B's. Record the id alongside the previous status and fire
@@ -206,10 +208,14 @@ export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams
         const analysisId = workspace.analysis?.id ?? null;
         const prev = prevProfile;
         prevProfile = { status, analysisId };
-        // Only the running→completed transition FOR THE SAME analysis. Edits made WHILE a profile ran
-        // were skipped (`already_running`); this closes that window without any new polling, because the
-        // sidebar already polls a running profile, so the transition is observable here for free.
-        if (!(prev.status === "running" && status === "completed" && prev.analysisId === analysisId)) return;
+        // Only a running→terminal transition FOR THE SAME analysis. A live run suppresses the whole
+        // check, materialization included, so BOTH terminal outcomes have to release it: a run that
+        // fails leaves the same deferred work behind as one that completes, and waiting for the next
+        // chat open to notice is how inputs registered mid-profile went missing from the tree. This
+        // costs no new polling — the sidebar already polls a running profile, so both edges are
+        // observable here for free.
+        const settled = status === "completed" || status === "failed";
+        if (!(prev.status === "running" && settled && prev.analysisId === analysisId)) return;
         const runtime = harnessRuntime();
         const analysis = workspace.analysis;
         if (!runtime || !analysis) return;
@@ -345,9 +351,11 @@ async function runParityDrive(runtime: HarnessRuntime, analysis: Analysis, curre
             seams.notify(couldNotStartNotice(analysis, outcome.reason));
             return;
         case "skipped_failed":
-            // Silent on purpose: the sidebar already renders the failed state + its error, and retry is a
-            // DELIBERATE action ({@link driveForceReprofile}), so a toast here would nag on every open
-            // while the user has decided to retry manually.
+            // Silent on purpose, and now honestly so: the outcome means the failed attempt's own input
+            // set is still the one on disk, so the user's files ARE materialized and the sidebar already
+            // renders the failure + its error. Nothing is being withheld and nothing is pending — a
+            // toast would only nag on every open about a retry the user has chosen to make deliberately
+            // ({@link driveForceReprofile}). A set that drifted takes the `triggered` path above instead.
             return;
         case "already_profiled":
         case "already_running":
@@ -422,9 +430,10 @@ async function runForceDrive(runtime: HarnessRuntime, analysis: Analysis, curren
         case "cleared":
         case "skipped_failed":
             // Unreachable from `forceReprofile`: force is the user's explicit will, so past its live-run
-            // check it ALWAYS stages → seeds → triggers. It never compares input sets (`already_profiled`),
-            // never clears an emptied set (an empty enumerate short-circuits to `no_inputs`), and never
-            // skips a failed row (it retries it). Handled here only to keep the switch exhaustive over the
+            // check it ALWAYS materializes → seeds → triggers. It never compares input sets
+            // (`already_profiled`), never consults the already-materialized predicate, never clears an
+            // emptied set (an empty enumerate short-circuits to `no_inputs`), and never skips a failed
+            // row (it retries it). Handled here only to keep the switch exhaustive over the
             // shared outcome union — silent rather than throwing, so that a future refactor which made one
             // reachable degrades quietly rather than crashing a fire-and-forget UI action.
             return;

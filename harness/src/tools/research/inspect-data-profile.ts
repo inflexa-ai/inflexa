@@ -78,7 +78,17 @@ interface FilesOutput extends ProfileEnvelope {
     readonly files: DataProfileFile[];
 }
 
-/** No profile to serve — the honest lifecycle states, in the ok channel. */
+/**
+ * No profile to serve — the honest lifecycle states, in the ok channel.
+ *
+ * Deliberately carries no staleness verdict. None of this variant's three
+ * producers retains a comparand: an analysis that was never profiled and one
+ * with no input files never had one, and `clearDataProfile` nulls
+ * `seed_input_file_ids` along with every other profile column, so a cleared row
+ * keeps no record of what it once covered. Such a field could only ever be
+ * constant here, and a constant field carries no information while implying
+ * that it does. `FailedOutput` omits one for the same reason — see its note.
+ */
 interface AbsentOutput {
     readonly state: "absent";
     readonly message: string;
@@ -90,9 +100,26 @@ interface PendingOutput {
     readonly message: string;
 }
 
+/**
+ * A recorded failure with no profile to fall back on.
+ *
+ * Carries no staleness verdict, deliberately. Whether the failed attempt covered
+ * the files the analysis holds NOW is not derivable here: this tool reads one
+ * `cortex_analysis_state` row, the current input set is the embedder's knowledge,
+ * and `seed_input_file_ids` is the most recently seeded set rather than a
+ * per-attempt snapshot (`upsertAnalysis` overwrites it). A field reporting that
+ * verdict could only ever hold one value, which carries no information while
+ * implying that it does — and the tool description, being the whole of what an
+ * agent knows about this tool, must not advertise a distinction it cannot make.
+ *
+ * `failedAt` is reported instead: a fact the row actually holds, and one an agent
+ * that knows when the input set last changed can act on.
+ */
 interface FailedOutput {
     readonly state: "failed";
     readonly error: string | null;
+    /** When the failure was recorded; `null` when the row holds no time. */
+    readonly failedAt: string | null;
     readonly message: string;
 }
 
@@ -123,6 +150,17 @@ function stalenessReasons(status: DataProfileStatus, result: DataProfileResult):
     return reasons;
 }
 
+/**
+ * The qualification the `failed` message must carry. A bare `failed: <error>`
+ * reads as a verdict on whatever files the agent is currently holding, and
+ * `message` is what an agent quotes back to the user — so the limit of what this
+ * row can establish belongs in the prose channel, not only in the field set.
+ */
+const FAILURE_SCOPE_NOTE =
+    "This records an earlier attempt; this row cannot establish whether it covered the input files the analysis " +
+    "holds now, so do not read it as a verdict on the current data. Compare failedAt against when the input set " +
+    "last changed, and re-profile if they have moved apart.";
+
 export function createInspectDataProfileTool(pool: Pool) {
     return defineTool({
         id: "inspect_data_profile",
@@ -139,7 +177,11 @@ export function createInspectDataProfileTool(pool: Pool) {
             "always with the true total and hasMore, so you can see exactly what you have not read yet. " +
             "The state field says what you got: 'ready'; 'stale' (a profile is returned but may not describe the current " +
             "inputs — staleReason says why); 'pending' (profiling is still running); 'failed'; or 'absent' (never profiled, " +
-            "or the analysis has no input files).",
+            "or the analysis has no input files). " +
+            "A 'failed' state reports a PAST attempt, with failedAt naming when it was recorded — it is not a verdict on the " +
+            "input files you are holding now, and this tool cannot tell you whether that attempt covered them. Compare failedAt " +
+            "against when the input set last changed before you conclude anything: if the data moved since, say the profile " +
+            "needs re-running rather than diagnosing the data itself.",
         inputSchema: z.object({
             scope: z
                 .enum(["overview", "files"])
@@ -170,10 +212,15 @@ export function createInspectDataProfileTool(pool: Pool) {
             const result = status.result;
             if (!result) {
                 if (status.status === "failed") {
+                    // A failure that DID leave a prior profile on the row never reaches
+                    // here — it is served as `stale`, where `stalenessReasons` names the
+                    // failed re-profile and compares the input sets through the single
+                    // shared predicate. This branch is the case with nothing to compare.
                     return ok({
                         state: "failed",
                         error: status.error,
-                        message: `Data profiling failed and no earlier profile exists: ${status.error ?? "no reason recorded"}.`,
+                        failedAt: status.completedAt,
+                        message: `Data profiling failed and no earlier profile exists: ${status.error ?? "no reason recorded"}. ${FAILURE_SCOPE_NOTE}`,
                     });
                 }
                 if (status.status === "completed") {

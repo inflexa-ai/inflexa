@@ -7,6 +7,15 @@ function apiError(status: number): Error {
     return Object.assign(new Error(`HTTP ${status}`), { status });
 }
 
+/**
+ * The shape the AI SDK actually hands over when a 4xx body fails to parse
+ * against the configured provider's error schema: the message degrades to
+ * `response.statusText`, while the raw bytes survive on `responseBody`.
+ */
+function nonConformingApiError(status: number, reasonPhrase: string, responseBody?: string): Error {
+    return Object.assign(new Error(reasonPhrase), { status, ...(responseBody === undefined ? {} : { responseBody }) });
+}
+
 describe("classifyProviderError", () => {
     it("classifies a 401 as a non-retryable auth error", () => {
         // The field failure: an expired OAuth access token reached a step as a
@@ -107,11 +116,95 @@ describe("toProviderError idempotency", () => {
         expect(isProviderError(err)).toBe(true);
     });
 
-    it("wraps a plain Error into a provider error carrying its own message", () => {
+    it("wraps a plain Error into a provider error naming the workload alongside the detail", () => {
         const wrapped = toProviderError(new Error("upstream boom"), "analysis:abc");
         expect(wrapped.type).toBe("provider");
-        expect(wrapped.message).toBe("upstream boom");
+        expect(wrapped.message).toBe("Provider call failed for analysis:abc: upstream boom");
         expect(wrapped.message).not.toBe("[object Object]");
+        // No status was extractable, so none is claimed.
+        expect(wrapped.message).not.toContain("HTTP");
+    });
+});
+
+describe("the provider arm's composed message", () => {
+    it("names the workload and the status when a 400 body degrades to its reason phrase", () => {
+        // inflexa#258: the local proxy answered 400 with a body that does not match
+        // the Anthropic error envelope, so the SDK message was the bare phrase and
+        // the whole account of a failed profiling run read `Bad Request.`
+        const wrapped = toProviderError(nonConformingApiError(400, "Bad Request"), "analysis:abc");
+
+        expect(wrapped.type).toBe("provider");
+        expect(wrapped.retryable).toBe(false);
+        expect(wrapped.message).toBe("Provider call failed for analysis:abc (HTTP 400): Bad Request");
+        expect(wrapped.message).not.toBe("Bad Request");
+    });
+
+    it("reads the status off the cause chain, the same links classification walks", () => {
+        const wrapped = toProviderError(new Error("wrapped", { cause: nonConformingApiError(429, "Too Many Requests") }), "analysis:abc");
+
+        expect(wrapped.message).toContain("(HTTP 429)");
+        expect(wrapped.retryable).toBe(true);
+    });
+
+    it("preserves a captured response body as a single-lined excerpt", () => {
+        const wrapped = toProviderError(
+            nonConformingApiError(400, "Bad Request", '{\n  "error": "model \'claude-x\' is not enabled for this credential"\n}'),
+            "analysis:abc",
+        );
+
+        expect(wrapped.message).toContain("response body:");
+        expect(wrapped.message).toContain('"error": "model \'claude-x\' is not enabled for this credential"');
+        // Single-lined: the ledger column and every log sink take one line.
+        expect(wrapped.message).not.toContain("\n");
+    });
+
+    it("caps the excerpt at 120 characters so it can never evict the workload and status", () => {
+        const body = "x".repeat(500);
+        const wrapped = toProviderError(nonConformingApiError(400, "Bad Request", body), "analysis:abc");
+
+        const excerpt = wrapped.message.split("response body: ")[1]!;
+        expect(excerpt.length).toBe(120);
+        expect(excerpt.endsWith("…")).toBe(true);
+        // The lead survives, and leads: truncation downstream eats the excerpt first.
+        expect(wrapped.message.startsWith("Provider call failed for analysis:abc (HTTP 400): Bad Request")).toBe(true);
+    });
+
+    it("ignores a blank response body rather than trailing an empty segment", () => {
+        const wrapped = toProviderError(nonConformingApiError(400, "Bad Request", "   \n  "), "analysis:abc");
+        expect(wrapped.message).toBe("Provider call failed for analysis:abc (HTTP 400): Bad Request");
+    });
+
+    it("still identifies the failure when the transport supplies no reason phrase", () => {
+        // An HTTP/2 hop carries no reason phrase, so `statusText` — and with it the
+        // SDK message — is empty. The message must not collapse to nothing.
+        const wrapped = toProviderError(nonConformingApiError(400, ""), "analysis:abc");
+
+        expect(wrapped.message).toBe("Provider call failed for analysis:abc (HTTP 400)");
+        expect(wrapped.message.endsWith(":")).toBe(false);
+    });
+
+    it("keeps the composed message inside the ledger's 200-character line", () => {
+        // `profileFailureReason` (tasks/data-profile.ts) truncates at 200 and this is
+        // the tightest consumer; the lead must survive that cut intact.
+        const wrapped = toProviderError(
+            nonConformingApiError(400, "Bad Request", '{"error":{"message":"upstream credential rejected the request"}}'),
+            "analysis:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+        );
+
+        expect(wrapped.message.slice(0, 200)).toContain("(HTTP 400)");
+        expect(wrapped.message.slice(0, 200)).toContain("response body:");
+    });
+
+    it("does not let message composition move an arm: same status, different bodies, same classification", () => {
+        const a = toProviderError(nonConformingApiError(400, "Bad Request", '{"error":"budget exceeded"}'), "analysis:abc");
+        const b = toProviderError(nonConformingApiError(400, "Bad Request", '{"error":"unknown model"}'), "analysis:abc");
+
+        expect(a.type).toBe(b.type);
+        expect(a.retryable).toBe(b.retryable);
+        expect(a.message).not.toBe(b.message);
+        // Classification keys on the status alone — a body that reads like another
+        // arm's prose does not become that arm.
+        expect(a.type).toBe("provider");
     });
 });
 

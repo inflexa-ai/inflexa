@@ -90,7 +90,60 @@ export function toProviderError(e: unknown, workload: string): ProviderError {
             cause: e,
         };
     }
-    return { type: "provider", retryable, message: detail, cause: e };
+    // The `provider` arm composes like its three siblings rather than forwarding
+    // the SDK message verbatim. It has to: when a 4xx body does not parse against
+    // the configured provider's error schema, the AI SDK falls back to
+    // `response.statusText`, so the "detail" is a bare HTTP reason phrase —
+    // `"Bad Request"` — that names neither the call nor the cause, while the
+    // status, the workload, and the body the SDK captured are all still on the
+    // `cause` chain right here.
+    //
+    // Composed strictly AFTER `classifyProviderError` has returned, so message
+    // text can never become a classification input: the harness-providers spec
+    // fixes classification on the HTTP status alone.
+    const status = extractStatus(e);
+    const lead = status === undefined ? `Provider call failed for ${workload}` : `Provider call failed for ${workload} (HTTP ${status})`;
+    // A transport that carries no reason phrase (an HTTP/2 hop yields
+    // `statusText === ""`) leaves `detail` empty; appending it regardless would
+    // trail a bare `": "` on an otherwise complete message.
+    const reason = detail.trim();
+    const diagnosed = reason ? `${lead}: ${reason}` : lead;
+    const body = extractResponseBody(e);
+    return {
+        type: "provider",
+        retryable,
+        // The excerpt trails deliberately — workload and status lead, so a
+        // downstream truncation (`profileFailureReason` cuts the line at 200)
+        // eats the least diagnostic content first.
+        message: body ? `${diagnosed} — response body: ${excerptResponseBody(body)}` : diagnosed,
+        cause: e,
+    };
+}
+
+/**
+ * Max characters of a captured provider response body carried in a message.
+ *
+ * Derived, not picked: the tightest downstream consumer (`profileFailureReason`,
+ * `tasks/data-profile.ts`) truncates the whole line at 200, and the lead this
+ * excerpt trails — a workload label plus `HTTP <status>` plus a reason phrase —
+ * runs to roughly 80. 120 is therefore the largest round value that cannot evict
+ * that lead.
+ *
+ * Deliberately NOT shared with that consumer's `PROFILE_ERROR_MAX_LEN`: that one
+ * bounds a `varchar` ledger column, this one bounds a message many non-ledger
+ * consumers read, and coupling them would make either one unmovable.
+ */
+const PROVIDER_BODY_EXCERPT_MAX_LEN = 120;
+
+/**
+ * Single-lined, length-capped rendering of a captured response body. Bounding
+ * happens here rather than at a consumer because most `ProviderError` consumers
+ * truncate nothing at all, and the one that does would let an unbounded body
+ * crowd out the workload and status ahead of it.
+ */
+function excerptResponseBody(body: string): string {
+    const singleLine = body.replace(/\s+/g, " ").trim();
+    return singleLine.length > PROVIDER_BODY_EXCERPT_MAX_LEN ? singleLine.slice(0, PROVIDER_BODY_EXCERPT_MAX_LEN - 1) + "…" : singleLine;
 }
 
 export interface ProviderErrorClassification {
@@ -129,16 +182,42 @@ interface MaybeErrorChain {
     code?: unknown;
     name?: unknown;
     message?: unknown;
+    /** The AI SDK's `APICallError` carries the raw response body under this name. */
+    responseBody?: unknown;
     cause?: unknown;
 }
 
-/** Walk the `cause` chain for the first numeric HTTP status. */
-function extractStatus(err: unknown): number | undefined {
+/**
+ * Walk the `cause` chain for the first numeric HTTP status. The single status
+ * walker: `classifyProviderError` keys on what this returns, so a caller asking
+ * "did the provider layer have a status to classify on?" must ask it here rather
+ * than re-implement the traversal.
+ */
+export function extractStatus(err: unknown): number | undefined {
     let cursor: unknown = err;
     for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
         const e = cursor as MaybeErrorChain;
         if (typeof e.status === "number") return e.status;
         if (typeof e.statusCode === "number") return e.statusCode;
+        cursor = e.cause;
+    }
+    return undefined;
+}
+
+/**
+ * Walk the `cause` chain for the first captured provider response body.
+ *
+ * This is what recovers a proxy-minted or otherwise non-conforming error body:
+ * the AI SDK keeps the raw bytes on `APICallError.responseBody` even when its
+ * own parse against the provider's error schema fails and its `message` degrades
+ * to the HTTP reason phrase. A blank body is treated as absent — an empty
+ * `— response body:` segment says less than no segment at all.
+ */
+function extractResponseBody(err: unknown): string | undefined {
+    let cursor: unknown = err;
+    for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
+        const e = cursor as MaybeErrorChain;
+        if (typeof e.responseBody === "string" && e.responseBody.trim() !== "") return e.responseBody;
         cursor = e.cause;
     }
     return undefined;

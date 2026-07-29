@@ -1,4 +1,4 @@
-import { linkSync, copyFileSync, readdirSync, rmSync, rmdirSync, existsSync } from "node:fs";
+import { linkSync, copyFileSync, readdirSync, rmSync, rmdirSync, existsSync, utimesSync, type Stats } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { ok, err, Result } from "neverthrow";
 import type { AnalysisInput } from "../../types/analysis.ts";
@@ -76,8 +76,11 @@ function deriveFileId(input: AnalysisInput, subpath?: string): string {
  * Link a file into the staging tree, replacing any stale destination. Hardlinks are
  * preferred (fast, zero-copy, safe because the harness mounts the workspace tree
  * read-only into sandboxes); the copy fallback covers cross-filesystem boundaries.
+ *
+ * `srcStats` is the source's stat taken before placement — the same reading the manifest records —
+ * and is consumed ONLY by the copy fallback's timestamp stamp (see the constraint at that call site).
  */
-function stageFile(src: string, dest: string): Result<void, FsError> {
+function stageFile(src: string, dest: string, srcStats: Stats): Result<void, FsError> {
     // The callback's return type is annotated so the `err(...)` object literals below infer
     // `type: "io_failed"` as the literal, not `string` — without it each would need an `as FsError`.
     return mkdirResult(dirname(dest), "stageFile:mkdir").andThen((): Result<void, FsError> => {
@@ -97,6 +100,22 @@ function stageFile(src: string, dest: string): Result<void, FsError> {
                 copyFileSync(src, dest);
             } catch (cause) {
                 return err({ type: "io_failed", op: "stageFile:copy", cause });
+            }
+            // A copy carries its own creation time (measured: `copyFileSync` does not preserve the
+            // source's mtime), and the staged tree is the ONLY record that an input set was
+            // materialized — a record read by comparing size + mtime against the source. Without this
+            // stamp a copy-mode analysis would read as permanently unmaterialized and re-hash forever.
+            //
+            // The stamp belongs to THIS branch alone. A hardlinked destination shares the source's
+            // inode, so `utimesSync` on it rewrites the user's own input file (measured) — and since
+            // `enumerateInputSignatures` reads that file's mtime, staging would manufacture drift
+            // against the profile it just took. Seconds, not the `Date` fields: `mtimeMs / 1000`
+            // round-trips the sub-millisecond fraction exactly (measured 200/200), while a `Date`
+            // truncates to whole milliseconds and misses every time.
+            try {
+                utimesSync(dest, srcStats.atimeMs / 1000, srcStats.mtimeMs / 1000);
+            } catch (cause) {
+                return err({ type: "io_failed", op: "stageFile:utimes", cause });
             }
         }
         return ok(undefined);
@@ -176,17 +195,20 @@ export function walkFiles(dir: string, ignoredDirs: ReadonlySet<string>): Result
  * so {@link enumerateInputSignatures} can share the walk without any of them.
  */
 async function materializeStagedFile(file: InputFile, targetDir: string): Promise<Result<StagedInput, FsError>> {
+    // One stat yields both drift-signature components, so the manifest's signature is
+    // consistent with the one `enumerateInputSignatures` computes for the same file. Taken BEFORE
+    // placement so the copy fallback's timestamp stamp and the manifest record the same reading —
+    // two stats straddling the copy could disagree, and the staged tree would then misreport the set
+    // it materialized.
+    const statsResult = statResult(file.absPath, "materializeStagedFile:stat");
+    if (statsResult.isErr()) return err(statsResult.error);
+
     const dest = join(targetDir, file.relativePath);
-    const stageResult = stageFile(file.absPath, dest);
+    const stageResult = stageFile(file.absPath, dest, statsResult.value);
     if (stageResult.isErr()) return err(stageResult.error);
 
     const hashResult = await sha256File(file.absPath);
     if (hashResult.isErr()) return err(hashResult.error);
-
-    // One stat yields both drift-signature components, so the manifest's signature is
-    // consistent with the one `enumerateInputSignatures` computes for the same file.
-    const statsResult = statResult(file.absPath, "materializeStagedFile:stat");
-    if (statsResult.isErr()) return err(statsResult.error);
 
     return ok({
         fileId: file.fileId,
@@ -425,5 +447,61 @@ export function enumerateInputSignatures(analysisId: string): Result<ReadonlySet
             byPath.set(file.relativePath, inputSignature(file.fileId, stats.value.size, stats.value.mtimeMs));
         }
         return new Set(byPath.values());
+    });
+}
+
+/**
+ * Whether `analysisId`'s current input set already exists under `targetDir` exactly as
+ * {@link stageInputs} would leave it — "is there anything to materialize?", answered at stat/readdir
+ * cost like {@link enumerateInputSignatures}, never at content cost.
+ *
+ * The staged tree IS the record of what was materialized, so nothing else has to be kept: a staged
+ * file carries its source's size and mtime by construction (a hardlink shares the source's inode; the
+ * copy fallback stamps it — see {@link stageFile}), which makes "same file, same bytes" answerable from
+ * two stats. A separate marker file was rejected for adding a format, an atomicity question, and a
+ * whole class of record-versus-tree disagreement to a question the tree already answers. Built on
+ * {@link walkInputFiles}, the same walk staging expands, so the expected set cannot diverge from what
+ * staging would produce.
+ *
+ * Conservative in ONE direction: a missing staged file, a size or mtime mismatch, an unreadable path,
+ * or a staged file no current input produces (staging's mirror pass would delete it) all read as
+ * `false`. The worst outcome is a redundant staging pass; a `true` for a set that is not fully present
+ * and current is unrepresentable. The error channel carries only the walk's own faults — input
+ * listing, anchor resolution, a directory-input walk — exactly as enumeration reports them.
+ *
+ * @param analysisId - The analysis whose current input set to check.
+ * @param targetDir - The data directory root staging writes under (`workspaceDataDir(analysis)`).
+ */
+export function isInputSetMaterialized(analysisId: string, targetDir: string): Result<boolean, DbError | StagingError> {
+    return walkInputFiles(analysisId).map((files) => {
+        // Overlapping inputs can resolve to one `relativePath`; staging keeps the LAST entry, so the
+        // expected tree is that same collapse — comparing against the dropped entry's source would
+        // report a mismatch for a path the manifest never claimed.
+        const expected = new Map<string, InputFile>();
+        for (const file of files) expected.set(file.relativePath, file);
+
+        for (const [relativePath, file] of expected) {
+            const srcStats = statResult(file.absPath, "isInputSetMaterialized:src");
+            if (srcStats.isErr()) return false;
+            const stagedStats = statResult(join(targetDir, relativePath), "isInputSetMaterialized:staged");
+            if (stagedStats.isErr()) return false;
+            if (stagedStats.value.size !== srcStats.value.size || stagedStats.value.mtimeMs !== srcStats.value.mtimeMs) return false;
+        }
+
+        // A staged file no current input yields means the mirror pass has deletions to perform, which
+        // is work — so the set is not materialized as staging would leave it. The walk passes no ignore
+        // set, exactly as `reconcileStagedTree` does: it must see files staged under names the staging
+        // walk now skips, since those are precisely the ones reconciliation would remove.
+        const localRoot = join(targetDir, "inputs", "local");
+        if (!existsSync(localRoot)) return expected.size === 0;
+        const existingResult = walkFiles(localRoot, WALK_EVERYTHING);
+        if (existingResult.isErr()) return false;
+        // Absolute-vs-absolute, the comparison `reconcileStagedTree` makes for the same reason: a
+        // manifest key is not always a clean relative path, so only `join`ed absolutes agree.
+        const expectedPaths = new Set([...expected.keys()].map((relativePath) => join(targetDir, relativePath)));
+        for (const rel of existingResult.value) {
+            if (!expectedPaths.has(join(localRoot, rel))) return false;
+        }
+        return true;
     });
 }
