@@ -6,8 +6,9 @@ import { join } from "node:path";
 import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
-import { insertPlan } from "../state/plans.js";
+import { insertPlan, upsertPlan } from "../state/plans.js";
 import { insertRun } from "../state/runs.js";
+import { adHocPlanId, adHocRunId } from "../tools/analysis-invocation.js";
 import { envelopeMessage, markInterruptedMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { contentToCortexMessages } from "./content-to-cortex.js";
 import { createCardResolver } from "./reconstruct-cards.js";
@@ -376,6 +377,70 @@ describe("contentToCortexMessages", () => {
             runId,
             planId,
             title: "AD lesional vs control DE",
+            stepCount: 1,
+        });
+    });
+
+    it("reconstructs an ad hoc execute_analysis tool-call into its deterministic run card", async () => {
+        const analysisId = "analysis-adhoc-runcard";
+        const invocationId = "call-adhoc";
+        const planId = adHocPlanId(analysisId, invocationId);
+        const runId = adHocRunId(analysisId, invocationId);
+        const now = new Date().toISOString();
+        (
+            await upsertPlan(pool, {
+                planId,
+                analysisId,
+                plan: {
+                    title: "Targeted PCA",
+                    analytical_narrative: "Run the requested targeted computation",
+                    steps: [
+                        {
+                            id: "T1S1",
+                            name: "PCA",
+                            track: "adhoc",
+                            step_type: "analysis",
+                            question: "Run PCA",
+                            acceptance_criteria: ["PCA outputs persisted"],
+                            depends_on: [],
+                            maxSteps: 10,
+                        },
+                    ],
+                    created_at: now,
+                },
+            })
+        )._unsafeUnwrap();
+        (
+            await insertRun(pool, {
+                runId,
+                analysisId,
+                workflowName: "executeAnalysis",
+                planId,
+            })
+        )._unsafeUnwrap();
+
+        const cortex = await contentToCortexMessages(
+            [
+                stored(0, {
+                    role: "assistant",
+                    content: [
+                        {
+                            type: "tool-call",
+                            toolCallId: invocationId,
+                            toolName: "execute_analysis",
+                            input: { mode: "adhoc", request: "Run PCA" },
+                        },
+                    ],
+                }),
+            ],
+            createCardResolver(pool, analysisId, "/tmp/cortex-test-no-previews"),
+        );
+
+        expect(cortex[0]!.parts[0]).toMatchObject({
+            type: "data-run-card",
+            runId,
+            planId,
+            title: "Targeted PCA",
             stepCount: 1,
         });
     });
