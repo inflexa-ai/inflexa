@@ -932,15 +932,20 @@ async function runDefaultModelSetup(
             );
             return await promptTextOptional("Default chat model (leave blank for Auto)");
         },
-        writeBoth: (modelId) => writeAgentModel("conversation", modelId).andThen(() => writeAgentModel("sandbox", modelId)),
+        writeBoth: (modelId) =>
+            writeAgentModel("conversation", modelId)
+                .andThen(() => writeAgentModel("sandbox", modelId))
+                .andThen(() => writeAgentModel("utility", modelId)),
         warn: (message) => log.warn(message),
     });
     return ok(undefined);
 }
 
-/** Persist a model id to BOTH user-facing agents — the one write shape every explicit pick shares. */
+/** Persist a model id to every model role — the one write shape every explicit pick shares. */
 function writeBothAgents(modelId: string): Result<void, ConfigError> {
-    return writeAgentModel("conversation", modelId).andThen(() => writeAgentModel("sandbox", modelId));
+    return writeAgentModel("conversation", modelId)
+        .andThen(() => writeAgentModel("sandbox", modelId))
+        .andThen(() => writeAgentModel("utility", modelId));
 }
 
 /**
