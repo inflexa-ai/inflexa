@@ -242,7 +242,7 @@ describe("contentToCortexMessages", () => {
         ]);
     });
 
-    it("reconstructs an execute_plan tool-call into a data-run-card", async () => {
+    it("reconstructs a plan-mode execute_analysis tool-call into a data-run-card", async () => {
         const analysisId = "analysis-runcard-1";
         const now = new Date().toISOString();
         await pool.query({
@@ -299,7 +299,7 @@ describe("contentToCortexMessages", () => {
                     role: "assistant",
                     content: [
                         { type: "text", text: "Starting the run." },
-                        { type: "tool-call", toolCallId: "call-ep", toolName: "execute_plan", input: { planId } },
+                        { type: "tool-call", toolCallId: "call-ep", toolName: "execute_analysis", input: { mode: "plan", planId } },
                     ],
                 }),
             ],
@@ -364,7 +364,7 @@ describe("contentToCortexMessages", () => {
             [
                 stored(0, {
                     role: "assistant",
-                    content: [{ type: "tool-call", toolCallId: "call-ep", toolName: "execute_plan", input: { planId } }],
+                    content: [{ type: "tool-call", toolCallId: "call-ep", toolName: "execute_analysis", input: { mode: "plan", planId } }],
                 }),
             ],
             createCardResolver(pool, analysisId, "/tmp/cortex-test-no-previews"),
@@ -387,6 +387,12 @@ describe("contentToCortexMessages", () => {
         const planId = adHocPlanId(analysisId, invocationId);
         const runId = adHocRunId(analysisId, invocationId);
         const now = new Date().toISOString();
+        await pool.query({
+            text: `INSERT INTO cortex_analysis_state
+             (analysis_id, status, context, data_profile_status, created_at, updated_at)
+             VALUES ($1, 'active', NULL, 'completed', $2, $2)`,
+            values: [analysisId, now],
+        });
         (
             await upsertPlan(pool, {
                 planId,
