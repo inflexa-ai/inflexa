@@ -105,7 +105,7 @@ function workingDirFor(a: Analysis): string {
  * hands out paths beneath that tree for the whole life of a run, and the per-analysis instance lock
  * is no defence — it excludes other PROCESSES, while every run of this analysis executes inside
  * this one. Three things can be holding the tree: a streaming chat turn, a queued/running data
- * profile, or a durable run that outlived the turn that launched it (`execute_plan` returns before
+ * profile, or a durable run that outlived the turn that launched it (`execute_analysis` returns before
  * its workflow does). Checked once, before the dialog opens: a modal blocks the composer, so no
  * new work can start between the check and the action.
  */
@@ -247,7 +247,9 @@ export function ThemePicker(): JSX.Element {
 
 /** Display label for an agent in notices and picker titles. */
 function agentLabel(agent: AgentName): string {
-    return agent === "conversation" ? "Chat" : "Sandbox";
+    if (agent === "conversation") return "Chat";
+    if (agent === "sandbox") return "Sandbox";
+    return "Utility";
 }
 
 /**
@@ -355,7 +357,8 @@ export function ModelPickerDialog(props: {
 }): JSX.Element {
     // A thunk so the fixed-per-mount `props.agent` read lands inside JSX (a tracked scope), satisfying
     // solid/reactivity without destructuring or a disable.
-    const title = (): string => (props.agent === "conversation" ? "Switch chat model" : "Switch sandbox model");
+    const title = (): string =>
+        props.agent === "conversation" ? "Switch chat model" : props.agent === "sandbox" ? "Switch sandbox model" : "Switch utility model";
 
     // The picker's own sub-phase. `picking` shows the list/free-text surface; a commit moves it to
     // `checking` (busy prompt) and then either persists+closes or lands on `error` (stays open, names the
@@ -732,6 +735,7 @@ export function modelStatusLines(): string[] {
         `connection: ${boot.connection.provider} ${GLYPHS.middot} ${boot.connection.mode} (${gloss})`,
         agentLine("chat model", "conversation"),
         agentLine("sandbox model", "sandbox"),
+        agentLine("utility model", "utility"),
     ];
 }
 
@@ -1800,6 +1804,13 @@ export const commands: Command[] = [
         description: "Choose the model runs, data profiling, and the sandbox agents use",
         category: "Provider",
         run: (ctx) => openModelPicker(ctx, "sandbox"),
+    },
+    {
+        id: "model.switch-utility",
+        title: "Switch utility model",
+        description: "Choose the model used for bounded routing and classification work",
+        category: "Provider",
+        run: (ctx) => openModelPicker(ctx, "utility"),
     },
     {
         id: "app.quit",

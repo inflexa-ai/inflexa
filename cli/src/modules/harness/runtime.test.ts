@@ -140,9 +140,10 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(workflows.dataProfile.skillsDir).toBe(skillsDir);
             expect(workflows.dataProfile.embedding.dimensions).toBe(1536);
             expect(workflows.dataProfile.embedding.embed).toBeInstanceOf(Function);
-            // The ephemeral + target-assessment bundles carry the shared backends.
-            expect(workflows.ephemeral.sandboxClient).toBeDefined();
+            // The target-assessment bundle carries the shared sandbox backend.
             expect(workflows.executeTargetAssessment.chatProvider).toBeDefined();
+            expect(conversation.utilityProvider).toBeDefined();
+            expect(conversation.utilityModel).toBeDefined();
             // The conversation bundle carries the local realizations: the configured
             // templates tree, the read-only report-html skills tree, the
             // unavailable-preview factory, and the shared launcher.
@@ -174,7 +175,6 @@ function recordingSeams(calls: string[]): BootSeams {
                         sandboxStep: async () => ({ status: "complete", durationMs: 0, finishReason: null, error: null }),
                         executeTargetAssessment: async () => ({ assessmentId: "", status: "completed", bytes: 0 }),
                         dataProfile: async () => {},
-                        ephemeral: async () => ({ text: "", durationMs: 0, stepsUsed: 0 }),
                     },
                 },
                 shutdown: async () => {},
@@ -236,7 +236,7 @@ describe("bootHarnessRuntime", () => {
         // connection budget, assemble, and launch (each proven by the harness's own
         // boot test, not re-asserted here). The embedder's `beforeLaunch` hook — which
         // `bootHarness` runs after registration and before launch — cancels stale
-        // ephemeral rows, installs the agent switch, then registers the three
+        // legacy ephemeral rows, installs the agent switch, then registers the three
         // sandbox-hygiene crons. The CLI is a poll-mode embedder, so it binds NO
         // callback ingress — `startIngress` is never called.
         expect(calls).toEqual([
@@ -256,13 +256,15 @@ describe("bootHarnessRuntime", () => {
             "registerNotificationSweep",
         ]);
         expect(calls).not.toContain("ingress");
-        // No `models.agents` and a single `harness.model` (claude-test-model): both agents resolve to it
-        // and share ONE underlying provider instance. Each agent carries its own swappable HANDLE
+        // No `models.agents` and a single `harness.model` (claude-test-model): all roles resolve to it
+        // and share ONE underlying provider instance. Each role carries its own swappable HANDLE
         // (so a later live switch of one agent re-points only that agent), but the
         // handles delegate to the SAME inner, which is the referential invariant that matters.
         expect(runtime.conversation.model).toBe("claude-test-model");
         expect(runtime.sandbox.model).toBe("claude-test-model");
+        expect(runtime.utility.model).toBe("claude-test-model");
         expect(agentProviderInner(runtime.sandbox.provider)).toBe(agentProviderInner(runtime.conversation.provider));
+        expect(agentProviderInner(runtime.utility.provider)).toBe(agentProviderInner(runtime.conversation.provider));
         expect(runtime.triggerDeps.workflow).toBeInstanceOf(Function);
         // The assembled conversation agent + its agent provider are on the handle (the `chat` command
         // drives `runAgent(conversationAgent, …, conversation.provider)`).
@@ -281,7 +283,7 @@ describe("bootHarnessRuntime", () => {
         expect(runtime.runTriggerDeps.pool).toBe(runtime.pool);
     });
 
-    test("delegates the boot tail to bootHarness once, and its beforeLaunch hook sweeps ephemerals before registering the crons", async () => {
+    test("delegates the boot tail to bootHarness once, and its beforeLaunch hook runs the legacy sweep before registering crons", async () => {
         const calls: string[] = [];
         await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
@@ -295,7 +297,7 @@ describe("bootHarnessRuntime", () => {
         expect(boot).toBeGreaterThanOrEqual(0);
         expect(calls.filter((c) => c === "boot")).toHaveLength(1);
         // The embedder's `beforeLaunch` hook (which `bootHarness` runs after
-        // registration and before launch) sweeps stale ephemeral rows FIRST, then
+        // registration and before launch) sweeps legacy stale rows FIRST, then
         // registers the three sandbox-hygiene crons — all after `boot` is entered.
         expect(boot).toBeLessThan(sweep);
         for (const name of ["registerReaper", "registerWatchdog", "registerNotificationSweep"]) {
@@ -337,15 +339,17 @@ describe("bootHarnessRuntime", () => {
         }
     });
 
-    test("resolves the model from the proxy only when config has none — both agents share the ONE auto-resolve", async () => {
+    test("resolves the model from the proxy only when config has none — all roles share the ONE auto-resolve", async () => {
         const calls: string[] = [];
         const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig({ model: null }) }))._unsafeUnwrap();
 
-        // Both agents fall through to the proxy default; the auto-resolve is memoized, so `/models` is hit
-        // ONCE and both agents' swappable handles delegate to the resulting id's single provider instance.
+        // All roles fall through to the proxy default; the auto-resolve is memoized, so `/models` is hit
+        // ONCE and all swappable handles delegate to the resulting id's single provider instance.
         expect(runtime.conversation.model).toBe("claude-from-proxy");
         expect(runtime.sandbox.model).toBe("claude-from-proxy");
+        expect(runtime.utility.model).toBe("claude-from-proxy");
         expect(agentProviderInner(runtime.sandbox.provider)).toBe(agentProviderInner(runtime.conversation.provider));
+        expect(agentProviderInner(runtime.utility.provider)).toBe(agentProviderInner(runtime.conversation.provider));
         expect(calls.filter((c) => c === "resolveModel")).toHaveLength(1);
     });
 
@@ -529,7 +533,7 @@ describe("bootHarnessRuntime", () => {
         expect(calls).toContain("boot");
     });
 
-    test("direct mode with no configured model fails boot with model_required naming BOTH agents (no proxy auto-resolve)", async () => {
+    test("direct mode with no configured model fails boot with model_required naming every role (no proxy auto-resolve)", async () => {
         const calls: string[] = [];
         const result = await bootHarnessRuntime({
             seams: recordingSeams(calls),
@@ -537,13 +541,13 @@ describe("bootHarnessRuntime", () => {
             connection: directConnection(),
         });
 
-        // Neither agent has an override nor a harness.model fallback, so the one actionable error names both.
-        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_required", agents: ["conversation", "sandbox"] });
+        // No role has an override or harness.model fallback, so one actionable error names all three.
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_required", agents: ["conversation", "sandbox", "utility"] });
         expect(calls).not.toContain("resolveModel");
         expect(calls).not.toContain("postgres");
     });
 
-    test("direct mode with a per-agent override for only one agent fails naming just the unresolved agent", async () => {
+    test("direct mode with a per-role override for only one role names both unresolved roles", async () => {
         const calls: string[] = [];
         const result = await bootHarnessRuntime({
             seams: recordingSeams(calls),
@@ -551,28 +555,33 @@ describe("bootHarnessRuntime", () => {
             connection: directConnection({ agents: { conversation: "deepseek-chat" } }),
         });
 
-        // conversation resolves from its override; sandbox has neither an override nor harness.model.
-        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_required", agents: ["sandbox"] });
+        // conversation resolves from its override; sandbox and utility have no fallback.
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_required", agents: ["sandbox", "utility"] });
         expect(calls).not.toContain("postgres");
     });
 
-    test("direct mode with both agents overridden boots on the distinct per-agent models, over two provider instances", async () => {
+    test("direct mode with all roles overridden boots on distinct models with one inner per model", async () => {
         const calls: string[] = [];
         const result = await bootHarnessRuntime({
             seams: recordingSeams(calls),
             config: testConfig({ model: null }),
-            connection: directConnection({ agents: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner" } }),
+            connection: directConnection({
+                agents: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner", utility: "deepseek-utility" },
+            }),
         });
 
         const runtime = result._unsafeUnwrap();
         expect(runtime.conversation.model).toBe("deepseek-chat");
         expect(runtime.sandbox.model).toBe("deepseek-reasoner");
-        // Distinct resolved models ⇒ two provider instances over the one connection.
-        expect(runtime.sandbox.provider).not.toBe(runtime.conversation.provider);
+        expect(runtime.utility.model).toBe("deepseek-utility");
+        // Distinct resolved models ⇒ distinct inners over the one connection.
+        expect(agentProviderInner(runtime.sandbox.provider)).not.toBe(agentProviderInner(runtime.conversation.provider));
+        expect(agentProviderInner(runtime.utility.provider)).not.toBe(agentProviderInner(runtime.conversation.provider));
+        expect(agentProviderInner(runtime.utility.provider)).not.toBe(agentProviderInner(runtime.sandbox.provider));
         expect(calls).toContain("boot");
     });
 
-    test("per-agent resolution order: an agent override wins over harness.model, which is the both-agents fallback", async () => {
+    test("per-role resolution order: one override wins while the other two share the harness.model inner", async () => {
         const calls: string[] = [];
         // harness.model = claude-test-model is the fallback; only sandbox overrides it. conversation
         // therefore rides the fallback and sandbox rides its own override — the resolution order applied per agent.
@@ -585,7 +594,9 @@ describe("bootHarnessRuntime", () => {
         const runtime = result._unsafeUnwrap();
         expect(runtime.conversation.model).toBe("claude-test-model");
         expect(runtime.sandbox.model).toBe("claude-sonnet-4-5");
-        expect(runtime.sandbox.provider).not.toBe(runtime.conversation.provider);
+        expect(runtime.utility.model).toBe("claude-test-model");
+        expect(agentProviderInner(runtime.sandbox.provider)).not.toBe(agentProviderInner(runtime.conversation.provider));
+        expect(agentProviderInner(runtime.utility.provider)).toBe(agentProviderInner(runtime.conversation.provider));
         // An agent override is trusted like harness.model — the proxy /models is never consulted.
         expect(calls).not.toContain("resolveModel");
     });

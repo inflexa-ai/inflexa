@@ -19,6 +19,7 @@ function ctxFor(analysisId: string, ask: (r: AskRequest) => Promise<AskApproval>
     return {
         // The tool reads only `session.scope`; a cast avoids constructing the full value object.
         session: { scope: { kind: "analysis", analysisId } } as unknown as AgentSession,
+        invocationId: "test-tool-call",
         signal: new AbortController().signal,
         emit: () => {},
         runStep: (_name, fn) => fn(),

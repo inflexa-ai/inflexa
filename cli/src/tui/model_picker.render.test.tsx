@@ -69,6 +69,18 @@ describe("ModelPickerDialog", () => {
         );
         expect(frame).toContain("Switch chat model");
     });
+
+    test("the utility role has its own picker title", async () => {
+        const frame = await renderFrame(
+            () => (
+                <DialogShowcase>
+                    <ModelPickerDialog agent="utility" models={["claude-haiku-4-5"]} current="" validate={validateNoop} onCommit={noop} onCancel={noop} />
+                </DialogShowcase>
+            ),
+            { width: 80, height: 24 },
+        );
+        expect(frame).toContain("Switch utility model");
+    });
 });
 
 // The row set as DATA: which row carries the manual sentinel, which is marked `current`, and that the
@@ -293,11 +305,13 @@ describe("runModelCommit — validate then persist-or-report", () => {
 // the category and its position past the last `View` command guards the intended "Provider is its own
 // group near the end" placement against an accidental re-home.
 describe("model-switch command categorisation", () => {
-    test("both switch commands sit in the Provider category", () => {
+    test("all three role-switch commands sit in the Provider category", () => {
         const chat = commands.find((c) => c.id === "model.switch-chat");
         const sandbox = commands.find((c) => c.id === "model.switch-sandbox");
+        const utility = commands.find((c) => c.id === "model.switch-utility");
         expect(chat?.category).toBe("Provider");
         expect(sandbox?.category).toBe("Provider");
+        expect(utility?.category).toBe("Provider");
     });
 
     test("Provider first appears after the last View command", () => {
