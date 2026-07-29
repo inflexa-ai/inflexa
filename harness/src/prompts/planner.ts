@@ -2,7 +2,7 @@ import type { ResourcePolicy } from "../config/resource-limits.js";
 
 /** The Resource Estimation planning rules — concrete host limits when a
  *  policy is supplied, the historical default guidance otherwise. */
-function resourceEstimationSection(policy?: ResourcePolicy): string {
+export function resourceEstimationSection(policy?: ResourcePolicy): string {
     const base = `Use the data context to estimate cpu and memoryGb for each step. Consider
 total file size, per-file sizes, feature x sample dimensions, and what the
 step actually does in memory. Be conservative — a 14 MB dataset does not

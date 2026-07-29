@@ -101,6 +101,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     const unavailableAsk = new UnavailableAsk();
     const ask = opts.ask ?? ((request: AskRequest) => unavailableAsk.ask(request));
     const toolCtx = (tu: ToolCallPart): ToolContext => ({
+        invocationId: tu.toolCallId,
         session,
         signal,
         emit,

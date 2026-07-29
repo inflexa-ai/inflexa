@@ -13,7 +13,6 @@ describe("sandbox-catalog (derived from SANDBOX_AGENT_META)", () => {
         const ids = new Set(PLANNABLE_AGENT_CATALOG.map((m) => m.id));
         expect(ids.has("data-profiler")).toBe(false);
         expect(ids.has("scientific-executor")).toBe(false);
-        expect(ids.has("ephemeral-executor")).toBe(false);
     });
 
     it("PLANNABLE_AGENT_CATALOG includes the expected omics specialists", () => {
@@ -33,7 +32,7 @@ describe("sandbox-catalog (derived from SANDBOX_AGENT_META)", () => {
     });
 
     it("KNOWN_AGENT_IDS is a superset of PLANNABLE_AGENT_IDS (by the non-plannable count)", () => {
-        expect(KNOWN_AGENT_IDS.length).toBe(PLANNABLE_AGENT_IDS.length + 3);
+        expect(KNOWN_AGENT_IDS.length).toBe(PLANNABLE_AGENT_IDS.length + 2);
     });
 
     it("formatAgentCatalog renders one line per plannable agent with capabilities + suitable-for", () => {

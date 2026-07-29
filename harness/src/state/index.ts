@@ -27,7 +27,9 @@ export type { RegisterArtifactInput, InputArtifactMeta, StepArtifactRef } from "
 
 export {
     insertRun,
+    reserveRunById,
     RunDedupCollisionError,
+    RunIdentityCollisionError,
     updateRunStatus,
     promoteFailedToPartial,
     setRunMandate, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
@@ -37,7 +39,7 @@ export {
     queryRunsByAnalysis,
     queryRunsByThread,
 } from "./runs.js";
-export type { InsertRunInput } from "./runs.js";
+export type { InsertRunInput, RunReservation } from "./runs.js";
 
 export { insertStepExecution, seedStepExecutions, sweepPendingStepExecutions, updateStepExecution, queryStepsByRun } from "./step-executions.js";
 export type { InsertStepExecutionInput, SeedStepExecutionRow, UpdateStepExecutionInput } from "./step-executions.js";
@@ -45,8 +47,8 @@ export type { InsertStepExecutionInput, SeedStepExecutionRow, UpdateStepExecutio
 export { setSandboxRef, setActiveExecId, clearSandboxRef, queryActiveSandboxes, reconcileReapedSandbox } from "./active-sandboxes.js";
 export type { ActiveSandboxRow } from "./active-sandboxes.js";
 
-export { insertPlan, loadPlan } from "./plans.js";
-export type { InsertPlanInput } from "./plans.js";
+export { insertPlan, upsertPlan, loadPlan } from "./plans.js";
+export type { InsertPlanInput, UpsertPlanInput } from "./plans.js";
 
 export {
     tryStartDataProfile,

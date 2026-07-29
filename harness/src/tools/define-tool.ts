@@ -8,7 +8,7 @@
  * captures its deps and calls `defineTool`.
  *
  * `ToolContext` carries only request-scoped values every tool may need
- * (`session`, `signal`, `emit`, `runStep`, `ask`) — no pool, no sandbox, no
+ * (`invocationId`, `session`, `signal`, `emit`, `runStep`, `ask`) — no pool, no sandbox, no
  * logger. The error contract: an expected
  * outcome ("not found", "no results") stays in the ok channel as a data
  * variant (`ok({ found: false })`); an unexpected failure is an `err(ToolError)`
@@ -48,11 +48,15 @@ export function isToolError(value: unknown): value is ToolError {
 
 /**
  * The request-scoped values passed to every tool's `execute`. No injected
- * dependencies (see the harness-durable-runtime spec) — `session`, `signal`, `emit`, the `runStep`
+ * dependencies (see the harness-durable-runtime spec) — invocation identity,
+ * `session`, `signal`, `emit`, the `runStep`
  * durability seam (`passthroughStep` in chat, `DBOS.runStep` in workflows) a
  * tool uses to wrap its own durable work, and the `ask` user-approval seam.
  */
 export interface ToolContext {
+    /** Stable identity of this AI SDK tool call. Redelivery preserves it; a new
+     * model-issued call receives a new value. */
+    readonly invocationId: string;
     readonly session: AgentSession;
     readonly signal: AbortSignal;
     readonly emit: EmitFn;

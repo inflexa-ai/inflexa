@@ -1,5 +1,5 @@
 /**
- * executePlan tool — unit-level coverage for the validation gate and the
+ * execute_analysis tool — unit-level coverage for the validation gate and the
  * dedup recovery contract. The Postgres-testcontainer end-to-end coverage
  * (task 3.5) is exercised once the full executeAnalysis dep bundle is wired
  * at boot; here we drive the tool with a fake `Pool` and a fake registered
@@ -7,15 +7,17 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import type { RequestSession, RunSession } from "../auth/types.js";
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
+import type { ChatProvider } from "../providers/types.js";
 import type { ExecuteAnalysisInput } from "../workflows/execute-analysis.js";
 import type { ToolContext } from "./define-tool.js";
-import { PlanNotFoundError, PlanValidationError, createExecutePlanTool } from "./execute-plan.js";
+import { PlanNotFoundError, PlanValidationError, createExecuteAnalysisTool } from "./execute-analysis.js";
 
 /** Records launches; never reaches the durability engine. */
 function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
@@ -30,9 +32,6 @@ function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
             if (opts.failLaunch) throw new Error("launch boom");
             launches.push({ workflowId: o.workflowId });
             inputs.push(input as ExecuteAnalysisInput);
-        },
-        launchAndAwait: async () => {
-            throw new Error("launchAndAwait not used by execute_plan");
         },
     };
     return { launcher, launches, inputs };
@@ -87,7 +86,7 @@ function fakePool(rowsByPrefix: Record<string, Row[]>): {
     return { pool: { query } as unknown as Pool, queries };
 }
 
-function fakeContext(): ToolContext {
+function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): ToolContext {
     const session: RequestSession = {
         identity: { user: "user-1" },
         scope: { kind: "analysis", analysisId: ANALYSIS_ID, threadId: "thread-1" },
@@ -96,10 +95,95 @@ function fakeContext(): ToolContext {
     };
     return {
         session,
+        invocationId,
         signal: new AbortController().signal,
-        emit: async () => {},
+        emit: async (part) => {
+            emitted.push(part);
+        },
         runStep: (_name, fn) => fn(),
+        ask: async () => {
+            throw new Error("ask should not be reached");
+        },
     };
+}
+
+function routeProvider(agentId = "single-cell-agent"): { provider: ChatProvider; calls: { count: number } } {
+    const calls = { count: 0 };
+    return {
+        calls,
+        provider: {
+            capabilities: { toolCalling: true },
+            chat: () => {
+                calls.count++;
+                return okAsync({
+                    message: {
+                        role: "assistant",
+                        content: [
+                            {
+                                type: "tool-call",
+                                toolCallId: `route-${calls.count}`,
+                                toolName: "submit_route",
+                                input: {
+                                    agentId,
+                                    resources: { cpu: 2, memoryGb: 4 },
+                                    rationale: `route-${calls.count}`,
+                                },
+                            },
+                        ],
+                    },
+                    finishReason: "tool-calls",
+                });
+            },
+            chatStream: async function* () {},
+        } as ChatProvider,
+    };
+}
+
+function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: Map<string, Row> } {
+    const plans = new Map<string, unknown>();
+    const runs = new Map<string, Row>();
+    const query = async (q: { text: string; values?: unknown[] }) => {
+        const values = q.values ?? [];
+        if (q.text.includes("SELECT plan FROM cortex_plans")) {
+            const plan = plans.get(String(values[0]));
+            return { rows: plan === undefined ? [] : [{ plan }], rowCount: plan === undefined ? 0 : 1 };
+        }
+        if (q.text.includes("INSERT INTO cortex_plans")) {
+            const planId = String(values[0]);
+            if (!plans.has(planId)) plans.set(planId, JSON.parse(String(values[2])));
+            return { rows: [], rowCount: 1 };
+        }
+        if (q.text.includes("INSERT INTO cortex_runs") && q.text.includes("ON CONFLICT (run_id)")) {
+            const runId = String(values[0]);
+            if (runs.has(runId)) return { rows: [], rowCount: 0 };
+            const row = {
+                run_id: runId,
+                analysis_id: String(values[1]),
+                thread_id: values[2] ?? null,
+                workflow_name: String(values[3]),
+                status: "running",
+                started_at: String(values[4]),
+                completed_at: null,
+                error: null,
+                synthesis_status: null,
+                synthesis_reason: null,
+                parts: null,
+                mandate_jti: null,
+                mandate_expires_at: null,
+                plan_id: values[5] ?? null,
+            };
+            runs.set(runId, row);
+            return { rows: [{ run_id: runId }], rowCount: 1 };
+        }
+        if (q.text.includes("FROM cortex_runs") && q.text.includes("WHERE run_id = $1")) {
+            const row = runs.get(String(values[0]));
+            return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+        }
+        if (q.text.includes("UPDATE cortex_runs")) return { rows: [], rowCount: 1 };
+        // No persisted data profile.
+        return { rows: [], rowCount: 0 };
+    };
+    return { pool: { query } as unknown as Pool, plans, runs };
 }
 
 function setEnv(): void {
@@ -132,12 +216,36 @@ const validPlan = {
     created_at: "2026-01-01T00:00:00Z",
 };
 
-describe("createExecutePlanTool", () => {
+const utilityDeps = {
+    utilityProvider: {} as never,
+    utilityModel: "utility-model",
+};
+
+describe("createExecuteAnalysisTool plan mode", () => {
+    it("exposes one flat refined schema with only mode, planId, and request", () => {
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool: {} as Pool,
+            runLauncher: fakeLauncher().launcher,
+            runAuthorizer: throwingAuthorizer,
+            executeAnalysisWorkflow: async () => {
+                throw new Error("unused");
+            },
+        });
+
+        expect(Object.keys((tool.jsonSchema.properties ?? {}) as Record<string, unknown>).sort()).toEqual(["mode", "planId", "request"]);
+        expect(tool.inputSchema.safeParse({ mode: "plan", planId: PLAN_ID }).success).toBe(true);
+        expect(tool.inputSchema.safeParse({ mode: "adhoc", request: "Compute this" }).success).toBe(true);
+        expect(tool.inputSchema.safeParse({ mode: "plan", request: "wrong" }).success).toBe(false);
+        expect(tool.inputSchema.safeParse({ mode: "adhoc", planId: PLAN_ID, request: "wrong" }).success).toBe(false);
+    });
+
     it("throws PlanNotFoundError when no row matches the (analysis, plan) tuple", async () => {
         const { pool } = fakePool({
             "SELECT plan FROM cortex_plans": [],
         });
-        const tool = createExecutePlanTool({
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
@@ -145,7 +253,7 @@ describe("createExecutePlanTool", () => {
                 throw new Error("should not be called");
             },
         });
-        await expect(tool.execute({ planId: PLAN_ID }, fakeContext())).rejects.toBeInstanceOf(PlanNotFoundError);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toBeInstanceOf(PlanNotFoundError);
     });
 
     it("throws PlanValidationError without dispatching the workflow when the DAG has a cycle", async () => {
@@ -157,7 +265,8 @@ describe("createExecutePlanTool", () => {
             "SELECT plan FROM cortex_plans": [{ plan: cyclic }],
         });
         let dispatched = false;
-        const tool = createExecutePlanTool({
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
@@ -173,7 +282,7 @@ describe("createExecutePlanTool", () => {
                 };
             },
         });
-        await expect(tool.execute({ planId: PLAN_ID }, fakeContext())).rejects.toBeInstanceOf(PlanValidationError);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toBeInstanceOf(PlanValidationError);
         expect(dispatched).toBe(false);
     });
 
@@ -207,7 +316,8 @@ describe("createExecutePlanTool", () => {
         }) as unknown as typeof fetch;
 
         let dispatched = false;
-        const tool = createExecutePlanTool({
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
@@ -223,7 +333,7 @@ describe("createExecutePlanTool", () => {
                 };
             },
         });
-        const result = (await tool.execute({ planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+        const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
         expect((result as { runId: string }).runId).toBe("r-existing");
         expect(mintCalls).toBe(0);
         expect(dispatched).toBe(false);
@@ -244,7 +354,8 @@ describe("createExecutePlanTool", () => {
             },
             revoke: async () => {},
         };
-        const tool = createExecutePlanTool({
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: failingAuthorizer,
@@ -253,7 +364,7 @@ describe("createExecutePlanTool", () => {
             },
         });
 
-        await expect(tool.execute({ planId: PLAN_ID }, fakeContext())).rejects.toThrow(/mint exploded/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/mint exploded/);
 
         // The reserved row is released — marked failed — so the partial-unique
         // slot frees up and a retry can re-run.
@@ -267,7 +378,8 @@ describe("createExecutePlanTool", () => {
         });
         const { authorizer, revokes } = recordingAuthorizer();
         const { launcher, launches } = fakeLauncher();
-        const tool = createExecutePlanTool({
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -276,7 +388,7 @@ describe("createExecutePlanTool", () => {
             },
         });
 
-        const result = (await tool.execute({ planId: PLAN_ID }, fakeContext()))._unsafeUnwrap() as { runId: string };
+        const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap() as { runId: string };
 
         expect(launches).toHaveLength(1);
         expect(launches[0]!.workflowId).toBe(result.runId);
@@ -290,7 +402,8 @@ describe("createExecutePlanTool", () => {
         });
         const { authorizer } = recordingAuthorizer();
         const { launcher, inputs } = fakeLauncher();
-        const tool = createExecutePlanTool({
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -299,7 +412,7 @@ describe("createExecutePlanTool", () => {
             },
         });
 
-        await tool.execute({ planId: PLAN_ID }, fakeContext());
+        await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
 
         const workflowInput = inputs[0]!;
         expect(workflowInput.planStepById["step-a"]!.question).toBe("do step-a");
@@ -315,7 +428,8 @@ describe("createExecutePlanTool", () => {
         });
         const { authorizer, revokes } = recordingAuthorizer();
         const { launcher } = fakeLauncher({ failLaunch: true });
-        const tool = createExecutePlanTool({
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -324,9 +438,73 @@ describe("createExecutePlanTool", () => {
             },
         });
 
-        await expect(tool.execute({ planId: PLAN_ID }, fakeContext())).rejects.toThrow(/launch boom/);
+        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/launch boom/);
 
         expect(revokes).toContain("workflow-start-failed");
         expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("failed"))).toBe(true);
+    });
+});
+
+describe("createExecuteAnalysisTool ad hoc mode", () => {
+    it("persists one routed step, disables synthesis, and reuses the same terminal-capable reservation on redelivery", async () => {
+        const { pool, plans, runs } = statefulAdHocPool();
+        const routing = routeProvider();
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches, inputs } = fakeLauncher();
+        const emitted: unknown[] = [];
+        const tool = createExecuteAnalysisTool({
+            pool,
+            utilityProvider: routing.provider,
+            utilityModel: "utility-model",
+            runAuthorizer: authorizer,
+            runLauncher: launcher,
+            executeAnalysisWorkflow: async () => {
+                throw new Error("launch seam should be used");
+            },
+        });
+
+        const first = (
+            await tool.execute({ mode: "adhoc", request: "Compare marker expression between these clusters" }, fakeContext("call-adhoc-1", emitted))
+        )._unsafeUnwrap() as { runId: string };
+        // Simulate a terminal DBOS outcome. A duplicate tool delivery must still
+        // return this exact run instead of launching it again.
+        runs.get(first.runId)!.status = "completed";
+        const replay = (
+            await tool.execute({ mode: "adhoc", request: "Compare marker expression between these clusters" }, fakeContext("call-adhoc-1", emitted))
+        )._unsafeUnwrap() as { runId: string };
+
+        expect(replay.runId).toBe(first.runId);
+        expect(routing.calls.count).toBe(1);
+        expect(launches).toHaveLength(1);
+        expect(inputs[0]!.steps).toEqual([{ id: "T1S1", depends_on: [] }]);
+        expect(inputs[0]!.agentByStepId).toEqual({ T1S1: "single-cell-agent" });
+        expect(inputs[0]!.synthesisEnabled).toBe(false);
+        expect(plans.size).toBe(1);
+        expect(emitted).toHaveLength(2);
+    });
+
+    it("treats a deliberate identical re-call with a new tool invocation id as a new run", async () => {
+        const { pool } = statefulAdHocPool();
+        const routing = routeProvider("cheminformatics-agent");
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, launches } = fakeLauncher();
+        const tool = createExecuteAnalysisTool({
+            pool,
+            utilityProvider: routing.provider,
+            utilityModel: "utility-model",
+            runAuthorizer: authorizer,
+            runLauncher: launcher,
+            executeAnalysisWorkflow: async () => {
+                throw new Error("launch seam should be used");
+            },
+        });
+        const request = "Calculate descriptors for the supplied compounds";
+
+        const first = (await tool.execute({ mode: "adhoc", request }, fakeContext("call-1")))._unsafeUnwrap() as { runId: string };
+        const second = (await tool.execute({ mode: "adhoc", request }, fakeContext("call-2")))._unsafeUnwrap() as { runId: string };
+
+        expect(second.runId).not.toBe(first.runId);
+        expect(launches).toHaveLength(2);
+        expect(routing.calls.count).toBe(2);
     });
 });

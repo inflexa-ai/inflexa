@@ -40,7 +40,7 @@ export interface ValidatePlanOptions {
      * Host per-step resource ceilings. When present, a step whose declared
      * `resources` exceed them is an error — the planner gets actionable
      * feedback at plan time instead of a silent clamp at sandbox creation.
-     * The plan-generation path passes this; `execute_plan` deliberately does
+     * The plan-generation path passes this; `execute_analysis` plan mode deliberately does
      * not, so stored plans that predate the policy keep running (the
      * sandbox-creation clamp remains their backstop).
      */

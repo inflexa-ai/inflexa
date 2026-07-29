@@ -1,7 +1,7 @@
 /**
  * Read-path reconstruction of display cards from a persisted turn.
  *
- * `show_plan` / `show_user` / `show_file` / `execute_plan` / `iterate_report` emit
+ * `show_plan` / `show_user` / `show_file` / `execute_analysis` / `iterate_report` emit
  * `data-plan` / `data-presentation` / `data-file-reference` / `data-run-card` /
  * `data-report-preview` cards
  * live over the chat SSE stream. On reload, `content-to-cortex` calls this
@@ -69,7 +69,7 @@ export function createCardResolver(pool: Pool, analysisId: string, workspaceRoot
             return card ? ({ type: "data-plan", ...card } as CortexPart) : null;
         }
 
-        if (block.name === "execute_plan") {
+        if (block.name === "execute_analysis" && input.mode === "plan") {
             const planId = typeof input.planId === "string" ? input.planId : null;
             if (!planId) return null;
             const card = unwrapOrThrow(await buildRunCardData(pool, { planId, analysisId }));

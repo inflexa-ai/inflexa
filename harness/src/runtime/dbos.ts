@@ -146,11 +146,10 @@ export async function shutdownDbos({ logger: injected }: { logger: Logger }): Pr
 }
 
 /**
- * Cancel any `ephemeral:`-prefixed PENDING workflow this executor owns —
- * called BEFORE `launchDbos`, whose recovery would otherwise re-dispatch them.
- *
- * Ephemeral runs are turn-scoped: a run whose pod died mid-flight has no live
- * awaiter and must never re-execute. DBOS has no "zero recovery" knob, and
+ * Cancel any legacy `ephemeral:`-prefixed PENDING workflow this executor owns
+ * before `launchDbos`, whose recovery would otherwise re-dispatch rows created
+ * by older releases. No current workflow creates this prefix. DBOS has no
+ * "zero recovery" knob, and
  * `launch()` starts recovery itself, so there is no post-launch window to
  * cancel from — the only race-free point is a direct system-DB UPDATE before
  * launch. A CANCELLED row is excluded from the recovery query (which selects
@@ -180,14 +179,14 @@ export async function sweepEphemeralWorkflows({
             values: [Date.now(), executorID],
         });
         if (rowCount && rowCount > 0) {
-            logger.info("swept orphaned ephemeral workflows", { executorID, swept: rowCount });
+            logger.info("swept legacy ephemeral workflow rows", { executorID, swept: rowCount });
         }
     } catch (err) {
         // First-ever boot: DBOS has not created its schema yet — nothing to sweep.
         if (err && typeof err === "object" && "code" in err && err.code === "42P01") {
             return;
         }
-        logger.error("ephemeral sweep failed", { executorID, ...logger.errorFields(err) });
+        logger.error("legacy ephemeral-row sweep failed", { executorID, ...logger.errorFields(err) });
     }
 }
 

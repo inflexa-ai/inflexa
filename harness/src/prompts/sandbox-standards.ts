@@ -2,15 +2,15 @@
  * Sandbox prompts — split into two layers, both STATIC.
  *
  * - `sandboxOrientCorePrompt` — universal guidance for any agent that talks to
- *   a sandbox (plannable steps, the data profiler, the read-only ephemeral
- *   executor). Covers the workspace path model, the environment's hard limits,
+ *   a sandbox (plannable steps and the data profiler). Covers the workspace
+ *   path model, the environment's hard limits,
  *   the output contract, and tool-use discipline. Always appended by
  *   `createSandboxAgent`.
  *
  * - `sandboxAnalysisStepStandardsPrompt` — conventions for plannable analysis
  *   steps that produce reproducible script + output + figure artifacts in their
  *   working directory. Opt out via `appendAnalysisStepStandards: false` for
- *   agents that don't fit this mold (data-profiler, ephemeral-executor).
+ *   agents that don't fit this mold (for example data-profiler).
  *
  * Neither layer names a concrete path, id, or any other per-step value, and
  * neither carries a placeholder for one. That is load-bearing rather than
@@ -213,8 +213,8 @@ occur exactly once — include surrounding context to make it unique.
 export const sandboxAnalysisStepStandardsPrompt = `# Sandbox Analysis-Step Conventions
 
 These apply to plannable analysis steps — agents that produce reproducible
-script + output + figure artifacts. They do NOT apply to read-only ephemeral
-execution, data profiling, or report building (those agents opt out via
+script + output + figure artifacts. They do NOT apply to data profiling or
+report building (those agents opt out via
 \`appendAnalysisStepStandards: false\`).
 
 ## Language Policy
