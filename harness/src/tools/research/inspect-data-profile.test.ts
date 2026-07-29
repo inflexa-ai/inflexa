@@ -103,6 +103,11 @@ describe("the tool contract", () => {
         // The description must say where the profile lives, because nothing else will.
         expect(tool.description).toContain("AUTHORITATIVE");
         expect(tool.description).toContain("NO data-profile file");
+        // A tool is self-describing at attach time, so the failed state's qualifier
+        // has to be here or the agent never learns it exists — and it must claim only
+        // what the tool can produce.
+        expect(tool.description).toContain("failedAt");
+        expect(tool.description).toContain("PAST attempt");
     });
 });
 
@@ -134,7 +139,7 @@ describe("lifecycle variants — every one is data, not an error", () => {
         expect(out).toMatchObject({ status: "running" });
     });
 
-    it("failed: profiling failed and no earlier profile exists", async () => {
+    it("failed: reports a past attempt with its time, not a verdict on the current inputs", async () => {
         await resetLedger();
         await seedAnalysis();
         (await tryStartDataProfile(pool, ANALYSIS))._unsafeUnwrap();
@@ -143,6 +148,50 @@ describe("lifecycle variants — every one is data, not an error", () => {
         const out = await run();
         expect(out.state).toBe("failed");
         expect(out).toMatchObject({ error: "sandbox crashed" });
+        expect(typeof (out as { failedAt: string | null }).failedAt).toBe("string");
+        const message = (out as { message: string }).message;
+        expect(message).toContain("earlier attempt");
+        expect(message).toContain("cannot establish");
+    });
+
+    it("failed: a row recording no completion time answers failedAt: null, not a fabricated one", async () => {
+        await resetLedger();
+        await seedAnalysis();
+        (await tryStartDataProfile(pool, ANALYSIS))._unsafeUnwrap();
+        (await failDataProfile(pool, ANALYSIS, "sandbox crashed"))._unsafeUnwrap();
+        await pool.query({
+            text: "UPDATE cortex_analysis_state SET data_profile_completed_at = NULL WHERE analysis_id = $1",
+            values: [ANALYSIS],
+        });
+
+        const wire = JSON.parse(JSON.stringify(await run())) as Record<string, unknown>;
+        expect(wire.state).toBe("failed");
+        expect(wire).toHaveProperty("failedAt");
+        expect(wire.failedAt).toBeNull();
+    });
+
+    it("failed: exposes no staleness verdict, because the row cannot support one", async () => {
+        await resetLedger();
+        await seedAnalysis();
+        (await tryStartDataProfile(pool, ANALYSIS))._unsafeUnwrap();
+        (await failDataProfile(pool, ANALYSIS, "Provider call failed for analysis:001 (HTTP 400): Bad Request"))._unsafeUnwrap();
+
+        // The tool reads one ledger row; the analysis's current input set is the
+        // embedder's knowledge. A field claiming that comparison would be constant.
+        const wire = JSON.parse(JSON.stringify(await run())) as Record<string, unknown>;
+        expect(Object.keys(wire).sort()).toEqual(["error", "failedAt", "message", "state"]);
+        expect(tool.description).not.toContain("inputSetSinceFailure");
+    });
+
+    it("absent: carries no staleness verdict either — no producer keeps a comparand", async () => {
+        await resetLedger();
+        await seedAnalysis();
+        (await tryStartDataProfile(pool, ANALYSIS))._unsafeUnwrap();
+        (await completeDataProfile(pool, ANALYSIS))._unsafeUnwrap();
+
+        const out = await run();
+        expect(out.state).toBe("absent");
+        expect(Object.keys(out).sort()).toEqual(["message", "state"]);
     });
 
     it("ready: a completed profile covering exactly the seeded inputs", async () => {
@@ -192,6 +241,9 @@ describe("lifecycle variants — every one is data, not an error", () => {
         expect(out.state).toBe("stale");
         expect(out).toMatchObject({ staleReason: expect.stringContaining("timeout") });
         expect(out).toMatchObject({ fileCount: 2 });
+        // A surviving result is served as `stale`, never as `failed` — which is why
+        // the `failed` variant never has an input set to compare against.
+        expect(out).not.toHaveProperty("failedAt");
     });
 });
 

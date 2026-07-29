@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, utimesSync, chmodSync, statSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, renameSync, symlinkSync, utimesSync, chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
@@ -9,7 +9,7 @@ import { freshDb } from "../../test_support/db.ts";
 import { insertAnchor, insertAnalysis, insertAnalysisInput, deleteAnalysisInput } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { Analysis, AnalysisInput } from "../../types/analysis.ts";
-import { stageInputs, enumerateInputSignatures, inputSignature } from "./staging.ts";
+import { stageInputs, enumerateInputSignatures, inputSignature, isInputSetMaterialized } from "./staging.ts";
 
 function sha256(content: string): string {
     return createHash("sha256").update(content).digest("hex");
@@ -345,6 +345,166 @@ describe("stageInputs", () => {
         const idsByKey = (list: typeof first) => new Map(list.map((s) => [s.key, s.fileId]));
         expect(idsByKey(second)).toEqual(idsByKey(first));
         expect(readFileSync(join(targetDir, "inputs", "local", "stable", "member.txt"), "utf-8")).toBe("v2");
+    });
+});
+
+describe("stageInputs — the staged tree records what it materialized", () => {
+    test("a hardlinked staged file reports its source's size and mtime", async () => {
+        const src = join(anchorDir, "linked.csv");
+        writeFileSync(src, "a,b\n1,2\n");
+        // A deterministic sub-millisecond mtime: the fraction is exactly what a truncating stamp would
+        // drop, and the predicate compares mtimeMs at full precision.
+        utimesSync(src, 1, 2.0005);
+        insertAnalysisInput({ path: "linked.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        const stagedStats = statSync(join(targetDir, staged[0]!.relativePath));
+        const srcStats = statSync(src);
+
+        expect(stagedStats.size).toBe(srcStats.size);
+        expect(stagedStats.mtimeMs).toBe(srcStats.mtimeMs);
+        // The placement mode this case exists to cover: one inode under two names.
+        expect(stagedStats.ino).toBe(srcStats.ino);
+    });
+
+    test("a copied staged file reports its source's size and mtime too", async () => {
+        // Forcing the cross-filesystem fallback needs a source `linkSync` refuses: a root-owned system
+        // binary is that on both platforms this runs on — macOS keeps it on the sealed read-only system
+        // volume, and Linux's `fs.protected_hardlinks` (on by default) refuses a link to a file the
+        // caller neither owns nor may write. Both surface as EPERM, which drops staging into
+        // `copyFileSync`. The inode assertion below proves the fallback actually ran, so a platform that
+        // permitted the link would fail loudly here rather than silently re-testing the hardlink path.
+        const systemFile = "/bin/ls";
+        insertAnalysisInput({ path: systemFile, isDir: false, analysisId, anchorId: null })._unsafeUnwrap();
+
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        const stagedStats = statSync(join(targetDir, staged[0]!.relativePath));
+        const srcStats = statSync(systemFile);
+
+        expect(stagedStats.ino).not.toBe(srcStats.ino);
+        expect(stagedStats.size).toBe(srcStats.size);
+        // `copyFileSync` stamps the destination with its own creation time; without the source's mtime
+        // copied back on, the staged tree could never record which input set it materialized.
+        expect(stagedStats.mtimeMs).toBe(srcStats.mtimeMs);
+    });
+
+    test("staging by hardlink never touches the source's mtime, so nothing drifts afterwards", async () => {
+        // The constraint the copy branch's `utimesSync` must never cross: a hardlink shares the source's
+        // inode, so stamping the staged path would rewrite the USER'S OWN input file — and since
+        // `enumerateInputSignatures` reads that file's mtime, staging would manufacture drift against
+        // the very profile it was staging for.
+        const src = join(anchorDir, "untouched.csv");
+        writeFileSync(src, "payload");
+        utimesSync(src, 1, 2.0005);
+        insertAnalysisInput({ path: "untouched.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+
+        const before = statSync(src).mtimeMs;
+        const signaturesBefore = [...enumerateInputSignatures(analysisId)._unsafeUnwrap()];
+
+        (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+
+        expect(statSync(src).mtimeMs).toBe(before);
+        expect([...enumerateInputSignatures(analysisId)._unsafeUnwrap()]).toEqual(signaturesBefore);
+    });
+});
+
+describe("isInputSetMaterialized", () => {
+    /** Register one file input and stage it, returning its source path — the materialized baseline. */
+    async function stagedBaseline(name = "counts.csv", content = "id,value\n1,2\n"): Promise<string> {
+        const src = join(anchorDir, name);
+        writeFileSync(src, content);
+        insertAnalysisInput({ path: name, isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        return src;
+    }
+
+    test("an unchanged input set reads as materialized", async () => {
+        await stagedBaseline();
+        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
+    });
+
+    test("an input replaced at the same path reads as not materialized", async () => {
+        const src = await stagedBaseline();
+        // Replace-at-the-same-path — what a text editor, `mv`, or a re-download does: the new bytes land
+        // in a NEW inode that the staged hardlink knows nothing about, so the tree holds the old file.
+        const replacement = join(testDir, "replacement.csv");
+        writeFileSync(replacement, "id,value\n9,9,9\n");
+        renameSync(replacement, src);
+        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(false);
+    });
+
+    test("a truncate-in-place edit is carried by the shared inode, so the tree stays current", async () => {
+        // Not a miss: hardlink placement means the staged path IS the source, so a truncate-write (the
+        // other half of "edited in place") leaves the tree holding exactly the new bytes — there is
+        // nothing for staging to do. Drift against a COMPLETED profile is judged separately, on the
+        // recorded signatures, so such an edit still re-profiles. The one case it does not reach is a
+        // `failed` row, whose retry is gated on this predicate; the deliberate re-profile covers it.
+        const src = await stagedBaseline();
+        writeFileSync(src, "id,value\n9,9\n");
+        utimesSync(src, 3, 3);
+        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
+        expect(statSync(join(targetDir, "inputs", "local", "counts.csv")).mtimeMs).toBe(statSync(src).mtimeMs);
+    });
+
+    test("a newly registered input reads as not materialized", async () => {
+        await stagedBaseline();
+        writeFileSync(join(anchorDir, "extra.csv"), "extra");
+        insertAnalysisInput({ path: "extra.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(false);
+    });
+
+    test("a removed input whose staged file lingers reads as not materialized", async () => {
+        await stagedBaseline();
+        const removed: AnalysisInput = { path: "removed.csv", isDir: false, analysisId, anchorId };
+        writeFileSync(join(anchorDir, "removed.csv"), "gone soon");
+        insertAnalysisInput(removed)._unsafeUnwrap();
+        (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+
+        deleteAnalysisInput(removed)._unsafeUnwrap();
+
+        // Every expected file still matches; only the orphan the mirror pass owes a deletion says
+        // otherwise — which is exactly the extra-file arm of the predicate.
+        expect(existsSync(join(targetDir, "inputs", "local", "removed.csv"))).toBe(true);
+        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(false);
+    });
+
+    test("a hand-deleted staged file reads as not materialized, and staging restores it", async () => {
+        await stagedBaseline();
+        const stagedPath = join(targetDir, "inputs", "local", "counts.csv");
+        rmSync(stagedPath, { force: true });
+
+        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(false);
+
+        (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        expect(existsSync(stagedPath)).toBe(true);
+        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
+    });
+
+    test("an input set that was never staged reads as not materialized", async () => {
+        writeFileSync(join(anchorDir, "fresh.csv"), "fresh");
+        insertAnalysisInput({ path: "fresh.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        // The tree does not exist at all — the wedged-analysis state this predicate has to catch.
+        expect(isInputSetMaterialized(analysisId, join(testDir, "never-staged"))._unsafeUnwrap()).toBe(false);
+    });
+
+    test("a copy-staged input set reads as materialized on the next check", async () => {
+        // The reason the copy fallback stamps the mtime at all: without it this analysis would re-hash
+        // its whole input set on every parity check, forever.
+        insertAnalysisInput({ path: "/bin/ls", isDir: false, analysisId, anchorId: null })._unsafeUnwrap();
+        (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
+    });
+
+    test("reads no file content — a mode-000 input is still answerable", async () => {
+        // The cost contract: stat and readdir only. A file whose bytes are unreadable still answers,
+        // because neither side of the comparison opens it.
+        const src = await stagedBaseline("locked.csv", "secret");
+        chmodSync(src, 0o000);
+        try {
+            expect(isInputSetMaterialized(analysisId, targetDir)._unsafeUnwrap()).toBe(true);
+        } finally {
+            chmodSync(src, 0o644);
+        }
     });
 });
 
