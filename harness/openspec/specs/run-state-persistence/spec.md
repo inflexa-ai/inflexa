@@ -27,9 +27,10 @@ KEY — equal to the DBOS workflowID, a bare UUID), `analysis_id` (TEXT, NOT NUL
 NOT NULL), `started_at` (TEXT, NOT NULL), `completed_at` (TEXT, nullable),
 `error` (TEXT, nullable), `parts` (JSONB, nullable — vestigial), `mandate_jti`
 (TEXT, nullable), `mandate_expires_at` (TEXT, nullable), and `plan_id` (TEXT,
-nullable — dedup key, FK to `cortex_plans`). There SHALL be NO `attempt_count`
-column: it was the parent-workflow resume counter for an `executeAnalysis`
-resume-after-402 entry point that was never built, and is removed.
+nullable — planned-run dedup and internal-plan reference, FK to
+`cortex_plans`). There SHALL be NO `attempt_count` column: it was the
+parent-workflow resume counter for an `executeAnalysis` resume-after-402 entry
+point that was never built, and is removed.
 
 Indexes SHALL exist on `(analysis_id)` and `(thread_id)`. A partial-unique index
 `idx_cortex_runs_active_plan` SHALL exist on `(analysis_id, plan_id) WHERE status
@@ -41,7 +42,7 @@ EXISTS`.
 
 #### Scenario: Run created at workflow launch time
 
-- **WHEN** `executePlan` runs the INSERT after the dedup pre-check passes
+- **WHEN** `execute_analysis` reserves the row after mode-specific validation
 - **THEN** a row is inserted with the bare-UUID `run_id`, `analysis_id`, `thread_id`, `plan_id`, `workflow_name = "executeAnalysis"`, `status = "running"`, and `started_at`
 - **AND** `parts`, `completed_at`, `error` are NULL
 - **AND** no `workflow_id` column write is attempted
@@ -192,4 +193,31 @@ by any parts-reconstruction routine (none exists).
 - **GIVEN** an artifact row with `file_type = "script"` already exists
 - **WHEN** the same path is upserted with `fileType: null`
 - **THEN** `file_type` remains `"script"` (COALESCE preserves the existing value)
+
+### Requirement: Ad hoc run reservation is idempotent by deterministic run id
+
+The state layer SHALL provide an analysis-scoped insert-if-absent reservation
+for an ad hoc run whose caller supplies a deterministic bare UUID `runId`.
+After insert or conflict it SHALL reload by `(analysisId, runId)`. A row in
+another analysis SHALL never be returned. Reusing an existing row SHALL be a
+successful idempotent outcome regardless of its active or terminal status; it
+SHALL NOT create a second row or authorize a second run.
+
+#### Scenario: Duplicate delivery finds an active run
+
+- **GIVEN** an active row already exists for the invocation-derived `runId`
+- **WHEN** the same ad hoc invocation reserves again
+- **THEN** reservation returns that row and creates no new row
+
+#### Scenario: Duplicate delivery finds a terminal run
+
+- **GIVEN** a completed row already exists for the invocation-derived `runId`
+- **WHEN** the same ad hoc invocation is redelivered
+- **THEN** reservation returns the completed row rather than treating the terminal partial-index predicate as permission to re-run
+
+#### Scenario: Run id belongs to another analysis
+
+- **GIVEN** a row with the derived `runId` exists under a different analysis
+- **WHEN** reservation reloads it under the current analysis id
+- **THEN** it returns no foreign row and surfaces the identity collision as an error
 
