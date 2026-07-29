@@ -18,13 +18,19 @@ The harness SHALL define `ResourcePolicy` in `config/resource-limits.ts`:
 
 ```typescript
 interface ResourcePolicy {
-  perStep: ResourceLimits;                    // existing shape; existing clamp semantics
-  budget: { cpu: number; memoryGb: number };  // total across concurrently running steps
-  ephemeral?: ResourceSpec;                   // default sandbox size for runEphemeral
+  perStep: ResourceLimits;
+  budget: { cpu: number; memoryGb: number };
 }
 ```
 
-The policy is embedder-supplied at the composition root and optional — an embedder that supplies none gets today's behavior everywhere. When a policy is supplied, construction SHALL reject one where `perStep.maxCpu > budget.cpu` or `perStep.maxMemoryGb > budget.memoryGb` (a maximum-size step must be admissible against an empty budget). `budget.cpu` and `budget.memoryGb` MUST be positive numbers.
+The policy is embedder-supplied at the composition root and optional — an
+embedder that supplies none gets dependency-gated fan-out plus the historical
+per-step defaults. When a policy is supplied, construction SHALL reject one
+where `perStep.maxCpu > budget.cpu` or
+`perStep.maxMemoryGb > budget.memoryGb` (a maximum-size step must be admissible
+against an empty budget). `budget.cpu` and `budget.memoryGb` MUST be positive
+numbers. The policy SHALL NOT contain an execution-mode-specific resource
+field.
 
 #### Scenario: Valid policy accepted
 
@@ -36,9 +42,18 @@ The policy is embedder-supplied at the composition root and optional — an embe
 - **WHEN** a policy with `perStep.maxMemoryGb: 32` and `budget.memoryGb: 16` is constructed
 - **THEN** construction throws a configuration error naming the violated invariant
 
+#### Scenario: Resource policy has no ephemeral value
+
+- **WHEN** configuration includes an `ephemeral` resource value
+- **THEN** the resolved `ResourcePolicy` contains no `ephemeral` field and no special execution budget is supplied
+
 ### Requirement: The machine budget is snapshotted into workflow input at launch
 
-`executePlan` SHALL copy the policy's `budget` into the `executeAnalysis` workflow input at the async edge, before `DBOS.startWorkflow`. The workflow body SHALL read the budget only from its input, never from live configuration, so replay after a crash reproduces identical admission decisions.
+`execute_analysis` SHALL copy the policy's `budget` into the
+`executeAnalysis` workflow input at the async edge for both plan and ad hoc
+modes, before `DBOS.startWorkflow`. The workflow body SHALL read the budget only
+from its input, never from live configuration, so replay after a crash
+reproduces identical admission decisions.
 
 #### Scenario: Mid-run config edit does not affect a running workflow
 
@@ -105,20 +120,4 @@ The `DagStepState.status` vocabulary in the `data-dag-state` part SHALL gain a `
 - **GIVEN** a step previously emitted as `"queued"`
 - **WHEN** capacity frees and its child workflow starts
 - **THEN** the next `data-dag-state` emit shows the step as `"running"`
-
-### Requirement: Ephemeral sandbox sizing comes from the policy
-
-`runEphemeral` SHALL size its sandbox from `policy.ephemeral` when the embedder supplies one, falling back to the built-in default `{ cpu: 4, memoryGb: 8 }`. The value remains subject to the existing per-step clamp at sandbox creation.
-
-#### Scenario: Policy overrides the ephemeral default
-
-- **GIVEN** a policy with `ephemeral: { cpu: 2, memoryGb: 4 }`
-- **WHEN** a `run_ephemeral` sandbox is created
-- **THEN** the sandbox is requested with `{ cpu: 2, memoryGb: 4 }`
-
-#### Scenario: Absent policy falls back to the default
-
-- **GIVEN** no resource policy supplied at the composition root
-- **WHEN** a `run_ephemeral` sandbox is created
-- **THEN** the sandbox is requested with `{ cpu: 4, memoryGb: 8 }`
 

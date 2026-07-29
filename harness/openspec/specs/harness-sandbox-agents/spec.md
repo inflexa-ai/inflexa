@@ -32,10 +32,12 @@ The directory SHALL contain `shared.ts` (the composition root: tool registry,
 (the `AgentMeta` interface, the `SandboxToolName` union, and
 `SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS`), `index.ts` (the `SANDBOX_AGENT_META`
 record and the `createSandboxAgents(deps)` builder), and one file per agent. The
-agent set SHALL cover the data-profiler, the omics specialists, the executors,
-cheminformatics, translational-safety, pkpd-clinical-response, immune-profiling,
-and drug-repurposing. Each `AgentDefinition` SHALL carry the four fields
-`runAgent` consumes: `id`, `systemPrompt`, `model`, `tools`, and `maxIterations`.
+agent set SHALL cover the data-profiler, the omics specialists,
+scientific-executor, cheminformatics, translational-safety,
+pkpd-clinical-response, immune-profiling, and drug-repurposing. It SHALL NOT
+contain a special ephemeral executor. Each `AgentDefinition` SHALL carry the
+five fields `runAgent` consumes: `id`, `systemPrompt`, `model`, `tools`, and
+`maxIterations`.
 
 #### Scenario: Catalog covers every agent
 
@@ -47,6 +49,11 @@ and drug-repurposing. Each `AgentDefinition` SHALL carry the four fields
 
 - **WHEN** any sandbox `AgentDefinition` is inspected
 - **THEN** its `id`, `systemPrompt`, `model`, `tools`, and `maxIterations` SHALL all be populated
+
+#### Scenario: Ephemeral executor is absent
+
+- **WHEN** the sandbox-agent source files and catalog are inspected
+- **THEN** no `ephemeral-executor` definition, prompt, metadata entry, or factory entry exists
 
 ### Requirement: Composition root resolves each agent's tools from a central registry
 

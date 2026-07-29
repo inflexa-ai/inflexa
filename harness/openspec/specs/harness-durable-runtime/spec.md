@@ -41,15 +41,16 @@ core.
 
 Chat turns SHALL run in-process, single-replica per turn, with no workflow or
 step rows. User-named long operations (`executeAnalysis`,
-`executeTargetAssessment`, the data-profile task, and `runEphemeral`) SHALL run
-as DBOS workflows started from tools and SHALL be independent of the chat turn
-that triggered them. The same `runAgent` body SHALL serve both modes through an
-injected `RunStep` — `passthroughStep` in chat, `durableStep` inside workflow
-steps.
+`executeTargetAssessment`, and the data-profile task) SHALL run as DBOS
+workflows started from tools and SHALL be independent of the chat turn that
+triggered them. Planned and ad hoc analysis modes SHALL both launch
+`executeAnalysis`; there SHALL be no separate turn-scoped computation workflow.
+The same `runAgent` body SHALL serve both modes through an injected `RunStep` —
+`passthroughStep` in chat, `durableStep` inside workflow steps.
 
 #### Scenario: A tool starts a workflow that outlives the chat turn
 
-- **GIVEN** a chat turn whose agent dispatches `execute_plan`
+- **GIVEN** a chat turn whose agent dispatches `execute_analysis`
 - **WHEN** the tool launches the `executeAnalysis` workflow
 - **THEN** the workflow runs independently of the in-process chat turn and continues if the turn ends
 
@@ -185,28 +186,6 @@ a host concern.
 - **GIVEN** a host process that crashed with pending workflows under `executorID = "core-worker-0"`
 - **WHEN** a new process launches under the same `executorID`
 - **THEN** DBOS can reclaim those pending workflows without any core-owned recovery route
-
-### Requirement: runEphemeral is a turn-scoped workflow
-
-`runEphemeral` SHALL run as a real DBOS workflow so its sandbox callbacks route
-through DBOS messaging, but it SHALL be turn-scoped: awaited inline by the
-`run_ephemeral` tool via `RunLauncher.launchAndAwait`, cancelled on chat
-disconnect (`DBOS.cancelWorkflow`), and never recovered. Because DBOS has no
-zero-recovery knob, the launch path SHALL cancel any `ephemeral:`-prefixed
-`PENDING` workflow owned by this executor BEFORE recovery runs, so a dead pod's
-ephemeral run never re-executes.
-
-#### Scenario: An ephemeral run is cancelled on chat disconnect
-
-- **GIVEN** a `run_ephemeral` call awaiting its workflow result inline
-- **WHEN** the chat turn's `AbortSignal` fires
-- **THEN** the launcher cancels the workflow and returns a `{ status: "cancelled" }` outcome
-
-#### Scenario: A dead pod's ephemeral workflow is never recovered
-
-- **GIVEN** an `ephemeral:`-prefixed `PENDING` workflow left by a crashed process
-- **WHEN** a new process launches under the same executor id
-- **THEN** the pre-launch sweep marks it `CANCELLED` before DBOS recovery selects it
 
 ### Requirement: Lifecycle flags are process-local
 
@@ -383,4 +362,19 @@ root releases whatever it acquired). Only `shutdown` swallows per-step failures.
 - **GIVEN** a `beforeLaunch` hook is supplied
 - **WHEN** `bootHarness` runs to launch
 - **THEN** `beforeLaunch` SHALL run after `assembleCoreRuntime` registers the workflow cohort and before `launchDbos`
+
+### Requirement: Legacy ephemeral rows are cancelled before recovery
+
+The runtime SHALL retain an executor-scoped pre-launch migration
+sweep that marks pending legacy ephemeral workflows cancelled before DBOS
+recovery while upgrades from binaries that created `ephemeral:*` rows remain
+supported. No registered tool or workflow in the new runtime SHALL create an
+`ephemeral:*` row.
+
+#### Scenario: Upgrade encounters a pending legacy row
+
+- **GIVEN** a pending `ephemeral:*` workflow owned by the runtime's stable executor id
+- **WHEN** the new runtime performs its pre-launch migration hooks
+- **THEN** it cancels that row before DBOS recovery starts
+- **AND** no ephemeral workflow registration is required to execute it
 
