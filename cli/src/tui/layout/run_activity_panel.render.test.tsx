@@ -1,11 +1,12 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { parseColor, type RGBA } from "@opentui/core";
+import { createSignal } from "solid-js";
 
-import { DEFAULT_THEME_ID, themes } from "../../lib/design_system.ts";
+import { DEFAULT_THEME_ID, GLYPHS, themes } from "../../lib/design_system.ts";
 import { setTheme } from "../theme.ts";
 import { renderFrame } from "../../test_support/tui.ts";
-import { RunActivityPanel } from "./run_activity_panel.tsx";
+import { ELAPSED_TICK_MS, RunActivityPanel } from "./run_activity_panel.tsx";
 import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import type { RunStepView } from "../components/run_block.tsx";
 
@@ -113,6 +114,105 @@ describe("RunActivityPanel content", () => {
     });
 });
 
+describe("RunActivityPanel repaint", () => {
+    test("a props change repaints the frontier, the counts, and the activity in place", async () => {
+        // Every other test in this file renders once against static props, which cannot distinguish a
+        // panel that tracks its inputs from one that latched them at mount — the exact failure a live
+        // readout must not have. One mount, two prop generations.
+        const [snapshot, setSnapshot] = createSignal(progress());
+        const [activity, setActivity] = createSignal("tool bash");
+        const setup = await testRender(
+            () => (
+                <RunActivityPanel
+                    progress={snapshot()}
+                    activity={activity()}
+                    activeCount={1}
+                    position={1}
+                    nextKeyLabel="ctrl+n"
+                    dismissKeyLabel="ctrl+r"
+                    onNext={() => {}}
+                />
+            ),
+            WIDE,
+        );
+        try {
+            await setup.renderOnce();
+            const before = setup.captureCharFrame();
+            expect(before).toContain("align reads");
+            expect(before).toContain("1/3");
+            expect(before).toContain("tool bash");
+
+            setSnapshot(
+                progress({
+                    done: 2,
+                    steps: [
+                        step({ label: "quality control", state: "done" }),
+                        step({ label: "align reads", state: "done" }),
+                        step({ label: "summarize", state: "running", agent: "analyst" }),
+                    ],
+                }),
+            );
+            setActivity("tool samtools sort");
+            await setup.renderOnce();
+
+            const after = setup.captureCharFrame();
+            expect(after).toContain("summarize");
+            expect(after).toContain("[analyst]");
+            expect(after).toContain("2/3");
+            expect(after).toContain("tool samtools sort");
+            // The frontier moved on — the step that finished must leave, or the panel is showing a
+            // stale frontier beside fresh counts.
+            expect(after).not.toContain("align reads");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
+describe("RunActivityPanel elapsed clock", () => {
+    // Elapsed is driven by the panel's own ticker, not by its data feed. The two are distinguishable
+    // only under a frozen feed: if the readout advances while the progress object never changes, it
+    // cannot be a side effect of a refresh — which is what keeps a stalled VIEW from reading as a
+    // stalled RUN.
+    afterEach(() => setSystemTime());
+
+    test("elapsed advances with no change to the underlying run data", async () => {
+        const frozen = progress({ startedAt: Date.ago(0), steps: [step({ label: "align reads", startedAt: Date.ago(0) })] });
+        const setup = await testRender(
+            () => (
+                <RunActivityPanel
+                    progress={frozen}
+                    activity="tool bash"
+                    activeCount={1}
+                    position={1}
+                    nextKeyLabel="ctrl+n"
+                    dismissKeyLabel="ctrl+r"
+                    onNext={() => {}}
+                />
+            ),
+            WIDE,
+        );
+        try {
+            await setup.renderOnce();
+            expect(setup.captureCharFrame()).toContain(`${GLYPHS.middot} 0s`);
+
+            // Move the wall clock, never the data: `frozen` is the same object across both frames, so
+            // anything that changes on screen can only have come from the ticker. Two hours rather
+            // than a few seconds because the readout's coarse unit then absorbs the real time this
+            // test must also spend waiting out one tick — the assertion pins a value, not a race.
+            setSystemTime(new Date(Date.now() + 2 * 60 * 60_000));
+            await Promise.sleep(ELAPSED_TICK_MS + 250);
+            await setup.renderOnce();
+
+            const after = setup.captureCharFrame();
+            expect(after).toContain("2h00m");
+            expect(after).not.toContain(`${GLYPHS.middot} 0s`);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
 describe("RunActivityPanel navigation", () => {
     test("a single active run shows no position indicator and no next-run hint", async () => {
         const frame = await renderFrame(panel({ activeCount: 1, position: 1 }), WIDE);
@@ -196,6 +296,23 @@ describe("RunActivityPanel legibility on a light theme", () => {
         }
     });
 
+    test("the rule's RUN label resolves the muted role", async () => {
+        // The label rides the border row, which opentui paints straight into the buffer from the box's
+        // `titleColor` rather than through a <text> — a path with its own default, and one no character
+        // frame can speak about at all. Span color is the only assertion that can say it is legible.
+        setTheme(LIGHT);
+        const setup = await testRender(panel(), WIDE);
+        try {
+            await setup.renderOnce();
+            const label = spanFg(setup, "RUN");
+            expect(label).toBeDefined();
+            expect(label && parseColor(themes[LIGHT].colors.fgMuted).equals(label)).toBe(true);
+            expect(label && parseColor("#ffffff").equals(label)).toBe(false);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
     test("a stale panel mutes its name and step rather than leaving them unpainted", async () => {
         setTheme(LIGHT);
         const setup = await testRender(panel({ progress: progress({ stale: true }) }), WIDE);
@@ -241,21 +358,31 @@ describe("RunActivityPanel chrome across terminal heights", () => {
         );
     }
 
+    // Each panel row, named by a substring that identifies it. The RULE row leads deliberately: it is
+    // now the row directly beneath the scrollbox, so it is the one the bleed reaches first. Its label
+    // also proves the rule itself is drawn — opentui paints a title onto the top border side, so the
+    // label cannot appear unless that side exists.
+    const PANEL_ROWS = [" RUN ", "Differential expression", "align reads", "next run"];
+
     for (const height of [8, 10, 12, 16, 20, 30, 40]) {
         test(`height ${height}: the panel keeps its rows, and no stream content bleeds into them`, async () => {
             const frame = await renderFrame(column(height), { width: 60, height });
             const lines = frame.split("\n");
 
-            // The panel did not collapse: its identity row and its hint row both survive.
-            expect(frame).toContain("Differential expression");
-            expect(frame).toContain("next run");
-            // The fixed input row below it is never squeezed out either.
-            expect(frame).toContain("INPUTROW");
+            // The panel did not collapse: rule, identity, frontier and hint all survive.
+            for (const row of PANEL_ROWS) expect(frame).toContain(row);
+            // The fixed input row below it is never squeezed out either — and it sits DIRECTLY under
+            // the hint, so the panel drew no bottom rule of its own. That is not a spare assertion:
+            // opentui promotes a box carrying `borderStyle`/`borderColor` but no explicit `border` to
+            // a full four-sided frame, so losing the top-only intent is a silent edit, and the result
+            // is the two-parallel-hairlines-around-an-empty-row shape the design rejects.
+            const hint = lines.findIndex((line) => line.includes("next run"));
+            expect(lines[hint + 1]).toContain("INPUTROW");
 
             // No stream content shares a line with any panel row. A bleed shows up exactly here: the
             // scrollbox's last row overlapping the panel's first.
             for (const line of lines) {
-                if (line.includes("Differential expression") || line.includes("align reads") || line.includes("next run")) {
+                if (PANEL_ROWS.some((row) => line.includes(row))) {
                     expect(line).not.toContain("BLEEDCANARY");
                 }
             }

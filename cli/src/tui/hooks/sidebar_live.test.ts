@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { ok, okAsync, errAsync, ResultAsync } from "neverthrow";
 import { createRoot } from "solid-js";
 
@@ -938,6 +938,90 @@ describe("the bounded poll never overlaps itself", () => {
 
             h.release();
         } finally {
+            dispose();
+        }
+    });
+});
+
+// The other half of that guard: it must always come back. A read that never settles would hold a
+// boolean claim for the process lifetime, and because the poll and the run-observation push consult
+// the SAME claim, one stall would freeze every live surface at its last value — no error anywhere,
+// and indistinguishable from a run that stopped progressing.
+describe("the in-flight guard is bounded", () => {
+    /** 3 × the 5s poll cadence, past which a claim is abandoned — plus a millisecond to clear it. */
+    const PAST_THE_BOUND_MS = 3 * 5_000 + 1;
+    const runEvent = (): void => {
+        Bus.emit("inflexa", { type: "run.observed", analysisId: "A", snapshot: { runId: "r1", status: "running", steps: [] } });
+    };
+
+    test("a refresh whose reads never settle is abandoned, and the next tick refreshes the store", async () => {
+        const arms: Array<() => void> = [];
+        let entries = 0;
+        const watchSeams: WatchSeams = {
+            // The first refresh parks FOREVER — the wedged read the bound exists for. Every later one
+            // runs the REAL refresh against immediate seams, so "the next tick proceeds" is asserted
+            // against a store write rather than against a call count.
+            refresh: (analysisId) => {
+                entries += 1;
+                if (entries === 1) return new Promise<void>(() => {});
+                return refreshSidebarData(analysisId, seams(profileStatus({ status: "running" }), [runRow({ runId: "after-the-bound" })]));
+            },
+            arm: (fn) => {
+                arms.push(fn);
+                return () => {};
+            },
+        };
+        const dispose = mountWatch(wsFor("A"), watchSeams);
+        const tick = (): void => {
+            for (const fn of arms) fn();
+        };
+        try {
+            // A running profile is active work, so the poll arms.
+            await refreshSidebarData("A", seams(profileStatus({ status: "running" }), []));
+            expect(arms.length).toBeGreaterThan(0);
+
+            tick();
+            expect(entries).toBe(1); // claims the guard, and never settles
+            tick();
+            expect(entries).toBe(1); // still inside the bound: a merely slow refresh is not abandoned
+
+            setSystemTime(new Date(Date.now() + PAST_THE_BOUND_MS));
+            tick();
+            expect(entries).toBe(2); // past the bound: the guard is taken and a fresh refresh runs
+            // And nothing partial or empty was published in the abandoned refresh's place — the
+            // snapshot is still the one the arming refresh wrote.
+            expect(runsSnapshot()).toEqual({ kind: "loaded", runs: [] });
+
+            setSystemTime();
+            await new Promise<void>((r) => setTimeout(r, 0));
+            const snap = runsSnapshot();
+            expect(snap.kind === "loaded" && snap.runs.map((r) => r.runId)).toEqual(["after-the-bound"]);
+        } finally {
+            setSystemTime();
+            dispose();
+        }
+    });
+
+    test("the run-observation push recovers from the same stall — one guard, both triggers", async () => {
+        let entries = 0;
+        const dispose = mountWatch(wsFor("A"), {
+            refresh: () => {
+                entries += 1;
+                return new Promise<void>(() => {});
+            },
+            arm: () => () => {},
+        });
+        try {
+            runEvent();
+            expect(entries).toBe(1);
+            runEvent();
+            expect(entries).toBe(1); // inside the bound: dropped, exactly as the burst rule says
+
+            setSystemTime(new Date(Date.now() + PAST_THE_BOUND_MS));
+            runEvent();
+            expect(entries).toBe(2); // an event is never left permanently disabled by a wedged read
+        } finally {
+            setSystemTime();
             dispose();
         }
     });

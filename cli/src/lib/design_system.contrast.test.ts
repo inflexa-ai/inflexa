@@ -107,7 +107,13 @@ const COLOR_SURFACES: Surface[] = [
     { token: "user", fg: (t) => t.colors.user, on: ["bg"], threshold: TEXT, ref: "chat marker/label (message_block.tsx)" },
     { token: "assistant", fg: (t) => t.colors.assistant, on: ["bg"], threshold: TEXT, ref: "chat marker/label (message_block.tsx)" },
     { token: "thinking", fg: (t) => t.colors.thinking, on: ["bg"], threshold: TEXT, ref: "reasoning marker/label (thinking_block.tsx)" },
-    { token: "tool", fg: (t) => t.colors.tool, on: ["bg"], threshold: TEXT, ref: "tool names (tool_block.tsx)" },
+    {
+        token: "tool",
+        fg: (t) => t.colors.tool,
+        on: ["bg", "bgRaised"],
+        threshold: TEXT,
+        ref: "tool names (tool_block.tsx); the frontier step's owning-agent tag on the raised panel fill (run_activity_panel.tsx)",
+    },
     {
         token: "success",
         fg: (t) => t.colors.success,

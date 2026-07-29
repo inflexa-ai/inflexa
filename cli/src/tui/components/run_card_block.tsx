@@ -4,14 +4,17 @@ import { GLYPHS, space, MARKERS } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
 import { Fg } from "./emphasis.tsx";
 
-/** How a run card resolves against the ledger right now. */
+/**
+ * How a run card resolves against the ledger right now.
+ *
+ * There is no `live` kind, and that is the point: a running run resolves to no state at all, so the
+ * card shows its launch record until the run settles (see {@link RunCardBlock}).
+ */
 export type RunCardState =
     /** No run row could be found for this card's id — the ledger was pruned, or the DB was replaced. */
     | { kind: "unavailable" }
-    /** The run is still going: live counts drive the meter. */
-    | { kind: "live"; done: number; total: number }
     /**
-     * The run reached a terminal status: the meter is gone and this is the record.
+     * The run reached a terminal status, and this is the record of how it ended.
      *
      * `done`/`total` are OPTIONAL because a terminal run has left the live progress snapshot, taking
      * its step counts with it — and a reloaded transcript never had them. Omitted rather than
@@ -22,7 +25,7 @@ export type RunCardState =
 
 /** Props for {@link RunCardBlock}. */
 export type RunCardBlockProps = {
-    /** The launched run's id — shown under the title, and the key its live state is resolved by. */
+    /** The launched run's id — shown under the title, and the key its ledger state is resolved by. */
     runId: string;
     /** Run title; falls back to the id when the harness card carries none. */
     title: string;
@@ -58,23 +61,28 @@ function settledMark(status: string): { glyph: string; role: keyof ThemeColors }
  *
  * A run card is the conversation's memory of a launch, so it is never hidden and never removed —
  * signalling completion by making a widget vanish is the defect this exists to remove, and a card
- * that disappeared would erase the launch from a reloaded transcript entirely. It has three shapes:
+ * that disappeared would erase the launch from a reloaded transcript entirely.
  *
- *  - **live** — a progress meter with `done/total`, updating as the run advances.
- *  - **settled** — the meter is GONE, replaced by a compact outcome line (status, counts, duration,
- *    and the reason when it did not succeed). A progress bar frozen mid-run is a false claim in
- *    scroll-back: it reads as work still in flight forever.
+ * The card is a RECORD, not an instrument: it carries no live progress at any point in its life.
+ * Live `done/total` belongs to the two surfaces that own live state — the sidebar RUNS rail (which
+ * renders the meter) and the run-activity panel (whose counts are deliberately bare text, precisely
+ * so two surfaces do not read as two widgets showing one run). A meter here would be the same figure
+ * a third time, and would defeat that argument for the other two. So the card has two shapes beyond
+ * the launch record it always renders:
+ *
+ *  - **settled** — a compact outcome line (status, counts, duration, and the reason when it did not
+ *    succeed), which is what the reader of a scroll-back transcript came for.
  *  - **unavailable** — the identity it recorded, and an honest note that the run could not be
  *    resolved. Never a fabricated status.
  */
 export function RunCardBlock(props: RunCardBlockProps) {
     const heading = (): string => props.title || props.runId;
-    // The launch-time step count, or the live one once resolved — the ledger knows better than the
+    // The launch-time step count, or the settled one once resolved — the ledger knows better than the
     // card's recorded number, which was written before any step existed.
     const total = createMemo((): number => {
         const s = props.state;
-        const live = s && s.kind !== "unavailable" ? s.total : undefined;
-        return live !== undefined && live > 0 ? live : props.stepCount;
+        const resolved = s?.kind === "settled" ? s.total : undefined;
+        return resolved !== undefined && resolved > 0 ? resolved : props.stepCount;
     });
     const steps = (): string => `${total()} step${total() === 1 ? "" : "s"}`;
 
@@ -88,16 +96,6 @@ export function RunCardBlock(props: RunCardBlockProps) {
             <text paddingLeft={space.md}>
                 <Fg role="fgMuted">{props.runId}</Fg>
             </text>
-
-            <Show when={props.state?.kind === "live" ? props.state : undefined}>
-                {(live: Accessor<Extract<RunCardState, { kind: "live" }>>) => (
-                    <text paddingLeft={space.md}>
-                        <Fg role="success">{GLYPHS.bar.repeat(live().done)}</Fg>
-                        <Fg role="fgSubtle">{GLYPHS.bar.repeat(Math.max(0, live().total - live().done))}</Fg>
-                        <Fg role="fgMuted">{`  ${live().done}/${live().total}`}</Fg>
-                    </text>
-                )}
-            </Show>
 
             <Show when={props.state?.kind === "settled" ? props.state : undefined}>
                 {(done: Accessor<Extract<RunCardState, { kind: "settled" }>>) => (

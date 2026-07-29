@@ -1,6 +1,7 @@
-import { createEffect, createMemo, createSignal } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { createRunEventStream, type StepActivityPart, type StepPhase } from "@inflexa-ai/harness";
 
-import { readNewestWorkflowStep, runWorkflowFamily } from "../../modules/harness/profile.ts";
+import { getLogger } from "../../lib/log.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { harnessRuntime } from "./boot.ts";
 import { activeRunProgress, type ActiveRunProgress } from "./sidebar_live.ts";
@@ -11,13 +12,22 @@ import { activeRunProgress, type ActiveRunProgress } from "./sidebar_live.ts";
 // so a module singleton is correct.
 //
 // The store owns NO run data. Every run fact it renders comes from `sidebar_live`'s keyed snapshot;
-// this module holds only the three things that are the panel's own — focus, dismissal, and the
-// activity label, which is the one datum the rail deliberately does not read (it cannot fit it).
+// this module holds only the three things that are the panel's own — focus, dismissal, and the live
+// step activity the harness's run-event stream reports, which is the one datum the rail deliberately
+// does not read (it cannot fit it).
 
 /** The focused run id, or null before the user has chosen one (the panel then shows the first active run). */
 const [focusedId, setFocusedId] = createSignal<string | null>(null);
 const [dismissed, setDismissed] = createSignal(false);
-const [activity, setActivity] = createSignal<string | null>(null);
+/**
+ * The focused run's live step activity, keyed by step id — one entry per step the subscription has
+ * heard from, each holding that step's latest report.
+ *
+ * Insertion order is REPORT RECENCY (a re-report is deleted before it is re-set), which is what
+ * {@link focusedRunActivity} reads to pick between steps running concurrently. A fresh `Map` per
+ * write, because Solid's default equality is referential.
+ */
+const [stepActivity, setStepActivity] = createSignal<ReadonlyMap<string, StepActivityPart>>(new Map());
 
 /**
  * The run the panel is showing, or `null` when there is nothing to show.
@@ -44,6 +54,44 @@ export const focusedRun = createMemo((): ActiveRunProgress | null => {
     return null;
 });
 
+/**
+ * The focused run's id alone — the subscription's key, and the ONLY thing about the focused run the
+ * subscription is allowed to depend on.
+ *
+ * `focusedRun` mints a fresh object on every sidebar refresh (see the assembly in
+ * `refreshSidebarData`), so an effect tracking it would tear down and re-open the stream on every
+ * poll tick, replaying the run's whole history each time for a run that has not changed. Narrowing
+ * to the id lets Solid's referential equality stop the propagation: this re-fires only when focus
+ * genuinely moves, which is exactly the subscription's lifetime.
+ */
+const focusedRunId = createMemo((): string | null => focusedRun()?.runId ?? null);
+
+/**
+ * Whether a step-activity phase means that step has stopped working.
+ *
+ * The stream is the panel's only evidence of which steps are live: the ledger-derived frontier the
+ * panel renders is a display shape (`RunStepView`) that carries no step id, so an activity cannot be
+ * joined back to a frontier row. A step's own terminal report is the honest substitute — the
+ * workflow emits `complete` / `failed` as the last thing it says about itself, so a step whose
+ * latest report is one of those is no longer describing work in flight.
+ *
+ * Declared as an exhaustive `Record<StepPhase, boolean>` rather than a set literal (the
+ * `RUN_STATUS_TERMINAL` idiom) so a phase added to the harness contract is a compile error here
+ * until it is classified, instead of silently defaulting to "still working".
+ */
+const STEP_PHASE_SETTLED: Record<StepPhase, boolean> = {
+    "sandbox-init": false,
+    executing: false,
+    "generating-metadata": false,
+    "generating-summary": false,
+    indexing: false,
+    persisting: false,
+    retrying: false,
+    warning: false,
+    complete: true,
+    failed: true,
+};
+
 /** Whether the panel should render: it has a run to show and the user has not dismissed it. */
 export const runPanelVisible = createMemo((): boolean => focusedRun() !== null && !dismissed());
 
@@ -58,11 +106,30 @@ export const focusedRunPosition = createMemo((): number => {
 });
 
 /**
- * A human phrase for what the focused run's newest durable workflow step is doing, or `null` when it
- * cannot be resolved. Omitted rather than substituted at the render site — a placeholder would claim
- * knowledge the reader does not have.
+ * A human phrase for what the focused run's running step is doing (`Running script deseq2.R`), or
+ * `null` when nothing has been reported. Omitted rather than substituted at the render site — a
+ * placeholder would claim knowledge the reader does not have.
+ *
+ * The phrase is the harness's, passed through verbatim: the producer emits one on every tool call
+ * its agent makes and it already reads as a sentence, so re-mapping it here could only degrade it.
+ *
+ * The panel has ONE activity line and a run may have several steps in flight, so this picks the
+ * newest report among the steps still working ({@link STEP_PHASE_SETTLED}). Newest rather than
+ * first-in-the-frontier because that ordering is not available: `RunStepView` carries no step id, so
+ * the two sets cannot be joined — and of the orderings that ARE available, the freshest report is
+ * the one that answers "what is happening right now".
  */
-export const focusedRunActivity = activity;
+export const focusedRunActivity = createMemo((): string | null => {
+    const runId = focusedRunId();
+    if (runId === null) return null;
+    let live: StepActivityPart | null = null;
+    // Later entries are more recently reported, so the last survivor of the scan wins.
+    for (const part of stepActivity().values()) {
+        if (part.runId !== runId || STEP_PHASE_SETTLED[part.phase]) continue;
+        live = part;
+    }
+    return live?.activity ?? null;
+});
 
 /**
  * Advance to the next active run, wrapping past the last back to the first. A no-op when nothing is
@@ -97,6 +164,24 @@ export function restoreRunPanel(): void {
     setDismissed(false);
 }
 
+/** Call-time parameters of one {@link RunPanelSeams.subscribeActivity}. */
+export type RunActivitySubscription = {
+    /** The run to observe. */
+    readonly runId: string;
+    /**
+     * Receives each step activity the run reports. The harness seam folds its reconciling parts
+     * latest-wins before delivery, so what arrives is a step's CURRENT value — a subscriber
+     * attaching mid-run converges rather than replaying superseded intermediates.
+     */
+    readonly onActivity: (part: StepActivityPart) => void;
+    /**
+     * Aborting stops delivery. Best-effort by construction — the durability engine's reader exposes
+     * no cancellation, so a part can still arrive after the abort (documented on the harness seam).
+     * That is precisely why {@link watchRunPanel} also carries a generation token.
+     */
+    readonly signal: AbortSignal;
+};
+
 /**
  * Injectable edges so {@link watchRunPanel} is unit-testable offline (no Postgres, no booted runtime)
  * — the `RefreshSeams` / `WatchSeams` pattern from `sidebar_live.ts`.
@@ -104,30 +189,51 @@ export function restoreRunPanel(): void {
 export type RunPanelSeams = {
     /** The booted runtime handle, or `null` when boot is not ready. Real: {@link harnessRuntime}. */
     readonly runtime: () => HarnessRuntime | null;
-    /** The newest durable step of a run's workflow family. Real: `readNewestWorkflowStep` @ `runWorkflowFamily`. */
-    readonly readActivity: (runtime: HarnessRuntime, runId: string) => Promise<{ step: number; label: string } | null>;
+    /**
+     * Observe one run's step activity until the run is terminal or the signal aborts. Real:
+     * `createRunEventStream` @ the runtime pool, narrowed to `data-step-activity`.
+     */
+    readonly subscribeActivity: (runtime: HarnessRuntime, options: RunActivitySubscription) => Promise<void>;
 };
 
 const realRunPanelSeams: RunPanelSeams = {
     runtime: harnessRuntime,
-    readActivity: (runtime, runId) => readNewestWorkflowStep(runtime.pool, runWorkflowFamily(runId)),
+    // The panel deliberately does NOT read `readNewestWorkflowStep` / `runWorkflowFamily` /
+    // `friendlyStepLabel` (`modules/harness/profile.ts`), which the headless `inflexa run` wait still
+    // uses. Those select the newest row of the durability engine's step cache, and that table records
+    // a step only when it RETURNS — so a completed-step record cannot describe in-flight work. It
+    // names whatever finished last, which around the slowest operation in a run is an instantaneous
+    // internal checkpoint, and the engine's own stream-write bookkeeping lands in the same table and
+    // would be shown verbatim. No repair changes what the source is a record of, which is why this
+    // path takes the event stream instead of a fixed mapper.
+    subscribeActivity: (runtime, { runId, onActivity, signal }) =>
+        createRunEventStream({ pool: runtime.pool }).subscribe({
+            runId,
+            onPart: (part) => {
+                if (part.type === "data-step-activity") onActivity(part);
+            },
+            signal,
+        }),
 };
 
-// Monotonic token identifying the newest activity read, so a slow read for a run the panel has since
-// advanced off cannot write its label over the current one. Same discipline as `refreshGeneration`.
+// Monotonic token identifying the newest subscription, so a run the panel has since advanced off
+// cannot write its activity over the current one. The abort below is best-effort by construction —
+// the engine's reader can be suspended inside an await when it is asked to wind down — so teardown
+// alone does not guarantee silence, and this is what makes a late part harmless. Same discipline as
+// `refreshGeneration`.
 let activityGeneration = 0;
 
 /**
  * Wire the run-activity panel's two reactive behaviours. Call once from `App` (inside its reactive
  * root). Both are effects over the module's derived state:
  *
- *  1. **the activity read** — re-fires whenever the focused run changes identity OR the sidebar
- *     refresh mints a fresh snapshot for it, which is deliberately the whole cadence: the refresh's
- *     lifecycle edges, its bounded poll, and its run-observation trigger already decide when run
- *     state is worth re-reading, and a second timer here would be a competing cadence for the same
- *     question. A run whose step read blips re-reads once, on the fresh → stale edge that re-stamps
- *     its entry; every blip after that carries the SAME object (see the assembly in
- *     `refreshSidebarData`), so a persistent outage costs one activity read, not one per tick.
+ *  1. **the activity subscription** — one open stream for the focused run, keyed on
+ *     {@link focusedRunId} so it survives the sidebar's poll and re-opens only when focus actually
+ *     moves. It is torn down on focus change, on the run terminating (a terminal run leaves
+ *     `activeRunProgress`, so focus resolves elsewhere), and on unmount — all three through the same
+ *     `onCleanup` abort, because they are the same event as far as this effect is concerned. The
+ *     accumulated activity is cleared at the same moment, so the panel never shows one run's work
+ *     under another's name.
  *
  *  2. **dismissal expiry** — clears a dismissal once no run is active. The dismissal meant "not this,
  *     not now"; once the work it referred to is over, keeping the panel suppressed would leave a
@@ -135,20 +241,40 @@ let activityGeneration = 0;
  */
 export function watchRunPanel(seams: RunPanelSeams = realRunPanelSeams): void {
     createEffect(() => {
-        const run = focusedRun();
+        const runId = focusedRunId();
         const runtime = seams.runtime();
         const mine = ++activityGeneration;
-        if (!run || !runtime) {
-            setActivity(null);
-            return;
-        }
-        // `readActivity` resolves `null` on any miss or error rather than rejecting — the activity
-        // label is a cosmetic channel, and a DBOS hiccup must degrade to "no label", never to a
-        // rejected promise inside a reactive effect.
-        void seams.readActivity(runtime, run.runId).then((detail) => {
-            if (mine !== activityGeneration) return;
-            setActivity(detail?.label ?? null);
-        });
+        setStepActivity(new Map());
+        if (runId === null || !runtime) return;
+
+        const controller = new AbortController();
+        onCleanup(() => controller.abort());
+
+        void seams
+            .subscribeActivity(runtime, {
+                runId,
+                onActivity: (part) => {
+                    if (mine !== activityGeneration) return;
+                    setStepActivity((prev) => {
+                        const next = new Map(prev);
+                        // Delete before set so a re-reporting step moves to the END of the iteration
+                        // order: `Map` keeps a key's ORIGINAL position on overwrite, which would make
+                        // the order first-heard rather than last-heard and hand the panel a stale
+                        // step's phrase whenever two steps run at once.
+                        next.delete(part.stepId);
+                        next.set(part.stepId, part);
+                        return next;
+                    });
+                },
+                signal: controller.signal,
+            })
+            .catch((err: unknown) => {
+                // Defensive: the seam contains every stream failure and resolves rather than
+                // rejecting, so arriving here is a defect in it — but an unhandled rejection would
+                // take the TUI process down over a cosmetic channel, which is strictly worse than
+                // losing the label.
+                getLogger("chat").debug({ err, runId }, "run-activity subscription rejected");
+            });
     });
 
     createEffect(() => {
@@ -156,10 +282,10 @@ export function watchRunPanel(seams: RunPanelSeams = realRunPanelSeams): void {
     });
 }
 
-/** Test hook: clear focus, dismissal, and the activity label, and invalidate any in-flight read. */
+/** Test hook: clear focus, dismissal, and the activity map, and invalidate any live subscription. */
 export function __resetRunPanelForTest(): void {
     activityGeneration += 1;
     setFocusedId(null);
     setDismissed(false);
-    setActivity(null);
+    setStepActivity(new Map());
 }
