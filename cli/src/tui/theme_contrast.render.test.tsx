@@ -314,14 +314,9 @@ const BLOCKS: BlockCase[] = [
         node: () => <RunCardBlock runId={mockRunCard.runId} title={mockRunCard.title} stepCount={mockRunCard.stepCount} />,
         until: "3c07",
     },
-    // The card's three resolved states are separate entries, not one: each paints spans the others do
-    // not (the meter, the outcome glyph and its tone, the failure reason, the unavailable note), and a
-    // sweep that only ever rendered the launch record would never look at any of them.
-    {
-        name: "RunCardBlock (live)",
-        node: () => <RunCardBlock runId={mockRunCard.runId} title={mockRunCard.title} stepCount={4} state={{ kind: "live", done: 1, total: 4 }} />,
-        until: "1/4",
-    },
+    // The card's resolved states are separate entries, not one: each paints spans the other does not
+    // (the outcome glyph and its tone, the failure reason, the unavailable note), and a sweep that
+    // only ever rendered the launch record would never look at either of them.
     {
         name: "RunCardBlock (settled, failed)",
         node: () => (

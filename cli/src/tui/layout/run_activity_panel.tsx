@@ -1,7 +1,7 @@
-import { createMemo, For, Show, type Accessor } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Accessor } from "solid-js";
 
 import { theme } from "../theme.ts";
-import { GLYPHS, space } from "../../lib/design_system.ts";
+import { GLYPHS, space, stroke } from "../../lib/design_system.ts";
 import { Fg } from "../components/emphasis.tsx";
 import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import type { RunStepView } from "../components/run_block.tsx";
@@ -41,6 +41,16 @@ export type RunActivityPanelProps = {
 };
 
 /**
+ * How often the elapsed readouts recompute. One second is the finest unit `String.relativeAge`
+ * prints (`31s`), so a coarser tick would visibly skip values and a finer one would spend renders
+ * redrawing the same string.
+ *
+ * Exported so the test that proves elapsed advances waits out the REAL period rather than a copy of
+ * it — a hand-held duplicate would silently stop covering this if the period were ever retuned.
+ */
+export const ELAPSED_TICK_MS = 1_000;
+
+/**
  * The steps currently running — the run's frontier.
  *
  * All of them, not the first: a run with parallel steps genuinely has several frontiers, and
@@ -61,6 +71,38 @@ export function RunActivityPanel(props: RunActivityPanelProps) {
     // reading a blip must never produce.
     const stale = createMemo((): boolean => props.progress?.stale === true);
 
+    // Elapsed is a CLOCK readout, not a data readout. Computed inline during render it would advance
+    // only when the progress object's identity changed, which couples the clock to the feed: a
+    // stalled feed would freeze every age at its last value, and the panel would then read as a run
+    // that has stopped progressing rather than as a view that has stopped updating — two conditions
+    // that call for opposite responses from the reader, so they must not look identical.
+    //
+    // The tick's VALUE is never rendered. Subscribing to it is the whole point: it re-runs `age`,
+    // which reads the wall clock through `relativeAge`.
+    const [tick, setTick] = createSignal(0);
+    // PRESENCE, not the object: an effect tracking `props.progress` itself would tear down and re-arm
+    // on every data refresh, resetting the tick's phase — and a feed refreshing faster than the tick
+    // would leave the clock permanently un-fired, which is the exact failure this ticker exists to
+    // rule out. A boolean memo dedupes referentially, so the effect re-runs only when a run appears
+    // or leaves.
+    const showing = createMemo((): boolean => props.progress !== undefined);
+    // Armed only while a run is showing — with no run the panel renders no rows at all, so a live
+    // timer would be pure background work. The effect's own cleanup disarms it on both transitions:
+    // the run leaving, and the component being disposed.
+    createEffect(() => {
+        if (!showing()) return;
+        const timer = setInterval(() => setTick((t) => t + 1), ELAPSED_TICK_MS);
+        onCleanup(() => clearInterval(timer));
+    });
+
+    /** Relative age of an ISO instant, recomputed on every clock tick — `null` when absent or unparseable. */
+    function age(iso: string | null | undefined): string | null {
+        // Read for the SUBSCRIPTION, not the value: this is what enrolls each caller's JSX expression
+        // in the ticker, so `relativeAge` is re-evaluated against a moved wall clock.
+        tick();
+        return iso?.relativeAge() ?? null;
+    }
+
     return (
         <Show when={props.progress}>
             {(run: Accessor<ActiveRunProgress>) => (
@@ -69,8 +111,42 @@ export function RunActivityPanel(props: RunActivityPanelProps) {
                 // renders one row taller than it contributes to the column, so a bare <text> would let
                 // scrolled content show through the gaps between its glyphs (the documented bleed). And a
                 // non-numeric width defaults to shrinking, which would collapse the panel below its own
-                // height on a short terminal — the stream must yield the squeeze instead.
-                <box width="100%" flexShrink={0} flexDirection="column" backgroundColor={theme().bg} paddingLeft={space.sm} paddingRight={space.sm}>
+                // height on a short terminal — the stream must yield the squeeze instead. The rule row
+                // inherits that protection: opentui draws the border, the title and the fill in one
+                // `drawBox`, so the frame is part of the same opaque rect rather than glyphs over
+                // transparency.
+                //
+                // `bgRaised` is the surface every docked element already paints — the status bar, the
+                // sidebar, the ask prompt, dialog panels. This panel was the only docked surface on `bg`,
+                // the transcript's own fill, which is precisely why it read as one more message that had
+                // stopped scrolling. The tint alone cannot carry that distinction (it separates from `bg`
+                // by as little as 1.06:1 on the lightest theme), so the labelled rule is the load-bearing
+                // cue and the surface supports it.
+                //
+                // The rule is TOP-ONLY: the input's own top border already supplies this panel's bottom
+                // edge one row below, and drawing a second would put two parallel hairlines around an
+                // empty row — structure the eye reads as a rendering artifact. `border` must stay
+                // explicit for that: opentui promotes a box carrying `borderStyle`/`borderColor` and no
+                // `border` to a full four-sided frame, so dropping this one prop does not remove the
+                // frame, it silently produces the card shape the design rejected.
+                //
+                // The frame colour is CONSTANT across every run state, including degraded. The input's
+                // border colour is its focus/mode signal, so a state-coloured frame directly above it
+                // would read as a second focus ring and make the real one ambiguous. Run state lives in
+                // the header glyph's role and in the words.
+                <box
+                    width="100%"
+                    flexShrink={0}
+                    flexDirection="column"
+                    backgroundColor={theme().bgRaised}
+                    border={["top"]}
+                    borderStyle={stroke.panel}
+                    borderColor={theme().border}
+                    title=" RUN "
+                    titleColor={theme().fgMuted}
+                    paddingLeft={space.sm}
+                    paddingRight={space.sm}
+                >
                     {/* The header row is the panel's CLICK TARGET for navigation, and only it — a
                         click anywhere on the panel would hijack the drag that starts a text selection
                         over the frontier lines. It carries the position indicator, so the affordance
@@ -82,7 +158,7 @@ export function RunActivityPanel(props: RunActivityPanelProps) {
                             {/* Bare counts, deliberately — the rail renders the same figure as a meter, and
                                 two meters would read as two widgets showing one run. */}
                             <Fg role="fgMuted">{`  ${run().done}/${run().total}`}</Fg>
-                            <Fg role="fgMuted">{`  ${GLYPHS.middot} ${run().startedAt.relativeAge() ?? GLYPHS.emDash}`}</Fg>
+                            <Fg role="fgMuted">{`  ${GLYPHS.middot} ${age(run().startedAt) ?? GLYPHS.emDash}`}</Fg>
                             <Show when={props.activeCount > 1}>
                                 <Fg role="fgMuted">{`  ${GLYPHS.middot} run ${props.position}/${props.activeCount}`}</Fg>
                             </Show>
@@ -98,7 +174,7 @@ export function RunActivityPanel(props: RunActivityPanelProps) {
                                 <Fg role="fgMuted">{`  ${GLYPHS.arrowRight} `}</Fg>
                                 <Fg role={stale() ? "fgMuted" : "fg"}>{step.label}</Fg>
                                 <Show when={step.agent}>{(a: Accessor<string>) => <Fg role="tool">{`  [${a()}]`}</Fg>}</Show>
-                                <Show when={step.startedAt?.relativeAge()}>{(age: Accessor<string>) => <Fg role="fgMuted">{`  ${age()}`}</Fg>}</Show>
+                                <Show when={age(step.startedAt)}>{(stepAge: Accessor<string>) => <Fg role="fgMuted">{`  ${stepAge()}`}</Fg>}</Show>
                             </text>
                         )}
                     </For>

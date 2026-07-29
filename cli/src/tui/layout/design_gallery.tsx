@@ -611,82 +611,153 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         RUNS section answers "what is the shape of the work". The only overlap is the
                         completion count — bare text here, a meter there — so the two never read as the
                         same widget shown twice. The key labels are passed literally in these exhibits;
-                        the real mount derives them from the bindings via keybindLabel. */}
+                        the real mount derives them from the bindings via keybindLabel.
+
+                        Every exhibit below is wrapped in a `bg`-painted column because the gallery's own
+                        panel is `bgRaised` — the same surface the run panel paints. Rendered directly
+                        into the gallery the tint would have nothing to separate from, so the exhibit
+                        would misrepresent the design in the one place it is meant to be reviewed.
+
+                        Activity strings here are the harness's own vocabulary (`activityForTool`), which
+                        is what the live panel now shows — not a label derived from a workflow step name. */}
                     <text fg={theme().fgMuted}>one active run — the frontier step with its agent and live activity label:</text>
-                    <RunActivityPanel
-                        progress={galleryRun()}
-                        activity="tool bash"
-                        activeCount={1}
-                        position={1}
-                        nextKeyLabel={runPanelNextKey}
-                        dismissKeyLabel={runPanelToggleKey}
-                        onNext={noop}
-                    />
+                    <box width="100%" backgroundColor={theme().bg}>
+                        <RunActivityPanel
+                            progress={galleryRun()}
+                            activity="Running script deseq2.R"
+                            activeCount={1}
+                            position={1}
+                            nextKeyLabel={runPanelNextKey}
+                            dismissKeyLabel={runPanelToggleKey}
+                            onNext={noop}
+                        />
+                    </box>
                     <text fg={theme().fgMuted}>several active runs — position indicator and the cycling hint appear (the header row is click-to-advance):</text>
-                    <RunActivityPanel
-                        progress={galleryRun()}
-                        activity="model round 3"
-                        activeCount={3}
-                        position={2}
-                        nextKeyLabel={runPanelNextKey}
-                        dismissKeyLabel={runPanelToggleKey}
-                        onNext={noop}
-                    />
+                    <box width="100%" backgroundColor={theme().bg}>
+                        <RunActivityPanel
+                            progress={galleryRun()}
+                            activity="Writing file counts_matrix.csv"
+                            activeCount={3}
+                            position={2}
+                            nextKeyLabel={runPanelNextKey}
+                            dismissKeyLabel={runPanelToggleKey}
+                            onNext={noop}
+                        />
+                    </box>
                     <text fg={theme().fgMuted}>parallel frontier — a run genuinely running several steps at once shows all of them:</text>
-                    <RunActivityPanel
-                        progress={galleryRun({
-                            steps: [
-                                { label: "align reads", state: "running", startedAt: null, agent: "bioinformatician" },
-                                { label: "call variants", state: "running", startedAt: null, agent: "geneticist" },
-                            ],
-                        })}
-                        activeCount={1}
-                        position={1}
-                        nextKeyLabel={runPanelNextKey}
-                        dismissKeyLabel={runPanelToggleKey}
-                        onNext={noop}
-                    />
+                    <box width="100%" backgroundColor={theme().bg}>
+                        <RunActivityPanel
+                            progress={galleryRun({
+                                steps: [
+                                    { label: "align reads", state: "running", startedAt: null, agent: "bioinformatician" },
+                                    { label: "call variants", state: "running", startedAt: null, agent: "geneticist" },
+                                ],
+                            })}
+                            activeCount={1}
+                            position={1}
+                            nextKeyLabel={runPanelNextKey}
+                            dismissKeyLabel={runPanelToggleKey}
+                            onNext={noop}
+                        />
+                    </box>
                     <text fg={theme().fgMuted}>degraded — this run's step read blipped, so the last known frontier renders muted and marked:</text>
-                    <RunActivityPanel
-                        progress={galleryRun({ stale: true })}
-                        activity="tool bash"
-                        activeCount={1}
-                        position={1}
-                        nextKeyLabel={runPanelNextKey}
-                        dismissKeyLabel={runPanelToggleKey}
-                        onNext={noop}
-                    />
+                    <box width="100%" backgroundColor={theme().bg}>
+                        <RunActivityPanel
+                            progress={galleryRun({ stale: true })}
+                            activity="Running script deseq2.R"
+                            activeCount={1}
+                            position={1}
+                            nextKeyLabel={runPanelNextKey}
+                            dismissKeyLabel={runPanelToggleKey}
+                            onNext={noop}
+                        />
+                    </box>
                     <text fg={theme().fgMuted}>
                         no activity label resolved — omitted, never substituted (a placeholder would claim knowledge the reader lacks):
                     </text>
-                    <RunActivityPanel
-                        progress={galleryRun()}
-                        activity={null}
-                        activeCount={1}
-                        position={1}
-                        nextKeyLabel={runPanelNextKey}
-                        dismissKeyLabel={runPanelToggleKey}
-                        onNext={noop}
-                    />
+                    <box width="100%" backgroundColor={theme().bg}>
+                        <RunActivityPanel
+                            progress={galleryRun()}
+                            activity={null}
+                            activeCount={1}
+                            position={1}
+                            nextKeyLabel={runPanelNextKey}
+                            dismissKeyLabel={runPanelToggleKey}
+                            onNext={noop}
+                        />
+                    </box>
                     <text fg={theme().fgMuted}>no active run — the panel contributes ZERO rows (nothing renders between this line and the next):</text>
-                    <RunActivityPanel
-                        progress={undefined}
-                        activeCount={0}
-                        position={0}
-                        nextKeyLabel={runPanelNextKey}
-                        dismissKeyLabel={runPanelToggleKey}
-                        onNext={noop}
-                    />
+                    <box width="100%" backgroundColor={theme().bg}>
+                        <RunActivityPanel
+                            progress={undefined}
+                            activeCount={0}
+                            position={0}
+                            nextKeyLabel={runPanelNextKey}
+                            dismissKeyLabel={runPanelToggleKey}
+                            onNext={noop}
+                        />
+                    </box>
+
+                    {/* IN CONTEXT. The two relationships the whole chrome design turns on are relationships
+                        to its NEIGHBOURS, so a panel shown alone cannot demonstrate either: the rule caps
+                        the panel where the scrolling transcript stops, and exactly ONE rule — the
+                        composer's own top border — sits between the panel and the input. A second rule
+                        here would read as a rendering artifact rather than as structure. */}
+                    <text fg={theme().fgMuted}>
+                        in context — transcript above, composer below: the rule caps the stream, and only ONE rule meets the input:
+                    </text>
+                    <box width="100%" height={9} flexDirection="column" backgroundColor={theme().bg}>
+                        <box flexGrow={1} minHeight={0} paddingLeft={space.sm}>
+                            <text fg={theme().fg}>…the transcript scrolls above the panel and is capped by its rule.</text>
+                        </box>
+                        <RunActivityPanel
+                            progress={galleryRun()}
+                            activity="Running script deseq2.R"
+                            activeCount={1}
+                            position={1}
+                            nextKeyLabel={runPanelNextKey}
+                            dismissKeyLabel={runPanelToggleKey}
+                            onNext={noop}
+                        />
+                        <ChatBar autoFocus={false} onTextareaRef={noop} onSubmit={noop} />
+                    </box>
+
+                    {/* STACKED WITH AN ASK. Both dock in the same slot and both paint `bgRaised`, so a run
+                        whose tool needs approval puts two raised surfaces flush against each other. Each
+                        half keeps its own marker and typography, which is what keeps it legible; the seam
+                        between them is carried by those, not by a boundary. Exhibited rather than left to
+                        be discovered — giving the ask its own matching top cap is a live option, and it is
+                        a change to `ask_prompt.tsx`, so it is a deliberate decision rather than a default. */}
+                    <text fg={theme().fgMuted}>stacked with a docked ask — two raised surfaces meet; markers, not a boundary, carry the seam:</text>
+                    <box width="100%" backgroundColor={theme().bg}>
+                        <RunActivityPanel
+                            progress={galleryRun()}
+                            activity="Running script deseq2.R"
+                            activeCount={1}
+                            position={1}
+                            nextKeyLabel={runPanelNextKey}
+                            dismissKeyLabel={runPanelToggleKey}
+                            onNext={noop}
+                        />
+                        <AskPrompt
+                            inert
+                            title={mockAskPrompts.basic.title}
+                            command={mockAskPrompts.basic.command}
+                            queuedCount={0}
+                            onApprove={noop}
+                            onReject={noop}
+                        />
+                    </box>
                 </State>
-                <State n="24" label="run card lifecycle — live / settled / unavailable, and the sub-agent activity line">
+                <State n="24" label="run card lifecycle — launched / settled / unavailable, and the sub-agent activity line">
                     {/* A run card is the conversation's memory of a launch: never hidden, never removed,
-                        and never left holding a frozen meter. Signalling completion by making a widget
-                        vanish is the defect this whole surface exists to remove. */}
-                    <text fg={theme().fgMuted}>launch record — no live state resolved (an older card in scroll-back, outside the read window):</text>
+                        and never an instrument. Signalling completion by making a widget vanish is the
+                        defect this whole surface exists to remove — and live done/total is the rail's and
+                        the run-activity panel's to render, so a running run's card looks exactly like the
+                        launch record below until it settles. */}
+                    <text fg={theme().fgMuted}>launch record — the card while its run is going, and for any card outside the read window:</text>
                     <RunCardBlock runId={mockRunCardIds.runId} title="Differential expression" stepCount={4} />
-                    <text fg={theme().fgMuted}>live — the run is going, and the card tracks it by the runId it already carries:</text>
-                    <RunCardBlock runId={mockRunCardIds.runId} title="Differential expression" stepCount={4} state={{ kind: "live", done: 1, total: 4 }} />
-                    <text fg={theme().fgMuted}>settled, success — the meter is GONE, replaced by a compact outcome line:</text>
+                    <text fg={theme().fgMuted}>settled, success — the launch record gains a compact outcome line:</text>
                     <RunCardBlock
                         runId={mockRunCardIds.runId}
                         title="Differential expression"

@@ -3,6 +3,7 @@ import { okAsync, errAsync } from "neverthrow";
 
 import { testRender } from "@opentui/solid";
 import { renderFrame } from "../../test_support/tui.ts";
+import { GLYPHS } from "../../lib/design_system.ts";
 import { RunCardBlock } from "../components/run_card_block.tsx";
 import { MessageBlock, resolveRunCardState } from "./message_block.tsx";
 import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshSeams } from "../hooks/sidebar_live.ts";
@@ -12,8 +13,9 @@ import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Part } from "../../types/session.ts";
 
 // A run card is the conversation's memory of a launch. It must never vanish on completion — that is
-// the very defect this work removes — and it must never keep a live meter once the run is over,
-// because a progress bar frozen mid-run reads in scroll-back as work still in flight forever.
+// the very defect this work removes — and it carries no progress meter at any point: live done/total
+// is the sidebar rail's and the run-activity panel's to show, and a third reading of one run's
+// progress is what makes all three read as instruments rather than one record and two live surfaces.
 
 const WIDE = { width: 80, height: 14 };
 const RUN_ID = "11111111-2222-3333-4444-555555555555";
@@ -99,23 +101,19 @@ function seamsFor(runs: CortexRunRow[], opts: { runsFail?: boolean } = {}): Refr
 afterEach(() => __resetSidebarLiveForTest());
 
 describe("run card states", () => {
-    test("with no resolved state it renders the launch record, exactly as before", async () => {
+    test("with no resolved state it renders the launch record, and no meter", async () => {
         const frame = await renderFrame(() => <RunCardBlock runId={RUN_ID} title="Differential expression" stepCount={4} />, WIDE);
         expect(frame).toContain("Differential expression");
         expect(frame).toContain("4 steps");
         expect(frame).toContain(RUN_ID);
         expect(frame).not.toContain("unavailable");
+        // This is also what an ACTIVE run's card renders — `resolveRunCardState` gives a running run
+        // no state at all. `x/y` is the meter's signature; the card never emits one.
+        expect(frame).not.toMatch(/\d+\/\d+/);
+        expect(frame).not.toContain(GLYPHS.bar);
     });
 
-    test("a live run shows a progress meter and its counts", async () => {
-        const frame = await renderFrame(
-            () => <RunCardBlock runId={RUN_ID} title="Differential expression" stepCount={4} state={{ kind: "live", done: 1, total: 4 }} />,
-            WIDE,
-        );
-        expect(frame).toContain("1/4");
-    });
-
-    test("a settled run's meter is GONE, replaced by a compact outcome line", async () => {
+    test("a settled run's card is the launch record plus a compact outcome line", async () => {
         const frame = await renderFrame(
             () => (
                 <RunCardBlock
@@ -133,9 +131,9 @@ describe("run card states", () => {
         // The outcome, with its duration.
         expect(frame).toContain("completed");
         expect(frame).toContain("2m30s");
-        // And NO live meter: a frozen bar is a false claim in scroll-back. `x/y` is the meter's
-        // signature and must not survive settlement.
+        // And still no meter — the settled line states counts in words, never as a bar.
         expect(frame).not.toMatch(/\d+\/\d+/);
+        expect(frame).not.toContain(GLYPHS.bar);
     });
 
     test("a failed run's card carries the reason", async () => {
@@ -177,11 +175,17 @@ describe("run card states", () => {
 });
 
 describe("resolveRunCardState", () => {
-    test("an active run resolves live, from the runId the card already carries", async () => {
+    test("an active run resolves to no state — its progress belongs to the rail and the panel", async () => {
         await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: RUN_ID })]));
-        const state = resolveRunCardState(RUN_ID);
-        expect(state?.kind).toBe("live");
-        expect(state).toMatchObject({ done: 1, total: 2 });
+        expect(resolveRunCardState(RUN_ID)).toBeUndefined();
+    });
+
+    test("a runs read that failed under an active run still does not call it unavailable", async () => {
+        // The active-run map and the runs snapshot fail independently, so this pair is reachable: the
+        // run is known to be live, and reporting it unresolvable would be a falsehood the card prints.
+        await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: RUN_ID })]));
+        await refreshSidebarData("analysis-1", seamsFor([], { runsFail: true }));
+        expect(resolveRunCardState(RUN_ID)).toBeUndefined();
     });
 
     test("a terminal run resolves settled, with its duration and reason", async () => {

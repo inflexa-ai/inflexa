@@ -15,6 +15,7 @@ import {
 } from "@inflexa-ai/harness";
 
 import { Bus } from "../../lib/bus.ts";
+import { getLogger } from "../../lib/log.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
@@ -355,6 +356,18 @@ const RUNS_LIMIT = 10;
 const POLL_INTERVAL_MS = 5_000;
 
 /**
+ * How long a guarded refresh may hold the in-flight guard before the next trigger takes it away.
+ *
+ * A MULTIPLE of the poll cadence rather than its own constant: the bound is only ever meaningful
+ * relative to that cadence — long enough that a merely slow refresh still finishes and writes its
+ * snapshots, short enough that a wedged one costs a small number of ticks — and two independent
+ * constants would let tuning either one silently invert that relationship. Three ticks is the
+ * smallest multiple that reads as "comfortably longer than one poll" rather than "a poll that ran
+ * late".
+ */
+const REFRESH_BOUND_MS = POLL_INTERVAL_MS * 3;
+
+/**
  * Terminal run statuses — a run that reached a final state polling cannot advance. A NON-terminal run
  * (`running`, or a fund-suspended run awaiting a resume) can still change its ledger row under us,
  * which is exactly what arms the poll. Declared exhaustively over {@link RunStatus} (a full record,
@@ -622,8 +635,7 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
             // but its freshness is a property of THIS refresh, so a run that read cleanly last tick
             // must stop advertising itself as fresh. An already-stale entry is carried by IDENTITY
             // instead: it asserts the same fact, and minting an equal-but-new object would re-fire
-            // every consumer memoized on it — the run panel's activity effect among them, which would
-            // then issue a DBOS read per blip for a value that cannot have changed.
+            // every consumer memoized on it for a value that cannot have changed.
             next.set(run.runId, kept.stale ? kept : { ...kept, stale: true });
         }
         return next;
@@ -667,6 +679,10 @@ const realWatchSeams: WatchSeams = {
  *     re-armed on every snapshot identity change (each refresh mints fresh snapshot objects) — it
  *     re-arms only when the arm/disarm decision or the analysis actually changes, keeping the 5s
  *     cadence steady and guaranteeing an idle sidebar issues zero queries.
+ *
+ * The poll and the run-observation push (trigger 4, wired inline below) share one in-flight guard so
+ * they never overlap themselves, and that guard is bounded by {@link REFRESH_BOUND_MS} so a refresh
+ * that cannot finish can never disable the ones after it.
  */
 export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realWatchSeams): void {
     // Trigger 1 — ready + analysis (and analysis swap). On a genuine swap the two snapshots still hold
@@ -714,12 +730,48 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
     });
     // A tick fired while the previous refresh is still awaiting Postgres is DROPPED, not queued.
     // `refreshSidebarData` claims the generation token at entry, so a newer refresh CANCELS an older
-    // one — without this flag, reads slower than the interval would leave every tick superseded by the
-    // next and the store would never receive a write at all. That failure is self-sustaining: an
+    // one — without this guard, reads slower than the interval would leave every tick superseded by
+    // the next and the store would never receive a write at all. That failure is self-sustaining: an
     // `unavailable` snapshot is itself an arming condition (`hasActiveWork`), so a struggling database
     // would be re-queried every 5s behind a permanently frozen section. Skipping degrades cadence
     // instead. Only the POLL skips: lifecycle edges carry new information and must supersede.
-    let pollInFlight = false;
+    //
+    // The claim is a TIMESTAMPED token, not a boolean, because the guard must be bounded: a read that
+    // never settles would hold a boolean for the process lifetime, and since the poll and the
+    // run-observation trigger consult the same guard, that one stall silently freezes every live
+    // surface at its last value — with no error anywhere, and indistinguishable from a run that
+    // stopped progressing.
+    let inFlight: { readonly startedAt: number } | null = null;
+
+    /**
+     * Run one refresh under the in-flight guard, abandoning a claim that has outlived
+     * {@link REFRESH_BOUND_MS}.
+     *
+     * Abandonment is resolved HERE, when the next trigger asks for the guard, rather than by a timer
+     * armed alongside each refresh: the guard only matters when something wants it, so the moment of
+     * asking is the moment the answer is needed, and there is no per-refresh handle to cancel on
+     * teardown. Nothing is published on abandonment — the previous snapshots stand, and the abandoned
+     * refresh, if it ever settles, is dropped by the generation token the replacement has already
+     * bumped.
+     */
+    function guardedRefresh(analysisId: string): void {
+        const at = Date.now();
+        const held = inFlight;
+        if (held !== null) {
+            if (at - held.startedAt < REFRESH_BOUND_MS) return;
+            getLogger("chat").warn(
+                { analysisId, elapsedMs: at - held.startedAt, boundMs: REFRESH_BOUND_MS },
+                "sidebar refresh exceeded its bound; abandoning it so live surfaces resume updating",
+            );
+        }
+        const claim = { startedAt: at };
+        inFlight = claim;
+        // Cleared by IDENTITY: an abandoned refresh can still settle long after its replacement
+        // claimed the guard, and a bare `inFlight = null` there would release a claim it does not own.
+        void seams.refresh(analysisId).finally(() => {
+            if (inFlight === claim) inFlight = null;
+        });
+    }
 
     // Trigger 4 — the run-observation push. The embedded runtime reports a run's state change
     // in-process, and this pokes the SAME refresh the lifecycle edges poke: the event is a TRIGGER,
@@ -729,7 +781,7 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
     //
     // It follows the POLL's skip rule rather than the lifecycle rule: events can arrive faster than
     // a refresh completes, and without the skip every one would supersede the last, leaving the
-    // store with no write at all — the same failure the poll's flag prevents.
+    // store with no write at all — the same failure the shared guard prevents.
     //
     // Polling stays armed regardless. This channel is in-process only, so a run launched by a
     // separate `inflexa run` never reaches it; the interval remains the backstop that makes such a
@@ -738,11 +790,7 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
         if (event.type !== "run.observed") return;
         const analysisId = workspace.analysis?.id;
         if (!analysisId || event.analysisId !== analysisId) return;
-        if (pollInFlight) return;
-        pollInFlight = true;
-        void seams.refresh(analysisId).finally(() => {
-            pollInFlight = false;
-        });
+        guardedRefresh(analysisId);
     };
     Bus.on("inflexa", onRunEvent);
     onCleanup(() => Bus.off("inflexa", onRunEvent));
@@ -751,13 +799,7 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
         const key = armKey();
         teardown();
         if (!key) return;
-        disarm = seams.arm(() => {
-            if (pollInFlight) return;
-            pollInFlight = true;
-            void seams.refresh(key).finally(() => {
-                pollInFlight = false;
-            });
-        }, POLL_INTERVAL_MS);
+        disarm = seams.arm(() => guardedRefresh(key), POLL_INTERVAL_MS);
     });
     onCleanup(teardown);
 }

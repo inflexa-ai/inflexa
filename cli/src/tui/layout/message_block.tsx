@@ -17,7 +17,7 @@ import { activeRunProgress, runsSnapshot, RUN_STATUS_TERMINAL } from "../hooks/s
 import type { AskCardPart, MessageRole, OpenableCardPart, Part } from "../../types/session.ts";
 
 /**
- * Resolve a run card's live state from the sidebar's ledger snapshots, by the `runId` the card
+ * Resolve a run card's settled state from the sidebar's ledger snapshots, by the `runId` the card
  * already carries — no new persisted field, and nothing the card has to have been told at launch.
  *
  * Returns `undefined` when the run simply is not in what has been read. That is the common case for
@@ -27,8 +27,12 @@ import type { AskCardPart, MessageRole, OpenableCardPart, Part } from "../../typ
  * read itself failed — so the card says so only when there is something to say.
  */
 export function resolveRunCardState(runId: string): RunCardState | undefined {
-    const live = activeRunProgress().get(runId);
-    if (live) return { kind: "live", done: live.done, total: live.total };
+    // A run that is currently active resolves to NO state: the card renders its launch record and
+    // nothing else, because live progress belongs to the rail and the run-activity panel. This has to
+    // be answered before the ladder below rather than folded into it — the two run reads can leave
+    // `runsSnapshot` at `unavailable` while the active-run map still holds this run, and reporting a
+    // run known to be live as unresolvable is the one falsehood this function exists to avoid.
+    if (activeRunProgress().has(runId)) return undefined;
 
     const snap = runsSnapshot();
     if (snap.kind === "unavailable") return { kind: "unavailable" };
