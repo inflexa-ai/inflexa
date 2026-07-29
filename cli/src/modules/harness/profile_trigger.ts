@@ -50,12 +50,22 @@ import type { HarnessRuntime } from "./runtime.ts";
  *
  * `kind` describes the PROFILE decision only. The orthogonal `staged` flag reports the materialization
  * STATE the check finished in — "the current input set is on disk" — NOT whether this drive did the
- * writing. So a completed profile at parity and a `failed` row the predicate found materialized both
- * report true having written nothing, which is the point: a caller can tell "the files are on disk but
- * profiling did not run" from "nothing happened". It is false only where the check leaves the set
- * genuinely unmaterialized or deliberately does not look (a live `running` profile, an emptied input
- * set, a staging fault). Kinds for each staging×profile combination were rejected — they would multiply
- * the union and every consumer's switch to express two facts that compose.
+ * writing. So `already_profiled` (a completed profile at parity) and `skipped_failed` (a `failed` row the
+ * predicate found materialized) both carry `staged: true` having written nothing, which is the point: a
+ * caller can tell "the files are on disk but profiling did not run" from "nothing happened".
+ *
+ * `staged` is FIXED for five of the seven kinds, so the type pins each to a literal rather than `boolean`
+ * — the union states which states are bivalent instead of a comment claiming it. A path that reached a
+ * (re-)trigger always materialized first (`triggered` → `true`); the two write-nothing-but-on-disk cases
+ * above are `true`; `cleared`/`no_inputs` describe an empty set with nothing to stage (`false`). Only two
+ * kinds genuinely take either value, which is where the flag earns its keep:
+ *   - `already_running` — `false` when the live-run gate suppressed staging up front (the sandbox is
+ *     reading the tree staging would reconcile-delete), but `true` when THIS drive staged and then lost
+ *     the trigger's CAS to a run that claimed the row concurrently;
+ *   - `failed` — `false` for a fault before or during materialization (enumerate, ledger read, dataDir
+ *     resolve, the staging write itself), `true` for a fault AFTER the files landed (seed, trigger, retry).
+ * Kinds for each staging×profile combination were rejected — they would multiply the union and every
+ * consumer's switch to express two facts that compose.
  *
  * No consumer branches on `staged` today; the drivers (`tui/hooks/profile_parity.ts`) switch on `kind`
  * alone. It is reported now because the check is the only place that knows it, so that a later
@@ -64,12 +74,12 @@ import type { HarnessRuntime } from "./runtime.ts";
  * a retrofit.
  */
 export type ProfileParityOutcome =
-    | { kind: "triggered"; restarted: boolean; staged: boolean }
-    | { kind: "already_profiled"; staged: boolean }
+    | { kind: "triggered"; restarted: boolean; staged: true }
+    | { kind: "already_profiled"; staged: true }
     | { kind: "already_running"; staged: boolean }
-    | { kind: "cleared"; staged: boolean }
-    | { kind: "skipped_failed"; staged: boolean }
-    | { kind: "no_inputs"; staged: boolean }
+    | { kind: "cleared"; staged: false }
+    | { kind: "skipped_failed"; staged: true }
+    | { kind: "no_inputs"; staged: false }
     | { kind: "failed"; reason: string; staged: boolean };
 
 /**
