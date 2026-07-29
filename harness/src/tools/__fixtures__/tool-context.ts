@@ -19,6 +19,7 @@ export function makeToolContext(signal?: AbortSignal): TestToolContext {
     const emitted: unknown[] = [];
     const deny = new UnavailableAsk();
     const ctx: ToolContext = {
+        invocationId: "test-tool-call",
         session: makeSession(),
         signal: signal ?? new AbortController().signal,
         emit: (event) => {

@@ -167,7 +167,7 @@ const intentField = () =>
                 "builder picks the components, sizing and alternation.",
         );
 
-/** Free-text row transform — the reason to never pre-slice a CSV with `run_ephemeral`. */
+/** Free-text row transform — the reason to avoid launching analysis just to pre-slice a CSV. */
 const transformField = () =>
     z
         .string()
@@ -177,7 +177,7 @@ const transformField = () =>
                 "asset — filter, derive, aggregate, sort (e.g. 'filter padj < 0.05 and " +
                 "abs(log2FoldChange) > 1', 'compute -log10(padj) as neg_log_padj', 'group " +
                 "by sample and sum count', 'sort by mean_count desc, take top 50'). Use " +
-                "this instead of running `run_ephemeral` to pre-slice the file. The text " +
+                "this instead of launching an ad hoc analysis to pre-slice the file. The text " +
                 "is rendered verbatim as a provenance footnote, so the data reads as " +
                 "processed, not fabricated.",
         );
@@ -429,14 +429,15 @@ treatment. Pass the composed brief as \`submit_report\`'s \`report\` field.
   their content reaches the report as prose you write into \`narrative\` /
   \`methods\` sections.
 
-## Do NOT reach for run_ephemeral first
+## Do NOT launch ad hoc analysis for a section transform
 - Not to peek at a CSV — pre-flight already parsed its columns and head rows.
 - Not to filter, slice, rank, or derive columns from a single CSV about to be
   rendered — \`chart.content.transform\` and \`table.content.transform\` do exactly
   that client-side, and the transform text renders as a provenance footnote.
-- run_ephemeral is only for computation no single section transform covers:
-  cross-file aggregation, statistics needing a real numerical library, or a
-  derived CSV the report then lists as a fresh source.
+- A durable ad hoc analysis is appropriate only when the user explicitly asks
+  for computation no single section transform covers: cross-file aggregation,
+  statistics needing a real numerical library, or a derived CSV the report then
+  lists as a fresh source.
 
 ## Choosing a section type
 - narrative — prose you wrote: context, story, interpretation.
