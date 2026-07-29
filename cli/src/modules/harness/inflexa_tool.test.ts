@@ -44,6 +44,7 @@ function makeCtx(ask: (request: AskRequest) => Promise<AskApproval>, analysisId:
     return {
         // Only `scope` is read; a cast avoids constructing the full session value object.
         session: { scope } as unknown as AgentSession,
+        invocationId: "test-tool-call",
         signal: new AbortController().signal,
         emit: () => {},
         runStep: (_name, fn) => fn(),

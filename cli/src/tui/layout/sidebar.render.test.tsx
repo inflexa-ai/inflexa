@@ -43,7 +43,7 @@ afterEach(() => {
     __resetSidebarLiveForTest();
     // The MODELS section reads the boot store's agentModels cell + the ready-state connection; reset both
     // so one test's seed never bleeds into the next (mirrors __resetSidebarLiveForTest for the live sections).
-    __setAgentModelsForTest({ current: { conversation: "", sandbox: "" }, pending: new Map() });
+    __setAgentModelsForTest({ current: { conversation: "", sandbox: "", utility: "" }, pending: new Map() });
     __setBootStateForTest({ phase: "idle" });
     // The SESSION section reads the open-thread snapshot (another module singleton) and the loaded-state
     // case repaints on a light theme; drop both so one case's seed never bleeds into the next.
@@ -504,7 +504,10 @@ describe("Sidebar MODELS section", () => {
     });
 
     test("renders each agent's active model", async () => {
-        __setAgentModelsForTest({ current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" }, pending: new Map() });
+        __setAgentModelsForTest({
+            current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" },
+            pending: new Map(),
+        });
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain("MODELS");
         expect(frame).toContain("chat");
@@ -515,7 +518,7 @@ describe("Sidebar MODELS section", () => {
 
     test("a scheduled switch shows the pending model on its own indicator line", async () => {
         __setAgentModelsForTest({
-            current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" },
+            current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" },
             pending: new Map([["sandbox", "claude-haiku-4-5"]]),
         });
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
@@ -533,7 +536,10 @@ describe("Sidebar MODELS section", () => {
 describe("Sidebar MODELS connection line", () => {
     test("cliproxy: shows the provider slug above the agent rows, never the mode", async () => {
         __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
-        __setAgentModelsForTest({ current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" }, pending: new Map() });
+        __setAgentModelsForTest({
+            current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" },
+            pending: new Map(),
+        });
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain("MODELS");
         expect(frame).toContain("conn");
@@ -543,7 +549,7 @@ describe("Sidebar MODELS connection line", () => {
 
     test("direct: shows the configured provider slug, never the mode", async () => {
         __setBootStateForTest({ phase: "ready", model: "deepseek-chat", connection: { provider: "deepseek", mode: "direct" } });
-        __setAgentModelsForTest({ current: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner" }, pending: new Map() });
+        __setAgentModelsForTest({ current: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner", utility: "deepseek-reasoner" }, pending: new Map() });
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain("conn");
         expect(frame).toContain("deepseek"); // the configured provider slug

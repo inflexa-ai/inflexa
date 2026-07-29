@@ -895,7 +895,7 @@ async function runDefaultModelSetup(
         (value) => value,
         () => null,
     );
-    // An ANSWERED model is a PIN, not a selection: it persists to both agents with no prompt, in either
+    // An ANSWERED model is a PIN, not a selection: it persists to all model roles with no prompt, in either
     // resolution mode (an answer skips its question even on a TTY).
     if (answeredModel !== undefined) return pinCliproxyModel(answeredModel, apiKey, validate);
     // Batch with no model answer keeps Auto semantics: nothing is written, and no listing is even
@@ -944,7 +944,7 @@ function writeBothAgents(modelId: string): Result<void, ConfigError> {
 }
 
 /**
- * Persist an ANSWERED cliproxy model to both agents, accessibility-checked the way the interactive
+ * Persist an ANSWERED cliproxy model to all model roles, accessibility-checked the way the interactive
  * election checks its list — via the unbilled `count_tokens` route, bounded like every probe round-trip.
  *
  * The check is OPPORTUNISTIC, and deliberately asymmetric to the direct-endpoint validation (design D8):
@@ -977,7 +977,7 @@ async function pinCliproxyModel(model: string, apiKey: string | null, validate: 
     }
     return writeBothAgents(model)
         .map(() => {
-            log.success(`Model "${model}" set for both agents.`);
+            log.success(`Model "${model}" set for all model roles.`);
         })
         .mapErr((e) => new ProxyError(`Could not save the model selection: ${e.type}.`));
 }
@@ -2069,7 +2069,7 @@ export async function collectDirectModel(deps: DirectModelDeps): Promise<void> {
             }
         }
         deps.writeBoth(model).match(
-            () => deps.success(`Model "${model}" set for both agents.`),
+            () => deps.success(`Model "${model}" set for all model roles.`),
             (e) => deps.warn(`Could not save the model selection: ${e.type}. Set it later with the model-switch commands.`),
         );
         return;
@@ -2236,7 +2236,7 @@ async function validateAnsweredDirectModel(
 function persistAnsweredDirectModel(model: string): Result<void, ProxyError> {
     return writeBothAgents(model)
         .map(() => {
-            log.success(`Model "${model}" set for both agents.`);
+            log.success(`Model "${model}" set for all model roles.`);
         })
         .mapErr((e) => new ProxyError(`Could not save the model selection: ${e.type}.`));
 }
@@ -2889,7 +2889,7 @@ export async function warnStalePins(deps: StalePinDeps): Promise<void> {
 
     // Each agent's EFFECTIVE explicit pin is its own `models.agents` override, else the both-agents
     // `harness.model` fallback; an agent with neither is auto-resolved and skipped. Grouping by the
-    // resolved id means a `harness.model` pin shared by both agents is one round-trip and one warning
+    // resolved id means a `harness.model` pin shared by all roles is one round-trip and one warning
     // naming both, while an agent override that redirects one of them splits into its own distinct pin.
     const byId = new Map<string, AgentName[]>();
     for (const agent of AGENT_NAMES) {

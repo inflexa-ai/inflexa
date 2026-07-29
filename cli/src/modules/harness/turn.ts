@@ -122,7 +122,7 @@ const realTurnSeams: ChatTurnSeams = { prepare: prepareChatTurn, run: runAgent }
  * shape: the REPL passes `"cli-chat"`, the TUI `"tui-chat"`. `callPath` is
  * `[agentId]` — length 1, so this top-level agent's events PASS the printer's
  * sub-agent depth filter while planner / literature-reviewer traffic (deeper
- * callPaths) is dropped. `threadId` rides IN scope: `execute_plan` reads
+ * callPaths) is dropped. `threadId` rides IN scope: `execute_analysis` reads
  * `session.scope.threadId` to stamp `cortex_runs.thread_id`, giving a
  * chat-launched run its thread lineage.
  */

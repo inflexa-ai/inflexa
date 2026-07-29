@@ -127,7 +127,7 @@ function AgentModelLine(props: { label: string; agent: AgentName }): JSX.Element
 
 /**
  * The MODELS-section connection line: the configured provider slug, rendered above the per-agent rows
- * so the user sees which vendor both agents run on. The connection MODE (`cliproxy`/`direct`) is
+ * so the user sees which vendor all model roles run on. The connection MODE (`cliproxy`/`direct`) is
  * deliberately NOT here — it is transport plumbing, not a fact the user acts on from the rail, and the
  * fixed-width rail keeps the identity to one word; the full connection detail (mode included) lives in
  * the Status dialog. Reads the immutable boot-ready state, NOT the swap-tracking `agentModels` store,
@@ -314,12 +314,12 @@ export function Sidebar(props: SidebarProps) {
         return s.kind === "loaded" ? s.runs.slice(0, 3) : [];
     });
 
-    // The agent models are present exactly once the runtime installs the live switch at boot (both agents
+    // The role models are present exactly once the runtime installs the live switch at boot (all roles
     // seed together), so an empty pair reads as "not ready" — decoupled from the boot phase so the
     // section reflects the switch's own authority, not a second boot-phase read.
     const modelsReady = createMemo((): boolean => {
         const c = agentModels().current;
-        return c.conversation !== "" || c.sandbox !== "";
+        return c.conversation !== "" || c.sandbox !== "" || c.utility !== "";
     });
 
     return (
@@ -461,6 +461,7 @@ export function Sidebar(props: SidebarProps) {
                         <ConnectionLine />
                         <AgentModelLine label="chat" agent="conversation" />
                         <AgentModelLine label="sandbox" agent="sandbox" />
+                        <AgentModelLine label="utility" agent="utility" />
                     </Show>
                 </Section>
             </ScrollPane>

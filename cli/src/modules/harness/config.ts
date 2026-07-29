@@ -36,12 +36,6 @@ const harnessConfigSchema = z.object({
                     memoryGb: z.number().positive().optional(),
                 })
                 .optional(),
-            ephemeral: z
-                .object({
-                    cpu: z.number().positive(),
-                    memoryGb: z.number().positive(),
-                })
-                .optional(),
         })
         .optional(),
     adminPort: z.number().int().positive().optional(),
@@ -70,8 +64,7 @@ export type ResolvedHarnessConfig = {
     readonly sandboxImage: string;
     /**
      * The harness's `ResourcePolicy`, resolved from `harness.resourceLimits`:
-     * the per-step ceilings plus the machine budget and optional ephemeral
-     * sandbox size. What the fields mean and how they are enforced is the
+     * the per-step ceilings plus the machine budget. What the fields mean and how they are enforced is the
      * harness's contract — this module only resolves the values it supplies
      * (see `resolvePolicy` for the derivation and its defaults).
      */
@@ -158,7 +151,6 @@ function resolvePolicy(cfg: z.infer<typeof harnessConfigSchema> | undefined): Re
             cpu: Math.max(configured.cpu, perStep.maxCpu),
             memoryGb: Math.max(configured.memoryGb, perStep.maxMemoryGb),
         },
-        ...(limits?.ephemeral && { ephemeral: limits.ephemeral }),
     };
 }
 
@@ -207,8 +199,8 @@ export function resolveHarnessConfig(): ResolvedHarnessConfig {
 export type ModelWireProtocol = "anthropic" | "openai-compatible";
 
 /**
- * The two user-facing model agents: `conversation` (the chat agent and its
- * sub-agents) and `sandbox` (the catalog step agents, data profiling, and the ephemeral runner).
+ * The three model roles: `conversation` (chat and its sub-agents), `sandbox`
+ * (durable analysis workers), and `utility` (bounded routing/classification).
  * Internal agents — run synthesis, post-step metadata/summary, target assessment — follow `sandbox`.
  * Derived from the `models.agents` schema keys so the domain type can never drift from the config
  * surface it names.
@@ -219,7 +211,7 @@ export type AgentName = keyof NonNullable<z.infer<typeof modelsConfigSchema>["ag
  * The closed agent set as a runtime list — the source boot iterates for its per-agent resolution. The
  * `satisfies` guard rejects any element that is not a {@link AgentName}, keeping the list honest.
  */
-export const AGENT_NAMES = ["conversation", "sandbox"] as const satisfies readonly AgentName[];
+export const AGENT_NAMES = ["conversation", "sandbox", "utility"] as const satisfies readonly AgentName[];
 
 /**
  * Per-agent model-id overrides from `models.agents`, each optional. An absent agent falls through the
@@ -290,8 +282,8 @@ export type ModelConnectionIdentity = {
 
 /**
  * The zero-config connection: cliproxy mode, provider `anthropic`, no agent overrides — the default an
- * install without a `models` block boots on, so it chats and records provenance with both agents
- * resolving to the one auto-resolved model.
+ * install without a `models` block boots on, with every role resolving to the
+ * one auto-resolved model.
  */
 const DEFAULT_MODEL_CONNECTION: ResolvedModelConnection = { mode: "cliproxy", provider: "anthropic", agents: {} };
 

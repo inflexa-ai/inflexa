@@ -92,7 +92,7 @@ export function describeBootError(e: HarnessBootError): string {
         case "model_required":
             return [
                 `A direct model connection needs an explicit model for the ${e.agents.join(" and ")} agent${e.agents.length > 1 ? "s" : ""} — there is no proxy \`/models\` to auto-resolve one from.`,
-                "Set `harness.model` in config.json (applies to both agents), or `models.agents.<agent>` per agent, to the model id your endpoint serves.",
+                "Set `harness.model` in config.json (applies to all model roles), or `models.agents.<role>` per role, to the model id your endpoint serves.",
             ].join("\n");
         case "sandbox_engine_unresolved":
             // The message was built at resolution time against the pinned runtime AND

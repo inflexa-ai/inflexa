@@ -28,7 +28,7 @@ import type { SwappableSandboxEmitters } from "./prov_bridge.ts";
  * One user-facing agent's chat backend: the {@link ChatProvider} instance
  * bound to that agent's resolved model over the SHARED connection, plus the bare model id. Two agents
  * with the same resolved model share ONE instance (the boot builds one provider per DISTINCT model);
- * two agents with different models carry different instances differing only in the bound wire model.
+ * roles with different models carry different instances differing only in the bound wire model.
  */
 export type AgentBackend = {
     /** Chat provider bound to `model` (`ChatProvider extends AgentChat`, so it satisfies both seams). */
@@ -48,7 +48,7 @@ export type AgentBackend = {
  * backends the data-profile workflow uses. The chat provider is NO LONGER shared: it splits per
  * user-facing agent — the run-engine bundles draw {@link
  * RunEngineComposition.sandbox}; {@link RunEngineComposition.conversation} rides here so boot has one
- * carrier for both agents + the handle. Kept separate from the two per-seam extras
+ * carrier for all model roles + their handles. Kept separate from the two per-seam extras
  * (`sandboxStepCallable`, `runAuthorizer`) that only the parent needs.
  */
 export type RunEngineComposition = {
@@ -69,8 +69,10 @@ export type RunEngineComposition = {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** The conversation agent's backend — drives the chat agent and its sub-agents; not read by the run-engine bundles. */
     readonly conversation: AgentBackend;
-    /** The sandbox agent's backend — drives the step agents, data profile, ephemeral runner, run synthesis, and post-step metadata. */
+    /** The sandbox agent's backend — drives step agents, data profile, run synthesis, and post-step metadata. */
     readonly sandbox: AgentBackend;
+    /** The utility backend — drives bounded ad hoc routing/classification calls. */
+    readonly utility: AgentBackend;
     /**
      * The vendor slug naming every agent's provider (`anthropic`, `openai`, …) — an open vocabulary,
      * the model connection's CONFIGURED provider fed by boot (one connection across
@@ -207,9 +209,8 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDep
  * `sandboxStepCallable` MUST be the callable returned by registering the child
  * first (the parent's dispatch closes over it). `synthesisModel` follows the
  * SANDBOX agent (run synthesis is an internal agent that aliases `sandbox`),
- * `runCharge` is the harness no-op bracket, and
- * `synthesisEnabled` is left unset so it defaults to `true` — the skeleton proves
- * the whole body including run-level synthesis.
+ * `runCharge` is the harness no-op bracket. Synthesis is selected per durable
+ * workflow input, defaulting to enabled for legacy planned runs.
  *
  * `emitProvenance` is the composition's stable delegating run-lifecycle emitter
  * ({@link RunEngineComposition.sandboxEmitters}), so the run's start/terminal
@@ -234,31 +235,6 @@ export function buildExecuteAnalysisDeps(
         runCharge: createNoopRunCharge(),
         runAuthorizer,
         emitProvenance: comp.sandboxEmitters.emitProvenance,
-    };
-}
-
-/**
- * Assemble the ephemeral-runner's construction deps. Every field is a straight
- * pass-through of the shared backends — an ephemeral chat-turn run needs the same
- * provider/pool/sandbox/workspace/embedding graph the durable workflows use.
- * `resourcePolicy` is omitted deliberately: `assembleCoreRuntime` injects the one
- * host policy so the ephemeral sandbox size can never diverge from what the
- * planner tools and `execute_plan` see. The return type is sourced from
- * {@link CoreWorkflowDeps} (barrel) rather than the harness-internal `EphemeralDeps`,
- * which is not part of the embedder surface.
- */
-export function buildEphemeralDeps(comp: RunEngineComposition): CoreWorkflowDeps["ephemeral"] {
-    return {
-        provider: comp.sandbox.provider,
-        pool: comp.pool,
-        sandboxClient: comp.sandboxClient,
-        workspaceFs: comp.workspaceFs,
-        embedding: comp.embedding,
-        resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
-        model: comp.sandbox.model,
-        bioKeys: comp.bioKeys,
-        refStorePath: comp.refStorePath,
-        ...(comp.packagesFile ? { packagesFile: comp.packagesFile } : {}),
     };
 }
 

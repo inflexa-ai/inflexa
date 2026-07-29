@@ -49,8 +49,14 @@ function agentModel(handle: SwappableChatProvider): string {
 // delegates to a REAL {@link createSwappableSandboxEmitters} holder, and the returned emit helpers read
 // that holder's stable emitter at call time — so an event emitted before a swap carries the old name and
 // one after carries the new, exactly as an in-flight run's steps vs. a post-swap run's steps would.
-function setup(models: { conversation: string; sandbox: string } = { conversation: "claude-conv", sandbox: "claude-sand" }): {
-    swappable: Record<"conversation" | "sandbox", SwappableChatProvider>;
+function setup(
+    models: { conversation: string; sandbox: string; utility: string } = {
+        conversation: "claude-conv",
+        sandbox: "claude-sand",
+        utility: "claude-utility",
+    },
+): {
+    swappable: Record<"conversation" | "sandbox" | "utility", SwappableChatProvider>;
     rebuildCount: () => number;
     emitterSwapNames: string[];
     emitRunStarted: (runId: string) => void;
@@ -60,6 +66,7 @@ function setup(models: { conversation: string; sandbox: string } = { conversatio
     const swappable = {
         conversation: createSwappableProvider(fakeProvider(models.conversation)),
         sandbox: createSwappableProvider(fakeProvider(models.sandbox)),
+        utility: createSwappableProvider(fakeProvider(models.utility)),
     };
     const emitters = createSwappableSandboxEmitters(`anthropic/${models.sandbox}`);
     const emitterSwapNames: string[] = [];
@@ -80,7 +87,7 @@ function setup(models: { conversation: string; sandbox: string } = { conversatio
             emitters.swap(name);
         },
         modelProvider: "anthropic",
-        initialModels: { conversation: models.conversation, sandbox: models.sandbox },
+        initialModels: { conversation: models.conversation, sandbox: models.sandbox, utility: models.utility },
     });
 
     const runStarted = (runId: string): RunProvenanceEvent => ({ type: "run_started", analysisId: "an-1", runId, planSummary: "p", stepCount: 1, atMs: 1 });
@@ -174,7 +181,7 @@ describe("agent switch — idle applies immediately", () => {
     });
 
     test("switching the chat model while idle re-points only the conversation agent (not sandbox, no emitter swap)", () => {
-        const h = setup({ conversation: "same-model", sandbox: "same-model" });
+        const h = setup({ conversation: "same-model", sandbox: "same-model", utility: "same-model" });
         const sandboxInnerBefore = agentProviderInner(h.swappable.sandbox);
 
         const result = requestAgentModelChange("conversation", "claude-chat-new");
@@ -184,6 +191,19 @@ describe("agent switch — idle applies immediately", () => {
         // The sandbox agent's inner is untouched (independent per-agent handles) and no emitter swapped
         // (the conversation agent drives no provenance).
         expect(agentProviderInner(h.swappable.sandbox)).toBe(sandboxInnerBefore);
+        expect(h.emitterSwapNames).toEqual([]);
+    });
+
+    test("switching utility while idle repoints only utility and never swaps sandbox provenance emitters", () => {
+        const h = setup({ conversation: "same-model", sandbox: "same-model", utility: "same-model" });
+        const conversationBefore = agentProviderInner(h.swappable.conversation);
+        const sandboxBefore = agentProviderInner(h.swappable.sandbox);
+
+        expect(requestAgentModelChange("utility", "claude-utility-new")).toEqual({ status: "applied" });
+
+        expect(agentModel(h.swappable.utility)).toBe("claude-utility-new");
+        expect(agentProviderInner(h.swappable.conversation)).toBe(conversationBefore);
+        expect(agentProviderInner(h.swappable.sandbox)).toBe(sandboxBefore);
         expect(h.emitterSwapNames).toEqual([]);
     });
 
@@ -235,6 +255,19 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         leaveTurn();
         expect(agentModel(h.swappable.conversation)).toBe("claude-chat-next");
         expect(pendingAgentSelections().size).toBe(0);
+    });
+
+    test("a utility switch waits for the chat turn that may be using it for routing", () => {
+        const h = setup();
+        const leaveTurn = enterChatTurn();
+
+        expect(requestAgentModelChange("utility", "claude-utility-next")).toEqual({ status: "scheduled" });
+        expect(agentModel(h.swappable.utility)).toBe("claude-utility");
+        expect(pendingAgentSelections().get("utility")).toBe("claude-utility-next");
+
+        leaveTurn();
+        expect(agentModel(h.swappable.utility)).toBe("claude-utility-next");
+        expect(pendingAgentSelections().has("utility")).toBe(false);
     });
 
     // The gesture under test: switching the chat model WHILE a response streams. This drives the actual
@@ -363,7 +396,7 @@ describe("agent switch — state notifications + no active runtime", () => {
     test("a change requested with no live runtime reports scheduled (config persists it for next boot)", () => {
         // No `installAgentSwitch` this test — the beforeEach cleared any prior controller.
         expect(requestAgentModelChange("sandbox", "whatever")).toEqual({ status: "scheduled" });
-        expect(currentAgentModels()).toEqual({ conversation: "", sandbox: "" });
+        expect(currentAgentModels()).toEqual({ conversation: "", sandbox: "", utility: "" });
         expect(pendingAgentSelections().size).toBe(0);
     });
 });

@@ -6,7 +6,7 @@ import type { StampedEvent } from "../../types/events.ts";
 import type { ProvModelId } from "../../types/prov.ts";
 import { AGENT_NAMES, type AgentName } from "./config.ts";
 
-// The live agent-model switch. Two cooperating pieces live here because they
+// The live role-model switch. Two cooperating pieces live here because they
 // are one decision: an agent-work GAUGE that reads whether any agent work is in flight, and the
 // pending-selection CONTROLLER that applies a persisted agent pick either immediately (gauge idle) or
 // at the moment the LAST in-flight work settles (gauge busy). Both are process singletons — there is
@@ -85,11 +85,10 @@ export function agentProviderInner(provider: ChatProvider): ChatProvider {
 // One token per discrete unit of in-flight agent work. Idle ⇔ empty. A Set keyed by a stable id makes
 // enter/leave idempotent, which is what lets DBOS recovery re-emit `run_started` for a reclaimed run
 // without double-counting it. Kinds and their tokens:
-//   chat turn      `chat-turn:<uuid>`     — bracketed in `runChatTurn` (covers ephemeral: `run_ephemeral`
-//                                            is `launchAndAwait`, so it settles inside the turn, and the
-//                                            boot ephemeral sweep cancels recovery-orphaned ones).
+//   chat turn      `chat-turn:<uuid>`     — bracketed in `runChatTurn`; utility
+//                                            routing called by the conversation tool settles inside it.
 //   analysis run   `run:<runId>`          — driven by the `prov.run_started`/`prov.run_completed` bus,
-//                                            which covers cli-launched, chat-launched (`execute_plan`,
+//                                            which covers cli-launched, chat-launched (`execute_analysis`,
 //                                            outliving its turn), AND DBOS-recovered runs (re-emitted).
 //   data profile   `data-profile:<id>`    — fed by a host observer via `noteDataProfileState` (see its
 //                                            doc for why this channel is push-fed rather than self-owned).
@@ -323,7 +322,7 @@ export function requestAgentModelChange(agent: AgentName, model: string): { stat
  * palette/status are boot-gated, so callers see real values).
  */
 export function currentAgentModels(): Record<AgentName, string> {
-    if (!active) return { conversation: "", sandbox: "" };
+    if (!active) return { conversation: "", sandbox: "", utility: "" };
     return { ...active.current };
 }
 

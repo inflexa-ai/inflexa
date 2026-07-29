@@ -15,6 +15,7 @@ import { createLaunchDirTool } from "./launch_dir_tool.ts";
 function ctxFor(analysisId: string): ToolContext {
     return {
         session: { scope: { kind: "analysis", analysisId } } as unknown as AgentSession,
+        invocationId: "test-tool-call",
         signal: new AbortController().signal,
         emit: () => {},
         runStep: (_name, fn) => fn(),
@@ -73,6 +74,7 @@ describe("list_launch_dir tool", () => {
     test("reports no_analysis outside an analysis scope", async () => {
         const ctx: ToolContext = {
             session: { scope: { kind: "target-assessment", targetAssessmentId: "ta1", billingContextId: "b1" } } as unknown as AgentSession,
+            invocationId: "test-tool-call",
             signal: new AbortController().signal,
             emit: () => {},
             runStep: (_name, fn) => fn(),

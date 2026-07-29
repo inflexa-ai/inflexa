@@ -146,9 +146,13 @@ describe("agent-models store (watchAgentModels)", () => {
         } as unknown as ChatProvider;
     }
 
-    function installFakeSwitch(models: { conversation: string; sandbox: string }): void {
+    function installFakeSwitch(models: { conversation: string; sandbox: string; utility: string }): void {
         installAgentSwitch({
-            swappable: { conversation: createSwappableProvider(fakeProvider()), sandbox: createSwappableProvider(fakeProvider()) },
+            swappable: {
+                conversation: createSwappableProvider(fakeProvider()),
+                sandbox: createSwappableProvider(fakeProvider()),
+                utility: createSwappableProvider(fakeProvider()),
+            },
             rebuildProvider: () => fakeProvider(),
             swapSandboxEmitters: () => {},
             modelProvider: "anthropic",
@@ -157,23 +161,23 @@ describe("agent-models store (watchAgentModels)", () => {
     }
 
     test("stays empty before ready, then seeds both agents' current models at the ready edge", async () => {
-        installFakeSwitch({ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" });
+        installFakeSwitch({ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" });
         let dispose!: () => void;
         createRoot((d) => {
             dispose = d;
             watchAgentModels();
         });
         try {
-            expect(agentModels().current).toEqual({ conversation: "", sandbox: "" });
+            expect(agentModels().current).toEqual({ conversation: "", sandbox: "", utility: "" });
             await startHarnessBoot(cfg, readyDriver("claude-opus-4-8"));
-            expect(agentModels().current).toEqual({ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" });
+            expect(agentModels().current).toEqual({ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" });
         } finally {
             dispose();
         }
     });
 
     test("an idle swap updates the store; a switch scheduled behind work shows as pending, then clears when it lands", async () => {
-        installFakeSwitch({ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" });
+        installFakeSwitch({ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" });
         let dispose!: () => void;
         createRoot((d) => {
             dispose = d;
