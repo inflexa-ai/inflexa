@@ -16,6 +16,7 @@ import type { CortexPart } from "@inflexa-ai/harness/contracts/message.js";
 import type { Pool } from "pg";
 
 import { unwrapOrThrow } from "../lib/result.js";
+import { adHocPlanId, adHocRunId } from "../tools/analysis-invocation.js";
 import { validatePath } from "../tools/lib/path-validation.js";
 import { buildFileReferenceCardData, buildPlanCardData, buildPresentationCardData, buildPreviewCardData, buildRunCardData } from "./card-builders.js";
 
@@ -69,10 +70,11 @@ export function createCardResolver(pool: Pool, analysisId: string, workspaceRoot
             return card ? ({ type: "data-plan", ...card } as CortexPart) : null;
         }
 
-        if (block.name === "execute_analysis" && input.mode === "plan") {
-            const planId = typeof input.planId === "string" ? input.planId : null;
-            if (!planId) return null;
-            const card = unwrapOrThrow(await buildRunCardData(pool, { planId, analysisId }));
+        if (block.name === "execute_analysis" && (input.mode === "plan" || input.mode === "adhoc")) {
+            const planId = input.mode === "plan" ? (typeof input.planId === "string" ? input.planId : null) : adHocPlanId(analysisId, block.id);
+            if (planId === null) return null;
+            const runId = input.mode === "adhoc" ? adHocRunId(analysisId, block.id) : undefined;
+            const card = unwrapOrThrow(await buildRunCardData(pool, { planId, analysisId, ...(runId !== undefined ? { runId } : {}) }));
             return card ? ({ type: "data-run-card", ...card } as CortexPart) : null;
         }
 
