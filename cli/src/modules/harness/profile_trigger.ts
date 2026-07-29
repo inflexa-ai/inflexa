@@ -56,6 +56,12 @@ import type { HarnessRuntime } from "./runtime.ts";
  * genuinely unmaterialized or deliberately does not look (a live `running` profile, an emptied input
  * set, a staging fault). Kinds for each staging×profile combination were rejected — they would multiply
  * the union and every consumer's switch to express two facts that compose.
+ *
+ * No consumer branches on `staged` today; the drivers (`tui/hooks/profile_parity.ts`) switch on `kind`
+ * alone. It is reported now because the check is the only place that knows it, so that a later
+ * caller — a "files staged, profiling deferred" affordance — reads a recorded fact instead of
+ * re-deriving one. Populated and tested on every variant so that consumer inherits a correct value, not
+ * a retrofit.
  */
 export type ProfileParityOutcome =
     | { kind: "triggered"; restarted: boolean; staged: boolean }
