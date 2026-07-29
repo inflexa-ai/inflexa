@@ -1173,7 +1173,10 @@ describe("selectDefaultModel", () => {
         rmSync(env.configPath, { force: true });
     });
 
-    const writeBoth = (id: string) => writeAgentModel("conversation", id).andThen(() => writeAgentModel("sandbox", id));
+    const writeBoth = (id: string) =>
+        writeAgentModel("conversation", id)
+            .andThen(() => writeAgentModel("sandbox", id))
+            .andThen(() => writeAgentModel("utility", id));
 
     function deps(over: Partial<Parameters<typeof selectDefaultModel>[0]>): Parameters<typeof selectDefaultModel>[0] {
         return {
@@ -1198,9 +1201,9 @@ describe("selectDefaultModel", () => {
         expect(readConfig().models).toBeUndefined();
     });
 
-    test("an explicit pick pins BOTH user-facing agents to the chosen id", async () => {
+    test("an explicit pick pins every model role to the chosen id", async () => {
         await selectDefaultModel(deps({ candidates: async () => ["claude-pick"], prompt: async () => ({ auto: false, modelId: "claude-pick" }) }));
-        expect(persistedAgents()).toEqual({ conversation: "claude-pick", sandbox: "claude-pick" });
+        expect(persistedAgents()).toEqual({ conversation: "claude-pick", sandbox: "claude-pick", utility: "claude-pick" });
     });
 
     test("the offered list hides a not_found model but keeps an inconclusive one", async () => {
@@ -1254,7 +1257,7 @@ describe("selectDefaultModel", () => {
         expect(readConfig().models).toBeUndefined();
     });
 
-    test("no offerable list → manual entry: a served typed id pins BOTH agents", async () => {
+    test("no offerable list → manual entry: a served typed id pins every model role", async () => {
         await selectDefaultModel(
             deps({
                 candidates: async () => ["claude-404"],
@@ -1262,7 +1265,7 @@ describe("selectDefaultModel", () => {
                 check: async (id) => (id === "claude-x" ? "served" : "not_found"),
             }),
         );
-        expect(persistedAgents()).toEqual({ conversation: "claude-x", sandbox: "claude-x" });
+        expect(persistedAgents()).toEqual({ conversation: "claude-x", sandbox: "claude-x", utility: "claude-x" });
     });
 
     test("no offerable list → manual entry declined keeps Auto — nothing persisted", async () => {
@@ -1291,7 +1294,7 @@ describe("selectDefaultModel", () => {
 
     // An unanswered listing means the same round-trip would only time out again on the typed id, and its
     // `inconclusive` verdict persists anyway — so the id is trusted rather than bought with a silent wait.
-    test("an unavailable listing trusts the typed id — no second check, still pins BOTH agents", async () => {
+    test("an unavailable listing trusts the typed id — no second check, still pins every model role", async () => {
         const checked: string[] = [];
         await selectDefaultModel(
             deps({
@@ -1304,7 +1307,7 @@ describe("selectDefaultModel", () => {
             }),
         );
         expect(checked).toEqual([]);
-        expect(persistedAgents()).toEqual({ conversation: "claude-unlisted", sandbox: "claude-unlisted" });
+        expect(persistedAgents()).toEqual({ conversation: "claude-unlisted", sandbox: "claude-unlisted", utility: "claude-unlisted" });
     });
 
     test("a sweep that rules out EVERY candidate also routes to manual entry", async () => {
@@ -1530,8 +1533,8 @@ describe("setup() — batch orchestration", () => {
             baseURL: "https://gw.corp/v1",
             auth: { kind: "command", command: "printf tok%s _123", scheme: "x-api-key" },
         });
-        // A batch model answer pins BOTH user-facing agents.
-        expect(models()?.agents).toEqual({ conversation: "m-1", sandbox: "m-1" });
+        // A batch model answer pins every model role.
+        expect(models()?.agents).toEqual({ conversation: "m-1", sandbox: "m-1", utility: "m-1" });
         // Token-free by construction: the source was RUN (the probe minted `tok_123` and sent it), and
         // only the command + scheme were written.
         expect(JSON.stringify(readConfig())).not.toContain("tok_123");
@@ -1625,7 +1628,7 @@ describe("setup() — batch orchestration", () => {
         await runSetup(batch({ ...directFlags }, { validate: false }));
 
         expect(process.exitCode).toBe(0);
-        expect(models()?.agents).toEqual({ conversation: "m-1", sandbox: "m-1" });
+        expect(models()?.agents).toEqual({ conversation: "m-1", sandbox: "m-1", utility: "m-1" });
         expect((models()?.connection as Record<string, unknown>).auth).toEqual({ kind: "command", command: "printf tok%s _123", scheme: "x-api-key" });
     });
 
@@ -1776,7 +1779,7 @@ describe("setup() — batch orchestration", () => {
             expect(models()?.agents).toBeUndefined();
         });
 
-        test("an inconclusive check proceeds and pins BOTH agents", async () => {
+        test("an inconclusive check proceeds and pins every model role", async () => {
             // Every route 404s with an unparseable body — exactly what an unauthenticated pre-staged proxy
             // answers, and what `checkModelAccess` classifies as `inconclusive` rather than a verdict.
             routeFetch({});
@@ -1784,7 +1787,7 @@ describe("setup() — batch orchestration", () => {
             await runSetup(batch({ model: "claude-maybe" }));
 
             expect(process.exitCode).toBe(0);
-            expect(models()?.agents).toEqual({ conversation: "claude-maybe", sandbox: "claude-maybe" });
+            expect(models()?.agents).toEqual({ conversation: "claude-maybe", sandbox: "claude-maybe", utility: "claude-maybe" });
         });
     });
 
@@ -1958,7 +1961,7 @@ describe("setup() — batch orchestration", () => {
             // The connection mode and the wire protocol were both answered, so no select ran at all.
             expect(selects).toEqual([]);
             expect(models()?.connection).toEqual({ mode: "direct", provider: "openai", baseURL: "https://gw.corp/v1", protocol: "openai-compatible" });
-            expect(models()?.agents).toEqual({ conversation: "m-1", sandbox: "m-1" });
+            expect(models()?.agents).toEqual({ conversation: "m-1", sandbox: "m-1", utility: "m-1" });
         });
 
         test("an answered `--base-url` suppresses the ecosystem-adoption ladder entirely", async () => {
@@ -2130,7 +2133,7 @@ describe("setup() — batch orchestration", () => {
                 flags: { ...direct, model: "pinned-1" },
                 options: offline,
                 effect: (run) => {
-                    expect(run.agents).toEqual({ conversation: "pinned-1", sandbox: "pinned-1" });
+                    expect(run.agents).toEqual({ conversation: "pinned-1", sandbox: "pinned-1", utility: "pinned-1" });
                 },
             },
             "connection.auth": authCommandCase,
