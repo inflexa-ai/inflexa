@@ -145,6 +145,19 @@ export const IGNORED_WALK_DIRS: ReadonlySet<string> = new Set([
 
 const WALK_EVERYTHING: ReadonlySet<string> = new Set();
 
+/** The single flat mount every CLI-staged file lands under (`StagedInput.mountName`). */
+const LOCAL_MOUNT_NAME = "local";
+
+/**
+ * The staged tree's root relative to the data dir: `inputs/{LOCAL_MOUNT_NAME}`. Three places derive
+ * from this ONE value and compare the results against each other — the manifest's `relativePath`
+ * ({@link walkInputFiles}), the reconcile walk's root ({@link reconcileStagedTree}), and the
+ * already-materialized predicate ({@link isInputSetMaterialized}). A divergence between them is not a
+ * type error: it makes the predicate compare a source against a staged path the manifest never wrote,
+ * so it reports drift for a set that is in fact materialized. Structural coupling, not a comment-kept one.
+ */
+const LOCAL_MOUNT_SUBDIR = join("inputs", LOCAL_MOUNT_NAME);
+
 /**
  * Recursively enumerate all files under `dir`, returning paths relative to `dir`.
  * Directories are traversed, not yielded; directories named in `ignoredDirs` are
@@ -212,7 +225,7 @@ async function materializeStagedFile(file: InputFile, targetDir: string): Promis
 
     return ok({
         fileId: file.fileId,
-        mountName: "local",
+        mountName: LOCAL_MOUNT_NAME,
         key: file.key,
         fileName: basename(file.absPath),
         hash: hashResult.value,
@@ -255,7 +268,7 @@ function pruneEmptyDirs(dir: string): Result<void, FsError> {
  * skips, or they would linger forever.
  */
 function reconcileStagedTree(targetDir: string, staged: StagedInput[]): Result<void, FsError> {
-    const localRoot = join(targetDir, "inputs", "local");
+    const localRoot = join(targetDir, LOCAL_MOUNT_SUBDIR);
     if (!existsSync(localRoot)) return ok(undefined);
 
     const existingResult = walkFiles(localRoot, WALK_EVERYTHING);
@@ -348,10 +361,10 @@ function walkInputFiles(analysisId: string): Result<InputFile[], DbError | Stagi
             if (walkResult.isErr()) return err({ type: "staging_failed", cause: walkResult.error });
             for (const subpath of walkResult.value) {
                 const key = join(keyRoot, subpath);
-                files.push({ input, absPath: join(absPath, subpath), key, fileId: deriveFileId(input, subpath), relativePath: join("inputs", "local", key) });
+                files.push({ input, absPath: join(absPath, subpath), key, fileId: deriveFileId(input, subpath), relativePath: join(LOCAL_MOUNT_SUBDIR, key) });
             }
         } else {
-            files.push({ input, absPath, key: keyRoot, fileId: deriveFileId(input), relativePath: join("inputs", "local", keyRoot) });
+            files.push({ input, absPath, key: keyRoot, fileId: deriveFileId(input), relativePath: join(LOCAL_MOUNT_SUBDIR, keyRoot) });
         }
     }
     return ok(files);
@@ -492,7 +505,7 @@ export function isInputSetMaterialized(analysisId: string, targetDir: string): R
         // is work — so the set is not materialized as staging would leave it. The walk passes no ignore
         // set, exactly as `reconcileStagedTree` does: it must see files staged under names the staging
         // walk now skips, since those are precisely the ones reconciliation would remove.
-        const localRoot = join(targetDir, "inputs", "local");
+        const localRoot = join(targetDir, LOCAL_MOUNT_SUBDIR);
         if (!existsSync(localRoot)) return expected.size === 0;
         const existingResult = walkFiles(localRoot, WALK_EVERYTHING);
         if (existingResult.isErr()) return false;
