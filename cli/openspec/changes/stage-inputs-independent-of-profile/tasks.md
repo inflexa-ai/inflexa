@@ -17,7 +17,7 @@
 - [x] 3.2 In `ensureProfileAtParity`, move materialization above the profile-status gates for the non-empty-input branch: skip it only for `running` (a live sandbox is reading the tree) and for `completed`-at-parity (its set is materialized by construction). Gate the call on `isInputSetMaterialized` so an unchanged set is not re-hashed.
 - [x] 3.3 On a staging failure, return the `failed` outcome with the staging reason and do not reach the profile decision — no seed, no trigger.
 - [x] 3.4 Remove the `failed` special case from the drift rule: when the row is `failed` and the set is not materialized (i.e. it drifted), claim `failed → running` via `tryRetryDataProfile` then `runDataProfile`, the same recovery `forceReprofile` performs. When the set is unchanged, keep returning `skipped_failed`.
-- [x] 3.5 Add `staged: boolean` to `ProfileParityOutcome` and populate it on every variant, defined as "the check finished with the current input set materialized" — true when this check staged it, found it already materialized, or skipped on a completed-at-parity row; false on a staging failure, an empty input set, or the `running` skip. Keep `kind` describing the profile decision only, so both drivers' exhaustive switches keep compiling untouched.
+- [x] 3.5 Add a `materialized` flag to `ProfileParityOutcome` and populate it on every variant, defined as "the check finished with the current input set materialized" — true when this check staged it, found it already materialized, or skipped on a completed-at-parity row; false on a staging failure, an empty input set, or the `running` skip. Keep `kind` describing the profile decision only, so both drivers' exhaustive switches keep compiling untouched.
 - [x] 3.6 Update `forceReprofile` to use the same split so the two entry points cannot drift on what materialization means; force still stages unconditionally past its live-run check.
 - [x] 3.7 Comment the `already_running` skip with why staging is suppressed there (the reconcile-delete under a live sandbox), cross-referencing the existing `TODO(robustness)` rather than duplicating it.
 
@@ -34,7 +34,7 @@
 
 ## 6. Revise the pinned tests
 
-- [x] 6.1 Rewrite `profile_trigger.test.ts:261` (`"a failed row is skipped_failed — never staged, seeded, or triggered"`): a failed row whose input set is already materialized returns `skipped_failed` and stages nothing — `{stage: false, seed: false, trigger: false}` — while the outcome still reports the set as materialized (`staged: true`, per the outcome definition in the tui-harness-chat delta). "Unchanged" and "already materialized" are the same condition here, since a failed row records no signatures of its own.
+- [x] 6.1 Rewrite `profile_trigger.test.ts:261` (`"a failed row is skipped_failed — never staged, seeded, or triggered"`): a failed row whose input set is already materialized returns `skipped_failed` and stages nothing — `{stage: false, seed: false, trigger: false}` — while the outcome still reports the set as materialized (`materialized: true`, per the outcome definition in the tui-harness-chat delta). "Unchanged" and "already materialized" are the same condition here, since a failed row records no signatures of its own.
 - [x] 6.2 Add the drift case: a failed row whose set is not materialized stages, retry-claims, and runs.
 - [x] 6.3 Add the cheap-path case: a `completed`-at-parity row neither stages nor hashes.
 - [x] 6.4 Add the staging-failure case: the outcome is `failed` with the staging reason, and seed/trigger never ran.

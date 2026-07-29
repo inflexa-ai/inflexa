@@ -115,7 +115,7 @@ describe("ensureProfileAtParity — empty input set", () => {
     test("a settled profile over an emptied input set is cleared", async () => {
         const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set<string>()), loadStatus: () => okAsync(completedWith([file("f1")])) });
         const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);
-        expect(outcome).toEqual({ kind: "cleared", staged: false });
+        expect(outcome).toEqual({ kind: "cleared", materialized: false });
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
     });
 
@@ -125,7 +125,7 @@ describe("ensureProfileAtParity — empty input set", () => {
             loadStatus: () => okAsync(completedWith([file("f1")])),
             clear: () => okAsync(false),
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", staged: false });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: false });
     });
 
     test("a clear fault is failed", async () => {
@@ -147,7 +147,7 @@ describe("ensureProfileAtParity — empty input set", () => {
                 return okAsync(true);
             },
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "no_inputs", staged: false });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "no_inputs", materialized: false });
         expect(clearCalled).toBe(false);
     });
 
@@ -161,7 +161,7 @@ describe("ensureProfileAtParity — empty input set", () => {
                 return okAsync(true);
             },
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", staged: false });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: false });
         expect(clearCalled).toBe(false);
     });
 });
@@ -173,9 +173,9 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
             loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
         });
         const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);
-        // `staged` is the materialization STATE, not this drive's action: a profile at parity was taken
+        // `materialized` is the materialization STATE, not this drive's action: a profile at parity was taken
         // over the set now on disk, so the files are there even though nothing was written here.
-        expect(outcome).toEqual({ kind: "already_profiled", staged: true });
+        expect(outcome).toEqual({ kind: "already_profiled", materialized: true });
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
     });
 
@@ -184,7 +184,7 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
             enumerate: () => ok(enumerated([file("f1"), file("f2")])),
             loadStatus: () => okAsync(completedWith([file("f2"), file("f1")])),
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", staged: true });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
     });
 
     test("a completed profile whose set drifted re-profiles (restarted)", async () => {
@@ -193,7 +193,7 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
             loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
             trigger: async () => "restarted",
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, staged: true });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
         expect(ran.stage).toBe(true);
     });
 
@@ -209,7 +209,7 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
             loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
             trigger: async () => "restarted",
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, staged: true });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
         // Staging and seeding both ran (no early failure); the overridden `trigger` seam stands in for
         // the dispatch, so `ran.trigger` stays false exactly as the sibling drift tests leave it.
         expect(ran.stage).toBe(true);
@@ -231,7 +231,7 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
             loadStatus: () => okAsync(completedWith([file("f1", 10, 1000), file("f2")])),
             trigger: async () => "restarted",
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, staged: true });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
         expect(ran.stage).toBe(true);
     });
 
@@ -263,12 +263,12 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
         expect(ran.stage).toBe(true);
     });
 
-    test("a failed row whose set is still materialized is skipped_failed — reported staged, nothing written", async () => {
+    test("a failed row whose set is still materialized is skipped_failed — reported materialized, nothing written", async () => {
         // The failed attempt's own input set is the one on disk, so the failure IS evidence about it:
         // materialization has nothing to do, and re-running it unasked is the loop managed parity
         // refuses. Retry stays deliberate ({@link forceReprofile}).
         //
-        // `staged: true` alongside `{stage: false}` is the point of the field, not a contradiction: it
+        // `materialized: true` alongside `{stage: false}` is the point of the field, not a contradiction: it
         // reports the materialization STATE the check finished in — the predicate just confirmed the
         // files are on disk — never whether this drive did the writing.
         const { seams, ran } = trackingSeams({
@@ -276,7 +276,7 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
             loadStatus: () => okAsync(statusOf("failed")),
             materialized: () => ok(true),
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "skipped_failed", staged: true });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "skipped_failed", materialized: true });
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
     });
 
@@ -299,7 +299,7 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
                 ranRun = true;
             },
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, staged: true });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
         expect(ran.stage).toBe(true);
         expect(ran.seed).toBe(true);
         expect(claimed).toBe(true);
@@ -308,7 +308,7 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
         expect(ran.trigger).toBe(false);
     });
 
-    test("a failed row whose retry claim is lost is failed — the files are still staged", async () => {
+    test("a failed row whose retry claim is lost is failed — the files are still materialized", async () => {
         // Another attempt moved the row on between our read and the claim. The profile decision fails,
         // but materialization already happened and is reported, so the caller can tell "the inputs are
         // on disk but profiling did not run" from "nothing happened".
@@ -319,7 +319,7 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
         });
         const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);
         expect(outcome.kind).toBe("failed");
-        expect(outcome.staged).toBe(true);
+        expect(outcome.materialized).toBe(true);
         expect(ran.stage).toBe(true);
     });
 
@@ -331,7 +331,7 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
             },
         });
         const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);
-        expect(outcome).toEqual({ kind: "failed", reason: "staging inputs failed (staging_failed)", staged: false });
+        expect(outcome).toEqual({ kind: "failed", reason: "staging inputs failed (staging_failed)", materialized: false });
         // Materialization is a precondition for seeding: there is nothing coherent to decide about a
         // profile over a tree that did not materialize.
         expect(ran.seed).toBe(false);
@@ -350,20 +350,20 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
                 return ok(true);
             },
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", staged: true });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_profiled", materialized: true });
         expect(askedMaterialized).toBe(false);
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
     });
 
     test("a pending / never-profiled analysis triggers (not restarted)", async () => {
         const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set(["f1", "f2"])), loadStatus: () => okAsync(null) });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: false, staged: true });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: false, materialized: true });
         expect(ran.stage).toBe(true);
     });
 
     test("a running profile skips without staging", async () => {
         const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set(["f1", "f2"])), loadStatus: () => okAsync(statusOf("running")) });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", staged: false });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: false });
         expect(ran.stage).toBe(false);
     });
 });
@@ -404,7 +404,7 @@ describe("ensureProfileAtParity — faults", () => {
 
     test("a trigger CAS lost to another attempt is already_running", async () => {
         const { seams } = trackingSeams({ trigger: async () => "already_running" });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", staged: true });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: true });
     });
 
     test("a trigger failure is failed with a reason (parity never retries)", async () => {
@@ -450,7 +450,7 @@ describe("ensureProfileAtParity — trigger path (real seed)", () => {
 
         const outcome = await ensureProfileAtParity(runtime, ANALYSIS, seams);
 
-        expect(outcome).toEqual({ kind: "triggered", restarted: false, staged: true });
+        expect(outcome).toEqual({ kind: "triggered", restarted: false, materialized: true });
         expect(capturedParams).not.toBeNull();
         // The params profile.ts builds: local auth, the cli analysis id, the manifest verbatim.
         expect(capturedParams!.analysisId).toBe(ANALYSIS.id);
@@ -477,14 +477,14 @@ describe("ensureProfileAtParity — orphaned-profile reconcile (S2)", () => {
             },
             loadStatus: () => (reconciled ? okAsync(null) : okAsync(statusOf("running"))),
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: false, staged: true });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: false, materialized: true });
     });
 
     test("a reconcile fault is swallowed (best-effort) — parity still proceeds", async () => {
         const { seams } = trackingSeams({
             reconcile: () => errAsync({ type: "query_failed", op: "reconcileOrphanedDataProfile", cause: new Error("db blip") }),
         });
-        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: false, staged: true });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: false, materialized: true });
     });
 });
 
@@ -495,7 +495,7 @@ describe("forceReprofile", () => {
             loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
             trigger: async () => "restarted",
         });
-        expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, staged: true });
+        expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
         expect(ran.stage).toBe(true);
     });
 
@@ -517,19 +517,19 @@ describe("forceReprofile", () => {
 
     test("an empty input set is no_inputs — nothing staged", async () => {
         const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set<string>()) });
-        expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "no_inputs", staged: false });
+        expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "no_inputs", materialized: false });
         expect(ran.stage).toBe(false);
     });
 
     test("a live run is already_running — nothing staged", async () => {
         const { seams, ran } = trackingSeams({ loadStatus: () => okAsync(statusOf("running")) });
-        expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", staged: false });
+        expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: false });
         expect(ran.stage).toBe(false);
     });
 
     test("a trigger CAS lost passes through as already_running", async () => {
         const { seams } = trackingSeams({ trigger: async () => "already_running" });
-        expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", staged: true });
+        expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: true });
     });
 
     test("a failed row is retry-claimed and re-run → triggered (restarted)", async () => {
@@ -541,7 +541,7 @@ describe("forceReprofile", () => {
                 ranRun = true;
             },
         });
-        expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, staged: true });
+        expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
         expect(ranRun).toBe(true);
     });
 

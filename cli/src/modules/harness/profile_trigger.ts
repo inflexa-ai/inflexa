@@ -48,13 +48,13 @@ import type { HarnessRuntime } from "./runtime.ts";
  * - `failed` — a step faulted (enumerate, ledger read, clear, staging, seed, or the trigger/retry
  *   itself); `reason` is a one-line, user-facing explanation the caller surfaces as a warning.
  *
- * `kind` describes the PROFILE decision only. The orthogonal `staged` flag reports the materialization
+ * `kind` describes the PROFILE decision only. The orthogonal `materialized` flag reports the materialization
  * STATE the check finished in — "the current input set is on disk" — NOT whether this drive did the
  * writing. So `already_profiled` (a completed profile at parity) and `skipped_failed` (a `failed` row the
- * predicate found materialized) both carry `staged: true` having written nothing, which is the point: a
+ * predicate found materialized) both carry `materialized: true` having written nothing, which is the point: a
  * caller can tell "the files are on disk but profiling did not run" from "nothing happened".
  *
- * `staged` is FIXED for five of the seven kinds, so the type pins each to a literal rather than `boolean`
+ * `materialized` is FIXED for five of the seven kinds, so the type pins each to a literal rather than `boolean`
  * — the union states which states are bivalent instead of a comment claiming it. A path that reached a
  * (re-)trigger always materialized first (`triggered` → `true`); the two write-nothing-but-on-disk cases
  * above are `true`; `cleared`/`no_inputs` describe an empty set with nothing to stage (`false`). Only two
@@ -67,20 +67,20 @@ import type { HarnessRuntime } from "./runtime.ts";
  * Kinds for each staging×profile combination were rejected — they would multiply the union and every
  * consumer's switch to express two facts that compose.
  *
- * No consumer branches on `staged` today; the drivers (`tui/hooks/profile_parity.ts`) switch on `kind`
+ * No consumer branches on `materialized` today; the drivers (`tui/hooks/profile_parity.ts`) switch on `kind`
  * alone. It is reported now because the check is the only place that knows it, so that a later
  * caller — a "files staged, profiling deferred" affordance — reads a recorded fact instead of
  * re-deriving one. Populated and tested on every variant so that consumer inherits a correct value, not
  * a retrofit.
  */
 export type ProfileParityOutcome =
-    | { kind: "triggered"; restarted: boolean; staged: true }
-    | { kind: "already_profiled"; staged: true }
-    | { kind: "already_running"; staged: boolean }
-    | { kind: "cleared"; staged: false }
-    | { kind: "skipped_failed"; staged: true }
-    | { kind: "no_inputs"; staged: false }
-    | { kind: "failed"; reason: string; staged: boolean };
+    | { kind: "triggered"; restarted: boolean; materialized: true }
+    | { kind: "already_profiled"; materialized: true }
+    | { kind: "already_running"; materialized: boolean }
+    | { kind: "cleared"; materialized: false }
+    | { kind: "skipped_failed"; materialized: true }
+    | { kind: "no_inputs"; materialized: false }
+    | { kind: "failed"; reason: string; materialized: boolean };
 
 /**
  * The effectful seams, injectable so the condition-ladder tests run offline (no Postgres, no Docker,
@@ -221,7 +221,7 @@ async function seedFromManifest(
  * trigger's CAS claims only pending/completed rows, so this is the only route back out of `failed`.
  * Shared by both entry points, which arrive from opposite directions: parity when a `failed` row's input
  * set drifted (the failure is not evidence about the set now on disk), force whenever its trigger reports
- * the row was `failed`. Both have already materialized, hence `staged: true` throughout.
+ * the row was `failed`. Both have already materialized, hence `materialized: true` throughout.
  */
 async function retryFailedRow(
     runtime: HarnessRuntime,
@@ -234,18 +234,18 @@ async function retryFailedRow(
     // here is a CAS-failure query fault, not a ledger-read miss (the caller already read
     // the ledger). Phrase the refusal as a claim failure, not a read failure, so
     // the toast wording stays accurate under this rare race.
-    if (claimResult.isErr()) return { kind: "failed", reason: `could not claim the failed profile to retry (${claimResult.error.type})`, staged: true };
+    if (claimResult.isErr()) return { kind: "failed", reason: `could not claim the failed profile to retry (${claimResult.error.type})`, materialized: true };
     // Lost the claim (`ok(false)`): the row is no longer `failed` — another attempt already moved
     // it on. The command dies with "could not start"; headless, we report a distinct `failed`
     // reason so the caller can word the refusal separately from a start fault.
-    if (!claimResult.value) return { kind: "failed", reason: "could not claim the failed profile to retry", staged: true };
+    if (!claimResult.value) return { kind: "failed", reason: "could not claim the failed profile to retry", materialized: true };
     // Claimed `failed → running`. `runDataProfile` resolves once the run is DISPATCHED (not
     // completed) and compensates the ledger on a rejected start (see its doc), so bridging its
     // promise and mapping ok/err is the headless twin of the command's fire-and-forget `.catch`.
     // A resurrected failure is a re-profile, hence `restarted: true`.
     return await ResultAsync.fromPromise(seams.run(runtime.triggerDeps, params), (cause) => cause).match(
-        (): ProfileParityOutcome => ({ kind: "triggered", restarted: true, staged: true }),
-        (): ProfileParityOutcome => ({ kind: "failed", reason: "the profile workflow could not be started", staged: true }),
+        (): ProfileParityOutcome => ({ kind: "triggered", restarted: true, materialized: true }),
+        (): ProfileParityOutcome => ({ kind: "failed", reason: "the profile workflow could not be started", materialized: true }),
     );
 }
 
@@ -294,11 +294,11 @@ export async function ensureProfileAtParity(
     );
 
     const enumerateResult = seams.enumerate(analysis.id);
-    if (enumerateResult.isErr()) return { kind: "failed", reason: `could not enumerate inputs (${enumerateResult.error.type})`, staged: false };
+    if (enumerateResult.isErr()) return { kind: "failed", reason: `could not enumerate inputs (${enumerateResult.error.type})`, materialized: false };
     const currentSignatures = enumerateResult.value;
 
     const statusResult = await seams.loadStatus(runtime.pool, analysis.id);
-    if (statusResult.isErr()) return { kind: "failed", reason: `could not read the profile ledger (${statusResult.error.type})`, staged: false };
+    if (statusResult.isErr()) return { kind: "failed", reason: `could not read the profile ledger (${statusResult.error.type})`, materialized: false };
     const status = statusResult.value;
 
     if (currentSignatures.size === 0) {
@@ -306,15 +306,15 @@ export async function ensureProfileAtParity(
         // never-profiled analysis is the ordinary "add inputs" state; a live run must never be cleared
         // (its completion write would resurrect half-cleared state); any settled prior profile now
         // describes files that are gone, so clear it.
-        if (status === null) return { kind: "no_inputs", staged: false };
-        if (status.status === "running") return { kind: "already_running", staged: false };
+        if (status === null) return { kind: "no_inputs", materialized: false };
+        if (status.status === "running") return { kind: "already_running", materialized: false };
         const clearResult = await seams.clear(runtime.pool, analysis.id);
-        if (clearResult.isErr()) return { kind: "failed", reason: `could not clear the stale profile (${clearResult.error.type})`, staged: false };
+        if (clearResult.isErr()) return { kind: "failed", reason: `could not clear the stale profile (${clearResult.error.type})`, materialized: false };
         // `clearDataProfile` skips (`ok(false)`) ONLY on a live `running` row — and we returned above
         // for `running`, so a false here means the row flipped to `running` between our status read and
         // the clear (a workflow started concurrently). A live run must never be cleared, so treat that
         // race exactly as the running branch above.
-        return clearResult.value ? { kind: "cleared", staged: false } : { kind: "already_running", staged: false };
+        return clearResult.value ? { kind: "cleared", materialized: false } : { kind: "already_running", materialized: false };
     }
 
     // A non-empty input set. The two states that skip materialization as well as profiling, and nothing
@@ -325,21 +325,21 @@ export async function ensureProfileAtParity(
         // carries as a TODO(robustness) for runs this ladder cannot observe, made concrete by a run it
         // can. The work is deferred, not dropped: the completion edge (`tui/hooks/profile_parity.ts`)
         // re-runs the check when the run reaches either terminal state.
-        return { kind: "already_running", staged: false };
+        return { kind: "already_running", materialized: false };
     }
     if (status?.status === "completed") {
         // A completed profile at parity implies its set is materialized — it is the set that profile was
         // staged for, unchanged since — so this skips the predicate too and keeps the steady-state chat
-        // open (nothing edited) on the stat/readdir path it has always been on. `staged` reports that
+        // open (nothing edited) on the stat/readdir path it has always been on. `materialized` reports that
         // STATE, not whether this drive performed it: the files are on disk, so it is true even though
         // nothing was written here. Inferred rather than checked, which is why the deliberate
         // {@link forceReprofile} / `inflexa profile` stays the repair path for a hand-emptied tree.
         const profiled = profiledSignatures(status);
-        if (profiled !== null && inputSetMatches(currentSignatures, profiled)) return { kind: "already_profiled", staged: true };
+        if (profiled !== null && inputSetMatches(currentSignatures, profiled)) return { kind: "already_profiled", materialized: true };
     }
 
     const dataDirResult = resolveDataDir(analysis, seams);
-    if (dataDirResult.isErr()) return { kind: "failed", reason: dataDirResult.error, staged: false };
+    if (dataDirResult.isErr()) return { kind: "failed", reason: dataDirResult.error, materialized: false };
     const dataDir = dataDirResult.value;
 
     // A `failed` row is the one state where materialization is conditional rather than implied: every
@@ -354,19 +354,19 @@ export async function ensureProfileAtParity(
     if (status?.status === "failed") {
         const materializedResult = seams.materialized(analysis.id, dataDir);
         if (materializedResult.isErr()) {
-            return { kind: "failed", reason: `could not check the staged inputs (${materializedResult.error.type})`, staged: false };
+            return { kind: "failed", reason: `could not check the staged inputs (${materializedResult.error.type})`, materialized: false };
         }
-        // `staged` reports the materialization STATE, not whether this drive performed it: the predicate
+        // `materialized` reports the materialization STATE, not whether this drive performed it: the predicate
         // just confirmed the files are on disk, which is exactly the fact a caller needs to tell "the
         // inputs are materialized but profiling did not run" from "nothing happened".
-        if (materializedResult.value) return { kind: "skipped_failed", staged: true };
+        if (materializedResult.value) return { kind: "skipped_failed", materialized: true };
     }
 
     const stagedResult = await materializeInputs(analysis, dataDir, seams);
-    if (stagedResult.isErr()) return { kind: "failed", reason: stagedResult.error, staged: false };
+    if (stagedResult.isErr()) return { kind: "failed", reason: stagedResult.error, materialized: false };
 
     const paramsResult = await seedFromManifest(runtime, analysis, stagedResult.value, seams);
-    if (paramsResult.isErr()) return { kind: "failed", reason: paramsResult.error, staged: true };
+    if (paramsResult.isErr()) return { kind: "failed", reason: paramsResult.error, materialized: true };
     const params = paramsResult.value;
 
     // The trigger's CAS claims only pending/completed rows, so dispatching it against a row we just read
@@ -378,14 +378,14 @@ export async function ensureProfileAtParity(
     switch (result) {
         case "started":
         case "restarted":
-            return { kind: "triggered", restarted: result === "restarted", staged: true };
+            return { kind: "triggered", restarted: result === "restarted", materialized: true };
         case "already_running":
-            return { kind: "already_running", staged: true };
+            return { kind: "already_running", materialized: true };
         case "failed":
             // A `failed` ledger row took the retry-claim route above, so reaching here means the trigger
             // itself faulted — report it so the UI surfaces it and the user can re-open or run
             // `inflexa profile`.
-            return { kind: "failed", reason: "the profile workflow could not be started", staged: true };
+            return { kind: "failed", reason: "the profile workflow could not be started", materialized: true };
         default: {
             const _exhaustive: never = result;
             throw new Error(`unhandled trigger result: ${JSON.stringify(_exhaustive)}`);
@@ -413,33 +413,33 @@ export async function forceReprofile(runtime: HarnessRuntime, analysis: Analysis
     );
 
     const enumerateResult = seams.enumerate(analysis.id);
-    if (enumerateResult.isErr()) return { kind: "failed", reason: `could not enumerate inputs (${enumerateResult.error.type})`, staged: false };
-    if (enumerateResult.value.size === 0) return { kind: "no_inputs", staged: false };
+    if (enumerateResult.isErr()) return { kind: "failed", reason: `could not enumerate inputs (${enumerateResult.error.type})`, materialized: false };
+    if (enumerateResult.value.size === 0) return { kind: "no_inputs", materialized: false };
 
     const statusResult = await seams.loadStatus(runtime.pool, analysis.id);
-    if (statusResult.isErr()) return { kind: "failed", reason: `could not read the profile ledger (${statusResult.error.type})`, staged: false };
+    if (statusResult.isErr()) return { kind: "failed", reason: `could not read the profile ledger (${statusResult.error.type})`, materialized: false };
     // A live run owns the ledger AND is reading the staged tree; forcing over it would double-profile and
     // reconcile-delete under the sandbox. Every other state is fair game — force skips the drift, the
     // `failed`-state, and the already-materialized gates parity applies, because the user asked for it.
-    if (statusResult.value?.status === "running") return { kind: "already_running", staged: false };
+    if (statusResult.value?.status === "running") return { kind: "already_running", materialized: false };
 
     const dataDirResult = resolveDataDir(analysis, seams);
-    if (dataDirResult.isErr()) return { kind: "failed", reason: dataDirResult.error, staged: false };
+    if (dataDirResult.isErr()) return { kind: "failed", reason: dataDirResult.error, materialized: false };
 
     const stagedResult = await materializeInputs(analysis, dataDirResult.value, seams);
-    if (stagedResult.isErr()) return { kind: "failed", reason: stagedResult.error, staged: false };
+    if (stagedResult.isErr()) return { kind: "failed", reason: stagedResult.error, materialized: false };
 
     const paramsResult = await seedFromManifest(runtime, analysis, stagedResult.value, seams);
-    if (paramsResult.isErr()) return { kind: "failed", reason: paramsResult.error, staged: true };
+    if (paramsResult.isErr()) return { kind: "failed", reason: paramsResult.error, materialized: true };
     const params = paramsResult.value;
 
     const result = await seams.trigger(runtime.triggerDeps, params);
     switch (result) {
         case "started":
         case "restarted":
-            return { kind: "triggered", restarted: result === "restarted", staged: true };
+            return { kind: "triggered", restarted: result === "restarted", materialized: true };
         case "already_running":
-            return { kind: "already_running", staged: true };
+            return { kind: "already_running", materialized: true };
         case "failed":
             // The trigger's CAS claims only pending/completed rows; a `failed` row needs the retry claim.
             // Force is deliberate, so unlike parity it resurrects a failure whose input set is unchanged.

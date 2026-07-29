@@ -73,8 +73,8 @@ describe("driveProfileParity — sidebar poke", () => {
     // `triggered` seeded a running row and `cleared` nulled a stale one; both change ledger state the
     // sidebar's own refresh triggers can't see, so both (and ONLY they) poke it.
     const pokeOutcomes: ProfileParityOutcome[] = [
-        { kind: "triggered", restarted: false, staged: true },
-        { kind: "cleared", staged: false },
+        { kind: "triggered", restarted: false, materialized: true },
+        { kind: "cleared", materialized: false },
     ];
     for (const outcome of pokeOutcomes) {
         test(`${outcome.kind} refreshes the sidebar with the analysis id`, async () => {
@@ -87,11 +87,11 @@ describe("driveProfileParity — sidebar poke", () => {
     // Every other outcome changes no ledger state the sidebar needs, so none of them poke it —
     // `skipped_failed` joins this silent set (a failed row awaits a deliberate retry).
     const silentOutcomes: ProfileParityOutcome[] = [
-        { kind: "already_profiled", staged: true },
-        { kind: "already_running", staged: false },
-        { kind: "no_inputs", staged: false },
-        { kind: "skipped_failed", staged: true },
-        { kind: "failed", reason: "the profile workflow could not be started", staged: false },
+        { kind: "already_profiled", materialized: true },
+        { kind: "already_running", materialized: false },
+        { kind: "no_inputs", materialized: false },
+        { kind: "skipped_failed", materialized: true },
+        { kind: "failed", reason: "the profile workflow could not be started", materialized: false },
     ];
     for (const outcome of silentOutcomes) {
         test(`${outcome.kind} does not refresh the sidebar`, async () => {
@@ -104,25 +104,25 @@ describe("driveProfileParity — sidebar poke", () => {
 
 describe("driveProfileParity — notices", () => {
     test("triggered (restarted: false) raises the first-time Profiling notice", async () => {
-        const { seams, notices } = driverSeams({ kind: "triggered", restarted: false, staged: true });
+        const { seams, notices } = driverSeams({ kind: "triggered", restarted: false, materialized: true });
         await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
         expect(notices).toEqual([{ kind: "info", text: `Profiling "${ANALYSIS.name}" data${GLYPHS.ellipsis}` }]);
     });
 
     test("triggered (restarted: true) words it as Re-profiling", async () => {
-        const { seams, notices } = driverSeams({ kind: "triggered", restarted: true, staged: true });
+        const { seams, notices } = driverSeams({ kind: "triggered", restarted: true, materialized: true });
         await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
         expect(notices).toEqual([{ kind: "info", text: `Re-profiling "${ANALYSIS.name}" data${GLYPHS.ellipsis}` }]);
     });
 
     test("cleared raises an info notice", async () => {
-        const { seams, notices } = driverSeams({ kind: "cleared", staged: false });
+        const { seams, notices } = driverSeams({ kind: "cleared", materialized: false });
         await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
         expect(notices).toEqual([{ kind: "info", text: `Data profile cleared — "${ANALYSIS.name}" has no inputs` }]);
     });
 
     test("failed raises a warn notice carrying the reason", async () => {
-        const { seams, notices } = driverSeams({ kind: "failed", reason: "boom", staged: false });
+        const { seams, notices } = driverSeams({ kind: "failed", reason: "boom", materialized: false });
         await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
         expect(notices).toEqual([{ kind: "warn", text: `Could not start profiling "${ANALYSIS.name}": boom` }]);
     });
@@ -130,10 +130,10 @@ describe("driveProfileParity — notices", () => {
     // Managed-parity skips stay silent — `skipped_failed` especially, since the sidebar already shows
     // the failed state and a toast would nag on every open while retry is deliberate.
     const silentOutcomes: ProfileParityOutcome[] = [
-        { kind: "already_profiled", staged: true },
-        { kind: "already_running", staged: false },
-        { kind: "no_inputs", staged: false },
-        { kind: "skipped_failed", staged: true },
+        { kind: "already_profiled", materialized: true },
+        { kind: "already_running", materialized: false },
+        { kind: "no_inputs", materialized: false },
+        { kind: "skipped_failed", materialized: true },
     ];
     for (const outcome of silentOutcomes) {
         test(`${outcome.kind} raises no notice`, async () => {
@@ -146,7 +146,7 @@ describe("driveProfileParity — notices", () => {
 
 describe("driveProfileParity — mid-check analysis swap guard", () => {
     test("swapped mid-check neither pokes the sidebar nor notifies", async () => {
-        const { seams, refreshedWith, notices } = driverSeams({ kind: "triggered", restarted: false, staged: true });
+        const { seams, refreshedWith, notices } = driverSeams({ kind: "triggered", restarted: false, materialized: true });
         // The open analysis moved off the captured one while `check` was in flight.
         await driveProfileParity(RUNTIME, ANALYSIS, () => "a2", seams);
         expect(refreshedWith).toEqual([]);
@@ -154,7 +154,7 @@ describe("driveProfileParity — mid-check analysis swap guard", () => {
     });
 
     test("unswapped pokes the sidebar and notifies", async () => {
-        const { seams, refreshedWith, notices } = driverSeams({ kind: "triggered", restarted: false, staged: true });
+        const { seams, refreshedWith, notices } = driverSeams({ kind: "triggered", restarted: false, materialized: true });
         await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
         expect(refreshedWith).toEqual([ANALYSIS.id]);
         expect(notices).toEqual([{ kind: "info", text: `Profiling "${ANALYSIS.name}" data${GLYPHS.ellipsis}` }]);
@@ -168,7 +168,7 @@ describe("driveProfileParity — mid-check analysis swap guard", () => {
         const seams: ParityDriverSeams = {
             check: async () => {
                 checked = true;
-                return { kind: "triggered", restarted: false, staged: true };
+                return { kind: "triggered", restarted: false, materialized: true };
             },
             refreshSidebar: async () => {},
             notify: () => {},
@@ -181,38 +181,38 @@ describe("driveProfileParity — mid-check analysis swap guard", () => {
 
 describe("driveForceReprofile — deliberate re-profile speaks its skips", () => {
     test("triggered pokes the sidebar and words the notice by restarted", async () => {
-        const first = forceSeams({ kind: "triggered", restarted: false, staged: true });
+        const first = forceSeams({ kind: "triggered", restarted: false, materialized: true });
         await driveForceReprofile(RUNTIME, ANALYSIS, () => ANALYSIS.id, first.seams);
         expect(first.refreshedWith).toEqual([ANALYSIS.id]);
         expect(first.notices).toEqual([{ kind: "info", text: `Profiling "${ANALYSIS.name}" data${GLYPHS.ellipsis}` }]);
 
-        const again = forceSeams({ kind: "triggered", restarted: true, staged: true });
+        const again = forceSeams({ kind: "triggered", restarted: true, materialized: true });
         await driveForceReprofile(RUNTIME, ANALYSIS, () => ANALYSIS.id, again.seams);
         expect(again.notices).toEqual([{ kind: "info", text: `Re-profiling "${ANALYSIS.name}" data${GLYPHS.ellipsis}` }]);
     });
 
     test("already_running refuses with an info notice and no poke", async () => {
-        const { seams, refreshedWith, notices } = forceSeams({ kind: "already_running", staged: false });
+        const { seams, refreshedWith, notices } = forceSeams({ kind: "already_running", materialized: false });
         await driveForceReprofile(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
         expect(refreshedWith).toEqual([]);
         expect(notices).toEqual([{ kind: "info", text: "A profile run is already in progress" }]);
     });
 
     test("no_inputs refuses with a warn notice and no poke", async () => {
-        const { seams, refreshedWith, notices } = forceSeams({ kind: "no_inputs", staged: false });
+        const { seams, refreshedWith, notices } = forceSeams({ kind: "no_inputs", materialized: false });
         await driveForceReprofile(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
         expect(refreshedWith).toEqual([]);
         expect(notices).toEqual([{ kind: "warn", text: "No inputs to profile — add inputs first" }]);
     });
 
     test("failed raises the same warn notice parity does", async () => {
-        const { seams, notices } = forceSeams({ kind: "failed", reason: "boom", staged: false });
+        const { seams, notices } = forceSeams({ kind: "failed", reason: "boom", materialized: false });
         await driveForceReprofile(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
         expect(notices).toEqual([{ kind: "warn", text: `Could not start profiling "${ANALYSIS.name}": boom` }]);
     });
 
     test("swapped mid-check neither pokes the sidebar nor notifies", async () => {
-        const { seams, refreshedWith, notices } = forceSeams({ kind: "triggered", restarted: false, staged: true });
+        const { seams, refreshedWith, notices } = forceSeams({ kind: "triggered", restarted: false, materialized: true });
         await driveForceReprofile(RUNTIME, ANALYSIS, () => "a2", seams);
         expect(refreshedWith).toEqual([]);
         expect(notices).toEqual([]);
@@ -492,7 +492,7 @@ describe("profile drives serialize", () => {
                     trace.push(`enter ${label}`);
                     await gate;
                     trace.push(`exit ${label}`);
-                    return { kind: "already_profiled", staged: true } as ProfileParityOutcome;
+                    return { kind: "already_profiled", materialized: true } as ProfileParityOutcome;
                 },
                 refreshSidebar: async () => {},
                 notify: () => {},
@@ -533,7 +533,7 @@ describe("profile drives serialize", () => {
                 trace.push("enter force");
                 await forceGate;
                 trace.push("exit force");
-                return { kind: "triggered", restarted: true, staged: true };
+                return { kind: "triggered", restarted: true, materialized: true };
             },
             refreshSidebar: async () => {},
             notify: () => {},
