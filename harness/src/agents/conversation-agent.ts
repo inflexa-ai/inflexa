@@ -11,13 +11,10 @@
  * The system prompt is static composition — SOUL kernel + SOUL conversational
  * + the conversation prompt — with no processor pipeline.
  *
- * `executePlan` is wired here — it launches the DBOS `executeAnalysis` parent
+ * `execute_analysis` is wired here — it launches the DBOS `executeAnalysis` parent
  * workflow under `workflowId = runId` (the bare run UUID) through the
  * `RunLauncher` seam and returns the runId (results are pull-only via
- * `inspectRun` on a later turn). `run_ephemeral`
- * is wired here too — it mints a run authorization, starts the turn-scoped DBOS
- * `ephemeral` workflow, and awaits the result inline; chat disconnect cancels
- * the workflow and it is never recovered. Report authoring is wired here as the
+ * `inspectRun` on a later turn). Report authoring is wired here as the
  * pair `plan_report` (returns the report-brief schema + authoring rules
  * just-in-time as its result) + `submit_report` (validates the composed brief
  * and drives in-process Nunjucks rendering via the `report-builder` agent, no
@@ -86,12 +83,10 @@ import { createUpdateWorkingMemoryTool } from "../tools/memory/index.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import { createListAvailablePackagesTool } from "../tools/sandbox/list-available-packages.js";
 import { createListAvailableRefsTool } from "../tools/sandbox/list-available-refs.js";
-import { createExecutePlanTool } from "../tools/execute-plan.js";
-import { createRunEphemeralTool } from "../tools/run-ephemeral.js";
+import { createExecuteAnalysisTool } from "../tools/execute-analysis.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import { planReportTool, createReportSubmitTool, type SubmitReportDeps } from "../tools/iterate-report.js";
-import type { EphemeralWorkflowInput, EphemeralResult } from "../execution/ephemeral-runner.js";
 import type { Logger } from "../lib/logger.js";
 
 /** Canonical agent id — the single source of truth. */
@@ -119,28 +114,26 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
     readonly workspaceFs: WorkspaceFilesystem;
     /** Model id — provenance / metric label; the provider owns the wire model. */
     readonly model: string;
+    /** Dedicated lower-cost model/provider for ad hoc specialist routing. */
+    readonly utilityProvider: ChatProvider;
+    readonly utilityModel: string;
     /**
      * Registered `executeAnalysis` workflow callable — produced by
-     * `registerExecuteAnalysis` (wired by `assembleCoreRuntime`). `executePlan`
+     * `registerExecuteAnalysis` (wired by `assembleCoreRuntime`). `execute_analysis`
      * launches it through the `RunLauncher` seam to start the run.
      */
     readonly executeAnalysisWorkflow: (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
-    /**
-     * Registered `ephemeral` workflow — `run_ephemeral` mints a run authorization,
-     * starts it, and awaits the result inline within the chat turn.
-     */
-    readonly ephemeralWorkflow: (input: EphemeralWorkflowInput) => Promise<EphemeralResult>;
     /** Workspace-root resolution seam (see workspace/paths.ts). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /**
      * Async-edge run-authorization seam — injected, not constructed here.
-     * `execute_plan` and `run_ephemeral` turn the caller's opaque auth into a
+     * `execute_analysis` turns the caller's opaque auth into a
      * durable `RunSession` through it. The managed root injects the platform
      * realization; the OSS root injects the local one.
      */
     readonly runAuthorizer: RunAuthorizer;
     /**
-     * Durable-run launch seam — `execute_plan` and `run_ephemeral` start their
+     * Durable-run launch seam — `execute_analysis` starts its
      * workflows through it so the durability engine stays out of the tools.
      */
     readonly runLauncher: RunLauncher;
@@ -161,7 +154,7 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
     /**
      * Host resource policy — per-step ceilings + machine budget. `generate_plan`
      * states the ceilings to the planner and validates against them;
-     * `execute_plan` snapshots the budget into the workflow input. Absent,
+     * `execute_analysis` snapshots the budget into the workflow input. Absent,
      * planning guidance and scheduling keep their legacy behavior.
      */
     readonly resourcePolicy?: ResourcePolicy;
@@ -182,8 +175,9 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         embedding,
         workspaceFs,
         model,
+        utilityProvider,
+        utilityModel,
         executeAnalysisWorkflow,
-        ephemeralWorkflow,
         resolveWorkspaceRoot,
         runAuthorizer,
         runLauncher,
@@ -237,24 +231,22 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createListAvailableRefsTool({ ...(refStorePath ? { refStorePath } : {}) }),
         // What is importable inside a sandbox. Reads the same manifest a sandbox agent
         // reads, host-side — so "is scanpy available?" is a manifest lookup here rather
-        // than a whole ephemeral container spun up to run one import.
+        // than launching analysis computation to run one import.
         createListAvailablePackagesTool({ ...(packagesFile ? { packagesFile } : {}) }),
         // Execution.
         createInspectRunTool(pool),
         // The dataset's own record. No file backs it — the DB row is the only copy.
         createInspectDataProfileTool(pool),
         createGeneratePlanTool({ provider, pool, model, resourcePolicy, ...(refStorePath ? { refStorePath } : {}), ...(packagesFile ? { packagesFile } : {}) }),
-        createExecutePlanTool({
+        createExecuteAnalysisTool({
             pool,
             executeAnalysisWorkflow,
             runAuthorizer,
             runLauncher,
             resourcePolicy,
-        }),
-        createRunEphemeralTool({
-            workflow: ephemeralWorkflow,
-            runAuthorizer,
-            runLauncher,
+            utilityProvider,
+            utilityModel,
+            ...(deps.logger ? { logger: deps.logger } : {}),
         }),
         // Report authoring: the always-on `plan_report` trigger delivers the
         // heavy brief schema + rules just-in-time as its result; `submit_report`

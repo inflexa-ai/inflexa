@@ -574,7 +574,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             "to the planner directly. Do NOT summarize or re-type them into this call; you cannot restate that " +
             "record more faithfully than the record itself. Pass only what the profile cannot hold: the research " +
             "question, facts the user told you (analystNotes), prior run results, and their constraints. " +
-            "Returns a structured plan ready for show_plan and execute_plan, or a clarification question if " +
+            "Returns a structured plan ready for show_plan and execute_analysis plan mode, or a clarification question if " +
             "the planner is missing something it cannot infer.",
         inputSchema: z.object({
             researchQuestion: z.string().describe("What the user wants to analyze — their goal and specific questions."),

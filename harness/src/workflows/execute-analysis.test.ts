@@ -254,12 +254,7 @@ interface FakeDepsRecord {
     readonly threadWrites: Array<{ kind: string }>;
 }
 
-function makeDeps(opts: {
-    childResults: Map<string, SandboxStepResult | Error>;
-    pool: FakePool;
-    synthesisEnabled?: boolean;
-    emitProvenance?: (event: RunProvenanceEvent) => void;
-}): {
+function makeDeps(opts: { childResults: Map<string, SandboxStepResult | Error>; pool: FakePool; emitProvenance?: (event: RunProvenanceEvent) => void }): {
     deps: ExecuteAnalysisDeps;
     record: FakeDepsRecord;
 } {
@@ -282,7 +277,6 @@ function makeDeps(opts: {
         resolveWorkspaceRoot: (id: string) => join("/tmp/cortex-execute-analysis-test", id),
         synthesisModel: "test-synthesis-model",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        synthesisEnabled: opts.synthesisEnabled ?? false,
         runCharge: {
             open: async () => {},
             close: async ({ reason }) => {
@@ -324,7 +318,11 @@ function planStep(id: string, dependsOn: readonly string[]): AnalysisStep {
     };
 }
 
-function input(steps: Array<{ id: string; depends_on?: readonly string[] }>, budget?: { cpu: number; memoryGb: number }): ExecuteAnalysisInput {
+function input(
+    steps: Array<{ id: string; depends_on?: readonly string[] }>,
+    budget?: { cpu: number; memoryGb: number },
+    synthesisEnabled?: boolean,
+): ExecuteAnalysisInput {
     const ids = steps.map((s) => s.id);
     return {
         analysisId: "a1",
@@ -336,6 +334,7 @@ function input(steps: Array<{ id: string; depends_on?: readonly string[] }>, bud
         agentByStepId: Object.fromEntries(ids.map((id) => [id, "agent-x"])),
         resourcesByStepId: Object.fromEntries(ids.map((id) => [id, { cpu: 2, memoryGb: 4 }])),
         ...(budget && { budget }),
+        ...(synthesisEnabled !== undefined ? { synthesisEnabled } : {}),
         runSession: {
             identity: { user: "u-1" },
             scope: { kind: "analysis", analysisId: "a1" },
@@ -804,7 +803,6 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
-            synthesisEnabled: true,
             childResults: new Map<string, SandboxStepResult | Error>([
                 ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
                 ["B", { status: "canceled", durationMs: 1, finishReason: null, error: "budget_exceeded" }],
@@ -836,7 +834,6 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            synthesisEnabled: true,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
         dbosState.resultOnStep.set("synthesize-findings", {
@@ -858,7 +855,6 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            synthesisEnabled: true,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
         dbosState.resultOnStep.set("synthesize-findings", {
@@ -880,7 +876,6 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            synthesisEnabled: true,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
         dbosState.throwOnStep.set("synthesize-findings", "synth boom");
@@ -896,13 +891,13 @@ describe("executeAnalysis body", () => {
 
     it("synthesis disabled → no synthesis_status write (ledger columns stay NULL) even when a step completed", async () => {
         const pool = makeFakePool();
-        // synthesisEnabled defaults false in makeDeps — synthesis never runs.
+        // Ad hoc execution explicitly disables synthesis in its durable input.
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
 
         expect(result.status).toBe("completed");
         expect(synthesisWrites(pool)).toEqual([]);
@@ -942,7 +937,6 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            synthesisEnabled: true,
             childResults: new Map<string, SandboxStepResult | Error>([
                 ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
                 ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
@@ -971,7 +965,7 @@ describe("executeAnalysis body", () => {
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
 
-        await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+        await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
 
         const seeds = seedWrites(pool);
         expect(seeds.length).toBe(1);
@@ -984,7 +978,6 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            synthesisEnabled: true,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
         dbosState.resultOnStep.set("synthesize-findings", { findings: [], synthesisStatus: "produced", synthesisReason: null });
@@ -1023,7 +1016,6 @@ describe("executeAnalysis body", () => {
             const pool = makeFakePool();
             const { deps } = makeDeps({
                 pool,
-                synthesisEnabled: true,
                 childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
             });
             dbosState.resultOnStep.set("synthesize-findings", { findings: [], synthesisStatus: outcome, synthesisReason: reason });
@@ -1043,7 +1035,6 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            synthesisEnabled: true,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
         dbosState.throwOnStep.set("synthesize-findings", "synth boom");
@@ -1064,7 +1055,6 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            synthesisEnabled: true,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
         dbosState.throwErrorOnStep.set("synthesize-findings", new DBOSErrors.DBOSWorkflowCancelledError("run-test"));
@@ -1084,11 +1074,10 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            synthesisEnabled: true,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "step died" }]]),
         });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
 
         expect(result.status).toBe("failed");
         expect(synthesisMarkRunning(pool)).toEqual([]);
@@ -1101,7 +1090,6 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            synthesisEnabled: true,
             childResults: new Map<string, SandboxStepResult | Error>([
                 ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
                 ["B", { status: "canceled", durationMs: 1, finishReason: null, error: "budget_exceeded" }],
@@ -1134,7 +1122,7 @@ describe("executeAnalysis body", () => {
             ]),
         });
 
-        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }], undefined, false), deps);
 
         const seeds = pool.queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && q.text.includes("'pending'"));
         expect(seeds.length).toBe(1);
@@ -1219,7 +1207,7 @@ describe("executeAnalysis body", () => {
         });
 
         expect(deps.emitProvenance).toBeUndefined();
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
         expect(result.status).toBe("completed");
     });
 
@@ -1232,7 +1220,7 @@ describe("executeAnalysis body", () => {
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
 
         expect(result.status).toBe("completed");
         // Clock reads, in body order: startedAtMs, step-A settlement, terminal.

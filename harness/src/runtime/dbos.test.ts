@@ -1,16 +1,17 @@
 /**
  * Unit tests for the DBOS bootstrap module. The actual DBOS engine is not
- * launched — these tests cover idempotence, state reporting, and the
- * shutdown error-swallowing contract.
+ * launched — these tests cover idempotence, state reporting, shutdown, and
+ * the legacy pre-recovery migration sweep.
  *
  * End-to-end "launch a real DBOS against a testcontainer" coverage lives
  * with the durable workflow tests (change 8).
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import type { Pool } from "pg";
 
 import { silentLogger } from "../__tests__/setup/logger.js";
-import { __resetDbosStateForTest, __setDbosStateForTest, dbosState, type DbosConfig } from "./dbos.js";
+import { __resetDbosStateForTest, __setDbosStateForTest, dbosState, sweepEphemeralWorkflows, type DbosConfig } from "./dbos.js";
 
 const stubConfig = {} as DbosConfig;
 
@@ -88,5 +89,25 @@ describe("launchDbos / shutdownDbos", () => {
         await shutdownDbos({ logger: silentLogger });
         expect(dbosState().launched).toBe(false);
         expect(stub).toHaveBeenCalled();
+    });
+});
+
+describe("legacy ephemeral workflow migration sweep", () => {
+    it("cancels only pending rows for the current executor before recovery", async () => {
+        const queries: Array<{ text: string; values?: unknown[] }> = [];
+        const pool = {
+            query: async (query: { text: string; values?: unknown[] }) => {
+                queries.push(query);
+                return { rows: [], rowCount: 2 };
+            },
+        } as unknown as Pool;
+
+        await sweepEphemeralWorkflows({ pool, logger: silentLogger, executorId: "executor-1" });
+
+        expect(queries).toHaveLength(1);
+        expect(queries[0]!.text).toContain("status = 'PENDING'");
+        expect(queries[0]!.text).toContain("executor_id = $2");
+        expect(queries[0]!.text).toContain("workflow_uuid LIKE 'ephemeral:%'");
+        expect(queries[0]!.values?.[1]).toBe("executor-1");
     });
 });

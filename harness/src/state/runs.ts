@@ -27,6 +27,18 @@ export interface InsertRunInput {
     mandateExpiresAt?: string | null; // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
 }
 
+export interface RunReservation {
+    readonly row: CortexRunRow;
+    readonly inserted: boolean;
+}
+
+export class RunIdentityCollisionError extends Error {
+    constructor(readonly runId: string) {
+        super(`run id ${runId} already belongs to another analysis`);
+        this.name = "RunIdentityCollisionError";
+    }
+}
+
 /**
  * Raised when `insertRun` collides with the partial-unique index
  * `idx_cortex_runs_active_plan` — i.e., an active run already exists for
@@ -81,6 +93,47 @@ export function insertRun(pool: Querier, input: InsertRunInput): ResultAsync<voi
         }
         return e;
     });
+}
+
+/** Reserve a deterministic run id, treating same-analysis PK conflict as redelivery. */
+export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsync<RunReservation, DbError> {
+    const now = new Date().toISOString();
+    return tryMutation("runs.reserveRunById", async () => {
+        const result = await pool.query({
+            text: `INSERT INTO cortex_runs
+            (run_id, analysis_id, thread_id, workflow_name,
+             status, started_at, plan_id, mandate_jti, mandate_expires_at)
+            VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, $8)
+            ON CONFLICT (run_id) DO NOTHING
+            RETURNING run_id`,
+            values: [
+                input.runId,
+                input.analysisId,
+                input.threadId ?? null,
+                input.workflowName,
+                now,
+                input.planId ?? null,
+                input.mandateJti ?? null,
+                input.mandateExpiresAt ?? null,
+            ],
+        });
+        return (result.rowCount ?? 0) > 0;
+    }).andThen((inserted) =>
+        tryQuery("runs.reserveRunById.reload", async () => {
+            const result = await pool.query({
+                text: `SELECT run_id, analysis_id, thread_id, workflow_name,
+                       status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
+                       mandate_jti, mandate_expires_at, plan_id
+                FROM cortex_runs
+                WHERE run_id = $1`,
+                values: [input.runId],
+            });
+            return result.rows[0] ?? null;
+        }).map((row) => {
+            if (!row || row.analysis_id !== input.analysisId) throw new RunIdentityCollisionError(input.runId);
+            return { row: mapRunRow(row), inserted };
+        }),
+    );
 }
 
 function isPartialUniqueViolation(err: unknown): boolean {

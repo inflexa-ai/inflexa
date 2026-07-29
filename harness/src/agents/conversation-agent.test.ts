@@ -20,14 +20,13 @@ import type { RunLauncher } from "../execution/run-launcher.js";
 function buildAgent(hostTools?: readonly Tool[]) {
     return createConversationAgent({
         provider: {} as ChatProvider,
+        utilityProvider: {} as ChatProvider,
         pool: {} as Pool,
         embedding: {} as EmbeddingProvider,
         workspaceFs: {} as WorkspaceFilesystem,
         model: "anthropic/claude-opus-4-7",
+        utilityModel: "anthropic/claude-haiku-4-5",
         executeAnalysisWorkflow: (async () => {
-            throw new Error("not used at composition time");
-        }) as never,
-        ephemeralWorkflow: (async () => {
             throw new Error("not used at composition time");
         }) as never,
         resolveWorkspaceRoot: (id: string) => join("/sessions", id),
@@ -62,8 +61,8 @@ describe("createConversationAgent", () => {
     });
 
     // "Is Seurat installed?" is a manifest lookup, but without this tool the only way to
-    // answer it is `run_ephemeral` — a whole container spun up to run one import. The
-    // sandbox agents already read this manifest; the agent the user actually asks did not.
+    // answer it is a sandbox run. The sandbox agents already read this manifest;
+    // the agent the user actually asks should not need computation for discovery.
     test("carries package discovery, so an environment question costs no sandbox", () => {
         expect(buildAgent().tools.map((tool) => tool.id)).toContain("list_available_packages");
     });
@@ -104,8 +103,7 @@ describe("createConversationAgent", () => {
             "update_working_memory",
             "inspect_run",
             "inspect_data_profile",
-            "execute_plan",
-            "run_ephemeral",
+            "execute_analysis",
             "plan_report",
             "submit_report",
             "show_user",

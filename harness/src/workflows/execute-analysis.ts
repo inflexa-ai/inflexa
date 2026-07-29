@@ -150,6 +150,11 @@ export interface ExecuteAnalysisInput {
      */
     readonly budget?: MachineBudget;
     /**
+     * Replay-stable run-level synthesis decision. Absent preserves the legacy
+     * behavior for workflows persisted before this field existed.
+     */
+    readonly synthesisEnabled?: boolean;
+    /**
      * Durable `RunSession` minted at the async edge by `executePlan`.
      * Carries the run-authorization credential, identity, scope, and `runFrame.runId`.
      * DBOS replay reconstructs it from the serialized workflow input on
@@ -266,12 +271,6 @@ export interface ExecuteAnalysisDeps {
     readonly bioKeys: BioToolKeys;
     /** Run-level billing-bracket seam (managed: external bracket; OSS: no-op). */
     readonly runCharge: RunCharge;
-    /**
-     * When false, skip run-level synthesis entirely (findings stay empty).
-     * Config, not a seam. Defaults to true.
-     */
-    readonly synthesisEnabled?: boolean;
-
     /** Run-authorization seam — the terminal path revokes through `revoke`. */
     readonly runAuthorizer: RunAuthorizer;
 
@@ -599,7 +598,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // `pending` and the terminal sweep finalizes it to `skipped` — honest
     // ("never ran, never will"), like any never-dispatched DAG step. Its wave
     // sits after every DAG level so ledger-ordered readers render it last.
-    const synthesisEnabled = deps.synthesisEnabled ?? true;
+    const synthesisEnabled = input.synthesisEnabled ?? true;
     const synthesisWave = Math.max(-1, ...levels.values()) + 1;
     await DBOS.runStep(
         async () => {
@@ -667,10 +666,8 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         // recovered replay reuses the original instants (same rule as `startedAtMs`).
         const synthStartedAtMs = await DBOS.now();
         // Mark the seeded `synthesis` row running. The same upsert the DAG children
-        // use: it stamps started_at, and it CREATES the row outright when the seed
-        // never carried it (synthesisEnabled flipped true across a recovery
-        // redeploy) — the mark self-heals rather than trusting the seed's snapshot
-        // of the config. Log-don't-fail: a progress row must never fail an
+        // use: it stamps started_at, and it creates the row outright if a legacy
+        // persisted input did not seed it. Log-don't-fail: a progress row must never fail an
         // otherwise-healthy run. Cancellation still re-propagates — it is not a
         // write failure, and swallowing it here would only defer it one operation.
         try {

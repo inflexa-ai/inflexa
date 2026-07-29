@@ -45,7 +45,7 @@ export type { PreviewPublisher, PreviewMintResult } from "./tools/report/preview
 
 // Run launching.
 export { createDbosRunLauncher } from "./execution/dbos-run-launcher.js";
-export type { RunLauncher, LaunchOptions, LaunchRunOptions, LaunchOutcome } from "./execution/run-launcher.js";
+export type { RunLauncher, LaunchOptions } from "./execution/run-launcher.js";
 
 // Tool primitive.
 export { defineTool, isToolError } from "./tools/define-tool.js";
@@ -198,11 +198,9 @@ export type { CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } fr
 // workspace tree, and the exec-callback envelope pieces (the HTTP→DBOS-topic
 // ingress is the embedder's to host; see the sandbox-server callback protocol).
 
-// DBOS lifecycle. `sweepEphemeralWorkflows` is a pre-launch boot duty: once the
-// `ephemeral` workflow is registered, a host crash mid-run leaves a PENDING
-// `ephemeral:*` row that the next launch's recovery would re-dispatch (a sandbox
-// for a chat turn that no longer exists). The embedder sweeps it with a direct
-// system-DB UPDATE between state-init and `launchDbos` — the only race-free point.
+// DBOS lifecycle. `sweepEphemeralWorkflows` is a pre-launch upgrade migration:
+// older releases could leave PENDING `ephemeral:*` rows that recovery would
+// otherwise re-dispatch. No current workflow creates that prefix.
 export { launchDbos, shutdownDbos, sweepEphemeralWorkflows } from "./runtime/dbos.js";
 export type { DbosConfig } from "./runtime/dbos.js";
 // DBOS workflow-status vocabulary. An embedder that reads its own
@@ -308,8 +306,17 @@ export type { ValidationResult } from "./schemas/validate-plan.js";
 // the run-state calls mirror the chat trigger's reserve → dedup → status flow.
 export { upsertPlan, loadPlan } from "./state/plans.js";
 export type { UpsertPlanInput } from "./state/plans.js";
-export { insertRun, queryActiveRun, updateRunStatus, queryRun, queryRunsByAnalysis, RunDedupCollisionError } from "./state/runs.js";
-export type { InsertRunInput } from "./state/runs.js";
+export {
+    insertRun,
+    reserveRunById,
+    queryActiveRun,
+    updateRunStatus,
+    queryRun,
+    queryRunsByAnalysis,
+    RunDedupCollisionError,
+    RunIdentityCollisionError,
+} from "./state/runs.js";
+export type { InsertRunInput, RunReservation } from "./state/runs.js";
 export { queryStepsByRun } from "./state/step-executions.js";
 export type { CortexRunRow, StepExecutionRow, RunStatus } from "./state/schema.js";
 // The storage-layer error every `state/` Result fails with. Embedders that

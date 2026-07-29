@@ -32,7 +32,7 @@
  * step and throws directly, so the seam forwards its `Promise<void>` as-is.)
  * Workflow consumers (`sandbox-step.ts`) already wrap each seam call in
  * `DBOS.runStep`, so the re-thrown error records the step as failed;
- * non-workflow consumers (`reaper`, `watchdog`, `ephemeral-runner`,
+ * non-workflow consumers (`reaper`, `watchdog`,
  * `data-profile`, `run-exec`) already handle a thrown failure. They are
  * untouched by this wave.
  */

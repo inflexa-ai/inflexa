@@ -12,9 +12,9 @@ describe("parseResourcePolicy", () => {
         expect(parseResourcePolicy(valid)).toEqual(valid);
     });
 
-    it("accepts an optional ephemeral spec", () => {
+    it("strips a legacy ephemeral spec from the parsed policy", () => {
         const policy = { ...valid, ephemeral: { cpu: 2, memoryGb: 4 } };
-        expect(parseResourcePolicy(policy)).toEqual(policy);
+        expect(parseResourcePolicy(policy)).toEqual(valid);
     });
 
     it("accepts per-step ceilings equal to the budget", () => {

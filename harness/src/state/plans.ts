@@ -12,7 +12,7 @@ import type { Querier } from "./db.js";
 
 /**
  * `cortex_plans.plan_id` shape contract — `pln-` followed by 8 lowercase hex
- * chars. The chat trigger (`tools/execute-plan.ts`) enforces the same regex on
+ * chars. The chat trigger (`tools/execute-analysis.ts`) enforces the same regex on
  * its tool input; `upsertPlan` re-asserts it because it accepts a caller-derived
  * id rather than minting one.
  */

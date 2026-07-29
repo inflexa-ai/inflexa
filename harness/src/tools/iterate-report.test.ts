@@ -142,7 +142,7 @@ describe("planReportTool", () => {
         expect(JSON.stringify(value.schema)).toContain("sections");
         expect(typeof value.rules).toBe("string");
         expect(value.rules).toContain("Markdown is NOT a source");
-        expect(value.rules).toContain("run_ephemeral");
+        expect(value.rules).toContain("durable ad hoc analysis");
     });
 });
 

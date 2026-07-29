@@ -109,6 +109,7 @@ const testCParent = DBOS.registerWorkflow(
                 planStepById: { S1: S1_PLAN_STEP },
                 agentByStepId: { S1: "scientific-executor" },
                 resourcesByStepId: { S1: { cpu: 2, memoryGb: 4 } },
+                synthesisEnabled: false,
                 runSession: {
                     identity: { user: "u-1" },
                     scope: { kind: "analysis", analysisId: input.analysisId },
@@ -173,6 +174,7 @@ const testDParent = DBOS.registerWorkflow(
                 planStepById: { S1: S1_PLAN_STEP },
                 agentByStepId: { S1: "scientific-executor" },
                 resourcesByStepId: { S1: { cpu: 2, memoryGb: 4 } },
+                synthesisEnabled: false,
                 runSession: {
                     identity: { user: "u-1" },
                     scope: { kind: "analysis", analysisId: input.analysisId },
@@ -223,7 +225,6 @@ describe("402 budget-pause cascade — parent self-cancel", () => {
             resolveWorkspaceRoot: (id: string) => join(BUDGET_TEST_SESSIONS_DIR, id),
             synthesisModel: "test-model",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            synthesisEnabled: false,
             runCharge: {
                 open: async () => {
                     order.push("openRunningCharge");
@@ -320,7 +321,6 @@ describe("402 budget-pause cascade — parent self-cancel", () => {
             resolveWorkspaceRoot: (id: string) => join(BUDGET_TEST_SESSIONS_DIR, id),
             synthesisModel: "test-model",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            synthesisEnabled: false,
             runCharge: {
                 open: async () => {
                     order.push("openRunningCharge");
