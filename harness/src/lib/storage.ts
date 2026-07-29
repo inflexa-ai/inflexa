@@ -8,7 +8,7 @@
  */
 
 import pg, { type Pool } from "pg";
-import { resolveAppPoolSize } from "../runtime/pools.js";
+import { APP_POOL_ACQUIRE_TIMEOUT_MS, resolveAppPoolSize } from "../runtime/pools.js";
 
 /**
  * Narrow config slice the app pool reads — the six `DB_PG_*` connection
@@ -35,6 +35,9 @@ function poolOptions(config: PoolConfig) {
         // Per-pod app pool; DBOS owns its system-DB connections separately
         // (see the postgres-storage-backend spec). The boot guard checks this fits `max_connections`.
         max: resolveAppPoolSize(config.poolMax),
+        // Acquisition is bounded so a saturated pool fails a caller instead of
+        // hanging it — see `APP_POOL_ACQUIRE_TIMEOUT_MS` for the invariant.
+        connectionTimeoutMillis: APP_POOL_ACQUIRE_TIMEOUT_MS,
         // `pg` accepts `ssl: false` to disable entirely, or an object with
         // `rejectUnauthorized` to tune TLS. We map sslmode to those forms.
         ssl:

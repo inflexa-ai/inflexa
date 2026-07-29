@@ -299,6 +299,17 @@ export type {
 export { registerSandboxStep } from "./workflows/sandbox-step.js";
 export type { SandboxStepDeps, SandboxStepInput, SandboxStepResult, SandboxAgentBuildContext } from "./workflows/sandbox-step.js";
 
+// Run-event read seam — the fine-grained durable channel beside `observeRun`.
+// The two are a deliberate pair, not a duplication: `observeRun` is the coarse,
+// in-process run/step snapshot a workflow hands its host synchronously, and it
+// defers sub-step detail to the run's durable event stream. This is that stream,
+// read back — the per-tool-call activity, file trees, and step summaries a run
+// writes, fanned in from the parent workflow and every sandbox-step child.
+// Nothing in the signature belongs to the durability engine, so an embedder
+// consumes run events without depending on it.
+export { createRunEventStream } from "./execution/run-event-stream.js";
+export type { RunEventStream, RunEventStreamDeps, RunEventSubscribeOptions, RunEventPartHandler } from "./execution/run-event-stream.js";
+
 // Sandbox-agent catalog. `buildAgent` maps a `SandboxAgentBuildContext` onto
 // `SandboxAgentDeps`, then selects the per-step agent by id from this record;
 // `SANDBOX_AGENT_META` is the planner-facing meta the same ids key.
