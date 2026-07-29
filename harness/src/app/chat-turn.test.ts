@@ -5,6 +5,7 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { createThreadHistory } from "../memory/thread-history.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
+import { insertRun, updateRunStatus } from "../state/index.js";
 import { prepareChatTurn } from "./chat-turn.js";
 
 const ANALYSIS_A = "analysis-a";
@@ -87,6 +88,9 @@ describe("prepareChatTurn", () => {
         expect(joined).toContain("earlier question about PCA");
         expect(joined).toContain("earlier answer");
         expect(joined).toContain("run a differential expression analysis please");
+        expect(joined).toContain("[Run Activity]");
+        expect(joined).toContain("No runs are currently running or suspended.");
+        expect(contentText(result.userMessage.content)).not.toContain("[Run Activity]");
     });
 
     it("leaves an existing non-empty title unchanged", async () => {
@@ -111,5 +115,53 @@ describe("prepareChatTurn", () => {
         expect(result.kind).toBe("ok");
         const after = (await store.getThread("t-titled"))._unsafeUnwrap();
         expect(after!.title).toBe("My Existing Title");
+    });
+
+    it("injects analysis-wide running and suspended runs regardless of launching thread", async () => {
+        (
+            await insertRun(pool, { runId: "run-other-thread", analysisId: ANALYSIS_A, threadId: "other-thread", workflowName: "executeAnalysis" })
+        )._unsafeUnwrap();
+        (
+            await insertRun(pool, {
+                runId: "run-suspended",
+                analysisId: ANALYSIS_A,
+                threadId: "another-thread",
+                workflowName: "executeAnalysis",
+            })
+        )._unsafeUnwrap();
+        (await updateRunStatus(pool, "run-suspended", "suspended_insufficient_funds"))._unsafeUnwrap();
+        (await insertRun(pool, { runId: "run-other-analysis", analysisId: ANALYSIS_B, workflowName: "executeAnalysis" }))._unsafeUnwrap();
+
+        const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "current-thread", userInput: "status?" });
+        expect(result.kind).toBe("ok");
+        if (result.kind !== "ok") throw new Error("unreachable");
+
+        const joined = result.messages.map((message) => contentText(message.content)).join("\n");
+        expect(joined).toContain("Running:");
+        expect(joined).toContain("runId: run-other-thread");
+        expect(joined).toContain("Suspended:");
+        expect(joined).toContain("runId: run-suspended");
+        expect(joined).toContain("planId: none");
+        expect(joined).not.toContain("run-other-analysis");
+    });
+
+    it("injects an unavailable state when only the activity read fails", async () => {
+        const activityFailingPool = {
+            query: (query: string | { text: string; values?: unknown[] }, values?: unknown[]) => {
+                const text = typeof query === "string" ? query : query.text;
+                if (text.includes("status IN ('running','suspended_insufficient_funds')")) {
+                    return Promise.reject(new Error("activity unavailable"));
+                }
+                return pool.query(query as never, values as never);
+            },
+        } as unknown as Pool;
+
+        const result = await prepareChatTurn({ pool: activityFailingPool }, { analysisId: ANALYSIS_A, threadId: "unavailable-thread", userInput: "hello" });
+        expect(result.kind).toBe("ok");
+        if (result.kind !== "ok") throw new Error("unreachable");
+
+        const joined = result.messages.map((message) => contentText(message.content)).join("\n");
+        expect(joined).toContain("Run status is temporarily unavailable.");
+        expect(joined).not.toContain("No runs are currently running or suspended.");
     });
 });

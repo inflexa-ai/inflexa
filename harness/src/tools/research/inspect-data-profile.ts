@@ -12,11 +12,9 @@
  * and it is why the record is served in full rather than summarized: an agent that
  * cannot pull a fact here has no fallback but to re-derive it from the raw bytes.
  *
- * Bounded by construction. `inspect_run` is the cautionary counter-example — it caps
- * its query at 50 rows with no `limit` parameter and no signal to the caller, so a
- * 51st run is simply invisible. Here the per-file scope is explicitly paged and always
- * reports `total` and `hasMore`: an elided tail is a fact the model can see and act on,
- * never a silent truncation.
+ * Bounded by construction. Like `inspect_run`, the per-file scope is explicitly
+ * paged and always reports `total` and `hasMore`: an elided tail is a fact the
+ * model can see and act on, never a silent truncation.
  *
  * Lifecycle states are data variants, not errors (the `defineTool` contract): a missing,
  * in-flight, failed, or stale profile is an ordinary, expected outcome the model must be

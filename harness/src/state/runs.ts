@@ -32,6 +32,12 @@ export interface RunReservation {
     readonly inserted: boolean;
 }
 
+/** Bounded run rows paired with the true count before limit/offset. */
+export interface RunPage {
+    readonly runs: CortexRunRow[];
+    readonly total: number;
+}
+
 export class RunIdentityCollisionError extends Error {
     constructor(readonly runId: string) {
         super(`run id ${runId} already belongs to another analysis`);
@@ -224,6 +230,83 @@ export function queryRunsByAnalysis(
             values: [analysisId, limit, offset],
         });
         return result.rows.map(mapRunRow);
+    });
+}
+
+/**
+ * Read the analysis's non-terminal run activity without coupling it to a
+ * conversation thread. The total is counted before the detail limit so a
+ * bounded prompt projection can disclose omitted rows.
+ */
+export function queryNonTerminalRunsByAnalysis(pool: Querier, analysisId: string, limit = 20): ResultAsync<RunPage, DbError> {
+    return tryQuery("runs.queryNonTerminalRunsByAnalysis", async () => {
+        const countResult = await pool.query({
+            text: `SELECT COUNT(*)::int AS total
+            FROM cortex_runs
+            WHERE analysis_id = $1
+              AND status IN ('running','suspended_insufficient_funds')`,
+            values: [analysisId],
+        });
+        const rowsResult = await pool.query({
+            text: `SELECT run_id, analysis_id, thread_id, workflow_name,
+                   status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
+                   mandate_jti, mandate_expires_at, plan_id
+            FROM cortex_runs
+            WHERE analysis_id = $1
+              AND status IN ('running','suspended_insufficient_funds')
+            ORDER BY CASE status
+                         WHEN 'running' THEN 0
+                         WHEN 'suspended_insufficient_funds' THEN 1
+                         ELSE 2
+                     END,
+                     started_at DESC,
+                     run_id DESC
+            LIMIT $2`,
+            values: [analysisId, limit],
+        });
+        return {
+            runs: rowsResult.rows.map(mapRunRow),
+            total: Number(countResult.rows[0]?.total ?? 0),
+        };
+    });
+}
+
+/**
+ * Read one stable inspection page: running first, then suspended, then
+ * terminal history. This is deliberately separate from
+ * {@link queryRunsByAnalysis}, whose chronological order is an embedder/UI
+ * contract.
+ */
+export function queryRunsForInspection(
+    pool: Querier,
+    analysisId: string,
+    { limit = 50, offset = 0 }: { limit?: number; offset?: number } = {},
+): ResultAsync<RunPage, DbError> {
+    return tryQuery("runs.queryRunsForInspection", async () => {
+        const countResult = await pool.query({
+            text: "SELECT COUNT(*)::int AS total FROM cortex_runs WHERE analysis_id = $1",
+            values: [analysisId],
+        });
+        const rowsResult = await pool.query({
+            text: `SELECT run_id, analysis_id, thread_id, workflow_name,
+                   status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
+                   mandate_jti, mandate_expires_at, plan_id
+            FROM cortex_runs
+            WHERE analysis_id = $1
+            ORDER BY CASE status
+                         WHEN 'running' THEN 0
+                         WHEN 'suspended_insufficient_funds' THEN 1
+                         ELSE 2
+                     END,
+                     started_at DESC,
+                     run_id DESC
+            LIMIT $2 OFFSET $3`,
+            values: [analysisId, limit, offset],
+        });
+        return {
+            runs: rowsResult.rows.map(mapRunRow),
+            total: Number(countResult.rows[0]?.total ?? 0),
+        };
     });
 }
 

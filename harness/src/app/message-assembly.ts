@@ -5,12 +5,13 @@
  *
  *   [ ...loadRecent(threadId, budget)            ← stable, cacheable prefix
  *     {user: cortex_analysis_state.context},     ← tail
+ *     {user: runActivityContext},                 ← tail
  *     {user: render(workingMemory)},             ← tail
  *     {user: normalizeUnicode(redactSecrets(input))} ]  ← tail
  *
  * `system + tools + history` is the cacheable prefix — it only extends
- * turn-to-turn. Working memory and analysis context go in the **tail** as
- * `user` messages: working memory changes every turn, so a system-message
+ * turn-to-turn. Run activity, working memory, and analysis context go in the
+ * **tail** as `user` messages: they change every turn, so a system-message
  * placement would bust the Anthropic cache prefix.
  *
  * Sanitization (`redactSecrets`, `normalizeUnicode`) is applied **once**, to
@@ -47,6 +48,8 @@ export interface AssembleMessagesArgs {
     readonly userInput: string;
     /** `cortex_analysis_state.context`, already read by the route. `null` when absent. */
     readonly analysisContext: string | null;
+    /** Fresh, non-persisted analysis-wide run activity rendered by chat-turn preparation. */
+    readonly runActivityContext: string;
     /** The conversation message store — supplies the history window. */
     readonly history: ThreadHistory;
     /** The working-memory store — rendered into the tail. */
@@ -90,6 +93,11 @@ export async function assembleMessages(args: AssembleMessagesArgs): Promise<Asse
             content: `[Analysis Context]\n${args.analysisContext}`,
         });
     }
+
+    tail.push({
+        role: "user",
+        content: args.runActivityContext,
+    });
 
     // Working memory — agent-authored, trusted. Always injected (its rendered
     // form names the sections even when empty).

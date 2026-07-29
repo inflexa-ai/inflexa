@@ -36,10 +36,12 @@ export {
     setRunSynthesisOutcome,
     queryRun,
     queryActiveRun,
+    queryNonTerminalRunsByAnalysis,
+    queryRunsForInspection,
     queryRunsByAnalysis,
     queryRunsByThread,
 } from "./runs.js";
-export type { InsertRunInput, RunReservation } from "./runs.js";
+export type { InsertRunInput, RunPage, RunReservation } from "./runs.js";
 
 export { insertStepExecution, seedStepExecutions, sweepPendingStepExecutions, updateStepExecution, queryStepsByRun } from "./step-executions.js";
 export type { InsertStepExecutionInput, SeedStepExecutionRow, UpdateStepExecutionInput } from "./step-executions.js";

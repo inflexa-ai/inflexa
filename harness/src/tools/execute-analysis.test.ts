@@ -334,7 +334,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             },
         });
         const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
-        expect((result as { runId: string }).runId).toBe("r-existing");
+        expect(result).toMatchObject({ runId: "r-existing", status: "in_progress" });
         expect(mintCalls).toBe(0);
         expect(dispatched).toBe(false);
         // The dedup pre-check is the only query that touched cortex_runs.
@@ -388,10 +388,14 @@ describe("createExecuteAnalysisTool plan mode", () => {
             },
         });
 
-        const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap() as { runId: string };
+        const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap() as {
+            runId: string;
+            status: string;
+        };
 
         expect(launches).toHaveLength(1);
         expect(launches[0]!.workflowId).toBe(result.runId);
+        expect(result.status).toBe("in_progress");
         expect(revokes).toHaveLength(0);
     });
 

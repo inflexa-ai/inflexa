@@ -73,7 +73,12 @@ export interface RunAgentOptions {
 export async function runAgent(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
     const { provider, signal, emit, runStep } = opts;
     const formatStepName = opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER;
-    const isFatalLoopError = opts.isFatalLoopError ?? (() => false);
+    const configuredFatalLoopError = opts.isFatalLoopError ?? (() => false);
+    // AbortError is control flow, not a tool failure. Always compose it with the
+    // host's fatal predicate so request cancellation cannot be converted into a
+    // model-visible error result and retried by the loop.
+    const isFatalLoopError = (err: unknown): boolean =>
+        ((err instanceof Error || err instanceof DOMException) && err.name === "AbortError") || configuredFatalLoopError(err);
     if (agent.tools.length > 0 && !provider.capabilities.toolCalling) {
         throw new Error(`Provider/model cannot run tool-required agent "${agent.id}"`);
     }
