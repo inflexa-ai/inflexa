@@ -5,43 +5,41 @@ The embedding seam between the cli and `@inflexa-ai/harness`: a lazy, process-si
 ## Requirements
 ### Requirement: On-demand composition of the embedded harness runtime
 
-The system SHALL provide a composition module that boots the embedded harness runtime
-on first use and reuses it for the remainder of the process (module singleton). Boot
-SHALL sequence: ensure Postgres readiness (via the infra module); **in callback
-transport mode only**, start the exec-callback listener; register the durable
-workflows with their fully-realized deps — the child sandbox-step workflow BEFORE the
-execute-analysis parent (the parent's deps close over the registered child callable),
-plus the data-profile workflow and the sandbox-hygiene scheduled workflows — then
-launch DBOS, so every registration lands in one pre-launch cohort. The CLI runs in
-**poll** transport mode by default, in which the sandbox is polled for results and no
-callback listener is bound. Passive flows (bare `inflexa` launch, TUI startup) SHALL
-NOT boot the runtime. A second boot request SHALL return the existing runtime without
-re-registering or re-launching.
+The system SHALL provide a composition module that boots the embedded harness
+runtime on first use and reuses it for the remainder of the process. Boot SHALL
+sequence: ensure Postgres readiness; in callback mode only, start the callback
+listener; register the durable workflows with fully realized deps — sandbox-step
+before execute-analysis, plus data-profile, target-assessment, and
+sandbox-hygiene scheduled workflows; run pre-launch migration/hooks; then launch
+DBOS. No ephemeral execution workflow SHALL be registered. Poll transport
+remains the default. Passive flows SHALL NOT boot the runtime. A second boot
+request SHALL return the singleton without re-registration or re-launch.
 
-#### Scenario: First trigger boots the runtime (poll mode, the default)
+#### Scenario: First trigger boots the runtime in poll mode
 
-- **WHEN** a data-profile or analysis-run launch is requested and the runtime has not been booted
-- **THEN** Postgres readiness is ensured, all workflows are registered (sandbox-step before execute-analysis), and DBOS launches — in that order — and NO callback listener is bound
+- **WHEN** a profile or analysis launch first requests the runtime
+- **THEN** Postgres is ready, the non-ephemeral workflow cohort is registered, legacy pre-launch migration/hooks run, and DBOS launches in that order
+- **AND** no callback listener is bound
 
 #### Scenario: Callback mode additionally binds the listener
 
-- **WHEN** the runtime boots in callback transport mode
+- **WHEN** runtime boots in callback transport mode
 - **THEN** the exec-callback listener starts after Postgres readiness and before registration
 
 #### Scenario: Subsequent triggers reuse the runtime
 
 - **WHEN** a second launch is requested in the same process
-- **THEN** no re-registration or re-launch occurs and the existing runtime serves the trigger
+- **THEN** no re-registration or re-launch occurs
 
 #### Scenario: Unavailable Postgres blocks boot with actionable guidance
 
-- **WHEN** the runtime boot cannot reach a ready Postgres
-- **THEN** boot fails with the infra module's actionable error (e.g. pointing at setup) and DBOS is not launched
+- **WHEN** runtime boot cannot reach ready Postgres
+- **THEN** boot fails actionably and DBOS is not launched
 
 #### Scenario: One registration cohort
 
-- **WHEN** the runtime boots and DBOS recovery resumes an in-flight workflow of any registered kind (profile, run parent, run child)
-- **THEN** the workflow is found by its registered name — no workflow the cli can trigger is registered after launch
+- **WHEN** recovery resumes any supported in-flight workflow
+- **THEN** its registered name exists in the one pre-launch cohort
 
 ### Requirement: Local realizations for every data-profile dependency
 
@@ -285,44 +283,36 @@ step failure instead of a hang until the step deadline.
 ### Requirement: Local realizations for every conversation dependency
 
 The composition SHALL realize the conversation agent's dependency surface from
-deliberate local wiring, reusing the existing realizations where the seams are shared
-(pool, embedding provider, workspace filesystem, session-tree base, bio keys, run
-authorizer, run launcher) — the chat provider and model id are the CONVERSATION
-agent's (see `agent-model-selection`): the provider instance bound to the conversation agent's resolved model over the shared connection, serving the chat agent and its
-sub-agents. Specific to the conversation
-surface:
+deliberate local wiring, reusing shared pool, embedding, workspace filesystem,
+session-tree, bio-key, authorizer, and launcher realizations. It SHALL supply:
 
-- `skillsDir` and `templatesDir` SHALL each be a config-overridable path that, absent an
-  override, resolves to the extracted content directory
-  (`join(env.contentDir, <contentHash>, "skills")` / `.../templates`, materialized by
-  `content-assets`) in a **release build**, and to the repository-root `skills/` /
-  `templates/` trees in a **development run**; both remain gated at pre-flight, which now
-  passes because `content-assets` materializes the tree before the gate.
-- `chrome` SHALL be the empty config (no browser URL): with report preview
-  unavailable, nothing in the local path reaches Chrome.
-- `createPreviewPublisher` SHALL yield the harness's unavailable preview publisher,
-  which fails visibly at the point of use (report preview reports its unavailability;
-  report submission remains the only gate) — consistent with the rule that no
-  dependency is realized as a fake that fabricates success.
-- `hostTools` SHALL carry the `run_inflexa` tool (see `agent-cli-tool`) through the
-  harness host-tool seam, so the conversation agent can drive the `inflexa` CLI as an
-  approval-gated subprocess. The harness stays agnostic to the tool; the CLI owns its
-  classifier, spawn, and approval-request construction.
+- the conversation provider/model resolved under the `conversation` role for the
+  chat agent and its conversation sub-agents;
+- the utility provider/model resolved under the `utility` role for the
+  harness-owned ad hoc router;
+- config-overridable skills/templates paths with the existing release/development
+  defaults and pre-flight gates;
+- empty local Chrome config and the unavailable preview publisher;
+- the `run_inflexa` host tool through the host-tool seam.
 
-#### Scenario: Conversation deps resolve to their designated backends
+The utility role SHALL use the same configured connection and credential
+realization as the other roles. The CLI SHALL NOT supply routing prompts,
+candidate agent ids, or selection decisions.
 
-- **WHEN** the runtime composes the conversation agent
-- **THEN** chat traffic targets the resolved model connection under the conversation agent's model (the local proxy in `cliproxy` mode, the configured endpoint in `direct` mode), threads and working memory live in the local Postgres, and templates resolve from the configured directory or, absent an override, the extracted content directory in a release build (the repo-root `templates/` tree in a development run)
+#### Scenario: Conversation and utility deps resolve to their roles
+
+- **WHEN** the runtime composes a conversation model distinct from utility
+- **THEN** chat/sub-agent traffic uses conversation and ad hoc routing uses utility over the same configured connection
 
 #### Scenario: Report preview degrades visibly, report building does not
 
-- **WHEN** the agent attempts a report preview snapshot in a local chat
-- **THEN** the preview tool reports preview unavailability (no Chrome is contacted) and report iteration/submission still works
+- **WHEN** the agent attempts local report preview
+- **THEN** preview reports unavailability and report iteration/submission still works
 
 #### Scenario: The conversation agent carries the inflexa CLI host tool
 
-- **WHEN** the runtime composes the conversation agent
-- **THEN** the `run_inflexa` host tool is present in the agent's tools via the harness `hostTools` seam
+- **WHEN** runtime composes the conversation agent
+- **THEN** `run_inflexa` is present through `hostTools`
 
 ### Requirement: The CLI realizes the workspace-root resolver
 
@@ -373,4 +363,36 @@ pending asks orphaned by a prior process are expired before any new turn runs.
 - **GIVEN** a prior process that died with a pending ask in the ledger
 - **WHEN** the runtime boots
 - **THEN** the sweep marks it expired before the first turn can run
+
+### Requirement: Ephemeral configuration and workflow wiring are absent
+
+The resolved CLI `ResourcePolicy` SHALL contain only per-step ceilings and the
+machine budget. The CLI SHALL NOT project `harness.resourceLimits.ephemeral`,
+build ephemeral workflow dependencies, or supply an ephemeral callable to the
+harness composition. A stale on-disk ephemeral setting MAY be tolerated during
+the upgrade window but SHALL have no runtime effect.
+
+#### Scenario: Runtime composes ordinary resource policy
+
+- **WHEN** the CLI resolves its harness configuration
+- **THEN** the supplied policy has `perStep` and `budget` and no `ephemeral` field
+
+#### Scenario: Workflow cohort has no ephemeral dependency
+
+- **WHEN** the CLI constructs `CoreWorkflowDeps`
+- **THEN** it supplies no ephemeral dependency bundle and registers no ephemeral workflow
+
+### Requirement: Legacy ephemeral sweep remains a pre-launch migration
+
+During the supported upgrade window, the CLI SHALL call the harness's
+executor-scoped legacy ephemeral sweep after workflow registration and before
+DBOS launch. The call exists only to cancel pending rows left by an older binary
+and SHALL NOT imply an ephemeral tool, agent, resource policy, dependency
+bundle, or workflow registration.
+
+#### Scenario: Old pending row exists during upgrade
+
+- **GIVEN** the local executor owns a pending legacy `ephemeral:*` DBOS row
+- **WHEN** the new CLI reaches its pre-launch hook
+- **THEN** it cancels the row before recovery and then launches without an ephemeral workflow registration
 

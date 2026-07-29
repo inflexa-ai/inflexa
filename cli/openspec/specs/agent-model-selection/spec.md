@@ -9,189 +9,166 @@ select-seat-models.
 ## Requirements
 ### Requirement: Per-agent model configuration over the shared connection
 
-The `models` config block SHALL carry an `agents` map with the two user-facing agents —
-`conversation` (the chat agent and its sub-agents) and `sandbox` (the catalog step agents, data
-profiling, and the ephemeral runner) — each an optional model id served by the ONE configured
-connection (`model-connection`); agent entries SHALL NOT name their own provider or endpoint.
-Internal model consumers (run synthesis, post-step metadata/summary, target assessment) SHALL
-follow the `sandbox` agent. Each agent's model resolves in order: `models.agents.<agent>` →
-`harness.model` (legacy both-agents fallback) → the connection's mode default (in cliproxy mode
-the elected default per `default-model-election` — deterministic recency rank plus
-accessibility-validated walk — under the provider-family guard; in direct mode an agent without
-a resolvable model fails boot actionably). The composition SHALL construct one chat-provider
-instance per DISTINCT resolved agent model over the shared connection, and every consumer of an
-agent's model identity (agent definitions, provenance emitters) SHALL receive that agent's
-resolved value.
+The `models` config block SHALL carry an `agents` map with three model roles —
+`conversation` (the chat agent and its conversation sub-agents), `sandbox` (the
+catalog step agents, data profiling, and analysis-internal consumers), and
+`utility` (the ad hoc specialist/resource router) — each an optional model id
+served by the ONE configured connection (`model-connection`). Agent entries
+SHALL NOT name their own provider or endpoint. Run synthesis, post-step
+metadata/summary, and target assessment SHALL continue to follow `sandbox`.
 
-#### Scenario: Two agents, two models, one connection
+Each role's model resolves in order:
+`models.agents.<role>` → `harness.model` (legacy all-roles fallback) → the
+connection's mode default (in cliproxy mode the elected default per
+`default-model-election` under the provider-family guard; in direct mode a role
+without a resolvable model fails boot actionably). The composition SHALL
+construct one chat-provider inner instance per DISTINCT resolved model over the
+shared connection and one independent stable swappable handle per role. Every
+consumer of a role's model identity SHALL receive that role's resolved value.
 
-- **WHEN** the connection is cliproxy/anthropic and `models.agents` is `{ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" }`
-- **THEN** chat turns run on `claude-opus-4-8`, step/profile agents run on `claude-sonnet-4-5`,
-  both against the same proxy endpoint and key, and provenance records
-  `anthropic/claude-sonnet-4-5` on step and command activities
+#### Scenario: Three roles, three models, one connection
+
+- **WHEN** the connection is cliproxy/anthropic and `models.agents` is `{ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-haiku-4-5" }`
+- **THEN** chat turns run on `claude-opus-4-8`, step/profile/internal analysis agents run on `claude-sonnet-4-5`, and ad hoc routing runs on `claude-haiku-4-5`
+- **AND** all three use the same proxy endpoint and key
 
 #### Scenario: Absent agents map preserves single-model behavior
 
-- **WHEN** `models.agents` is absent and `harness.model` (or the cliproxy elected default)
-  resolves one id
-- **THEN** both agents resolve to that id, one provider instance is constructed, and behavior is
-  identical to the pre-change composition
+- **WHEN** `models.agents` is absent and `harness.model` (or the cliproxy elected default) resolves one id
+- **THEN** all three roles resolve to that id, one inner provider instance is constructed behind three independent handles, and behavior preserves the existing single-model fallback
 
 #### Scenario: Internal consumers follow the sandbox agent
 
-- **WHEN** the agents resolve to distinct models and a run reaches synthesis and post-step
-  metadata generation
-- **THEN** those activities run under the `sandbox` agent's model and provider
+- **WHEN** all roles resolve to distinct models and a run reaches synthesis and post-step metadata generation
+- **THEN** those activities run under the `sandbox` role while ad hoc routing alone runs under `utility`
+
+#### Scenario: Direct mode requires every unresolved role
+
+- **WHEN** direct mode has no connection default, `harness.model` is absent, and only `models.agents.conversation` is configured
+- **THEN** boot fails once with `model_required` naming both `sandbox` and `utility`
 
 ### Requirement: Palette commands switch an agent's model through a listing picker
 
-The command palette SHALL offer `Switch chat model` and `Switch sandbox model` commands under a
-dedicated `Provider` palette category, enabled only when the harness runtime is booted (the
-existing boot-gated command pattern). Each SHALL
-open a picker listing the connection's models dynamically — the proxy's `/models` in cliproxy
-mode; in direct mode, `{baseURL}/models` for BOTH protocols, derived from the SAME configured
-`baseURL` the chat path uses (the `/v1`-terminated protocol root — see `model-connection`), never
-a re-derived variant of it —
-marking each agent's current model. When listing fails (endpoint down, unsupported), the picker
-SHALL degrade to free-text model entry, pre-filled with the agent's current model, rather than
-blocking the switch. The picker SHALL ALSO offer manual free-text entry when a listing IS present:
-a dedicated manual-entry row in the listing opens the same free-text field — empty, since the
-current id is already listed and marked — so an id the connection does not enumerate can still be
-chosen; the manually entered id follows the identical commit-time validation path as a listed pick.
+The command palette SHALL offer `Switch chat model`, `Switch sandbox model`, and
+`Switch utility model` commands under the dedicated `Provider` palette category,
+enabled only when the harness runtime is booted. Each SHALL open a picker listing
+the shared connection's models dynamically — the proxy's `/models` in cliproxy
+mode; in direct mode, `{baseURL}/models` for BOTH protocols, derived from the
+SAME configured `baseURL` the chat path uses, never a re-derived variant —
+marking the selected role's current model.
 
-That row SHALL remain offered whatever the user has typed into the picker's filter, because the
-filter query IS a model id and the row exists to accept the ids the list cannot match. Backing out
-of the manual field (esc) SHALL return to the listing rather than close the picker, since the field
-was reached from it.
+When listing fails, the picker SHALL degrade to free-text model entry, pre-filled
+with the role's current model, rather than blocking the switch. The picker SHALL
+also offer a manual-entry row when listing succeeds. That row SHALL remain
+offered whatever the user typed into the filter. Backing out of the manual field
+SHALL return to the listing.
 
-In direct mode the listing and validation requests SHALL authenticate the way the chat path does:
-when the connection carries an `auth` block, the credential is resolved through the configured
-credential source and sent under its configured scheme (`bearer` sends `Authorization: Bearer` and
-no `x-api-key`; `x-api-key` the reverse) — never the static environment key, and never a scheme
-the configuration does not name. Only when no `auth` block exists does the static env-key
-resolution supply the credential with today's per-protocol headers. A credential-source resolution
-failure is an EXPECTED listing/validation outcome and follows the existing degradation paths
-(listing → free-text entry; validation → inconclusive-accept), never a crash.
+In direct mode, listing and validation SHALL authenticate exactly as chat does:
+configured `auth` resolves its credential source and applies only its named
+scheme; only absent `auth` uses static env-key resolution. Credential-source
+failure SHALL degrade through the existing listing/validation paths rather than
+crash.
 
-A committed selection — listed or free-text — SHALL be accessibility-validated before persisting
-when the connection protocol is `anthropic` (the unbilled `count_tokens` check, bounded, with
-the dialog in its busy state while checking): a definite `not_found_error` SHALL keep the dialog
-open with an inline error naming the model and that this account cannot serve it, persisting
-nothing; a 200 or an inconclusive outcome (timeout, other status, network failure) SHALL commit.
-On an `openai-compatible` connection no validation request exists and the selection commits as
-before. A committed selection SHALL persist to `models.agents.<agent>` in `config.json`
-immediately, independent of when the runtime applies it.
+For Anthropic protocol, a committed listed or free-text selection SHALL be
+accessibility-validated with the bounded unbilled `count_tokens` check. A
+definite `not_found_error` SHALL keep the dialog open and persist nothing; a 200
+or inconclusive timeout/network/other-status outcome SHALL commit. OpenAI-
+compatible connections SHALL commit without that validation request. Commit
+SHALL write `models.agents.<role>` immediately, independent of when the runtime
+can apply it.
 
 #### Scenario: Picker lists live models and marks the current one
 
-- **WHEN** the user runs `Switch sandbox model` on a booted cliproxy runtime
-- **THEN** the picker shows the proxy's current `/models` ids with the sandbox agent's active
-  model marked, and choosing one writes `models.agents.sandbox`
+- **WHEN** the user runs `Switch utility model` on a booted cliproxy runtime
+- **THEN** the picker shows the proxy's current model ids with utility's active model marked, and choosing one writes `models.agents.utility`
 
 #### Scenario: An unlisted id is reachable from a successful listing
 
-- **WHEN** the picker lists the connection's models and the user filters it by an id the connection
-  does not enumerate
-- **THEN** the manual-entry row is still offered (the filter never hides it), selecting it opens an
-  empty free-text field, and esc there returns to the listing with the picker still open
+- **WHEN** the picker lists models and the user filters by an id the connection does not enumerate
+- **THEN** the manual-entry row remains offered, selecting it opens an empty free-text field, and escape returns to the listing
 
 #### Scenario: Listing failure degrades to free text
 
 - **WHEN** the direct endpoint's model listing request fails
-- **THEN** the picker offers free-text entry, the entered id persists exactly as typed after the
-  same commit-time validation, and no switch capability is lost
+- **THEN** the picker offers free-text entry, the entered id persists exactly as typed after the same commit-time validation, and no switch capability is lost
 
 #### Scenario: The anthropic listing derives from the chat baseURL
 
 - **WHEN** the connection is direct-anthropic with the `/v1`-terminated `baseURL` chat requires
-- **THEN** the listing request targets `{baseURL}/models` and succeeds — the picker auto-lists on
-  the exact configuration under which chat works
+- **THEN** the listing request targets `{baseURL}/models` and succeeds under the exact configuration where chat works
 
 #### Scenario: The picker authenticates with the configured credential source
 
-- **WHEN** the connection is direct-anthropic with a `bearer` command `auth` block and the user
-  opens the picker
-- **THEN** the listing request carries `Authorization: Bearer <minted token>` and no `x-api-key`
-  header, and a commit-time `count_tokens` validation for the selection authenticates identically
+- **WHEN** the connection is direct-anthropic with a `bearer` command `auth` block and the user opens a role's picker
+- **THEN** listing carries `Authorization: Bearer <minted token>` and no `x-api-key`, and commit-time validation authenticates identically
 
 #### Scenario: An inaccessible pick is rejected in-dialog, not persisted
 
 - **WHEN** the user commits a model whose `count_tokens` check answers `not_found_error`
-- **THEN** the dialog stays open showing an error naming the model and the account-accessibility
-  cause, and `models.agents` is not written
+- **THEN** the dialog stays open with an account-accessibility error and `models.agents` is not written
 
 #### Scenario: A flaky validation does not block a switch
 
-- **WHEN** the user commits a model and the `count_tokens` check times out
-- **THEN** the selection persists (inconclusive-accept) exactly as an unvalidated commit would
+- **WHEN** the user commits a model and `count_tokens` times out
+- **THEN** the selection persists through the existing inconclusive-accept rule
 
 ### Requirement: A switch applies live only when no agent work is in flight
 
-The runtime SHALL track in-flight agent work — analysis runs, data profiling, chat turns, and
-ephemeral workflows. A persisted agent-model selection SHALL apply to the live runtime
-immediately when no agent work is in flight; otherwise it SHALL be recorded as pending and
-applied at the moment the last in-flight work settles. Application SHALL reconstruct the affected
-agent's provider instance and — for the sandbox agent — its provenance emitters (reconstructed
-WITH the new `{provider}/{model}` name, preserving their construction-time-stamping contract).
+The runtime SHALL track in-flight agent work — analysis runs, data profiling,
+and chat turns (including the bounded utility routing performed inside an ad hoc
+launch). A persisted role-model selection SHALL apply to the live runtime
+immediately when no agent work is in flight; otherwise it SHALL be pending and
+apply when the last in-flight work settles. Application SHALL reconstruct that
+role's provider inner and, only for `sandbox`, its provenance emitters with the
+new `{provider}/{model}` name.
 
-Every swappable object SHALL reach its consumers as a stable delegating handle injected once at
-composition: the consumer (harness deps bundles, agent assembly, registered workflows) holds ONE
-identity for the runtime's life, and a swap replaces only the cli-owned inner target behind it.
-The application path SHALL NOT mutate any field of an object a consumer holds — correctness MUST
-NOT depend on when or how often the consumer reads its deps fields. This is the contract the chat
-provider's swappable handle already satisfies; the provenance emitters (`artifactRegistry`,
-`emitProvenance`) SHALL satisfy the same one.
-
-In-flight work SHALL complete on — and
-record provenance under — the model that started it; no request observes a mid-flight model
-change, and an in-progress streamed response is NEVER interrupted, truncated, or aborted by a
-switch (whether requested from the palette or applied at settlement). An indeterminate busy state
-SHALL defer, never apply.
+Every swappable provider and emitter SHALL reach consumers as a stable delegating
+handle injected once at composition. Applying a switch SHALL replace only the
+CLI-owned target behind the selected handle, never mutate an object a consumer
+holds. In-flight work SHALL complete and record provenance under the model that
+started it; no request SHALL observe a mid-flight role change, and a streamed
+chat response SHALL never be interrupted by a switch. An indeterminate busy
+state SHALL defer.
 
 #### Scenario: Idle switch applies immediately
 
-- **WHEN** the user switches the chat model with no run, profile, or chat turn in flight
-- **THEN** the next chat turn runs on the new model and its provenance/metadata carry the new
-  `{provider}/{model}` name
+- **WHEN** the user switches utility with no run, profile, or chat turn in flight
+- **THEN** the next ad hoc route uses the new utility model and conversation/sandbox handles are unchanged
 
 #### Scenario: Busy switch is scheduled, then lands at settlement
 
-- **WHEN** the user switches the sandbox model while an analysis run is executing
-- **THEN** the running work continues and records the old model to completion; the selection is
-  persisted and marked pending; when the run (and any other in-flight work) settles, the new
-  provider is constructed and subsequent steps record the new name
+- **WHEN** the user switches sandbox while an analysis run is executing
+- **THEN** running work completes on the old model, the selection is persisted/pending, and the new provider applies after all work settles
 
-#### Scenario: A chat turn defers the swap to the turn boundary, without disturbing the stream
+#### Scenario: Utility cannot switch during its routing call
 
-- **WHEN** the user switches the chat model while a chat turn is streaming a response
-- **THEN** the in-flight turn streams to completion on the old model — uninterrupted and
-  untruncated — and the swap lands before the next turn begins
+- **WHEN** the user selects a new utility model while an ad hoc-launch chat turn is still routing
+- **THEN** the switch remains pending until that turn settles and the in-flight route stays on its starting model
+
+#### Scenario: A chat turn defers the swap to the turn boundary
+
+- **WHEN** the user switches chat while a chat response is streaming
+- **THEN** the stream completes uninterrupted on the old model and the swap lands before the next turn
 
 #### Scenario: A consumer that snapshots its deps still observes the swap
 
-- **WHEN** a consumer captures the injected `emitProvenance` (or `artifactRegistry`) reference
-  once at registration, the sandbox model is then switched at idle, and the consumer emits
-  through its captured reference
-- **THEN** the emitted event carries the NEW `{provider}/{model}` name — the swap is effective
-  regardless of the consumer's read discipline, because the captured reference is the stable
-  delegating handle
+- **WHEN** a harness consumer captured the utility provider handle at registration and utility is switched while idle
+- **THEN** its next call reaches the new inner provider through that same captured handle
 
 ### Requirement: The TUI surfaces the connection and the active and pending agent models
 
-The TUI SHALL render, from the runtime's boot/status state: the shared connection's identity —
-the configured provider slug and mode (`cliproxy` or `direct`) — and the active model of each
-user-facing agent, and SHALL surface a pending switch as such (selection made, applies when
-agent work settles) until it lands. The boot/status state SHALL carry per-agent resolved models,
-pending selections, and the connection identity.
+The TUI SHALL render from runtime boot/status state the shared connection
+identity and the active model for conversation, sandbox, and utility. It SHALL
+surface any pending role selection until it applies. Boot/status state SHALL
+carry three-role resolved models, pending selections, and connection identity.
 
-#### Scenario: Status shows the connection and what each agent runs on
+#### Scenario: Status shows the connection and all role models
 
-- **WHEN** the runtime is ready on a cliproxy/anthropic connection with distinct agent models
-- **THEN** the user can see the provider (`anthropic`), the mode, and both active models in the
-  TUI status surface without opening config
+- **WHEN** the runtime is ready with three distinct resolved model ids
+- **THEN** the TUI shows provider, mode, and the active conversation, sandbox, and utility models without requiring the user to inspect config
 
 #### Scenario: Pending switch is visible, not silent
 
-- **WHEN** a switch is scheduled behind a running analysis
-- **THEN** the TUI shows the pending selection and clears the pending state once applied
+- **WHEN** a utility switch is scheduled behind in-flight work
+- **THEN** the TUI shows utility's pending selection and clears it once applied
 
