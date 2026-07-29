@@ -23,7 +23,10 @@ bun run typecheck    # tsc --noEmit
 bun run lint         # Run ESLint
 bun run format       # Format all of src/
 bun run docs:gen     # Generate the CLI reference package (dist-docs/, untracked)
+bun run test         # bun test --isolate — see below
 ```
+
+**Local test runs go through `bun run test` (or `bun test --isolate`), never plain `bun test`.** A Bun runtime bug on macOS corrupts child-process pipe capture once certain module graphs have loaded earlier in the run: the children spawn and write their output fine, but the parent reads zero bytes from the pipe, so dozens of spawn-dependent tests (the provenance bridge, `spawnInflexa` process bounds, the embedding launch drain) fail with empty captured output. `--isolate` runs each test file with a fresh global object, which avoids the corruption entirely. CI on Linux is unaffected.
 
 ## Dependencies
 

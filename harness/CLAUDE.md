@@ -24,7 +24,7 @@ Design decisions are recorded in the OpenSpec specs (`openspec/specs/`), the sin
 
 ```bash
 tsc -p tsconfig.json    # Build: emit dist/ from src/ (also `npm run build`)
-bun test                # Run unit tests (bun:test)
+bun test                # Unit tests only — DB/DBOS suites need Postgres (see Testing notes)
 ```
 
 **Runtime**: Node.js. Bun is used only for testing (`bun test`).
@@ -257,7 +257,7 @@ If the only thing a comment can say is "this used to be X, now it's Y" or "chang
 
 **Test state, not interactions.** Assert on returned values and database state. Do not assert that method X was called N times with arguments Y — this couples tests to implementation details.
 
-**Postgres testcontainer**: Tests that touch the database use `withSchema(testName)` from `__tests__/setup/postgres.ts`. The helper starts a single `pgvector/pgvector:pg18` container per `bun test` run (cold start ~3s on first use; re-used across every test file afterward) and hands each test an isolated schema scoped via `search_path`. Set `CORTEX_TEST_PG_URL=postgres://cortex:dev@localhost:5433/cortex` to skip container startup and point at a locally-running Postgres — instant feedback during tight iteration. Harness modules receive their `Pool` as an injected construction dep (`createPool`), so a test passes the schema-scoped test pool directly into the factory under test — there is no global pool accessor or test-override seam.
+**Postgres testcontainer**: Tests that touch the database use `withSchema(testName)` from `__tests__/setup/postgres.ts`. The helper starts a single `pgvector/pgvector:pg18` container per `bun test` run (cold start ~3s on first use; re-used across every test file afterward) and hands each test an isolated schema scoped via `search_path`. Set `CORTEX_TEST_PG_URL=postgres://cortex:dev@localhost:5433/cortex` to skip container startup and point at a locally-running Postgres — instant feedback during tight iteration. The container fallback needs a reachable Docker API socket, and testcontainers' ryuk reaper container does not come up under podman — so a bare `bun test` on a podman host errors out the entire DB/DBOS portion of the suite, not just one file. The two supported local routes are `bun run test:full`, which starts the one container itself and reaches podman through its docker-compat socket, and exporting `CORTEX_TEST_PG_URL` at an already-running Postgres. `TESTCONTAINERS_RYUK_DISABLED=true` forces the fallback through as a last resort, at the cost of leaving one unreaped container per DB test file. Harness modules receive their `Pool` as an injected construction dep (`createPool`), so a test passes the schema-scoped test pool directly into the factory under test — there is no global pool accessor or test-override seam.
 
 **DBOS testcontainer**: Tests that need a launched DBOS engine use `setupDbosForTests` from `__tests__/setup/dbos.ts`. The rig launches lazily, shares one DBOS engine across `bun test`, and carves out a fresh per-test cortex schema via `withSchema()`. Use it for workflow/runtime-shape tests; pure body-level unit tests should stay on `passthroughStep`.
 

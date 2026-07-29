@@ -15,7 +15,7 @@
         "harness:remote": "rm -rf node_modules/@inflexa-ai/harness && bun install",
         "lint": "eslint .",
         "start": "bun run src/index.ts",
-        "test": "bun test",
+        "test": "bun test --isolate",
         "typecheck": "tsc --noEmit",
         "wipe": "bun scripts/wipe.ts"
     },
