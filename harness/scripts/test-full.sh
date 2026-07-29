@@ -24,6 +24,20 @@ if [ -n "${CORTEX_TEST_PG_URL:-}" ]; then
     exec bun test "$@"
 fi
 
+# The `docker` CLI's active context points at Docker Desktop's socket, which is
+# absent on a machine where podman provides the container runtime. A podman
+# machine serves the same Docker API at /var/run/docker.sock, so pinning
+# DOCKER_HOST there aims the CLI at whichever runtime is actually up — and
+# every docker call below, including the trap, inherits it from the process env.
+if ! docker info >/dev/null 2>&1; then
+    if [ -e /var/run/docker.sock ] && DOCKER_HOST=unix:///var/run/docker.sock docker info >/dev/null 2>&1; then
+        export DOCKER_HOST=unix:///var/run/docker.sock
+    else
+        echo "No reachable container runtime: start Docker, or start a podman machine exposing its docker-compat socket at /var/run/docker.sock." >&2
+        exit 1
+    fi
+fi
+
 CID=$(docker run -d --rm \
     -e POSTGRES_USER=cortex -e POSTGRES_PASSWORD=cortex -e POSTGRES_DB=cortex \
     -p 127.0.0.1::5432 \
