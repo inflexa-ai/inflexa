@@ -238,6 +238,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             resourcePolicy,
             ...(refStorePath ? { refStorePath } : {}),
             ...(packagesFile ? { packagesFile } : {}),
+            ...(deps.logger ? { logger: deps.logger } : {}),
         }),
         createExecuteAnalysisTool({
             pool,

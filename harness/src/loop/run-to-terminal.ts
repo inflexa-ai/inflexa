@@ -22,6 +22,7 @@
  */
 
 import type { AgentSession } from "../auth/types.js";
+import { createNoopLogger } from "../lib/console-logger.js";
 import type { Tool } from "../tools/define-tool.js";
 import { DEFAULT_STEP_NAME_FORMATTER, runAgent, type RunAgentOptions, type RunAgentResult, type StepNameFormatter } from "./run-agent.js";
 import type { AgentDefinition, LoopMessage } from "./types.js";
@@ -61,6 +62,13 @@ export async function runToTerminal(
 ): Promise<RunAgentResult> {
     const first = await runAgent(agent, initial, session, opts);
     if (opts.resolved?.() || opts.signal.aborted) return first;
+
+    // Reported here rather than in `runAgent` because the loop cannot know it is being
+    // salvaged: it sees an ordinary run with a small budget and a restricted tool set.
+    // Only this wrapper holds the fact that a first attempt ended without its outcome.
+    (opts.logger ?? createNoopLogger())
+        .named("loop")
+        .warn("salvaging a run that never reached its terminal tool", { agentId: agent.id, callPath: session.provenance.callPath });
 
     const salvageAgent: AgentDefinition = {
         ...agent,

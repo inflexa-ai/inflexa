@@ -48,6 +48,8 @@ import { plannerPrompt } from "../../prompts/planner.js";
 import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
 import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
+import { createNoopLogger } from "../../lib/console-logger.js";
+import type { Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { hintForZodIssue } from "../../lib/zod-issues.js";
 import { insertPlan, loadDataProfileStatus, loadPlan, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
@@ -355,7 +357,13 @@ interface InnerTools {
  * shared `holder` so the outer `execute` reads the terminal outcome after the
  * loop finishes.
  */
-function buildInnerTools(holder: OutcomeHolder, persistCtx: PersistContext, pool: Pool, resourcePolicy: ResourcePolicy | undefined): InnerTools {
+function buildInnerTools(
+    holder: OutcomeHolder,
+    persistCtx: PersistContext,
+    pool: Pool,
+    resourcePolicy: ResourcePolicy | undefined,
+    logger: Logger,
+): InnerTools {
     const submitPlanTool = defineTool({
         id: "submit_plan",
         description:
@@ -390,6 +398,7 @@ function buildInnerTools(holder: OutcomeHolder, persistCtx: PersistContext, pool
 
             const result = fullyValidate(input.plan, resourcePolicy);
             if (!result.valid) {
+                logger.debug("submit_plan rejected a plan", { issueCount: result.issues.length, issues: result.issues });
                 return ok({ accepted: false as const, issues: result.issues });
             }
 
@@ -474,49 +483,111 @@ interface ShapeOutcomeArgs {
 }
 
 /**
- * Translate the captured `PlannerOutcome` (plus any loop error) into the
- * `PlanningAgentOutput` contract the conversation agent consumes.
+ * How the invocation ended, at the granularity a diagnostic reader needs.
+ *
+ * Finer than `PlanningAgentOutput.event`, which collapses six distinct endings
+ * into `"error"` because the conversation agent only needs to know it has no
+ * plan. Whoever is asking *why* plan generation keeps failing needs the six kept
+ * apart — a wall-clock guard elapsing and a planner stopping on prose call for
+ * opposite responses.
  */
-function shapeOutcome(args: ShapeOutcomeArgs): PlanningAgentOutput {
+type OutcomeKind =
+    | "plan_submitted"
+    | "clarification"
+    | "blocker"
+    | "persist_error"
+    | "timeout"
+    | "cancelled"
+    | "loop_error"
+    | "no_outcome"
+    /** Rejected before the planner ran — the parent plan named for iteration is not this analysis's. */
+    | "invalid_parent_plan"
+    /** Rejected before the planner ran — the parent plan could not be read. */
+    | "parent_plan_load_failed";
+
+interface ShapedOutcome {
+    readonly output: PlanningAgentOutput;
+    readonly kind: OutcomeKind;
+}
+
+/**
+ * Translate the captured `PlannerOutcome` (plus any loop error) into the
+ * `PlanningAgentOutput` contract the conversation agent consumes, alongside the
+ * kind the diagnostic record carries.
+ *
+ * Both come out of one branch deliberately: deriving the kind separately would
+ * be a second copy of this precedence order, free to drift from the answer the
+ * caller actually returned.
+ */
+function shapeOutcome(args: ShapeOutcomeArgs): ShapedOutcome {
     const { holder, runError, timedOut, outerAborted } = args;
     const outcome = holder.outcome;
 
     if (outcome?.kind === "plan_submitted") {
-        return { event: "plan_complete", planId: outcome.planId, plan: outcome.plan };
+        return { output: { event: "plan_complete", planId: outcome.planId, plan: outcome.plan }, kind: "plan_submitted" };
     }
     if (outcome?.kind === "clarification") {
         return {
-            event: "clarification_needed",
-            question: outcome.question,
-            ...(outcome.questionContext ? { questionContext: outcome.questionContext } : {}),
+            output: {
+                event: "clarification_needed",
+                question: outcome.question,
+                ...(outcome.questionContext ? { questionContext: outcome.questionContext } : {}),
+            },
+            kind: "clarification",
         };
     }
     if (outcome?.kind === "blocker") {
-        return { event: "error", error: outcome.reason };
+        return { output: { event: "error", error: outcome.reason }, kind: "blocker" };
     }
     if (outcome?.kind === "persist_error") {
-        return { event: "error", error: `Failed to save plan: ${outcome.message}` };
+        return { output: { event: "error", error: `Failed to save plan: ${outcome.message}` }, kind: "persist_error" };
     }
 
     // No terminal outcome — something went wrong in the loop.
     if (timedOut) {
         return {
-            event: "error",
-            error: "Plan generation timed out — the model may be overloaded.",
+            output: {
+                event: "error",
+                error: "Plan generation timed out — the model may be overloaded.",
+            },
+            kind: "timeout",
         };
     }
     if (outerAborted) {
-        return { event: "error", error: "Plan generation was cancelled." };
+        return { output: { event: "error", error: "Plan generation was cancelled." }, kind: "cancelled" };
     }
     if (runError) {
         const msg = runError instanceof Error ? runError.message : String(runError);
-        return { event: "error", error: `Plan generation failed: ${msg}` };
+        return { output: { event: "error", error: `Plan generation failed: ${msg}` }, kind: "loop_error" };
     }
     return {
-        event: "error",
-        error: "Plan generation completed without a terminal outcome — the planner " + "did not call submit_plan, request_clarification, or report_blocker.",
+        output: {
+            event: "error",
+            error:
+                "Plan generation completed without a terminal outcome — the planner " + "did not call submit_plan, request_clarification, or report_blocker.",
+        },
+        kind: "no_outcome",
     };
 }
+
+/**
+ * Severity follows the ending, not the return type — which is uniformly `ok(...)`,
+ * so it distinguishes nothing. A submitted plan and a clarification request are
+ * both this tool working as designed; a blocker is a real answer that cost the
+ * user their plan; the rest are failures.
+ */
+const OUTCOME_LEVEL: Record<OutcomeKind, "info" | "warn" | "error"> = {
+    plan_submitted: "info",
+    clarification: "info",
+    blocker: "warn",
+    persist_error: "error",
+    timeout: "error",
+    cancelled: "error",
+    loop_error: "error",
+    no_outcome: "error",
+    invalid_parent_plan: "warn",
+    parent_plan_load_failed: "error",
+};
 
 // ── Outer tool ──────────────────────────────────────────────────────
 
@@ -538,10 +609,13 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
      * default guidance and validation skips the ceiling check.
      */
     readonly resourcePolicy?: ResourcePolicy;
+    /** Diagnostic sink. Absent, the tool runs silently — see `RunAgentOptions.logger`. */
+    readonly logger?: Logger;
 }
 
 /** Build the `generate_plan` tool bound to its provider and pool. */
 export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
+    const baseLogger = (deps.logger ?? createNoopLogger()).named("generate-plan");
     return defineTool({
         id: "generate_plan",
         description:
@@ -583,6 +657,19 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
         }),
         execute: async (input, ctx): Promise<Result<PlanningAgentOutput, ToolError>> => {
             const analysisId = scopeResource(ctx.session.scope).resourceId;
+            // Bound per invocation: `analysisId` comes from the call-time session, not from
+            // the construction-time deps the factory closes over.
+            const logger = baseLogger.with({ analysisId });
+            const startedAt = Date.now();
+
+            // Every exit routes through here, so "recorded exactly once per invocation" holds
+            // by construction rather than by remembering. `elapsedMs` is what separates a
+            // planner that gave up early from one still working when the guard cut it — the
+            // fixed budget above makes the number readable without any other context.
+            const finish = (shaped: ShapedOutcome): Result<PlanningAgentOutput, ToolError> => {
+                logger[OUTCOME_LEVEL[shaped.kind]]("plan generation finished", { outcome: shaped.kind, elapsedMs: Date.now() - startedAt });
+                return ok(shaped.output);
+            };
 
             // If iterating, load the parent plan so the planner sees what it is
             // revising. Fails fast with the sanitized message submit_plan would
@@ -596,17 +683,17 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                         }),
                     );
                     if (!priorPlan) {
-                        return ok({
-                            event: "error",
-                            error: "parentPlanId is not a valid plan for this analysis",
-                        } satisfies PlanningAgentOutput);
+                        return finish({
+                            output: { event: "error", error: "parentPlanId is not a valid plan for this analysis" },
+                            kind: "invalid_parent_plan",
+                        });
                     }
                     priorPlanBlock = formatPriorPlan(input.parentPlanId, priorPlan);
                 } catch {
-                    return ok({
-                        event: "error",
-                        error: "Plan iteration failed — parent plan could not be loaded.",
-                    } satisfies PlanningAgentOutput);
+                    return finish({
+                        output: { event: "error", error: "Plan iteration failed — parent plan could not be loaded." },
+                        kind: "parent_plan_load_failed",
+                    });
                 }
             }
 
@@ -651,7 +738,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 analysisId,
                 parentPlanId: input.parentPlanId ?? null,
             };
-            const innerTools = buildInnerTools(holder, persistCtx, deps.pool, deps.resourcePolicy);
+            const innerTools = buildInnerTools(holder, persistCtx, deps.pool, deps.resourcePolicy, logger);
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
@@ -680,6 +767,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                         // a tool call, and the terminal predicate stops the loop
                         // as soon as one is recorded.
                         toolChoice: "required",
+                        logger,
                     },
                     {
                         tools: innerTools.terminal,
@@ -693,7 +781,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 runError = err;
             }
 
-            return ok(
+            return finish(
                 shapeOutcome({
                     holder,
                     runError,

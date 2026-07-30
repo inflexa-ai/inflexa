@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createCapturingLogger, type CapturedLog, type CapturingLogger } from "../../__tests__/setup/logger.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { PLANNABLE_AGENT_IDS } from "../../agents/sandbox-catalog.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../../loop/__fixtures__/scripted-provider.js";
@@ -419,6 +420,127 @@ describe("generatePlan loop-driving tool", () => {
 
             const notes = seed.slice(seed.indexOf("## Analyst Notes"));
             expect(notes).not.toContain("Homo sapiens");
+        });
+    });
+
+    // ── Diagnostic records ───────────────────────────────────────────
+    //
+    // This tool returns `ok(...)` for every ending, so the return value distinguishes
+    // nothing about how an invocation went. It is also a conversation-layer tool on
+    // `passthroughStep`: no ledger row, no durable stream. The record is therefore the
+    // only evidence that survives the turn, which is what these assertions protect.
+
+    describe("outcome records", () => {
+        function loggedToolFor(provider: ScriptedProvider): { tool: Tool; logger: CapturingLogger } {
+            const logger = createCapturingLogger();
+            return { tool: createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, logger }), logger };
+        }
+
+        /** The one per-invocation outcome record, failing loudly if there is not exactly one. */
+        function outcomeRecord(logger: CapturingLogger): CapturedLog {
+            const records = logger.records.filter((r) => r.msg.endsWith("plan generation finished"));
+            expect(records).toHaveLength(1);
+            return records[0]!;
+        }
+
+        it("records a submitted plan once, at info, with the elapsed time and analysis", async () => {
+            const analysisId = "an-log-ok";
+            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: RICH_PROFILE.inputFileIds });
+            const provider = scriptedProvider([
+                makeMessage([toolUseBlock("t1", "submit_plan", { plan: validCandidate() })], "tool_use"),
+                makeMessage([textBlock("Submitted.")], "end_turn"),
+            ]);
+            const { tool, logger } = loggedToolFor(provider);
+
+            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            expect(result.event).toBe("plan_complete");
+
+            const record = outcomeRecord(logger);
+            expect(record.level).toBe("info");
+            expect(record.fields).toMatchObject({ outcome: "plan_submitted", analysisId });
+            expect(typeof record.fields.elapsedMs).toBe("number");
+        });
+
+        it("records a clarification request at info — the tool working as designed", async () => {
+            const provider = scriptedProvider([
+                makeMessage([toolUseBlock("t1", "request_clarification", { question: "Which contrast?" })], "tool_use"),
+                makeMessage([textBlock("Asked.")], "end_turn"),
+            ]);
+            const { tool, logger } = loggedToolFor(provider);
+
+            await tool.execute(INPUT, toolContext());
+
+            const record = outcomeRecord(logger);
+            expect(record.level).toBe("info");
+            expect(record.fields).toMatchObject({ outcome: "clarification" });
+        });
+
+        it("records a blocker at warn — a real answer that cost the user their plan", async () => {
+            const { tool, logger } = loggedToolFor(blockImmediately());
+
+            await tool.execute(INPUT, toolContext());
+
+            const record = outcomeRecord(logger);
+            expect(record.level).toBe("warn");
+            expect(record.fields).toMatchObject({ outcome: "blocker" });
+        });
+
+        it("distinguishes the failure shapes rather than collapsing them to one error", async () => {
+            // Ends on prose without ever recording an outcome — the salvage turn also
+            // declines, so the invocation finishes with nothing submitted.
+            const { tool, logger } = loggedToolFor(scriptedProvider(() => makeMessage([textBlock("thinking out loud")], "end_turn")));
+
+            await tool.execute(INPUT, toolContext());
+
+            const record = outcomeRecord(logger);
+            expect(record.level).toBe("error");
+            expect(record.fields).toMatchObject({ outcome: "no_outcome" });
+
+            // A different failure carries a different kind, so the two are separable in a
+            // log query — the whole reason the tool records a kind and not just "failed".
+            const cancelled = createCapturingLogger();
+            const aborted = new AbortController();
+            aborted.abort();
+            await createGeneratePlanTool({ conversation: { provider: scriptedProvider([]), model: "claude-test" }, pool, logger: cancelled }).execute(INPUT, {
+                ...toolContext(),
+                signal: aborted.signal,
+            });
+
+            const cancelledRecord = cancelled.records.filter((r) => r.msg.endsWith("plan generation finished"))[0]!;
+            expect(cancelledRecord.fields.outcome).toBe("cancelled");
+            expect(cancelledRecord.fields.outcome).not.toBe(record.fields.outcome);
+        });
+
+        it("records a submit that fails re-validation, which is the rejection that costs an iteration", async () => {
+            // A dangling `depends_on` passes the strict arg schema and fails the semantic
+            // checks, so `execute` runs and rejects — the path a schema-level bounce at the
+            // loop's input boundary would never reach.
+            const provider = scriptedProvider([
+                makeMessage([toolUseBlock("t1", "submit_plan", { plan: validCandidate({ depends_on: ["T9S9"] }) })], "tool_use"),
+                makeMessage([toolUseBlock("t2", "report_blocker", { reason: "cannot fix" })], "tool_use"),
+                makeMessage([textBlock("Reported.")], "end_turn"),
+            ]);
+            const { tool, logger } = loggedToolFor(provider);
+
+            await tool.execute(INPUT, toolContext());
+
+            const rejection = logger.records.filter((r) => r.level === "debug" && r.msg.includes("submit_plan rejected"));
+            expect(rejection).toHaveLength(1);
+            expect(rejection[0]!.fields.issueCount).toBeGreaterThan(0);
+            expect(Array.isArray(rejection[0]!.fields.issues)).toBe(true);
+        });
+
+        it("records no rejection when the first submit is accepted", async () => {
+            const accepted = loggedToolFor(
+                scriptedProvider([
+                    makeMessage([toolUseBlock("t1", "submit_plan", { plan: validCandidate() })], "tool_use"),
+                    makeMessage([textBlock("Submitted.")], "end_turn"),
+                ]),
+            );
+
+            await accepted.tool.execute(INPUT, toolContext("an-log-accept"));
+
+            expect(accepted.logger.records.filter((r) => r.msg.includes("rejected"))).toHaveLength(0);
         });
     });
 });
