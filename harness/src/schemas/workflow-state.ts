@@ -11,8 +11,8 @@ import { z } from "zod";
 
 /**
  * A step of an analysis plan. `PlanStepSchema` (schemas/plan-schemas.ts) narrows
- * this into the planner's output contract and emits it as the `validate_plan` /
- * `submit_plan` arg schema — so each field's meaning belongs in `.describe()`,
+ * this into the planner's output contract and emits it as the `submit_plan`
+ * arg schema — so each field's meaning belongs in `.describe()`,
  * not in a comment the model never sees.
  */
 export const AnalysisStepSchema = z.object({

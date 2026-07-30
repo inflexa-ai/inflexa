@@ -57,6 +57,7 @@ describe("runToTerminal", () => {
                 signal: new AbortController().signal,
                 emit: () => {},
                 runStep: passthroughStep,
+                toolChoice: "required",
             },
             {
                 resolved: () => cell.value !== null,
@@ -66,6 +67,10 @@ describe("runToTerminal", () => {
         );
 
         expect(cell.value).toBe("done");
+        // The terminal tool ends the loop itself; no acknowledgement call is
+        // spent after the closure outcome is recorded.
+        expect(provider.calls).toHaveLength(1);
+        expect(provider.calls[0]!.toolChoice).toBe("required");
         // No salvage continuation — the nudge never reaches the provider.
         const sawNudge = provider.calls.some((c) => c.messages.some((m) => m.content === NUDGE));
         expect(sawNudge).toBe(false);

@@ -61,7 +61,11 @@ export async function runToTerminal(
     opts: RunAgentOptions,
     salvage: TerminalSalvage,
 ): Promise<RunAgentResult> {
-    const first = await runAgent(agent, initial, session, opts);
+    const terminalOpts: RunAgentOptions = {
+        ...opts,
+        resolved: salvage.resolved,
+    };
+    const first = await runAgent(agent, initial, session, terminalOpts);
     if (salvage.resolved() || opts.signal.aborted) return first;
 
     const salvageAgent: AgentDefinition = {
@@ -70,7 +74,7 @@ export async function runToTerminal(
         maxIterations: salvage.maxIterations ?? DEFAULT_SALVAGE_ITERATIONS,
     };
     const salvageOpts: RunAgentOptions = {
-        ...opts,
+        ...terminalOpts,
         formatStepName: salvageStepNames(opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER),
     };
     return runAgent(salvageAgent, [...first.messages, { role: "user", content: salvage.nudge }], session, salvageOpts);

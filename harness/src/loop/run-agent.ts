@@ -56,6 +56,15 @@ export interface RunAgentOptions {
     readonly runStep: RunStep;
     readonly formatStepName?: StepNameFormatter;
     readonly isFatalLoopError?: (err: unknown) => boolean;
+    /** Tool-selection policy for in-loop model calls. The cap wrap-up remains
+     * tool-less regardless. */
+    readonly toolChoice?: ChatRequest["toolChoice"];
+    /**
+     * Optional outcome predicate for loop-driving agents whose result is
+     * recorded by a tool into closure state. Checked immediately after each
+     * dispatch round, once every sibling tool result has been appended.
+     */
+    readonly resolved?: () => boolean;
     /**
      * Prompt-cache policy for every LLM call this run makes. Defaults to
      * `DEFAULT_PROMPT_CACHE` (5m) — an agent loop always re-sends its prefix, so
@@ -133,6 +142,11 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
         return { messages, finish: { reason: "denied", cappedOut: false, truncationRecoveries } };
     };
+    const stopOnResolved = async (i: number): Promise<RunAgentResult> => {
+        await emit({ type: "iteration", source, index: i, final: true });
+        recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
+        return { messages, finish: { reason: "stop", cappedOut: false, truncationRecoveries } };
+    };
 
     for (let i = 0; i < agent.maxIterations; i++) {
         iterations = i + 1;
@@ -140,6 +154,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             system: agent.systemPrompt,
             messages,
             tools: toolDefs,
+            ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
             providerOptions,
         };
         const reply = await resultStep(runStep)(formatStepName.llm(i), () => provider.chat(request, session, signal));
@@ -190,6 +205,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             results.push(errorResult(trailing, TRUNCATED_TOOL_USE_ERROR));
             messages.push({ role: "tool", content: results });
             if (hasDenial(results)) return stopOnDenial(i);
+            if (opts.resolved?.()) return stopOnResolved(i);
             continue;
         }
 
@@ -216,6 +232,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         }
         messages.push({ role: "tool", content: results });
         if (hasDenial(results)) return stopOnDenial(i);
+        if (opts.resolved?.()) return stopOnResolved(i);
     }
 
     // Cache defeater (known; not fixed here). Emptying the tool set changes the

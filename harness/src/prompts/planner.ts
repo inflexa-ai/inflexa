@@ -52,29 +52,24 @@ your work is discarded and the user sees nothing. Every session MUST end
 with exactly one call to \`submit_plan\`, \`request_clarification\`, or
 \`report_blocker\`.
 
-Your very first action must be either \`validate_plan\` (to test a draft)
+Your very first action must be either \`submit_plan\`
 or \`request_clarification\` / \`report_blocker\` (if you cannot draft one).
 Do NOT respond with text before any tool call.
 
 ## Canonical Flow
 
-The plan's shape is the \`validate_plan\` / \`submit_plan\` arg schema —
-read it, and fill every field it declares.
+The plan's shape is the \`submit_plan\` arg schema — read it, and fill
+every field it declares.
 
-\`validate_plan(draft)\` → inspect issues → \`validate_plan(fixed)\` →
-\`valid: true\` → \`submit_plan(fixed)\` → \`accepted: true\`. STOP.
-
-\`validate_plan\` is cheap, deterministic, and non-terminal — call it as
-many times as needed. You MUST get \`valid: true\` from it before calling
-\`submit_plan\`. If issues come back, fix the specific field at the given
-path and validate again.
+\`submit_plan(candidate)\` → if rejected, inspect its structured \`issues\`,
+fix the specific fields, and call \`submit_plan\` again →
+\`accepted: true\`. STOP.
 
 Typical run: 2–4 tool calls total. Every run ends with ONE terminal
 tool call. No exceptions.
 
 ## Do NOT
 - Respond with plain text (even to explain the plan — the user never sees it).
-- Call \`submit_plan\` without first getting \`valid: true\` from \`validate_plan\`.
 - Call any terminal tool twice.
 - Continue generating after \`submit_plan\` returned \`accepted: true\`.
 - End the session without a terminal tool call. That is a failure mode.
@@ -264,7 +259,6 @@ question or data context explicitly supports them.
 - Produce vague step descriptions
 - Ignore prior run results mentioned in context
 - Generate a plan without referencing specific data characteristics
-- Call \`submit_plan\` without first calling \`validate_plan\`
 - Respond with prose instead of a tool call
 `;
 }

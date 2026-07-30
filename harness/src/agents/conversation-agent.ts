@@ -237,7 +237,13 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createInspectRunTool(pool),
         // The dataset's own record. No file backs it — the DB row is the only copy.
         createInspectDataProfileTool(pool),
-        createGeneratePlanTool({ provider, pool, model, resourcePolicy, ...(refStorePath ? { refStorePath } : {}), ...(packagesFile ? { packagesFile } : {}) }),
+        createGeneratePlanTool({
+            conversation: { provider, model },
+            pool,
+            resourcePolicy,
+            ...(refStorePath ? { refStorePath } : {}),
+            ...(packagesFile ? { packagesFile } : {}),
+        }),
         createExecuteAnalysisTool({
             pool,
             executeAnalysisWorkflow,
