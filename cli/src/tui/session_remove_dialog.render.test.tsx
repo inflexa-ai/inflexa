@@ -13,7 +13,7 @@ import type { Analysis } from "../types/analysis.ts";
 import type { Notice } from "./theme.ts";
 
 // The removal confirmation is the one surface in the session flows whose CORRECTNESS IS ITS WORDING.
-// `deleteThread` writes a tombstone: the row and every message survive, and the thread only stops
+// `archiveThread` writes a tombstone: the row and every message survive, and the thread only stops
 // listing. The dialog is nonetheless the app's strongest irreversibility signal — danger chrome plus
 // typing the name back — so what it says has to match what the store does, or the ritual teaches users
 // to discount it everywhere it IS telling the truth. Notice-text assertions cannot cover that: the
@@ -40,6 +40,9 @@ function threadRow(): Thread {
         title: "Cohort survival questions",
         createdAt: new Date("2026-07-08T00:00:00.000Z"),
         updatedAt: new Date("2026-07-08T01:00:00.000Z"),
+        // The flow only ever confirms against a LIVE conversation, so the row it reads carries no
+        // tombstone.
+        deletedAt: null,
     };
 }
 
@@ -49,7 +52,9 @@ function seams(notices: Notice[]): SessionSeams {
         listThreads: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
         getThread: () => okAsync(threadRow()),
         updateTitle: () => okAsync(null),
-        deleteThread: () => okAsync<void, DbError>(undefined),
+        listThreadsWithArchived: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
+        archiveThread: () => okAsync<void, DbError>(undefined),
+        unarchiveThread: () => okAsync<void, DbError>(undefined),
         resolveThreadId: async () => "thread-2",
         workingDirFor: () => "/work",
         refreshThread: () => {},

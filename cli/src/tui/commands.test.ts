@@ -1,24 +1,39 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { errAsync, okAsync } from "neverthrow";
-import type { DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { err, errAsync, ok, okAsync } from "neverthrow";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { AnalysisPurgeOutcome, DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
 
 import { GLYPHS } from "../lib/design_system.ts";
 import { __setAgentModelsForTest, __setBootStateForTest } from "./hooks/boot.ts";
+import { __resetNoticesForTest, currentNotice } from "./hooks/notice.ts";
 import {
     commands,
     commitSessionRename,
+    commitSessionRestore,
     confirmSessionDelete,
+    deleteAnalysisWith,
     deleteSessionFlow,
+    exportProvenanceToFile,
     modelStatusLines,
     openAnalysis,
     openRenameSession,
+    openRestoreSession,
     openSwitchSession,
+    type AnalysisDeleteSeams,
     type CommandId,
+    type ProvExportSeams,
     type SessionSeams,
 } from "./commands.tsx";
 import type { Workspace } from "./contexts/workspace.ts";
 import type { Notice } from "./theme.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
+import type { WorkspaceDisposal, WorkspaceError } from "../modules/analysis/output.ts";
+import type { Sidecar } from "../modules/prov/verify.ts";
+import type { SigningError } from "../modules/prov/signing.ts";
+// The SQLite layer's error union, distinct from the harness's Postgres one already imported above.
+import type { DbError as SqliteError } from "../db/errors.ts";
 import type { Analysis } from "../types/analysis.ts";
 
 // modelStatusLines reads the module-level boot + agentModels stores, so each test seeds them via the
@@ -75,10 +90,11 @@ describe("modelStatusLines", () => {
     });
 });
 
-// The three session commands read the module-level boot store and the workspace scope. Thread metadata
-// lives only in Postgres, so before `ready` there is nothing to list, retitle, or remove; rename and
-// delete additionally need a bound thread to act on. These drive the registry's own `enabled`
-// predicates rather than a hand-rolled copy, so a re-wired gate fails here.
+// The session commands read the module-level boot store and the workspace scope. Thread metadata lives
+// only in Postgres, so before `ready` there is nothing to list, retitle, remove, or restore; rename and
+// delete additionally need a bound thread to act on, while restore acts on one the user picks. These
+// drive the registry's own `enabled` predicates rather than a hand-rolled copy, so a re-wired gate
+// fails here.
 describe("session command gating", () => {
     // Only `id`/`name` are load-bearing (the predicates read the scope, not the row), so a partial
     // stand-in cast keeps the fixture flat — the same shape `workspace.test.ts` uses.
@@ -100,29 +116,33 @@ describe("session command gating", () => {
 
     const BOUND = scope(ANALYSIS, "thread-bound-1");
 
-    test("all three are unavailable before boot reaches ready, even with a bound thread", () => {
+    test("none of them are available before boot reaches ready, even with a bound thread", () => {
         for (const phase of [{ phase: "idle" }, { phase: "booting" }, { phase: "failed", message: "postgres unreachable" }] as const) {
             __setBootStateForTest(phase);
             expect(enabledOf("session.switch", BOUND)).toBe(false);
             expect(enabledOf("session.rename", BOUND)).toBe(false);
             expect(enabledOf("session.delete", BOUND)).toBe(false);
+            expect(enabledOf("session.restore", BOUND)).toBe(false);
         }
     });
 
-    test("ready with no thread bound yet: switching is offered, rename and delete are not", () => {
+    test("ready with no thread bound yet: switching and restoring are offered, rename and delete are not", () => {
         __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
         const unbound = scope(ANALYSIS, null);
-        // Switching is how the user reaches an existing thread while the scope is still unbound.
+        // Switching is how the user reaches an existing thread while the scope is still unbound, and
+        // restoring names its own thread from the picker — neither needs one bound to act on.
         expect(enabledOf("session.switch", unbound)).toBe(true);
+        expect(enabledOf("session.restore", unbound)).toBe(true);
         expect(enabledOf("session.rename", unbound)).toBe(false);
         expect(enabledOf("session.delete", unbound)).toBe(false);
     });
 
-    test("ready with a bound thread offers all three", () => {
+    test("ready with a bound thread offers every session command", () => {
         __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
         expect(enabledOf("session.switch", BOUND)).toBe(true);
         expect(enabledOf("session.rename", BOUND)).toBe(true);
         expect(enabledOf("session.delete", BOUND)).toBe(true);
+        expect(enabledOf("session.restore", BOUND)).toBe(true);
     });
 
     test("no analysis in scope: the analysis-scoped session commands stay unavailable", () => {
@@ -130,6 +150,8 @@ describe("session command gating", () => {
         const noAnalysis = scope(null, "thread-bound-1");
         expect(enabledOf("session.switch", noAnalysis)).toBe(false);
         expect(enabledOf("session.delete", noAnalysis)).toBe(false);
+        // The archived listing is per-analysis, so with none open there is no set to draw from.
+        expect(enabledOf("session.restore", noAnalysis)).toBe(false);
     });
 });
 
@@ -155,6 +177,9 @@ describe("session flows", () => {
             title: "Cohort survival questions",
             createdAt: new Date("2026-07-08T00:00:00.000Z"),
             updatedAt: new Date("2026-07-08T01:00:00.000Z"),
+            // Live by default: the tombstone is what an archived row carries, and every flow but restore
+            // only ever sees rows without one.
+            deletedAt: null,
             ...over,
         };
     }
@@ -220,7 +245,9 @@ describe("session flows", () => {
             listThreads: () => okAsync(threadPage([])),
             getThread: () => okAsync(null),
             updateTitle: () => okAsync(null),
-            deleteThread: () => okAsync<void, DbError>(undefined),
+            listThreadsWithArchived: () => okAsync(threadPage([])),
+            archiveThread: () => okAsync<void, DbError>(undefined),
+            unarchiveThread: () => okAsync<void, DbError>(undefined),
             resolveThreadId: async () => "thread-resolved",
             workingDirFor: () => "/work",
             refreshThread: (threadId) => {
@@ -343,14 +370,14 @@ describe("session flows", () => {
         // confirming it tombstones that one AND re-lands the chat — yanking the user off the session
         // they switched to, for a removal they never asked for there.
         const w = sessionScope(ANALYSIS, "thread-1");
-        let deletes = 0;
+        let archives = 0;
         const t = makeSeams({
             getThread: () => {
                 w.swapTo({ sessionId: "thread-2" });
                 return okAsync(threadRow());
             },
-            deleteThread: () => {
-                deletes += 1;
+            archiveThread: () => {
+                archives += 1;
                 return okAsync<void, DbError>(undefined);
             },
         });
@@ -358,7 +385,7 @@ describe("session flows", () => {
         await deleteSessionFlow(w.ws, t.seams);
 
         expect(w.dialogs()).toBe(0);
-        expect(deletes).toBe(0);
+        expect(archives).toBe(0);
         expect(w.opened).toEqual([]); // nothing tombstoned, so nothing re-landed
         expect(t.notices[0]?.text).toContain("Session changed");
     });
@@ -506,7 +533,7 @@ describe("session flows", () => {
     });
 
     test("a failed delete surfaces the error and leaves the user where they were", async () => {
-        const t = makeSeams({ deleteThread: () => errAsync(dbErr) });
+        const t = makeSeams({ archiveThread: () => errAsync(dbErr) });
         const w = sessionScope(ANALYSIS, "thread-1");
 
         await confirmSessionDelete(w.ws, fakePool, ANALYSIS, "thread-1", t.seams);
@@ -514,6 +541,110 @@ describe("session flows", () => {
         expect(t.notices).toHaveLength(1);
         expect(t.notices[0]?.kind).toBe("error");
         expect(w.opened).toEqual([]); // the thread still lists, so nothing is re-landed
+    });
+
+    // The moment a removal stamped the tombstone. Distinct from the fixture's activity clock, which the
+    // archive deliberately leaves alone, so an assertion can tell the two stamps apart.
+    const ARCHIVED_AT = new Date("2026-07-09T09:30:00.000Z");
+
+    test("restore refuses before boot reaches ready, speaking rather than no-op'ing, and lists nothing", async () => {
+        // Reachable pre-`ready` for the same reason the switch picker is: the leader chord dispatches by
+        // id and bypasses the palette's `enabled` predicate.
+        __setBootStateForTest({ phase: "booting" });
+        let listings = 0;
+        const t = makeSeams({
+            listThreadsWithArchived: () => {
+                listings += 1;
+                return okAsync(threadPage([]));
+            },
+        });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await openRestoreSession(w.ws, t.seams);
+
+        expect(listings).toBe(0);
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("info");
+        expect(t.notices[0]?.text).toContain("booting");
+    });
+
+    test("restore on a FAILED boot says the harness did not start, not that it is still booting", async () => {
+        __setBootStateForTest({ phase: "failed", message: "postgres unreachable" });
+        const t = makeSeams();
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await openRestoreSession(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("warn");
+        expect(t.notices[0]?.text).toContain("did not start");
+        expect(t.notices[0]?.text).not.toContain("booting");
+    });
+
+    test("restore refuses to open a picker built for an analysis the user has since left", async () => {
+        // Nothing is modal across the listing round trip, so the analysis-switch keys are live. A picker
+        // opened anyway would offer the PREVIOUS analysis's archived conversations under a heading
+        // claiming to be about the current one, and restoring from it would return a conversation to an
+        // analysis the user is no longer looking at.
+        __setBootStateForTest(READY);
+        const OTHER = { id: "a2", name: "Beta", projectId: null } as unknown as Analysis;
+        const w = sessionScope(ANALYSIS, "thread-1");
+        const t = makeSeams({
+            listThreadsWithArchived: () => {
+                w.swapTo({ analysis: OTHER });
+                return okAsync(threadPage([threadRow({ deletedAt: ARCHIVED_AT })]));
+            },
+        });
+
+        await openRestoreSession(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.text).toContain("Analysis changed");
+    });
+
+    test("a failed archived listing warns and still opens the picker — a degrade, never a crash", async () => {
+        __setBootStateForTest(READY);
+        const t = makeSeams({ listThreadsWithArchived: () => errAsync(dbErr) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await openRestoreSession(w.ws, t.seams);
+
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("warn");
+        // The picker still opens on an empty list, as the switch picker does: the user keeps a working
+        // surface and its empty state is what tells them nothing could be listed.
+        expect(w.dialogs()).toBe(1);
+    });
+
+    test("a restore lifts the chosen conversation's tombstone and names it in the notice", async () => {
+        const restored: string[] = [];
+        const t = makeSeams({
+            unarchiveThread: (_pool, threadId) => {
+                restored.push(threadId);
+                return okAsync<void, DbError>(undefined);
+            },
+        });
+
+        await commitSessionRestore(fakePool, threadRow({ threadId: "thread-archived", title: "Variant burden sweep", deletedAt: ARCHIVED_AT }), t.seams);
+
+        expect(restored).toEqual(["thread-archived"]);
+        expect(t.notices[0]?.kind).toBe("info");
+        expect(t.notices[0]?.text).toContain("Variant burden sweep");
+    });
+
+    test("a failed restore surfaces the error rather than claiming the conversation is back", async () => {
+        const t = makeSeams({ unarchiveThread: () => errAsync(dbErr) });
+
+        await commitSessionRestore(fakePool, threadRow({ title: "Variant burden sweep", deletedAt: ARCHIVED_AT }), t.seams);
+
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("error");
+        // The thread is still archived, so the one claim this outcome cannot make is that it is listing
+        // again.
+        expect(t.notices[0]?.text).not.toContain("appears in this analysis again");
     });
 
     test("two rapid opens: the one STARTED last wins, even when the older listing resolves last", async () => {
@@ -557,5 +688,318 @@ describe("activity-panel palette command", () => {
         // here is that the palette entry calls the restore, never the toggle — a toggle in the palette
         // could hide the panel a second time and read as the command having done nothing.
         expect(cmd.run.toString()).toContain("restoreActivityPanel");
+    });
+});
+
+// The export's ordering is only observable on disk: "signed before written" and "written then signed"
+// differ solely in what survives a signing failure. These drive the real `mkdir`/`writeFile` against a
+// temp directory for that reason — a recorded call list would prove the calls happened in an order,
+// not that a failure left the destination untouched.
+describe("palette provenance export", () => {
+    const ANALYSIS = { id: "a1", name: "Alpha", slug: "alpha", anchorId: "anchor-1", projectId: null } as unknown as Analysis;
+    const DOCUMENT = '{"prefix":{},"entity":{}}';
+    const SIDECAR: Sidecar = {
+        payloadType: "application/json; profile=prov-json",
+        payloadDigestAlgorithm: "SHA-256",
+        payloadDigest: "8f43",
+        payloadDigestMethod: "verbatim",
+        signatureAlgorithm: "Ed25519",
+        signature: "3a91",
+        publicKey: { kty: "OKP", crv: "Ed25519", x: "abc" },
+    };
+
+    let root: string;
+    let out: string;
+    beforeEach(() => {
+        root = mkdtempSync(join(tmpdir(), "inflexa-prov-export-"));
+        // Deliberately NOT created: the export's own `mkdir` is what brings it into being, so its
+        // absence afterwards proves nothing was written rather than merely that a file is missing.
+        out = join(root, "analyses", "alpha");
+        __resetNoticesForTest();
+    });
+    afterEach(() => {
+        rmSync(root, { recursive: true, force: true });
+        __resetNoticesForTest();
+    });
+
+    /** The three edges, with the signature outcome the case is about. */
+    function seams(sidecar: ProvExportSeams["buildSidecar"]): ProvExportSeams {
+        return {
+            resolveOutputDir: () => ok<string, WorkspaceError>(out),
+            serializeProvenance: () => ok<string, SqliteError>(DOCUMENT),
+            buildSidecar: sidecar,
+        };
+    }
+
+    test("a signing failure writes neither the document nor the sidecar", async () => {
+        const exported = await exportProvenanceToFile(
+            ANALYSIS,
+            "json",
+            seams(async () => err<Sidecar, SigningError>({ type: "keypair_race_lost" })),
+        );
+
+        // The delete flow reads this to caveat its own outcome notice, so an unwritten export must
+        // never report success back to a caller exporting on the user's behalf.
+        expect(exported).toBe(false);
+        expect(existsSync(join(out, "provenance.json"))).toBe(false);
+        expect(existsSync(join(out, "provenance.json.sig.json"))).toBe(false);
+        // Nothing at all, not even the directory the write would have needed: an unsigned document
+        // beneath a notice claiming provenance is never exported unsigned is the failure being fixed.
+        expect(existsSync(out)).toBe(false);
+        expect(currentNotice()?.kind).toBe("error");
+        expect(currentNotice()?.text).toContain("never exported unsigned");
+    });
+
+    test("a successful signature writes the document and its sidecar together", async () => {
+        const exported = await exportProvenanceToFile(
+            ANALYSIS,
+            "json",
+            seams(async () => ok<Sidecar, SigningError>(SIDECAR)),
+        );
+
+        expect(exported).toBe(true);
+        expect(readFileSync(join(out, "provenance.json"), "utf8")).toBe(DOCUMENT);
+        expect(JSON.parse(readFileSync(join(out, "provenance.json.sig.json"), "utf8"))).toEqual(SIDECAR);
+        expect(currentNotice()?.kind).toBe("info");
+        expect(currentNotice()?.text).toContain(join(out, "provenance.json"));
+    });
+});
+
+// The delete ladder's contract IS its order, so every case here asserts the recorded stage sequence
+// rather than whether each stage ran: a suite that only counted calls would stay green with the purge
+// moved after the row delete, which is the failure mode that strands an analysis's Postgres footprint
+// beyond any retry while reporting success.
+describe("analysis delete ladder", () => {
+    const ANALYSIS = { id: "a1", name: "Alpha", slug: "alpha", anchorId: "anchor-1", projectId: null } as unknown as Analysis;
+    const SURVIVOR = { id: "a2", name: "Beta", slug: "beta", anchorId: "anchor-1", projectId: null } as unknown as Analysis;
+    const fakePool = {} as unknown as Pool;
+    const fakeRuntime = { pool: fakePool } as unknown as HarnessRuntime;
+    const ARCHIVE_PATH = "/work/.inflexa/analyses_archived/alpha";
+    const PURGED: AnalysisPurgeOutcome = { threads: 2, messages: 40, workflows: 3, vectorIndexDropped: true };
+    const pgErr: DbError = { type: "query_failed", op: "purgeAnalysis", cause: new Error("boom") };
+
+    /** What each stage of one run reports back; every stage still records itself either way. */
+    type LadderOutcomes = {
+        /** `null` stands in for a harness that never booted. */
+        runtime?: HarnessRuntime | null;
+        flushed?: boolean;
+        exported?: boolean;
+        disposal?: WorkspaceDisposal;
+        disposalError?: WorkspaceError;
+        purgeError?: DbError;
+        rowsDeleted?: number;
+        remaining?: Analysis[];
+    };
+
+    function ladder(out: LadderOutcomes = {}): {
+        seams: AnalysisDeleteSeams;
+        steps: string[];
+        notices: Notice[];
+        purged: { pool: Pool; analysisId: string }[];
+    } {
+        const steps: string[] = [];
+        const notices: Notice[] = [];
+        const purged: { pool: Pool; analysisId: string }[] = [];
+        const runtime = out.runtime === undefined ? fakeRuntime : out.runtime;
+        const seams: AnalysisDeleteSeams = {
+            runtime: () => runtime,
+            hasWorkspaceOnDisk: () => true,
+            flushProvenance: async () => {
+                steps.push("flush");
+                return out.flushed ?? true;
+            },
+            exportProvenance: async () => {
+                steps.push("export");
+                return out.exported ?? true;
+            },
+            disposeWorkspace: (_a, mode) => {
+                steps.push(`dispose:${mode}`);
+                if (out.disposalError) return err<WorkspaceDisposal, WorkspaceError>(out.disposalError);
+                return ok<WorkspaceDisposal, WorkspaceError>(out.disposal ?? { kind: "archived", path: ARCHIVE_PATH });
+            },
+            purgeAnalysis: (pool, analysisId) => {
+                steps.push("purge");
+                purged.push({ pool, analysisId });
+                return out.purgeError ? errAsync(out.purgeError) : okAsync<AnalysisPurgeOutcome, DbError>(PURGED);
+            },
+            deleteAnalysis: () => {
+                steps.push("delete-row");
+                return ok<number, SqliteError>(out.rowsDeleted ?? 1);
+            },
+            listRecentAnalyses: () => ok<Analysis[], SqliteError>(out.remaining ?? []),
+            openAnalysis: async (_ws, a) => {
+                steps.push(`land:${a.id}`);
+            },
+            notify: (n) => {
+                notices.push(n);
+            },
+        };
+        return { seams, steps, notices, purged };
+    }
+
+    /** A scope stand-in recording only the quit the landing falls back to. */
+    function scope(): { ws: Workspace; quits: () => number } {
+        let quits = 0;
+        const ws = {
+            analysis: ANALYSIS,
+            sessionId: null,
+            workingDir: "/work",
+            project: null,
+            openDialog: () => {},
+            closeDialog: () => {},
+            openSession: () => {},
+            quit: async () => {
+                quits += 1;
+            },
+        } as unknown as Workspace;
+        return { ws, quits: () => quits };
+    }
+
+    test("keeping the files: flush, export, dispose, purge, then the row — in that order", async () => {
+        const l = ladder({ remaining: [SURVIVOR] });
+        const w = scope();
+
+        await deleteAnalysisWith(w.ws, ANALYSIS, "archive", l.seams);
+
+        // The export lands BEFORE the disposal because it writes into the live workspace, and the row
+        // goes LAST because it carries the only copy of the id the purge needs.
+        expect(l.steps).toEqual(["flush", "export", "dispose:archive", "purge", "delete-row", `land:${SURVIVOR.id}`]);
+        expect(l.purged).toEqual([{ pool: fakePool, analysisId: ANALYSIS.id }]);
+        expect(l.notices.at(-1)?.kind).toBe("info");
+        expect(l.notices.at(-1)?.text).toContain(ARCHIVE_PATH);
+    });
+
+    test("deleting the files: nothing is exported, and the purge still precedes the row", async () => {
+        const l = ladder({ disposal: { kind: "deleted", path: "/work/.inflexa/analyses/alpha" } });
+        const w = scope();
+
+        await deleteAnalysisWith(w.ws, ANALYSIS, "delete", l.seams);
+
+        // No export: the tree that would hold the document is the one being removed. The purge runs
+        // anyway — the disposal mode governs the workspace tree, never the Postgres footprint.
+        expect(l.steps).toEqual(["dispose:delete", "purge", "delete-row"]);
+        expect(l.purged).toEqual([{ pool: fakePool, analysisId: ANALYSIS.id }]);
+        expect(w.quits()).toBe(1);
+    });
+
+    test("a purge failure leaves the SQLite row standing and says nothing was lost", async () => {
+        const l = ladder({ purgeError: pgErr });
+        const w = scope();
+
+        await deleteAnalysisWith(w.ws, ANALYSIS, "archive", l.seams);
+
+        // Deleting the row anyway would convert a retryable failure into a permanent orphan: the id
+        // that names the footprint would be gone, so no later run could reach it.
+        expect(l.steps).toEqual(["flush", "export", "dispose:archive", "purge"]);
+        expect(l.notices.at(-1)?.kind).toBe("error");
+        expect(l.notices.at(-1)?.text).toContain("nothing was lost");
+        expect(w.quits()).toBe(0);
+    });
+
+    test("a failed disposal aborts before the purge is even attempted", async () => {
+        const l = ladder({ disposalError: { type: "mutation_failed", op: "disposeWorkspace", cause: new Error("EACCES") } });
+        const w = scope();
+
+        await deleteAnalysisWith(w.ws, ANALYSIS, "archive", l.seams);
+
+        expect(l.steps).toEqual(["flush", "export", "dispose:archive"]);
+        expect(l.purged).toEqual([]);
+        expect(l.notices.at(-1)?.text).toContain("NOT deleted");
+    });
+
+    test("without a booted runtime nothing is exported, disposed, purged, or deleted", async () => {
+        const l = ladder({ runtime: null });
+        const w = scope();
+
+        await deleteAnalysisWith(w.ws, ANALYSIS, "archive", l.seams);
+
+        expect(l.steps).toEqual([]);
+        expect(l.notices).toHaveLength(1);
+        expect(l.notices[0]?.kind).toBe("warn");
+        expect(l.notices[0]?.text).toContain("harness is not running");
+    });
+
+    test("an export that fails does not abort, and says so in the deletion's own notice", async () => {
+        const l = ladder({ exported: false });
+        const w = scope();
+
+        await deleteAnalysisWith(w.ws, ANALYSIS, "archive", l.seams);
+
+        // Carrying on is the point: the user asked to delete the analysis, not to export provenance.
+        expect(l.steps).toEqual(["flush", "export", "dispose:archive", "purge", "delete-row"]);
+        // The export raises its own toast, but the outcome notice arrives milliseconds later and the
+        // channel replaces what is showing — so the fact has to ride the notice the user will see.
+        expect(l.notices.at(-1)?.kind).toBe("warn");
+        expect(l.notices.at(-1)?.text).toContain('Deleted analysis "Alpha"');
+        expect(l.notices.at(-1)?.text).toContain("provenance could not be exported");
+    });
+
+    test("an analysis that was never opened is deleted without anything being created", async () => {
+        const root = mkdtempSync(join(tmpdir(), "inflexa-delete-absent-"));
+        const workspace = join(root, ".inflexa", "analyses", "alpha");
+        const l = ladder({ disposal: { kind: "absent" } });
+        const w = scope();
+        const seams: AnalysisDeleteSeams = {
+            ...l.seams,
+            hasWorkspaceOnDisk: () => existsSync(workspace),
+            // Mirrors what the real export does on the way to writing: it `mkdir`s its destination.
+            // That is precisely how a deletion could end up CREATING the tree it was asked to retire,
+            // so the fake has to do it for the assertion below to mean anything.
+            exportProvenance: async () => {
+                l.steps.push("export");
+                mkdirSync(workspace, { recursive: true });
+                writeFileSync(join(workspace, "provenance.json"), "{}");
+                return true;
+            },
+        };
+
+        try {
+            await deleteAnalysisWith(w.ws, ANALYSIS, "archive", seams);
+
+            // Neither stage ran: there is nothing to preserve beside a tree that does not exist.
+            expect(l.steps).toEqual(["dispose:archive", "purge", "delete-row"]);
+            expect(existsSync(workspace)).toBe(false);
+            // The row still goes, and the disposal's `absent` is what the user is told.
+            expect(l.notices.at(-1)?.kind).toBe("info");
+            expect(l.notices.at(-1)?.text).toContain("no files on disk");
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test("a flush that could not run leaves the export caveated, not silent", async () => {
+        const l = ladder({ flushed: false });
+        const w = scope();
+
+        await deleteAnalysisWith(w.ws, ANALYSIS, "archive", l.seams);
+
+        // The document was still written — it is the session's tail that may be missing from it, which
+        // is a different claim from "not exported" and must not be collapsed into it.
+        expect(l.steps).toEqual(["flush", "export", "dispose:archive", "purge", "delete-row"]);
+        expect(l.notices.at(-1)?.kind).toBe("warn");
+        expect(l.notices.at(-1)?.text).toContain("may be missing this session's last activity");
+    });
+
+    test("the palette refuses before any confirmation when the harness is not booted", async () => {
+        __resetNoticesForTest();
+        let dialogs = 0;
+        const ws = {
+            analysis: ANALYSIS,
+            sessionId: null,
+            openDialog: () => {
+                dialogs += 1;
+            },
+            closeDialog: () => {},
+            quit: async () => {},
+        } as unknown as Workspace;
+
+        // Nothing in this process booted a runtime, so the command's own gate is what runs — spending
+        // the user's name-typing confirmation on a delete the ladder would refuse is the point of it.
+        await commands.find((c) => c.id === "analysis.delete")!.run(ws);
+
+        expect(dialogs).toBe(0);
+        expect(currentNotice()?.kind).toBe("warn");
+        expect(currentNotice()?.text).toContain("harness is not running");
+        __resetNoticesForTest();
     });
 });

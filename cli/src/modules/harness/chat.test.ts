@@ -6,7 +6,7 @@ import { selectThread } from "./chat.ts";
 
 /** A `Thread` row fixture — override the fields a test cares about. */
 function thread(overrides: Partial<Thread> = {}): Thread {
-    return { threadId: "t-1", analysisId: "an-1", title: null, createdAt: new Date(0), updatedAt: new Date(0), ...overrides };
+    return { threadId: "t-1", analysisId: "an-1", title: null, createdAt: new Date(0), updatedAt: new Date(0), deletedAt: null, ...overrides };
 }
 
 /** A `getThread` seam that resolves to `value` (a row or null). */

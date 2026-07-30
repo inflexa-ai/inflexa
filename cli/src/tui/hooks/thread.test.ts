@@ -45,6 +45,8 @@ function threadRow(over: Partial<Thread> = {}): Thread {
         title: "Cohort survival questions",
         createdAt: new Date("2026-07-08T00:00:00.000Z"),
         updatedAt: new Date("2026-07-08T01:00:00.000Z"),
+        // The resolver and the rail read only live rows, so the fixture carries no tombstone.
+        deletedAt: null,
         ...over,
     };
 }
