@@ -85,6 +85,39 @@ export type ActiveRunProgress = {
 };
 
 /**
+ * Live progress of the analysis's data profile while it is running — the run-activity panel's second
+ * kind of subject.
+ *
+ * Carries only what a profile HAS. There is no completion count and no step list because a profile is
+ * a single agent loop with no step decomposition, so a `done/total` would have to be invented; and
+ * there is no display name because there is one profile per analysis and it is always the same
+ * operation, which makes the name a constant belonging to the renderer rather than a fact the ledger
+ * supplies.
+ */
+export type ActiveProfileProgress = {
+    /** The analysis whose profile this is — the map-free singleton's identity, carried for symmetry with a run's `runId`. */
+    analysisId: string;
+    /** When the profile started (ISO), for the elapsed readout. */
+    startedAt: string;
+    /**
+     * The DBOS workflow id the ledger row records — the stream to subscribe to for this profile's
+     * activity, or `null` when the row has not recorded one yet.
+     *
+     * `null` is a normal state, not an error: the body writes its id as its first durable step, so a
+     * freshly-claimed row has none, and a claim deliberately clears any previous attempt's id rather
+     * than leaving the row pointing at a stream that has already drained.
+     */
+    workflowId: string | null;
+    /**
+     * True when this entry was carried forward from a previous refresh because the profile read
+     * failed. Same meaning and the same reason as {@link ActiveRunProgress.stale}: the carry-forward
+     * is invisible from outside, so a surface that must mute itself on a blip has no other way to
+     * tell a stale entry from a fresh one.
+     */
+    stale: boolean;
+};
+
+/**
  * Every active run's progress, keyed by run id. Empty when nothing is active: no runs, all runs
  * terminal, or the runtime not booted.
  *
@@ -96,11 +129,22 @@ export type ActiveRunProgress = {
  */
 export type ActiveRunProgressMap = ReadonlyMap<string, ActiveRunProgress>;
 
+/**
+ * One thing the run-activity panel can be showing. A discriminated union rather than a widened run,
+ * because the two kinds genuinely differ in what they have: a profile has no steps and no
+ * denominator, and making those optional on one shape would push a guard into every consumer while
+ * leaving "a profile with three running steps" representable.
+ */
+export type PanelSubject = { readonly kind: "run"; readonly run: ActiveRunProgress } | { readonly kind: "profile"; readonly profile: ActiveProfileProgress };
+
 const [profile, setProfile] = createSignal<ProfileSnapshot>({ kind: "not_ready" });
 const [runs, setRuns] = createSignal<RunsSnapshot>({ kind: "not_ready" });
 // A fresh Map object per publish: Solid's default equality is referential, so mutating one in place
 // would update no consumer.
 const [activeRun, setActiveRun] = createSignal<ActiveRunProgressMap>(new Map());
+// A singleton, not a map: there is exactly one data profile per analysis and the store is scoped to
+// the open analysis, so a key would only ever hold one entry.
+const [activeProfile, setActiveProfile] = createSignal<ActiveProfileProgress | null>(null);
 
 /** The data-profile snapshot — read in a tracking scope to repaint on refresh. */
 export const profileSnapshot = profile;
@@ -108,6 +152,28 @@ export const profileSnapshot = profile;
 export const runsSnapshot = runs;
 /** Every active run's progress keyed by run id (empty when nothing is active) — read in a tracking scope. */
 export const activeRunProgress = activeRun;
+/** The running data profile's progress, or `null` when none is running — read in a tracking scope. */
+export const activeProfileProgress = activeProfile;
+
+/**
+ * The live subjects the run-activity panel can show: every active run, then the running profile.
+ *
+ * Runs come FIRST, and that ordering is deliberate — it is the one place this module departs from
+ * ordering by recency. The two kinds differ in PROVENANCE, not in recency: a profile is auto-triggered
+ * when a chat opens on drifted inputs, so it can enter the set without the user having asked for
+ * anything, and a newest-first set would routinely let it take the head and displace a run the user
+ * launched deliberately. Ordering by kind makes the background thing reachable without ever making it
+ * the thing on screen.
+ *
+ * DERIVED, not written: it holds no state of its own and introduces no second writer, so the refresh
+ * remains the single owner of ordering and staleness.
+ */
+export const activeSubjects = createMemo((): readonly PanelSubject[] => {
+    const subjects: PanelSubject[] = [...activeRun().values()].map((run) => ({ kind: "run", run }));
+    const profile = activeProfile();
+    if (profile) subjects.push({ kind: "profile", profile });
+    return subjects;
+});
 
 /**
  * Compact relative age of an ISO timestamp (`5m31s`, `8h54m`), or an em dash when absent/unparseable.
@@ -464,6 +530,7 @@ function resetSnapshots(): void {
     setProfile({ kind: "not_ready" });
     setRuns({ kind: "not_ready" });
     setActiveRun(new Map());
+    setActiveProfile(null);
 }
 
 /**
@@ -495,6 +562,7 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
         setProfile({ kind: "not_ready" });
         setRuns({ kind: "not_ready" });
         setActiveRun(new Map());
+        setActiveProfile(null);
         return;
     }
 
@@ -513,6 +581,37 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
     profileRes.match(
         (row) => setProfile(row === null ? { kind: "absent" } : { kind: "loaded", profile: row }),
         () => setProfile({ kind: "unavailable" }),
+    );
+
+    // The profile's panel-subject entry, published from the SAME read the section above uses — one
+    // reader, one generation token, no second staleness rule.
+    //
+    // Only a `running` profile is published. A `pending` row carries no `startedAt` (the ledger writes
+    // it on the transitions INTO `running`) and no workflow id, so a pending entry would be a name
+    // beside a blank elapsed and a blank activity — and `pending` means seeded-and-queued, while this
+    // entry describes work in flight. The poll's arming condition still counts pending as active work,
+    // which is right: that decides whether to keep looking, not whether there is anything to show.
+    //
+    // The `startedAt` conjunct is TYPE NARROWING, not a second rule: the ledger's `startedAt` is
+    // nullable while the entry's is not, and every claim into `running` stamps it in the same UPDATE.
+    // So a `running` row without one is a state the ledger does not produce, and this cannot silently
+    // hide a live profile — which is also why it is left unpinned by the tests rather than encoded as
+    // behaviour the ledger would have to keep honouring.
+    profileRes.match(
+        (row) =>
+            setActiveProfile(
+                row !== null && row.status === "running" && row.startedAt !== null
+                    ? { analysisId, startedAt: row.startedAt, workflowId: row.workflowId, stale: false }
+                    : null,
+            ),
+        () =>
+            // A read failure carries the previous entry forward rather than dropping it. Without this a
+            // transient blip would remove the panel's profile entry entirely — the snapshot collapses to
+            // a single `unavailable` on any error — so the subject would vanish and return, which reads
+            // as the profile having finished and a new one starting. Re-stamped only on the fresh→stale
+            // edge; an already-stale entry is carried by IDENTITY so consumers memoized on it do not
+            // re-fire for a value that cannot have changed.
+            setActiveProfile((prev) => (prev === null || prev.stale ? prev : { ...prev, stale: true })),
     );
 
     // The two run reads answer different questions, and the section survives EITHER failing.

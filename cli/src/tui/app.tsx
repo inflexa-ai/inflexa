@@ -19,11 +19,11 @@ import { profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/s
 import { usePromptRecall } from "./hooks/prompt_recall.ts";
 import { watchOpenThread } from "./hooks/thread.ts";
 import {
-    activeRunCount,
-    focusedRun,
-    focusedRunActivity,
-    focusedRunPosition,
-    focusNextRun,
+    activeSubjectCount,
+    focusedSubject,
+    focusedSubjectActivity,
+    focusedSubjectPosition,
+    focusNextSubject,
     runPanelVisible,
     toggleRunPanel,
     watchRunPanel,
@@ -744,7 +744,7 @@ export function App(props: AppProps) {
             { chord: resolveKeybind("app.command-palette"), run: () => dialogPush(() => <CommandPalette commands={commands} />) },
             { chord: resolveKeybind("app.toggle-sidebar"), run: () => setSidebarOpen((open) => !open) },
             { chord: resolveKeybind("plan.explore-steps"), run: () => runCommandById("plan.explore-steps") },
-            { chord: resolveKeybind("app.run-panel-next"), run: focusNextRun },
+            { chord: resolveKeybind("app.run-panel-next"), run: focusNextSubject },
             { chord: resolveKeybind("app.run-panel-toggle"), run: toggleRunPanel },
             {
                 chord: leaderSeq("k"),
@@ -754,7 +754,7 @@ export function App(props: AppProps) {
             },
             { chord: leaderSeq("b"), run: () => setSidebarOpen((open) => !open), desc: "Toggle sidebar", group: "App" },
             { chord: leaderSeq("p"), run: toggleRunPanel, desc: "Toggle run panel", group: "View" },
-            { chord: leaderSeq("]"), run: focusNextRun, desc: "Next active run", group: "View" },
+            { chord: leaderSeq("]"), run: focusNextSubject, desc: "Next active run or profile", group: "View" },
             { chord: leaderSeq("a"), run: () => runCommandById("analysis.switch"), desc: "Switch analysis", group: "Analysis" },
             { chord: leaderSeq("n"), run: () => runCommandById("analysis.new"), desc: "New analysis", group: "Analysis" },
             { chord: leaderSeq("d"), run: openProfile, desc: "Data profile", group: "Analysis" },
@@ -1002,13 +1002,13 @@ export function App(props: AppProps) {
                         rail's 40 columns cannot hold. */}
                         <Show when={runPanelVisible()}>
                             <RunActivityPanel
-                                progress={focusedRun() ?? undefined}
-                                activity={focusedRunActivity()}
-                                activeCount={activeRunCount()}
-                                position={focusedRunPosition()}
+                                subject={focusedSubject() ?? undefined}
+                                activity={focusedSubjectActivity()}
+                                activeCount={activeSubjectCount()}
+                                position={focusedSubjectPosition()}
                                 nextKeyLabel={keybindLabel("app.run-panel-next")}
                                 dismissKeyLabel={keybindLabel("app.run-panel-toggle")}
-                                onNext={focusNextRun}
+                                onNext={focusNextSubject}
                             />
                         </Show>
 

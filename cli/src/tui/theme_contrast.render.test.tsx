@@ -19,6 +19,7 @@ import { ThinkingBlock } from "./components/thinking_block.tsx";
 import { ToolBlock } from "./components/tool_block.tsx";
 import { Welcome } from "./components/welcome.tsx";
 import {
+    galleryProfile,
     galleryRun,
     mockAskPrompts,
     mockFileEdit,
@@ -343,7 +344,7 @@ const BLOCKS: BlockCase[] = [
         name: "RunActivityPanel",
         node: () => (
             <RunActivityPanel
-                progress={galleryRun()}
+                subject={{ kind: "run", run: galleryRun() }}
                 activity="tool bash"
                 activeCount={3}
                 position={2}
@@ -358,7 +359,7 @@ const BLOCKS: BlockCase[] = [
         name: "RunActivityPanel (degraded)",
         node: () => (
             <RunActivityPanel
-                progress={galleryRun({ stale: true })}
+                subject={{ kind: "run", run: galleryRun({ stale: true }) }}
                 activity="tool bash"
                 activeCount={1}
                 position={1}
@@ -368,6 +369,24 @@ const BLOCKS: BlockCase[] = [
             />
         ),
         until: "unavailable",
+    },
+    {
+        // A separate entry because the profile arm paints spans the run arm never does — its own marker
+        // glyph, in its own role, and a legend naming a different region. A sweep that only ever rendered
+        // a run subject would leave every one of them unmeasured.
+        name: "RunActivityPanel (profile)",
+        node: () => (
+            <RunActivityPanel
+                subject={{ kind: "profile", profile: galleryProfile() }}
+                activity="tool bash"
+                activeCount={3}
+                position={2}
+                nextKeyLabel="ctrl+n"
+                dismissKeyLabel="ctrl+r"
+                onNext={noop}
+            />
+        ),
+        until: "Data profile",
     },
     {
         name: "PresentationBlock",

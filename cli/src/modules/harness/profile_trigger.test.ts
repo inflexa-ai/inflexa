@@ -30,7 +30,7 @@ const STAGED: StagedInput[] = [
 
 /** A `DataProfileStatus` at the given lifecycle state with a null `result` (the drift-triggering shape). */
 function statusOf(status: DataProfileStatus["status"]): DataProfileStatus {
-    return { status, error: null, startedAt: null, completedAt: null, result: null, seedInputFileIds: null };
+    return { status, error: null, startedAt: null, completedAt: null, result: null, workflowId: null, seedInputFileIds: null };
 }
 
 /**
@@ -55,6 +55,7 @@ function completedWith(files: DataProfileInputFile[]): DataProfileStatus {
         startedAt: null,
         completedAt: null,
         result: { summary: "s", files: [], inputFileIds: files.map((f) => f.fileId), inputFiles: files, profiledAt: "2026-01-01T00:00:00Z" },
+        workflowId: null,
         seedInputFileIds: null,
     };
 }
@@ -70,6 +71,7 @@ function completedLegacy(fileIds: string[]): DataProfileStatus {
         startedAt: null,
         completedAt: null,
         result: { summary: "s", files: [], inputFileIds: fileIds, profiledAt: "2026-01-01T00:00:00Z" },
+        workflowId: null,
         seedInputFileIds: null,
     };
 }

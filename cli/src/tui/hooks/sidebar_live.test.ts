@@ -16,7 +16,9 @@ import { __resetBootForTest, startHarnessBoot, type BootDriver } from "./boot.ts
 import { setChatStatus } from "./status.ts";
 import {
     __resetSidebarLiveForTest,
+    activeProfileProgress,
     activeRunProgress,
+    activeSubjects,
     hasActiveWork,
     idTail,
     profileDetailLines,
@@ -49,9 +51,19 @@ function profileStatus(over: Partial<DataProfileStatus> = {}): DataProfileStatus
         startedAt: "2026-07-08T00:00:00.000Z",
         completedAt: "2026-07-08T00:00:05.000Z",
         result: { summary: "s", files: [{ path: "a.csv", description: "d" }], inputFileIds: [], profiledAt: "2026-07-08T00:00:05.000Z" },
+        workflowId: null,
         seedInputFileIds: null,
         ...over,
     };
+}
+
+/**
+ * A profile row in the one status that publishes a panel-subject entry. Honest ledger shape: a running
+ * profile has no completion stamp and no result yet, and the base builder's defaults describe a
+ * finished one — so the overrides are part of the fixture, not noise at each call site.
+ */
+function runningProfile(over: Partial<DataProfileStatus> = {}): DataProfileStatus {
+    return profileStatus({ status: "running", startedAt: "2026-07-30T10:00:00.000Z", completedAt: null, result: null, workflowId: "wf-1", ...over });
 }
 
 function runRow(over: Partial<CortexRunRow> = {}): CortexRunRow {
@@ -153,6 +165,7 @@ function loaded(over: Partial<DataProfileStatus> = {}): ProfileSnapshot {
                 inputFileIds: ["i1", "i2"],
                 profiledAt: "2026-07-08T00:00:05.000Z",
             },
+            workflowId: null,
             seedInputFileIds: ["i1", "i2", "i3"],
             ...over,
         },
@@ -635,6 +648,168 @@ describe("refreshSidebarData — sticky run-progress row", () => {
         } finally {
             dispose();
         }
+    });
+});
+
+// The data profile is the run-activity panel's SECOND kind of subject, published from the SAME
+// profile read the DATA PROFILE section consumes — so these pin what a profile row turns into, never
+// how it is read.
+describe("refreshSidebarData — the profile's panel-subject entry", () => {
+    test("a running profile publishes an entry carrying its startedAt and recorded workflowId", async () => {
+        await refreshSidebarData("A", seams(runningProfile({ startedAt: "2026-07-30T10:00:00.000Z", workflowId: "wf-7" }), []));
+        // `analysisId` comes from the refresh's argument rather than a ledger column: the entry carries
+        // whose profile it is so a consumer holding one entry still knows.
+        expect(activeProfileProgress()).toEqual({ analysisId: "A", startedAt: "2026-07-30T10:00:00.000Z", workflowId: "wf-7", stale: false });
+    });
+
+    test("a running profile whose workflow id is not yet recorded still publishes", async () => {
+        // The profile body writes its workflow id as its first durable step, so a freshly-claimed row
+        // has none. Withholding the subject would hide the profile for exactly the window in which it
+        // just started — absence of the id is a normal state, not a reason to show nothing.
+        await refreshSidebarData("A", seams(runningProfile({ workflowId: null }), []));
+        const entry = activeProfileProgress();
+        expect(entry).not.toBeNull();
+        expect(entry?.workflowId).toBeNull();
+        expect(entry?.stale).toBe(false);
+    });
+
+    test("a terminal profile publishes none, and clears an entry published on a previous refresh", async () => {
+        await refreshSidebarData("A", seams(runningProfile(), []));
+        expect(activeProfileProgress()).not.toBeNull();
+
+        await refreshSidebarData("A", seams(profileStatus({ status: "completed" }), []));
+        expect(activeProfileProgress()).toBeNull();
+
+        // Failure is the other terminal end and must clear identically — a failed profile is no more
+        // "work in flight" than a completed one.
+        await refreshSidebarData("A", seams(runningProfile(), []));
+        expect(activeProfileProgress()).not.toBeNull();
+        await refreshSidebarData("A", seams(profileStatus({ status: "failed", error: "boom", result: null }), []));
+        expect(activeProfileProgress()).toBeNull();
+    });
+
+    test("a pending profile publishes no entry, yet still arms the poll", async () => {
+        // Two independent decisions, asserted so either can regress alone. A `pending` row carries no
+        // start stamp and no workflow, so an entry would be a name beside two blanks — but the poll
+        // must keep looking, because seeded-and-queued work will produce something to show.
+        await refreshSidebarData("A", seams(profileStatus({ status: "pending", startedAt: null, completedAt: null, result: null }), []));
+        expect(activeProfileProgress()).toBeNull();
+        expect(hasActiveWork(profileSnapshot(), runsSnapshot())).toBe(true);
+    });
+
+    test("publishing a profile entry leaves the per-run entries untouched", async () => {
+        const active = [runRow({ runId: "run-1", status: "running" })];
+        await refreshSidebarData(
+            "A",
+            seams(null, active, () => fakeRuntime, [stepRow("s", "running")]),
+        );
+        const runsOnly = activeRunProgress().get("run-1");
+        expect(runsOnly).toBeDefined();
+
+        await refreshSidebarData(
+            "A",
+            seams(runningProfile(), active, () => fakeRuntime, [stepRow("s", "running")]),
+        );
+        // The rail renders off this map, so a profile joining the panel must not rewrite, reorder, or
+        // displace any of it — the two live surfaces share a refresh, not a data set.
+        expect(activeProfileProgress()).not.toBeNull();
+        expect([...activeRunProgress().keys()]).toEqual(["run-1"]);
+        expect(activeRunProgress().get("run-1")).toEqual(runsOnly!);
+    });
+});
+
+// A profile read failure collapses the whole profile SNAPSHOT to a single `unavailable`, so without a
+// carry-forward the panel's profile subject would vanish and return on any transient blip — which
+// reads as the profile having finished and a new one starting.
+describe("refreshSidebarData — a failed profile read carries the profile entry forward", () => {
+    /** Seams whose profile read fails while every other read succeeds — the isolated profile blip. */
+    function blippedProfile(): RefreshSeams {
+        return { ...seams(null, []), loadProfile: () => errAsync(dbErr) };
+    }
+
+    test("a blip keeps the previous entry and marks it stale; a recovered read clears staleness", async () => {
+        await refreshSidebarData("A", seams(runningProfile({ workflowId: "wf-7" }), []));
+        const fresh = activeProfileProgress()!;
+        expect(fresh.stale).toBe(false);
+
+        await refreshSidebarData("A", blippedProfile());
+        // The CONTENT is the last known state; only its freshness changes, because freshness is a
+        // property of THIS refresh and the panel mutes itself on it.
+        expect(activeProfileProgress()).toEqual({ ...fresh, stale: true });
+        // The section degraded, and that is exactly the failure the entry has to survive.
+        expect(profileSnapshot().kind).toBe("unavailable");
+
+        await refreshSidebarData("A", seams(runningProfile({ workflowId: "wf-7" }), []));
+        const recovered = activeProfileProgress();
+        expect(recovered?.stale).toBe(false);
+        expect(recovered).toEqual(fresh);
+    });
+
+    test("a second consecutive failure carries the SAME object, not an equal copy", async () => {
+        await refreshSidebarData("A", seams(runningProfile(), []));
+        await refreshSidebarData("A", blippedProfile());
+        const carried = activeProfileProgress()!;
+        expect(carried.stale).toBe(true);
+
+        await refreshSidebarData("A", blippedProfile());
+        // Identity, not equality: consumers memoize on this entry, so minting an equal-but-new object
+        // every poll would re-fire all of them for a value that cannot have changed during an outage.
+        expect(activeProfileProgress()).toBe(carried);
+    });
+});
+
+// Ordering is load-bearing rather than cosmetic. A parity profile is auto-triggered when a chat opens
+// on drifted inputs, so it enters the set without the user having asked for anything; a newest-first
+// set would routinely hand it the head and displace a run the user launched deliberately on any
+// surface that reads the head as its default focus.
+describe("activeSubjects — a profile never displaces a run", () => {
+    /** The subject set flattened to ids (`"profile"` for the profile) so kind AND order are one assertion. */
+    function subjectIds(): string[] {
+        return activeSubjects().map((s) => (s.kind === "run" ? s.run.runId : "profile"));
+    }
+
+    test("a profile sorts behind the only active run", async () => {
+        await refreshSidebarData(
+            "A",
+            seams(runningProfile(), [runRow({ runId: "run-1", status: "running" })], () => fakeRuntime, [stepRow("s", "running")]),
+        );
+        expect(subjectIds()).toEqual(["run-1", "profile"]);
+    });
+
+    test("two active runs keep their newest-first order and the profile is last", async () => {
+        const runs = [
+            runRow({ runId: "newest", status: "running", startedAt: "2026-07-30T11:00:00.000Z" }),
+            runRow({ runId: "older", status: "running", startedAt: "2026-07-30T09:00:00.000Z" }),
+        ];
+        await refreshSidebarData(
+            "A",
+            seams(runningProfile(), runs, () => fakeRuntime, [stepRow("s", "running")]),
+        );
+        // The runs query's own newest-first order, untouched by the profile joining the set.
+        expect(subjectIds()).toEqual(["newest", "older", "profile"]);
+        expect(activeSubjects()[0]?.kind).toBe("run");
+    });
+
+    test("a profile alone is the only subject", async () => {
+        await refreshSidebarData("A", seams(runningProfile(), []));
+        expect(subjectIds()).toEqual(["profile"]);
+    });
+
+    test("a profile that starts after a run does not take the head", async () => {
+        const runs = [runRow({ runId: "user-launched", status: "running" })];
+        await refreshSidebarData(
+            "A",
+            seams(null, runs, () => fakeRuntime, [stepRow("s", "running")]),
+        );
+        expect(subjectIds()).toEqual(["user-launched"]);
+
+        await refreshSidebarData(
+            "A",
+            seams(runningProfile(), runs, () => fakeRuntime, [stepRow("s", "running")]),
+        );
+        // The later arrival goes to the TAIL, so the run the user launched keeps the head it had.
+        expect(subjectIds()).toEqual(["user-launched", "profile"]);
+        expect(activeSubjects()[0]?.kind).toBe("run");
     });
 });
 

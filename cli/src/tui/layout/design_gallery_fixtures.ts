@@ -11,7 +11,7 @@
 import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
 
 import type { AskCardPart, TextPart, ThinkingPart, ToolCallPart, FileEditPart, PlanCardPart, PlanCardStepView, RunCardPart } from "../../types/session.ts";
-import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
+import type { ActiveProfileProgress, ActiveRunProgress } from "../hooks/sidebar_live.ts";
 
 /** A run step's lifecycle state (mirrors `RunStepView.state`). */
 export type StepState = "done" | "running" | "failed" | "queued";
@@ -414,6 +414,7 @@ export const mockDataProfile: DataProfileStatus = {
         inputFileIds: ["mock-input-counts", "mock-input-meta"],
         profiledAt: Date.ago(4 * 60_000),
     },
+    workflowId: null,
     seedInputFileIds: ["mock-input-counts", "mock-input-meta"],
 };
 
@@ -529,6 +530,27 @@ export function galleryRun(over: Partial<ActiveRunProgress> = {}): ActiveRunProg
             { label: "call variants", state: "queued", startedAt: null },
             { label: "summarize findings", state: "queued", startedAt: null },
         ],
+        stale: false,
+        ...over,
+    };
+}
+
+/**
+ * MOCK: the running data profile's progress, as the run-activity panel receives it. A factory for the
+ * same reason {@link galleryRun} is one — the exhibits vary a single field at a time.
+ *
+ * Carries no name and no counts because the type has neither: the panel's name for a profile is a
+ * constant it renders itself, and a profile has no step decomposition to count.
+ */
+export function galleryProfile(over: Partial<ActiveProfileProgress> = {}): ActiveProfileProgress {
+    return {
+        analysisId: "mock-analysis",
+        // Fixed rather than "now", for the same reason as the run fixture: a live clock would make the
+        // gallery's captured frames differ between runs.
+        startedAt: "2026-07-28T10:02:30.000Z",
+        // A realistic shape — `dataprofile:{analysisId}:{nonce}` is what the harness mints — so a reader
+        // can see that a profile is addressed by its WORKFLOW id, not by a run id.
+        workflowId: "dataprofile:mock-analysis:9f21f0d4-4a88-4c07-9b31-2e6a5c1f7d80",
         stale: false,
         ...over,
     };
