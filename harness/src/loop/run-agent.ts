@@ -3,6 +3,8 @@ import type { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
 import { stripNulCharacters } from "../input-sanitization.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { classifyProviderError } from "../providers/errors.js";
@@ -78,6 +80,17 @@ export interface RunAgentOptions {
      * cache-write premium for a cache nothing ever reads back.
      */
     readonly promptCache?: PromptCachePolicy;
+    /**
+     * Diagnostic sink for the run's own lifecycle. Optional because `runAgent` is
+     * called from tools, workflow bodies, and test rigs alike — silence is the
+     * correct behaviour for a caller that wires nothing, and the noop fallback
+     * gives it without every call site threading `?.`.
+     *
+     * Distinct from `emit`, which feeds a user-facing surface: every host filters
+     * sub-agent events off that surface by `callPath` depth, so a sub-agent's
+     * progress is emitted and then dropped. This is where it survives.
+     */
+    readonly logger?: Logger;
 }
 
 export async function runAgent(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
@@ -98,6 +111,11 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         agentId: session.provenance.agentId ?? agent.id,
         callPath: session.provenance.callPath,
     };
+    // Bound from the same `source` the emitted events carry: one derivation feeding
+    // both sinks, so a record and an event cannot disagree about who produced them.
+    // `callPath` rides as an array rather than a joined string — the queryable form;
+    // rendering `parent > child` is the sink's choice, not a published package's.
+    const log = (opts.logger ?? createNoopLogger()).named("loop").with({ agentId: source.agentId, callPath: source.callPath });
     const toolsById = new Map<string, Tool>(agent.tools.map((t) => [t.id, t]));
     const toolDefs: ToolSet = Object.fromEntries(
         agent.tools.map((t) => [
@@ -133,6 +151,13 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     const providerOptions = promptCacheProviderOptions(opts.promptCache ?? DEFAULT_PROMPT_CACHE);
     const usage: AgentRunUsage = {};
 
+    // Exactly one record per completed run — never one per iteration. That bound is
+    // what keeps the default level affordable for an agent that runs long; the
+    // per-iteration detail lives at `debug`, where paying per iteration is the point.
+    const logFinish = (level: "info" | "warn", reason: AgentFinish["reason"], cappedOut: boolean): void => {
+        log[level]("run finished", { iterations, reason, cappedOut, truncationRecoveries, usage });
+    };
+
     // The user said no. A subsequent model call would only let the agent argue
     // with the decision, or spend a call acknowledging it; the denial tool result
     // is itself what the surface renders, so the turn ends the moment a denial
@@ -141,6 +166,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     const stopOnDenial = async (i: number): Promise<RunAgentResult> => {
         await emit({ type: "iteration", source, index: i, final: true });
         recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
+        logFinish("warn", "denied", false);
         return { messages, finish: { reason: "denied", cappedOut: false, truncationRecoveries } };
     };
     const stopOnResolved = async (i: number): Promise<RunAgentResult> => {
@@ -179,6 +205,9 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         if (reply.finishReason === "length") {
             truncationRecoveries++;
             await emit({ type: "iteration", source, index: i, final: false });
+            // `tools` is what the model asked for; the trailing call was cut off at the
+            // output limit and is never dispatched, which the distinct message records.
+            log.debug("iteration truncated at output limit", { iteration: i, tools: toolCalls.map((t) => t.toolName), truncationRecoveries });
             if (toolCalls.length === 0) {
                 // Stamped synthetic, not left as a bare `user` message: the wire format needs a user turn
                 // after a truncated assistant message, but this one is the loop's own nudge, and thread
@@ -213,10 +242,12 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         if (reply.finishReason !== "tool-calls") {
             await emit({ type: "iteration", source, index: i, final: true });
             recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
+            logFinish("info", reply.finishReason, false);
             return { messages, finish: { reason: reply.finishReason, cappedOut: false, truncationRecoveries } };
         }
 
         await emit({ type: "iteration", source, index: i, final: false });
+        log.debug("iteration", { iteration: i, tools: toolCalls.map((t) => t.toolName) });
         for (const tu of toolCalls) {
             await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input });
         }
@@ -258,12 +289,14 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         markLastLoopAssistant(messages, initial.length);
         await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
         recordAgentRun({ agentId: agent.id, iterations, cappedOut: true, usage });
+        logFinish("warn", "aborted", true);
         return { messages, finish: { reason: "aborted", cappedOut: true, truncationRecoveries } };
     }
 
     messages.push(wrapUp.message);
     await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
     recordAgentRun({ agentId: agent.id, iterations, cappedOut: true, usage });
+    logFinish("warn", "max_iterations", true);
     return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries } };
 }
 
