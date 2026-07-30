@@ -77,6 +77,18 @@ The frame stays a constant colour for the same reason the full box was rejected:
 
 **Why.** The card's own documentation said this before it regressed: it renders the fields the launch record carries, "not a live progress meter, which the rail renders". Three surfaces showing one figure is not redundancy that helps, and the panel already argues its own counts are bare text specifically so they do not read as a second meter — an argument that fails once a third meter exists.
 
+### D5a — The legend is region-scoped, and degrades by measured width
+
+**Decision.** The rule's legend carries the region's name, the panel's position in the active set, and the chords that act on the panel. The position leaves the header row and the hint row is deleted. The legend is chosen from a ladder by the panel's own measured width.
+
+**Why the ladder.** opentui renders a border title only when the box is at least `title.length + 4` columns wide, and otherwise **drops it silently** rather than truncating — measured exactly at six title lengths from 5 to 37 columns, each first appearing at `length + 4`. So an over-long legend does not lose its tail, it loses the region's name too and leaves an unlabelled rule. The full legend needs 41 columns, and a 40-column tmux pane is a case this codebase already designs for, so degradation has to be deliberate: chords shed first, then the position, ending at the bare name.
+
+**Why the panel's own width and not the terminal's.** An open sidebar makes the two differ by the rail's width. That gap is exactly the dangerous case — a 40-column pane with the rail shown leaves the panel too narrow while the terminal still looks roomy.
+
+**How it is measured, and three timings that do not work.** A renderable's width is 0 until layout computes it, and layout runs inside the render loop. Reading it in the ref callback gives 0; a microtask queued from the ref gives 0; a macrotask gives 0 whenever the panel mounts from a data update rather than at startup, because the deferred read fires before that panel's first layout. The box's own `resized` event is no help either — it fires from `resize()`, which flex-driven sizing never calls, so it stayed silent while the width went from 0 to its computed value. The root emits `layout-changed` from `calculateLayout`, so the panel subscribes there: the width is correct on the first painted frame and stays correct through resizes and sidebar toggles.
+
+**Consequence for the click affordance.** The spec requires mouse navigation, and a box's border is drawn by the box rather than being a child that could carry a handler, so the click stays on the header row — now without a co-located indicator. The earlier rationale that "the affordance sits on the thing it acts upon" no longer applies and is not worth preserving: the position is view state and belongs on the frame, while the click is merely the only safe target that does not hijack a text-selection drag.
+
 ### D6 — Elapsed gets its own ticker
 
 **Decision.** Drive the panel's relative ages from a periodic signal rather than recomputing them incidentally when the data object changes.

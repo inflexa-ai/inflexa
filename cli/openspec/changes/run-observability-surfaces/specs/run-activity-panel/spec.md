@@ -70,7 +70,14 @@ through the gaps between them.
 The panel SHALL be visually distinguishable from the transcript above it. It SHALL paint the
 raised surface the application uses for docked chrome — the same surface as the status bar,
 the sidebar, the ask prompt, and dialog panels — and SHALL cap itself against the stream with
-a single rule along its top edge carrying a short label naming the region.
+a single rule along its top edge carrying the region's legend.
+
+**The legend carries region state and region actions; the content rows carry the run.** The
+panel's position within the active set, and the chords that act on the panel itself, are facts
+about the *view* rather than about the run — so they belong to the frame, and the content rows
+SHALL carry only what is true of the run (its name, counts, elapsed time, frontier, activity).
+The panel SHALL NOT spend a content row on chord hints, and SHALL NOT place its position
+indicator on a row otherwise describing the run.
 
 The rule is required, not decorative: the raised surface separates from the stream background
 by as little as 1.06:1 on the lightest built-in theme, which is a tint rather than an edge, so
@@ -99,6 +106,18 @@ is size-dependent and a single height hides it.
 
 - **WHEN** the panel renders beneath a transcript in any built-in theme
 - **THEN** it is painted on the docked-chrome surface and capped by a labelled rule, so it is distinguishable from the blocks above it
+
+#### Scenario: Region state and actions ride the legend
+
+- **WHEN** several runs are active and the panel is showing one of them
+- **THEN** the legend names the region, states which run of how many is shown, and names the chords that advance and dismiss the panel
+- **AND** no content row carries the position indicator, and no row is spent on chord hints
+
+#### Scenario: The legend degrades rather than vanishing when the panel is narrow
+
+- **GIVEN** a legend too long to fit the panel's width
+- **WHEN** the panel renders
+- **THEN** it drops the least essential part of the legend and still renders the region's name, rather than rendering an unlabelled rule
 
 #### Scenario: Only one rule meets the input
 

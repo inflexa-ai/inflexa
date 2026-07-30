@@ -1,4 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Accessor } from "solid-js";
+import { LayoutEvents, type BoxRenderable } from "@opentui/core";
+import { useRenderer } from "@opentui/solid";
 
 import { theme } from "../theme.ts";
 import { GLYPHS, space, stroke } from "../../lib/design_system.ts";
@@ -51,6 +53,49 @@ export type RunActivityPanelProps = {
 export const ELAPSED_TICK_MS = 1_000;
 
 /**
+ * Columns a border title costs beyond its own text: two rule glyphs on each side, which opentui
+ * always draws around the label.
+ *
+ * A title is rendered only when the box is at least this much wider than the string, and when it is
+ * not, opentui **drops the title silently** rather than truncating it — so an over-long legend does
+ * not lose its tail, it loses the region's name as well and leaves an unlabelled rule. Measured
+ * exactly, at six title lengths from 5 to 37 columns, each first appearing at `length + 4`.
+ */
+const TITLE_RULE_COST = 4;
+
+/** The narrowest legend a panel will ever show — its region name, and nothing else. */
+const BARE_LEGEND = " RUN ";
+
+/**
+ * The legend a panel of `width` columns should carry: the widest of a fixed ladder that opentui will
+ * actually render, falling back to the region's name alone.
+ *
+ * The legend is the region's own line — what this region is, which of the active runs it is showing,
+ * and the chords that act on the region itself. None of those is a fact about the run, which is why
+ * they live on the frame and not on a row describing the run.
+ *
+ * The ladder exists because the alternative to degrading is disappearing (see {@link
+ * TITLE_RULE_COST}). Its order is deliberate: the chords are shed first, because a hint the reader
+ * has no room to read is worth less than knowing which run they are looking at. Below roughly nine
+ * columns even the bare name is dropped by opentui — a panel that narrow cannot render its content
+ * either, so it is not defended against here.
+ */
+export function fitRunLegend(opts: {
+    readonly width: number;
+    readonly position: number;
+    readonly activeCount: number;
+    readonly nextKeyLabel: string;
+    readonly dismissKeyLabel: string;
+}): string {
+    const multi = opts.activeCount > 1;
+    const region = multi ? `RUN ${opts.position}/${opts.activeCount}` : "RUN";
+    const chords = multi ? `${opts.nextKeyLabel} next ${GLYPHS.middot} ${opts.dismissKeyLabel} hide` : `${opts.dismissKeyLabel} hide`;
+    // Padded so the label breathes inside the rule rather than butting against its glyphs.
+    const ladder = [` ${region} ${GLYPHS.middot} ${chords} `, ` ${region} `, BARE_LEGEND];
+    return ladder.find((c) => opts.width >= c.length + TITLE_RULE_COST) ?? BARE_LEGEND;
+}
+
+/**
  * The steps currently running — the run's frontier.
  *
  * All of them, not the first: a run with parallel steps genuinely has several frontiers, and
@@ -86,6 +131,35 @@ export function RunActivityPanel(props: RunActivityPanelProps) {
     // rule out. A boolean memo dedupes referentially, so the effect re-runs only when a run appears
     // or leaves.
     const showing = createMemo((): boolean => props.progress !== undefined);
+
+    // The panel's OWN width, which is what the legend has to fit — NOT the terminal's. An open sidebar
+    // makes the two differ by the rail's width, and that gap is precisely the dangerous case: a
+    // 40-column pane with the rail shown leaves the panel too narrow for the full legend while the
+    // terminal still looks roomy, and a legend that does not fit is dropped rather than truncated.
+    //
+    // Zero until the first layout lands, which the ladder reads as "narrowest" — so the first frame
+    // carries the bare region name rather than an unlabelled rule.
+    const [panelWidth, setPanelWidth] = createSignal(0);
+    // Re-measured after every layout pass, which is the only timing that holds. A renderable's width
+    // is 0 until layout computes it, and layout runs inside the render loop — so the ref callback, a
+    // microtask queued from it, and even a macrotask all read 0 when the panel mounts from a data
+    // update rather than at startup (measured: the deferred read fired before the first layout of a
+    // panel appearing mid-session). The box's own `resized` event is no help either — it fires from
+    // `resize()`, which flex-driven sizing never calls.
+    //
+    // The root emits `layout-changed` from `calculateLayout`, so subscribing there gives a width that
+    // is correct on the first painted frame and stays correct through resizes and sidebar toggles.
+    const renderer = useRenderer();
+    let panelRef: BoxRenderable | null = null;
+    const measure = (r: BoxRenderable): void => {
+        panelRef = r;
+    };
+    const onLayout = (): void => {
+        if (panelRef) setPanelWidth(panelRef.width);
+    };
+    renderer.root.on(LayoutEvents.LAYOUT_CHANGED, onLayout);
+    onCleanup(() => renderer.root.off(LayoutEvents.LAYOUT_CHANGED, onLayout));
+
     // Armed only while a run is showing — with no run the panel renders no rows at all, so a live
     // timer would be pure background work. The effect's own cleanup disarms it on both transitions:
     // the run leaving, and the component being disposed.
@@ -102,6 +176,16 @@ export function RunActivityPanel(props: RunActivityPanelProps) {
         tick();
         return iso?.relativeAge() ?? null;
     }
+
+    const legend = createMemo((): string =>
+        fitRunLegend({
+            width: panelWidth(),
+            position: props.position,
+            activeCount: props.activeCount,
+            nextKeyLabel: props.nextKeyLabel,
+            dismissKeyLabel: props.dismissKeyLabel,
+        }),
+    );
 
     return (
         <Show when={props.progress}>
@@ -135,6 +219,7 @@ export function RunActivityPanel(props: RunActivityPanelProps) {
                 // would read as a second focus ring and make the real one ambiguous. Run state lives in
                 // the header glyph's role and in the words.
                 <box
+                    ref={measure}
                     width="100%"
                     flexShrink={0}
                     flexDirection="column"
@@ -142,15 +227,18 @@ export function RunActivityPanel(props: RunActivityPanelProps) {
                     border={["top"]}
                     borderStyle={stroke.panel}
                     borderColor={theme().border}
-                    title=" RUN "
+                    title={legend()}
                     titleColor={theme().fgMuted}
                     paddingLeft={space.sm}
                     paddingRight={space.sm}
                 >
-                    {/* The header row is the panel's CLICK TARGET for navigation, and only it — a
-                        click anywhere on the panel would hijack the drag that starts a text selection
-                        over the frontier lines. It carries the position indicator, so the affordance
-                        sits on the thing it acts upon. Inert with a single active run. */}
+                    {/* The header row is the panel's CLICK TARGET for navigation, and only it — a click
+                        anywhere on the panel would hijack the drag that starts a text selection over the
+                        frontier lines. The row carries no navigation label: the position and the chords
+                        are the region's, so they ride the legend, and the border is drawn by the box
+                        rather than being a child that could carry a handler. The click therefore stays
+                        here because it is the only safe target, not because it is co-located with its
+                        indicator. Inert with a single active run. */}
                     <box width="100%" onMouseDown={() => props.activeCount > 1 && props.onNext()}>
                         <text>
                             <Fg role={stale() ? "fgMuted" : "warning"}>{`${GLYPHS.circleHalf} `}</Fg>
@@ -159,9 +247,6 @@ export function RunActivityPanel(props: RunActivityPanelProps) {
                                 two meters would read as two widgets showing one run. */}
                             <Fg role="fgMuted">{`  ${run().done}/${run().total}`}</Fg>
                             <Fg role="fgMuted">{`  ${GLYPHS.middot} ${age(run().startedAt) ?? GLYPHS.emDash}`}</Fg>
-                            <Show when={props.activeCount > 1}>
-                                <Fg role="fgMuted">{`  ${GLYPHS.middot} run ${props.position}/${props.activeCount}`}</Fg>
-                            </Show>
                             <Show when={stale()}>
                                 <Fg role="fgMuted">{`  ${GLYPHS.middot} unavailable`}</Fg>
                             </Show>
@@ -189,18 +274,6 @@ export function RunActivityPanel(props: RunActivityPanelProps) {
                             </text>
                         )}
                     </Show>
-
-                    {/* `fgMuted`, not `fgSubtle`: a key hint is information-bearing text and holds the
-                        4.5:1 floor. `fgSubtle` is the decorative tier (3:1) — it measures 3.36:1 on
-                        github-light, which the contrast sweep correctly rejects for a line the reader
-                        is meant to act on. */}
-                    <text>
-                        <Fg role="fgMuted">
-                            {props.activeCount > 1
-                                ? `${props.nextKeyLabel} next run ${GLYPHS.middot} ${props.dismissKeyLabel} hide`
-                                : `${props.dismissKeyLabel} hide`}
-                        </Fg>
-                    </text>
                 </box>
             )}
         </Show>

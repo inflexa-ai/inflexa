@@ -5,7 +5,6 @@ import { createSignal } from "solid-js";
 
 import { DEFAULT_THEME_ID, GLYPHS, themes } from "../../lib/design_system.ts";
 import { setTheme } from "../theme.ts";
-import { renderFrame } from "../../test_support/tui.ts";
 import { ELAPSED_TICK_MS, RunActivityPanel } from "./run_activity_panel.tsx";
 import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import type { RunStepView } from "../components/run_block.tsx";
@@ -18,6 +17,33 @@ import type { RunStepView } from "../components/run_block.tsx";
 //     SWEEP because that class of defect is size-dependent and a single height hides it.
 
 const WIDE = { width: 80, height: 12 };
+
+/**
+ * A frame of a panel that has finished measuring itself.
+ *
+ * The shared `renderFrame` renders once, which is a frame too early for this component: the panel
+ * sizes its legend from its own computed width, and that width is only readable a macrotask after
+ * mount (the layout pass runs inside the render loop). Asserting on the single-render frame would
+ * pin the pre-measurement fallback — the bare region name — and so would pass no matter what the
+ * legend logic did. Every assertion in this file goes through here for that reason.
+ */
+async function settledFrame(node: Parameters<typeof testRender>[0], size: { width: number; height: number }): Promise<string> {
+    const setup = await testRender(node, size);
+    try {
+        for (let i = 0; i < 3; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            await setup.renderOnce();
+        }
+        return setup
+            .captureCharFrame()
+            .split("\n")
+            .map((line) => line.trimEnd())
+            .join("\n")
+            .trimEnd();
+    } finally {
+        setup.renderer.destroy();
+    }
+}
 
 function step(over: Partial<RunStepView> = {}): RunStepView {
     return { label: "step", state: "running", startedAt: null, ...over };
@@ -59,7 +85,7 @@ function panel(over: Partial<Parameters<typeof RunActivityPanel>[0]> = {}) {
 
 describe("RunActivityPanel content", () => {
     test("a running step is named, attributed, and described", async () => {
-        const frame = await renderFrame(panel(), WIDE);
+        const frame = await settledFrame(panel(), WIDE);
         expect(frame).toContain("Differential expression");
         expect(frame).toContain("1/3");
         expect(frame).toContain("align reads");
@@ -68,7 +94,7 @@ describe("RunActivityPanel content", () => {
     });
 
     test("the frontier only — done and queued steps stay in the rail, not here", async () => {
-        const frame = await renderFrame(panel(), WIDE);
+        const frame = await settledFrame(panel(), WIDE);
         expect(frame).toContain("align reads");
         // The step list belongs to the sidebar. Rendering it here too would put one widget on screen
         // twice, which is the duplication the panel exists to avoid.
@@ -77,7 +103,7 @@ describe("RunActivityPanel content", () => {
     });
 
     test("every parallel frontier step is shown, not just the first", async () => {
-        const frame = await renderFrame(
+        const frame = await settledFrame(
             panel({
                 progress: progress({
                     steps: [step({ label: "align reads" }), step({ label: "call variants" })],
@@ -92,12 +118,12 @@ describe("RunActivityPanel content", () => {
     test("an unrecognised step kind passes through verbatim rather than collapsing to a placeholder", async () => {
         // `friendlyStepLabel` returns an unknown DBOS step name unchanged; the panel must not
         // second-guess it, so a newly added step kind surfaces instead of hiding.
-        const frame = await renderFrame(panel({ activity: "some-new-step-kind" }), WIDE);
+        const frame = await settledFrame(panel({ activity: "some-new-step-kind" }), WIDE);
         expect(frame).toContain("some-new-step-kind");
     });
 
     test("an unresolvable activity label is omitted, and the rest of the frontier still renders", async () => {
-        const frame = await renderFrame(panel({ activity: null }), WIDE);
+        const frame = await settledFrame(panel({ activity: null }), WIDE);
         expect(frame).toContain("align reads");
         expect(frame).toContain("[bioinformatician]");
         expect(frame).not.toContain("tool bash");
@@ -106,7 +132,7 @@ describe("RunActivityPanel content", () => {
     test("no run → zero rows: the panel renders nothing at all", async () => {
         // Rendered directly rather than through `panel()`: Solid's prop merge treats an `undefined`
         // value in a spread as "not provided", so it cannot clear a prop an earlier source set.
-        const frame = await renderFrame(
+        const frame = await settledFrame(
             () => <RunActivityPanel progress={undefined} activeCount={0} position={0} nextKeyLabel="ctrl+n" dismissKeyLabel="ctrl+r" onNext={() => {}} />,
             WIDE,
         );
@@ -214,31 +240,67 @@ describe("RunActivityPanel elapsed clock", () => {
 });
 
 describe("RunActivityPanel navigation", () => {
-    test("a single active run shows no position indicator and no next-run hint", async () => {
-        const frame = await renderFrame(panel({ activeCount: 1, position: 1 }), WIDE);
-        expect(frame).not.toContain("run 1/1");
-        expect(frame).not.toContain("next run");
-        expect(frame).toContain("ctrl+r hide");
+    test("a single active run names no position and offers no next-run chord", async () => {
+        const frame = await settledFrame(panel({ activeCount: 1, position: 1 }), WIDE);
+        expect(frame).toContain("RUN · ctrl+r hide");
+        expect(frame).not.toContain("1/1");
+        expect(frame).not.toContain("next");
     });
 
-    test("several active runs show the position and the derived next-run chord", async () => {
-        const frame = await renderFrame(panel({ activeCount: 3, position: 2 }), WIDE);
-        expect(frame).toContain("run 2/3");
-        expect(frame).toContain("ctrl+n next run");
+    test("several active runs put the position and the next-run chord in the legend", async () => {
+        const frame = await settledFrame(panel({ activeCount: 3, position: 2 }), WIDE);
+        expect(frame).toContain("RUN 2/3 · ctrl+n next · ctrl+r hide");
     });
 
-    test("hint labels come from the props, so a remapped chord is advertised correctly", async () => {
+    test("the legend's chords come from the props, so a remapped chord is advertised correctly", async () => {
         // The mount derives these from `keybindLabel`; passing different ones proves nothing is
         // hand-written inside the component.
-        const frame = await renderFrame(panel({ activeCount: 2, nextKeyLabel: "ctrl+9", dismissKeyLabel: "ctrl+0" }), WIDE);
-        expect(frame).toContain("ctrl+9 next run");
+        const frame = await settledFrame(panel({ activeCount: 2, nextKeyLabel: "ctrl+9", dismissKeyLabel: "ctrl+0" }), WIDE);
+        expect(frame).toContain("ctrl+9 next");
         expect(frame).toContain("ctrl+0 hide");
+    });
+
+    test("the run's own rows carry no view state — no position, no chord hints", async () => {
+        const lines = (await settledFrame(panel({ activeCount: 3, position: 2 }), WIDE)).split("\n");
+        // Everything below the rule describes the RUN. The position and the chords are facts about the
+        // region, so they live on the frame; a content row carrying either is the defect this pins.
+        const body = lines.slice(1).join("\n");
+        expect(body).not.toContain("2/3");
+        expect(body).not.toContain("ctrl+n");
+        expect(body).not.toContain("ctrl+r");
+    });
+});
+
+describe("RunActivityPanel legend fits the panel's width", () => {
+    // opentui renders a border title only when the box is at least `title.length + 4` wide and
+    // otherwise DROPS it — silently, taking the region's name with it. So the legend degrades by a
+    // ladder, and the boundary is worth pinning: a 40-column tmux pane is a real case, and the
+    // difference between "sheds its chords" and "renders an unlabelled rule" is invisible without it.
+    const CASES = [
+        { width: 100, expect: "RUN 2/3 · ctrl+n next · ctrl+r hide", note: "roomy: the whole legend" },
+        { width: 41, expect: "RUN 2/3 · ctrl+n next · ctrl+r hide", note: "the exact width the full legend still fits" },
+        { width: 40, expect: "RUN 2/3", note: "one column short: chords shed, position survives" },
+        { width: 14, expect: "RUN", note: "narrow: the region's name alone" },
+    ] as const;
+
+    for (const c of CASES) {
+        test(`${c.width} columns — ${c.note}`, async () => {
+            const frame = await settledFrame(panel({ activeCount: 3, position: 2 }), { width: c.width, height: 12 });
+            expect(frame.split("\n")[0]).toContain(c.expect);
+        });
+    }
+
+    test("the rule is never left unlabelled at any width the panel can be given", async () => {
+        for (let width = 12; width <= 60; width += 1) {
+            const frame = await settledFrame(panel({ activeCount: 3, position: 2 }), { width, height: 12 });
+            expect(frame.split("\n")[0]).toContain("RUN");
+        }
     });
 });
 
 describe("RunActivityPanel degradation", () => {
     test("a stale entry keeps the run and its last known frontier, marked unavailable", async () => {
-        const frame = await renderFrame(panel({ progress: progress({ stale: true }) }), WIDE);
+        const frame = await settledFrame(panel({ progress: progress({ stale: true }) }), WIDE);
         // Still present — a panel that vanished on a blip is indistinguishable from a finished run.
         expect(frame).toContain("Differential expression");
         expect(frame).toContain("align reads");
@@ -246,7 +308,7 @@ describe("RunActivityPanel degradation", () => {
     });
 
     test("a fresh entry carries no unavailable marker", async () => {
-        const frame = await renderFrame(panel(), WIDE);
+        const frame = await settledFrame(panel(), WIDE);
         expect(frame).not.toContain("unavailable");
     });
 });
@@ -344,7 +406,7 @@ describe("RunActivityPanel chrome across terminal heights", () => {
                 </scrollbox>
                 <RunActivityPanel
                     progress={progress({ steps: [step({ label: "align reads", agent: "bioinformatician" })] })}
-                    activity="tool bash"
+                    activity="Running script deseq2.R"
                     activeCount={2}
                     position={1}
                     nextKeyLabel="ctrl+n"
@@ -359,25 +421,25 @@ describe("RunActivityPanel chrome across terminal heights", () => {
     }
 
     // Each panel row, named by a substring that identifies it. The RULE row leads deliberately: it is
-    // now the row directly beneath the scrollbox, so it is the one the bleed reaches first. Its label
-    // also proves the rule itself is drawn — opentui paints a title onto the top border side, so the
-    // label cannot appear unless that side exists.
-    const PANEL_ROWS = [" RUN ", "Differential expression", "align reads", "next run"];
+    // the row directly beneath the scrollbox, so it is the one the bleed reaches first. Its label also
+    // proves the rule itself is drawn — opentui paints a title onto the top border side, so the label
+    // cannot appear unless that side exists.
+    const PANEL_ROWS = [" RUN ", "Differential expression", "align reads", "Running script"];
 
     for (const height of [8, 10, 12, 16, 20, 30, 40]) {
         test(`height ${height}: the panel keeps its rows, and no stream content bleeds into them`, async () => {
-            const frame = await renderFrame(column(height), { width: 60, height });
+            const frame = await settledFrame(column(height), { width: 60, height });
             const lines = frame.split("\n");
 
-            // The panel did not collapse: rule, identity, frontier and hint all survive.
+            // The panel did not collapse: rule, identity, frontier and activity all survive.
             for (const row of PANEL_ROWS) expect(frame).toContain(row);
             // The fixed input row below it is never squeezed out either — and it sits DIRECTLY under
-            // the hint, so the panel drew no bottom rule of its own. That is not a spare assertion:
-            // opentui promotes a box carrying `borderStyle`/`borderColor` but no explicit `border` to
-            // a full four-sided frame, so losing the top-only intent is a silent edit, and the result
-            // is the two-parallel-hairlines-around-an-empty-row shape the design rejects.
-            const hint = lines.findIndex((line) => line.includes("next run"));
-            expect(lines[hint + 1]).toContain("INPUTROW");
+            // the panel's last row, so the panel drew no bottom rule of its own. That is not a spare
+            // assertion: opentui promotes a box carrying `borderStyle`/`borderColor` but no explicit
+            // `border` to a full four-sided frame, so losing the top-only intent is a silent edit, and
+            // the result is the two-parallel-hairlines-around-an-empty-row shape the design rejects.
+            const lastPanelRow = lines.findIndex((line) => line.includes("Running script"));
+            expect(lines[lastPanelRow + 1]).toContain("INPUTROW");
 
             // No stream content shares a line with any panel row. A bleed shows up exactly here: the
             // scrollbox's last row overlapping the panel's first.
@@ -390,7 +452,7 @@ describe("RunActivityPanel chrome across terminal heights", () => {
     }
 
     test("with no run the column composes exactly as it would with no panel present", async () => {
-        const withPanel = await renderFrame(
+        const withPanel = await settledFrame(
             () => (
                 <box flexDirection="column" width={60} height={16}>
                     <scrollbox flexGrow={1} minHeight={0}>
@@ -404,7 +466,7 @@ describe("RunActivityPanel chrome across terminal heights", () => {
             ),
             { width: 60, height: 16 },
         );
-        const withoutPanel = await renderFrame(
+        const withoutPanel = await settledFrame(
             () => (
                 <box flexDirection="column" width={60} height={16}>
                     <scrollbox flexGrow={1} minHeight={0}>
