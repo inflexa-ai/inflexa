@@ -619,7 +619,13 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         would misrepresent the design in the one place it is meant to be reviewed.
 
                         Activity strings here are the harness's own vocabulary (`activityForTool`), which
-                        is what the live panel now shows — not a label derived from a workflow step name. */}
+                        is what the live panel now shows — not a label derived from a workflow step name.
+
+                        The legend carries the region: its name, which of the active runs is on screen,
+                        and the chords that act on the panel. None of those is a fact about the run, so
+                        no content row holds them. It degrades by width — opentui drops a border title
+                        that does not fit rather than truncating it — so a narrow exhibit here sheds its
+                        chords and then its position, which is the real behaviour and not a defect. */}
                     <text fg={theme().fgMuted}>one active run — the frontier step with its agent and live activity label:</text>
                     <box width="100%" backgroundColor={theme().bg}>
                         <RunActivityPanel
@@ -632,7 +638,9 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             onNext={noop}
                         />
                     </box>
-                    <text fg={theme().fgMuted}>several active runs — position indicator and the cycling hint appear (the header row is click-to-advance):</text>
+                    <text fg={theme().fgMuted}>
+                        several active runs — the legend gains the position and the cycling chord (the header row is click-to-advance):
+                    </text>
                     <box width="100%" backgroundColor={theme().bg}>
                         <RunActivityPanel
                             progress={galleryRun()}

@@ -62,3 +62,13 @@
 - [x] 9.3 Run `bun run format:file` on every changed file under `src/`
 - [ ] 9.4 Drive the real TUI against a live run and confirm the activity line changes as the agent makes tool calls — BLOCKED in the implementing environment: no `~/.inflexa/config.json`, so no model/provider wiring, and a real run spends the operator's model budget. Every layer beneath it is covered by automated tests; this is the one end-to-end confirmation only the operator can make
 - [x] 9.5 Validate with `openspec validate run-observability-surfaces`
+
+## 10. The legend carries the region; the hint row goes
+
+- [x] 10.1 Move the position indicator off the header row and into the rule's legend, merged into the label itself (`RUN 1/2`), so a content row no longer carries view state
+- [x] 10.2 Move the chord hints into the legend and delete the hint row — net one row back, and with a single active run the panel stops spending a whole row on one hint
+- [x] 10.3 Degrade the legend by width rather than losing it: opentui renders a border title only when `width >= title.length + 4` (measured exactly across six lengths) and otherwise drops it silently, taking the region's name with it. Pick the longest legend that fits from a ladder ending at the bare region name
+- [x] 10.4 Source the panel's own width, not the terminal's — an open sidebar makes them differ by the rail's width, which is precisely the case that would render an unlabelled rule at a 40-column pane
+- [x] 10.5 Rewrite the header row's click comment: the indicator no longer sits there, so the "affordance sits on the thing it acts upon" rationale no longer holds. The click stays because the spec requires mouse navigation and the border is not a child that can carry a handler
+- [x] 10.6 Test the legend ladder at several widths, including the boundary where the full legend stops fitting, and assert the region name survives at every width
+- [x] 10.7 Update the panel's height sweep and the gallery exhibits, whose captions and row expectations assume a hint row
