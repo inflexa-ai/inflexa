@@ -366,3 +366,86 @@ describe("listThreads", () => {
         expect(last.hasMore).toBe(false);
     });
 });
+
+describe("listThreads includeArchived", () => {
+    /** One live thread and one archived thread under the same analysis. */
+    async function seedLiveAndArchived(): Promise<void> {
+        (await store.createThread({ threadId: "live", analysisId: ANALYSIS_A, title: "Live" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "archived", analysisId: ANALYSIS_A, title: "Archived" }))._unsafeUnwrap();
+        (await store.archiveThread("archived"))._unsafeUnwrap();
+    }
+
+    it("omits the archived thread and counts only the live one when the flag is absent", async () => {
+        await seedLiveAndArchived();
+
+        const page = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
+
+        expect(page.threads.map((t) => t.threadId)).toEqual(["live"]);
+        expect(page.total).toBe(1);
+        expect(page.threads[0]!.deletedAt).toBeNull();
+    });
+
+    it("returns live and archived together when asked", async () => {
+        await seedLiveAndArchived();
+
+        const page = (await store.listThreads({ analysisId: ANALYSIS_A, includeArchived: true }))._unsafeUnwrap();
+
+        expect(page.threads.map((t) => t.threadId).sort()).toEqual(["archived", "live"]);
+        expect(page.total).toBe(2);
+        // Once both states share one result set, the tombstone is the only thing
+        // that tells them apart — a caller has nothing else to render or filter on.
+        expect(page.threads.find((t) => t.threadId === "archived")!.deletedAt).toBeInstanceOf(Date);
+        expect(page.threads.find((t) => t.threadId === "live")!.deletedAt).toBeNull();
+    });
+
+    it("counts and pages the whole widened set", async () => {
+        for (let i = 0; i < 3; i++) {
+            (await store.createThread({ threadId: `live-${i}`, analysisId: ANALYSIS_A, title: `Live ${i}` }))._unsafeUnwrap();
+        }
+        for (let i = 0; i < 2; i++) {
+            (await store.createThread({ threadId: `arch-${i}`, analysisId: ANALYSIS_A, title: `Archived ${i}` }))._unsafeUnwrap();
+            (await store.archiveThread(`arch-${i}`))._unsafeUnwrap();
+        }
+
+        // A `perPage` below the five-row set forces both statements to answer for
+        // the same rows: a count still excluding the archived pair would report
+        // three, and a page still excluding them would run dry before this offset.
+        const first = (await store.listThreads({ analysisId: ANALYSIS_A, includeArchived: true, page: 0, perPage: 2 }))._unsafeUnwrap();
+        expect(first.total).toBe(5);
+        expect(first.threads).toHaveLength(2);
+        expect(first.hasMore).toBe(true);
+
+        const middle = (await store.listThreads({ analysisId: ANALYSIS_A, includeArchived: true, page: 1, perPage: 2 }))._unsafeUnwrap();
+        const last = (await store.listThreads({ analysisId: ANALYSIS_A, includeArchived: true, page: 2, perPage: 2 }))._unsafeUnwrap();
+        expect(last.total).toBe(5);
+        expect(last.threads).toHaveLength(1);
+        expect(last.hasMore).toBe(false);
+
+        // Paging to exhaustion yields exactly what the total promised, archived
+        // rows included and none of them visited twice.
+        const paged = [...first.threads, ...middle.threads, ...last.threads].map((t) => t.threadId).sort();
+        expect(paged).toEqual(["arch-0", "arch-1", "live-0", "live-1", "live-2"]);
+    });
+
+    it("restores a thread reached through the widened listing", async () => {
+        (await store.createThread({ threadId: "kept", analysisId: ANALYSIS_A, title: "Kept" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "restore-me", analysisId: ANALYSIS_A, title: "Restore me" }))._unsafeUnwrap();
+        (await store.archiveThread("restore-me"))._unsafeUnwrap();
+
+        // The id handed to the restore comes out of the listing rather than from
+        // the test's own knowledge of it: a host has no other way to obtain one,
+        // which is what makes the archive recoverable in practice and not just in
+        // the API's own terms.
+        const widened = (await store.listThreads({ analysisId: ANALYSIS_A, includeArchived: true }))._unsafeUnwrap();
+        const archived = widened.threads.filter((t) => t.deletedAt !== null);
+        expect(archived).toHaveLength(1);
+
+        (await store.unarchiveThread(archived[0]!.threadId))._unsafeUnwrap();
+
+        const page = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
+        expect(page.total).toBe(2);
+        const restored = page.threads.find((t) => t.threadId === "restore-me");
+        expect(restored).toBeDefined();
+        expect(restored!.deletedAt).toBeNull();
+    });
+});
