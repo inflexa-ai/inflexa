@@ -16,6 +16,8 @@
  * non-retryable 4xx, so it is a different kind.
  */
 
+import { redactSecrets } from "../input-sanitization.js";
+
 export type ProviderErrorKind = "auth" | "budget" | "tenant-blocked" | "provider";
 
 /**
@@ -136,14 +138,23 @@ export function toProviderError(e: unknown, workload: string): ProviderError {
 const PROVIDER_BODY_EXCERPT_MAX_LEN = 120;
 
 /**
- * Single-lined, length-capped rendering of a captured response body. Bounding
- * happens here rather than at a consumer because most `ProviderError` consumers
- * truncate nothing at all, and the one that does would let an unbounded body
- * crowd out the workload and status ahead of it.
+ * Single-lined, secret-redacted, length-capped rendering of a captured response body. Bounding happens
+ * here rather than at a consumer because most `ProviderError` consumers truncate nothing at all, and the
+ * one that does would let an unbounded body crowd out the workload and status ahead of it.
+ *
+ * The body is an UNTRUSTED upstream/proxy payload, and this excerpt lands verbatim in the ledger's
+ * `data_profile_error` (surfaced to the UI) and the logs, whereas the composed lead does not — so
+ * secrets are redacted here and nowhere else on the message. Redaction runs on the FULL body before
+ * truncation: a token straddling the cut would otherwise be sliced into an unmatchable fragment that
+ * leaks. `redactSecrets` matches only prefixed formats (API keys, JWTs, bearer tokens, connection
+ * strings) and is safe on biological data, so a legitimate error body passes through intact.
  */
 function excerptResponseBody(body: string): string {
-    const singleLine = body.replace(/\s+/g, " ").trim();
-    return singleLine.length > PROVIDER_BODY_EXCERPT_MAX_LEN ? singleLine.slice(0, PROVIDER_BODY_EXCERPT_MAX_LEN - 1) + "…" : singleLine;
+    const singleLine = redactSecrets(body).replace(/\s+/g, " ").trim();
+    // Slice by CODE POINT, not UTF-16 unit: a raw byte body can carry astral characters, and a plain
+    // `.slice` could bisect a surrogate pair into a lone half that renders as U+FFFD.
+    const chars = [...singleLine];
+    return chars.length > PROVIDER_BODY_EXCERPT_MAX_LEN ? chars.slice(0, PROVIDER_BODY_EXCERPT_MAX_LEN - 1).join("") + "…" : singleLine;
 }
 
 export interface ProviderErrorClassification {

@@ -351,11 +351,11 @@ async function runParityDrive(runtime: HarnessRuntime, analysis: Analysis, curre
             seams.notify(couldNotStartNotice(analysis, outcome.reason));
             return;
         case "skipped_failed":
-            // Silent on purpose, and now honestly so: the outcome means the failed attempt's own input
-            // set is still the one on disk, so the user's files ARE materialized and the sidebar already
-            // renders the failure + its error. Nothing is being withheld and nothing is pending — a
-            // toast would only nag on every open about a retry the user has chosen to make deliberately
-            // ({@link driveForceReprofile}). A set that drifted takes the `triggered` path above instead.
+            // Silent on purpose: `skipped_failed` means the failed attempt's own input set is still the
+            // one on disk, so the user's files ARE materialized and the sidebar already renders the
+            // failure + its error. Nothing is withheld and nothing is pending — a toast would only nag on
+            // every open about a retry the user makes deliberately ({@link driveForceReprofile}). A set
+            // that drifted takes the `triggered` path above instead.
             return;
         case "already_profiled":
         case "already_running":

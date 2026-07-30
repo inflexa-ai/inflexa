@@ -9,7 +9,7 @@ import { freshDb } from "../../test_support/db.ts";
 import { insertAnchor, insertAnalysis, insertAnalysisInput, deleteAnalysisInput } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { Analysis, AnalysisInput } from "../../types/analysis.ts";
-import { stageInputs, enumerateInputSignatures, inputSignature, isInputSetMaterialized } from "./staging.ts";
+import { stageInputs, enumerateInputSignatures, inputSignature, isInputSetMaterialized, mtimesMatch } from "./staging.ts";
 
 function sha256(content: string): string {
     return createHash("sha256").update(content).digest("hex");
@@ -384,8 +384,27 @@ describe("stageInputs — the staged tree records what it materialized", () => {
         expect(stagedStats.ino).not.toBe(srcStats.ino);
         expect(stagedStats.size).toBe(srcStats.size);
         // `copyFileSync` stamps the destination with its own creation time; without the source's mtime
-        // copied back on, the staged tree could never record which input set it materialized.
+        // copied back on, the staged tree could never record which input set it materialized. A system
+        // binary carries a WHOLE-second mtime (no sub-ms tail), which is the one case the `utimesSync`
+        // seconds round-trip reproduces bit-exactly — so `===` holds here. A freshly-written input's
+        // nanosecond mtime does not, which is why the predicate matches within a tolerance; the drift
+        // that tolerance absorbs is pinned in the `mtimesMatch` block below, since forcing the copy
+        // fallback on a fractional-mtime file we own (same-filesystem temp dir → `linkSync` succeeds) is
+        // not reliably reproducible here.
         expect(stagedStats.mtimeMs).toBe(srcStats.mtimeMs);
+    });
+
+    test("mtimesMatch absorbs the copy-stamp round-trip drift but not a real edit", () => {
+        // Values captured on APFS: statSync reports nanosecond precision (`…704.7327`), but the copy
+        // stamp (utimesSync in seconds) reads back a few float-ULPs short (`…704.732`). An exact `===`
+        // reported ~90% of copy-staged files as drifted, re-hashing them on every parity check.
+        expect(mtimesMatch(1785359002704.7327, 1785359002704.732)).toBe(true);
+        expect(mtimesMatch(1785359002704.9714, 1785359002704.971)).toBe(true);
+        // A whole-ms source (a system binary) round-trips exactly — same instant, zero gap.
+        expect(mtimesMatch(1722767501000, 1722767501000)).toBe(true);
+        // A genuine edit moves the mtime by milliseconds and up — never a sub-ULP tie.
+        expect(mtimesMatch(1785359002704.7327, 1785359002705.7327)).toBe(false);
+        expect(mtimesMatch(1000, 2000)).toBe(false);
     });
 
     test("staging by hardlink never touches the source's mtime, so nothing drifts afterwards", async () => {
