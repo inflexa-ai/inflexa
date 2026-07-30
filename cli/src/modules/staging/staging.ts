@@ -109,9 +109,13 @@ function stageFile(src: string, dest: string, srcStats: Stats): Result<void, FsE
             // The stamp belongs to THIS branch alone. A hardlinked destination shares the source's
             // inode, so `utimesSync` on it rewrites the user's own input file (measured) — and since
             // `enumerateInputSignatures` reads that file's mtime, staging would manufacture drift
-            // against the profile it just took. Seconds, not the `Date` fields: `mtimeMs / 1000`
-            // round-trips the sub-millisecond fraction exactly (measured 200/200), while a `Date`
-            // truncates to whole milliseconds and misses every time.
+            // against the profile it just took. Seconds, not the `Date` fields: `utimesSync` takes an
+            // f64 seconds value, and `mtimeMs / 1000` keeps far more of the sub-millisecond fraction
+            // than a `Date` (which truncates to whole ms and misses every fractional mtime). It is still
+            // NOT bit-exact — the seconds round-trip drops a few float-ULPs of the tail a nanosecond
+            // filesystem reports (measured on APFS: ~90% of natural mtimes read back a fraction off, up
+            // to 2^-10 ms) — which is exactly why {@link isInputSetMaterialized} compares mtimes within
+            // {@link MTIME_MATCH_TOLERANCE_MS} rather than with `===`.
             try {
                 utimesSync(dest, srcStats.atimeMs / 1000, srcStats.mtimeMs / 1000);
             } catch (cause) {
@@ -464,6 +468,33 @@ export function enumerateInputSignatures(analysisId: string): Result<ReadonlySet
 }
 
 /**
+ * The largest gap between two `mtimeMs` readings still treated as the same modification instant.
+ *
+ * The copy fallback stamps the source's mtime onto the destination with `utimesSync` ({@link stageFile}),
+ * which takes an f64 seconds value: the sub-millisecond tail a nanosecond-granularity filesystem reports
+ * (`…704.7327`) does not survive the ms → seconds → `timespec` → ms round-trip and reads back a few
+ * float-ULPs short (`…704.732`). An exact `===` therefore reported ~90% of copy-staged files as drifted
+ * on APFS (measured), re-hashing genomics-sized inputs on every parity check for nothing. Measured drift
+ * topped out at 2^-10 ms; the error is a few ULPs of the f64 mtime grid (~2^-11 ms/ULP at epoch-ms
+ * scale, and the grid coarsens as the timestamp grows), so this is set to 2^-6 ms — ample headroom over
+ * that across filesystems and future timestamps, yet still ~64× finer than a millisecond and orders of
+ * magnitude below any real edit's mtime delta (a rewrite stamps wall-clock "now", seconds-to-hours after
+ * staging). So it never masks a genuine change; only a coarse (whole-second) filesystem drifts past it,
+ * and there the predicate merely re-stages, the safe direction. Hardlinked files share the source inode
+ * and match at a zero gap.
+ */
+const MTIME_MATCH_TOLERANCE_MS = 2 ** -6;
+
+/**
+ * Whether two `mtimeMs` readings denote the same modification instant, within the copy-stamp round-trip
+ * tolerance ({@link MTIME_MATCH_TOLERANCE_MS}). Exported for the round-trip test, which pins real APFS
+ * drift values a live copy is hard to reproduce deterministically in a same-filesystem temp dir.
+ */
+export function mtimesMatch(a: number, b: number): boolean {
+    return Math.abs(a - b) <= MTIME_MATCH_TOLERANCE_MS;
+}
+
+/**
  * Whether `analysisId`'s current input set already exists under `targetDir` exactly as
  * {@link stageInputs} would leave it — "is there anything to materialize?", answered at stat/readdir
  * cost like {@link enumerateInputSignatures}, never at content cost.
@@ -479,8 +510,11 @@ export function enumerateInputSignatures(analysisId: string): Result<ReadonlySet
  * Conservative in ONE direction: a missing staged file, a size or mtime mismatch, an unreadable path,
  * or a staged file no current input produces (staging's mirror pass would delete it) all read as
  * `false`. The worst outcome is a redundant staging pass; a `true` for a set that is not fully present
- * and current is unrepresentable. The error channel carries only the walk's own faults — input
- * listing, anchor resolution, a directory-input walk — exactly as enumeration reports them.
+ * and current is unrepresentable. mtime is matched within {@link MTIME_MATCH_TOLERANCE_MS}, not by
+ * `===`, because the copy fallback's stamp does not round-trip bit-exact; the tolerance is far below any
+ * real edit's mtime delta, so it never manufactures a false `true` for a genuinely changed file — see
+ * that constant. The error channel carries only the walk's own faults — input listing, anchor
+ * resolution, a directory-input walk — exactly as enumeration reports them.
  *
  * @param analysisId - The analysis whose current input set to check.
  * @param targetDir - The data directory root staging writes under (`workspaceDataDir(analysis)`).
@@ -498,7 +532,7 @@ export function isInputSetMaterialized(analysisId: string, targetDir: string): R
             if (srcStats.isErr()) return false;
             const stagedStats = statResult(join(targetDir, relativePath), "isInputSetMaterialized:staged");
             if (stagedStats.isErr()) return false;
-            if (stagedStats.value.size !== srcStats.value.size || stagedStats.value.mtimeMs !== srcStats.value.mtimeMs) return false;
+            if (stagedStats.value.size !== srcStats.value.size || !mtimesMatch(stagedStats.value.mtimeMs, srcStats.value.mtimeMs)) return false;
         }
 
         // A staged file no current input yields means the mirror pass has deletions to perform, which
