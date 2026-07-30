@@ -48,6 +48,11 @@ export type PromptCachePolicy = { readonly ttl: "5m" | "1h" } | "off";
  * seeds the cache (billed at a premium; it only pays for itself once a later
  * call reads it back).
  *
+ * `reasoningTokens` is exactly what the provider reported — never derived from,
+ * nor reconciled against, `outputTokens`. Whether reasoning tokens are counted
+ * inside the output total varies by provider, so any arithmetic between the two
+ * would be a guess dressed as a figure.
+ *
  * Every field is optional: a provider that reports no usage at all, or reports
  * totals without a cache breakdown, is legitimate. Absent means "not reported",
  * never "zero".
@@ -57,6 +62,7 @@ export interface ChatUsage {
     readonly outputTokens?: number;
     readonly cacheCreationInputTokens?: number;
     readonly cacheReadInputTokens?: number;
+    readonly reasoningTokens?: number;
 }
 
 export interface ChatResponse {
@@ -73,6 +79,23 @@ export interface ChatResponse {
     readonly finishReason: FinishReason | "aborted";
     readonly rawFinishReason?: string;
     readonly usage?: ChatUsage;
+    /**
+     * The id of the model this provider instance is bound to — what the caller
+     * asked for. Absent when the binding names no id.
+     */
+    readonly requestedModelId?: string;
+    /**
+     * The model id the provider itself reported as having answered. Absent
+     * whenever the provider reported none — it is NEVER filled in from
+     * `requestedModelId`, because a claim about which model answered is only
+     * worth anything when the endpoint actually made it.
+     *
+     * A value differing from `requestedModelId` is not an error: the pair exists
+     * so a consumer can observe an endpoint or proxy serving a different model
+     * version than the one configured. Treat the comparison as best-effort
+     * diagnostics, never as an invariant.
+     */
+    readonly servedModelId?: string;
 }
 
 export type ChatStreamEvent = { readonly type: "text-delta"; readonly text: string } | { readonly type: "done"; readonly response: ChatResponse };

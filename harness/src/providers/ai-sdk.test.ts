@@ -246,7 +246,8 @@ describe("createAiSdkProvider", () => {
                     message: { role: "assistant", content: [{ type: "text", text: "hello" }] },
                     finishReason: "stop",
                     rawFinishReason: "stop",
-                    usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+                    usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 },
+                    requestedModelId: "fake-model",
                 },
             },
         ]);
@@ -345,6 +346,7 @@ describe("usage reporting", () => {
             outputTokens: 42,
             cacheCreationInputTokens: 200,
             cacheReadInputTokens: 1700,
+            reasoningTokens: 0,
         });
     });
 
@@ -378,6 +380,7 @@ describe("usage reporting", () => {
             outputTokens: 42,
             cacheCreationInputTokens: 200,
             cacheReadInputTokens: 1700,
+            reasoningTokens: 0,
         });
     });
 
@@ -400,6 +403,85 @@ describe("usage reporting", () => {
         expect(reply.usage?.inputTokens).toBe(50);
         expect(reply.usage?.cacheReadInputTokens).toBeUndefined();
         expect(reply.usage?.cacheCreationInputTokens).toBeUndefined();
+    });
+
+    it("carries a reported reasoning count verbatim, without reconciling it against the output total", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => ({
+                content: [{ type: "text", text: "done" }],
+                finishReason: { unified: "stop", raw: "stop" },
+                usage: {
+                    inputTokens: { total: 120, noCache: 120, cacheRead: undefined, cacheWrite: undefined },
+                    // A provider counting reasoning OUTSIDE its output total: 90 + 40
+                    // does not equal `total`. Neither figure may be adjusted to fit the
+                    // other — whether reasoning is a subset of output is the provider's
+                    // convention, not the harness's arithmetic.
+                    outputTokens: { total: 90, text: 90, reasoning: 40 },
+                },
+                warnings: [],
+            })),
+            resolveBilling: async () => ({}),
+        });
+
+        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+
+        expect(reply.usage?.reasoningTokens).toBe(40);
+        expect(reply.usage?.outputTokens).toBe(90);
+    });
+
+    it("leaves reasoningTokens undefined — never zero — when a provider reports no reasoning count", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => ({
+                content: [{ type: "text", text: "done" }],
+                finishReason: { unified: "stop", raw: "stop" },
+                usage: {
+                    inputTokens: { total: 50, noCache: 50, cacheRead: undefined, cacheWrite: undefined },
+                    outputTokens: { total: 5, text: 5, reasoning: undefined },
+                },
+                warnings: [],
+            })),
+            resolveBilling: async () => ({}),
+        });
+
+        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+
+        expect(reply.usage?.reasoningTokens).toBeUndefined();
+        expect(reply.usage?.outputTokens).toBe(5);
+    });
+
+    it("surfaces reasoning tokens on the stream path's terminal event", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async () => okResult(),
+                async () => ({
+                    stream: new ReadableStream({
+                        start(controller) {
+                            controller.enqueue({ type: "stream-start", warnings: [] });
+                            controller.enqueue({ type: "text-start", id: "txt-1" });
+                            controller.enqueue({ type: "text-delta", id: "txt-1", delta: "done" });
+                            controller.enqueue({ type: "text-end", id: "txt-1" });
+                            controller.enqueue({
+                                type: "finish",
+                                finishReason: { unified: "stop", raw: "stop" },
+                                usage: {
+                                    inputTokens: { total: 120, noCache: 120, cacheRead: undefined, cacheWrite: undefined },
+                                    outputTokens: { total: 90, text: 50, reasoning: 40 },
+                                },
+                            });
+                            controller.close();
+                        },
+                    }),
+                }),
+            ),
+            resolveBilling: async () => ({}),
+        });
+
+        const events = [];
+        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
+
+        const done = events.at(-1);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        expect(done.response.usage?.reasoningTokens).toBe(40);
     });
 
     it("forwards the request's providerOptions verbatim to the model", async () => {
@@ -639,7 +721,8 @@ describe("createAiSdkProvider chatStream retry", () => {
                     message: { role: "assistant", content: [{ type: "text", text: "ab" }] },
                     finishReason: "stop",
                     rawFinishReason: "stop",
-                    usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+                    usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 },
+                    requestedModelId: "fake-model",
                 },
             },
         ]);
@@ -735,7 +818,8 @@ describe("createAiSdkProvider chatStream retry", () => {
                     message: { role: "assistant", content: [{ type: "text", text: "ab" }] },
                     finishReason: "stop",
                     rawFinishReason: "stop",
-                    usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+                    usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 },
+                    requestedModelId: "fake-model",
                 },
             },
         ]);
@@ -889,5 +973,121 @@ describe("createAiSdkProvider billing resolution fail-fast", () => {
         if (isProviderError(caught)) expect(caught.type).toBe("provider");
         expect(streamCalls).toBe(0);
         expect(billingInvocations).toBe(1);
+    });
+});
+
+/**
+ * The served id is captured at the raw model boundary, not read off the SDK's
+ * assembled result: `generateText` and `streamText` both fall back to the bound
+ * model's own id when the endpoint reports none, so `result.response.modelId`
+ * would republish the requested id as an endpoint's claim. These tests pin that
+ * the fallback never reaches `servedModelId` — a fake model reporting no
+ * response metadata leaves it absent even though the SDK would have filled it
+ * with `"fake-model"`.
+ */
+describe("model identity", () => {
+    it("reports the served model beside the requested one when the endpoint names it", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => ({
+                content: [{ type: "text", text: "done" }],
+                finishReason: { unified: "stop", raw: "stop" },
+                usage,
+                response: { id: "resp-1", timestamp: new Date(0), modelId: "fake-model-20260101" },
+                warnings: [],
+            })),
+            resolveBilling: async () => ({}),
+        });
+
+        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+
+        expect(reply.requestedModelId).toBe("fake-model");
+        expect(reply.servedModelId).toBe("fake-model-20260101");
+    });
+
+    it("leaves servedModelId absent when the endpoint reports no model id", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => okResult()),
+            resolveBilling: async () => ({}),
+        });
+
+        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+
+        expect(reply.requestedModelId).toBe("fake-model");
+        expect(reply.servedModelId).toBeUndefined();
+    });
+
+    it("captures the served model from the stream's response metadata", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async () => okResult(),
+                async () => ({
+                    stream: new ReadableStream({
+                        start(controller) {
+                            controller.enqueue({ type: "stream-start", warnings: [] });
+                            controller.enqueue({ type: "response-metadata", id: "resp-1", modelId: "fake-model-20260101" });
+                            controller.enqueue({ type: "text-start", id: "txt-1" });
+                            controller.enqueue({ type: "text-delta", id: "txt-1", delta: "done" });
+                            controller.enqueue({ type: "text-end", id: "txt-1" });
+                            controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
+                            controller.close();
+                        },
+                    }),
+                }),
+            ),
+            resolveBilling: async () => ({}),
+        });
+
+        const events = [];
+        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
+
+        const done = events.at(-1);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        expect(done.response.requestedModelId).toBe("fake-model");
+        expect(done.response.servedModelId).toBe("fake-model-20260101");
+    });
+
+    it("leaves servedModelId absent on a stream that carries no response metadata", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async () => okResult(),
+                async () => streamResult(["do", "ne"]),
+            ),
+            resolveBilling: async () => ({}),
+        });
+
+        const events = [];
+        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
+
+        const done = events.at(-1);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        expect(done.response.requestedModelId).toBe("fake-model");
+        expect(done.response.servedModelId).toBeUndefined();
+    });
+
+    it("keeps a text-less turn's model identity on the terminal event", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async () => okResult(),
+                async () => ({
+                    stream: new ReadableStream({
+                        start(controller) {
+                            controller.enqueue({ type: "stream-start", warnings: [] });
+                            controller.enqueue({ type: "response-metadata", id: "resp-1", modelId: "fake-model-20260101" });
+                            controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
+                            controller.close();
+                        },
+                    }),
+                }),
+            ),
+            resolveBilling: async () => ({}),
+        });
+
+        const events = [];
+        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
+
+        const done = events.at(-1);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        expect(done.response.requestedModelId).toBe("fake-model");
+        expect(done.response.servedModelId).toBe("fake-model-20260101");
     });
 });
