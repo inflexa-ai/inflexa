@@ -21,10 +21,17 @@ properties.
 If a tool mentioned below is not in your tool list, do not attempt to call it or fabricate
 its output. Work with the tools you have.
 
-- \`search_drugbank\` — requires DRUGBANK_API_KEY
-- \`search_disgenet\` — requires DISGENET_API_KEY
+- \`drug_gene_interactions\` — its \`drugbank\` source requires
+  DRUGBANK_API_KEY; \`dgidb\` (the default) and \`pharmgkb\` are public
+- \`gene_disease_evidence\` — its \`disgenet\` source requires
+  DISGENET_API_KEY; \`gwas\` and \`clinvar\` are public
 - EPA CTX tool (\`comptox\`, datasets toxcast / hazard / chemical /
   exposure) — requires EPA_CCTE_API_KEY
+
+Both multi-source tools report per-corpus availability in \`perSource\`:
+an unconfigured key degrades that ONE source to \`unavailable\` and the
+rest of the call still answers. Read \`perSource\` before concluding that
+evidence is absent.
 
 ## Core Capabilities
 
@@ -35,13 +42,12 @@ its output. Work with the tools you have.
 
 2. **Target-based repurposing** — map disease-relevant targets to
    existing drugs via ChEMBL (\`chembl\`, actions compounds / drug /
-   mechanism) and DrugBank (\`search_drugbank\`, conditional).
+   mechanism) and \`drug_gene_interactions\`.
    Prioritize approved and clinical-stage drugs.
 
-3. **Genetics-based repurposing** — use genetic evidence (GWAS,
-   DisGeNET conditional) to identify targets with causal disease links, then map
-   to existing drugs. Genetic support increases clinical success
-   probability ~2x.
+3. **Genetics-based repurposing** — use \`gene_disease_evidence\` to
+   identify targets with causal disease links, then map to existing
+   drugs. Genetic support increases clinical success probability ~2x.
 
 4. **Network proximity analysis** — compute PPI network proximity
    between drug target sets and disease gene modules. Closer
@@ -78,14 +84,18 @@ its output. Work with the tools you have.
 3. \`chembl({action:"drug"})\` — check approval status and existing indications.
 4. \`chembl({action:"mechanism"})\` — verify mechanism relevance.
 
-### From Targets (DrugBank workflow, conditional)
-1. \`search_drugbank(searchType: "target")\` — find drugs for a gene.
+### From Targets (interaction workflow)
+1. \`drug_gene_interactions({direction:"gene_to_drugs"})\` — find drugs for
+   a gene set. Add \`sources:["dgidb","drugbank"]\` and
+   \`includeDrugRecord:true\` when you need indications and toxicity for a
+   shortlisted candidate — not for the whole discovery sweep.
 2. Review indications, interactions, and toxicity.
 
 ### From Genetic Evidence
-1. \`search_gwas_catalog\` — find GWAS associations for the disease.
-2. \`search_disgenet\` (conditional) — get gene-disease scores.
-3. \`opentargets({action:"target"})\` — check target tractability and drug scores.
+1. \`gene_disease_evidence({queryType:"disease"})\` — GWAS associations,
+   DisGeNET scores and ClinVar classifications for the indication in one
+   call.
+2. \`opentargets({action:"target"})\` — check target tractability and drug scores.
 
 ### Validation Layer
 1. \`search_clinical_trials\` — existing trials for drug + indication.
@@ -93,16 +103,15 @@ its output. Work with the tools you have.
 3. \`pubmed\` — published evidence.
 
 ### Preclinical Target Intelligence
-1. \`search_bgee_expression\` (geneSymbol) — cross-species baseline
-   expression for the proposed target. Confirms the target is expressed
-   in tissues relevant to the new indication and that model-organism
-   surrogates are sensible.
-2. \`get_impc_ko_profile\` (geneSymbol) — mouse-KO phenotype + viability
-   (per-zygosity breakdown plus a derived top-line lethal / subviable /
-   viable). A complete-penetrance lethal KO is a hard tractability flag;
-   a clean viable KO with no organ-system phenotypes is a positive
-   tractability signal.
-3. Treat empty/null outputs as valid "no data" (not all genes have
+1. \`gene_preclinical_profile\` (geneSymbol) — returns both halves in one
+   call: cross-species baseline expression, confirming the target is
+   expressed in tissues relevant to the new indication and that
+   model-organism surrogates are sensible; and the mouse-KO phenotype +
+   viability (per-zygosity breakdown plus a derived top-line lethal /
+   subviable / viable). A complete-penetrance lethal KO is a hard
+   tractability flag; a clean viable KO with no organ-system phenotypes
+   is a positive tractability signal.
+2. Treat empty/null outputs as valid "no data" (not all genes have
    IMPC mouse lines; Bgee can be sparse for dog/macaque). Do NOT retry.
 
 ## Required Figures

@@ -105,20 +105,44 @@ export async function getInteractionPartners(identifiers: string[], options: Int
     return res.value.sort((a, b) => b.score - a.score);
 }
 
-/** Fetch the network among the given identifiers. */
-export async function getInteractionNetwork(identifiers: string[], options: InteractionOptions = {}): Promise<StringInteraction[]> {
+/**
+ * Fetch the network among the given identifiers.
+ *
+ * STRING has no server-side row cap on `/network` — edge count grows with the
+ * square of the input set, so `limit` truncates the score-sorted rows here.
+ * `totalEdges` reports the true count so a caller can tell a trimmed network
+ * from a sparse one.
+ */
+export async function getInteractionNetwork(
+    identifiers: string[],
+    options: InteractionOptions = {},
+): Promise<{ interactions: StringInteraction[]; totalEdges: number }> {
     const params = buildParams(identifiers, options.species ?? 9606, {
         required_score: options.minScore ?? 400,
     });
     const res = await apiFetchValidated(`${STRING_BASE}/network?${params}`, z.array(StringInteractionSchema));
     if (res.isErr()) throw new Error(describeApiError(res.error));
-    return res.value.sort((a, b) => b.score - a.score);
+    const sorted = res.value.sort((a, b) => b.score - a.score);
+    const limit = options.limit ?? sorted.length;
+    return { interactions: sorted.slice(0, limit), totalEdges: sorted.length };
 }
 
-/** Functional enrichment for a gene set. */
-export async function getEnrichment(identifiers: string[], species = 9606): Promise<StringEnrichment[]> {
+/**
+ * Functional enrichment for a gene set.
+ *
+ * STRING returns every enriched term across all categories (GO, KEGG,
+ * Reactome, Pfam, …) with the full member-gene list per term, so `limit`
+ * truncates the FDR-sorted rows and `totalTerms` reports what was there.
+ */
+export async function getEnrichment(
+    identifiers: string[],
+    species = 9606,
+    options: { limit?: number } = {},
+): Promise<{ enrichment: StringEnrichment[]; totalTerms: number }> {
     const params = buildParams(identifiers, species);
     const res = await apiFetchValidated(`${STRING_BASE}/enrichment?${params}`, z.array(StringEnrichmentSchema));
     if (res.isErr()) throw new Error(describeApiError(res.error));
-    return res.value.sort((a, b) => a.fdr - b.fdr);
+    const sorted = res.value.sort((a, b) => a.fdr - b.fdr);
+    const limit = options.limit ?? sorted.length;
+    return { enrichment: sorted.slice(0, limit), totalTerms: sorted.length };
 }

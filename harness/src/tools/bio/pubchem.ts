@@ -62,14 +62,18 @@ const inputSchema = z
         activeOnly: z
             .boolean()
             .optional()
-            .describe("Action 'assays' only. Default false (all outcomes). Set true to keep only rows whose activityOutcome is 'Active'."),
+            .describe(
+                "Action 'assays' only. Default TRUE — only rows whose activityOutcome is 'Active'. A widely screened compound has thousands of " +
+                    "inactive rows and they answer nothing on their own; set false only when a LOW hit rate is the finding you are after (selectivity, " +
+                    "or confirming a compound was tested and came back clean).",
+            ),
         limit: z
             .number()
             .int()
             .min(1)
             .max(500)
             .optional()
-            .describe("Action 'assays' only. Max assay records to return (default 50, max 500). Applied after the activeOnly filter."),
+            .describe("Action 'assays' only. Max assay records to return (default 25, max 500). Applied after the activeOnly filter."),
     })
     .refine((d) => d.action !== "compound" || (d.query !== undefined && d.query.trim().length > 0), {
         message: "query is required when action is 'compound' — the identifier to resolve (a name, SMILES, InChI, InChIKey, or CID)",
@@ -105,8 +109,8 @@ export const pubchemTool = defineTool({
             case "assays":
                 return ok<PubchemOutput>({
                     assays: await fetchPubchemAssays(input.cid!, {
-                        activeOnly: input.activeOnly ?? false,
-                        limit: input.limit ?? 50,
+                        activeOnly: input.activeOnly ?? true,
+                        limit: input.limit ?? 25,
                     }),
                 });
         }

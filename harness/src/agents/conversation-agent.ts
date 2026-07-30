@@ -43,21 +43,16 @@ import { composeSystemPrompt } from "./system-prompt.js";
 // Bio-lookup leaf tools (pure — no dependencies).
 import {
     searchGeneTool,
-    searchPathwayTool,
-    lookupGoTermTool,
+    lookupAnnotationTool,
     searchInteractionsTool,
     chemblTool,
     pubchemTool,
     openTargetsTool,
-    searchGwasCatalogTool,
-    searchPharmgkbTool,
     searchFaersTool,
     searchClinicalTrialsTool,
     searchGeoDatasetsTool,
-    createSearchDgidbTool,
-    searchBgeeExpressionTool,
-    getImpcKoProfileTool,
-    checkSafetyPanelTool,
+    genePreclinicalProfileTool,
+    targetSafetyTool,
 } from "../tools/bio/index.js";
 import { createNcbiTools, createChemDbTools, type BioToolKeys } from "../tools/bio/keys.js";
 
@@ -193,13 +188,14 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
     } = deps;
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
-    const chemDb = createChemDbTools(bioKeys);
+    const chemDb = createChemDbTools(bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
 
     const tools: Tool[] = [
-        // Bio-lookup.
+        // Identifier resolution — the ENSG most other bio tools key off.
         searchGeneTool,
-        searchPathwayTool,
-        lookupGoTermTool,
+        // Functional annotation (GO / KEGG / Reactome behind one vocabulary) and
+        // STRING networks + gene-set enrichment.
+        lookupAnnotationTool,
         searchInteractionsTool,
         // Literature (search / details / fulltext behind one action).
         ncbi.pubmed,
@@ -207,20 +203,19 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         chemblTool,
         // PubChem (compound / crossrefs / assays behind one action).
         pubchemTool,
-        // Translational medicine.
+        // Target assessment: the integrated scored view, then the underlying records.
         openTargetsTool,
-        // Genetic evidence — SNP-trait associations for target validation / MR support.
-        searchGwasCatalogTool,
-        searchPharmgkbTool,
+        // Genetic evidence — GWAS Catalog + DisGeNET + ClinVar behind one `sources`.
+        chemDb.geneDiseaseEvidence,
+        // Drug↔gene interactions — DGIdb + DrugBank + PharmGKB behind one `sources`.
+        chemDb.drugGeneInteractions,
         searchFaersTool,
         searchClinicalTrialsTool,
         searchGeoDatasetsTool,
-        createSearchDgidbTool({ ...(deps.logger ? { logger: deps.logger } : {}) }),
-        // Preclinical.
-        searchBgeeExpressionTool,
-        getImpcKoProfileTool,
-        // Off-target liability.
-        checkSafetyPanelTool,
+        // Preclinical — baseline expression + mouse knockout in one call.
+        genePreclinicalProfileTool,
+        // Target-level safety — the curated panel + Open Targets liabilities.
+        targetSafetyTool,
         // EPA CompTox (toxcast / hazard / chemical / exposure behind one dataset).
         chemDb.comptox,
         // What reference data this install actually holds. The conversation agent is

@@ -19,7 +19,7 @@ export const meta: AgentMeta = {
     ],
     suitableFor: ["multi-omics", "cross-modality-integration"],
     skills: ["multi-omics-integration", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "searchPathway", "lookupGoTerm", "searchInteractions", "searchBgeeExpression", "getImpcKoProfile"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "lookupAnnotation", "searchInteractions", "genePreclinicalProfile"],
 };
 
 export function createMultiOmicsIntegrationAgent(deps: SandboxAgentDeps): AgentDefinition {

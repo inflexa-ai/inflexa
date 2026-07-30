@@ -43,22 +43,17 @@ import { createInspectDataProfileTool } from "../../tools/research/inspect-data-
 
 // Bio leaf tools.
 import {
-    checkSafetyPanelTool,
     chemblTool,
-    getImpcKoProfileTool,
-    lookupGoTermTool,
+    genePreclinicalProfileTool,
+    lookupAnnotationTool,
     openTargetsTool,
     pubchemTool,
-    searchBgeeExpressionTool,
     searchClinicalTrialsTool,
-    createSearchDgidbTool,
     searchFaersTool,
     searchGeneTool,
     searchGeoDatasetsTool,
-    searchGwasCatalogTool,
     searchInteractionsTool,
-    searchPathwayTool,
-    searchPharmgkbTool,
+    targetSafetyTool,
 } from "../../tools/bio/index.js";
 import { createNcbiTools, createChemDbTools, type BioToolKeys } from "../../tools/bio/keys.js";
 
@@ -159,7 +154,7 @@ export interface SandboxAgentPromptOptions {
  */
 function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxToolName[]): Tool[] {
     const ncbi = createNcbiTools(deps.bioKeys);
-    const chemDb = createChemDbTools(deps.bioKeys);
+    const chemDb = createChemDbTools(deps.bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
     const registry: Record<SandboxToolName, Tool> = {
         listAvailablePackages: createListAvailablePackagesTool({ ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}) }),
         listAvailableRefs: createListAvailableRefsTool({ ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}) }),
@@ -168,24 +163,18 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         inspectRun: createInspectRunTool(deps.pool),
         pubmed: ncbi.pubmed,
         searchGene: searchGeneTool,
-        searchPathway: searchPathwayTool,
-        lookupGoTerm: lookupGoTermTool,
+        lookupAnnotation: lookupAnnotationTool,
         searchInteractions: searchInteractionsTool,
         chembl: chemblTool,
         pubchem: pubchemTool,
         opentargets: openTargetsTool,
-        searchPharmgkb: searchPharmgkbTool,
+        geneDiseaseEvidence: chemDb.geneDiseaseEvidence,
+        drugGeneInteractions: chemDb.drugGeneInteractions,
+        genePreclinicalProfile: genePreclinicalProfileTool,
         searchFaers: searchFaersTool,
         searchClinicalTrials: searchClinicalTrialsTool,
         searchGeoDatasets: searchGeoDatasetsTool,
-        searchClinvar: ncbi.searchClinvar,
-        searchDgidb: createSearchDgidbTool({ ...(deps.logger ? { logger: deps.logger } : {}) }),
-        searchGwasCatalog: searchGwasCatalogTool,
-        searchDisgenet: chemDb.searchDisgenet,
-        searchDrugbank: chemDb.searchDrugbank,
-        searchBgeeExpression: searchBgeeExpressionTool,
-        getImpcKoProfile: getImpcKoProfileTool,
-        checkSafetyPanel: checkSafetyPanelTool,
+        targetSafety: targetSafetyTool,
         comptox: chemDb.comptox,
     };
 

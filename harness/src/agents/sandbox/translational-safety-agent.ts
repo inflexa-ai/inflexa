@@ -37,19 +37,16 @@ export const meta: AgentMeta = {
     skills: ["translational-safety", "cheminformatics", "shared/omics-general"],
     tools: [
         ...BASE_SANDBOX_TOOLS,
-        "checkSafetyPanel",
+        "targetSafety",
         "pubmed",
         "searchGene",
-        "searchPathway",
-        "lookupGoTerm",
+        "lookupAnnotation",
         "searchInteractions",
         "opentargets",
         "searchFaers",
-        "searchPharmgkb",
-        "searchDgidb",
+        "drugGeneInteractions",
         "comptox",
-        "searchBgeeExpression",
-        "getImpcKoProfile",
+        "genePreclinicalProfile",
     ],
 };
 

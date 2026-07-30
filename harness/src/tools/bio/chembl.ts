@@ -22,12 +22,18 @@ import type { ChemblActivity, ChemblCompound, ChemblDrug, ChemblMechanism, Chemb
 import { defineTool, type ToolError } from "../define-tool.js";
 import { getBioactivity, getDrugInfo, getMechanism, searchCompounds, searchTargets } from "../lib/chembl-client.js";
 
-/** Per-action record caps, preserved from the five tools this one replaces. */
+/**
+ * Per-action record caps. The ceilings are what the endpoints will serve; the
+ * defaults are deliberately far below them — 500 activity rows is ~125k
+ * characters, which answers no question that the top 25 by potency does not.
+ */
 const LIMITS = {
     /** `compounds` / `bioactivity` — activity-scale reads. */
-    wide: 500,
+    wideMax: 500,
+    wideDefault: 25,
     /** `drug` / `targets` — resolution reads, where a long list is noise. */
-    narrow: 25,
+    narrowMax: 25,
+    narrowDefault: 10,
 } as const;
 
 const inputSchema = z
@@ -35,75 +41,67 @@ const inputSchema = z
         action: z
             .enum(["compounds", "drug", "mechanism", "bioactivity", "targets"])
             .describe(
-                "Which ChEMBL lookup to run — each names the params it needs and the fields it returns.\n" +
-                    "'compounds' (query + searchType) — molecules by target, name, or SMILES; resolves a named compound to its ChEMBL ID " +
-                    "and structure, or lists the compounds assayed against a target. Returns chemblId, preferredCompoundName, " +
-                    "canonicalSmiles, molecularWeight, alogp, molecularFormula.\n" +
-                    "'drug' (query) — the drug registry by drug name or disease indication: 'what drugs treat X?', 'is Y approved, and " +
-                    "since when?'. Returns moleculeChemblId, preferredName, maxPhase (4 = approved), moleculeType (small molecule, " +
-                    "antibody, …), firstApproval year, indication. When the drug endpoint is empty it falls back to a molecule search " +
-                    "filtered to max_phase >= 4; rows from that fallback carry indication: null.\n" +
-                    "'mechanism' (chemblId) — the curated mechanism of action of ONE molecule: 'how does drug X work?'. Returns " +
-                    "mechanismOfAction (prose), actionType (INHIBITOR, AGONIST, ANTAGONIST, …), targetChemblId + the resolved targetName, " +
-                    "moleculeChemblId. ChEMBL curates mechanisms mainly for clinical/approved molecules, so tool compounds often have none.\n" +
-                    "'bioactivity' (chemblId + idType) — measured activity rows (IC50, EC50, Ki, Kd, …): the curated, quotable potency " +
-                    "data for a compound or a target. Returns standardType, standardValue + standardUnits, pchemblValue (normalized " +
-                    "-log10 potency), assayChemblId, assayType, compoundChemblId, targetChemblId.\n" +
-                    "'targets' (query) — resolve a gene symbol or protein name to a ChEMBL target: the step that produces the target ID " +
-                    "used by bioactivity (idType='target') and compounds (searchType='target'). Returns targetChemblId, preferredName, " +
-                    "targetType (SINGLE PROTEIN, PROTEIN COMPLEX, …), organism, geneNames. Results span organisms — check `organism` " +
-                    "before using an ID, since the top hit for a human gene symbol may be a non-human ortholog.",
+                "Which ChEMBL lookup to run; each names its params and return fields.\n" +
+                    "'compounds' (query + searchType) — molecules by target, name or SMILES: resolve a named compound to its ID and structure, or list " +
+                    "what was assayed against a target. → chemblId, preferredCompoundName, canonicalSmiles, molecularWeight, alogp, molecularFormula.\n" +
+                    "'drug' (query) — the drug registry by drug name or indication: 'what treats X?', 'is Y approved, since when?'. → moleculeChemblId, " +
+                    "preferredName, maxPhase (4 = approved), moleculeType, firstApproval, indication. If the drug endpoint is empty it falls back to a " +
+                    "max_phase >= 4 molecule search, whose rows carry indication: null.\n" +
+                    "'mechanism' (chemblId, molecule only) — curated mechanism of ONE molecule: 'how does X work?'. → mechanismOfAction, actionType " +
+                    "(INHIBITOR, AGONIST, …), targetChemblId + targetName, moleculeChemblId. Curated mainly for clinical/approved molecules, so tool " +
+                    "compounds often have none.\n" +
+                    "'bioactivity' (chemblId + idType) — measured activity rows: the curated, QUOTABLE potency. → standardType, standardValue + " +
+                    "standardUnits, pchemblValue (normalized -log10), assayChemblId, assayType, compoundChemblId, targetChemblId.\n" +
+                    "'targets' (query) — resolve a gene symbol or protein name to a ChEMBL target, producing the ID that bioactivity (idType='target') " +
+                    "and compounds (searchType='target') need. → targetChemblId, preferredName, targetType, organism, geneNames. Check `organism`: the " +
+                    "top hit for a human symbol may be a non-human ortholog.",
             ),
         query: z
             .string()
             .min(1)
             .optional()
             .describe(
-                "Required for 'compounds', 'drug', 'targets'. compounds: must match searchType — a target name/gene symbol or target " +
-                    "ChEMBL ID, a compound name, or a SMILES string. drug: a drug name (e.g. 'imatinib') or a disease indication " +
-                    "(e.g. 'melanoma'). targets: a gene symbol (e.g. 'EGFR', 'ABL1'), a protein name, or a ChEMBL target ID.",
+                "Required for 'compounds', 'drug', 'targets'. compounds: must match searchType — a target name/gene symbol or target ChEMBL ID, a " +
+                    "compound name, or a SMILES. drug: a drug name ('imatinib') or an indication ('melanoma'). targets: a gene symbol ('EGFR'), a " +
+                    "protein name, or a ChEMBL target ID.",
             ),
         searchType: z
             .enum(["target", "compound", "smiles"])
             .optional()
             .describe(
-                "Required for 'compounds' — how to read `query`. 'target': resolve it to a ChEMBL target, then return the compounds " +
-                    "assayed against that target. 'compound': free-text search over molecule names. 'smiles': flexible (flexmatch) " +
-                    "structure search on canonical SMILES.",
+                "Required for 'compounds' — how to read `query`. 'target': resolve to a ChEMBL target, then return what was assayed against it. " +
+                    "'compound': free-text over molecule names. 'smiles': flexmatch structure search.",
             ),
         chemblId: z
             .string()
             .min(1)
             .optional()
             .describe(
-                "Required for 'mechanism' and 'bioactivity'. A ChEMBL molecule ID (e.g. 'CHEMBL25' = aspirin) or — for bioactivity " +
-                    "with idType='target' — a target ID (e.g. 'CHEMBL203' = EGFR). 'mechanism' takes a molecule ID only, never a target ID.",
+                "Required for 'mechanism' and 'bioactivity'. A molecule ID ('CHEMBL25' = aspirin), or — for bioactivity with idType='target' — a target " +
+                    "ID ('CHEMBL203' = EGFR). 'mechanism' takes a molecule ID only.",
             ),
         idType: z
             .enum(["compound", "target"])
             .optional()
             .describe(
-                "Required for 'bioactivity' — which side of the activity table `chemblId` indexes. 'compound': chemblId is a molecule " +
-                    "ID; returns everything that molecule was assayed against. 'target': chemblId is a target ID; returns every compound " +
-                    "assayed against that target.",
+                "Required for 'bioactivity' — which side of the activity table `chemblId` indexes. 'compound': everything that molecule was assayed " +
+                    "against. 'target': every compound assayed against that target.",
             ),
         activityType: z
             .string()
             .optional()
-            .describe(
-                "'bioactivity' only. Exact ChEMBL standard_type filter, e.g. 'IC50', 'EC50', 'Ki', 'Kd'. Matched exactly " +
-                    "(case-sensitive); omit to get all activity types.",
-            ),
+            .describe("'bioactivity' only. Exact, case-sensitive standard_type filter — 'IC50', 'EC50', 'Ki', 'Kd'. Omit for all types."),
         limit: z
             .number()
             .int()
             .min(1)
-            .max(LIMITS.wide)
+            .max(LIMITS.wideMax)
             .optional()
             .describe(
-                `Max records. 'compounds'/'bioactivity': 1–${LIMITS.wide} (default ${LIMITS.wide}). 'drug'/'targets': 1–${LIMITS.narrow} ` +
-                    `(default ${LIMITS.narrow}). Ignored by 'mechanism'. With searchType='target' it caps the activity rows scanned, so ` +
-                    `fewer unique compounds usually come back.`,
+                `Max records. 'compounds'/'bioactivity': 1–${LIMITS.wideMax} (default ${LIMITS.wideDefault}). 'drug'/'targets': 1–${LIMITS.narrowMax} ` +
+                    `(default ${LIMITS.narrowDefault}). Ignored by 'mechanism'. Rows are UNSORTED, so raising this is the only way to widen the window — ` +
+                    `do it to survey an SAR series or a full assay panel, not to browse. With searchType='target' it caps the activity rows scanned, so ` +
+                    `fewer unique compounds come back.`,
             ),
     })
     .refine((d) => !(d.action === "compounds" || d.action === "drug" || d.action === "targets") || (d.query !== undefined && d.query.length > 0), {
@@ -124,8 +122,8 @@ const inputSchema = z
         message: "idType is required when action is 'bioactivity' — 'compound' if chemblId is a molecule ID, 'target' if it is a target ID",
         path: ["idType"],
     })
-    .refine((d) => !(d.action === "drug" || d.action === "targets") || d.limit === undefined || d.limit <= LIMITS.narrow, {
-        message: `limit is capped at ${LIMITS.narrow} for action 'drug' and 'targets' (only 'compounds' and 'bioactivity' reach ${LIMITS.wide})`,
+    .refine((d) => !(d.action === "drug" || d.action === "targets") || d.limit === undefined || d.limit <= LIMITS.narrowMax, {
+        message: `limit is capped at ${LIMITS.narrowMax} for action 'drug' and 'targets' (only 'compounds' and 'bioactivity' reach ${LIMITS.wideMax})`,
         path: ["limit"],
     });
 
@@ -140,29 +138,26 @@ export type ChemblOutput =
 export const chemblTool = defineTool({
     id: "chembl",
     description:
-        "ChEMBL — the manually curated database of drug-like bioactives (~2.4M compounds), the targets they were measured " +
-        "against, their mechanisms, and their approval status. One tool, five lookups; pick with `action` (its description gives " +
-        "each action's params and return fields).\n" +
-        "IDs are resolved, never guessed: a `chemblId` comes from a prior action='compounds'/'drug' (molecule IDs) or action='targets' " +
-        "(target IDs) call, or from pubchem action='crossrefs' — a compound or gene name is not a ChEMBL ID.\n" +
-        "ChEMBL is curated, so prefer it over PubChem for anything you will quote or build on: use action='bioactivity' rather than " +
-        "pubchem action='assays' whenever you will quote a number (PubChem assay summaries are broader HTS screening outcomes), and resolve " +
-        "compounds here first. If ChEMBL does not find the compound, resolve it in PubChem with pubchem action='compound' and bridge back " +
-        "to a ChEMBL ID via pubchem action='crossrefs'.\n" +
-        "An empty array is a valid 'no match' / no-data answer, not an error — do not retry the same call.",
+        "ChEMBL — the manually curated database of drug-like bioactives (~2.4M compounds), the targets they were measured against, their mechanisms and " +
+        "their approval status. Five lookups; pick with `action`, which gives each one's params and return fields.\n" +
+        "IDs are resolved, never guessed: a `chemblId` comes from a prior action='compounds'/'drug' (molecules) or action='targets' (targets), or from " +
+        "pubchem action='crossrefs'. A compound or gene name is not a ChEMBL ID.\n" +
+        "Being curated, ChEMBL is what you quote from: prefer action='bioactivity' over pubchem action='assays' for any number you will cite, and resolve " +
+        "compounds here first. If ChEMBL misses the compound, resolve it via pubchem action='compound' and bridge back with pubchem action='crossrefs'.\n" +
+        "An empty array is valid no-data, not an error — do not retry the same call.",
     inputSchema,
     execute: async ({ action, query, searchType, chemblId, idType, activityType, limit }): Promise<Result<ChemblOutput, ToolError>> => {
         switch (action) {
             case "compounds":
-                return ok({ compounds: await searchCompounds(query!, searchType!, limit ?? LIMITS.wide) });
+                return ok({ compounds: await searchCompounds(query!, searchType!, limit ?? LIMITS.wideDefault) });
             case "drug":
-                return ok({ drugs: await getDrugInfo(query!, limit ?? LIMITS.narrow) });
+                return ok({ drugs: await getDrugInfo(query!, limit ?? LIMITS.narrowDefault) });
             case "mechanism":
                 return ok({ mechanisms: await getMechanism(chemblId!) });
             case "bioactivity":
-                return ok({ activities: await getBioactivity(chemblId!, idType!, { activityType, limit: limit ?? LIMITS.wide }) });
+                return ok({ activities: await getBioactivity(chemblId!, idType!, { activityType, limit: limit ?? LIMITS.wideDefault }) });
             case "targets":
-                return ok({ targets: await searchTargets(query!, limit ?? LIMITS.narrow) });
+                return ok({ targets: await searchTargets(query!, limit ?? LIMITS.narrowDefault) });
         }
     },
 });

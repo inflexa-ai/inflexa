@@ -86,21 +86,6 @@ const DISEASE_DATA = {
     },
 };
 
-const SAFETY_DATA = {
-    target: {
-        id: TP53,
-        approvedSymbol: "TP53",
-        safetyLiabilities: [
-            {
-                event: "cardiac arrhythmia",
-                biosamples: [{ tissueLabel: "heart" }, { tissueLabel: "myocardium" }],
-                effects: [{ direction: "activation" }, { direction: "inhibition" }],
-                datasource: "AOP-Wiki",
-            },
-        ],
-    },
-};
-
 describe("opentargets — action 'target'", () => {
     it("returns targetInfo, tractability and the per-datatype association breakdown", async () => {
         const seen = stubOpenTargets(() => gqlResponse(TARGET_DATA));
@@ -156,16 +141,16 @@ describe("opentargets — action 'target'", () => {
         expect(result).toEqual({ targetInfo: null, associations: [] });
     });
 
-    it("forwards limit as the page size, and defaults it to 25 when omitted", async () => {
+    it("forwards limit as the page size, and defaults it to 10 when omitted", async () => {
         const seen = stubOpenTargets(() => gqlResponse(TARGET_DATA));
 
         const { ctx } = makeToolContext();
         await openTargetsTool.execute({ action: "target", ensemblId: TP53, limit: 5 }, ctx);
         expect(seen[0]!.variables.size).toBe(5);
 
-        // The schema's default is what the loop applies before `execute` runs.
-        const parsed = openTargetsTool.inputSchema.safeParse({ action: "target", ensemblId: TP53 });
-        expect(parsed.success && (parsed.data as { limit?: number }).limit).toBe(25);
+        // `execute` owns the default, so an omitted limit still pages at 10.
+        await openTargetsTool.execute({ action: "target", ensemblId: TP53 }, ctx);
+        expect(seen[1]!.variables.size).toBe(10);
     });
 
     it("throws on an upstream 5xx failure", async () => {
@@ -216,57 +201,6 @@ describe("opentargets — action 'disease'", () => {
     });
 });
 
-describe("opentargets — action 'safety'", () => {
-    it("returns found: true with the curated liabilities, flattened to tissues and effect directions", async () => {
-        const seen = stubOpenTargets(() => gqlResponse(SAFETY_DATA));
-
-        const { ctx } = makeToolContext();
-        const result = (await openTargetsTool.execute({ action: "safety", ensemblId: TP53, limit: 25 }, ctx))._unsafeUnwrap();
-
-        // The 'safety' action reaches the safety query — and does not page.
-        expect(seen).toEqual([{ operation: "TargetSafety", variables: { ensemblId: TP53 } }]);
-
-        expect(result).toEqual({
-            found: true,
-            targetSymbol: "TP53",
-            safetyLiabilities: [
-                {
-                    event: "cardiac arrhythmia",
-                    biosamples: ["heart", "myocardium"],
-                    effects: "activation, inhibition",
-                    source: "AOP-Wiki",
-                },
-            ],
-        });
-    });
-
-    it("returns found: false for an Ensembl id Open Targets does not know (not is_error)", async () => {
-        stubOpenTargets(() => gqlResponse({ target: null }));
-
-        const { ctx } = makeToolContext();
-        const outcome = await openTargetsTool.execute({ action: "safety", ensemblId: "ENSG00000000000", limit: 25 }, ctx);
-
-        expect(outcome.isOk()).toBe(true);
-        expect(outcome._unsafeUnwrap()).toEqual({ found: false, ensemblId: "ENSG00000000000" });
-    });
-
-    it("returns found: true with an empty liabilities array when the target has none", async () => {
-        stubOpenTargets(() => gqlResponse({ target: { id: TP53, approvedSymbol: "TP53", safetyLiabilities: [] } }));
-
-        const { ctx } = makeToolContext();
-        const result = (await openTargetsTool.execute({ action: "safety", ensemblId: TP53, limit: 25 }, ctx))._unsafeUnwrap();
-
-        expect(result).toEqual({ found: true, targetSymbol: "TP53", safetyLiabilities: [] });
-    });
-
-    it("throws on an upstream 5xx failure", async () => {
-        stubOpenTargets(() => new Response("upstream down", { status: 500 }));
-
-        const { ctx } = makeToolContext();
-        await expect(openTargetsTool.execute({ action: "safety", ensemblId: TP53, limit: 25 }, ctx)).rejects.toThrow();
-    });
-});
-
 describe("opentargets — input validation", () => {
     it("emits a flat object schema whose only required field is the discriminator", () => {
         expect(openTargetsTool.jsonSchema.type).toBe("object");
@@ -282,12 +216,12 @@ describe("opentargets — input validation", () => {
         expect(message).toContain("search_gene");
     });
 
-    it("rejects 'safety' with no ensemblId", () => {
-        const parsed = openTargetsTool.inputSchema.safeParse({ action: "safety" });
+    it("rejects the retired 'safety' action — it now lives in target_safety", () => {
+        const parsed = openTargetsTool.inputSchema.safeParse({ action: "safety", ensemblId: TP53 });
 
         expect(parsed.success).toBe(false);
         const message = parsed.success ? "" : parsed.error.issues.map((i) => i.message).join(" ");
-        expect(message).toContain("ensemblId is required");
+        expect(message).toContain('expected one of "target"|"disease"');
     });
 
     it("rejects a 'target' whose ensemblId is blank", () => {
@@ -309,7 +243,6 @@ describe("opentargets — input validation", () => {
 
     it("accepts each action with its own identifier", () => {
         expect(openTargetsTool.inputSchema.safeParse({ action: "target", ensemblId: TP53 }).success).toBe(true);
-        expect(openTargetsTool.inputSchema.safeParse({ action: "safety", ensemblId: TP53 }).success).toBe(true);
         expect(openTargetsTool.inputSchema.safeParse({ action: "disease", efoId: "EFO_0000311" }).success).toBe(true);
     });
 

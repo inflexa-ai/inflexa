@@ -12,7 +12,7 @@ export const meta: AgentMeta = {
     capabilities: ["network analysis", "co-expression networks", "regulatory analysis", "module detection", "TF activity inference"],
     suitableFor: ["expression-matrices", "correlation-matrices", "general-omics"],
     skills: ["network-regulatory", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "searchPathway", "lookupGoTerm", "searchInteractions"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "lookupAnnotation", "searchInteractions"],
     defaultMaxSteps: 35,
 };
 

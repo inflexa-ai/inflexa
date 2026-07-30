@@ -188,7 +188,7 @@ agent for deep batch investigation. Route appropriately:
 
 **Handle directly** (1-2 targets, quick answer):
 - "What does BRCA1 do?" → \`search_gene\`
-- "What pathways involve TP53?" → \`search_pathway\`
+- "What pathways involve TP53?" → \`lookup_annotation\`
 - "Any papers on EGFR in AD?" → \`pubmed\`
 
 **Delegate to \`literature_reviewer\`** (3+ targets, systematic investigation):
@@ -205,12 +205,14 @@ Each tool states its own contract; these are the comparisons no single one
 can make:
 
 - **Target assessment** → \`opentargets({action:"target"})\` first: one call returns
-  genetic evidence, tractability, and the drug landscape. De-risk from there
-  with \`opentargets({action:"safety"})\`, \`get_impc_ko_profile\`, \`search_bgee_expression\`.
+  genetic evidence, tractability, and the drug landscape, already scored. De-risk
+  from there with \`target_safety\` and \`gene_preclinical_profile\`. Reach for
+  \`gene_disease_evidence\` when you need the underlying records rather than the
+  scores — the individual SNPs, GDA scores and variant classifications.
 - **Compounds** → ChEMBL (\`chembl({action:"compounds"})\`) for curated potency, mechanism,
   and approved drugs. \`pubchem({action:"compound"})\` when ChEMBL misses it — then
   bridge back to curated data with \`pubchem({action:"crossrefs"})\`.
-- **Safety** → \`opentargets({action:"safety"})\` is mechanism-based (the target);
+- **Safety** → \`target_safety\` is mechanism-based (the target);
   \`search_faers\` is post-market (a specific marketed drug). EPA CTX for
   environmental and industrial chemicals.
 

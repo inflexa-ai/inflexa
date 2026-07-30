@@ -26,14 +26,11 @@ import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { forSubAgent } from "../../auth/types.js";
 import { type ChatProvider } from "../../providers/types.js";
 import { defineTool, type Tool } from "../define-tool.js";
-import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
-import { getImpcKoProfileTool } from "../bio/get-impc-ko-profile.js";
-import { lookupGoTermTool } from "../bio/lookup-go-term.js";
-import { searchBgeeExpressionTool } from "../bio/search-bgee-expression.js";
-import { createSearchDgidbTool } from "../bio/search-dgidb.js";
+import { createChemDbTools, createNcbiTools, type BioToolKeys } from "../bio/keys.js";
+import { genePreclinicalProfileTool } from "../bio/gene-preclinical-profile.js";
+import { lookupAnnotationTool } from "../bio/lookup-annotation.js";
 import { searchGeneTool } from "../bio/search-gene.js";
 import { searchInteractionsTool } from "../bio/search-interactions.js";
-import { searchPathwayTool } from "../bio/search-pathway.js";
 import type { Logger } from "../../lib/logger.js";
 
 /** Sub-agent identity — appended to `callPath`, set as `agentId`. */
@@ -56,15 +53,14 @@ export interface LiteratureReviewerDeps {
 /** Build the `literature_reviewer` delegation tool bound to its provider. */
 export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool {
     const ncbi = createNcbiTools(deps.bioKeys);
+    const chemDb = createChemDbTools(deps.bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
     const reviewerTools: readonly Tool[] = [
         searchGeneTool,
-        searchPathwayTool,
-        lookupGoTermTool,
+        lookupAnnotationTool,
         searchInteractionsTool,
         ncbi.pubmed,
-        createSearchDgidbTool({ ...(deps.logger ? { logger: deps.logger } : {}) }),
-        searchBgeeExpressionTool,
-        getImpcKoProfileTool,
+        chemDb.drugGeneInteractions,
+        genePreclinicalProfileTool,
     ];
 
     const agent: AgentDefinition = {

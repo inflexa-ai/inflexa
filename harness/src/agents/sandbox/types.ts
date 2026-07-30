@@ -6,10 +6,10 @@
  * each name to a concrete `Tool` (pure leaf or fully dep-bound factory
  * output) — unknown names throw at composition time, not at first LLM call.
  *
- * `searchDisgenet` and `searchDrugbank` require keys (`DISGENET_API_KEY`,
- * `DRUGBANK_API_KEY`); without the key the underlying header builder
- * throws on first call, which the harness surfaces as a tool `is_error`
- * envelope. `searchGwasCatalog` is fully public.
+ * `geneDiseaseEvidence`, `drugGeneInteractions` and `comptox` each span several
+ * corpora, some of which need a key (`DISGENET_API_KEY`, `DRUGBANK_API_KEY`,
+ * `EPA_CCTE_API_KEY`). A missing key degrades that ONE corpus to `unavailable`
+ * in the tool's `perSource` report; the rest of the call still answers.
  */
 
 /** Closed allowlist of tools any sandbox agent may declare. */
@@ -24,31 +24,26 @@ export type SandboxToolName =
     | "inspectRun"
     // Literature (search / details / fulltext behind one action).
     | "pubmed"
-    // Genomics / pathways / ontology.
+    // Identifier resolution.
     | "searchGene"
-    | "searchPathway"
-    | "lookupGoTerm"
+    // Functional annotation (GO / KEGG / Reactome) and STRING networks + enrichment.
+    | "lookupAnnotation"
     | "searchInteractions"
     // ChEMBL (compounds / drug / mechanism / bioactivity / targets behind one action).
     | "chembl"
     // PubChem (compound / crossrefs / assays behind one action).
     | "pubchem"
-    // Translational medicine.
+    // Target assessment.
     | "opentargets"
-    | "searchPharmgkb"
+    | "geneDiseaseEvidence"
+    | "drugGeneInteractions"
+    | "genePreclinicalProfile"
+    // Clinical / public-data landscape.
     | "searchFaers"
     | "searchClinicalTrials"
     | "searchGeoDatasets"
-    | "searchClinvar"
-    | "searchDgidb"
-    | "searchGwasCatalog"
-    | "searchDisgenet"
-    | "searchDrugbank"
-    // Preclinical.
-    | "searchBgeeExpression"
-    | "getImpcKoProfile"
-    // Off-target liability / EPA CompTox (toxcast / hazard / chemical / exposure behind one dataset).
-    | "checkSafetyPanel"
+    // Safety / toxicology.
+    | "targetSafety"
     | "comptox";
 
 /** Planner-facing metadata + tool allowlist for one sandbox agent. */

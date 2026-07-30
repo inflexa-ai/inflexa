@@ -56,16 +56,15 @@ factor loadings, key DIABLO features, network hubs), use the
 preclinical bio-lookup tools to build target intelligence on those
 drivers before reporting:
 
-- \`search_bgee_expression\` (geneSymbol) — cross-species baseline
-  expression to confirm a driver is normally expressed in the relevant
-  tissues across human and model organisms.
-- \`get_impc_ko_profile\` (geneSymbol) — mouse-KO phenotype + viability for
-  loss-of-function consequences. Useful when interpreting whether a
-  cross-modality hit is biologically essential or a viable therapeutic
-  handle.
+- \`gene_preclinical_profile\` (geneSymbol) — returns both halves at once:
+  cross-species baseline expression, to confirm a driver is normally
+  expressed in the relevant tissues across human and model organisms;
+  and the mouse-KO phenotype + viability for loss-of-function
+  consequences, useful when interpreting whether a cross-modality hit is
+  biologically essential or a viable therapeutic handle.
 
-Both tools take a single human gene symbol per call and return
-empty/null shapes as valid "no data" — do NOT retry on empty output.
+It takes a single human gene symbol per call and returns empty/null
+shapes as valid "no data" — do NOT retry on empty output.
 
 ## Required Figures
 

@@ -132,34 +132,35 @@ describe("pubchem tool — action 'assays'", () => {
         },
     };
 
-    it("returns per-assay screening summaries", async () => {
+    it("returns per-assay screening summaries, active rows only by default", async () => {
         stubFetch(() => json(assayTable));
 
         const { ctx } = makeToolContext();
         const result = (await pubchemTool.execute({ action: "assays", cid: 2244 }, ctx))._unsafeUnwrap();
 
-        expect("assays" in result && result.assays).toHaveLength(2);
+        // activeOnly defaults true, so the Inactive row is filtered out.
+        expect("assays" in result && result.assays).toHaveLength(1);
         if ("assays" in result) {
             expect(result.assays[0]!.aid).toBe(1);
             expect(result.assays[0]!.activityOutcome).toBe("Active");
         }
     });
 
-    it("keeps only active rows when activeOnly is true", async () => {
+    it("includes inactive rows when activeOnly is explicitly false", async () => {
         stubFetch(() => json(assayTable));
 
         const { ctx } = makeToolContext();
-        const result = (await pubchemTool.execute({ action: "assays", cid: 2244, activeOnly: true }, ctx))._unsafeUnwrap();
+        const result = (await pubchemTool.execute({ action: "assays", cid: 2244, activeOnly: false }, ctx))._unsafeUnwrap();
 
-        expect("assays" in result && result.assays).toHaveLength(1);
-        if ("assays" in result) expect(result.assays[0]!.activityOutcome).toBe("Active");
+        expect("assays" in result && result.assays).toHaveLength(2);
+        if ("assays" in result) expect(result.assays.map((a) => a.activityOutcome)).toEqual(["Active", "Inactive"]);
     });
 
     it("caps the returned rows at limit", async () => {
         stubFetch(() => json(assayTable));
 
         const { ctx } = makeToolContext();
-        const result = (await pubchemTool.execute({ action: "assays", cid: 2244, limit: 1 }, ctx))._unsafeUnwrap();
+        const result = (await pubchemTool.execute({ action: "assays", cid: 2244, activeOnly: false, limit: 1 }, ctx))._unsafeUnwrap();
 
         expect("assays" in result && result.assays).toHaveLength(1);
     });

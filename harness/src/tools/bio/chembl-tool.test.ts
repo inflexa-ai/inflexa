@@ -90,12 +90,12 @@ describe("chembl — action: targets", () => {
         expect(requestedUrls[0]).toContain("/target/search.json?q=EGFR&limit=25");
     });
 
-    it("defaults the limit to 25", async () => {
+    it("defaults the limit to 10 for a resolution read", async () => {
         stubRoutes([["/target/search.json", { targets: [EGFR_TARGET] }]]);
 
         await callChembl({ action: "targets", query: "EGFR" });
 
-        expect(requestedUrls[0]).toContain("limit=25");
+        expect(requestedUrls[0]).toContain("limit=10");
     });
 
     it("returns an empty targets list when ChEMBL responds 404 (not is_error)", async () => {
@@ -130,7 +130,7 @@ describe("chembl — action: compounds", () => {
                 molecularFormula: "C9H8O4",
             },
         ]);
-        expect(requestedUrls[0]).toContain("/molecule/search.json?q=aspirin&limit=500");
+        expect(requestedUrls[0]).toContain("/molecule/search.json?q=aspirin&limit=25");
     });
 
     it("flexmatches canonical SMILES for searchType='smiles'", async () => {
@@ -207,7 +207,7 @@ describe("chembl — action: drug", () => {
         expect(drugs[0]!.maxPhase).toBe(4);
         expect(drugs[0]!.firstApproval).toBe(2001);
         expect(drugs[0]!.indication).toBe("Leukemia, Myelogenous, Chronic, BCR-ABL Positive; gastrointestinal stromal tumor");
-        expect(requestedUrls[0]).toContain("/drug/search.json?q=imatinib&limit=25");
+        expect(requestedUrls[0]).toContain("/drug/search.json?q=imatinib&limit=10");
     });
 
     it("falls back to an approved-molecule search (indication: null) when the drug endpoint is empty", async () => {
@@ -315,7 +315,7 @@ describe("chembl — action: bioactivity", () => {
         const activities = resultKey(await callChembl({ action: "bioactivity", chemblId: "CHEMBL203", idType: "target" }), "activities");
 
         expect(activities[0]!.targetChemblId).toBe("CHEMBL203");
-        expect(requestedUrls[0]).toContain("/activity.json?target_chembl_id=CHEMBL203&limit=500");
+        expect(requestedUrls[0]).toContain("/activity.json?target_chembl_id=CHEMBL203&limit=25");
         expect(requestedUrls[0]).not.toContain("standard_type=");
     });
 
