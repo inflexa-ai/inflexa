@@ -198,9 +198,8 @@ describe("generatePlan loop-driving tool", () => {
     // never a positional index into a snapshot that does not exist.
     function refsProbe(): ScriptedProvider {
         return scriptedProvider((callIndex) => {
-            if (callIndex === 0) return makeMessage([toolUseBlock("t1", "list_available_refs", { query: "regulon" })], "tool_use");
-            if (callIndex === 1) return makeMessage([toolUseBlock("t2", "report_blocker", { reason: "probe only" })], "tool_use");
-            // A third call would mean the terminal outcome failed to stop the loop.
+            if (callIndex === 0) return makeMessage([toolUseBlock("t1", "report_blocker", { reason: "probe only" })], "tool_use");
+            // A second call would mean the terminal outcome failed to stop the loop.
             return makeMessage([textBlock("Reported.")], "end_turn");
         });
     }
@@ -218,7 +217,8 @@ describe("generatePlan loop-driving tool", () => {
         const provider = refsProbe();
         await createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, refStorePath: root }).execute(INPUT, toolContext());
 
-        expect(Object.keys(provider.calls[0]!.tools)).toContain("list_available_refs");
+        expect(Object.keys(provider.calls[0]!.tools)).not.toContain("list_available_refs");
+        expect(Object.keys(provider.calls[0]!.tools)).toEqual(expect.arrayContaining(["submit_plan", "request_clarification", "report_blocker"]));
         expect(transcript(provider)).toContain("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
         // The planner sees the same meaning-bearing labels a sandbox agent does.
         expect(transcript(provider)).toContain("regulon");
