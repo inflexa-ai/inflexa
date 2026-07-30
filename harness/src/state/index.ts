@@ -69,6 +69,11 @@ export type { DataProfileStatus, DataProfileResult, DataProfileInputFile, DataPr
 
 export { queryRunCountsByAnalyses, queryThreadCountsByAnalyses, queryDataProfileStatusByAnalyses } from "./analyses-metrics.js";
 
+// Not per-entity: one analysis's whole Postgres footprint, reached from its id
+// alone, with the workflow ledger behind an injected seam.
+export { createAnalysisPurge } from "./purge-analysis.js";
+export type { AnalysisPurge, AnalysisPurgeDeps, AnalysisPurgeOutcome } from "./purge-analysis.js";
+
 export {
     AnalysisStateRowSchema,
     ArtifactRole,
