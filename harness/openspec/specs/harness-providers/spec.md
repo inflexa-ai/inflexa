@@ -32,9 +32,7 @@ Both `chat` and `embed` return a `ResultAsync` over the `ProviderError` union �
 a provider failure is a value in the error channel, never a thrown exception.
 The sole thrown control-flow exception is a client abort, re-raised verbatim
 outside the Result channel.
-
 ## Requirements
-
 ### Requirement: Prompt caching is a vendor-neutral policy translated at one site
 
 The harness SHALL express prompt caching as `PromptCachePolicy` —
@@ -73,10 +71,13 @@ directive, so the policy is a no-op for it.
 ### Requirement: Chat usage reports the cache breakdown
 
 `ChatResponse` SHALL carry an optional `usage: ChatUsage` with `inputTokens`,
-`outputTokens`, `cacheCreationInputTokens`, and `cacheReadInputTokens`, in
-harness-neutral names. `inputTokens` SHALL be the *total* billed prefix — cached and
-uncached alike — so a cache hit rate is `cacheReadInputTokens / inputTokens`, not a
-ratio against a separate uncached figure.
+`outputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`, and
+`reasoningTokens`, in harness-neutral names. `inputTokens` SHALL be the *total*
+billed prefix — cached and uncached alike — so a cache hit rate is
+`cacheReadInputTokens / inputTokens`, not a ratio against a separate uncached
+figure. `reasoningTokens` SHALL be exactly what the provider reported: the
+harness SHALL NOT derive it from, or reconcile it against, `outputTokens`
+(whether reasoning tokens are a subset of output tokens varies by provider).
 
 Every field SHALL be optional, and absent SHALL mean "not reported", never "zero": a
 provider that reports no usage at all, or reports totals without a cache breakdown,
@@ -93,6 +94,12 @@ is legitimate and SHALL NOT be normalized into zeros.
 - **GIVEN** a provider that reports no token usage
 - **WHEN** the response is consumed
 - **THEN** `usage` (or its individual fields) SHALL be absent rather than zero
+
+#### Scenario: Reasoning tokens pass through unreconciled
+
+- **GIVEN** a provider reply reporting reasoning tokens
+- **WHEN** its usage is mapped to `ChatUsage`
+- **THEN** `reasoningTokens` SHALL carry the reported figure verbatim, and SHALL be absent when the provider reports none
 
 ### Requirement: The provider owns the per-model output-token cap
 
@@ -288,3 +295,20 @@ The AI SDK chat provider SHALL retry a failed model call before surfacing a `Pro
 - **THEN** the stream establishment is retried under the same policy
 - **WHEN** a failure occurs after at least one text delta has been yielded
 - **THEN** the error propagates without retry and no text is ever yielded twice
+
+### Requirement: Chat responses carry requested and served model identity
+
+`ChatResponse` SHALL carry an optional `requestedModelId` — the id of the model the provider instance is bound to — and an optional `servedModelId` — the model id the provider response reported as having answered. Both SHALL be absent when unavailable rather than guessed, and the harness SHALL NOT treat a mismatch as an error: the pair exists so consumers can observe when an endpoint or proxy serves a different model version than the one configured.
+
+#### Scenario: The served model is observable beside the requested one
+
+- **GIVEN** a provider response that reports the answering model's id
+- **WHEN** the `ChatResponse` is consumed
+- **THEN** `servedModelId` SHALL carry the reported id and `requestedModelId` the bound model's id, independently
+
+#### Scenario: An endpoint that reports no model id yields no claim
+
+- **GIVEN** a provider response without a model id
+- **WHEN** the `ChatResponse` is consumed
+- **THEN** `servedModelId` SHALL be absent — never populated from the requested id
+
