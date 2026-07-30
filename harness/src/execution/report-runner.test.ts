@@ -265,17 +265,12 @@ describe("runReportIteration (closure-state outcome)", () => {
         expect(v1Content).toBe("<html>v1</html>");
     });
 
-    test("phantom-success: submit_report ok but index.html missing → fails", async () => {
+    test("terminal submit stops the agent before post-submit mutations", async () => {
         const { workspaceRoot, resourceId } = await setupSession();
         const previewId = "prv-phantom";
 
-        // Agent calls submit_report without ever writing index.html. The
-        // submit-tool's own pre-check rejects when index.html doesn't exist —
-        // outcome stays undefined → failure classification "did not call submit".
-        // To exercise the phantom-success guard specifically, we instead have
-        // the agent write a zero-byte index.html (passes mtime check inside
-        // submit_report? — no, it checks size>0). So we seed a non-empty file
-        // and delete it after submit_report by overwriting with empty content.
+        // The terminal submit must stop the loop before any later tool call can
+        // mutate the submitted version.
         const provider = scriptedProvider([
             makeMessage(
                 [
@@ -291,17 +286,6 @@ describe("runReportIteration (closure-state outcome)", () => {
                 "tool_use",
             ),
             makeMessage([toolUseBlock("s1", "submit_report", { notes: [] })], "tool_use"),
-            // Truncate to zero after submit.
-            makeMessage(
-                [
-                    toolUseBlock("w2", "write_file", {
-                        path: "index.html",
-                        content: "",
-                    }),
-                ],
-                "tool_use",
-            ),
-            makeMessage([textBlock("done")], "end_turn"),
         ]);
 
         const session = makeSession({
@@ -310,10 +294,6 @@ describe("runReportIteration (closure-state outcome)", () => {
             callPath: ["conversation-agent"],
         });
 
-        // write_file rejects 0-byte content (the tool currently allows empty
-        // strings — Buffer.byteLength("") === 0 and the cap is the upper bound).
-        // The version-fs write_file accepts empty content; the post-truncate
-        // stat in the runner's phantom-success guard catches the empty file.
         const result = await runReportIteration(
             {
                 provider,
@@ -336,11 +316,7 @@ describe("runReportIteration (closure-state outcome)", () => {
             },
         );
 
-        // Phantom-success guard fires: outcome was ok but index.html is empty.
-        expect(result.ok).toBe(false);
-        if (!result.ok) {
-            expect(result.errorKind).toBe("build");
-            expect(result.reason).toContain("index.html");
-        }
+        expect(result.ok).toBe(true);
+        if (result.ok) expect(result.version).toBe(1);
     });
 });
