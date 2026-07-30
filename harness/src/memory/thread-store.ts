@@ -11,10 +11,13 @@
  * a workflow step feels immediately wrong.
  *
  * Three lifecycle verbs with distinct guarantees. `archiveThread` is
- * recoverable: it stamps `deleted_at`, and because `getThread`/`listThreads`
- * filter `deleted_at IS NULL` an archived thread is indistinguishable from an
- * absent one while its row and every one of its `messages` rows stay in
- * storage. `unarchiveThread` clears the stamp and the thread reads as it did.
+ * recoverable: it stamps `deleted_at`, and because `getThread` and the default
+ * `listThreads` filter `deleted_at IS NULL` an archived thread is
+ * indistinguishable from an absent one while its row and every one of its
+ * `messages` rows stay in storage. `unarchiveThread` clears the stamp and the
+ * thread reads as it did; a listing widened with `includeArchived` is the only
+ * way to obtain the id it takes, so the recovery is reachable by a host that
+ * holds no thread ids it obtained elsewhere.
  * `purgeThread` is not recoverable: it removes the `messages` rows and the
  * metadata row in one transaction, so a failure partway leaves both — never a
  * thread stripped of its transcript, nor a transcript with nothing naming it.
@@ -44,6 +47,13 @@ export interface Thread {
     readonly title: string | null;
     readonly createdAt: Date;
     readonly updatedAt: Date;
+    /**
+     * The archive tombstone — `null` on a live thread, the moment it left view
+     * on an archived one. Required rather than optional: a row is always one or
+     * the other, so a caller listing archived threads has no `undefined` case to
+     * fall through and render a tombstoned conversation as live.
+     */
+    readonly deletedAt: Date | null;
 }
 
 export interface CreateThreadInput {
@@ -56,6 +66,13 @@ export interface ListThreadsInput {
     readonly analysisId: string;
     readonly page?: number;
     readonly perPage?: number;
+    /**
+     * Widen the listing to archived threads alongside live ones. It widens, it
+     * does not switch: a caller wanting only the archived rows filters the
+     * result on `deletedAt`, which an archived-only listing could not be
+     * widened back out of.
+     */
+    readonly includeArchived?: boolean;
 }
 
 export interface ThreadPage {
@@ -98,7 +115,11 @@ export interface ThreadStore {
      * that it existed. A `thread_id` with no row succeeds as a no-op.
      */
     purgeThread(threadId: string): ResultAsync<void, DbError>;
-    /** Live threads for one analysis, newest-updated first, paginated. */
+    /**
+     * Threads for one analysis, newest-updated first, paginated. Live threads
+     * only unless `includeArchived` widens the set; `total` and `hasMore`
+     * always describe whichever set the page was drawn from.
+     */
     listThreads(input: ListThreadsInput): ResultAsync<ThreadPage, DbError>;
 }
 
@@ -108,6 +129,7 @@ interface ThreadRow {
     readonly title: string | null;
     readonly created_at: Date;
     readonly updated_at: Date;
+    readonly deleted_at: Date | null;
 }
 
 function toThread(row: ThreadRow): Thread {
@@ -117,6 +139,7 @@ function toThread(row: ThreadRow): Thread {
         title: row.title,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
+        deletedAt: row.deleted_at,
     };
 }
 
@@ -135,7 +158,7 @@ export function createThreadStore(pool: Pool): ThreadStore {
                 `INSERT INTO cortex_analysis_threads (thread_id, analysis_id, title)
          VALUES ($1, $2, $3)
          ON CONFLICT (thread_id) DO NOTHING
-         RETURNING thread_id, analysis_id, title, created_at, updated_at`,
+         RETURNING thread_id, analysis_id, title, created_at, updated_at, deleted_at`,
                 [input.threadId, input.analysisId, input.title ?? null],
             ),
         ).andThen(({ rows }) => {
@@ -145,7 +168,7 @@ export function createThreadStore(pool: Pool): ThreadStore {
             // the existing row's identity).
             return tryQuery("thread-store.createThread.readback", () =>
                 pool.query<ThreadRow>(
-                    `SELECT thread_id, analysis_id, title, created_at, updated_at
+                    `SELECT thread_id, analysis_id, title, created_at, updated_at, deleted_at
            FROM cortex_analysis_threads WHERE thread_id = $1`,
                     [input.threadId],
                 ),
@@ -156,7 +179,7 @@ export function createThreadStore(pool: Pool): ThreadStore {
     function getThread(threadId: string): ResultAsync<Thread | null, DbError> {
         return tryQuery("thread-store.getThread", () =>
             pool.query<ThreadRow>(
-                `SELECT thread_id, analysis_id, title, created_at, updated_at
+                `SELECT thread_id, analysis_id, title, created_at, updated_at, deleted_at
          FROM cortex_analysis_threads
          WHERE thread_id = $1 AND deleted_at IS NULL`,
                 [threadId],
@@ -178,7 +201,7 @@ export function createThreadStore(pool: Pool): ThreadStore {
                 `UPDATE cortex_analysis_threads
          SET title = $2, updated_at = GREATEST(updated_at, clock_timestamp())
          WHERE thread_id = $1 AND deleted_at IS NULL
-         RETURNING thread_id, analysis_id, title, created_at, updated_at`,
+         RETURNING thread_id, analysis_id, title, created_at, updated_at, deleted_at`,
                 [threadId, title],
             ),
         ).map(({ rows }) => (rows[0] ? toThread(rows[0]) : null));
@@ -230,21 +253,26 @@ export function createThreadStore(pool: Pool): ThreadStore {
         const perPage = Math.min(Math.max(input.perPage ?? DEFAULT_PER_PAGE, 1), MAX_PER_PAGE);
         const page = Math.max(input.page ?? 0, 0);
         const offset = page * perPage;
+        // The count and the page are two statements over what has to be one set:
+        // a total drawn from a different predicate than the page's would report a
+        // size the caller can never page to. Writing the row scope once — one of
+        // two fixed fragments, never caller text — makes them unable to disagree.
+        const scope = input.includeArchived ? "analysis_id = $1" : "analysis_id = $1 AND deleted_at IS NULL";
 
         return tryQuery("thread-store.listThreads.count", () =>
             pool.query<{ count: string }>(
                 `SELECT COUNT(*)::text AS count
          FROM cortex_analysis_threads
-         WHERE analysis_id = $1 AND deleted_at IS NULL`,
+         WHERE ${scope}`,
                 [input.analysisId],
             ),
         ).andThen((totalResult) => {
             const total = Number(totalResult.rows[0]!.count);
             return tryQuery("thread-store.listThreads.page", () =>
                 pool.query<ThreadRow>(
-                    `SELECT thread_id, analysis_id, title, created_at, updated_at
+                    `SELECT thread_id, analysis_id, title, created_at, updated_at, deleted_at
            FROM cortex_analysis_threads
-           WHERE analysis_id = $1 AND deleted_at IS NULL
+           WHERE ${scope}
            ORDER BY updated_at DESC, thread_id
            LIMIT $2 OFFSET $3`,
                     [input.analysisId, perPage, offset],
