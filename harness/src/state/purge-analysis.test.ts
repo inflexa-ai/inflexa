@@ -4,16 +4,23 @@
  * tables are SHARED by every test in the process and are partitioned only by
  * unique workflow ids: every workflow row here is seeded under an id minted by
  * `rig.nextWorkflowId`, the data-profile namespace carries a per-run nonce, and
- * the purge only ever deletes ids it read back out of this test's own rows. A
- * broad delete would destroy other tests' rows.
+ * the purge only ever deletes ids it read back out of this test's own rows.
+ *
+ * What a purge under test deliberately does not reach — every row behind a
+ * refusal or a stubbed failure — would otherwise outlive the process, since
+ * dropping the per-test schema takes nothing out of `dbos`. So `afterAll` deletes
+ * exactly the rows this file wrote, scoped to the `executor_id` literal it stamps
+ * on all of them and nothing else in the process writes. A delete broader than
+ * that literal would destroy other tests' rows.
  *
  * The `cortex_*` rows are seeded with literal SQL rather than through the state
  * modules so the full set of analysis-keyed tables sits in one place. That set is
  * hand-written, so it is pinned against `information_schema` — a table added to the
  * schema with an `analysis_id` column fails that check until it is listed, and
  * listing it then demands a seeded row and a post-purge zero like every other
- * table's. Drift therefore surfaces as a failure here rather than as a silently
- * missed store.
+ * table's. The `dbos` cascade set is hand-written for the same reason and pinned
+ * the same way, against the engine's live foreign keys. Drift therefore surfaces
+ * as a failure here rather than as a silently missed store.
  *
  * Workflow rows are seeded directly rather than by running workflows — the
  * assertions are about which rows the purge reaches (a run's descendants, the
@@ -25,6 +32,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { errAsync } from "neverthrow";
 
+import { createDbosLedgerSeeder, WORKFLOW_CASCADE_TABLES, type DbosLedgerSeeder } from "../__tests__/setup/dbos-ledger.js";
 import { setupDbosForTests, type DbosTestRig } from "../__tests__/setup/dbos.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { createDbosWorkflowPurger } from "../execution/dbos-workflow-purger.js";
@@ -32,6 +40,13 @@ import type { WorkflowPurger } from "../execution/workflow-purger.js";
 import { searchIndexName } from "../workspace/search-config.js";
 import { createVectorStore } from "./vector-store.js";
 import { createAnalysisPurge, type AnalysisPurge } from "./purge-analysis.js";
+
+/**
+ * Stamped on every `dbos.workflow_status` row this file writes, and read back by
+ * `afterAll` to reclaim them. Deliberately not the rig's executor id, so the
+ * launched engine's recovery pass never claims a seeded PENDING row.
+ */
+const SEEDED_EXECUTOR_ID = "purge-analysis-test";
 
 /** Every table the purge must clear for an analysis, asserted by name. */
 const ANALYSIS_KEYED_TABLES = [
@@ -45,16 +60,6 @@ const ANALYSIS_KEYED_TABLES = [
     "cortex_asks",
     "cortex_ask_grants",
 ] as const;
-
-/**
- * The `dbos` tables that hold an `ON DELETE CASCADE` foreign key to
- * `workflow_status`, which is how a purge that deletes a status row reaches the
- * bytes hanging off it. `seedWorkflow` writes a row in every one of them, so the
- * post-purge zero asserted for each stands for a row that was actually there.
- */
-const WORKFLOW_CASCADE_TABLES = ["operation_outputs", "streams", "workflow_inputs", "workflow_events", "workflow_queue"] as const;
-
-type WorkflowTable = "workflow_status" | (typeof WORKFLOW_CASCADE_TABLES)[number];
 
 const NOTHING_LEFT: Record<string, number> = {
     cortex_analysis_state: 0,
@@ -96,6 +101,7 @@ describe("createAnalysisPurge", () => {
     let rig: DbosTestRig;
     let purger: WorkflowPurger;
     let purge: AnalysisPurge;
+    let ledger: DbosLedgerSeeder;
     // A fresh nonce per run keeps the data-profile id namespace clear of rows a
     // previous run of this file left in the shared `dbos` schema.
     const run = randomUUID().slice(0, 8);
@@ -104,49 +110,20 @@ describe("createAnalysisPurge", () => {
         rig = await setupDbosForTests("purge_analysis");
         purger = createDbosWorkflowPurger({ pool: rig.pool });
         purge = createAnalysisPurge({ pool: rig.pool, workflows: purger });
+        // Every cascading table is seeded, so the post-purge zero asserted for each
+        // stands for a row that was actually there rather than an empty table.
+        ledger = createDbosLedgerSeeder({ pool: rig.pool, executorId: SEEDED_EXECUTOR_ID });
     });
 
     afterAll(async () => {
+        // Before the pool goes: every status row this file seeded, and — through the
+        // same cascade the purge relies on — every dependent row seeded beside it.
+        await rig.pool.query({
+            text: `DELETE FROM dbos.workflow_status WHERE executor_id = $1`,
+            values: [SEEDED_EXECUTOR_ID],
+        });
         await rig.drop();
     });
-
-    /**
-     * One workflow plus a row in each table that cascades off it. `executor_id` is
-     * deliberately not the rig's executor id, so the launched engine's recovery pass
-     * never claims a seeded PENDING row.
-     */
-    async function seedWorkflow(workflowId: string, parentId?: string): Promise<void> {
-        await rig.pool.query({
-            text: `INSERT INTO dbos.workflow_status (workflow_uuid, status, name, executor_id, parent_workflow_id)
-                   VALUES ($1, 'PENDING', 'purge-analysis-test-workflow', 'purge-analysis-test', $2)`,
-            values: [workflowId, parentId ?? null],
-        });
-        await rig.pool.query({
-            text: `INSERT INTO dbos.operation_outputs (workflow_uuid, function_id, function_name, output)
-                   VALUES ($1, 0, 'purge-analysis-test-step', '"done"')`,
-            values: [workflowId],
-        });
-        await rig.pool.query({
-            text: `INSERT INTO dbos.streams (workflow_uuid, key, value, "offset")
-                   VALUES ($1, 'events', '"event"', 0)`,
-            values: [workflowId],
-        });
-        await rig.pool.query({
-            text: `INSERT INTO dbos.workflow_inputs (workflow_uuid, inputs) VALUES ($1, '[]')`,
-            values: [workflowId],
-        });
-        await rig.pool.query({
-            text: `INSERT INTO dbos.workflow_events (workflow_uuid, key, value) VALUES ($1, 'purge-analysis-test-key', 'v')`,
-            values: [workflowId],
-        });
-        await rig.pool.query({
-            // `deduplication_id` is left NULL: the unique key it shares with
-            // `queue_name` treats NULLs as distinct, so every seeded workflow can sit
-            // on the same queue name without colliding.
-            text: `INSERT INTO dbos.workflow_queue (queue_name, workflow_uuid) VALUES ('purge-analysis-test-queue', $1)`,
-            values: [workflowId],
-        });
-    }
 
     /**
      * A populated analysis: a row in every analysis-keyed table, two threads (one
@@ -214,16 +191,16 @@ describe("createAnalysisPurge", () => {
                        VALUES ($1, $2, 'h', 1, 'output', $3, $4)`,
                 values: [analysisId, `runs/${index}/output/out.csv`, runId, now],
             });
-            await seedWorkflow(runId);
+            await ledger.seedWorkflow(runId);
         }
 
         // A child step workflow of the first run — reachable only as a descendant.
         const childWorkflowId = `${runIds[0]}-step-0`;
-        await seedWorkflow(childWorkflowId, runIds[0]);
+        await ledger.seedWorkflow(childWorkflowId, runIds[0]);
 
         // The data-profile attempt, reachable only through its id namespace.
         const dataProfileWorkflowId = `dataprofile:${analysisId}:${run}`;
-        await seedWorkflow(dataProfileWorkflowId);
+        await ledger.seedWorkflow(dataProfileWorkflowId);
 
         if (opts?.vectorIndex !== false) {
             const store = createVectorStore(rig.pool);
@@ -255,34 +232,6 @@ describe("createAnalysisPurge", () => {
         return rows[0]?.n ?? 0;
     }
 
-    async function countWorkflowRows(table: WorkflowTable, workflowIds: readonly string[]): Promise<number> {
-        const { rows } = await rig.pool.query<{ n: number }>({
-            // A table name cannot be a bind parameter; every value here comes from the
-            // literal `WorkflowTable` union, so nothing caller-shaped reaches the SQL.
-            text: `SELECT COUNT(*)::int AS n FROM dbos.${table} WHERE workflow_uuid = ANY($1)`,
-            values: [[...workflowIds]],
-        });
-        return rows[0]?.n ?? 0;
-    }
-
-    /** Every dependent row count for the given workflows, keyed by table. */
-    async function countCascadeRows(workflowIds: readonly string[]): Promise<Record<string, number>> {
-        const counts: Record<string, number> = {};
-        for (const table of WORKFLOW_CASCADE_TABLES) {
-            counts[table] = await countWorkflowRows(table, workflowIds);
-        }
-        return counts;
-    }
-
-    /** Every seeded row count set to the same number, for comparing a whole cascade at once. */
-    function cascadeRows(each: number): Record<string, number> {
-        const counts: Record<string, number> = {};
-        for (const table of WORKFLOW_CASCADE_TABLES) {
-            counts[table] = each;
-        }
-        return counts;
-    }
-
     async function workflowStatuses(workflowIds: readonly string[]): Promise<string[]> {
         const { rows } = await rig.pool.query<{ status: string }>({
             text: `SELECT status FROM dbos.workflow_status WHERE workflow_uuid = ANY($1) ORDER BY workflow_uuid`,
@@ -305,8 +254,8 @@ describe("createAnalysisPurge", () => {
         expect(await countsByAnalysis(doomed.analysisId)).toEqual(FULLY_SEEDED);
         expect(await countMessages(doomed.threadIds)).toBe(SEEDED_MESSAGES);
         expect(await vectorTableExists(doomed.analysisId)).toBe(true);
-        expect(await countWorkflowRows("workflow_status", doomed.workflowIds)).toBe(4);
-        expect(await countCascadeRows(doomed.workflowIds)).toEqual(cascadeRows(4));
+        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
+        expect(await ledger.countCascadeRows(doomed.workflowIds)).toEqual(ledger.cascadeRows(4));
 
         const outcome = (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrap();
         expect(outcome).toEqual({ threads: 2, messages: SEEDED_MESSAGES, workflows: 4, vectorIndexDropped: true });
@@ -316,8 +265,8 @@ describe("createAnalysisPurge", () => {
         expect(await vectorTableExists(doomed.analysisId)).toBe(false);
         // The status rows go, and every dependent row that cascades off them goes with
         // them — that is where the analysis's bulk actually lived.
-        expect(await countWorkflowRows("workflow_status", doomed.workflowIds)).toBe(0);
-        expect(await countCascadeRows(doomed.workflowIds)).toEqual(cascadeRows(0));
+        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(0);
+        expect(await ledger.countCascadeRows(doomed.workflowIds)).toEqual(ledger.cascadeRows(0));
     });
 
     it("covers exactly the analysis-keyed tables the live schema declares", async () => {
@@ -336,6 +285,22 @@ describe("createAnalysisPurge", () => {
         for (const table of ANALYSIS_KEYED_TABLES) {
             expect(FULLY_SEEDED[table]).toBeGreaterThan(0);
         }
+    });
+
+    it("covers exactly the dbos tables that cascade off a workflow status row", async () => {
+        const { rows } = await rig.pool.query<{ table_name: string }>(
+            // The engine owns this schema and adds to it across versions. A table it
+            // puts behind an `ON DELETE CASCADE` key is bytes a purge starts reclaiming
+            // the moment the key exists, so the set is read back from the live
+            // constraints: an unlisted one fails here until it is seeded and asserted
+            // like the rest.
+            `SELECT c.conrelid::regclass::text AS table_name
+               FROM pg_constraint c
+              WHERE c.contype = 'f'
+                AND c.confrelid = 'dbos.workflow_status'::regclass
+                AND c.confdeltype = 'c'`,
+        );
+        expect(rows.map((row) => row.table_name).sort()).toEqual(WORKFLOW_CASCADE_TABLES.map((table) => `dbos.${table}`).sort());
     });
 
     it("leaves a second analysis, a target assessment, an orphaned message, the shared corpus, and scheduled workflows untouched", async () => {
@@ -376,19 +341,19 @@ describe("createAnalysisPurge", () => {
         // A scheduled operational workflow belongs to no analysis: nothing maps it to
         // one, and no purge can or should reach it.
         const scheduled = rig.nextWorkflowId("purge-scheduled-");
-        await seedWorkflow(scheduled);
+        await ledger.seedWorkflow(scheduled);
         // A target assessment's workflow id is the assessment id — it is in neither
         // `cortex_runs` nor the `dataprofile:{analysisId}:` namespace, which is the
         // whole reason the purge cannot reach it.
-        await seedWorkflow(assessmentId);
+        await ledger.seedWorkflow(assessmentId);
 
         (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrap();
 
         expect(await countsByAnalysis(bystander.analysisId)).toEqual(FULLY_SEEDED);
         expect(await countMessages(bystander.threadIds)).toBe(SEEDED_MESSAGES);
         expect(await vectorTableExists(bystander.analysisId)).toBe(true);
-        expect(await countWorkflowRows("workflow_status", bystander.workflowIds)).toBe(4);
-        expect(await countCascadeRows(bystander.workflowIds)).toEqual(cascadeRows(4));
+        expect(await ledger.countStatusRows(bystander.workflowIds)).toBe(4);
+        expect(await ledger.countCascadeRows(bystander.workflowIds)).toEqual(ledger.cascadeRows(4));
 
         const { rows: survivors } = await rig.pool.query<{ assessments: number; annotations: number; chunks: number; orphans: number }>({
             text: `SELECT (SELECT COUNT(*)::int FROM cortex_target_assessments WHERE id = $1) AS assessments,
@@ -400,8 +365,8 @@ describe("createAnalysisPurge", () => {
         expect(survivors[0]).toEqual({ assessments: 1, annotations: 1, chunks: 1, orphans: 1 });
 
         for (const untouched of [scheduled, assessmentId]) {
-            expect(await countWorkflowRows("workflow_status", [untouched])).toBe(1);
-            expect(await countCascadeRows([untouched])).toEqual(cascadeRows(1));
+            expect(await ledger.countStatusRows([untouched])).toBe(1);
+            expect(await ledger.countCascadeRows([untouched])).toEqual(ledger.cascadeRows(1));
         }
     });
 
@@ -416,13 +381,13 @@ describe("createAnalysisPurge", () => {
             values: [analysisId, now],
         });
         const profileWorkflowId = `dataprofile:${analysisId}:${run}`;
-        await seedWorkflow(profileWorkflowId);
+        await ledger.seedWorkflow(profileWorkflowId);
 
         const outcome = (await purge.purgeAnalysis(analysisId))._unsafeUnwrap();
         expect(outcome.workflows).toBe(1);
 
-        expect(await countWorkflowRows("workflow_status", [profileWorkflowId])).toBe(0);
-        expect(await countCascadeRows([profileWorkflowId])).toEqual(cascadeRows(0));
+        expect(await ledger.countStatusRows([profileWorkflowId])).toBe(0);
+        expect(await ledger.countCascadeRows([profileWorkflowId])).toEqual(ledger.cascadeRows(0));
     });
 
     it("removes the analysis's plans on a schema that has no cascade to fall back on", async () => {
@@ -518,30 +483,73 @@ describe("createAnalysisPurge", () => {
         expect(await countsByAnalysis(doomed.analysisId)).toEqual(FULLY_SEEDED);
         expect(await countMessages(doomed.threadIds)).toBe(SEEDED_MESSAGES);
         expect(await vectorTableExists(doomed.analysisId)).toBe(true);
-        expect(await countWorkflowRows("workflow_status", doomed.workflowIds)).toBe(4);
+        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
     });
 
-    it("returns an error and destroys nothing when the derived vector index name is refused", async () => {
-        // `searchIndexName` only swaps hyphens for underscores, so an id carrying an
-        // uppercase letter or a dot derives a name outside the shape that may be
-        // interpolated into DDL. No vector table is seeded because none can be: the
-        // vector store refuses the same name on the write side.
+    it("returns an error and destroys nothing for an analysis id outside the purgeable shape", async () => {
+        // An uppercase letter and a dot both survive `searchIndexName`, which only
+        // swaps hyphens for underscores, so neither may reach the interpolated DDL. No
+        // vector table is seeded because none can be: the vector store refuses the same
+        // name on the write side.
         const analysisId = `Purge.Unsafe-${run}`;
-        expect(searchIndexName(analysisId)).toMatch(/[A-Z.]/);
         const doomed = await seedAnalysis(analysisId, { vectorIndex: false });
 
         const failure = (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrapErr();
-        expect(failure.op).toBe("purgeAnalysis.vectorIndexName");
+        expect(failure.op).toBe("purgeAnalysis.analysisId");
 
-        // The refusal lands ahead of every destructive stage, so an id whose derived
-        // name can never conform cannot leave the analysis reclaimed-but-unreportable:
-        // its rows are all still here, and a retry answers the same way at no cost.
+        // The refusal lands ahead of every destructive stage, so an id whose shape can
+        // never conform cannot leave the analysis reclaimed-but-unreportable: its rows
+        // are all still here, and a retry answers the same way at no cost.
         expect(await countsByAnalysis(doomed.analysisId)).toEqual(FULLY_SEEDED);
         expect(await countMessages(doomed.threadIds)).toBe(SEEDED_MESSAGES);
-        expect(await countWorkflowRows("workflow_status", doomed.workflowIds)).toBe(4);
-        expect(await countCascadeRows(doomed.workflowIds)).toEqual(cascadeRows(4));
+        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
+        expect(await ledger.countCascadeRows(doomed.workflowIds)).toEqual(ledger.cascadeRows(4));
         // Untouched by the cancel stage too, which never ran.
         expect(await workflowStatuses(doomed.workflowIds)).toEqual(["PENDING", "PENDING", "PENDING", "PENDING"]);
+    });
+
+    it("returns an error and destroys nothing for an analysis id carrying the workflow-namespace delimiter", async () => {
+        // Profile workflows are found by the prefix `dataprofile:{analysisId}:`,
+        // matched with `starts_with` and no delimiter check. An id holding a `:` is
+        // ambiguous in that namespace: `dataprofile:a:` is equally a prefix of every
+        // workflow id of an analysis named `a:x`, and each id the prefix returns is
+        // cancelled and then deleted with its descendants — another analysis's ledger
+        // rows and everything cascading off them. The id shape is what refuses it, so
+        // the check cannot be narrowed to the derived table name without re-opening
+        // this.
+        const analysisId = `purge-colon-${run}:child`;
+        const doomed = await seedAnalysis(analysisId, { vectorIndex: false });
+
+        const failure = (await purge.purgeAnalysis(analysisId))._unsafeUnwrapErr();
+        expect(failure.op).toBe("purgeAnalysis.analysisId");
+
+        expect(await countsByAnalysis(analysisId)).toEqual(FULLY_SEEDED);
+        expect(await countMessages(doomed.threadIds)).toBe(SEEDED_MESSAGES);
+        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
+        expect(await ledger.countCascadeRows(doomed.workflowIds)).toEqual(ledger.cascadeRows(4));
+        expect(await workflowStatuses(doomed.workflowIds)).toEqual(["PENDING", "PENDING", "PENDING", "PENDING"]);
+    });
+
+    it("returns an error for an empty analysis id, which derives a table belonging to no analysis", async () => {
+        // The empty id derives the bare table prefix — a legal identifier that would
+        // pass any check made of the derived name alone, while `dataprofile::` is a
+        // prefix of every data-profile workflow in the ledger.
+        expect(searchIndexName("")).toBe("search_");
+
+        const failure = (await purge.purgeAnalysis(""))._unsafeUnwrapErr();
+        expect(failure.op).toBe("purgeAnalysis.analysisId");
+    });
+
+    it("returns an error for an analysis id whose derived table name outgrows the identifier limit", async () => {
+        // Postgres keeps only the first 63 bytes of an identifier, so two ids sharing a
+        // long enough prefix derive one table — and a purge of either would drop the
+        // other analysis's index.
+        const analysisId = "a".repeat(60);
+        const twin = `${analysisId}b`;
+        expect(searchIndexName(analysisId).slice(0, 63)).toBe(searchIndexName(twin).slice(0, 63));
+
+        const failure = (await purge.purgeAnalysis(analysisId))._unsafeUnwrapErr();
+        expect(failure.op).toBe("purgeAnalysis.vectorIndexName");
     });
 
     it("returns an error and rolls the whole cortex stage back when one of its deletes fails", async () => {
@@ -598,13 +606,13 @@ describe("createAnalysisPurge", () => {
         });
         expect(rows.map((row) => row.run_id).sort()).toEqual([...doomed.runIds].sort());
         expect(await countsByAnalysis(doomed.analysisId)).toEqual(FULLY_SEEDED);
-        expect(await countWorkflowRows("workflow_status", doomed.workflowIds)).toBe(4);
+        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(4);
 
         // What the surviving mapping is for: a retry over a working seam still finds
         // all four workflows and reclaims the whole footprint.
         const retried = (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrap();
         expect(retried).toEqual({ threads: 2, messages: SEEDED_MESSAGES, workflows: 4, vectorIndexDropped: true });
-        expect(await countWorkflowRows("workflow_status", doomed.workflowIds)).toBe(0);
-        expect(await countCascadeRows(doomed.workflowIds)).toEqual(cascadeRows(0));
+        expect(await ledger.countStatusRows(doomed.workflowIds)).toBe(0);
+        expect(await ledger.countCascadeRows(doomed.workflowIds)).toEqual(ledger.cascadeRows(0));
     });
 });

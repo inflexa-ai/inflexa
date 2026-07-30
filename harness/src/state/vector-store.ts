@@ -18,7 +18,28 @@ import type { Pool } from "pg";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 
-const IDENT = /^[a-z_][a-z0-9_]*$/;
+/**
+ * The identifier shape and length the harness may interpolate into a statement.
+ * An identifier cannot be a bind parameter, so a name reaching SQL has to be
+ * checked rather than bound, and lower-snake is the whole of what the harness ever
+ * derives. The bound is as load-bearing as the shape: Postgres keeps only the
+ * first 63 bytes of an identifier and truncates the rest silently, so two longer
+ * names sharing a 63-byte prefix resolve to one table — a write that lands in
+ * another resource's index, and a drop that takes it. The shape is ASCII-only, so
+ * a name that matches it has one byte per character and `length` is the byte count
+ * the limit is measured in.
+ */
+const SQL_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
+const MAX_SQL_IDENTIFIER_BYTES = 63;
+
+/**
+ * Whether `name` may be interpolated into a statement as an identifier. Shared
+ * with the reclaim side, which guards the same derived names against the same
+ * shape — one invariant, one place to read it.
+ */
+export function isSqlIdentifier(name: string): boolean {
+    return SQL_IDENTIFIER.test(name) && name.length <= MAX_SQL_IDENTIFIER_BYTES;
+}
 
 export interface CreateIndexInput {
     readonly indexName: string;
@@ -60,7 +81,7 @@ export interface VectorStore {
 }
 
 function assertIdent(name: string): void {
-    if (!IDENT.test(name)) {
+    if (!isSqlIdentifier(name)) {
         throw new Error(`vector-store: unsafe index name "${name}"`);
     }
 }

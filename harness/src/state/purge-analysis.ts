@@ -10,16 +10,21 @@
  * analysis's stored bytes — and it is reached through the injected
  * `WorkflowPurger` seam so the durability engine stays out of the state layer.
  *
- * The stages run in one order, chosen for what a failure leaves behind:
- * capture ids, cancel, delete workflow rows, delete the `cortex_*` rows, drop the
- * vector table. Each stage carries the reason it sits where it does. Ahead of all
- * of them sits the one refusal the operation can raise on its own — a derived
- * vector-table name outside the shape that may be interpolated into DDL — because
- * a refusal is only useful while there is still something left to protect. There
- * is no single transaction across them: the purge spans app tables, a DDL `DROP TABLE`,
- * and the engine's system schema, so instead of faking atomicity every stage is
- * idempotent and the whole operation is safe to re-run. A purge of an unknown or
- * already-purged analysis therefore succeeds, reporting zeroes.
+ * There is no single transaction across the stages: the purge spans app tables, a
+ * DDL `DROP TABLE`, and the engine's system schema, so instead of faking atomicity
+ * every stage is idempotent and the whole operation is safe to re-run. A purge of
+ * an unknown or already-purged analysis therefore succeeds, reporting zeroes. Each
+ * stage carries the reason it sits where it does.
+ *
+ * A purge is NOT serialized against work still starting on the analysis. The
+ * mapping from an analysis to its workflows is read once, up front, out of
+ * `cortex_runs`; a run inserted after that read is outside the captured set, and
+ * the `cortex_runs` delete later in the same purge removes the only row that could
+ * ever have named it. Its workflow row and every byte cascading off it then belong
+ * to no analysis — no retry reaches them, because nothing is left that attributes
+ * them to one. Quiesce the analysis before purging it: no new runs, no new
+ * data-profile triggers. This module cannot observe a host's in-flight work, so it
+ * does not enforce that.
  *
  * What it does not reach, so that absent coverage is never read as delivered:
  * scheduled operational workflows (they belong to no analysis and accumulate
@@ -37,25 +42,28 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import { tryMutation, tryQuery, withTransaction, type DbError } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
 import { searchIndexName } from "../workspace/search-config.js";
+import { isSqlIdentifier } from "./vector-store.js";
 
 /**
- * The shape a per-analysis vector table name may take. The name is derived from a
- * caller-supplied `analysisId` and interpolated into DDL, because an identifier
- * cannot be a bind parameter — so a derived name outside this shape is refused
- * rather than sent. The vector store guards the same interpolation of the same
- * name on the write side; this is the reclaim side of it, and it answers with a
- * `DbError` because a throw would escape the Result a caller reads to tell a
- * failed purge from a completed one.
+ * The shape an `analysisId` must take to be purgeable. It is load-bearing twice
+ * over, and neither job survives the other being dropped:
  *
- * The check runs at the entry point, before any destructive stage. Raised from the
- * drop instead — the last stage — it would answer `err` only after the workflows
- * had been cancelled, their ledger rows deleted, and every `cortex_*` row removed,
- * and it would answer `err` again on every retry, since the derived name never
- * changes: an analysis whose footprint is in fact entirely reclaimed could then
- * never be reported purged. Validating first means a refused name costs nothing —
- * nothing cancelled, no workflow row and no `cortex_*` row gone.
+ *  - Safe DDL interpolation. The analysis's vector-table name is derived from the
+ *    id and interpolated into `DROP TABLE`, because an identifier cannot be a bind
+ *    parameter. Confining the id to `[a-z0-9_-]` is what makes that derived name an
+ *    identifier at all.
+ *  - An unambiguous `dataprofile:` namespace. Profile workflows are found by the id
+ *    prefix `dataprofile:{analysisId}:`, matched with `starts_with` and no
+ *    delimiter check. An id holding a `:` makes analysis `a`'s prefix equally a
+ *    prefix of every workflow id of an analysis named `a:x` — and each id that
+ *    prefix returns is cancelled, then deleted with its descendants, taking another
+ *    analysis's ledger rows and everything cascading off them. Excluding `:` is the
+ *    only thing that keeps a purge inside the analysis it was asked for.
+ *
+ * Empty is outside the shape too: it derives the bare table prefix, which is a
+ * perfectly legal identifier and belongs to no analysis.
  */
-const VECTOR_INDEX_NAME = /^[a-z_][a-z0-9_]*$/;
+const PURGEABLE_ANALYSIS_ID = /^[a-z0-9_-]+$/;
 
 /**
  * The analysis-keyed deletes that follow the thread/message pair, in the order
@@ -83,13 +91,21 @@ const ANALYSIS_KEYED_DELETES: readonly { readonly op: string; readonly sql: stri
 ];
 
 /**
- * What one invocation reclaimed. It is a report of this call, not a claim that
- * nothing anywhere remains — a re-run after a late write reclaims more and says
- * so.
+ * What one invocation reclaimed. It is a report of this call, not a claim that the
+ * analysis is now empty. What a re-run does reclaim is what a failed stage left
+ * behind, and rows written under a workflow the purge already deleted, which trip
+ * their foreign key. What it cannot reclaim is a run that started while the purge
+ * ran: nothing is left to name its workflow (see the module note on quiescing).
  */
 export interface AnalysisPurgeOutcome {
     readonly threads: number;
     readonly messages: number;
+    /**
+     * How many workflows the ledger delete targeted, counted immediately before it
+     * and outside any transaction, because the engine owns the delete and reports no
+     * count of its own. It is not a post-delete tally: a row arriving between the
+     * count and the delete is deleted without being counted.
+     */
     readonly workflows: number;
     readonly vectorIndexDropped: boolean;
 }
@@ -106,9 +122,19 @@ export interface AnalysisPurge {
      * Remove the analysis's entire persisted Postgres footprint. Absence is a
      * normal outcome: an unknown or already-purged analysis succeeds with zeroes.
      * Every failure rides the error channel — the operation never reports a purge
-     * it did not achieve.
+     * it did not achieve. The caller quiesces the analysis first; the purge is not
+     * serialized against a run starting under it.
      */
     purgeAnalysis(analysisId: string): ResultAsync<AnalysisPurgeOutcome, DbError>;
+}
+
+/**
+ * A refusal raised before any stage runs, so nothing is cancelled, no workflow row
+ * and no `cortex_*` row is gone, and a retry answers the same way at the same cost.
+ * `op` names the check that raised it.
+ */
+function refuse(op: string, message: string): ResultAsync<AnalysisPurgeOutcome, DbError> {
+    return errAsync({ type: "mutation_failed", op, cause: new Error(message) });
 }
 
 /** Run one delete on the transaction's client and report how many rows it took. */
@@ -171,12 +197,14 @@ export function createAnalysisPurge({ pool, workflows, logger: injected }: Analy
                         messages,
                     })),
                 )
-                // Folded rather than run together, because the list is ordered and each
-                // statement must land before the next one starts.
+                // Folded so the first failure short-circuits the rest. Submitting them
+                // together would not: the transaction is aborted the moment one raises,
+                // every statement behind it comes back `25P02`, and the `op` naming the
+                // delete that actually broke is buried under theirs.
                 .andThen((counts) =>
-                    ANALYSIS_KEYED_DELETES.reduce<ResultAsync<number, DbError>>(
-                        (stage, { op, sql }) => stage.andThen(() => deleteRows(client, op, sql, analysisId)),
-                        okAsync(0),
+                    ANALYSIS_KEYED_DELETES.reduce<ResultAsync<void, DbError>>(
+                        (stage, { op, sql }) => stage.andThen(() => deleteRows(client, op, sql, analysisId).map(() => undefined)),
+                        okAsync(undefined),
                     ).map(() => counts),
                 ),
         );
@@ -185,18 +213,21 @@ export function createAnalysisPurge({ pool, workflows, logger: injected }: Analy
      * `vectorIndexDropped` is established by a `to_regclass` probe taken
      * immediately before the drop, because `DROP TABLE IF EXISTS` reports nothing
      * about whether it found anything. The probe resolves the name exactly as the
-     * drop does — both go through `search_path` — and the drop runs regardless of
-     * what the probe saw, so the window between them can at worst misreport the
-     * flag for an analysis already being destroyed, never leave a table behind.
+     * drop does — both go through `search_path`, and the probe is handed the same
+     * double-quoted form the drop interpolates, since `to_regclass` parses its
+     * argument as an SQL identifier and would fold an unquoted one to lower case.
+     * The drop runs regardless of what the probe saw, so the window between them can
+     * at worst misreport the flag for an analysis already being destroyed, never
+     * leave a table behind.
      *
-     * `indexName` arrives already matched against `VECTOR_INDEX_NAME`; that is the
-     * whole warrant for interpolating it into the DDL below.
+     * `indexName` arrives already accepted at the entry point; that is the whole
+     * warrant for interpolating it into the DDL below.
      */
     const dropVectorIndex = (indexName: string): ResultAsync<boolean, DbError> =>
         tryQuery("purgeAnalysis.vectorIndexPresent", async () => {
             const { rows } = await pool.query<{ present: boolean }>({
                 text: "SELECT to_regclass($1::text) IS NOT NULL AS present",
-                values: [indexName],
+                values: [`"${indexName}"`],
             });
             return rows[0]?.present ?? false;
         }).andThen((present) =>
@@ -206,13 +237,17 @@ export function createAnalysisPurge({ pool, workflows, logger: injected }: Analy
         );
 
     const purgeAnalysis = (analysisId: string): ResultAsync<AnalysisPurgeOutcome, DbError> => {
+        if (!PURGEABLE_ANALYSIS_ID.test(analysisId)) {
+            return refuse("purgeAnalysis.analysisId", `purge-analysis: refusing unpurgeable analysis id "${analysisId}"`);
+        }
         const indexName = searchIndexName(analysisId);
-        if (!VECTOR_INDEX_NAME.test(indexName)) {
-            return errAsync<AnalysisPurgeOutcome, DbError>({
-                type: "mutation_failed",
-                op: "purgeAnalysis.vectorIndexName",
-                cause: new Error(`purge-analysis: unsafe vector index name "${indexName}"`),
-            });
+        // The id's shape already settles the derived name's characters; what it cannot
+        // settle is how long the derivation makes it. This is the same guard the vector
+        // store applies to the same name on the write side, so the accepted shape
+        // cannot drift between the two, and a name Postgres would silently truncate
+        // onto another analysis's table is refused rather than dropped.
+        if (!isSqlIdentifier(indexName)) {
+            return refuse("purgeAnalysis.vectorIndexName", `purge-analysis: unsafe vector index name "${indexName}"`);
         }
         return (
             collectWorkflowIds(analysisId)
@@ -229,7 +264,7 @@ export function createAnalysisPurge({ pool, workflows, logger: injected }: Analy
                 // Descendants are included because a run's child step workflows carry the
                 // sandbox transcripts and are reachable only through their parent.
                 .andThen((ids) => workflows.deleteWorkflows(ids, true))
-                .andThen((workflowsRemoved) => deleteCortexRows(analysisId).map((counts) => ({ ...counts, workflows: workflowsRemoved })))
+                .andThen((workflowsTargeted) => deleteCortexRows(analysisId).map((counts) => ({ ...counts, workflows: workflowsTargeted })))
                 // The vector table is dropped after the transaction rather than inside
                 // it: `DROP TABLE` takes an ACCESS EXCLUSIVE lock, and enlisting it would
                 // hold that lock for the duration of every row delete above.
