@@ -31,9 +31,21 @@ CREATE TABLE IF NOT EXISTS cortex_analysis_state (
   data_profile_started_at   TEXT,
   data_profile_completed_at TEXT,
   data_profile_result       JSONB,
+  data_profile_workflow_id  TEXT,
   created_at                TEXT NOT NULL,
   updated_at                TEXT NOT NULL
 );
+
+-- DBOS workflow id of the profile attempt that owns the row — what a consumer
+-- subscribes to in order to observe that profile's activity. Written by the
+-- workflow body, not the trigger: the ledger claim happens before the workflow id
+-- is minted, so only the body knows the id of the attempt that actually started.
+-- Nullable, and absence is a normal state rather than a defect, with two ordinary
+-- causes: a row claimed whose body has not yet recorded its id, and a row written
+-- before this column existed. Both mean "this profile's stream is not
+-- addressable", which is true in each case — hence no backfill.
+ALTER TABLE cortex_analysis_state
+  ADD COLUMN IF NOT EXISTS data_profile_workflow_id TEXT;
 
 -- File registry — artifact_id (provenance) + file_id (S3), cross-run.
 CREATE TABLE IF NOT EXISTS cortex_artifacts (

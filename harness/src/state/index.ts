@@ -63,6 +63,7 @@ export {
     clearDataProfile,
     loadDataProfileStatus,
     loadSeedInputFileIds,
+    recordDataProfileWorkflowId,
 } from "./data-profile.js";
 export type { DataProfileStatus, DataProfileResult, DataProfileInputFile, DataProfileFile, DataProfileQualityAssessment } from "./data-profile.js";
 

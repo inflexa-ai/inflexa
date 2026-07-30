@@ -51,12 +51,14 @@ import {
     failDataProfile,
     loadDataProfileStatus,
     loadSeedInputFileIds,
+    recordDataProfileWorkflowId,
     tryRerunDataProfile,
     tryStartDataProfile,
     upsertArtifacts,
     type DataProfileInputFile,
     type DataProfileResult,
 } from "../state/index.js";
+import { createProfileActivityEmitter, type ProfileActivityEmitter } from "./data-profile-activity.js";
 import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
 
 /** Synthetic run/step literal for the data-profile workflow. */
@@ -221,7 +223,38 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
     const { analysisId, runSession, ownsMandate = true, stagedInputs } = input; // oss-core-managed-ok
     const authorization: RunAuthorization = { runSession, ownsMandate }; // oss-core-managed-ok
 
+    // The profile's activity channel. `DBOS.writeStream` is body-only, so the write is bound here
+    // while every phase and phrase lives in the emitter — the phrases are the observable contract of
+    // this capability, and a body that composed its own strings is a body they can drift from.
+    // The frame is the workflow's synthetic one: both values are constants shared by every analysis,
+    // so they identify nothing and consumers are required not to key on them.
+    const activity: ProfileActivityEmitter = createProfileActivityEmitter(
+        (part) => DBOS.writeStream("events", part),
+        { runId: DATA_PROFILE_RUN_LITERAL, stepId: DATA_PROFILE_STEP_LITERAL },
+        logger,
+    );
+
     try {
+        // Record which workflow owns this profile before anything else, so a consumer that resolves
+        // the id from the ledger can subscribe from the earliest possible moment. Guarded on a real
+        // ambient id: this body is also driven directly (outside a workflow), where the synthetic
+        // fallback used further down names no workflow at all and must never reach the ledger.
+        const ownWorkflowId = DBOS.workflowID;
+        if (ownWorkflowId !== undefined) {
+            await DBOS.runStep(
+                async () => {
+                    // A refused CAS is a normal in-band outcome, not a failure: the row left
+                    // `running` underneath us (cleared, or stale-expired and re-claimed), which is
+                    // the ledger correctly moving on. There is nothing to repair, and the profile's
+                    // own work is unaffected — only its observability is.
+                    if (!unwrapOrThrow(await recordDataProfileWorkflowId(deps.pool, analysisId, ownWorkflowId))) {
+                        logger.warn("workflow-id record skipped: ledger row not running (cleared or re-claimed concurrently)");
+                    }
+                },
+                { name: "record-workflow-id" },
+            );
+        }
+
         // 1. Input files are already staged under data/inputs/ (see the data-profile-init spec); the
         // embedder populated the tree and handed us this manifest in the workflow
         // input. The body never downloads.
@@ -229,6 +262,9 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             logger.warn("no input files staged");
             if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId))) logTerminalNoop(logger, analysisId, "completion");
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
+            // This is a terminal completion like any other, so it reports one — a consumer watching
+            // an empty-manifest profile sees it settle rather than seeing the stream simply stop.
+            await activity.complete();
             return;
         }
 
@@ -285,6 +321,12 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         ].join("\n");
 
         logger.info("starting sandbox", { executionId });
+
+        // Reported BEFORE the container exists, deliberately: provisioning is the longest single
+        // operation in a profile and it precedes the agent entirely, so a body that reported only
+        // from the agent loop would leave the longest wait of all unreported — the same defect the
+        // run panel's activity readout was built to remove.
+        await activity.sandboxInit();
 
         const sandbox = await deps.sandboxClient.createSandbox(
             {
@@ -349,6 +391,12 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             const agentDef = { ...baseAgent, tools: [...baseAgent.tools, submitProfileTool] };
 
             const signal = new AbortController().signal;
+
+            // Covers the gap between a ready sandbox and the agent's first tool call, which would
+            // otherwise still read as `Starting sandbox` long after the container was up. The run
+            // path's `Running ${agentId}` serves the same purpose at the same point.
+            await activity.agentStarting();
+
             await runToTerminal(
                 agentDef,
                 [{ role: "user", content: prompt }],
@@ -356,7 +404,16 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 {
                     provider: deps.provider,
                     signal,
-                    emit: () => {},
+                    // Every tool call the profiler makes becomes live activity. Only `tool-started`
+                    // is forwarded: the loop's other events (iteration boundaries, model deltas,
+                    // tool completions) describe machinery rather than work, and the panel this
+                    // feeds carries a single line whose value is that it always names what is
+                    // happening now. Awaited in body order, because `DBOS.writeStream` allocates a
+                    // function id and an unawaited write would race the next operation for the
+                    // counter and desynchronise the recorded sequence on replay.
+                    emit: async (event) => {
+                        if (event.type === "tool-started") await activity.forTool(event.name, event.input);
+                    },
                     runStep: durableStep,
                     resolved: () => capturedProfile !== null,
                 },
@@ -375,6 +432,12 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             const profilerData = capturedProfile as ProfilerOutput;
 
             // 4. Index into vector store — real files only, consistent type metadata
+            //
+            // Reported as `indexing`, not `persisting`: the contract defines `persisting` as step
+            // bytes uploading to an artifact store, and a profile uploads nothing — its durable
+            // products are this vector index and the ledger row.
+            await activity.indexing();
+
             const profilerByPath = new Map(profilerData.files.map((f) => [f.path, f]));
             const normPath = (p: string): string =>
                 p
@@ -444,6 +507,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 logTerminalNoop(logger, analysisId, "completion");
             }
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
+            // LAST statement of the success path, and that placement is the guarantee that exactly
+            // one terminal activity is ever emitted. Everything that could still throw — the ledger
+            // write above, the revoke — is already behind us, so any failure on the way here reaches
+            // the catch having emitted no terminal at all and reports `failed` alone. Emitted any
+            // earlier, a failing write would produce BOTH terminals and leave the fold's winner
+            // decided by arrival order. The sandbox teardown below emits nothing for the same reason.
+            await activity.complete();
         } finally {
             try {
                 await deps.sandboxClient.teardown(sandbox);
@@ -453,8 +523,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         }
     } catch (err) {
         logger.error("profile failed", logger.errorFields(err));
-        if (!unwrapOrThrow(await failDataProfile(deps.pool, analysisId, profileFailureReason(err)))) logTerminalNoop(logger, analysisId, "failure");
+        const reason = profileFailureReason(err);
+        if (!unwrapOrThrow(await failDataProfile(deps.pool, analysisId, reason))) logTerminalNoop(logger, analysisId, "failure");
         await deps.runAuthorizer.revoke(authorization, "data-profile-failed");
+        // The same bounded, user-safe line the ledger receives — never the raw error, whose paths and
+        // stack frames stay in the log record above. This is the only other terminal emission, so
+        // reaching it means the success path did not emit one.
+        await activity.failed(reason);
     }
 }
 

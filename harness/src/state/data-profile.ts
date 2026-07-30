@@ -109,6 +109,13 @@ export interface DataProfileStatus {
     startedAt: string | null;
     completedAt: string | null;
     result: DataProfileResult | null;
+    /**
+     * The DBOS workflow id of the profile attempt that owns this row — the durable
+     * event stream a consumer subscribes to for this profile's activity. `null` means
+     * this profile's stream is not addressable (see
+     * {@link recordDataProfileWorkflowId}).
+     */
+    workflowId: string | null;
     seedInputFileIds: string[] | null;
 }
 
@@ -147,7 +154,8 @@ export function tryStartDataProfile(pool: Querier, analysisId: string): ResultAs
     return tryMutation("dataProfile.tryStartDataProfile", async () => {
         const result = await pool.query({
             text: `UPDATE cortex_analysis_state
-            SET data_profile_status = 'running', data_profile_started_at = $1
+            SET data_profile_status = 'running', data_profile_started_at = $1,
+                data_profile_workflow_id = NULL
             WHERE analysis_id = $2 AND (data_profile_status = 'pending' OR data_profile_status IS NULL) AND ${SEEDED}`,
             values: [now, analysisId],
         });
@@ -155,14 +163,23 @@ export function tryStartDataProfile(pool: Querier, analysisId: string): ResultAs
     });
 }
 
-/** Claim a `failed` row back into `running` (the deliberate-retry route). Carries {@link SEEDED}. */
+/**
+ * Claim a `failed` row back into `running` (the deliberate-retry route). Carries {@link SEEDED}.
+ *
+ * Clears `data_profile_workflow_id`, because the claim IS the moment a new attempt takes the row
+ * and the prior attempt's workflow is finished. Left in place it would leave the row `running`
+ * while naming a stream that has already drained, so a consumer would subscribe and observe
+ * nothing without knowing why; NULL says "not addressable yet", which is exactly true until the
+ * new body records its own id (see {@link recordDataProfileWorkflowId}).
+ */
 export function tryRetryDataProfile(pool: Querier, analysisId: string): ResultAsync<boolean, DbError> {
     const now = new Date().toISOString();
     return tryMutation("dataProfile.tryRetryDataProfile", async () => {
         const result = await pool.query({
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'running', data_profile_started_at = $1,
-                data_profile_error = NULL, data_profile_completed_at = NULL
+                data_profile_error = NULL, data_profile_completed_at = NULL,
+                data_profile_workflow_id = NULL
             WHERE analysis_id = $2 AND data_profile_status = 'failed' AND ${SEEDED}`,
             values: [now, analysisId],
         });
@@ -174,6 +191,11 @@ export function tryRetryDataProfile(pool: Querier, analysisId: string): ResultAs
  * Claim a `completed` row back into `running` (the re-profile route). `data_profile_result`
  * is deliberately preserved so a consumer can keep serving the prior profile while the new
  * one runs. Carries {@link SEEDED}.
+ *
+ * `data_profile_workflow_id` is NOT preserved alongside it, and the asymmetry is the point: the
+ * result is CONTENT that stays valid until replaced, while the id is a POINTER to a live stream
+ * whose workflow is now finished. Keeping it would leave the row `running` while naming a drained
+ * stream — see {@link tryRetryDataProfile} for the same reasoning.
  */
 export function tryRerunDataProfile(pool: Querier, analysisId: string): ResultAsync<boolean, DbError> {
     const now = new Date().toISOString();
@@ -181,9 +203,53 @@ export function tryRerunDataProfile(pool: Querier, analysisId: string): ResultAs
         const result = await pool.query({
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'running', data_profile_started_at = $1,
-                data_profile_error = NULL, data_profile_completed_at = NULL
+                data_profile_error = NULL, data_profile_completed_at = NULL,
+                data_profile_workflow_id = NULL
             WHERE analysis_id = $2 AND data_profile_status = 'completed' AND ${SEEDED}`,
             values: [now, analysisId],
+        });
+        return (result.rowCount ?? 0) > 0;
+    });
+}
+
+/**
+ * Record the DBOS workflow id of the attempt that owns a claimed-`running` row, so a
+ * consumer resolves which durable event stream carries this profile's activity from the
+ * ledger row alone — no durability-engine query, no id reconstructed from the workflow-id
+ * string format. The workflow BODY calls this, never the trigger: the claim CAS runs
+ * before the workflow id is minted, so only the body can report the id of the attempt
+ * that actually started.
+ *
+ * `AND data_profile_status = 'running'` buys exactly one thing: a write that lands late
+ * cannot stamp a row that has already settled, which would otherwise point a consumer at
+ * a workflow for a profile that is already finished. What it does NOT buy is
+ * disambiguation between two attempts that each believe they are the running one — the
+ * stale-expiry claim admits precisely that, since a row whose `data_profile_started_at`
+ * has aged past the timeout can be claimed by a second attempt while the first body is
+ * still alive but has not completed its first step, and that first step then overwrites
+ * the second's id.
+ *
+ * That residue is deliberately left open rather than closed. Its worst outcome is already
+ * a specified-normal state: a consumer subscribed to a superseded workflow reads a stream
+ * that has already drained, so it observes no activity — indistinguishable from "running,
+ * nothing reported yet". A missing activity line for one profile is acceptable; a wrong
+ * one would not be. And closing it costs more than it buys: either the three claim
+ * functions widen their `Result<boolean>` returns to carry the id — their callers branch
+ * on truthiness (`if (!retried)`), so an object return makes every such branch
+ * always-taken, a silent behaviour change in the embedder's recovery path — or the
+ * embedder mints the workflow ids, putting a harness-internal construction in a
+ * consumer's hands.
+ *
+ * `ok(true)` when this call stamped the row; `ok(false)` when the CAS refused it — a
+ * normal in-band outcome, not an error.
+ */
+export function recordDataProfileWorkflowId(pool: Querier, analysisId: string, workflowId: string): ResultAsync<boolean, DbError> {
+    return tryMutation("dataProfile.recordDataProfileWorkflowId", async () => {
+        const result = await pool.query({
+            text: `UPDATE cortex_analysis_state
+            SET data_profile_workflow_id = $1
+            WHERE analysis_id = $2 AND data_profile_status = 'running'`,
+            values: [workflowId, analysisId],
         });
         return (result.rowCount ?? 0) > 0;
     });
@@ -329,7 +395,8 @@ export function clearDataProfile(pool: Querier, analysisId: string): ResultAsync
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = NULL, data_profile_error = NULL,
                 data_profile_started_at = NULL, data_profile_completed_at = NULL,
-                data_profile_result = NULL, seed_input_file_ids = NULL
+                data_profile_result = NULL, data_profile_workflow_id = NULL,
+                seed_input_file_ids = NULL
             WHERE analysis_id = $1 AND data_profile_status IS DISTINCT FROM 'running'`,
             values: [analysisId],
         });
@@ -362,11 +429,12 @@ export function loadDataProfileStatus(pool: Querier, analysisId: string): Result
             data_profile_started_at: string | null;
             data_profile_completed_at: string | null;
             data_profile_result: DataProfileStatus["result"];
+            data_profile_workflow_id: string | null;
             seed_input_file_ids: string[] | null;
         }>({
             text: `SELECT data_profile_status, data_profile_error,
                    data_profile_started_at, data_profile_completed_at,
-                   data_profile_result, seed_input_file_ids
+                   data_profile_result, data_profile_workflow_id, seed_input_file_ids
             FROM cortex_analysis_state WHERE analysis_id = $1`,
             values: [analysisId],
         });
@@ -378,6 +446,7 @@ export function loadDataProfileStatus(pool: Querier, analysisId: string): Result
             startedAt: row.data_profile_started_at ?? null,
             completedAt: row.data_profile_completed_at ?? null,
             result: row.data_profile_result ?? null,
+            workflowId: row.data_profile_workflow_id ?? null,
             seedInputFileIds: row.seed_input_file_ids ?? null,
         };
     });

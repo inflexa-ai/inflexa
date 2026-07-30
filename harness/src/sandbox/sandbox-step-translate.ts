@@ -1,11 +1,27 @@
 /**
  * Pure translation between the agent-loop / sandbox event stream and the
  * typed per-step parts the frontend renders. No DBOS, no per-run state — just the
- * label mapping, the file-tree delta extraction/fold, and the chat-data-part
- * narrowing the `sandbox-step` workflow body composes into its emitters.
+ * reconciliation-id construction, the label mapping, the file-tree delta
+ * extraction/fold, and the chat-data-part narrowing a workflow body composes
+ * into its emitters.
  */
 
 import type { ChatDataPart, EmitFn } from "../loop/types.js";
+
+/**
+ * Stable reconciliation id for a step's reconciling parts
+ * (`data-step-activity`, `data-step-file-tree`). One id per (runId, stepId)
+ * so the run-stream fold collapses every phase transition latest-wins onto
+ * a single frame. The client keys these by `stepId`, but the server fold
+ * keys by part `id`, so the id MUST be unique per step within the run.
+ *
+ * Every producer of these parts mints its ids here: the id is a
+ * reconciliation contract, and the fold collapses correctly only while all
+ * producers construct it identically.
+ */
+export function stepPartId(kind: string, runId: string, stepId: string): string {
+    return `${kind}-${runId}-${stepId}`;
+}
 
 /** Friendly live-activity label per sandbox tool id. Falls back to the raw
  *  tool name so a newly added tool still reads sensibly. */

@@ -15,8 +15,8 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import { setupDbosForTests, type DbosTestRig } from "../__tests__/setup/dbos.js";
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
-import type { CortexChatPart } from "../contracts/chat-parts.js";
-import { insertStepExecution } from "../state/step-executions.js";
+import type { CortexChatPart, StepActivityPart } from "../contracts/chat-parts.js";
+import { insertStepExecution, queryStepsByRun } from "../state/step-executions.js";
 import { createRunEventStream } from "./run-event-stream.js";
 
 if (DBOS.isInitialized()) {
@@ -137,6 +137,27 @@ async function settlesWithin<T>(promise: Promise<T>, timeoutMs: number, label: s
 }
 
 const typesOf = (parts: readonly CortexChatPart[]): string[] => parts.map((p) => p.type);
+
+const activitiesOf = (parts: readonly CortexChatPart[]): StepActivityPart[] => parts.filter((p): p is StepActivityPart => p.type === "data-step-activity");
+
+// ── Data-profile fixtures ────────────────────────────────────────────
+
+/**
+ * The data-profile workflow's synthetic frame. Both fields are constant literals
+ * — the same for every analysis and every attempt (`tasks/data-profile-activity.ts`)
+ * — so every profile that ever runs writes its activity under one reconciling id.
+ * What keeps two profiles apart is therefore never the frame: it is that each
+ * attempt writes the stream of its own workflow, and the fold's scope is one
+ * stream.
+ */
+const PROFILE_RUN_ID = "data-profile";
+const PROFILE_STEP_ID = "profile";
+
+/** One part exactly as a profile's activity emitter writes it. */
+const profileActivity = (phase: string, text: string): unknown => activity(PROFILE_RUN_ID, PROFILE_STEP_ID, phase, text);
+
+/** A profile attempt's DBOS workflow id — the `dataprofile:{analysisId}:{nonce}` a consumer subscribes to. */
+const profileWorkflowId = (analysisId: string): string => `dataprofile:${analysisId}:${rig.nextWorkflowId("n")}`;
 
 // ── Single-stream reading ────────────────────────────────────────────
 
@@ -388,5 +409,138 @@ describe("run-event stream — lifecycle", () => {
         const activities = seen.filter((p) => p.type === "data-step-activity");
         expect((activities.at(-1) as { phase: string }).phase).toBe("complete");
         expect(typesOf(seen)).toContain("data-run-completed");
+    });
+});
+
+// ── Data profiles ────────────────────────────────────────────────────
+
+/**
+ * A data profile is a workflow with no children whose every part carries the
+ * same constant frame. Both are unusual enough against the analysis-run shape the
+ * rest of this file drives that they are pinned here: nothing in the seam is
+ * profile-aware, so what makes a profile observable is the seam's existing
+ * behaviour applied to that shape — and it would fail silently rather than loudly.
+ */
+describe("run-event stream — a data profile", () => {
+    it("folds a profile's phase transitions onto its current activity", async () => {
+        const workflowId = profileWorkflowId(rig.nextWorkflowId("analysis-"));
+        const written = [
+            profileActivity("sandbox-init", "Starting sandbox"),
+            profileActivity("executing", "Running data-profiler"),
+            profileActivity("executing", "Running script profile.py"),
+            profileActivity("executing", "Reading file counts.csv"),
+            profileActivity("indexing", "Indexing input descriptions for search"),
+            profileActivity("complete", "Profile complete"),
+        ];
+        const profile = await startEmitter(workflowId, { before: written, after: [], gate: true });
+        await DBOS.getEvent<boolean>(workflowId, "gated", 30);
+
+        // A handler that takes its time is what makes the batch observable: the
+        // reader keeps enqueuing while a delivery is in flight, so the transitions
+        // it read behind the first one arrive as one batch for the fold to collapse
+        // rather than as a delivery per transition.
+        const seen: CortexChatPart[] = [];
+        const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
+        const subscription = stream.subscribe({
+            runId: workflowId,
+            onPart: async (p) => {
+                seen.push(p);
+                await new Promise((r) => setTimeout(r, 100));
+            },
+            signal: new AbortController().signal,
+        });
+
+        // Two deliveries: the part that opened delivery, then the batch that
+        // accumulated behind it, folded to one frame.
+        await waitUntil(() => seen.length >= 2, "the folded batch behind the first delivery");
+
+        await DBOS.send(workflowId, "go", "release");
+        await profile.getResult();
+        await settlesWithin(subscription, 20_000, "subscription to a profile");
+
+        // Every superseded transition was collapsed, not accumulated...
+        expect(seen.length).toBeLessThan(written.length);
+        // ...and the frames delivered are the profile's oldest and its current one.
+        const activities = activitiesOf(seen);
+        expect(activities).toHaveLength(seen.length);
+        expect(activities[0]?.phase).toBe("sandbox-init");
+        expect(activities.at(-1)?.phase).toBe("complete");
+        expect(activities.at(-1)?.activity).toBe("Profile complete");
+        // The fold worked despite — in fact because of — one id across the lot.
+        expect([...new Set(activities.map((p) => `${p.id}|${p.runId}|${p.stepId}`))]).toEqual([
+            `step-activity-${PROFILE_RUN_ID}-${PROFILE_STEP_ID}|${PROFILE_RUN_ID}|${PROFILE_STEP_ID}`,
+        ]);
+    });
+
+    it("resolves at a profile's terminal even though no child workflow ever existed", async () => {
+        const workflowId = profileWorkflowId(rig.nextWorkflowId("analysis-"));
+        const handle = await startEmitter(workflowId, {
+            before: [profileActivity("sandbox-init", "Starting sandbox"), profileActivity("failed", "Could not read the input files")],
+            after: [],
+            gate: false,
+        });
+        await handle.getResult();
+
+        // A profile writes no step-execution row, so the parent stream draining is
+        // the only signal the subscription has to settle on.
+        expect((await queryStepsByRun(rig.pool, workflowId))._unsafeUnwrap()).toEqual([]);
+
+        const seen: CortexChatPart[] = [];
+        const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
+        await settlesWithin(
+            stream.subscribe({ runId: workflowId, onPart: (p) => void seen.push(p), signal: new AbortController().signal }),
+            20_000,
+            "subscription to a childless profile workflow",
+        );
+
+        const activities = activitiesOf(seen);
+        expect(activities).toHaveLength(seen.length);
+        expect(activities.length).toBeGreaterThan(0);
+        expect(activities.at(-1)?.phase).toBe("failed");
+        expect(activities.at(-1)?.activity).toBe("Could not read the input files");
+    });
+
+    it("keeps two concurrent profiles apart despite an identical activity id", async () => {
+        const alpha = profileWorkflowId(rig.nextWorkflowId("analysis-alpha-"));
+        const beta = profileWorkflowId(rig.nextWorkflowId("analysis-beta-"));
+
+        // Every phrase carries its profile's marker so a frame that crossed
+        // streams is attributable no matter which transition survived the fold.
+        const runAlpha = await startEmitter(alpha, {
+            before: [profileActivity("sandbox-init", "Starting sandbox (alpha)"), profileActivity("executing", "Running script profile.py (alpha)")],
+            after: [profileActivity("complete", "Profile complete (alpha)")],
+            gate: true,
+        });
+        const runBeta = await startEmitter(beta, {
+            before: [profileActivity("sandbox-init", "Starting sandbox (beta)"), profileActivity("executing", "Running script survey.py (beta)")],
+            after: [profileActivity("complete", "Profile complete (beta)")],
+            gate: true,
+        });
+        await Promise.all([DBOS.getEvent<boolean>(alpha, "gated", 30), DBOS.getEvent<boolean>(beta, "gated", 30)]);
+
+        const seenAlpha: CortexChatPart[] = [];
+        const seenBeta: CortexChatPart[] = [];
+        const stream = createRunEventStream({ pool: rig.pool, logger: createCapturingLogger() });
+        const subAlpha = stream.subscribe({ runId: alpha, onPart: (p) => void seenAlpha.push(p), signal: new AbortController().signal });
+        const subBeta = stream.subscribe({ runId: beta, onPart: (p) => void seenBeta.push(p), signal: new AbortController().signal });
+
+        // Both profiles are live and reporting at the same moment — the state in
+        // which a fold keyed on the shared id rather than the stream would collide.
+        await waitUntil(() => seenAlpha.length > 0 && seenBeta.length > 0, "both profiles' first activity");
+
+        await DBOS.send(alpha, "go", "release");
+        await DBOS.send(beta, "go", "release");
+        await Promise.all([runAlpha.getResult(), runBeta.getResult()]);
+        await settlesWithin(Promise.all([subAlpha, subBeta]), 20_000, "both profile subscriptions");
+
+        const alphaActivities = activitiesOf(seenAlpha);
+        const betaActivities = activitiesOf(seenBeta);
+        expect(alphaActivities.map((p) => p.activity).every((a) => a.endsWith("(alpha)"))).toBe(true);
+        expect(betaActivities.map((p) => p.activity).every((a) => a.endsWith("(beta)"))).toBe(true);
+        expect(alphaActivities.at(-1)?.activity).toBe("Profile complete (alpha)");
+        expect(betaActivities.at(-1)?.activity).toBe("Profile complete (beta)");
+        // The identity really is shared, so the isolation above is the stream's
+        // doing and not an accident of two distinct ids.
+        expect(new Set([...alphaActivities, ...betaActivities].map((p) => p.id)).size).toBe(1);
     });
 });
