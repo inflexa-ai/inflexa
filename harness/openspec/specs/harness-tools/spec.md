@@ -48,7 +48,7 @@ name.
 ### Requirement: ToolContext carries only request-scoped values
 
 The `ToolContext` passed to `execute` SHALL be exactly
-`{ session, signal, emit, runStep, ask, invocationId }` unless a workflow-backed
+`{ session, signal, emit, runStep, ask, invocationId, turnUsage }` unless a workflow-backed
 wrapper explicitly provides a narrower workflow execution context for its own
 implementation. `invocationId` SHALL be the stable AI SDK tool-call id for this
 dispatch, identical when the same call is redelivered and distinct for a new
@@ -58,6 +58,10 @@ wrap durable work (`passthroughStep` in chat, `DBOS.runStep` in workflows).
 explicit user decision (see the tool-approval spec); it resolves to a
 deny-by-default realization when the embedder wires none, so a tool that calls
 it in a non-interactive context is denied rather than left waiting.
+`turnUsage` is the optional turn-scoped usage accumulator of the llm-usage-accounting
+capability — a call-scoped value the dispatching loop owns, present so a
+sub-agent-running tool can hand it to the child `runAgent`; it is request-scoped
+state, not an injected dependency, and a tool that runs no sub-agent ignores it.
 `ToolContext` SHALL NOT carry a database pool, sandbox client, logger, or any
 other injected dependency.
 
@@ -65,7 +69,7 @@ other injected dependency.
 
 - **GIVEN** the `ToolContext` type for a regular tool
 - **WHEN** a tool's `execute` is typed against it
-- **THEN** only `session`, `signal`, `emit`, `runStep`, `ask`, and `invocationId` are reachable
+- **THEN** only `session`, `signal`, `emit`, `runStep`, `ask`, `invocationId`, and `turnUsage` are reachable
 
 #### Scenario: ask resolves to deny-by-default when unwired
 
@@ -151,3 +155,4 @@ A tool's `execute` SHALL return `Promise<Result<Output, ToolError>>`. Expected o
 - **GIVEN** user input containing a 40-nucleotide `ACGT…` string
 - **WHEN** `redactSecrets` runs
 - **THEN** the sequence passes through unchanged
+
