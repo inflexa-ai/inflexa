@@ -26,6 +26,7 @@ import { finalText, runAgent } from "../../loop/run-agent.js";
 import { passthroughStep } from "../../loop/run-step.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ChatProvider } from "../../providers/types.js";
+import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { defineTool, type Tool } from "../define-tool.js";
 
 // Cross-domain search tools the analogical-reasoner uses.
@@ -183,6 +184,8 @@ export interface GenerateAnalogyReportDeps {
     readonly model: string;
     /** API keys for the bio/chem + GitHub data sources the reasoner searches. */
     readonly bioKeys: BioToolKeys;
+    /** LLM usage-accounting seam for the child loop; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 /** Build the `generate_analogy_report` delegation tool bound to its provider. */
@@ -240,6 +243,9 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                     signal: ctx.signal,
                     emit: ctx.emit,
                     runStep: passthroughStep,
+                    usageRecorder: deps.usageRecorder,
+                    // Fold the child's calls into the turn total the root loop reports.
+                    turnUsage: ctx.turnUsage,
                 });
                 rawText = finalText(transcript);
             } catch (err) {

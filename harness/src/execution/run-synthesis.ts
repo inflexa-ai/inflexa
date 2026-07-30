@@ -51,6 +51,7 @@ import { runToTerminal } from "../loop/run-to-terminal.js";
 import { passthroughStep } from "../loop/run-step.js";
 import type { AgentDefinition, ChatDataPart, EmitFn } from "../loop/types.js";
 import type { ChatProvider } from "../providers/types.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { RunSession } from "../auth/types.js";
 import { defineTool, type Tool, type ToolError } from "../tools/define-tool.js";
 import { createReportBlockerToolFor } from "../tools/sandbox/report-blocker.js";
@@ -425,6 +426,8 @@ export interface GenerateRunSynthesisInput {
     readonly model: string;
     /** API keys for the bio/chem tools the embedded literature reviewer uses. */
     readonly bioKeys: BioToolKeys;
+    /** LLM usage-accounting seam for the synthesizer + reviewer loops; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
     /** Step summaries from the completed run. Non-empty. */
     readonly summaries: readonly StepSummary[];
     /** Plan analytical narrative for context. */
@@ -456,6 +459,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         provider: input.provider,
         model: input.model,
         bioKeys: input.bioKeys,
+        usageRecorder: input.usageRecorder,
     });
 
     const validateTool = buildValidateTool(innerCtx);
@@ -482,6 +486,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         emit,
         runStep: passthroughStep,
         resolved: () => holder.outcome !== null,
+        usageRecorder: input.usageRecorder,
     } as const;
 
     await runToTerminal(agent, [{ role: "user", content: prompt }], input.session, loopDeps, {

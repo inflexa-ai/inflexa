@@ -40,6 +40,7 @@ import type { SynthesisStatus } from "../state/index.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 
 export interface SynthesizeRunDeps {
     /** Operational logging seam; omitted falls back to no-op. */
@@ -54,6 +55,8 @@ export interface SynthesizeRunDeps {
     readonly synthesisModel: string;
     /** API keys for the bio/chem tools the embedded literature reviewer uses. */
     readonly bioKeys: BioToolKeys;
+    /** LLM usage-accounting seam for the synthesizer loop; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 /** Optional fields for a progress update, mirroring the wire part. */
@@ -84,7 +87,7 @@ export interface SynthesizeRunResult {
 }
 
 export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeRunParams): Promise<SynthesizeRunResult> {
-    const { pool, provider, embedding, resolveWorkspaceRoot, synthesisModel, bioKeys } = deps;
+    const { pool, provider, embedding, resolveWorkspaceRoot, synthesisModel, bioKeys, usageRecorder } = deps;
     const { analysisId, runId, completedSteps, session, emit, onProgress } = params;
 
     await onProgress("starting", "Beginning literature-grounded synthesis");
@@ -113,6 +116,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             session: synthesizerSession,
             model: synthesisModel,
             bioKeys,
+            usageRecorder,
             summaries,
             planNarrative,
             runId,

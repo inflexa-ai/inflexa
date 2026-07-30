@@ -29,6 +29,7 @@ import { finalText, runAgent } from "../../../loop/run-agent.js";
 import { passthroughStep } from "../../../loop/run-step.js";
 import type { AgentDefinition } from "../../../loop/types.js";
 import type { ChatProvider } from "../../../providers/types.js";
+import type { UsageRecorder } from "../../../billing/usage-recorder.js";
 
 export const OffTargetAnnotationSchema = z.object({
     clinical_consequence: z.string().min(10),
@@ -40,6 +41,8 @@ export interface ClinicalConsequenceAnnotatorDeps {
     readonly provider: ChatProvider;
     readonly session: AgentSession;
     readonly model: string;
+    /** LLM usage-accounting seam for the annotator loop; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 export interface AnnotationInput {
@@ -176,6 +179,7 @@ export async function annotateClinicalConsequence(
             signal: controller.signal,
             emit: () => {},
             runStep: passthroughStep,
+            usageRecorder: deps.usageRecorder,
         });
         const raw = extractJsonObject(finalText(messages));
         if (raw === null) return null;

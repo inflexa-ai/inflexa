@@ -58,6 +58,8 @@ import { createSkillTools } from "../tools/sandbox/skills.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
+import type { AgentRunUsage } from "../loop/metrics.js";
 
 /** Skill pack the report-builder prompt directs the model to read (design-system reference). */
 const REPORT_BUILDER_SKILLS = ["report-html"] as const;
@@ -76,6 +78,8 @@ export interface ReportRunnerDeps {
     /** Skills root; the report-builder gets read-only `report-html` skill tools. */
     readonly skillsDir: string;
     readonly chrome: ChromeConfig;
+    /** LLM usage-accounting seam for the report-builder loop; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 export interface ReportRunnerOptions {
@@ -102,6 +106,11 @@ export interface ReportRunnerOptions {
     readonly signal: AbortSignal;
     /** Event sink — forwarded to the agent loop. */
     readonly emit: EmitFn;
+    /**
+     * The calling turn's usage accumulator (`ctx.turnUsage`), so the
+     * report-builder loop's tokens land in the turn total its root reports.
+     */
+    readonly turnUsage?: AgentRunUsage;
 }
 
 export type ReportRunnerResult =
@@ -235,6 +244,9 @@ export async function runReportIteration(deps: ReportRunnerDeps, opts: ReportRun
                     emit: opts.emit,
                     runStep: passthroughStep,
                     resolved: () => outcome !== undefined,
+                    usageRecorder: deps.usageRecorder,
+                    // Fold the builder's calls into the turn total the root loop reports.
+                    turnUsage: opts.turnUsage,
                 },
                 {
                     tools: [buildReportTool, submitReportTool],

@@ -29,11 +29,13 @@
 
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import type { StepPhase } from "@inflexa-ai/harness/contracts/chat-parts.js";
+import type { TokenUsageRollup } from "@inflexa-ai/harness/contracts/usage.js";
 import type { Pool } from "pg";
 
 import { insertStepExecution, updateStepExecution } from "../state/index.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
@@ -154,6 +156,17 @@ export interface SandboxStepResult {
     readonly durationMs: number;
     readonly finishReason: string | null;
     readonly error: string | null;
+    /**
+     * What this step's agent loop reported spending. Absent when it reported
+     * nothing — never an all-zero figure.
+     *
+     * Durable by virtue of being the child's workflow result: the parent folds
+     * the run's aggregate from these, and a recovered parent reads back the same
+     * values, so the aggregate needs no side channel to survive replay. Optional
+     * because this is a durable shape — a child that settled under an older
+     * result shape recovers without it.
+     */
+    readonly usage?: TokenUsageRollup;
 }
 
 // ── Step detail emit shapes ───────────────────────────────────────────
@@ -242,6 +255,11 @@ export interface SandboxStepDeps {
      * account of why a step died.
      */
     readonly logger?: Logger;
+    /**
+     * LLM usage-accounting seam. Covers this step's agent loop and the
+     * post-step sub-agent loops alike; omitted falls back to the no-op recorder.
+     */
+    readonly usageRecorder?: UsageRecorder;
     /** Non-streaming chat — drives the agent loop + the post-step sub-agents. */
     readonly provider: AgentChat;
     /** Write-side embedder for the post-step vector index. */
@@ -355,7 +373,7 @@ export function registerSandboxStep(deps: SandboxStepDeps): (input: SandboxStepI
  * Body extracted so tests can drive it without registering a workflow
  * (the DBOS calls inside still rely on a workflow context being present).
  */
-async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps): Promise<SandboxStepResult> {
+export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps): Promise<SandboxStepResult> {
     // Step coordinates bind once — every record below carries them without each
     // call site restating them. REPLAY: a recovered workflow re-executes this body
     // and re-emits its records, so a reader dedups by (runId, stepId), not by count.
@@ -589,12 +607,14 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
     let transcript: LoopMessage[];
     let finishReason: string;
     let hitMaxSteps: boolean;
+    let stepUsage: TokenUsageRollup | undefined;
     try {
         const agentResult = await runAgent(agent, initial, session, {
             provider: deps.provider,
             signal: neverAbort,
             emit,
             runStep: durableStep,
+            usageRecorder: deps.usageRecorder,
             formatStepName: {
                 llm: (iteration) => `llm:${iteration}`,
                 tool: (toolName, toolUseId) => `tool:${toolName}:${toolUseId}`,
@@ -604,6 +624,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
         transcript = agentResult.messages;
         finishReason = agentResult.finish.reason;
         hitMaxSteps = agentResult.finish.cappedOut;
+        stepUsage = agentResult.finish.usage;
     } catch (err) {
         if (isBudgetExceeded(err)) {
             // Notify the parent BEFORE self-cancel — DBOSWorkflowCancelledError
@@ -663,6 +684,29 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
         throw await failStep("agent_loop", err);
     }
 
+    // What the step's loop spent, emitted the moment the loop is done and before
+    // any branch that can end the step — so a step that later blocks or fails its
+    // post-step pipeline has still reported what it cost.
+    //
+    // No rollup means NO PART: the part's contract is to carry a step's rollup,
+    // and a loop that reported nothing has none to carry. A part naming the step
+    // with an absent usage field would be a claim about a figure nobody made.
+    //
+    // Stable id per (runId, stepId), like every other step part here, so a
+    // DBOS-replayed body's re-emission folds latest-wins onto the one part
+    // instead of appearing twice on the run's stream.
+    if (stepUsage) {
+        await safeEmit({
+            type: "data-step-usage",
+            id: stepPartId("step-usage", input.runId, input.stepId),
+            runId: input.runId,
+            stepId: input.stepId,
+            agentId: input.agentId,
+            modelId: agent.model,
+            usage: stepUsage,
+        });
+    }
+
     // Blocker (see the harness-sandbox-agents spec): the agent declared it cannot fulfil the step. A
     // blocked step has no deliverables — skip the artifact post-step pipeline,
     // mark `blocked` (carrying the reason), emit the blocked part, and return a
@@ -702,6 +746,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
             durationMs,
             finishReason,
             error: blockerOutcome.reason,
+            ...(stepUsage ? { usage: stepUsage } : {}),
         };
     }
 
@@ -868,6 +913,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
         durationMs,
         finishReason,
         error: null,
+        ...(stepUsage ? { usage: stepUsage } : {}),
     };
 }
 

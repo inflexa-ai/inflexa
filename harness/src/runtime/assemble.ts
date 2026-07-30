@@ -16,6 +16,7 @@
  */
 
 import { createConversationAgent, type ConversationAgentDeps } from "../agents/conversation-agent.js";
+import { createNoopUsageRecorder, type UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { registerExecuteAnalysis, type ExecuteAnalysisDeps, type ExecuteAnalysisInput, type ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
@@ -52,11 +53,12 @@ export interface RegisteredWorkflows {
 }
 
 /**
- * Conversation-agent deps minus the workflow callable and the resource
- * policy — `assembleCoreRuntime` supplies those itself so a caller cannot wire
- * a stale callable or a policy that diverges from the one the workflows see.
+ * Conversation-agent deps minus the workflow callable, the resource policy, and
+ * the usage recorder — `assembleCoreRuntime` supplies those itself so a caller
+ * cannot wire a stale callable, a policy that diverges from the one the
+ * workflows see, or a recorder that only half the agent tree reports to.
  */
-export type ConversationAssemblyDeps = Omit<ConversationAgentDeps, "executeAnalysisWorkflow" | "resourcePolicy">;
+export type ConversationAssemblyDeps = Omit<ConversationAgentDeps, "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder">;
 
 export interface CoreRuntimeDeps {
     readonly conversation: ConversationAssemblyDeps;
@@ -66,6 +68,13 @@ export interface CoreRuntimeDeps {
      * point for planner/routing guidance and workflow-input budget snapshots.
      */
     readonly resourcePolicy?: ResourcePolicy;
+    /**
+     * LLM usage-accounting seam. Resolved once here and stamped onto the
+     * conversation agent and every workflow deps bag this call registers, so
+     * one runtime reports to one ledger. Omitted falls back to
+     * `createNoopUsageRecorder()`.
+     */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 export interface CoreRuntime {
@@ -75,16 +84,18 @@ export interface CoreRuntime {
 
 export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const { conversation, workflows: wf, resourcePolicy } = deps;
+    const usageRecorder = deps.usageRecorder ?? createNoopUsageRecorder();
 
-    const sandboxStep = registerSandboxStep(wf.sandboxStep);
-    const executeAnalysis = registerExecuteAnalysis(wf.buildExecuteAnalysis(sandboxStep));
-    const executeTargetAssessment = registerExecuteTargetAssessment(wf.executeTargetAssessment);
-    const dataProfile = registerDataProfileWorkflow(wf.dataProfile);
+    const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, usageRecorder });
+    const executeAnalysis = registerExecuteAnalysis({ ...wf.buildExecuteAnalysis(sandboxStep), usageRecorder });
+    const executeTargetAssessment = registerExecuteTargetAssessment({ ...wf.executeTargetAssessment, usageRecorder });
+    const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder });
 
     const conversationAgent = createConversationAgent({
         ...conversation,
         executeAnalysisWorkflow: executeAnalysis,
         resourcePolicy,
+        usageRecorder,
     });
 
     return {

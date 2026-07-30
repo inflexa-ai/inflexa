@@ -80,21 +80,37 @@ function getInstruments(): Instruments {
  * Token usage summed over every LLM call one `runAgent` made. Each field stays
  * `undefined` until some call actually reports it, so "the provider told us
  * nothing" never masquerades as a measured zero.
+ *
+ * The fold is wider than the instruments: `reasoningTokens` is carried for the
+ * usage records and the finish rollups, and deliberately has no OTel counter —
+ * whether a provider counts reasoning inside `outputTokens` varies, so a
+ * cross-agent counter would sum figures that do not mean the same thing.
  */
 export interface AgentRunUsage {
     inputTokens?: number;
     outputTokens?: number;
     cacheCreationInputTokens?: number;
     cacheReadInputTokens?: number;
+    reasoningTokens?: number;
 }
 
 /** Fold one call's reported usage into a run's running total. */
 export function addChatUsage(total: AgentRunUsage, usage: ChatUsage | undefined): void {
     if (usage === undefined) return;
-    for (const key of ["inputTokens", "outputTokens", "cacheCreationInputTokens", "cacheReadInputTokens"] as const) {
+    for (const key of ["inputTokens", "outputTokens", "cacheCreationInputTokens", "cacheReadInputTokens", "reasoningTokens"] as const) {
         const value = usage[key];
         if (value !== undefined) total[key] = (total[key] ?? 0) + value;
     }
+}
+
+/**
+ * Whether anything was ever folded in. An accumulator no call reported into
+ * stays empty, and the surfaces that carry a rollup must then carry none at
+ * all rather than an all-zero figure.
+ */
+export function hasReportedUsage(usage: AgentRunUsage | ChatUsage | undefined): boolean {
+    if (usage === undefined) return false;
+    return Object.values(usage).some((value) => value !== undefined);
 }
 
 /** Record one completed `runAgent` invocation. */

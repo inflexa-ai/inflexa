@@ -11,6 +11,8 @@
  * emission, derived from the harness `Session.callPath`.
  */
 
+import type { TokenUsageRollup } from "./usage.js";
+
 /**
  * Provenance stamped on every chat-stream event: the emitting agent and the
  * call chain that reached it (e.g. `["conversation-agent"]`, or
@@ -76,10 +78,24 @@ export interface ToolFinishedEvent {
     source: EventSource;
 }
 
-/** The agent loop produced its terminal reply — the turn is complete. */
+/**
+ * The agent loop produced its terminal reply — the turn is complete.
+ *
+ * Both rollups are absent whenever no covered call reported usage; neither is
+ * ever an all-zero figure. A turn that dies instead of finishing emits
+ * `ChatErrorEvent` and therefore no rollup at all — the usage-record ledger,
+ * not this event, is the complete account of what a turn spent.
+ */
 export interface FinishEvent {
     type: "finish";
     source: EventSource;
+    /** What this loop's own LLM calls used, the forced wrap-up included. */
+    usage?: TokenUsageRollup;
+    /**
+     * The whole turn's total — this loop's calls plus every descendant loop's
+     * (sub-agent tools included). Present only on the turn's root loop.
+     */
+    turnUsage?: TokenUsageRollup;
 }
 
 /** The turn failed. `reason` is a machine-readable code when one applies. */

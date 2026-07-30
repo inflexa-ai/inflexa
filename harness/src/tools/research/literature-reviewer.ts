@@ -32,6 +32,7 @@ import { lookupAnnotationTool } from "../bio/lookup-annotation.js";
 import { searchGeneTool } from "../bio/search-gene.js";
 import { searchInteractionsTool } from "../bio/search-interactions.js";
 import type { Logger } from "../../lib/logger.js";
+import type { UsageRecorder } from "../../billing/usage-recorder.js";
 
 /** Sub-agent identity — appended to `callPath`, set as `agentId`. */
 const AGENT_ID = "literature-reviewer";
@@ -48,6 +49,8 @@ export interface LiteratureReviewerDeps {
     readonly model: string;
     /** API keys for the bio/chem data sources the reviewer searches. */
     readonly bioKeys: BioToolKeys;
+    /** LLM usage-accounting seam for the child loop; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 /** Build the `literature_reviewer` delegation tool bound to its provider. */
@@ -96,6 +99,9 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
                 signal: ctx.signal,
                 emit: ctx.emit,
                 runStep: passthroughStep,
+                usageRecorder: deps.usageRecorder,
+                // Fold the child's calls into the turn total the root loop reports.
+                turnUsage: ctx.turnUsage,
             });
             return ok({ report: finalText(transcript) });
         },

@@ -22,6 +22,7 @@ import type { StepSummary } from "../schemas/step-summary.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 
 import type { ArtifactRegistry } from "./artifact-registry.js";
@@ -41,6 +42,8 @@ export interface PostStepPipelineDeps {
     readonly pool: Pool;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
+    /** LLM usage-accounting seam for the metadata + summary loops; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
     /** Non-streaming chat — the metadata + summary sub-agent loops. */
     readonly provider: AgentChat;
     /** Write-side embedder for the vector index. */
@@ -73,6 +76,7 @@ export async function generateStepFileMetadata(
     }));
     const result = await coreGenerateFileMetadata({
         provider: deps.provider,
+        usageRecorder: deps.usageRecorder,
         session,
         artifacts: artifactsForMeta,
         resourceId: input.analysisId,
@@ -104,6 +108,7 @@ export async function generateStepSummaryAndWrite(
 
     const summary = await coreGenerateStepSummary({
         provider: deps.provider,
+        usageRecorder: deps.usageRecorder,
         session,
         modelId: deps.model,
         messages: transcript,

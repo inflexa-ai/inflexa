@@ -35,6 +35,7 @@ import { passthroughStep } from "../../loop/run-step.js";
 import type { AgentDefinition, LoopMessage } from "../../loop/types.js";
 import { forSubAgent, scopeResource } from "../../auth/types.js";
 import { type ChatProvider } from "../../providers/types.js";
+import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { createListAvailablePackagesTool } from "../sandbox/list-available-packages.js";
@@ -873,6 +874,8 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
     readonly resourcePolicy?: ResourcePolicy;
     /** Diagnostic sink. Absent, the tool runs silently — see `RunAgentOptions.logger`. */
     readonly logger?: Logger;
+    /** LLM usage-accounting seam for the planner loop; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 /** Build the `generate_plan` tool bound to its provider and pool. */
@@ -1094,6 +1097,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                         // as soon as one is recorded.
                         toolChoice: "required",
                         logger,
+                        usageRecorder: deps.usageRecorder,
+                        // Fold the planner's calls into the turn total the root loop reports.
+                        turnUsage: ctx.turnUsage,
                     },
                     {
                         tools: innerTools.terminal,

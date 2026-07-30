@@ -8,7 +8,7 @@
  * captures its deps and calls `defineTool`.
  *
  * `ToolContext` carries only request-scoped values every tool may need
- * (`invocationId`, `session`, `signal`, `emit`, `runStep`, `ask`) — no pool, no sandbox, no
+ * (`invocationId`, `session`, `signal`, `emit`, `runStep`, `ask`, `turnUsage`) — no pool, no sandbox, no
  * logger. The error contract: an expected
  * outcome ("not found", "no results") stays in the ok channel as a data
  * variant (`ok({ found: false })`); an unexpected failure is an `err(ToolError)`
@@ -20,6 +20,7 @@ import type { Result } from "neverthrow";
 import { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
+import type { AgentRunUsage } from "../loop/metrics.js";
 import type { EmitFn, RunStep } from "../loop/types.js";
 import type { AskApproval, AskRequest } from "./approval/contract.js";
 
@@ -51,7 +52,8 @@ export function isToolError(value: unknown): value is ToolError {
  * dependencies (see the harness-durable-runtime spec) — invocation identity,
  * `session`, `signal`, `emit`, the `runStep`
  * durability seam (`passthroughStep` in chat, `DBOS.runStep` in workflows) a
- * tool uses to wrap its own durable work, and the `ask` user-approval seam.
+ * tool uses to wrap its own durable work, the `ask` user-approval seam, and the
+ * turn's usage accumulator a sub-agent-running tool hands to its child loop.
  */
 export interface ToolContext {
     /** Stable identity of this AI SDK tool call. Redelivery preserves it; a new
@@ -73,6 +75,14 @@ export interface ToolContext {
      * waiting on a surface that cannot answer.
      */
     readonly ask: (request: AskRequest) => Promise<AskApproval>;
+    /**
+     * The turn's usage accumulator — the mutable total every loop under this
+     * turn folds its LLM calls into. A tool that drives a child `runAgent`
+     * passes it straight into that run's options, which is what puts the
+     * child's tokens in the turn total its root loop reports. A tool that runs
+     * no child agent ignores it.
+     */
+    readonly turnUsage?: AgentRunUsage;
 }
 
 /**

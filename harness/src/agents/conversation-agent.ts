@@ -83,6 +83,7 @@ import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import { planReportTool, createReportSubmitTool, type SubmitReportDeps } from "../tools/iterate-report.js";
 import type { Logger } from "../lib/logger.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 
 /** Canonical agent id — the single source of truth. */
 export const CONVERSATION_AGENT_ID = "conversation-agent" as const;
@@ -99,6 +100,12 @@ const CONVERSATION_MAX_ITERATIONS = 50;
 export interface ConversationAgentDeps extends EnvironmentStorePaths {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
+    /**
+     * LLM usage-accounting seam, handed to every loop-driving tool this agent
+     * owns so a sub-agent's calls land in the same ledger as the turn's.
+     * Omitted falls back to the no-op recorder.
+     */
+    readonly usageRecorder?: UsageRecorder;
     /** The LLM seam every loop-driving tool runs its sub-agent on. */
     readonly provider: ChatProvider;
     /** Postgres pool — plan persistence, run inspection, workspace index, working memory. */
@@ -185,6 +192,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         hostTools,
         refStorePath,
         packagesFile,
+        usageRecorder,
     } = deps;
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
@@ -236,6 +244,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             conversation: { provider, model },
             pool,
             resourcePolicy,
+            usageRecorder,
             ...(refStorePath ? { refStorePath } : {}),
             ...(packagesFile ? { packagesFile } : {}),
             ...(deps.logger ? { logger: deps.logger } : {}),
@@ -264,15 +273,16 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             skillsDir,
             chrome,
             createPreviewPublisher,
+            usageRecorder,
         }),
         // Display.
         showUserTool,
         createShowPlanTool(pool),
         showFileTool,
         // Batch literature/biology research (sub-agent as a loop-driving tool).
-        createLiteratureReviewerTool({ provider, model, bioKeys }),
+        createLiteratureReviewerTool({ provider, model, bioKeys, usageRecorder }),
         // Cross-domain analogy generation (sub-agent as a loop-driving tool).
-        createGenerateAnalogyReportTool({ provider, model, bioKeys }),
+        createGenerateAnalogyReportTool({ provider, model, bioKeys, usageRecorder }),
         // Workspace semantic search + raw read/grep over the read seam.
         createWorkspaceSearchTool(pool, embedding),
         createReadFileTool(workspaceFs),

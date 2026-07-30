@@ -1,7 +1,10 @@
+import { randomUUID } from "node:crypto";
+
 import { jsonSchema, tool as aiTool, type FinishReason, type ToolSet, type ToolCallPart, type ToolResultPart, type ModelMessage } from "ai";
 import type { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
+import { createNoopUsageRecorder, type UsageRecorder } from "../billing/usage-recorder.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
@@ -10,10 +13,10 @@ import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-m
 import { classifyProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
 import { resultStep } from "./run-step.js";
-import type { AgentChat, ChatRequest, PromptCachePolicy } from "../providers/types.js";
+import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
 import { isToolError, type Tool, type ToolContext } from "../tools/define-tool.js";
-import { addChatUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
+import { addChatUsage, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import { computeDetail, type ToolCallDetail } from "./tool-detail.js";
 import { toolOutcomeForOutputType, type ToolOutcome } from "./tool-outcome.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
@@ -22,6 +25,17 @@ export interface AgentFinish {
     readonly reason: FinishReason | "aborted" | "max_iterations" | "denied";
     readonly cappedOut: boolean;
     readonly truncationRecoveries: number;
+    /**
+     * What this loop's own LLM calls reported, the forced wrap-up included.
+     * Absent when no call reported anything — never an all-zero figure.
+     */
+    readonly usage?: AgentRunUsage;
+    /**
+     * The whole turn's total, every descendant loop included. Present only on
+     * the loop that created the turn accumulator — the run whose options
+     * carried none, which is by construction the turn's root.
+     */
+    readonly turnUsage?: AgentRunUsage;
 }
 
 export interface RunAgentResult {
@@ -93,6 +107,19 @@ export interface RunAgentOptions {
      * progress is emitted and then dropped. This is where it survives.
      */
     readonly logger?: Logger;
+    /**
+     * Per-call LLM usage-accounting seam. Omitted falls back to the no-op
+     * recorder. Delivery is fire-and-forget by contract — the loop neither
+     * awaits `record` nor guards it, so a realization must not throw or block.
+     */
+    readonly usageRecorder?: UsageRecorder;
+    /**
+     * The turn's usage accumulator, supplied by whatever ran this loop as part
+     * of a larger turn (a sub-agent-running tool passes `ctx.turnUsage`). A run
+     * that receives none creates its own and is therefore the turn's root: it
+     * alone reports `turnUsage` on its finish.
+     */
+    readonly turnUsage?: AgentRunUsage;
 }
 
 export async function runAgent(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
@@ -135,6 +162,13 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // answer that cannot come.
     const unavailableAsk = new UnavailableAsk();
     const ask = opts.ask ?? ((request: AskRequest) => unavailableAsk.ask(request));
+
+    // A run handed no accumulator is the turn's root: it creates the one every
+    // descendant loop folds into, and it is the only loop entitled to report a
+    // turn total. Descendants receive the root's object and mutate it in place.
+    const turnUsage: AgentRunUsage = opts.turnUsage ?? {};
+    const isTurnRoot = opts.turnUsage === undefined;
+
     const toolCtx = (tu: ToolCallPart): ToolContext => ({
         invocationId: tu.toolCallId,
         session,
@@ -142,6 +176,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         emit,
         runStep: (name, fn) => runStep(`${formatStepName.tool(tu.toolName, tu.toolCallId)}:${name}`, fn),
         ask,
+        turnUsage,
     });
 
     let iterations = 0;
@@ -166,6 +201,47 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         log[level]("run finished", { iterations, reason, cappedOut, truncationRecoveries, toolCalls: toolCallCount, toolErrors: toolErrorCount, usage });
     };
 
+    const usageRecorder = opts.usageRecorder ?? createNoopUsageRecorder();
+
+    /**
+     * Fold one completed call into both rollups and hand it to the recorder.
+     * Called at the fold point, with the reply in hand — before any branch that
+     * can end the run — so a call that completed is accounted for even when the
+     * run later aborts or dies.
+     *
+     * A call that reported nothing produces no record. Model ids are identity,
+     * not usage: a reply carrying only `requestedModelId`/`servedModelId` still
+     * reported nothing to account for, so it is folded (to no effect) and left
+     * out of the ledger rather than entered as an all-absent record.
+     *
+     * Delivery is bare — no `await`, no `try` — because the `UsageRecorder`
+     * contract forbids `record` to throw or block.
+     */
+    const accountForCall = (reply: ChatResponse, stepName: string): void => {
+        addChatUsage(usage, reply.usage);
+        addChatUsage(turnUsage, reply.usage);
+
+        const reported = reply.usage;
+        if (reported === undefined || !hasReportedUsage(reported)) return;
+        usageRecorder.record({
+            recordKey: recordKeyFor(session, stepName),
+            agentId: source.agentId,
+            callPath: source.callPath,
+            scope: session.scope,
+            ...(session.runFrame?.runId === undefined ? {} : { runId: session.runFrame.runId }),
+            ...(session.runFrame?.stepId === undefined ? {} : { stepId: session.runFrame.stepId }),
+            ...(reply.requestedModelId === undefined ? {} : { requestedModelId: reply.requestedModelId }),
+            ...(reply.servedModelId === undefined ? {} : { servedModelId: reply.servedModelId }),
+            usage: reported,
+        });
+    };
+
+    /** The rollups this loop stamps on its finish — each absent when nothing reported. */
+    const finishUsage = (): Pick<AgentFinish, "usage" | "turnUsage"> => ({
+        ...(hasReportedUsage(usage) ? { usage: { ...usage } } : {}),
+        ...(isTurnRoot && hasReportedUsage(turnUsage) ? { turnUsage: { ...turnUsage } } : {}),
+    });
+
     // The user said no. A subsequent model call would only let the agent argue
     // with the decision, or spend a call acknowledging it; the denial tool result
     // is itself what the surface renders, so the turn ends the moment a denial
@@ -175,7 +251,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         await emit({ type: "iteration", source, index: i, final: true });
         recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
         logFinish("warn", "denied", false);
-        return { messages, finish: { reason: "denied", cappedOut: false, truncationRecoveries } };
+        return { messages, finish: { reason: "denied", cappedOut: false, truncationRecoveries, ...finishUsage() } };
     };
     /**
      * The call details for one dispatch round, positionally aligned with `calls`.
@@ -236,8 +312,9 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
             providerOptions,
         };
-        const reply = await resultStep(runStep)(formatStepName.llm(i), () => provider.chat(request, session, signal));
-        addChatUsage(usage, reply.usage);
+        const llmStepName = formatStepName.llm(i);
+        const reply = await resultStep(runStep)(llmStepName, () => provider.chat(request, session, signal));
+        accountForCall(reply, llmStepName);
 
         if (reply.finishReason === "aborted") {
             // An interrupted turn keeps whatever the model produced before the cut, but
@@ -295,7 +372,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             await emit({ type: "iteration", source, index: i, final: true });
             recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
             logFinish("info", reply.finishReason, false);
-            return { messages, finish: { reason: reply.finishReason, cappedOut: false, truncationRecoveries } };
+            return { messages, finish: { reason: reply.finishReason, cappedOut: false, truncationRecoveries, ...finishUsage() } };
         }
 
         await emit({ type: "iteration", source, index: i, final: false });
@@ -318,10 +395,11 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // rewrites the whole prefix from scratch. It still carries the cache options
     // because it is the one call whose write is pure waste, and the
     // cache_write_tokens counter is what makes that waste visible.
-    const wrapUp = await resultStep(runStep)(formatStepName.llm(agent.maxIterations), () =>
+    const wrapUpStepName = formatStepName.llm(agent.maxIterations);
+    const wrapUp = await resultStep(runStep)(wrapUpStepName, () =>
         provider.chat({ system: agent.systemPrompt, messages, tools: {}, toolChoice: "none", providerOptions }, session, signal),
     );
-    addChatUsage(usage, wrapUp.usage);
+    accountForCall(wrapUp, wrapUpStepName);
 
     if (wrapUp.finishReason === "aborted") {
         // An abort during the tool-less wrap-up is still the user cutting the turn — the
@@ -335,14 +413,41 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
         recordAgentRun({ agentId: agent.id, iterations, cappedOut: true, usage });
         logFinish("warn", "aborted", true);
-        return { messages, finish: { reason: "aborted", cappedOut: true, truncationRecoveries } };
+        return { messages, finish: { reason: "aborted", cappedOut: true, truncationRecoveries, ...finishUsage() } };
     }
 
     messages.push(wrapUp.message);
     await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
     recordAgentRun({ agentId: agent.id, iterations, cappedOut: true, usage });
     logFinish("warn", "max_iterations", true);
-    return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries } };
+    return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries, ...finishUsage() } };
+}
+
+/**
+ * Idempotency key for one call's usage record.
+ *
+ * Under a `RunFrame` the key reuses the loop's own deterministic step name —
+ * the identity DBOS itself caches the call under — so a replayed body re-fires
+ * `record` with the byte-identical key and an upserting sink counts the call
+ * once. Minting a second *naming* scheme here would create two things that must
+ * agree about what "the same call" is, and they would drift.
+ *
+ * The `stepId` segment is what makes the key unique, and it is load-bearing
+ * rather than decoration: a step name is unique only WITHIN one workflow, which
+ * is all durability needs, but `executeAnalysis` runs one child workflow per
+ * step under a single shared `runId`. Without the discriminator, step A's
+ * `llm-0` and step B's `llm-0` are the same key and an upserting sink
+ * under-counts every multi-step run. The parent workflow's own loops carry no
+ * `stepId` and so produce a shorter key, which collides with nothing.
+ *
+ * Outside a `RunFrame` there is no replay to be safe against (the HTTP chat
+ * path runs a call exactly once), so a fresh id is enough and is what keeps two
+ * calls in one turn distinct.
+ */
+function recordKeyFor(session: AgentSession, stepName: string): string {
+    const frame = session.runFrame;
+    if (frame === undefined) return randomUUID();
+    return frame.stepId === undefined ? `${frame.runId}:${stepName}` : `${frame.runId}:${frame.stepId}:${stepName}`;
 }
 
 function toolCallParts(message: Extract<ModelMessage, { role: "assistant" }>): ToolCallPart[] {

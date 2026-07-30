@@ -4,6 +4,8 @@
 
 import { z } from "zod";
 
+import { TokenUsageRollupSchema } from "./usage.js";
+
 export const EventSourceSchema = z.object({
     agentId: z.string(),
     callPath: z.array(z.string()),
@@ -38,6 +40,8 @@ export const ToolFinishedEventSchema = z.object({
 export const FinishEventSchema = z.object({
     type: z.literal("finish"),
     source: EventSourceSchema,
+    usage: TokenUsageRollupSchema.optional(),
+    turnUsage: TokenUsageRollupSchema.optional(),
 });
 
 export const ChatErrorEventSchema = z.object({

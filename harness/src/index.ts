@@ -29,6 +29,13 @@ export type { ResolveBilling, ResolvableSession, BillingMap, BillingHeaders, Bil
 export { createNoopRunCharge } from "./billing/noop-run-charge.js";
 export type { RunCharge } from "./billing/run-charge.js";
 
+// Seam: per-call LLM usage accounting. `record` is fire-and-forget — the loop
+// neither awaits nor guards it, so a realization must not throw and must not
+// block. Wired as the optional `usageRecorder` of `assembleCoreRuntime`;
+// unwired, every call is dropped by `createNoopUsageRecorder`.
+export { createNoopUsageRecorder } from "./billing/usage-recorder.js";
+export type { UsageRecorder, LlmUsageRecord } from "./billing/usage-recorder.js";
+
 // Seam: artifact registration.
 export { createNoopArtifactRegistry } from "./execution/noop-artifact-registry.js";
 export type { ArtifactRegistry, ArtifactRegistrationInput, ArtifactSyncInput, ExternalRegistrationResult } from "./execution/artifact-registry.js";
@@ -193,6 +200,7 @@ export type {
     FinishEvent,
     ChatErrorEvent,
 } from "./contracts/chat-events.js";
+export type { TokenUsageRollup } from "./contracts/usage.js";
 export type {
     CortexChatPart,
     PresentationPart,
@@ -212,6 +220,7 @@ export type {
     StepOutputPart,
     StepOutputFile,
     StepSummaryPart,
+    StepUsagePart,
     StepBlockedPart,
     RunSynthesisPart,
     SynthesizedFinding,

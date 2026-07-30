@@ -758,6 +758,83 @@ describe("executeAnalysis body", () => {
         expect(Array.isArray(completed?.findings)).toBe(true);
     });
 
+    // ── Run-completed usage aggregate ──────────────────────────────────
+
+    it("run-completed carries the sum of the steps' rollups", async () => {
+        const pool = makeFakePool();
+        // Each child's rollup rides on its durable result — the only source the
+        // parent reads, and the one a recovered parent reads back unchanged.
+        const { deps, record } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                [
+                    "A",
+                    {
+                        status: "complete",
+                        durationMs: 1,
+                        finishReason: "stop",
+                        error: null,
+                        usage: { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 80 },
+                    },
+                ],
+                [
+                    "B",
+                    {
+                        status: "complete",
+                        durationMs: 1,
+                        finishReason: "stop",
+                        error: null,
+                        usage: { inputTokens: 55, outputTokens: 5, reasoningTokens: 9 },
+                    },
+                ],
+            ]),
+        });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }]), deps);
+
+        const completed = record.emittedParts.find((p) => p.type === "data-run-completed");
+        expect(completed?.usage).toEqual({
+            inputTokens: 155,
+            outputTokens: 25,
+            cacheReadInputTokens: 80,
+            reasoningTokens: 9,
+        });
+        expect(CortexChatPartSchema.safeParse(completed).success).toBe(true);
+    });
+
+    it("run-completed carries no usage when no step reported one", async () => {
+        // Absent, never an all-zero figure: a run whose providers said nothing
+        // must stay distinguishable from one that genuinely spent nothing.
+        const pool = makeFakePool();
+        const { deps, record } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+
+        const completed = record.emittedParts.find((p) => p.type === "data-run-completed");
+        expect(completed).toBeDefined();
+        expect("usage" in completed!).toBe(false);
+    });
+
+    it("run-completed aggregates only what settled children reported — a child that threw contributes nothing", async () => {
+        const pool = makeFakePool();
+        const { deps, record } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null, usage: { inputTokens: 70 } }],
+                ["B", new Error("child exploded before returning a result")],
+            ]),
+        });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }]), deps);
+
+        const completed = record.emittedParts.find((p) => p.type === "data-run-completed");
+        expect(completed?.status).toBe("partial");
+        expect(completed?.usage).toEqual({ inputTokens: 70 });
+    });
+
     it("conformance: data-run-failed from a failed run carries a string error", async () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({

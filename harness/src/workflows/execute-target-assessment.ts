@@ -40,6 +40,7 @@ import { forSubAgent } from "../auth/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { AgentChat } from "../providers/types.js";
 
@@ -139,6 +140,8 @@ export interface ExecuteTargetAssessmentDeps {
     readonly decisionModel: string;
     /** Billing-gateway model for synthesis agents — typically `env.TARGET_ASSESSMENT_SYNTHESIS_MODEL`. */
     readonly synthesisModel: string;
+    /** LLM usage-accounting seam for the assessment's agent loops; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
