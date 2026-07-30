@@ -39,7 +39,7 @@ import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
 import { runAgent } from "../loop/run-agent.js";
 import { durableStep } from "../loop/run-step.js";
-import { activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta } from "../sandbox/sandbox-step-translate.js";
+import { activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta, stepPartId } from "../sandbox/sandbox-step-translate.js";
 import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
 import { forSubAgent, type RunSession } from "../auth/types.js";
 import type { FileMetadataEntry } from "../execution/artifact-metadata.js";
@@ -296,17 +296,6 @@ export interface PostStepContext {
 function nextFunctionIdFactory(): () => string {
     let n = 0;
     return () => `fn-${(n++).toString(36)}`;
-}
-
-/**
- * Stable reconciliation id for a step's reconciling parts
- * (`data-step-activity`, `data-step-file-tree`). One id per (runId, stepId)
- * so the run-stream fold collapses every phase transition latest-wins onto
- * a single frame. The client keys these by `stepId`, but the server fold
- * keys by part `id`, so the id MUST be unique per step within the run.
- */
-function stepPartId(kind: string, runId: string, stepId: string): string {
-    return `${kind}-${runId}-${stepId}`;
 }
 
 /**

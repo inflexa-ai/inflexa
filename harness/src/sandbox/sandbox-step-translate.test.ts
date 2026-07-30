@@ -1,6 +1,30 @@
 import { describe, expect, it } from "bun:test";
 
-import { activityForTool, applyTreeDelta, sandboxTreeDelta } from "./sandbox-step-translate.js";
+import { activityForTool, applyTreeDelta, sandboxTreeDelta, stepPartId } from "./sandbox-step-translate.js";
+
+describe("stepPartId", () => {
+    it("pins the id shape the run-stream fold reconciles on", () => {
+        expect(stepPartId("step-activity", "run-1", "qc")).toBe("step-activity-run-1-qc");
+        expect(stepPartId("step-file-tree", "run-1", "qc")).toBe("step-file-tree-run-1-qc");
+        expect(stepPartId("step-summary", "run-1", "qc")).toBe("step-summary-run-1-qc");
+        expect(stepPartId("step-output", "run-1", "qc")).toBe("step-output-run-1-qc");
+        expect(stepPartId("step-blocked", "run-1", "qc")).toBe("step-blocked-run-1-qc");
+    });
+
+    it("gives every step of a run its own id, and every run its own", () => {
+        expect(stepPartId("step-activity", "run-1", "qc")).not.toBe(stepPartId("step-activity", "run-1", "cluster"));
+        expect(stepPartId("step-activity", "run-1", "qc")).not.toBe(stepPartId("step-activity", "run-2", "qc"));
+    });
+
+    it("keeps the two reconciling kinds of one step apart", () => {
+        expect(stepPartId("step-activity", "run-1", "qc")).not.toBe(stepPartId("step-file-tree", "run-1", "qc"));
+    });
+
+    it("is a pure function of its three arguments", () => {
+        expect(stepPartId("step-activity", "data-profile", "profile")).toBe(stepPartId("step-activity", "data-profile", "profile"));
+        expect(stepPartId("step-activity", "data-profile", "profile")).toBe("step-activity-data-profile-profile");
+    });
+});
 
 describe("activityForTool", () => {
     it("maps known sandbox tools to friendly live labels", () => {

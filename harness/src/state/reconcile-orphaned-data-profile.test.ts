@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
 import { setupDbosForTests, type DbosTestRig } from "../__tests__/setup/dbos.js";
 import { upsertAnalysis } from "./analyses.js";
-import { loadDataProfileStatus, reconcileOrphanedDataProfile, tryStartDataProfile } from "./data-profile.js";
+import { loadDataProfileStatus, reconcileOrphanedDataProfile, tryRetryDataProfile, tryStartDataProfile } from "./data-profile.js";
 
 // reconcileOrphanedDataProfile joins the real `dbos.workflow_status` (the DBOS
 // system table), so it is exercised against a launched engine — a plain
@@ -61,5 +61,26 @@ describe("reconcileOrphanedDataProfile", () => {
         const reset = (await reconcileOrphanedDataProfile(rig.pool, id))._unsafeUnwrap();
         expect(reset).toBe(true);
         expect((await loadDataProfileStatus(rig.pool, id))._unsafeUnwrap()?.status).toBe("failed");
+    });
+
+    // The reset is only worth anything if a fresh attempt can then claim the row.
+    // That claim is the whole recovery story for a profile whose workflow is gone —
+    // a body whose DBOS function-id sequence no longer matches after a deploy is
+    // re-profiled, never resumed — so it is checked rather than assumed from the
+    // status flip above.
+    it("leaves a reset row claimable, so the analysis can be profiled again", async () => {
+        const id = `dp-reclaim-${rig.nextWorkflowId("")}`;
+        await seedRunning(id);
+        (await reconcileOrphanedDataProfile(rig.pool, id))._unsafeUnwrap();
+
+        const reclaimed = (await tryRetryDataProfile(rig.pool, id))._unsafeUnwrap();
+        expect(reclaimed).toBe(true);
+
+        const status = (await loadDataProfileStatus(rig.pool, id))._unsafeUnwrap();
+        expect(status?.status).toBe("running");
+        // The reconcile's own reason does not survive into the fresh attempt.
+        expect(status?.error).toBeNull();
+        expect(status?.completedAt).toBeNull();
+        expect(status?.seedInputFileIds).toEqual(["file-aaa"]);
     });
 });

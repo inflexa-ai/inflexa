@@ -7,6 +7,7 @@ import {
     completeDataProfile,
     failDataProfile,
     loadDataProfileStatus,
+    recordDataProfileWorkflowId,
     tryRerunDataProfile,
     tryRetryDataProfile,
     tryStartDataProfile,
@@ -37,6 +38,15 @@ async function rawStatus(pool: Pool, analysisId: string): Promise<string | null>
         values: [analysisId],
     });
     return res.rows[0]?.data_profile_status ?? null;
+}
+
+/** Read `data_profile_workflow_id` straight off the row — the only way to see it on a cleared (NULL-status) row. */
+async function rawWorkflowId(pool: Pool, analysisId: string): Promise<string | null> {
+    const res = await pool.query<{ data_profile_workflow_id: string | null }>({
+        text: "SELECT data_profile_workflow_id FROM cortex_analysis_state WHERE analysis_id = $1",
+        values: [analysisId],
+    });
+    return res.rows[0]?.data_profile_workflow_id ?? null;
 }
 
 /** Rewrite `seed_input_file_ids` directly — the column every claim's CAS conjunct reads. */
@@ -619,5 +629,140 @@ describe("the persisted profile record", () => {
         // An unset optional is dropped by JSON.stringify rather than stored as null.
         expect(result?.subtype).toBeUndefined();
         expect(result).toEqual(noOrganism);
+    });
+});
+
+/**
+ * `data_profile_workflow_id` is how a consumer resolves which durable event stream carries
+ * an analysis's profile activity — from the ledger row alone, never by pattern-matching
+ * workflow ids in the durability engine's tables. The workflow BODY writes it (the claim CAS
+ * runs before the id is minted), CAS'd on the row still being `running` so a write that lands
+ * late cannot point a consumer at the workflow of a profile that has already settled.
+ */
+describe("the recorded profile workflow id", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_workflow_id");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("a claimed row's recorded id reads back as workflowId", async () => {
+        await seedAnalysis(pool, "a-wf-record", "pending");
+        (await tryStartDataProfile(pool, "a-wf-record"))._unsafeUnwrap();
+
+        const stamped = (await recordDataProfileWorkflowId(pool, "a-wf-record", "dataprofile:a-wf-record:n1"))._unsafeUnwrap();
+        expect(stamped).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-wf-record"))._unsafeUnwrap();
+        expect(status?.status).toBe("running");
+        expect(status?.workflowId).toBe("dataprofile:a-wf-record:n1");
+    });
+
+    it("a re-profile replaces the prior attempt's id", async () => {
+        await seedAnalysis(pool, "a-wf-replace", "pending");
+        (await tryStartDataProfile(pool, "a-wf-replace"))._unsafeUnwrap();
+        (await recordDataProfileWorkflowId(pool, "a-wf-replace", "dataprofile:a-wf-replace:n1"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-wf-replace", SAMPLE_RESULT))._unsafeUnwrap();
+
+        // The first attempt's id survives its own completion — nothing clears it on settle.
+        const settled = (await loadDataProfileStatus(pool, "a-wf-replace"))._unsafeUnwrap();
+        expect(settled?.workflowId).toBe("dataprofile:a-wf-replace:n1");
+
+        // The rerun claim re-opens the row AND clears the stale pointer, so the window before the
+        // new body records its own id reads as "not addressable" rather than naming a workflow whose
+        // stream has already drained — a consumer would otherwise subscribe and observe nothing with
+        // no way to tell why.
+        expect((await tryRerunDataProfile(pool, "a-wf-replace"))._unsafeUnwrap()).toBe(true);
+        const reclaimed = (await loadDataProfileStatus(pool, "a-wf-replace"))._unsafeUnwrap();
+        expect(reclaimed?.status).toBe("running");
+        expect(reclaimed?.workflowId).toBeNull();
+
+        // The new body's write is the one that lands.
+        expect((await recordDataProfileWorkflowId(pool, "a-wf-replace", "dataprofile:a-wf-replace:n2"))._unsafeUnwrap()).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-wf-replace"))._unsafeUnwrap();
+        expect(status?.workflowId).toBe("dataprofile:a-wf-replace:n2");
+    });
+
+    it("a row that never recorded an id reads back workflowId: null, and the read is otherwise unchanged", async () => {
+        // `seedAnalysis` never names the column, so it is NULL by DDL default — the exact
+        // state of a row written before the column existed, once the additive migration ran.
+        // NULL, not missing: the read must render the row, not reject it.
+        await seedAnalysis(pool, "a-wf-absent", "pending");
+        (await tryStartDataProfile(pool, "a-wf-absent"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-wf-absent", SAMPLE_RESULT))._unsafeUnwrap();
+
+        const status = (await loadDataProfileStatus(pool, "a-wf-absent"))._unsafeUnwrap();
+        expect(status?.workflowId).toBeNull();
+        // Everything else the read projects is intact — the missing id costs the caller nothing else.
+        expect(status?.status).toBe("completed");
+        expect(status?.result).toEqual(SAMPLE_RESULT);
+        expect(status?.error).toBeNull();
+        expect(status?.startedAt).not.toBeNull();
+        expect(status?.completedAt).not.toBeNull();
+        expect(status?.seedInputFileIds).toEqual(["file-seed"]);
+    });
+
+    it("refuses a completed row and leaves its recorded id untouched", async () => {
+        await seedAnalysis(pool, "a-wf-completed", "pending");
+        (await tryStartDataProfile(pool, "a-wf-completed"))._unsafeUnwrap();
+        (await recordDataProfileWorkflowId(pool, "a-wf-completed", "dataprofile:a-wf-completed:n1"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-wf-completed", SAMPLE_RESULT))._unsafeUnwrap();
+
+        // A late write from some other attempt. `ok(false)` is the in-band refusal signal.
+        const stamped = (await recordDataProfileWorkflowId(pool, "a-wf-completed", "dataprofile:a-wf-completed:late"))._unsafeUnwrap();
+        expect(stamped).toBe(false);
+
+        // And the refusal is about the ROW, not just the boolean: a consumer reading this
+        // ledger row still resolves the attempt that actually produced the profile.
+        const status = (await loadDataProfileStatus(pool, "a-wf-completed"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        expect(status?.workflowId).toBe("dataprofile:a-wf-completed:n1");
+    });
+
+    it("refuses a failed row and leaves its recorded id untouched", async () => {
+        await seedAnalysis(pool, "a-wf-failed", "pending");
+        (await tryStartDataProfile(pool, "a-wf-failed"))._unsafeUnwrap();
+        (await recordDataProfileWorkflowId(pool, "a-wf-failed", "dataprofile:a-wf-failed:n1"))._unsafeUnwrap();
+        (await failDataProfile(pool, "a-wf-failed", "sandbox crashed"))._unsafeUnwrap();
+
+        const stamped = (await recordDataProfileWorkflowId(pool, "a-wf-failed", "dataprofile:a-wf-failed:late"))._unsafeUnwrap();
+        expect(stamped).toBe(false);
+
+        const status = (await loadDataProfileStatus(pool, "a-wf-failed"))._unsafeUnwrap();
+        expect(status?.status).toBe("failed");
+        expect(status?.error).toBe("sandbox crashed");
+        expect(status?.workflowId).toBe("dataprofile:a-wf-failed:n1");
+    });
+
+    it("refuses a row with no profile at all", async () => {
+        // A cleared (NULL-status) row is not `running` either, so it is not stampable —
+        // there is no attempt to name.
+        await seedAnalysis(pool, "a-wf-cleared", "pending");
+        (await clearDataProfile(pool, "a-wf-cleared"))._unsafeUnwrap();
+
+        expect((await recordDataProfileWorkflowId(pool, "a-wf-cleared", "dataprofile:a-wf-cleared:n1"))._unsafeUnwrap()).toBe(false);
+        expect(await rawWorkflowId(pool, "a-wf-cleared")).toBeNull();
+    });
+
+    it("clearDataProfile nulls the recorded id — a cleared profile is not addressable", async () => {
+        await seedAnalysis(pool, "a-wf-clear", "pending");
+        (await tryStartDataProfile(pool, "a-wf-clear"))._unsafeUnwrap();
+        (await recordDataProfileWorkflowId(pool, "a-wf-clear", "dataprofile:a-wf-clear:n1"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-wf-clear", SAMPLE_RESULT))._unsafeUnwrap();
+        expect(await rawWorkflowId(pool, "a-wf-clear")).toBe("dataprofile:a-wf-clear:n1");
+
+        expect((await clearDataProfile(pool, "a-wf-clear"))._unsafeUnwrap()).toBe(true);
+
+        // Read raw: the public read collapses a cleared row to null, so it cannot show this.
+        expect(await rawWorkflowId(pool, "a-wf-clear")).toBeNull();
+        expect((await loadDataProfileStatus(pool, "a-wf-clear"))._unsafeUnwrap()).toBeNull();
     });
 });
