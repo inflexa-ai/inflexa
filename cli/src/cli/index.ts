@@ -185,6 +185,22 @@ export function buildProgram(): Command {
         },
     );
 
+    // Read-only local report over the LLM usage ledger — no harness runtime, no Postgres, no network:
+    // the ledger is CLI-owned SQLite precisely so a report about tokens already spent works with the
+    // durable engine cold. `--analysis` only selects WHICH analysis to report on, so every value it
+    // can carry leaves the command read-only, and it is safe-listed on that basis (design Decision 8).
+    registerAction(
+        cli
+            .command("usage")
+            .description("Report an analysis's recorded LLM token usage, by served model and by agent")
+            .option("--analysis <id|name>", "Operate on a specific analysis"),
+        { kind: "auto", safeFlags: ["analysis"] },
+        async (options: { analysis?: string }) => {
+            const { runUsage } = await import("../modules/usage/usage.ts");
+            runUsage({ analysis: options.analysis });
+        },
+    );
+
     const inputs = cli.command("inputs").description("Manage an analysis's input files (add, remove, list)");
 
     // Read-only listing of the current registered inputs. `--analysis` only selects WHICH analysis to
