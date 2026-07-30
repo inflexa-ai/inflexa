@@ -1,7 +1,7 @@
-import { generateText, streamText, type FinishReason, type LanguageModel, type LanguageModelUsage, type ModelMessage } from "ai";
+import { generateText, streamText, wrapLanguageModel, type FinishReason, type LanguageModel, type LanguageModelUsage, type ModelMessage } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { APICallError } from "@ai-sdk/provider";
+import { APICallError, type LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { retryWithExponentialBackoff } from "@ai-sdk/provider-utils";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
@@ -273,6 +273,10 @@ function createRetry(signal: AbortSignal | undefined, logger: Logger) {
  * vendor's own snake_case.
  *
  * `inputTokens` is the total billed prefix, cache reads included.
+ *
+ * `reasoningTokens` rides the neutral `outputTokenDetails` beside the text
+ * count and is copied verbatim: providers disagree on whether reasoning tokens
+ * are already inside the output total, so the harness reconciles nothing.
  */
 function toChatUsage(usage: LanguageModelUsage | undefined): ChatUsage | undefined {
     if (usage === undefined) return undefined;
@@ -281,30 +285,99 @@ function toChatUsage(usage: LanguageModelUsage | undefined): ChatUsage | undefin
         outputTokens: usage.outputTokens,
         cacheCreationInputTokens: usage.inputTokenDetails?.cacheWriteTokens,
         cacheReadInputTokens: usage.inputTokenDetails?.cacheReadTokens,
+        reasoningTokens: usage.outputTokenDetails?.reasoningTokens,
     };
 }
 
-function responseFromMessages(
-    messages: readonly ModelMessage[],
-    fallbackText: string,
-    finishReason: FinishReason,
-    rawFinishReason?: string,
-    usage?: LanguageModelUsage,
-): ChatResponse {
-    const message = [...messages].reverse().find((m): m is Extract<ModelMessage, { role: "assistant" }> => m.role === "assistant");
-    if (message === undefined) {
-        return {
-            message: { role: "assistant", content: fallbackText },
-            finishReason,
-            rawFinishReason,
-            usage: toChatUsage(usage),
-        };
-    }
-    return { message, finishReason, rawFinishReason, usage: toChatUsage(usage) };
+/** The id of the model bound into this provider — a bare id string is its own id. */
+function requestedModelIdOf(model: LanguageModel): string | undefined {
+    return typeof model === "string" ? model : model.modelId;
 }
 
-function responseFromGenerate(result: Awaited<ReturnType<typeof generateText>>): ChatResponse {
-    return responseFromMessages(result.responseMessages, result.text, result.finishReason, result.rawFinishReason, result.usage);
+/**
+ * A per-call view of the model that also records the model id the endpoint
+ * itself reported, if any.
+ */
+interface ServedModelCapture {
+    /** The model to hand to the SDK for this one call. */
+    readonly model: LanguageModel;
+    /** The id the endpoint reported, or `undefined` when it reported none. */
+    servedModelId(): string | undefined;
+}
+
+/**
+ * Capture the served model id at the raw model boundary, because that is the
+ * only place it is still distinguishable from the requested one: `generateText`
+ * and `streamText` both coalesce an unreported response model id to the bound
+ * model's own id, so reading `result.response.modelId` would silently republish
+ * the requested id as an endpoint's claim. A middleware sees the provider's
+ * result before that fallback applies, so "reported nothing" stays absent.
+ *
+ * Built per call, never per provider: one provider instance serves concurrent
+ * calls, and a shared mutable slot would hand one call another's answer. A bare
+ * model-id string has no wire result to observe, so it captures nothing.
+ */
+function captureServedModelId(model: LanguageModel): ServedModelCapture {
+    if (typeof model === "string") return { model, servedModelId: () => undefined };
+
+    let served: string | undefined;
+    const wrapped = wrapLanguageModel({
+        model,
+        middleware: {
+            wrapGenerate: async ({ doGenerate }) => {
+                const result = await doGenerate();
+                served = result.response?.modelId;
+                return result;
+            },
+            wrapStream: async ({ doStream }) => {
+                const result = await doStream();
+                return {
+                    ...result,
+                    stream: result.stream.pipeThrough(
+                        new TransformStream<LanguageModelV4StreamPart, LanguageModelV4StreamPart>({
+                            transform(chunk, controller) {
+                                if (chunk.type === "response-metadata" && chunk.modelId !== undefined) served = chunk.modelId;
+                                controller.enqueue(chunk);
+                            },
+                        }),
+                    ),
+                };
+            },
+        },
+    });
+    return { model: wrapped, servedModelId: () => served };
+}
+
+function responseFromMessages(input: {
+    readonly messages: readonly ModelMessage[];
+    readonly fallbackText: string;
+    readonly finishReason: FinishReason;
+    readonly rawFinishReason?: string;
+    readonly usage?: LanguageModelUsage;
+    readonly requestedModelId?: string;
+    readonly servedModelId?: string;
+}): ChatResponse {
+    const { messages, fallbackText, finishReason, rawFinishReason, requestedModelId, servedModelId } = input;
+    const usage = toChatUsage(input.usage);
+    const message = [...messages].reverse().find((m): m is Extract<ModelMessage, { role: "assistant" }> => m.role === "assistant");
+    if (message === undefined) {
+        return { message: { role: "assistant", content: fallbackText }, finishReason, rawFinishReason, usage, requestedModelId, servedModelId };
+    }
+    return { message, finishReason, rawFinishReason, usage, requestedModelId, servedModelId };
+}
+
+function responseFromGenerate(
+    result: Awaited<ReturnType<typeof generateText>>,
+    identity: { readonly requestedModelId?: string; readonly servedModelId?: string },
+): ChatResponse {
+    return responseFromMessages({
+        messages: result.responseMessages,
+        fallbackText: result.text,
+        finishReason: result.finishReason,
+        rawFinishReason: result.rawFinishReason,
+        usage: result.usage,
+        ...identity,
+    });
 }
 
 /**
@@ -337,18 +410,20 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const capabilities: ProviderCapabilities = { toolCalling: deps.capabilities?.toolCalling ?? true };
     const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
     const maxOutputTokens = deps.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    const requestedModelId = requestedModelIdOf(deps.model);
     routeSdkWarningsTo(logger);
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
             const retry = createRetry(signal, logger);
+            const capture = captureServedModelId(deps.model);
             try {
                 const result = await retry(async () => {
                     // Attribution headers are time-limited; resolving them inside the
                     // retried closure keeps them fresh across a multi-minute window.
                     const headers = await resolveBillingHeaders(deps.resolveBilling, session);
                     return generateText({
-                        model: deps.model,
+                        model: capture.model,
                         system: req.system,
                         messages: sanitizeMessages(req.messages),
                         tools: req.tools,
@@ -363,7 +438,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         providerOptions: req.providerOptions,
                     });
                 });
-                return ok(responseFromGenerate(result));
+                return ok(responseFromGenerate(result, { requestedModelId, servedModelId: capture.servedModelId() }));
             } catch (e) {
                 if (isAbortError(e) || signal?.aborted) throw e;
                 return err(toProviderError(unwrapForClassification(e), workloadOf(session)));
@@ -374,6 +449,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 
     async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
         const retry = createRetry(signal, logger);
+        const capture = captureServedModelId(deps.model);
         try {
             // Retry covers only stream establishment: streamText defers wire errors
             // to consumption, so a failure is not visible until the stream is read.
@@ -386,7 +462,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             const opened = await retry(async () => {
                 const headers = await resolveBillingHeaders(deps.resolveBilling, session);
                 const result = streamText({
-                    model: deps.model,
+                    model: capture.model,
                     system: req.system,
                     messages: sanitizeMessages(req.messages),
                     tools: req.tools,
@@ -423,7 +499,15 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             });
 
             if (opened.kind === "completed") {
-                const response = responseFromMessages(opened.messages, "", opened.finishReason, opened.rawFinishReason, opened.usage);
+                const response = responseFromMessages({
+                    messages: opened.messages,
+                    fallbackText: "",
+                    finishReason: opened.finishReason,
+                    rawFinishReason: opened.rawFinishReason,
+                    usage: opened.usage,
+                    requestedModelId,
+                    servedModelId: capture.servedModelId(),
+                });
                 yield { type: "done", response };
                 return;
             }
@@ -437,13 +521,17 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 text += next.value;
                 yield { type: "text-delta", text: next.value };
             }
-            const response = responseFromMessages(
-                await result.responseMessages,
-                text,
-                await result.finishReason,
-                await result.rawFinishReason,
-                await result.usage,
-            );
+            const response = responseFromMessages({
+                messages: await result.responseMessages,
+                fallbackText: text,
+                finishReason: await result.finishReason,
+                rawFinishReason: await result.rawFinishReason,
+                usage: await result.usage,
+                requestedModelId,
+                // Read after the drain: the metadata chunk carrying the served id
+                // reaches the capture only as the stream is consumed.
+                servedModelId: capture.servedModelId(),
+            });
             yield { type: "done", response };
         } catch (e) {
             if (isAbortError(e) || signal?.aborted) throw e;

@@ -123,6 +123,10 @@ describe("createAnthropicProvider", () => {
                     finishReason: "stop",
                     rawFinishReason: "end_turn",
                     message: { role: "assistant", content: [{ type: "text", text: "Hello, world" }] },
+                    // The canned wire body names its own model, so the served id is a
+                    // real claim from the endpoint rather than an echo of the request.
+                    requestedModelId: "claude-opus-4-7",
+                    servedModelId: "claude-opus-4-7",
                     // Mapped off the canned wire body above: Anthropic's snake_case
                     // `input_tokens` / `cache_*_input_tokens` normalize onto the
                     // harness's neutral `ChatUsage`.

@@ -68,6 +68,11 @@ export function createStreamingChat(provider: ChatProvider, onText: (text: strin
                         // stream had yielded its terminal `done` before the abort threw, that whole
                         // response is authoritative, so return it rather than the assembled deltas.
                         if (final !== undefined) return ok(final);
+                        // The partial carries no model identity and no usage: it is
+                        // assembled from deltas rather than from a provider response, so
+                        // nothing here reported which model answered or what it cost.
+                        // Stamping the requested id would manufacture a claim the
+                        // endpoint never made.
                         return ok({ message: { role: "assistant", content: partial }, finishReason: "aborted" });
                     }
                     return err(toProviderError(e, workload));
