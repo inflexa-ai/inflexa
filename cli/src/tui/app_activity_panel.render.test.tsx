@@ -86,7 +86,7 @@ beforeEach(() => {
     analysis = createAnalysis({ cwd: dir, name: str256("panel-test")._unsafeUnwrap(), inputPaths: [] })._unsafeUnwrap();
     // `ready` is what opens the input gate and stops the boot indicator claiming rows of its own.
     __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
-    __setAgentModelsForTest({ current: { conversation: "m", sandbox: "m" }, pending: new Map() });
+    __setAgentModelsForTest({ current: { conversation: "m", sandbox: "m", utility: "m" }, pending: new Map() });
 });
 
 afterEach(() => {
