@@ -1,7 +1,7 @@
 import { createSignal, Show, type JSX } from "solid-js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { ResultAsync } from "neverthrow";
+import { ResultAsync } from "neverthrow";
 // Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import type { VerifyResult } from "../types/prov.ts";
@@ -17,8 +17,8 @@ import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
 import { setTheme, theme, type Notice } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
-import { createThreadStore, loadPlan, queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
-import type { CortexRunRow, DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
+import { createAnalysisPurge, createDbosWorkflowPurger, createThreadStore, loadPlan, queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
+import type { AnalysisPurgeOutcome, CortexRunRow, DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
 
 import { agentModels, bootState, harnessRuntime } from "./hooks/boot.ts";
 import { refreshOpenThread, resolveThreadId } from "./hooks/thread.ts";
@@ -51,7 +51,7 @@ import { currentAgentModels, requestAgentModelChange } from "../modules/harness/
 import { resolveInputPath } from "../modules/analysis/input.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
 import { openOutputDir } from "../modules/analysis/open.ts";
-import { archivedOutputSubdir, defaultOutputSubdir, disposeWorkspace } from "../modules/analysis/output.ts";
+import { archivedOutputSubdir, defaultOutputSubdir, disposeWorkspace, locateExistingOutputDir, resolveOutputDir } from "../modules/analysis/output.ts";
 import { resolveAnchor, resolvedPathOrCached } from "../modules/anchor/anchor.ts";
 import { canonicalPath } from "../modules/anchor/marker.ts";
 import { loadAuth, describeAuthError } from "../modules/auth/auth.ts";
@@ -140,8 +140,19 @@ export type SessionSeams = {
     readonly getThread: (pool: Pool, threadId: string) => ResultAsync<Thread | null, DbError>;
     /** Retitle a thread; `null` when the row is gone. Real: `createThreadStore(pool).updateTitle`. */
     readonly updateTitle: (pool: Pool, threadId: string, title: string) => ResultAsync<Thread | null, DbError>;
-    /** Soft-delete a thread (tombstone, not a reclaim). Real: `createThreadStore(pool).deleteThread`. */
-    readonly deleteThread: (pool: Pool, threadId: string) => ResultAsync<void, DbError>;
+    /**
+     * An analysis's threads WIDENED to include the archived ones — the store widens the set rather than
+     * switching to an archived-only one, so a caller wanting the tombstoned rows alone narrows on
+     * `deletedAt` itself. Real: `createThreadStore(pool).listThreads` with `includeArchived`.
+     */
+    readonly listThreadsWithArchived: (pool: Pool, analysisId: string) => ResultAsync<ThreadPage, DbError>;
+    /**
+     * Archive a thread: stamp its tombstone so it stops listing, keeping the row and every message.
+     * Real: `createThreadStore(pool).archiveThread`.
+     */
+    readonly archiveThread: (pool: Pool, threadId: string) => ResultAsync<void, DbError>;
+    /** Lift a thread's tombstone so it lists again. Real: `createThreadStore(pool).unarchiveThread`. */
+    readonly unarchiveThread: (pool: Pool, threadId: string) => ResultAsync<void, DbError>;
     /** Pick the thread to open for an analysis — most recent, else a fresh mint. Real: {@link resolveThreadId}. */
     readonly resolveThreadId: (analysisId: string) => Promise<string | null>;
     /** An analysis's live working directory. Real: {@link workingDirFor}. */
@@ -157,7 +168,9 @@ const realSessionSeams: SessionSeams = {
     listThreads: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId }),
     getThread: (pool, threadId) => createThreadStore(pool).getThread(threadId),
     updateTitle: (pool, threadId, title) => createThreadStore(pool).updateTitle(threadId, title),
-    deleteThread: (pool, threadId) => createThreadStore(pool).deleteThread(threadId),
+    listThreadsWithArchived: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId, includeArchived: true }),
+    archiveThread: (pool, threadId) => createThreadStore(pool).archiveThread(threadId),
+    unarchiveThread: (pool, threadId) => createThreadStore(pool).unarchiveThread(threadId),
     resolveThreadId,
     workingDirFor,
     refreshThread: (threadId) => void refreshOpenThread(threadId),
@@ -799,6 +812,11 @@ function ConfirmDeleteDialog(props: {
  * on its own — the slug keys the workspace directory and is handed straight to the next analysis
  * of the same name, so the tree must leave `analyses/` either way. Keeping is the default: a run's
  * artifacts are the user's work, and an archive is recoverable where an `rm -rf` is not.
+ *
+ * Both descriptions name what the choice does NOT cover. The mode governs the workspace tree alone:
+ * the conversations, the run history, and the analysis's own provenance chain are reclaimed on
+ * either branch, so copy that spoke only of what the archive preserves would read as a promise to
+ * keep the whole analysis — and the user would discover otherwise only after the irreversible step.
  */
 function DeleteAnalysisFilesDialog(props: { analysis: Analysis; onDecided: (disposal: "archive" | "delete") => void }): JSX.Element {
     const ws = useWorkspace();
@@ -809,12 +827,12 @@ function DeleteAnalysisFilesDialog(props: { analysis: Analysis; onDecided: (disp
                 {
                     value: "archive" as const,
                     title: "Keep the files",
-                    description: `Move the workspace to ${archivedOutputSubdir(props.analysis.slug)}/ — inputs, run artifacts, reports, and provenance are preserved`,
+                    description: `Move the workspace to ${archivedOutputSubdir(props.analysis.slug)}/, keeping its inputs, run artifacts, reports, and a signed provenance export — the conversations and run history are removed either way`,
                 },
                 {
                     value: "delete" as const,
                     title: "Delete the files permanently",
-                    description: "Remove the workspace directory and everything in it. This cannot be undone",
+                    description: "Remove the workspace directory and everything in it, along with the conversations and run history. This cannot be undone",
                 },
             ]}
             emptyText="No options"
@@ -828,50 +846,187 @@ function DeleteAnalysisFilesDialog(props: { analysis: Analysis; onDecided: (disp
 }
 
 /**
- * Retire the workspace, then delete the row — in that order, and only proceeding if the first
- * succeeds. The filesystem move is the operation that realistically fails (permissions, an open
- * handle); doing it first means such a failure changes nothing at all. The reverse order would
- * leave the row deleted and the tree still sitting at `analyses/<slug>`, where the next analysis
- * of the same name would inherit it — the precise outcome the disposal exists to prevent.
- *
- * Scope: the SQLite analysis row (its input refs cascade) and the workspace tree. The analysis's
- * Postgres conversations and run ledger are deliberately left standing — reclaiming them needs a
- * purge that spans both stores, which does not exist yet; a partial cleanup here would only make
- * the orphans harder to find.
+ * Why deletion is refused without a booted harness, raised both at the palette gate (before the user
+ * spends a confirmation on it) and again inside the ladder, which cannot obtain a pool either way.
+ * One string so the two refusals can never drift into telling the user different things.
  */
-function deleteAnalysisWith(ctx: Workspace, a: Analysis, disposal: "archive" | "delete"): void {
-    disposeWorkspace(a, disposal).match(
-        (outcome) => {
-            const fate =
-                outcome.kind === "archived" ? `files kept at ${outcome.path}` : outcome.kind === "deleted" ? "files deleted" : "it had no files on disk";
-            deleteAnalysis(a.id).match(
-                (changed) => {
-                    if (changed === 0) {
-                        notify({ kind: "warn", text: "Analysis not found." });
-                        return;
-                    }
-                    notify({ kind: "info", text: `Deleted analysis "${a.name}" — ${fate}` });
-                    const remaining = listRecentAnalyses().match(
-                        (as) => as,
-                        () => [],
-                    );
-                    if (remaining.length > 0) {
-                        void openAnalysis(ctx, remaining[0]!);
-                    } else {
-                        void ctx.quit();
-                    }
-                },
-                (e) => notify({ kind: "error", text: `Workspace retired, but the analysis row could not be deleted (${e.type}).` }),
+const DELETE_NEEDS_HARNESS =
+    "Cannot delete while the harness is not running — deleting also reclaims this analysis's conversations and run history, which live in the harness's database.";
+
+/**
+ * Injectable edges for the delete ladder, so its ORDER is assertable offline — no Postgres, no
+ * SQLite, no filesystem. Order is the whole contract here (see {@link deleteAnalysisWith}), and a
+ * test that only proves each stage ran would pass with the stages reordered. Production callers omit
+ * the argument.
+ */
+export type AnalysisDeleteSeams = {
+    /** The booted runtime handle, or `null`. Its pool is the only route to the purge. Real: {@link harnessRuntime}. */
+    readonly runtime: () => HarnessRuntime | null;
+    /**
+     * Whether the analysis has a workspace tree on disk right now — the same question the disposal
+     * answers with `absent`. Real: {@link locateExistingOutputDir}, whose unlocatable-folder error maps
+     * to `false` because a tree inside a folder that cannot be found is one the disposal also skips.
+     */
+    readonly hasWorkspaceOnDisk: (a: Analysis) => boolean;
+    /**
+     * Drain the recorder's in-memory provenance appends into the persisted column, resolving `false`
+     * when the flush could not be run at all. Real: `flushProvenanceAsync`.
+     */
+    readonly flushProvenance: () => Promise<boolean>;
+    /**
+     * Write the signed provenance document into the analysis's live workspace, resolving `false` when
+     * nothing landed. Real: {@link exportProvenanceToFile}.
+     */
+    readonly exportProvenance: (a: Analysis) => Promise<boolean>;
+    /** Archive or remove the workspace tree. Real: {@link disposeWorkspace}. */
+    readonly disposeWorkspace: typeof disposeWorkspace;
+    /** Reclaim the analysis's Postgres footprint. Real: `createAnalysisPurge` over the booted pool. */
+    readonly purgeAnalysis: (pool: Pool, analysisId: string) => ResultAsync<AnalysisPurgeOutcome, DbError>;
+    /** Delete the SQLite row; its input refs cascade. Real: {@link deleteAnalysis}. */
+    readonly deleteAnalysis: typeof deleteAnalysis;
+    /** What is left to land on once the row is gone. Real: {@link listRecentAnalyses}. */
+    readonly listRecentAnalyses: typeof listRecentAnalyses;
+    /** Land the chat on a surviving analysis. Real: {@link openAnalysis}. */
+    readonly openAnalysis: (ws: Workspace, a: Analysis) => Promise<void>;
+    /** Raise a transient toast. Real: {@link notify}. Injected so every refusal is observable. */
+    readonly notify: (notice: Notice) => void;
+};
+
+const realAnalysisDeleteSeams: AnalysisDeleteSeams = {
+    runtime: harnessRuntime,
+    hasWorkspaceOnDisk: (a) =>
+        locateExistingOutputDir(a).match(
+            (dir) => dir !== null,
+            () => false,
+        ),
+    // Loaded lazily for the same reason the export's PROV modules are: the recorder pulls
+    // `@inflexa-ai/tsprov` in behind it. A flush that cannot run (or cannot load) costs the archive
+    // this session's most recent appends and nothing more, so it resolves `false` for the outcome
+    // notice rather than rejecting into the ladder above.
+    flushProvenance: () =>
+        ResultAsync.fromPromise(
+            import("../modules/prov/prov.ts").then((m) => m.flushProvenanceAsync()),
+            (cause) => cause,
+        ).match(
+            () => true,
+            () => false,
+        ),
+    exportProvenance: (a) => exportProvenanceToFile(a, "json"),
+    disposeWorkspace,
+    // Built per deletion over the booted pool the rest of the flow already uses: the purger is a thin
+    // adapter over that pool, so there is nothing to keep alive between deletions.
+    purgeAnalysis: (pool, analysisId) => createAnalysisPurge({ pool, workflows: createDbosWorkflowPurger({ pool }) }).purgeAnalysis(analysisId),
+    deleteAnalysis,
+    listRecentAnalyses,
+    openAnalysis,
+    notify,
+};
+
+/**
+ * Delete an analysis: export its provenance, retire its workspace, reclaim its Postgres footprint,
+ * and only then delete the row. Every stage sits where a failure of it leaves the deletion
+ * *retryable* instead of half-done, and the order is what makes that true:
+ *
+ * - The SQLite row dies LAST because it holds the only copy of the analysis id, and the purge needs
+ *   that id. A row deleted first strands the entire Postgres footprint beyond the reach of any
+ *   retry, and does it while reporting success — the exact silent orphan this ladder exists to end.
+ * - The purge follows the disposal because the filesystem move is the stage that realistically fails
+ *   (permissions, an open handle), so attempting it first means such a failure touches no store at
+ *   all. It runs on BOTH disposal modes: the mode governs the workspace tree, while Postgres holds
+ *   the same class of state the row does — ledgers, transcripts, indexes — which goes either way.
+ * - The provenance export precedes the disposal because it writes into the LIVE output directory.
+ *   After a disposal that path is gone, so exporting afterwards would `mkdir` `analyses/<slug>/` back
+ *   into existence holding a single file, resurrecting the directory the disposal exists to clear.
+ *   For the same reason it runs only when that directory already exists: no tree means the disposal
+ *   reports `absent`, and an export would have had to create the very thing being retired.
+ * - Its flush precedes the export because the serializer reads the persisted column, not the
+ *   recorder's memory, and deleting an analysis right after working in it is exactly when the tail
+ *   of the session is still unwritten.
+ *
+ * A failed flush or export is stepped over — the user asked to delete the analysis, not to export
+ * provenance, so a courtesy must not veto the request — but it rides the deletion's OWN outcome
+ * notice rather than a toast of its own, because the toast channel replaces what is showing with the
+ * next arrival and the outcome notice lands milliseconds later. A failed disposal or purge aborts
+ * with the row intact and says nothing was lost, because nothing was: a re-run archives an
+ * already-moved tree as `absent` and the purge is idempotent by contract.
+ */
+export async function deleteAnalysisWith(
+    ctx: Workspace,
+    a: Analysis,
+    disposal: "archive" | "delete",
+    seams: AnalysisDeleteSeams = realAnalysisDeleteSeams,
+): Promise<void> {
+    const runtime = seams.runtime();
+    // Without a pool there is no purge, and a deletion that skips it recreates the orphan silently.
+    // The palette refuses earlier for the user's sake; this refusal is what makes it an invariant.
+    if (!runtime) {
+        seams.notify({ kind: "warn", text: DELETE_NEEDS_HARNESS });
+        return;
+    }
+
+    // What the archive will and will not hold, phrased to finish the outcome notice below. The export
+    // reports its own failures too, but those toasts do not survive the outcome notice, so the fact
+    // has to travel with it.
+    //
+    // Skipped entirely when there is no tree: the export's `mkdir` CREATES the output directory, so on
+    // an analysis that was never opened it would conjure `analyses/<slug>/` holding a single file and
+    // the disposal would archive a directory this deletion is supposed to find absent. A delete must
+    // not create anything — nothing kept means nothing to write beside it. The guard belongs here and
+    // not inside the export: the palette's own export command is a deliberate request for the file and
+    // must keep creating the directory on demand.
+    let provenanceNote = "";
+    if (disposal === "archive" && seams.hasWorkspaceOnDisk(a)) {
+        const flushed = await seams.flushProvenance();
+        const exported = await seams.exportProvenance(a);
+        provenanceNote = !exported
+            ? ", but its provenance could not be exported"
+            : !flushed
+              ? ", though its provenance export may be missing this session's last activity"
+              : "";
+    }
+
+    const disposed = seams.disposeWorkspace(a, disposal);
+    if (disposed.isErr()) {
+        const e = disposed.error;
+        seams.notify({
+            kind: "error",
+            text:
+                e.type === "workspace_unavailable"
+                    ? e.message
+                    : `Could not retire the workspace folder (${e.type}) — the analysis was NOT deleted, so nothing was lost.`,
+        });
+        return;
+    }
+    const outcome = disposed.value;
+
+    const purged = await seams.purgeAnalysis(runtime.pool, a.id);
+    if (purged.isErr()) {
+        seams.notify({
+            kind: "error",
+            text: `Could not reclaim this analysis's stored conversations and run history (${purged.error.type}) — the analysis was NOT deleted, so nothing was lost. Try the delete again.`,
+        });
+        return;
+    }
+
+    const fate = outcome.kind === "archived" ? `files kept at ${outcome.path}` : outcome.kind === "deleted" ? "files deleted" : "it had no files on disk";
+    seams.deleteAnalysis(a.id).match(
+        (changed) => {
+            if (changed === 0) {
+                seams.notify({ kind: "warn", text: "Analysis not found." });
+                return;
+            }
+            seams.notify({ kind: provenanceNote ? "warn" : "info", text: `Deleted analysis "${a.name}" — ${fate}${provenanceNote}` });
+            const remaining = seams.listRecentAnalyses().match(
+                (as) => as,
+                () => [],
             );
+            if (remaining.length > 0) {
+                void seams.openAnalysis(ctx, remaining[0]!);
+            } else {
+                void ctx.quit();
+            }
         },
-        (e) =>
-            notify({
-                kind: "error",
-                text:
-                    e.type === "workspace_unavailable"
-                        ? e.message
-                        : `Could not retire the workspace folder (${e.type}) — the analysis was NOT deleted, so nothing was lost.`,
-            }),
+        (e) => seams.notify({ kind: "error", text: `Workspace and stored data were retired, but the analysis row could not be deleted (${e.type}).` }),
     );
 }
 
@@ -1163,12 +1318,11 @@ export async function commitSessionRename(ctx: Workspace, pool: Pool, threadId: 
  * analysis has left (its next most-recent thread, else a freshly minted empty chat) so the chat is
  * never left bound to a conversation that no longer lists.
  *
- * `deleteThread` sets `deleted_at`, so the row and every message survive and the thread merely stops
- * appearing anywhere. That is deliberate for now: the archive-vs-purge split is separate work, and
- * until it lands a removal that reclaims nothing is strictly less destructive than one that does.
- * Every word the user reads therefore says REMOVE, not delete — the confirm ritual (danger chrome,
- * type the name back) is the app's strongest irreversibility signal, and spending it on an action
- * that keeps the transcript would teach the user to distrust it where it is telling the truth.
+ * `archiveThread` sets `deleted_at`, so the row and every message survive and the thread merely stops
+ * appearing anywhere — {@link openRestoreSession} is the way back. Every word the user reads therefore
+ * says REMOVE, not delete — the confirm ritual (danger chrome, type the name back) is the app's
+ * strongest irreversibility signal, and spending it on an action that keeps the transcript, and that
+ * the user can undo from the palette, would teach them to distrust it where it is telling the truth.
  */
 export async function deleteSessionFlow(ctx: Workspace, seams: SessionSeams = realSessionSeams): Promise<void> {
     const runtime = seams.runtime();
@@ -1210,7 +1364,7 @@ export async function deleteSessionFlow(ctx: Workspace, seams: SessionSeams = re
 }
 
 /**
- * Tombstone the confirmed thread, then land the user on whatever the analysis has left. Lives beside
+ * Archive the confirmed thread, then land the user on whatever the analysis has left. Lives beside
  * the confirmation rather than inside its `onConfirm` so the post-confirm ladder is testable
  * headlessly (the {@link runModelCommit} shape); the dialog owns only the name match and its close.
  *
@@ -1224,7 +1378,7 @@ export async function confirmSessionDelete(
     threadId: string,
     seams: SessionSeams = realSessionSeams,
 ): Promise<void> {
-    await seams.deleteThread(pool, threadId).match(
+    await seams.archiveThread(pool, threadId).match(
         async () => {
             seams.notify({ kind: "info", text: "Session removed — it no longer appears in this analysis." });
             // Unbind BEFORE the landing, which is another Postgres round trip. Across that window the
@@ -1248,67 +1402,192 @@ export async function confirmSessionDelete(
     );
 }
 
-/** The single source of truth. Add a command = add an entry here. Ordered by category so the
- *  unfiltered palette groups contiguously. */
-// Serialize the active analysis's provenance and write it into its output folder, then notify the
-// path. The PROV-building module (`prov/document.ts`) is imported LAZILY inside the action — it
-// depends on `@inflexa-ai/tsprov`, so a static import here would pull that into the TUI's startup
-// path; deferring it both keeps launch lean and contains any tsprov load failure to this action.
-async function exportProvenanceToFile(ws: Workspace, format: BuiltinProvFormat): Promise<void> {
-    const a = ws.analysis;
-    if (!a) return;
+/**
+ * A thread whose archive tombstone is known to be set, so the picker can render the moment it left
+ * view without a non-null assertion on a column that is nullable for every live row.
+ */
+type ArchivedThread = Thread & { readonly deletedAt: Date };
 
-    let prov: typeof import("../modules/prov/document.ts");
-    let output: typeof import("../modules/analysis/output.ts");
-    let verify: typeof import("../modules/prov/verify.ts");
-    try {
-        prov = await import("../modules/prov/document.ts");
-        output = await import("../modules/analysis/output.ts");
-        verify = await import("../modules/prov/verify.ts");
-    } catch {
-        notify({ kind: "error", text: "Provenance export is unavailable (the tsprov library failed to load)." });
+/**
+ * Open the restore picker over the analysis's archived conversations. Fetched BEFORE the dialog opens
+ * for the same reason the switch picker's listing is — the thread store is an async Postgres read that
+ * a dialog body cannot pull from itself — and a read failure degrades to an empty picker.
+ *
+ * A separate command rather than a toggle inside the switch picker: that picker composes a list whose
+ * items are fixed for the dialog's lifetime, so a keystroke inside it could not re-render the rows,
+ * and rebuilding it on a reactive list would be design-system work for a rare, deliberate action that
+ * a palette entry already makes discoverable by search.
+ *
+ * The pre-ready refusal speaks rather than no-ops, as {@link openSwitchSession}'s does: the palette
+ * hides this command until `ready`, but the leader chord dispatches by id and bypasses that predicate.
+ */
+export async function openRestoreSession(ctx: Workspace, seams: SessionSeams = realSessionSeams): Promise<void> {
+    const runtime = seams.runtime();
+    const analysis = ctx.analysis;
+    if (!analysis) return;
+    const phase = bootState().phase;
+    if (phase !== "ready" || !runtime) {
+        // `failed` is terminal, so "still booting" would promise a wait that never ends and contradict
+        // the status bar the user is looking at. Every other non-ready phase IS a wait.
+        seams.notify(
+            phase === "failed"
+                ? { kind: "warn", text: "The harness did not start — archived conversations are unavailable." }
+                : { kind: "info", text: `Harness is still booting${GLYPHS.ellipsis}` },
+        );
         return;
     }
+    const pool = runtime.pool;
+    const archived = (await seams.listThreadsWithArchived(pool, analysis.id)).match(
+        // The listing widens the set rather than switching it, so the live threads come back beside the
+        // tombstoned ones — and only the tombstoned ones have anything to restore. The predicate narrows
+        // the row type too, which is what lets the picker read `deletedAt` as a date below.
+        (page) => page.threads.filter((t): t is ArchivedThread => t.deletedAt !== null),
+        (): ArchivedThread[] => {
+            seams.notify({ kind: "warn", text: "Could not list this analysis's archived conversations." });
+            return [];
+        },
+    );
+    // The listing is a Postgres round trip and NOTHING is modal across it, exactly as in
+    // {@link openSwitchSession}: the analysis-switch keys are still live, so a picker opened anyway
+    // would offer the previous analysis's archived conversations under the current analysis's heading.
+    if (ctx.analysis?.id !== analysis.id) {
+        seams.notify({ kind: "info", text: "Analysis changed — reopen restore for this one." });
+        return;
+    }
+    ctx.openDialog(() => (
+        <SelectDialog
+            title="Restore session"
+            placeholder={`Search archived sessions${GLYPHS.ellipsis}`}
+            // Durable-record rule: a listed conversation is a referenced record, so its stamp is an
+            // absolute local time. The tombstone rather than the activity clock, because what tells two
+            // archived conversations apart is when each one was removed — the archive leaves
+            // `updatedAt` on the last turn, which can predate the removal by weeks.
+            items={archived.map((t) => ({ value: t, title: threadLabel(t), description: `Removed ${t.deletedAt.toLocaleString()}` }))}
+            // Removal is the only thing that puts a row here, so the empty state names it rather than
+            // leaving the user to guess what this picker is ever supposed to hold.
+            emptyText="No archived conversations — removing one from this analysis puts it here"
+            onCancel={() => ctx.closeDialog()}
+            onSelect={(t: ArchivedThread) => {
+                ctx.closeDialog();
+                void commitSessionRestore(pool, t, seams);
+            }}
+        />
+    ));
+}
 
-    const dir = output.resolveOutputDir(a).match(
+/**
+ * Lift the chosen conversation's tombstone and report the outcome. Lives beside the picker rather than
+ * inside its `onSelect` so the outcome ladder is testable headlessly (the {@link commitSessionRename}
+ * shape); the dialog owns only the choice and its close.
+ *
+ * The restored thread is deliberately NOT bound to the chat. Restoring is a recovery of something the
+ * user may only want back in the listing, and yanking them off the conversation they are reading to
+ * land on it would be a navigation they never asked for. The notice therefore claims only what the
+ * write did — the thread lists again — leaving the switch picker to open it.
+ */
+export async function commitSessionRestore(pool: Pool, thread: Thread, seams: SessionSeams = realSessionSeams): Promise<void> {
+    await seams.unarchiveThread(pool, thread.threadId).match(
+        () => seams.notify({ kind: "info", text: `Session restored — "${threadLabel(thread)}" appears in this analysis again.` }),
+        (e) => seams.notify({ kind: "error", text: `Failed: ${e.type}` }),
+    );
+}
+
+/**
+ * The three edges the provenance export reads through, injected so its ORDERING is assertable
+ * without a signing key, a provenance chain, or an anchored workspace. Production callers omit them
+ * and {@link loadProvExportSeams} resolves the real ones.
+ */
+export type ProvExportSeams = {
+    /** Where the document lands — the analysis's live workspace root. Real: {@link resolveOutputDir}. */
+    readonly resolveOutputDir: typeof resolveOutputDir;
+    /** The persisted provenance chain, rendered in the requested format. Real: `document.serializeProvenance`. */
+    readonly serializeProvenance: typeof import("../modules/prov/document.ts").serializeProvenance;
+    /** The detached signature over the serialized document. Real: `verify.buildSidecar`. */
+    readonly buildSidecar: typeof import("../modules/prov/verify.ts").buildSidecar;
+};
+
+/**
+ * Resolve the real export edges, or `null` when the provenance stack cannot be loaded at all.
+ *
+ * The PROV modules are imported LAZILY — they depend on `@inflexa-ai/tsprov`, so a static import
+ * would pull that into this module's graph; deferring it both keeps the palette lean and contains a
+ * tsprov load failure to the one action that needs it. The `catch` exists only to turn that failure
+ * into the caller's `null` branch, since a dynamic import signals unavailability by rejecting.
+ */
+async function loadProvExportSeams(): Promise<ProvExportSeams | null> {
+    try {
+        const prov = await import("../modules/prov/document.ts");
+        const verify = await import("../modules/prov/verify.ts");
+        return { resolveOutputDir, serializeProvenance: prov.serializeProvenance, buildSidecar: verify.buildSidecar };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Serialize an analysis's provenance into its output folder — the document and its signature
+ * sidecar — then notify the destination.
+ *
+ * The sidecar is built BEFORE either file is written, and a signing failure writes neither. Writing
+ * the document first would leave unsigned provenance on disk beneath a notice saying provenance is
+ * never exported unsigned; the delete flow exports on the user's behalf without being asked, which
+ * makes that contradiction routine rather than rare. A sidecar that cannot be *written* after the
+ * document already landed is reported differently, because that leaves a real file the user has.
+ *
+ * Exported for the delete ladder, which exports into the live workspace before retiring it, and for
+ * the ordering tests. Resolves `true` only when both files landed — every failure is notified here,
+ * but a caller acting on the user's behalf needs the fact as well as the toast, because the toast
+ * channel replaces what is showing with the next arrival.
+ */
+export async function exportProvenanceToFile(a: Analysis, format: BuiltinProvFormat, injected?: ProvExportSeams): Promise<boolean> {
+    const seams = injected ?? (await loadProvExportSeams());
+    if (!seams) {
+        notify({ kind: "error", text: "Provenance export is unavailable (the tsprov library failed to load)." });
+        return false;
+    }
+
+    const dir = seams.resolveOutputDir(a).match(
         (d) => d,
         () => null,
     );
     if (!dir) {
         notify({ kind: "error", text: "Could not resolve this analysis's output directory." });
-        return;
+        return false;
     }
 
-    const text = prov.serializeProvenance(a, format).match(
+    const text = seams.serializeProvenance(a, format).match(
         (t) => t,
         (e) => {
             notify({ kind: "error", text: `Failed to build provenance: ${e.type}` });
             return null;
         },
     );
-    if (!text) return;
+    if (!text) return false;
+
+    // Provenance + sidecar are one logical export: the signature has to exist before anything is
+    // written, so a signing failure leaves the destination exactly as it found it.
+    const sidecarResult = await seams.buildSidecar(text);
+    if (sidecarResult.isErr()) {
+        notify({ kind: "error", text: `Signing failed (${sidecarResult.error.type}) — provenance is never exported unsigned.` });
+        return false;
+    }
 
     const dest = join(dir, `provenance.${format}`);
     const writeResult = mkdirResult(dir, "exportProvenance:mkdir").andThen(() => writeFileResult(dest, text, "exportProvenance:write"));
     if (writeResult.isErr()) {
         notify({ kind: "error", text: `Failed to write provenance: ${String(writeResult.error.cause)}` });
-        return;
+        return false;
     }
 
-    // Provenance + sidecar are one logical export: both must succeed before we report success.
-    const sidecarResult = await verify.buildSidecar(text);
-    if (sidecarResult.isErr()) {
-        notify({ kind: "error", text: `Signing failed (${sidecarResult.error.type}) — provenance is never exported unsigned.` });
-        return;
-    }
     const sigDest = `${dest}.sig.json`;
     const sidecarWrite = writeFileResult(sigDest, JSON.stringify(sidecarResult.value, null, 2), "exportProvenance:sidecar");
     if (sidecarWrite.isErr()) {
         notify({ kind: "error", text: `Wrote provenance but sidecar failed: ${String(sidecarWrite.error.cause)}` });
-        return;
+        return false;
     }
 
     notify({ kind: "info", text: `Wrote ${format} provenance to ${dest}` });
+    return true;
 }
 
 /**
@@ -1416,6 +1695,8 @@ async function openRunsPicker(ctx: Workspace): Promise<void> {
     ));
 }
 
+/** The single source of truth. Add a command = add an entry here. Ordered by category so the
+ *  unfiltered palette groups contiguously. */
 export const commands: Command[] = [
     {
         id: "analysis.switch",
@@ -1509,6 +1790,13 @@ export const commands: Command[] = [
         run: async (ctx) => {
             const a = ctx.analysis;
             if (!a) return;
+            // Gated BEFORE the quiescence check and both dialogs: the ladder cannot purge without the
+            // booted pool and will refuse anyway, so asking the user to type the analysis's name and
+            // choose a disposal first would spend their confirmation on a refusal.
+            if (!harnessRuntime()) {
+                notify({ kind: "warn", text: DELETE_NEEDS_HARNESS });
+                return;
+            }
             const busy = await workspaceBusyReason(a.id);
             if (busy) {
                 notify({ kind: "warn", text: `Cannot delete while ${busy} — deleting retires the analysis's workspace folder.` });
@@ -1519,7 +1807,7 @@ export const commands: Command[] = [
                     entityLabel="analysis"
                     entityName={a.name}
                     onConfirm={() => {
-                        ctx.openDialog(() => <DeleteAnalysisFilesDialog analysis={a} onDecided={(disposal) => deleteAnalysisWith(ctx, a, disposal)} />);
+                        ctx.openDialog(() => <DeleteAnalysisFilesDialog analysis={a} onDecided={(disposal) => void deleteAnalysisWith(ctx, a, disposal)} />);
                     }}
                 />
             ));
@@ -1548,7 +1836,11 @@ export const commands: Command[] = [
         description: "Write this analysis's PROV-JSON provenance to its output folder",
         category: "Analysis",
         enabled: (ctx) => ctx.analysis !== null,
-        run: (ctx) => exportProvenanceToFile(ctx, "json"),
+        run: async (ctx) => {
+            const a = ctx.analysis;
+            if (!a) return;
+            await exportProvenanceToFile(a, "json");
+        },
     },
     {
         id: "prov.export-provn",
@@ -1556,7 +1848,11 @@ export const commands: Command[] = [
         description: "Write this analysis's PROV-N provenance to its output folder",
         category: "Analysis",
         enabled: (ctx) => ctx.analysis !== null,
-        run: (ctx) => exportProvenanceToFile(ctx, "provn"),
+        run: async (ctx) => {
+            const a = ctx.analysis;
+            if (!a) return;
+            await exportProvenanceToFile(a, "provn");
+        },
     },
     {
         id: "prov.verify",
@@ -1628,9 +1924,10 @@ export const commands: Command[] = [
             notify({ kind: noticeKindFor(result), text: verify.formatVerifyResult(result) });
         },
     },
-    // The three session commands are boot-gated: thread metadata lives only in Postgres, so before
-    // `ready` there is nothing to list, retitle, or remove — offering them then would promise a surface
-    // that cannot answer. Rename and delete additionally need a bound thread to act on.
+    // The session commands are boot-gated: thread metadata lives only in Postgres, so before `ready`
+    // there is nothing to list, retitle, remove, or restore — offering them then would promise a
+    // surface that cannot answer. Rename and delete additionally need a bound thread to act on;
+    // restore acts on a thread the user picks, so an unbound scope is no obstacle to it.
     {
         id: "session.switch",
         title: "Switch session",
@@ -1656,6 +1953,14 @@ export const commands: Command[] = [
         category: "Session",
         enabled: (ctx) => ctx.analysis !== null && ctx.sessionId !== null && bootState().phase === "ready",
         run: (ctx) => deleteSessionFlow(ctx),
+    },
+    {
+        id: "session.restore",
+        title: "Restore session",
+        description: "Bring a removed session back into this analysis's conversations",
+        category: "Session",
+        enabled: (ctx) => ctx.analysis !== null && bootState().phase === "ready",
+        run: (ctx) => openRestoreSession(ctx),
     },
     {
         id: "project.new",
