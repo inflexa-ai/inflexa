@@ -39,7 +39,15 @@ import { FixedList } from "../components/fixed_list.tsx";
 import { SelectDialog } from "../components/dialog/select_dialog.tsx";
 import { FilePicker } from "../components/dialog/file_picker.tsx";
 import { RunDetailDialog } from "../components/dialog/run_detail_dialog.tsx";
-import { absTime, idTail, profileDetailLines, shortRunName } from "../hooks/sidebar_live.ts";
+import {
+    absTime,
+    idTail,
+    profileDetailLines,
+    shortRunName,
+    type ActiveProfileProgress,
+    type ActiveRunProgress,
+    type PanelSubject,
+} from "../hooks/sidebar_live.ts";
 import {
     mockUserText,
     mockAssistantText,
@@ -53,6 +61,7 @@ import {
     mockPlanStepDetail,
     mockRunCard,
     mockRunCardIds,
+    galleryProfile,
     galleryRun,
     mockAskPrompts,
     mockAskCards,
@@ -68,6 +77,12 @@ const noStreamText = (): string => "";
 const noop = (): void => {
     /* gallery showcase: submit is a no-op since inputs are non-interactive */
 };
+
+// The run-activity panel takes a discriminated subject, and the exhibits vary the fixture rather than
+// the kind — so wrapping happens here once instead of at each of the eight call sites, where the
+// literal would bury the field the exhibit is actually demonstrating.
+const runSubject = (over?: Partial<ActiveRunProgress>): PanelSubject => ({ kind: "run", run: galleryRun(over) });
+const profileSubject = (over?: Partial<ActiveProfileProgress>): PanelSubject => ({ kind: "profile", profile: galleryProfile(over) });
 
 function State(props: { n: string; label: string; children: JSX.Element }): JSX.Element {
     return (
@@ -629,7 +644,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <text fg={theme().fgMuted}>one active run — the frontier step with its agent and live activity label:</text>
                     <box width="100%" backgroundColor={theme().bg}>
                         <RunActivityPanel
-                            progress={galleryRun()}
+                            subject={runSubject()}
                             activity="Running script deseq2.R"
                             activeCount={1}
                             position={1}
@@ -643,7 +658,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     </text>
                     <box width="100%" backgroundColor={theme().bg}>
                         <RunActivityPanel
-                            progress={galleryRun()}
+                            subject={runSubject()}
                             activity="Writing file counts_matrix.csv"
                             activeCount={3}
                             position={2}
@@ -655,7 +670,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <text fg={theme().fgMuted}>parallel frontier — a run genuinely running several steps at once shows all of them:</text>
                     <box width="100%" backgroundColor={theme().bg}>
                         <RunActivityPanel
-                            progress={galleryRun({
+                            subject={runSubject({
                                 steps: [
                                     { label: "align reads", state: "running", startedAt: null, agent: "bioinformatician" },
                                     { label: "call variants", state: "running", startedAt: null, agent: "geneticist" },
@@ -671,7 +686,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <text fg={theme().fgMuted}>degraded — this run's step read blipped, so the last known frontier renders muted and marked:</text>
                     <box width="100%" backgroundColor={theme().bg}>
                         <RunActivityPanel
-                            progress={galleryRun({ stale: true })}
+                            subject={runSubject({ stale: true })}
                             activity="Running script deseq2.R"
                             activeCount={1}
                             position={1}
@@ -685,7 +700,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     </text>
                     <box width="100%" backgroundColor={theme().bg}>
                         <RunActivityPanel
-                            progress={galleryRun()}
+                            subject={runSubject()}
                             activity={null}
                             activeCount={1}
                             position={1}
@@ -697,9 +712,75 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <text fg={theme().fgMuted}>no active run — the panel contributes ZERO rows (nothing renders between this line and the next):</text>
                     <box width="100%" backgroundColor={theme().bg}>
                         <RunActivityPanel
-                            progress={undefined}
+                            subject={undefined}
                             activeCount={0}
                             position={0}
+                            nextKeyLabel={runPanelNextKey}
+                            dismissKeyLabel={runPanelToggleKey}
+                            onNext={noop}
+                        />
+                    </box>
+
+                    {/* THE OTHER SUBJECT KIND. A data profile is the second thing this panel can show, and
+                        it is shaped differently on purpose: no completion count and no frontier rows,
+                        because a profile is one agent loop with no step decomposition. A synthesized `1/1`
+                        was rejected — the panel's numbers are the ledger's, and an invented denominator is
+                        worse than none.
+
+                        Its marker is the pair the rail's running-profile line uses, so one piece of work
+                        looks like itself on both surfaces. The legend's region name comes from the focused
+                        subject, so it reads PROFILE here — and because `PROFILE` is four columns longer
+                        than `RUN`, its full legend first fits at a wider panel. */}
+                    <text fg={theme().fgMuted}>a running data profile — name, elapsed, and its live activity; no count and no step rows:</text>
+                    <box width="100%" backgroundColor={theme().bg}>
+                        <RunActivityPanel
+                            subject={profileSubject()}
+                            activity="Running script profile.py"
+                            activeCount={1}
+                            position={1}
+                            nextKeyLabel={runPanelNextKey}
+                            dismissKeyLabel={runPanelToggleKey}
+                            onNext={noop}
+                        />
+                    </box>
+                    <text fg={theme().fgMuted}>
+                        a profile beside a run — runs always sort first, so a parity profile triggered on chat open never takes the panel from a launched run
+                        (this is position 2 of 2):
+                    </text>
+                    <box width="100%" backgroundColor={theme().bg}>
+                        <RunActivityPanel
+                            subject={profileSubject()}
+                            activity="Indexing input descriptions for search"
+                            activeCount={2}
+                            position={2}
+                            nextKeyLabel={runPanelNextKey}
+                            dismissKeyLabel={runPanelToggleKey}
+                            onNext={noop}
+                        />
+                    </box>
+                    <text fg={theme().fgMuted}>
+                        degraded profile — the ledger read blipped, so the last known state renders muted and marked rather than vanishing:
+                    </text>
+                    <box width="100%" backgroundColor={theme().bg}>
+                        <RunActivityPanel
+                            subject={profileSubject({ stale: true })}
+                            activity="Running script profile.py"
+                            activeCount={1}
+                            position={1}
+                            nextKeyLabel={runPanelNextKey}
+                            dismissKeyLabel={runPanelToggleKey}
+                            onNext={noop}
+                        />
+                    </box>
+                    <text fg={theme().fgMuted}>
+                        a profile whose workflow id is not recorded yet — no stream to subscribe to, so the activity line is omitted, not faked:
+                    </text>
+                    <box width="100%" backgroundColor={theme().bg}>
+                        <RunActivityPanel
+                            subject={profileSubject({ workflowId: null })}
+                            activity={null}
+                            activeCount={1}
+                            position={1}
                             nextKeyLabel={runPanelNextKey}
                             dismissKeyLabel={runPanelToggleKey}
                             onNext={noop}
@@ -719,7 +800,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             <text fg={theme().fg}>…the transcript scrolls above the panel and is capped by its rule.</text>
                         </box>
                         <RunActivityPanel
-                            progress={galleryRun()}
+                            subject={runSubject()}
                             activity="Running script deseq2.R"
                             activeCount={1}
                             position={1}
@@ -739,7 +820,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <text fg={theme().fgMuted}>stacked with a docked ask — two raised surfaces meet; markers, not a boundary, carry the seam:</text>
                     <box width="100%" backgroundColor={theme().bg}>
                         <RunActivityPanel
-                            progress={galleryRun()}
+                            subject={runSubject()}
                             activity="Running script deseq2.R"
                             activeCount={1}
                             position={1}

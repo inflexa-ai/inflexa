@@ -12,7 +12,7 @@ import { App } from "./app.tsx";
 import { dialogClear } from "./components/dialog/dialog_host.tsx";
 import { __setAgentModelsForTest, __setBootStateForTest } from "./hooks/boot.ts";
 import { __resetNoticesForTest, currentNotice } from "./hooks/notice.ts";
-import { __resetRunPanelForTest, focusedRun, runPanelVisible, toggleRunPanel } from "./hooks/run_panel.ts";
+import { __resetRunPanelForTest, focusedSubject, runPanelVisible, toggleRunPanel } from "./hooks/run_panel.ts";
 import { __resetRunCompletionsForTest } from "./hooks/run_completion.ts";
 import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshSeams } from "./hooks/sidebar_live.ts";
 import { resetHotState } from "./hooks/conversation.ts";
@@ -196,8 +196,10 @@ describe("App composes the run-activity panel", () => {
             const railRows = frame.split("\n").filter((l) => l.includes("│"));
             expect(railRows.some((l) => l.includes("align reads"))).toBe(true);
             expect(railRows.some((l) => l.includes("Differential expression"))).toBe(true);
-            // And the run is still tracked and focused underneath.
-            expect(focusedRun()?.runId).toBe("run-a");
+            // And the run is still tracked and focused underneath. Focus is a subject union, so naming
+            // the run id also asserts the focused subject is that RUN rather than another kind.
+            const subject = focusedSubject();
+            expect(subject?.kind === "run" ? subject.run.runId : null).toBe("run-a");
         } finally {
             app.destroy();
         }

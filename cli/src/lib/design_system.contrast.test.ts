@@ -121,7 +121,13 @@ const COLOR_SURFACES: Surface[] = [
         threshold: TEXT,
         ref: "diff counts/signs, run progress, tones, selected gutter (diff_block.tsx, run_block.tsx, list_core.tsx)",
     },
-    { token: "warning", fg: (t) => t.colors.warning, on: ["bg", "bgRaised"], threshold: TEXT, ref: "which-key strokes, tones (which_key.tsx, status_bar.tsx)" },
+    {
+        token: "warning",
+        fg: (t) => t.colors.warning,
+        on: ["bg", "bgRaised"],
+        threshold: TEXT,
+        ref: "which-key strokes, tones, running-profile marker in the rail and the run panel (which_key.tsx, status_bar.tsx, sidebar.tsx, run_activity_panel.tsx)",
+    },
     {
         token: "error",
         fg: (t) => t.colors.error,
