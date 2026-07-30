@@ -25,8 +25,14 @@
 - [x] 4.2 Emit `step-usage` once at step-loop completion in the `executeAnalysis` child workflow (analysis runs only, per the scoped requirement); populate the run aggregate on completion
 - [x] 4.3 Tests: part appears on the stream at step completion; replayed emission folds latest-wins to a single part per step id
 
-## 5. Verification
+## 5. Review fixes (PR #276 adversarial review)
 
-- [x] 5.1 `tsc -p tsconfig.json` clean; `bun test` green (DB/DBOS suites per testing notes)
-- [x] 5.2 `bun run format:file` on every changed `src/` file
-- [x] 5.3 `openspec validate token-usage-tracking` passes; re-read the delta specs against the implementation for drift
+- [x] 5.1 Recompose `recordKey` with the call-path and nested-invocation discriminators (`{runId}[:{stepId}]:{callPath}[:{invocationId}]:{stepName}`); thread `ctx.invocationId` from sub-agent-running tools; update the recordKey JSDoc in `usage-recorder.ts`
+- [x] 5.2 Key tests: sibling loops sharing one frame yield distinct keys; parallel invocations of one sub-agent yield disjoint key sets; caching-runStep replay test proving records re-fire with identical keys when durable steps are cache-served; `runToTerminal` neither-pass-reported branch
+- [x] 5.3 Surface batch: static coupling of the four usage shapes; non-negative-integer schema constraints; `reconciling` flag aligned with evidence from the stream consumer; seam file split (interface vs no-op) matching sibling seams; workflow deps `Omit` of `usageRecorder`; docs updated to six capability seams; deps-bag wiring test through a real sub-agent factory
+
+## 6. Verification
+
+- [x] 6.1 `tsc -p tsconfig.json` clean; `bun test` green (DB/DBOS suites per testing notes)
+- [x] 6.2 `bun run format:file` on every changed `src/` file
+- [x] 6.3 `openspec validate token-usage-tracking` passes; re-read the delta specs against the implementation for drift

@@ -54,13 +54,25 @@ The harness SHALL declare a `UsageRecorder` capability seam (`record(record): vo
 
 ### Requirement: Usage records are replay-safe via deterministic record keys
 
-When the session carries a `RunFrame`, a record's `recordKey` SHALL be derived from the `runId`, the frame's `stepId` when present, and the same deterministic step-name scheme the loop uses for durability, so every replay of the same call yields the identical key. The `stepId` component is required for uniqueness, not decoration: step names are unique only within one workflow, and sibling step workflows share the run's id. Outside a `RunFrame` (the HTTP chat path, where no replay exists) the key SHALL be a freshly minted unique id. Consumers MUST upsert on `recordKey`: the harness guarantees key stability across replays, not at-most-once delivery.
+When the session carries a `RunFrame`, a record's `recordKey` SHALL compose, in order: the `runId`; the frame's `stepId` when present; the session's provenance call path; the tool-call `invocationId` when the loop runs nested inside a tool dispatch; and the loop's deterministic step name — every component replay-stable, so every replay of the same call yields the identical key and no two distinct calls under one run share one. Step names alone are NOT unique across the loops that share a frame (each loop invocation restarts its names), which is why the call-path and invocation-id components are required, not decorative. Outside a `RunFrame` (the HTTP chat path, where no replay exists) the key SHALL be a freshly minted unique id. Consumers MUST upsert on `recordKey`: the harness guarantees key stability across replays, not at-most-once delivery.
 
 #### Scenario: Two steps of one run yield distinct keys
 
 - **GIVEN** two steps of the same analysis run whose loops each make a first LLM call
 - **WHEN** their records are produced
 - **THEN** the two records SHALL carry distinct `recordKey`s despite sharing the `runId` and the per-workflow step name
+
+#### Scenario: Sibling loops sharing one frame yield distinct keys
+
+- **GIVEN** two different agent loops running under the same `RunFrame` (e.g. a step's file describer and its summary writer)
+- **WHEN** each loop's first LLM call is recorded
+- **THEN** the two records SHALL carry distinct `recordKey`s despite identical frame ids and identical loop-local step names
+
+#### Scenario: Parallel invocations of one sub-agent yield distinct keys
+
+- **GIVEN** a loop that dispatches the same sub-agent tool twice in one run
+- **WHEN** the two child loops' calls are recorded
+- **THEN** their key sets SHALL be disjoint, discriminated by the tool-call invocation id
 
 #### Scenario: A replayed step body does not double-count
 
@@ -97,15 +109,15 @@ Every loop's `FinishEvent` SHALL carry an optional usage rollup — that loop's 
 
 ### Requirement: The run-event stream carries per-step usage for analysis runs
 
-An analysis-run step SHALL emit a `step-usage` run-event part exactly once when its agent loop completes having reported usage, carrying the step id, the step's usage rollup, and the model identity it ran under. A loop that reported no usage has no rollup to carry and SHALL emit no part — a part with an absent figure would be a claim nobody made. The run-completed part SHALL carry an optional aggregate usage for the run. Per-call granularity is the seam's job — parts carry rollups only. Workflows without analysis step parts (target assessment, ephemeral runs, data profiling) reach the ledger through the recorder seam like every loop and gain no usage parts in this capability. Parts ride the existing single run-event stream with its established replay/latest-wins folding.
+An analysis-run step SHALL emit a `step-usage` run-event part exactly once when its agent loop completes having reported usage, carrying the step id, the step's usage rollup, and the model identity it ran under. A loop that reported no usage has no rollup to carry and SHALL emit no part — a part with an absent figure would be a claim nobody made. The run-completed part SHALL carry an optional aggregate usage for the run. Per-call granularity is the seam's job — parts carry rollups only. Workflows without analysis step parts (target assessment, ephemeral runs, data profiling) reach the ledger through the recorder seam like every loop and gain no usage parts in this capability. Parts ride the existing single run-event stream; the part's id SHALL be a pure function of the run and step ids, the body-level durable stream write is checkpointed by the durability engine (a replayed body finds the recorded write and does not re-insert), and the part is published non-reconciling like its once-per-step siblings.
 
 #### Scenario: A completed step surfaces its usage live
 
 - **WHEN** a step's sandbox-agent loop completes
 - **THEN** a `step-usage` part for that step id SHALL appear on the run's event stream
 
-#### Scenario: A replayed emission folds to one part
+#### Scenario: Replay does not duplicate the part
 
-- **GIVEN** a step whose body re-emits its `step-usage` part on replay
+- **GIVEN** a step whose body is replayed by the durability engine after its `step-usage` part was written
 - **WHEN** a consumer reads the stream
-- **THEN** latest-wins folding by part id SHALL yield a single `step-usage` part for that step
+- **THEN** exactly one `step-usage` part SHALL be present for that step id — the checkpointed durable write is not re-inserted, and the stable per-step id keeps even an out-of-band duplicate collapsible by id
