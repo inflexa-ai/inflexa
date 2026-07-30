@@ -33,6 +33,7 @@ import { runToTerminal } from "../loop/run-to-terminal.js";
 import { durableStep } from "../loop/run-step.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { defineTool } from "../tools/define-tool.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
@@ -94,6 +95,8 @@ export interface DataProfileDeps extends EnvironmentStorePaths {
     readonly embedding: EmbeddingProvider;
     /** Absolute path to the skills tree (one subdirectory per skill). */
     readonly skillsDir: string;
+    /** LLM usage-accounting seam for the profiler agent loop; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 /**
@@ -420,6 +423,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     },
                     runStep: durableStep,
                     resolved: () => capturedProfile !== null,
+                    usageRecorder: deps.usageRecorder,
                 },
                 {
                     tools: [submitProfileTool],

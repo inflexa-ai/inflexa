@@ -57,6 +57,7 @@ import type { PreviewPublisher } from "./report/preview-publisher.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 
 const REPORT_TOOL_ACCESS_TTL_SECONDS = 3600;
@@ -523,6 +524,8 @@ export interface SubmitReportDeps {
         previewId: string;
         ttlSeconds: number;
     }) => Promise<PreviewPublisher>;
+    /** LLM usage-accounting seam for the report-builder loop; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 /** The result the model reads back. Iteration outcome, or a brief that failed validation. */
@@ -787,6 +790,7 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
                     templatesDir: deps.templatesDir,
                     skillsDir: deps.skillsDir,
                     chrome: deps.chrome,
+                    usageRecorder: deps.usageRecorder,
                 },
                 {
                     resourceId,
@@ -799,6 +803,7 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
                     session: ctx.session as Parameters<typeof runReportIteration>[1]["session"],
                     signal: ctx.signal,
                     emit: ctx.emit,
+                    turnUsage: ctx.turnUsage,
                 },
             );
 

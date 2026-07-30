@@ -18,6 +18,7 @@ export type {
     StepOutputFile,
     StepOutputPart,
     StepSummaryPart,
+    StepUsagePart,
     StepBlockedPart,
     SynthesizedFinding,
     BiologicalTheme,
@@ -33,6 +34,7 @@ export type {
 } from "./chat-parts.js";
 
 export type { EventSource, TextDeltaEvent, ToolStartedEvent, ToolFinishedEvent, FinishEvent, ChatErrorEvent, CortexChatEvent } from "./chat-events.js";
+export type { TokenUsageRollup } from "./usage.js";
 export type { TextPart, ToolCallPart, CortexPart, CortexMessage } from "./message.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./part-registry.js";
 export type { CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./part-registry.js";

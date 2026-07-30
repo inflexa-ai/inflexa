@@ -9,8 +9,10 @@
  *   Run lifecycle:   run-started, dag-state, run-completed, run-failed, run-synthesis,
  *                    synthesis-progress
  *   Per-step live:   step-activity, step-file-tree
- *   Per-step final:  step-output, step-summary
+ *   Per-step final:  step-output, step-summary, step-usage
  */
+
+import type { TokenUsageRollup } from "./usage.js";
 
 // ── Presentation (agent-synthesized content) ────────────────────────
 
@@ -232,6 +234,39 @@ export interface StepSummaryPart {
     markdown: string;
 }
 
+// ── Step Usage (persistent, once per step) ──────────────────────────
+
+/**
+ * What one analysis-run step's agent loop reported spending, emitted when that
+ * loop completes.
+ *
+ * `usage` is the step's rollup and is required: a part exists to carry one, so a
+ * step whose loop reported nothing emits no part at all rather than one with an
+ * absent or zeroed figure. Per-call granularity is the usage-record ledger's
+ * job, never this part's.
+ *
+ * Scoped to analysis runs. Workflows without step parts (target assessment,
+ * ephemeral runs, data profiling) reach the ledger through the recorder seam and
+ * carry no usage part.
+ */
+export interface StepUsagePart {
+    type: "data-step-usage";
+    /** Stable ID for reconciliation — unique per step within a run. */
+    id: string;
+    runId: string;
+    stepId: string;
+    agentId: string;
+    /**
+     * The model id the step's agent was configured to run under — the identity
+     * the rollup is attributable to. Whether the endpoint actually served that
+     * model is a per-call question the usage-record ledger answers; a rollup
+     * spans calls and cannot.
+     */
+    modelId: string;
+    /** Summed token usage across this step loop's LLM calls. */
+    usage: TokenUsageRollup;
+}
+
 // ── Step Blocked (persistent, once per step) ────────────────────────
 
 /**
@@ -270,6 +305,11 @@ export interface RunCompletedPart {
      * to explain why (e.g., synthesis failed but step summaries are available).
      */
     note?: string;
+    /**
+     * The run's aggregate token usage — the sum of what its steps reported.
+     * Absent when no step reported any, never an all-zero figure.
+     */
+    usage?: TokenUsageRollup;
 }
 
 // ── Run Synthesis (persistent, once per run) ────────────────────────
@@ -395,6 +435,7 @@ export type CortexChatPart =
     | StepFileTreePart
     | StepOutputPart
     | StepSummaryPart
+    | StepUsagePart
     | StepBlockedPart
     | RunSynthesisPart
     | SynthesisProgressPart

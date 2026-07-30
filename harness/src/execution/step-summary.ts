@@ -40,6 +40,7 @@ import { StepSummarySchema, type StepSummary } from "../schemas/step-summary.js"
 import { incrementSummaryNullCount } from "./step-summary-metrics.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 
 const SYSTEM_PROMPT = `You are a sandbox agent writing a post-step interpretive summary of work you just completed.
 
@@ -58,6 +59,8 @@ const DEFAULT_MAX_ITERATIONS = 12;
 export interface GenerateStepSummaryOptions {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
+    /** LLM usage-accounting seam for the summary loop; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
     readonly provider: AgentChat;
     readonly session: AgentSession;
     readonly modelId: string;
@@ -123,6 +126,7 @@ export async function generateStepSummary(opts: GenerateStepSummaryOptions): Pro
             signal,
             emit: () => {},
             runStep: passthroughStep,
+            usageRecorder: opts.usageRecorder,
         });
     } catch (err) {
         logger.warn("summary loop failed", logger.errorFields(err));

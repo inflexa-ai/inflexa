@@ -4,6 +4,8 @@
 
 import { z } from "zod";
 
+import { TokenUsageRollupSchema } from "./usage.js";
+
 // ── Presentation ────────────────────────────────────────────────────
 
 export const PlanStepSchema = z.object({
@@ -214,6 +216,18 @@ export const StepSummaryPartSchema = z.object({
     markdown: z.string(),
 });
 
+// ── Step Usage ──────────────────────────────────────────────────────
+
+export const StepUsagePartSchema = z.object({
+    type: z.literal("data-step-usage"),
+    id: z.string(),
+    runId: z.string(),
+    stepId: z.string(),
+    agentId: z.string(),
+    modelId: z.string(),
+    usage: TokenUsageRollupSchema,
+});
+
 export const StepBlockedPartSchema = z.object({
     type: z.literal("data-step-blocked"),
     id: z.string(),
@@ -239,6 +253,7 @@ export const RunCompletedPartSchema = z.object({
     artifactCount: z.number(),
     findings: z.array(RunCompletedFindingSchema),
     note: z.string().optional(),
+    usage: TokenUsageRollupSchema.optional(),
 });
 
 // ── Run Synthesis ──────────────────────────────────────────────────
@@ -348,6 +363,7 @@ export const CortexChatPartSchema = z.discriminatedUnion("type", [
     StepFileTreePartSchema,
     StepOutputPartSchema,
     StepSummaryPartSchema,
+    StepUsagePartSchema,
     StepBlockedPartSchema,
     RunSynthesisPartSchema,
     SynthesisProgressPartSchema,

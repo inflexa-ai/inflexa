@@ -24,6 +24,7 @@
 import type { AgentSession } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Tool } from "../tools/define-tool.js";
+import { addChatUsage, type AgentRunUsage } from "./metrics.js";
 import { DEFAULT_STEP_NAME_FORMATTER, runAgent, type AgentFinish, type RunAgentOptions, type RunAgentResult, type StepNameFormatter } from "./run-agent.js";
 import type { AgentDefinition, LoopMessage } from "./types.js";
 
@@ -37,7 +38,9 @@ export const DEFAULT_SALVAGE_ITERATIONS = 3;
  * first run that ended `max_iterations` spent its whole budget failing to submit,
  * while one that ended `stop` gave up on prose after a single turn. Those call for
  * opposite responses, and the returned `RunAgentResult` carries only the second
- * run's finish, which is the same for either.
+ * run's finish, which is the same for either. Its token rollups are the sole
+ * exception — those are summed across both attempts, since they measure the run
+ * rather than diagnose it.
  */
 export interface SalvageRecord {
     /** How the FIRST run ended — the reason a salvage was needed at all. */
@@ -73,7 +76,8 @@ function salvageStepNames(base: StepNameFormatter): StepNameFormatter {
 /**
  * Drive `agent` to its terminal tool, salvaging once if it doesn't get there.
  * Returns the salvage run's result when a salvage occurred (its message array
- * already includes the first run's), otherwise the first run's result.
+ * already includes the first run's, and its token rollups are summed across both
+ * attempts), otherwise the first run's result.
  */
 export async function runToTerminal(
     agent: AgentDefinition,
@@ -110,5 +114,38 @@ export async function runToTerminal(
         formatStepName: salvageStepNames(opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER),
     };
     const salvaged = await runAgent(salvageAgent, [...first.messages, { role: "user", content: salvage.nudge }], session, salvageOpts);
-    return { ...salvaged, salvage: { firstFinish: first.finish, finish: salvaged.finish } };
+
+    // The continuation is the same logical run as the first attempt — its
+    // message array already carries the first run's — so its rollups must too,
+    // or the caller reads the salvage turn's tokens as the whole cost.
+    //
+    // `salvage` deliberately keeps each attempt's OWN finish, unsummed: it is the
+    // per-attempt diagnosis, not a second accounting of the same tokens. The two
+    // views are therefore NOT additive — `finish` is the run's total and already
+    // covers everything `salvage.firstFinish` and `salvage.finish` report.
+    return {
+        ...salvaged,
+        finish: {
+            ...salvaged.finish,
+            ...sumUsage("usage", first.finish, salvaged.finish),
+            ...sumUsage("turnUsage", first.finish, salvaged.finish),
+        },
+        salvage: { firstFinish: first.finish, finish: salvaged.finish },
+    };
+}
+
+/**
+ * Sum one rollup field across the two runs, keeping it absent when neither
+ * reported. Both runs are roots or neither is — `runToTerminal` forwards its
+ * caller's options unchanged — so summing `turnUsage` never mixes a turn total
+ * with a bare own-rollup.
+ */
+function sumUsage(field: "usage" | "turnUsage", first: AgentFinish, second: AgentFinish): Pick<AgentFinish, "usage" | "turnUsage"> {
+    const a = first[field];
+    const b = second[field];
+    if (a === undefined && b === undefined) return {};
+    const total: AgentRunUsage = {};
+    addChatUsage(total, a);
+    addChatUsage(total, b);
+    return { [field]: total };
 }

@@ -17,6 +17,7 @@ export {
     StepOutputFileSchema,
     StepOutputPartSchema,
     StepSummaryPartSchema,
+    StepUsagePartSchema,
     StepBlockedPartSchema,
     SynthesizedFindingSchema,
     BiologicalThemeSchema,
@@ -40,3 +41,5 @@ export {
     ChatErrorEventSchema,
     CortexChatEventSchema,
 } from "./chat-events.js";
+
+export { TokenUsageRollupSchema } from "./usage.js";

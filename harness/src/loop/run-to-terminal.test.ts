@@ -158,4 +158,35 @@ describe("runToTerminal", () => {
         expect(names.some((n) => n.startsWith("salvage:llm-"))).toBe(true);
         expect(new Set(names).size).toBe(names.length);
     });
+
+    it("reports the usage of both passes on the returned finish", async () => {
+        const cell = { value: null as string | null };
+        const tool = submitTool(cell);
+        const provider = scriptedProvider((_i, request) => {
+            const last = request.messages.at(-1);
+            const isSalvage = last?.role === "user" && typeof last.content === "string" && last.content === NUDGE;
+            return isSalvage
+                ? makeMessage([toolUseBlock("t1", "submit", { answer: "salvaged" })], "tool_use", { inputTokens: 3, outputTokens: 1 })
+                : makeMessage([textBlock("thinking")], "end_turn", { inputTokens: 10, outputTokens: 4 });
+        });
+
+        const { finish } = await runToTerminal(
+            agentDef([tool]),
+            GO,
+            makeSession(),
+            {
+                provider,
+                signal: new AbortController().signal,
+                emit: () => {},
+                runStep: passthroughStep,
+            },
+            { resolved: () => cell.value !== null, tools: [tool], nudge: NUDGE },
+        );
+
+        // The salvage continuation is the same logical run, so its rollups cover
+        // the first pass's call too — 10 (first run) + 3 (the nudged submit) +
+        // 10 (the salvage pass's reply after the tool result).
+        expect(finish.usage).toEqual({ inputTokens: 23, outputTokens: 9 });
+        expect(finish.turnUsage).toEqual(finish.usage!);
+    });
 });

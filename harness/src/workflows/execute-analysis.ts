@@ -70,6 +70,7 @@ import type { RunSession } from "../auth/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import {
     RunDedupCollisionError,
@@ -87,6 +88,8 @@ import {
 } from "../state/index.js";
 import type { SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
 import { isBudgetExceeded } from "../loop/budget-exceeded.js";
+import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
+import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
 import { MAX_UPSTREAM_ARTIFACTS, composeStepBriefing, type UpstreamHandoff } from "../prompts/briefing.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
@@ -319,6 +322,12 @@ export interface ExecuteAnalysisDeps {
     readonly runCharge: RunCharge;
     /** Run-authorization seam — the terminal path revokes through `revoke`. */
     readonly runAuthorizer: RunAuthorizer;
+    /**
+     * LLM usage-accounting seam for the in-body synthesizer loop (and the
+     * literature reviewer it delegates to); omitted falls back to the no-op
+     * recorder.
+     */
+    readonly usageRecorder?: UsageRecorder;
 
     /**
      * Optional, fire-and-forget provenance observation of the run lifecycle.
@@ -642,6 +651,7 @@ export function synthesizeFindings(args: {
             resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
             synthesisModel: deps.synthesisModel,
             bioKeys: deps.bioKeys,
+            usageRecorder: deps.usageRecorder,
         },
         {
             analysisId,
@@ -880,6 +890,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         failed: final.failed,
         canceled: final.canceled,
         budgetExceeded: final.budgetExceeded,
+        ...(final.usage ? { usage: final.usage } : {}),
         failureReason: synthesisError
             ? synthesisError instanceof Error
                 ? `synthesis-failed: ${synthesisError.message}`
@@ -993,6 +1004,11 @@ interface SchedulerLoopOutcome {
      * exists to prevent, and the one most likely to disagree about `skipped`.
      */
     readonly stepStates: StepRuntimeMap;
+    /**
+     * The run's aggregate token usage — the sum of every settled child's own
+     * rollup. Absent when no step reported one.
+     */
+    readonly usage?: TokenUsageRollup;
 }
 
 async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopOutcome> {
@@ -1004,6 +1020,13 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     const inFlight = new Map<string, { stepId: string; handle: WorkflowHandle<SandboxStepResult> }>();
 
     const budgetExceededChildIds = new Set<string>();
+
+    // Run-level usage aggregate, folded from the children's own durable results.
+    // `getResult` IS the replay-safe source: a recovered parent reads back the
+    // identical value from each child's workflow record, so the sum reproduces
+    // exactly without a second channel. A child that settled by throwing carries
+    // no result and therefore contributes nothing — same rule as its duration.
+    const runUsage: AgentRunUsage = {};
 
     // Child workflow ids the parent itself cancelled (budget / neverFits halt cascade). Their `getResult`
     // rejects with a DBOS cancellation error and lands in the settlement error branch — but the step was
@@ -1209,6 +1232,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
 
         if (settled.kind === "result") {
             const r = settled.result;
+            addChatUsage(runUsage, r.usage);
             if (r.status === "complete") {
                 completed.add(settled.stepId);
                 stepRuntime.set(settled.stepId, {
@@ -1320,7 +1344,15 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
 
     await drainBudgetExceededNotifications(budgetExceededChildIds);
 
-    return { completed, failed, canceled, budgetExceeded, failureReason, stepStates: stepRuntime };
+    return {
+        completed,
+        failed,
+        canceled,
+        budgetExceeded,
+        failureReason,
+        stepStates: stepRuntime,
+        ...(hasReportedUsage(runUsage) ? { usage: { ...runUsage } } : {}),
+    };
 }
 
 async function drainBudgetExceededNotifications(childIds: Set<string>): Promise<void> {
@@ -1359,6 +1391,11 @@ interface CollectAndCompleteArgs {
     readonly canceled: ReadonlySet<string>;
     readonly budgetExceeded: boolean;
     readonly failureReason: string | null;
+    /**
+     * The run's aggregate token usage for the run-completed card. Absent when no
+     * step reported a rollup.
+     */
+    readonly usage?: TokenUsageRollup;
     /** When true, override the derived status to "failed" (synthesis failure). */
     readonly forceFailed?: boolean;
     /** Quick-display findings from synthesis for the run-completed card. */
@@ -1532,6 +1569,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                       note: `${completed.size} of ${input.steps.length} steps completed; results are partial.`,
                   }
                 : {}),
+            ...(args.usage ? { usage: args.usage } : {}),
         });
     } else {
         await emitStreamPart({

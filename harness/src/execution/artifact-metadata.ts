@@ -37,6 +37,7 @@ import { inferArtifactType } from "../schemas/artifact-manifest.js";
 import { SubmitFileMetadataInputSchema, type SubmittedFileDescription } from "../schemas/file-metadata.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 
 export interface ArtifactForMetadata {
     /** Path used to update `cortex_artifacts` after metadata generation. */
@@ -50,6 +51,8 @@ export interface ArtifactForMetadata {
 export interface GenerateFileMetadataOptions {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
+    /** LLM usage-accounting seam for the describer loop; omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
     readonly provider: AgentChat;
     readonly session: AgentSession;
     readonly artifacts: readonly ArtifactForMetadata[];
@@ -250,6 +253,7 @@ export async function generateFileMetadata(opts: GenerateFileMetadataOptions): P
             signal,
             emit: () => {},
             runStep: passthroughStep,
+            usageRecorder: opts.usageRecorder,
         });
     } catch (err) {
         logger.warn("describer loop failed; using fallbacks", logger.errorFields(err));
