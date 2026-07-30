@@ -11,6 +11,7 @@ import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { ResultAsync } from "neverthrow";
 
 import type { AgentSession } from "../auth/types.js";
+import type { TokenUsageField } from "../contracts/usage.js";
 import type { ProviderError } from "./errors.js";
 
 export type { FinishReason, LanguageModel, ModelMessage, ProviderOptions, ToolSet };
@@ -64,6 +65,15 @@ export interface ChatUsage {
     readonly cacheReadInputTokens?: number;
     readonly reasoningTokens?: number;
 }
+
+// Every count reported here is folded by the loop and published on the wire as
+// `TokenUsageRollup`, whose fields `TOKEN_USAGE_FIELDS` enumerates. The rollup
+// lives in `contracts/`, which may not import this module, so the pin between
+// the two sits on this side of the boundary. Key-set equality in both
+// directions: a count added here with no home on the wire is as much a drift as
+// one added there and never reported.
+type _AssertChatUsageFields = Exclude<keyof ChatUsage, TokenUsageField> | Exclude<TokenUsageField, keyof ChatUsage> extends never ? true : never;
+const _assertChatUsageFields: _AssertChatUsageFields = true;
 
 export interface ChatResponse {
     readonly message: Extract<ModelMessage, { role: "assistant" }>;

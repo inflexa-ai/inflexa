@@ -33,7 +33,7 @@ export type { RunCharge } from "./billing/run-charge.js";
 // neither awaits nor guards it, so a realization must not throw and must not
 // block. Wired as the optional `usageRecorder` of `assembleCoreRuntime`;
 // unwired, every call is dropped by `createNoopUsageRecorder`.
-export { createNoopUsageRecorder } from "./billing/usage-recorder.js";
+export { createNoopUsageRecorder } from "./billing/noop-usage-recorder.js";
 export type { UsageRecorder, LlmUsageRecord } from "./billing/usage-recorder.js";
 
 // Seam: artifact registration.

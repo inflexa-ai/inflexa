@@ -4,7 +4,8 @@ import { jsonSchema, tool as aiTool, type FinishReason, type ToolSet, type ToolC
 import type { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
-import { createNoopUsageRecorder, type UsageRecorder } from "../billing/usage-recorder.js";
+import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
@@ -120,6 +121,15 @@ export interface RunAgentOptions {
      * alone reports `turnUsage` on its finish.
      */
     readonly turnUsage?: AgentRunUsage;
+    /**
+     * The id of the tool call this loop runs inside, supplied by a
+     * sub-agent-running tool from its `ctx.invocationId`. It is what separates
+     * two dispatches of the *same* sub-agent in one round — they share the run
+     * frame, the call path, and every loop-local step name — in the usage
+     * record key. Absent for a loop that is not nested inside a tool dispatch
+     * (a chat turn's root, a workflow step body, a background task).
+     */
+    readonly invocationId?: string;
 }
 
 export async function runAgent(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
@@ -224,7 +234,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         const reported = reply.usage;
         if (reported === undefined || !hasReportedUsage(reported)) return;
         usageRecorder.record({
-            recordKey: recordKeyFor(session, stepName),
+            recordKey: recordKeyFor(session, opts.invocationId, stepName),
             agentId: source.agentId,
             callPath: source.callPath,
             scope: session.scope,
@@ -424,30 +434,56 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
 }
 
 /**
- * Idempotency key for one call's usage record.
+ * Delimiter joining the call path into one key segment.
  *
- * Under a `RunFrame` the key reuses the loop's own deterministic step name —
- * the identity DBOS itself caches the call under — so a replayed body re-fires
- * `record` with the byte-identical key and an upserting sink counts the call
- * once. Minting a second *naming* scheme here would create two things that must
- * agree about what "the same call" is, and they would drift.
+ * Deliberately not the `:` that separates the key's segments, so a call path
+ * can never be read as one: agent ids are kebab-case identifiers, run ids are
+ * UUIDs or the profiler's `data-profile` literal, step ids are path-safe plan
+ * ids (`T1S1`, `synthesis`, `profile`), tool-call ids are provider-issued
+ * opaque tokens, and the loop's step names are `llm-{n}` / `tool-{name}-{id}`
+ * with an optional `salvage:` prefix — none of them can contain `>`.
+ */
+const CALL_PATH_DELIMITER = ">";
+
+/**
+ * Idempotency key for one call's usage record:
+ * `{runId}[:{stepId}]:{callPath}[:{invocationId}]:{stepName}`.
  *
- * The `stepId` segment is what makes the key unique, and it is load-bearing
- * rather than decoration: a step name is unique only WITHIN one workflow, which
- * is all durability needs, but `executeAnalysis` runs one child workflow per
- * step under a single shared `runId`. Without the discriminator, step A's
- * `llm-0` and step B's `llm-0` are the same key and an upserting sink
- * under-counts every multi-step run. The parent workflow's own loops carry no
- * `stepId` and so produce a shorter key, which collides with nothing.
+ * Every component is a fact the same call carries again on every replay, so a
+ * re-executed body re-fires `record` with the byte-identical key and an
+ * upserting sink counts the call once. Each earns its place by a collision it
+ * alone resolves:
+ *
+ * - `stepId` — `executeAnalysis` runs one child workflow per step under a
+ *   single shared `runId`, and each step's loop names its first call `llm-0`.
+ * - `callPath` — a step name is unique only within ONE loop invocation (every
+ *   `runAgent` restarts its names at `llm-0`), and several loops routinely run
+ *   under one frame: a step's post-step describer and its summary writer share
+ *   `{runId, stepId}`, and the run-synthesis loop shares a bare `{runId}` with
+ *   the sub-agents its tools run. The provenance path is what separates those
+ *   agent chains.
+ * - `invocationId` — the same sub-agent dispatched twice in one round has an
+ *   identical call path, so only the dispatching tool-call id tells the two
+ *   child loops apart. It is replay-stable by the harness-tools contract: a
+ *   redelivered call carries the id it was issued under.
+ * - `stepName` — the loop's own deterministic name, reused rather than
+ *   re-derived. Minting a second *naming* scheme here would create two things
+ *   that must agree about what "the same call" is, and they would drift.
  *
  * Outside a `RunFrame` there is no replay to be safe against (the HTTP chat
  * path runs a call exactly once), so a fresh id is enough and is what keeps two
  * calls in one turn distinct.
  */
-function recordKeyFor(session: AgentSession, stepName: string): string {
+function recordKeyFor(session: AgentSession, invocationId: string | undefined, stepName: string): string {
     const frame = session.runFrame;
     if (frame === undefined) return randomUUID();
-    return frame.stepId === undefined ? `${frame.runId}:${stepName}` : `${frame.runId}:${frame.stepId}:${stepName}`;
+    return [
+        frame.runId,
+        ...(frame.stepId === undefined ? [] : [frame.stepId]),
+        session.provenance.callPath.join(CALL_PATH_DELIMITER),
+        ...(invocationId === undefined ? [] : [invocationId]),
+        stepName,
+    ].join(":");
 }
 
 function toolCallParts(message: Extract<ModelMessage, { role: "assistant" }>): ToolCallPart[] {

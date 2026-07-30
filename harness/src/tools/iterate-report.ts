@@ -804,6 +804,7 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
                     signal: ctx.signal,
                     emit: ctx.emit,
                     turnUsage: ctx.turnUsage,
+                    invocationId: ctx.invocationId,
                 },
             );
 

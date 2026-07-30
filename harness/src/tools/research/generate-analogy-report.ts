@@ -246,6 +246,9 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                     usageRecorder: deps.usageRecorder,
                     // Fold the child's calls into the turn total the root loop reports.
                     turnUsage: ctx.turnUsage,
+                    // Keeps the usage record keys of two parallel dispatches disjoint —
+                    // same frame, same call path, same loop-local step names.
+                    invocationId: ctx.invocationId,
                 });
                 rawText = finalText(transcript);
             } catch (err) {

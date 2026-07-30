@@ -10,7 +10,7 @@
  * The loop is the single delivery site (it sees every reply in both execution
  * modes and already holds the session), so a realization is wired once at the
  * composition root and reaches every `runAgent` invocation through the deps
- * bags. OSS default: `createNoopUsageRecorder()`.
+ * bags. OSS default: `createNoopUsageRecorder` (`./noop-usage-recorder.ts`).
  */
 
 import type { Scope } from "../auth/types.js";
@@ -20,14 +20,18 @@ import type { ChatUsage } from "../providers/types.js";
 export interface LlmUsageRecord {
     /**
      * Idempotency key. Stable across every replay of the same call: under a
-     * `RunFrame` it is derived from the `runId`, the frame's `stepId` when it
-     * carries one, and the loop's deterministic step name; outside a `RunFrame`
-     * (the chat path, where no replay exists) it is freshly minted. The
-     * `stepId` segment is what keeps sibling step workflows apart — they share
-     * the `runId`, and a step name is unique only within one workflow. The
-     * harness guarantees key stability, not at-most-once delivery — consumers
-     * MUST upsert on this key, or a replayed workflow body will double-count
-     * the call.
+     * `RunFrame` it composes the `runId`, the frame's `stepId` when it carries
+     * one, the session's provenance call path, the dispatching tool call's id
+     * when the loop runs nested inside one, and the loop's deterministic step
+     * name; outside a `RunFrame` (the chat path, where no replay exists) it is
+     * freshly minted. Every component past the frame is load-bearing, because
+     * a step name is unique only within one loop invocation and loops routinely
+     * share a frame: the `stepId` keeps sibling step workflows of one run
+     * apart, the call path keeps distinct agent chains under one frame apart,
+     * and the invocation id keeps parallel dispatches of one sub-agent apart.
+     * The harness guarantees key stability, not at-most-once delivery —
+     * consumers MUST upsert on this key, or a replayed workflow body will
+     * double-count the call.
      */
     readonly recordKey: string;
     /** Agent that made the call — a sub-agent records under its own id. */
@@ -59,14 +63,4 @@ export interface LlmUsageRecord {
  */
 export interface UsageRecorder {
     record(record: LlmUsageRecord): void;
-}
-
-/**
- * Local/OSS usage recorder: drops every record. No ledger, no I/O — the
- * default an embedder that wires nothing gets.
- */
-export function createNoopUsageRecorder(): UsageRecorder {
-    return {
-        record: () => {},
-    };
 }

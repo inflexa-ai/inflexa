@@ -34,6 +34,7 @@ import {
     createLocalRunAuthorizer,       // RunAuthorizer    seam (local default)
     createNoopBillingResolver,      // ResolveBilling   seam
     createNoopRunCharge,            // RunCharge        seam
+    createNoopUsageRecorder,        // UsageRecorder    seam
     createNoopArtifactRegistry,     // ArtifactRegistry seam
     UnavailablePreviewPublisher,    // PreviewPublisher seam
     createDbosRunLauncher,          // shared RunLauncher
@@ -46,7 +47,7 @@ import {
 } from "@inflexa-ai/harness";
 ```
 
-`assembleCoreRuntime` is the single composition point: it registers the durable workflows and builds the conversation agent over them. The harness declares **five capability seams** an embedder wires — `RunAuthorizer`, `ResolveBilling`, `ArtifactRegistry`, `RunCharge`, `PreviewPublisher` — plus the **shared `RunLauncher`** (one host-neutral realization, `createDbosRunLauncher`). Local, dependency-free realizations of all five ship from the barrel; an embedder constructs them (or its own) and passes them in. The harness only ever sees the interface.
+`assembleCoreRuntime` is the single composition point: it registers the durable workflows and builds the conversation agent over them. The harness declares **six capability seams** an embedder wires — `RunAuthorizer`, `ResolveBilling`, `ArtifactRegistry`, `RunCharge`, `UsageRecorder`, `PreviewPublisher` — plus the **shared `RunLauncher`** (one host-neutral realization, `createDbosRunLauncher`). Local, dependency-free realizations of all six ship from the barrel; an embedder constructs them (or its own) and passes them in. The harness only ever sees the interface.
 
 ## Logging
 

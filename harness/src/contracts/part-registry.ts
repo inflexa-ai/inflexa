@@ -28,9 +28,7 @@ export const PART_REGISTRY: Record<CortexChatPartType, PartDescriptor> = {
     "data-step-file-tree": { emitter: "workflow", consumer: "sidebar", transient: true, reconciling: true },
     "data-step-output": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
     "data-step-summary": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
-    // Reconciling: a step emits it once, but a DBOS-replayed step body re-emits it
-    // under the same per-step id — folding latest-wins is what collapses the two.
-    "data-step-usage": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: true },
+    "data-step-usage": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
     "data-step-blocked": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
     "data-run-synthesis": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
     "data-synthesis-progress": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: true },
