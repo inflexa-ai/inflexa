@@ -13,7 +13,7 @@ import { withThreadWriteLock } from "./thread_write.ts";
 // screen answers a keystroke; a run terminates on its own schedule, possibly minutes after the
 // question that launched it, possibly while the user is reading something else entirely. So it gets
 // BOTH reactions: a transient notice, which needs no particular surface to be visible (not the
-// sidebar, not the run panel — either may be hidden), and a durable record on the conversation
+// sidebar, not the activity panel — either may be hidden), and a durable record on the conversation
 // thread, which is what makes the outcome survive a reload and reach the agent's next context.
 //
 // The transition is detected from the runs snapshot the sidebar already maintains rather than from

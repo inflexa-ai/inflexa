@@ -1,6 +1,6 @@
 ## Why
 
-The run-activity panel shipped, and watching a real run through it tells you almost nothing. Its activity line reads `sandbox.mint` while a container is provisioning, then `DBOS.writeStream` for the rest of the run — raw identifiers from the durability engine's internal step-cache table, which the panel reads directly. That table records a step only when it *completes*, so the line names whatever finished last rather than what is happening, and the emit calls that carry the real activity flood the same table with their own bookkeeping rows. The instrumentation drowns out the signal it exists to carry.
+The activity panel shipped, and watching a real run through it tells you almost nothing. Its activity line reads `sandbox.mint` while a container is provisioning, then `DBOS.writeStream` for the rest of the run — raw identifiers from the durability engine's internal step-cache table, which the panel reads directly. That table records a step only when it *completes*, so the line names whatever finished last rather than what is happening, and the emit calls that carry the real activity flood the same table with their own bookkeeping rows. The instrumentation drowns out the signal it exists to carry.
 
 Meanwhile the harness has been emitting a human phrase on every sandbox-agent tool call the whole time (`Running script deseq2.R`), to a durable stream nothing reads.
 
@@ -23,13 +23,13 @@ Two further defects landed with the same work. The panel paints the same backgro
 ## Capabilities
 
 ### Modified Capabilities
-- `run-activity-panel`: the activity label's source changes from the durability engine's step records to the harness run-event stream; the panel gains its own chrome and an independent clock for elapsed readouts.
+- `activity-panel`: the activity label's source changes from the durability engine's step records to the harness run-event stream; the panel gains its own chrome and an independent clock for elapsed readouts.
 - `tui-stream-blocks`: the run card carries no live progress meter at any point in its life, not merely after settling.
 - `sidebar-live`: the bounded-poll requirement gains the guarantee it already describes but does not deliver — a refresh that cannot complete must not disable future refreshes.
 
 ## Impact
 
-- **Modified**: `src/tui/layout/run_activity_panel.tsx` (chrome, clock), `src/tui/hooks/run_panel.ts` (activity source), `src/tui/hooks/sidebar_live.ts` (refresh bounding), `src/tui/components/run_card_block.tsx` (drop the live meter), `src/lib/design_system.contrast.test.ts` (a new rendered pair), `src/tui/layout/design_gallery.tsx` (exhibits for the new chrome).
+- **Modified**: `src/tui/layout/activity_panel.tsx` (chrome, clock), `src/tui/hooks/activity_panel.ts` (activity source), `src/tui/hooks/sidebar_live.ts` (refresh bounding), `src/tui/components/run_card_block.tsx` (drop the live meter), `src/lib/design_system.contrast.test.ts` (a new rendered pair), `src/tui/layout/design_gallery.tsx` (exhibits for the new chrome).
 - **Retired from this path**: the `dbos.operation_outputs` reader used by the panel. The headless `inflexa run` wait shares that reader and is **not** changed here — it keeps working as it does today, and rewiring it is separate.
 - **Depends on**: the harness `run-event-stream` capability. This change cannot land before it.
 - **No breaking changes**: no command, keybinding, or persisted shape changes.

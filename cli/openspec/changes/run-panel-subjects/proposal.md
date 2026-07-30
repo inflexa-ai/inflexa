@@ -23,15 +23,15 @@ None. The panel and the live store are both existing capabilities, and this wide
 
 ### Modified Capabilities
 
-- `run-activity-panel`: the panel's subject is no longer necessarily a run. The frontier requirement is widened to cover a subject that has no steps and no counts, and the legend requirement's region name becomes subject-derived.
+- `activity-panel`: the panel's subject is no longer necessarily a run. The frontier requirement is widened to cover a subject that has no steps and no counts, and the legend requirement's region name becomes subject-derived.
 - `sidebar-live`: the store's live-progress publication becomes an ordered subject set that includes the data profile, with the same carry-forward-and-mark-stale discipline the active-run map already has.
 
 ## Impact
 
 - `src/tui/hooks/sidebar_live.ts` — the subject type, the merged and ordered subject set, and the profile's carry-forward.
-- `src/tui/hooks/run_panel.ts` — focus, position, and count over subjects; the subscription keyed on the stream id; the activity fold no longer filtering by a part's `runId` (which is a constant for a profile, by the harness's stated contract).
-- `src/tui/layout/run_activity_panel.tsx` — the subject union in props, the counts-and-frontier rows becoming run-only, and `fitRunLegend` taking a region.
+- `src/tui/hooks/activity_panel.ts` — focus, position, and count over subjects; the subscription keyed on the stream id; the activity fold no longer filtering by a part's `runId` (which is a constant for a profile, by the harness's stated contract).
+- `src/tui/layout/activity_panel.tsx` — the subject union in props, the counts-and-frontier rows becoming run-only, and `fitRunLegend` taking a region.
 - `src/tui/layout/design_gallery.tsx` + `design_gallery_fixtures.ts` — profile-subject exhibits.
-- `src/tui/layout/run_activity_panel.render.test.tsx`, `src/tui/app_run_panel.render.test.tsx` — the subject shape and the legend ladder's new region cases.
+- `src/tui/layout/activity_panel.render.test.tsx`, `src/tui/app_activity_panel.render.test.tsx` — the subject shape and the legend ladder's new region cases.
 - **Hard prerequisite**: this cannot be implemented against the published `@inflexa-ai/harness` version the CLI pins. It needs `DataProfileStatus.workflowId` from the harness change, so that change must land and be linked locally first — the same precondition the previous run-observability work carried.
-- **Spec-text precondition**: the requirement this change modifies (`A sticky panel shows the focused run's frontier`) currently lives as an unarchived delta in `run-observability-surfaces`, not in `openspec/specs/run-activity-panel/spec.md`. The MODIFIED blocks here are composed against that pending text, so `run-observability-surfaces` must be archived into the spec tree before this change is, or the delta will not apply against the requirement it was written from.
+- **Spec-text precondition**: the requirement this change modifies (`A sticky panel shows the focused run's frontier`) currently lives as an unarchived delta in `run-observability-surfaces`, not in `openspec/specs/activity-panel/spec.md`. The MODIFIED blocks here are composed against that pending text, so `run-observability-surfaces` must be archived into the spec tree before this change is, or the delta will not apply against the requirement it was written from.

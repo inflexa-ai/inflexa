@@ -24,10 +24,10 @@ import {
     focusedSubjectActivity,
     focusedSubjectPosition,
     focusNextSubject,
-    runPanelVisible,
-    toggleRunPanel,
-    watchRunPanel,
-} from "./hooks/run_panel.ts";
+    activityPanelVisible,
+    toggleActivityPanel,
+    watchActivityPanel,
+} from "./hooks/activity_panel.ts";
 import { watchRunCompletions } from "./hooks/run_completion.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
@@ -40,7 +40,7 @@ import { BootIndicator } from "./components/boot_indicator.tsx";
 import { AskPrompt } from "./components/ask_prompt.tsx";
 import { seedTextareaText } from "./components/text_area.tsx";
 import { ChatBar } from "./layout/chat_bar.tsx";
-import { RunActivityPanel } from "./layout/run_activity_panel.tsx";
+import { ActivityPanel } from "./layout/activity_panel.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
@@ -455,11 +455,11 @@ export function App(props: AppProps) {
 
     // Wire the run-activity panel: its focused run's activity read (cadenced off the sidebar refresh,
     // deliberately not a second timer) and its dismissal expiry. Under App's reactive owner.
-    watchRunPanel();
+    watchActivityPanel();
 
     // Announce every run that reaches a terminal status: a toast now, and a durable outcome record on
     // the analysis thread queued behind whatever else is writing it. Deliberately independent of the
-    // sidebar and the run panel — either may be hidden when a run lands.
+    // sidebar and the activity panel — either may be hidden when a run lands.
     watchRunCompletions();
 
     // Mirror the live agent switch into the boot store's agentModels cell: the
@@ -744,8 +744,8 @@ export function App(props: AppProps) {
             { chord: resolveKeybind("app.command-palette"), run: () => dialogPush(() => <CommandPalette commands={commands} />) },
             { chord: resolveKeybind("app.toggle-sidebar"), run: () => setSidebarOpen((open) => !open) },
             { chord: resolveKeybind("plan.explore-steps"), run: () => runCommandById("plan.explore-steps") },
-            { chord: resolveKeybind("app.run-panel-next"), run: focusNextSubject },
-            { chord: resolveKeybind("app.run-panel-toggle"), run: toggleRunPanel },
+            { chord: resolveKeybind("app.activity-panel-next"), run: focusNextSubject },
+            { chord: resolveKeybind("app.activity-panel-toggle"), run: toggleActivityPanel },
             {
                 chord: leaderSeq("k"),
                 run: () => dialogPush(() => <CommandPalette commands={commands} />),
@@ -753,7 +753,7 @@ export function App(props: AppProps) {
                 group: "App",
             },
             { chord: leaderSeq("b"), run: () => setSidebarOpen((open) => !open), desc: "Toggle sidebar", group: "App" },
-            { chord: leaderSeq("p"), run: toggleRunPanel, desc: "Toggle run panel", group: "View" },
+            { chord: leaderSeq("p"), run: toggleActivityPanel, desc: "Toggle activity panel", group: "View" },
             { chord: leaderSeq("]"), run: focusNextSubject, desc: "Next active run or profile", group: "View" },
             { chord: leaderSeq("a"), run: () => runCommandById("analysis.switch"), desc: "Switch analysis", group: "Analysis" },
             { chord: leaderSeq("n"), run: () => runCommandById("analysis.new"), desc: "New analysis", group: "Analysis" },
@@ -1000,14 +1000,14 @@ export function App(props: AppProps) {
                         (the 1-cell scrollbox-bleed rule). Complements the sidebar RUNS section rather
                         than repeating it: the rail owns the step list, this owns the frontier detail the
                         rail's 40 columns cannot hold. */}
-                        <Show when={runPanelVisible()}>
-                            <RunActivityPanel
+                        <Show when={activityPanelVisible()}>
+                            <ActivityPanel
                                 subject={focusedSubject() ?? undefined}
                                 activity={focusedSubjectActivity()}
                                 activeCount={activeSubjectCount()}
                                 position={focusedSubjectPosition()}
-                                nextKeyLabel={keybindLabel("app.run-panel-next")}
-                                dismissKeyLabel={keybindLabel("app.run-panel-toggle")}
+                                nextKeyLabel={keybindLabel("app.activity-panel-next")}
+                                dismissKeyLabel={keybindLabel("app.activity-panel-toggle")}
                                 onNext={focusNextSubject}
                             />
                         </Show>

@@ -14,7 +14,7 @@ import { PlanCardBlock } from "./components/plan_card_block.tsx";
 import { PresentationBlock } from "./components/presentation_block.tsx";
 import { RunBlock } from "./components/run_block.tsx";
 import { RunCardBlock } from "./components/run_card_block.tsx";
-import { RunActivityPanel } from "./layout/run_activity_panel.tsx";
+import { ActivityPanel } from "./layout/activity_panel.tsx";
 import { ThinkingBlock } from "./components/thinking_block.tsx";
 import { ToolBlock } from "./components/tool_block.tsx";
 import { Welcome } from "./components/welcome.tsx";
@@ -341,9 +341,9 @@ const BLOCKS: BlockCase[] = [
         until: "fetch_abstract",
     },
     {
-        name: "RunActivityPanel",
+        name: "ActivityPanel",
         node: () => (
-            <RunActivityPanel
+            <ActivityPanel
                 subject={{ kind: "run", run: galleryRun() }}
                 activity="tool bash"
                 activeCount={3}
@@ -356,9 +356,9 @@ const BLOCKS: BlockCase[] = [
         until: "align reads",
     },
     {
-        name: "RunActivityPanel (degraded)",
+        name: "ActivityPanel (degraded)",
         node: () => (
-            <RunActivityPanel
+            <ActivityPanel
                 subject={{ kind: "run", run: galleryRun({ stale: true }) }}
                 activity="tool bash"
                 activeCount={1}
@@ -374,9 +374,9 @@ const BLOCKS: BlockCase[] = [
         // A separate entry because the profile arm paints spans the run arm never does — its own marker
         // glyph, in its own role, and a legend naming a different region. A sweep that only ever rendered
         // a run subject would leave every one of them unmeasured.
-        name: "RunActivityPanel (profile)",
+        name: "ActivityPanel (profile)",
         node: () => (
-            <RunActivityPanel
+            <ActivityPanel
                 subject={{ kind: "profile", profile: galleryProfile() }}
                 activity="tool bash"
                 activeCount={3}

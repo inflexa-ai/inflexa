@@ -651,7 +651,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
     });
 });
 
-// The data profile is the run-activity panel's SECOND kind of subject, published from the SAME
+// The data profile is the activity panel's SECOND kind of subject, published from the SAME
 // profile read the DATA PROFILE section consumes — so these pin what a profile row turns into, never
 // how it is read.
 describe("refreshSidebarData — the profile's panel-subject entry", () => {

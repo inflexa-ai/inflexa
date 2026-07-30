@@ -248,11 +248,11 @@ export const KEYBIND_DEFAULTS = {
     // colliding with any other esc owner (dialog dismiss, selection-clear, the composer's INSERT→NORMAL).
     "app.interrupt": "esc",
     "app.leader": "ctrl+x",
-    // The run-activity panel's two actions. Ctrl chords (never Alt — terminals deliver it
+    // The activity panel's two actions. Ctrl chords (never Alt — terminals deliver it
     // unreliably) chosen from the keys the composer's textarea does not consume: it claims only
     // enter, ctrl+j, and shift+enter, so neither of these can be swallowed while typing.
-    "app.run-panel-next": "ctrl+n",
-    "app.run-panel-toggle": "ctrl+r",
+    "app.activity-panel-next": "ctrl+n",
+    "app.activity-panel-toggle": "ctrl+r",
     // Opens the most recent openable artifact card. A bare printable, so it lives in the NORMAL-mode
     // (scroll-pane-focused) layer only — never active while the composer holds focus.
     "artifact.open-latest": "o",
@@ -269,11 +269,32 @@ export type KeybindId = keyof typeof KEYBIND_DEFAULTS;
 // takes the FIRST alternative only (the app keys are single-stroke); sequences come via parseKeySpec.
 let resolvedCache: Record<KeybindId, Chord> | null = null;
 let leaderTimeoutCache: number | null = null;
+/**
+ * Ids this build honours from a config file written against an earlier one.
+ *
+ * A keybind id is a KEY IN THE USER'S CONFIG (`keybinds` is a record keyed by id), so renaming one
+ * without this would make an existing override stop matching and silently fall back to the default —
+ * no error, no warning, just a key that quietly stopped doing what its owner set it to. That is the
+ * one failure mode remapping must never have, because the user's evidence for it is a chord that
+ * "randomly" reverted.
+ *
+ * A current id always wins; the legacy name is consulted only when the current one is absent, so a
+ * config carrying both is unambiguous. Entries may be dropped once configs predating the rename are
+ * no longer plausibly in use.
+ */
+const LEGACY_KEYBIND_IDS: Partial<Record<KeybindId, string>> = {
+    "app.activity-panel-next": "app.run-panel-next",
+    "app.activity-panel-toggle": "app.run-panel-toggle",
+};
+
 function resolved(): Record<KeybindId, Chord> {
     if (!resolvedCache) {
         const overrides = readConfig().keybinds ?? {};
         resolvedCache = Object.fromEntries(
-            (Object.keys(KEYBIND_DEFAULTS) as KeybindId[]).map((id) => [id, parseChord(overrides[id] ?? KEYBIND_DEFAULTS[id])]),
+            (Object.keys(KEYBIND_DEFAULTS) as KeybindId[]).map((id) => {
+                const legacy = LEGACY_KEYBIND_IDS[id];
+                return [id, parseChord(overrides[id] ?? (legacy ? overrides[legacy] : undefined) ?? KEYBIND_DEFAULTS[id])];
+            }),
         ) as Record<KeybindId, Chord>;
     }
     return resolvedCache;

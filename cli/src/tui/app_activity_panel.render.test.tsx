@@ -12,7 +12,7 @@ import { App } from "./app.tsx";
 import { dialogClear } from "./components/dialog/dialog_host.tsx";
 import { __setAgentModelsForTest, __setBootStateForTest } from "./hooks/boot.ts";
 import { __resetNoticesForTest, currentNotice } from "./hooks/notice.ts";
-import { __resetRunPanelForTest, focusedSubject, runPanelVisible, toggleRunPanel } from "./hooks/run_panel.ts";
+import { __resetActivityPanelForTest, focusedSubject, activityPanelVisible, toggleActivityPanel } from "./hooks/activity_panel.ts";
 import { __resetRunCompletionsForTest } from "./hooks/run_completion.ts";
 import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshSeams } from "./hooks/sidebar_live.ts";
 import { resetHotState } from "./hooks/conversation.ts";
@@ -94,7 +94,7 @@ afterEach(() => {
     dialogClear();
     resetHotState();
     __resetSidebarLiveForTest();
-    __resetRunPanelForTest();
+    __resetActivityPanelForTest();
     __resetRunCompletionsForTest();
     __resetNoticesForTest();
     __resetThreadWriteLocksForTest();
@@ -134,7 +134,7 @@ describe("App composes the run-activity panel", () => {
         const app = await mountApp();
         try {
             await app.seed([runRow({ runId: "run-a" })]);
-            expect(runPanelVisible()).toBe(true);
+            expect(activityPanelVisible()).toBe(true);
             const frame = await app.frame();
             // The plan title is the panel's run label and the frontier step is its own line — both
             // reach the screen only through App's mount.
@@ -169,7 +169,7 @@ describe("App composes the run-activity panel", () => {
         const app = await mountApp();
         try {
             await app.seed([runRow({ runId: "run-a", status: "completed", completedAt: "2026-07-28T10:01:00.000Z" })]);
-            expect(runPanelVisible()).toBe(false);
+            expect(activityPanelVisible()).toBe(false);
             const frame = await app.frame();
             expect(frame).not.toContain("align reads");
             // The panel's own hint line — a string that exists only when it renders — is absent too.
@@ -185,7 +185,7 @@ describe("App composes the run-activity panel", () => {
             await app.seed([runRow({ runId: "run-a" })]);
             expect((await app.frame()).includes("hide")).toBe(true);
 
-            toggleRunPanel();
+            toggleActivityPanel();
             const frame = await app.frame();
 
             // The panel's hint line is the string only IT renders, so its absence is the panel's.

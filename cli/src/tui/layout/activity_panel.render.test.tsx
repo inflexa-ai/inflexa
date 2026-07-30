@@ -5,7 +5,7 @@ import { createSignal } from "solid-js";
 
 import { DEFAULT_THEME_ID, GLYPHS, themes } from "../../lib/design_system.ts";
 import { setTheme } from "../theme.ts";
-import { ELAPSED_TICK_MS, RunActivityPanel } from "./run_activity_panel.tsx";
+import { ELAPSED_TICK_MS, ActivityPanel } from "./activity_panel.tsx";
 import type { ActiveProfileProgress, ActiveRunProgress, PanelSubject } from "../hooks/sidebar_live.ts";
 import type { RunStepView } from "../components/run_block.tsx";
 
@@ -92,9 +92,9 @@ function profileSubject(over: Partial<ActiveProfileProgress> = {}): PanelSubject
 }
 
 /** Render the panel with sensible defaults; `over` replaces any prop. */
-function panel(over: Partial<Parameters<typeof RunActivityPanel>[0]> = {}) {
+function panel(over: Partial<Parameters<typeof ActivityPanel>[0]> = {}) {
     return () => (
-        <RunActivityPanel
+        <ActivityPanel
             subject={runSubject()}
             activity="tool bash"
             activeCount={1}
@@ -107,7 +107,7 @@ function panel(over: Partial<Parameters<typeof RunActivityPanel>[0]> = {}) {
     );
 }
 
-describe("RunActivityPanel content", () => {
+describe("ActivityPanel content", () => {
     test("a running step is named, attributed, and described", async () => {
         const frame = await settledFrame(panel(), WIDE);
         expect(frame).toContain("Differential expression");
@@ -157,14 +157,14 @@ describe("RunActivityPanel content", () => {
         // Rendered directly rather than through `panel()`: Solid's prop merge treats an `undefined`
         // value in a spread as "not provided", so it cannot clear a prop an earlier source set.
         const frame = await settledFrame(
-            () => <RunActivityPanel subject={undefined} activeCount={0} position={0} nextKeyLabel="ctrl+n" dismissKeyLabel="ctrl+r" onNext={() => {}} />,
+            () => <ActivityPanel subject={undefined} activeCount={0} position={0} nextKeyLabel="ctrl+n" dismissKeyLabel="ctrl+r" onNext={() => {}} />,
             WIDE,
         );
         expect(frame.trim()).toBe("");
     });
 });
 
-describe("RunActivityPanel profile content", () => {
+describe("ActivityPanel profile content", () => {
     // A profile is the panel's second subject kind and it is defined by what it LACKS: no step
     // decomposition, so no denominator and no frontier. Both absences are asserted directly, because a
     // test that only checked the activity line was present would pass unchanged beside a stray `0/0` or
@@ -204,7 +204,7 @@ describe("RunActivityPanel profile content", () => {
     });
 });
 
-describe("RunActivityPanel repaint", () => {
+describe("ActivityPanel repaint", () => {
     test("a props change repaints the frontier, the counts, and the activity in place", async () => {
         // Every other test in this file renders once against static props, which cannot distinguish a
         // panel that tracks its inputs from one that latched them at mount — the exact failure a live
@@ -213,7 +213,7 @@ describe("RunActivityPanel repaint", () => {
         const [activity, setActivity] = createSignal("tool bash");
         const setup = await testRender(
             () => (
-                <RunActivityPanel
+                <ActivityPanel
                     subject={snapshot()}
                     activity={activity()}
                     activeCount={1}
@@ -259,7 +259,7 @@ describe("RunActivityPanel repaint", () => {
     });
 });
 
-describe("RunActivityPanel elapsed clock", () => {
+describe("ActivityPanel elapsed clock", () => {
     // Elapsed is driven by the panel's own ticker, not by its data feed. The two are distinguishable
     // only under a frozen feed: if the readout advances while the progress object never changes, it
     // cannot be a side effect of a refresh — which is what keeps a stalled VIEW from reading as a
@@ -270,7 +270,7 @@ describe("RunActivityPanel elapsed clock", () => {
         const frozen = runSubject({ startedAt: Date.ago(0), steps: [step({ label: "align reads", startedAt: Date.ago(0) })] });
         const setup = await testRender(
             () => (
-                <RunActivityPanel
+                <ActivityPanel
                     subject={frozen}
                     activity="tool bash"
                     activeCount={1}
@@ -303,7 +303,7 @@ describe("RunActivityPanel elapsed clock", () => {
     });
 });
 
-describe("RunActivityPanel navigation", () => {
+describe("ActivityPanel navigation", () => {
     test("a single active run names no position and offers no next-run chord", async () => {
         const frame = await settledFrame(panel({ activeCount: 1, position: 1 }), WIDE);
         expect(frame).toContain("RUN · ctrl+r hide");
@@ -335,7 +335,7 @@ describe("RunActivityPanel navigation", () => {
     });
 });
 
-describe("RunActivityPanel legend fits the panel's width", () => {
+describe("ActivityPanel legend fits the panel's width", () => {
     // opentui renders a border title only when the box is at least `title.length + 4` wide and
     // otherwise DROPS it — silently, taking the region's name with it. So the legend degrades by a
     // ladder, and the boundary is worth pinning: a 40-column tmux pane is a real case, and the
@@ -362,7 +362,7 @@ describe("RunActivityPanel legend fits the panel's width", () => {
     });
 });
 
-describe("RunActivityPanel profile legend fits the panel's width", () => {
+describe("ActivityPanel profile legend fits the panel's width", () => {
     // The profile region's boundaries are its OWN numbers, not the run's shifted by a constant. Both
     // ladders are measured against the region name they were given, and `PROFILE` is four columns longer
     // than `RUN` — so every rung degrades four columns sooner, and a test that derived these from the
@@ -400,7 +400,7 @@ describe("RunActivityPanel profile legend fits the panel's width", () => {
     });
 });
 
-describe("RunActivityPanel degradation", () => {
+describe("ActivityPanel degradation", () => {
     test("a stale entry keeps the run and its last known frontier, marked unavailable", async () => {
         const frame = await settledFrame(panel({ subject: runSubject({ stale: true }) }), WIDE);
         // Still present — a panel that vanished on a blip is indistinguishable from a finished run.
@@ -415,7 +415,7 @@ describe("RunActivityPanel degradation", () => {
     });
 });
 
-describe("RunActivityPanel legibility on a light theme", () => {
+describe("ActivityPanel legibility on a light theme", () => {
     // A character frame carries no color, so `toContain` passes identically for a correctly-painted
     // span and one that fell through to opentui's opaque-white default. github-light's bg is pure
     // #ffffff, where that default is fully invisible — the sharpest case for this class of defect.
@@ -521,7 +521,7 @@ describe("RunActivityPanel legibility on a light theme", () => {
     }
 });
 
-describe("RunActivityPanel chrome across terminal heights", () => {
+describe("ActivityPanel chrome across terminal heights", () => {
     // A flexGrow scrollbox renders one row TALLER than it contributes to the column, so a fixed row
     // beneath it must paint its own background across the full width or scrolled content bleeds
     // through the gaps between its glyphs. And a non-numeric width defaults to flexShrink: 1, which
@@ -536,7 +536,7 @@ describe("RunActivityPanel chrome across terminal heights", () => {
                         <text fg="#888888">{`BLEEDCANARY-${i}`}</text>
                     ))}
                 </scrollbox>
-                <RunActivityPanel
+                <ActivityPanel
                     subject={subject}
                     activity="Running script deseq2.R"
                     activeCount={2}
@@ -605,7 +605,7 @@ describe("RunActivityPanel chrome across terminal heights", () => {
                     <scrollbox flexGrow={1} minHeight={0}>
                         <text fg="#888888">STREAM</text>
                     </scrollbox>
-                    <RunActivityPanel subject={undefined} activeCount={0} position={0} nextKeyLabel="ctrl+n" dismissKeyLabel="ctrl+r" onNext={() => {}} />
+                    <ActivityPanel subject={undefined} activeCount={0} position={0} nextKeyLabel="ctrl+n" dismissKeyLabel="ctrl+r" onNext={() => {}} />
                     <box width="100%" flexShrink={0}>
                         <text fg="#888888">INPUTROW</text>
                     </box>

@@ -30,7 +30,7 @@ import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { AskPrompt } from "../components/ask_prompt.tsx";
 import { MessageBlock } from "./message_block.tsx";
 import { ChatBar } from "./chat_bar.tsx";
-import { RunActivityPanel } from "./run_activity_panel.tsx";
+import { ActivityPanel } from "./activity_panel.tsx";
 import { Bold, Italic, Underline, Dim, Reverse, Fg } from "../components/emphasis.tsx";
 import { TextArea } from "../components/text_area.tsx";
 import { TextInput } from "../components/text_input.tsx";
@@ -125,8 +125,8 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
     const interruptKey = keybindLabel("app.interrupt");
     const abortKey = keybindLabel("app.abort");
     // Derived, exactly as the real mount derives them — the exhibits must advertise the live chords.
-    const runPanelNextKey = keybindLabel("app.run-panel-next");
-    const runPanelToggleKey = keybindLabel("app.run-panel-toggle");
+    const activityPanelNextKey = keybindLabel("app.activity-panel-next");
+    const activityPanelToggleKey = keybindLabel("app.activity-panel-toggle");
     return (
         <DialogPanel title="Design system — stream blocks" size="xl" footer={`${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
             <ScrollPane focusOnMount={false} onRef={(r) => dialog?.setInitialFocus(r)} flexGrow={1} width="100%" paddingTop={space.sm}>
@@ -629,7 +629,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         the real mount derives them from the bindings via keybindLabel.
 
                         Every exhibit below is wrapped in a `bg`-painted column because the gallery's own
-                        panel is `bgRaised` — the same surface the run panel paints. Rendered directly
+                        panel is `bgRaised` — the same surface the activity panel paints. Rendered directly
                         into the gallery the tint would have nothing to separate from, so the exhibit
                         would misrepresent the design in the one place it is meant to be reviewed.
 
@@ -643,13 +643,13 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         chords and then its position, which is the real behaviour and not a defect. */}
                     <text fg={theme().fgMuted}>one active run — the frontier step with its agent and live activity label:</text>
                     <box width="100%" backgroundColor={theme().bg}>
-                        <RunActivityPanel
+                        <ActivityPanel
                             subject={runSubject()}
                             activity="Running script deseq2.R"
                             activeCount={1}
                             position={1}
-                            nextKeyLabel={runPanelNextKey}
-                            dismissKeyLabel={runPanelToggleKey}
+                            nextKeyLabel={activityPanelNextKey}
+                            dismissKeyLabel={activityPanelToggleKey}
                             onNext={noop}
                         />
                     </box>
@@ -657,19 +657,19 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         several active runs — the legend gains the position and the cycling chord (the header row is click-to-advance):
                     </text>
                     <box width="100%" backgroundColor={theme().bg}>
-                        <RunActivityPanel
+                        <ActivityPanel
                             subject={runSubject()}
                             activity="Writing file counts_matrix.csv"
                             activeCount={3}
                             position={2}
-                            nextKeyLabel={runPanelNextKey}
-                            dismissKeyLabel={runPanelToggleKey}
+                            nextKeyLabel={activityPanelNextKey}
+                            dismissKeyLabel={activityPanelToggleKey}
                             onNext={noop}
                         />
                     </box>
                     <text fg={theme().fgMuted}>parallel frontier — a run genuinely running several steps at once shows all of them:</text>
                     <box width="100%" backgroundColor={theme().bg}>
-                        <RunActivityPanel
+                        <ActivityPanel
                             subject={runSubject({
                                 steps: [
                                     { label: "align reads", state: "running", startedAt: null, agent: "bioinformatician" },
@@ -678,20 +678,20 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             })}
                             activeCount={1}
                             position={1}
-                            nextKeyLabel={runPanelNextKey}
-                            dismissKeyLabel={runPanelToggleKey}
+                            nextKeyLabel={activityPanelNextKey}
+                            dismissKeyLabel={activityPanelToggleKey}
                             onNext={noop}
                         />
                     </box>
                     <text fg={theme().fgMuted}>degraded — this run's step read blipped, so the last known frontier renders muted and marked:</text>
                     <box width="100%" backgroundColor={theme().bg}>
-                        <RunActivityPanel
+                        <ActivityPanel
                             subject={runSubject({ stale: true })}
                             activity="Running script deseq2.R"
                             activeCount={1}
                             position={1}
-                            nextKeyLabel={runPanelNextKey}
-                            dismissKeyLabel={runPanelToggleKey}
+                            nextKeyLabel={activityPanelNextKey}
+                            dismissKeyLabel={activityPanelToggleKey}
                             onNext={noop}
                         />
                     </box>
@@ -699,24 +699,24 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         no activity label resolved — omitted, never substituted (a placeholder would claim knowledge the reader lacks):
                     </text>
                     <box width="100%" backgroundColor={theme().bg}>
-                        <RunActivityPanel
+                        <ActivityPanel
                             subject={runSubject()}
                             activity={null}
                             activeCount={1}
                             position={1}
-                            nextKeyLabel={runPanelNextKey}
-                            dismissKeyLabel={runPanelToggleKey}
+                            nextKeyLabel={activityPanelNextKey}
+                            dismissKeyLabel={activityPanelToggleKey}
                             onNext={noop}
                         />
                     </box>
                     <text fg={theme().fgMuted}>no active run — the panel contributes ZERO rows (nothing renders between this line and the next):</text>
                     <box width="100%" backgroundColor={theme().bg}>
-                        <RunActivityPanel
+                        <ActivityPanel
                             subject={undefined}
                             activeCount={0}
                             position={0}
-                            nextKeyLabel={runPanelNextKey}
-                            dismissKeyLabel={runPanelToggleKey}
+                            nextKeyLabel={activityPanelNextKey}
+                            dismissKeyLabel={activityPanelToggleKey}
                             onNext={noop}
                         />
                     </box>
@@ -733,13 +733,13 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         than `RUN`, its full legend first fits at a wider panel. */}
                     <text fg={theme().fgMuted}>a running data profile — name, elapsed, and its live activity; no count and no step rows:</text>
                     <box width="100%" backgroundColor={theme().bg}>
-                        <RunActivityPanel
+                        <ActivityPanel
                             subject={profileSubject()}
                             activity="Running script profile.py"
                             activeCount={1}
                             position={1}
-                            nextKeyLabel={runPanelNextKey}
-                            dismissKeyLabel={runPanelToggleKey}
+                            nextKeyLabel={activityPanelNextKey}
+                            dismissKeyLabel={activityPanelToggleKey}
                             onNext={noop}
                         />
                     </box>
@@ -748,13 +748,13 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         (this is position 2 of 2):
                     </text>
                     <box width="100%" backgroundColor={theme().bg}>
-                        <RunActivityPanel
+                        <ActivityPanel
                             subject={profileSubject()}
                             activity="Indexing input descriptions for search"
                             activeCount={2}
                             position={2}
-                            nextKeyLabel={runPanelNextKey}
-                            dismissKeyLabel={runPanelToggleKey}
+                            nextKeyLabel={activityPanelNextKey}
+                            dismissKeyLabel={activityPanelToggleKey}
                             onNext={noop}
                         />
                     </box>
@@ -762,13 +762,13 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         degraded profile — the ledger read blipped, so the last known state renders muted and marked rather than vanishing:
                     </text>
                     <box width="100%" backgroundColor={theme().bg}>
-                        <RunActivityPanel
+                        <ActivityPanel
                             subject={profileSubject({ stale: true })}
                             activity="Running script profile.py"
                             activeCount={1}
                             position={1}
-                            nextKeyLabel={runPanelNextKey}
-                            dismissKeyLabel={runPanelToggleKey}
+                            nextKeyLabel={activityPanelNextKey}
+                            dismissKeyLabel={activityPanelToggleKey}
                             onNext={noop}
                         />
                     </box>
@@ -776,13 +776,13 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         a profile whose workflow id is not recorded yet — no stream to subscribe to, so the activity line is omitted, not faked:
                     </text>
                     <box width="100%" backgroundColor={theme().bg}>
-                        <RunActivityPanel
+                        <ActivityPanel
                             subject={profileSubject({ workflowId: null })}
                             activity={null}
                             activeCount={1}
                             position={1}
-                            nextKeyLabel={runPanelNextKey}
-                            dismissKeyLabel={runPanelToggleKey}
+                            nextKeyLabel={activityPanelNextKey}
+                            dismissKeyLabel={activityPanelToggleKey}
                             onNext={noop}
                         />
                     </box>
@@ -799,13 +799,13 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         <box flexGrow={1} minHeight={0} paddingLeft={space.sm}>
                             <text fg={theme().fg}>…the transcript scrolls above the panel and is capped by its rule.</text>
                         </box>
-                        <RunActivityPanel
+                        <ActivityPanel
                             subject={runSubject()}
                             activity="Running script deseq2.R"
                             activeCount={1}
                             position={1}
-                            nextKeyLabel={runPanelNextKey}
-                            dismissKeyLabel={runPanelToggleKey}
+                            nextKeyLabel={activityPanelNextKey}
+                            dismissKeyLabel={activityPanelToggleKey}
                             onNext={noop}
                         />
                         <ChatBar autoFocus={false} onTextareaRef={noop} onSubmit={noop} />
@@ -819,13 +819,13 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         a change to `ask_prompt.tsx`, so it is a deliberate decision rather than a default. */}
                     <text fg={theme().fgMuted}>stacked with a docked ask — two raised surfaces meet; markers, not a boundary, carry the seam:</text>
                     <box width="100%" backgroundColor={theme().bg}>
-                        <RunActivityPanel
+                        <ActivityPanel
                             subject={runSubject()}
                             activity="Running script deseq2.R"
                             activeCount={1}
                             position={1}
-                            nextKeyLabel={runPanelNextKey}
-                            dismissKeyLabel={runPanelToggleKey}
+                            nextKeyLabel={activityPanelNextKey}
+                            dismissKeyLabel={activityPanelToggleKey}
                             onNext={noop}
                         />
                         <AskPrompt

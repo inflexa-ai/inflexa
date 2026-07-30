@@ -8,7 +8,7 @@ import { Fg } from "../components/emphasis.tsx";
 import type { ActiveProfileProgress, ActiveRunProgress, PanelSubject } from "../hooks/sidebar_live.ts";
 import type { RunStepView } from "../components/run_block.tsx";
 
-// The run-activity panel: the chat column's live readout for ONE focused subject — an analysis run, or
+// The activity panel: the chat column's live readout for ONE focused subject — an analysis run, or
 // the analysis's data profile. Both are work a user waits on, and each renders only what is true of it:
 // a run has a frontier and a denominator, a profile has neither.
 //
@@ -22,8 +22,8 @@ import type { RunStepView } from "../components/run_block.tsx";
 // happening right now*. The only overlap is the completion count, rendered as bare text here and as
 // a meter there so the two never read as the same widget.
 
-/** Props for {@link RunActivityPanel}. */
-export type RunActivityPanelProps = {
+/** Props for {@link ActivityPanel}. */
+export type ActivityPanelProps = {
     /** The focused subject, or `undefined` when there is nothing active to show. */
     subject: PanelSubject | undefined;
     /**
@@ -140,7 +140,7 @@ const PROFILE_NAME = "Data profile";
  * The chat column's live subject readout. Renders nothing (no rows at all) when no subject is focused,
  * so an idle chat composes exactly as it did before the panel existed.
  */
-export function RunActivityPanel(props: RunActivityPanelProps) {
+export function ActivityPanel(props: ActivityPanelProps) {
     // Narrowed once each, so every arm's JSX reads its own kind's fields without re-testing the tag.
     const run = createMemo((): ActiveRunProgress | null => (props.subject?.kind === "run" ? props.subject.run : null));
     const profile = createMemo((): ActiveProfileProgress | null => (props.subject?.kind === "profile" ? props.subject.profile : null));

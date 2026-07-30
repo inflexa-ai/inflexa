@@ -112,7 +112,7 @@ const COLOR_SURFACES: Surface[] = [
         fg: (t) => t.colors.tool,
         on: ["bg", "bgRaised"],
         threshold: TEXT,
-        ref: "tool names (tool_block.tsx); the frontier step's owning-agent tag on the raised panel fill (run_activity_panel.tsx)",
+        ref: "tool names (tool_block.tsx); the frontier step's owning-agent tag on the raised panel fill (activity_panel.tsx)",
     },
     {
         token: "success",
@@ -126,7 +126,7 @@ const COLOR_SURFACES: Surface[] = [
         fg: (t) => t.colors.warning,
         on: ["bg", "bgRaised"],
         threshold: TEXT,
-        ref: "which-key strokes, tones, running-profile marker in the rail and the run panel (which_key.tsx, status_bar.tsx, sidebar.tsx, run_activity_panel.tsx)",
+        ref: "which-key strokes, tones, running-profile marker in the rail and the activity panel (which_key.tsx, status_bar.tsx, sidebar.tsx, activity_panel.tsx)",
     },
     {
         token: "error",

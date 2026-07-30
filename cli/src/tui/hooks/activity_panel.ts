@@ -6,7 +6,7 @@ import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { harnessRuntime } from "./boot.ts";
 import { activeSubjects, type PanelSubject } from "./sidebar_live.ts";
 
-// Which subject the run-activity panel is showing, whether it is dismissed, and what that subject is
+// Which subject the activity panel is showing, whether it is dismissed, and what that subject is
 // doing right now — held here (not inside `app.tsx`) so the state is decoupled from its renderer, the
 // same split as `status.ts` / `notice.ts` / `sidebar_live.ts`. One chat screen is mounted at a time,
 // so a module singleton is correct.
@@ -76,7 +76,7 @@ export const focusedSubject = createMemo((): PanelSubject | null => {
  * to — and the ONLY thing about the focused subject the subscription is allowed to depend on.
  *
  * A run's stream is its run id; a profile's is the workflow id its ledger row records. Both are what
- * {@link RunActivitySubscription.runId} takes, which is the whole payoff of resolving the id in the
+ * {@link ActivitySubscription.runId} takes, which is the whole payoff of resolving the id in the
  * store: the subscription needs one code path, not one per kind.
  *
  * A profile whose row records no workflow id yet resolves to `null`, so no subscription opens and the
@@ -126,7 +126,7 @@ const STEP_PHASE_SETTLED: Record<StepPhase, boolean> = {
 };
 
 /** Whether the panel should render: it has a subject to show and the user has not dismissed it. */
-export const runPanelVisible = createMemo((): boolean => focusedSubject() !== null && !dismissed());
+export const activityPanelVisible = createMemo((): boolean => focusedSubject() !== null && !dismissed());
 
 /** How many subjects are active — the denominator of the panel's position indicator. */
 export const activeSubjectCount = createMemo((): number => activeSubjects().length);
@@ -163,7 +163,7 @@ export const focusedSubjectActivity = createMemo((): string | null => {
     // that consumers must not key on it, so comparing it against the focused subject's identity would
     // discard every profile activity. The comparison would be redundant besides: the subscription is
     // scoped to one workflow and its children, so every delivered part belongs to the focused subject
-    // by construction. `run_panel.test.ts` pins that invariant — a part carrying a foreign identifier
+    // by construction. `activity_panel.test.ts` pins that invariant — a part carrying a foreign identifier
     // must still show — so re-adding the check fails a test instead of silently breaking profiles.
     //
     // Later entries are more recently reported, so the last survivor of the scan wins.
@@ -193,24 +193,24 @@ export function focusNextSubject(): void {
  * Hide or restore the panel. Dismissal is a view state ONLY: the work keeps running, the sidebar keeps
  * showing it, and a run's completion still announces — nothing here reaches the work itself.
  *
- * SCOPE: a dismissal lasts until no subject is active, then clears (see {@link watchRunPanel}). It
+ * SCOPE: a dismissal lasts until no subject is active, then clears (see {@link watchActivityPanel}). It
  * means "not this, not now", not "never again" — it is scoped to the work that was on screen when it
  * was issued, so later, unrelated work brings the panel back rather than being silently invisible with
  * no indication why. The alternative, a dismissal that persists for the session, makes the panel
  * disappear permanently on a keystroke a user may not remember pressing; that failure is silent and
  * self-reinforcing, whereas this one is merely a panel reappearing, which is visible and re-dismissable.
  */
-export function toggleRunPanel(): void {
+export function toggleActivityPanel(): void {
     setDismissed((d) => !d);
 }
 
 /** Restore a dismissed panel (the palette command's target — idempotent when already visible). */
-export function restoreRunPanel(): void {
+export function restoreActivityPanel(): void {
     setDismissed(false);
 }
 
-/** Call-time parameters of one {@link RunPanelSeams.subscribeActivity}. */
-export type RunActivitySubscription = {
+/** Call-time parameters of one {@link ActivityPanelSeams.subscribeActivity}. */
+export type ActivitySubscription = {
     /**
      * The stream to observe. Named for a run because that is the harness seam's own parameter name,
      * where the two coincide: an analysis run's stream id IS its run id. A profile deliberately passes
@@ -227,26 +227,26 @@ export type RunActivitySubscription = {
     /**
      * Aborting stops delivery. Best-effort by construction — the durability engine's reader exposes
      * no cancellation, so a part can still arrive after the abort (documented on the harness seam).
-     * That is precisely why {@link watchRunPanel} also carries a generation token.
+     * That is precisely why {@link watchActivityPanel} also carries a generation token.
      */
     readonly signal: AbortSignal;
 };
 
 /**
- * Injectable edges so {@link watchRunPanel} is unit-testable offline (no Postgres, no booted runtime)
+ * Injectable edges so {@link watchActivityPanel} is unit-testable offline (no Postgres, no booted runtime)
  * — the `RefreshSeams` / `WatchSeams` pattern from `sidebar_live.ts`.
  */
-export type RunPanelSeams = {
+export type ActivityPanelSeams = {
     /** The booted runtime handle, or `null` when boot is not ready. Real: {@link harnessRuntime}. */
     readonly runtime: () => HarnessRuntime | null;
     /**
      * Observe one workflow's step activity until it is terminal or the signal aborts. Real:
      * `createRunEventStream` @ the runtime pool, narrowed to `data-step-activity`.
      */
-    readonly subscribeActivity: (runtime: HarnessRuntime, options: RunActivitySubscription) => Promise<void>;
+    readonly subscribeActivity: (runtime: HarnessRuntime, options: ActivitySubscription) => Promise<void>;
 };
 
-const realRunPanelSeams: RunPanelSeams = {
+const realActivityPanelSeams: ActivityPanelSeams = {
     runtime: harnessRuntime,
     // The panel deliberately does NOT read `readNewestWorkflowStep` / `runWorkflowFamily` /
     // `friendlyStepLabel` (`modules/harness/profile.ts`), which the headless `inflexa run` wait still
@@ -274,7 +274,7 @@ const realRunPanelSeams: RunPanelSeams = {
 let activityGeneration = 0;
 
 /**
- * Wire the run-activity panel's two reactive behaviours. Call once from `App` (inside its reactive
+ * Wire the activity panel's two reactive behaviours. Call once from `App` (inside its reactive
  * root). Both are effects over the module's derived state:
  *
  *  1. **the activity subscription** — one open stream for the focused subject, keyed on
@@ -289,7 +289,7 @@ let activityGeneration = 0;
  *     this, not now"; once the work it referred to is over, keeping the panel suppressed would leave
  *     later, unrelated work silently invisible with no indication why.
  */
-export function watchRunPanel(seams: RunPanelSeams = realRunPanelSeams): void {
+export function watchActivityPanel(seams: ActivityPanelSeams = realActivityPanelSeams): void {
     createEffect(() => {
         const runId = focusedStreamId();
         const runtime = seams.runtime();
@@ -333,7 +333,7 @@ export function watchRunPanel(seams: RunPanelSeams = realRunPanelSeams): void {
 }
 
 /** Test hook: clear focus, dismissal, and the activity map, and invalidate any live subscription. */
-export function __resetRunPanelForTest(): void {
+export function __resetActivityPanelForTest(): void {
     activityGeneration += 1;
     setFocusedKey(null);
     setDismissed(false);
