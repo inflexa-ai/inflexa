@@ -253,44 +253,44 @@ describe("unarchiveThread", () => {
     });
 });
 
-describe("deleteThread (hard delete)", () => {
+describe("purgeThread (hard delete)", () => {
     it("removes the thread row and every one of its messages", async () => {
         (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Doomed" }))._unsafeUnwrap();
         (await store.createThread({ threadId: "t2", analysisId: ANALYSIS_A, title: "Spared" }))._unsafeUnwrap();
         (await appendTwoMessageTurn("t1"))._unsafeUnwrap();
         (await appendTwoMessageTurn("t2"))._unsafeUnwrap();
 
-        (await store.deleteThread("t1"))._unsafeUnwrap();
+        (await store.purgeThread("t1"))._unsafeUnwrap();
 
         expect((await store.getThread("t1"))._unsafeUnwrap()).toBeNull();
         expect(await threadRowCount("t1")).toBe(0);
         expect(await messageCount("t1")).toBe(0);
-        // The delete is thread-scoped: a sibling thread keeps its row and messages.
+        // The purge is thread-scoped: a sibling thread keeps its row and messages.
         expect(await threadRowCount("t2")).toBe(1);
         expect(await messageCount("t2")).toBe(2);
     });
 
     it("succeeds on an absent thread", async () => {
-        const deleted = await store.deleteThread("missing");
-        expect(deleted.isOk()).toBe(true);
+        const purged = await store.purgeThread("missing");
+        expect(purged.isOk()).toBe(true);
     });
 
     it("makes no claim on a turn that commits after it", async () => {
         (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Raced" }))._unsafeUnwrap();
         (await appendTwoMessageTurn("t1"))._unsafeUnwrap();
 
-        (await store.deleteThread("t1"))._unsafeUnwrap();
-        // A writer the store cannot observe lands its turn after the delete. It
+        (await store.purgeThread("t1"))._unsafeUnwrap();
+        // A writer the store cannot observe lands its turn after the purge. It
         // neither errors nor is prevented, and what it writes is past the reach of
         // any later thread- or analysis-scoped reclamation — which is why a host
-        // stops writes to a thread before deleting it.
+        // stops writes to a thread before purging it.
         (await appendTwoMessageTurn("t1"))._unsafeUnwrap();
 
         expect(await messageCount("t1")).toBe(2);
         expect(await threadRowCount("t1")).toBe(0);
     });
 
-    it("leaves the row and its messages intact when the delete fails partway", async () => {
+    it("leaves the row and its messages intact when the purge fails partway", async () => {
         (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Survivor" }))._unsafeUnwrap();
         (await appendTwoMessageTurn("t1"))._unsafeUnwrap();
 
@@ -302,7 +302,7 @@ describe("deleteThread (hard delete)", () => {
 
         // The failing statement names which half broke, so the surviving messages
         // below are the rollback's work and not a messages delete that never ran.
-        expect((await store.deleteThread("t1"))._unsafeUnwrapErr()).toMatchObject({ op: "thread-store.deleteThread.thread" });
+        expect((await store.purgeThread("t1"))._unsafeUnwrapErr()).toMatchObject({ op: "thread-store.purgeThread.thread" });
 
         expect(await threadRowCount("t1")).toBe(1);
         expect(await messageCount("t1")).toBe(2);

@@ -15,17 +15,20 @@
  * filter `deleted_at IS NULL` an archived thread is indistinguishable from an
  * absent one while its row and every one of its `messages` rows stay in
  * storage. `unarchiveThread` clears the stamp and the thread reads as it did.
- * `deleteThread` is not recoverable: it removes the `messages` rows and the
+ * `purgeThread` is not recoverable: it removes the `messages` rows and the
  * metadata row in one transaction, so a failure partway leaves both — never a
  * thread stripped of its transcript, nor a transcript with nothing naming it.
+ * It is the thread-scoped member of this package's reclamation vocabulary —
+ * `purgeAnalysis` reclaims an analysis's whole persisted footprint,
+ * `purgeThread` one thread's.
  *
- * A hard delete creates no orphan of its own, but it is NOT serialized against
- * a concurrent `appendTurn`: `messages` carries no foreign key to
+ * A purge creates no orphan of its own, but it is NOT serialized against a
+ * concurrent `appendTurn`: `messages` carries no foreign key to
  * `cortex_analysis_threads`, and the append deliberately tolerates a missing
- * metadata row. A turn committing after the delete therefore persists messages
+ * metadata row. A turn committing after the purge therefore persists messages
  * under a `thread_id` that no longer resolves to an analysis, leaving them
  * unreachable by any later thread- or analysis-scoped reclamation. Stop writes
- * to a thread — unbind it from any live conversation — before deleting it; this
+ * to a thread — unbind it from any live conversation — before purging it; this
  * store cannot observe a host's in-flight turns, so it does not enforce that.
  */
 
@@ -89,11 +92,12 @@ export interface ThreadStore {
      */
     unarchiveThread(threadId: string): ResultAsync<void, DbError>;
     /**
-     * Hard delete: remove the thread's `messages` rows and its
-     * `cortex_analysis_threads` row in one transaction. Unrecoverable — nothing
-     * of the thread survives. A `thread_id` with no row succeeds as a no-op.
+     * Reclaim the thread's whole footprint: its `messages` rows and its
+     * `cortex_analysis_threads` row, removed together in one transaction.
+     * Unrecoverable — nothing of the thread survives, and no tombstone marks
+     * that it existed. A `thread_id` with no row succeeds as a no-op.
      */
-    deleteThread(threadId: string): ResultAsync<void, DbError>;
+    purgeThread(threadId: string): ResultAsync<void, DbError>;
     /** Live threads for one analysis, newest-updated first, paginated. */
     listThreads(input: ListThreadsInput): ResultAsync<ThreadPage, DbError>;
 }
@@ -208,15 +212,15 @@ export function createThreadStore(pool: Pool): ThreadStore {
         ).map(() => undefined);
     }
 
-    function deleteThread(threadId: string): ResultAsync<void, DbError> {
+    function purgeThread(threadId: string): ResultAsync<void, DbError> {
         // One transaction for both statements: `messages` is attributable to an
         // analysis only by joining through `cortex_analysis_threads`, so a metadata
         // row removed without its messages strands them beyond the reach of any
         // later reclamation. Either the pair goes or neither does.
-        return withTransaction(pool, "thread-store.deleteThread", (client) =>
-            tryMutation("thread-store.deleteThread.messages", () => client.query("DELETE FROM messages WHERE thread_id = $1", [threadId]))
+        return withTransaction(pool, "thread-store.purgeThread", (client) =>
+            tryMutation("thread-store.purgeThread.messages", () => client.query("DELETE FROM messages WHERE thread_id = $1", [threadId]))
                 .andThen(() =>
-                    tryMutation("thread-store.deleteThread.thread", () => client.query("DELETE FROM cortex_analysis_threads WHERE thread_id = $1", [threadId])),
+                    tryMutation("thread-store.purgeThread.thread", () => client.query("DELETE FROM cortex_analysis_threads WHERE thread_id = $1", [threadId])),
                 )
                 .map(() => undefined),
         );
@@ -255,5 +259,5 @@ export function createThreadStore(pool: Pool): ThreadStore {
         });
     }
 
-    return { createThread, getThread, updateTitle, archiveThread, unarchiveThread, deleteThread, listThreads };
+    return { createThread, getThread, updateTitle, archiveThread, unarchiveThread, purgeThread, listThreads };
 }
