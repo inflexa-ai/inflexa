@@ -80,6 +80,12 @@ The harness SHALL expose `purgeAnalysis(analysisId)` as a host-agnostic operatio
 - **WHEN** the seam is asked for a namespace lookup, a cancellation, or a deletion
 - **THEN** each succeeds, reporting no ids found, nothing cancelled, and nothing deleted
 
+#### Scenario: A broken ledger is a failure, not an empty one
+
+- **GIVEN** a database where the engine's schema exists but its workflow table does not
+- **WHEN** the seam is asked for a namespace lookup, a cancellation, or a deletion
+- **THEN** each fails on the error channel, so a purge over a half-migrated ledger is never reported as one that reclaimed nothing
+
 ### Requirement: Purge cancels in-flight workflows before deleting them
 
 `purgeAnalysis` SHALL cancel an analysis's workflows before deleting their ledger rows. Deleting the status row of a running workflow does not stop the executor running it, which would then continue writing and re-materialize rows behind the purge — reproducing the orphans the operation exists to remove. Cancellation failure for a workflow SHALL NOT be swallowed: the operation SHALL surface it rather than proceed to a delete whose completeness it can no longer claim.
@@ -120,13 +126,37 @@ The harness SHALL expose `purgeAnalysis(analysisId)` as a host-agnostic operatio
 
 ### Requirement: A refusal the purge can raise itself is raised before anything is destroyed
 
-`purgeAnalysis` SHALL validate the analysis's derived vector-table name against the identifier shape that may be interpolated into DDL before it cancels a workflow or deletes any row, and SHALL refuse the whole operation on the error channel when the name does not conform. Raising that refusal from the drop stage instead would answer with an error only after the workflows were cancelled, their ledger rows deleted, and every `cortex_*` row removed — and would answer the same way on every retry, because the derived name never changes for a given analysis, so an analysis whose footprint was in fact entirely reclaimed could never be reported purged.
+`purgeAnalysis` SHALL validate the `analysisId` before it cancels a workflow or deletes any row, and SHALL refuse the whole operation on the error channel when it does not conform. Raising that refusal from a later stage would answer with an error only after the workflows were cancelled, their ledger rows deleted, and every `cortex_*` row removed — and would answer the same way on every retry, because the id never changes, so an analysis whose footprint was in fact entirely reclaimed could never be reported purged.
+
+The validated shape SHALL serve two purposes, and the requirement SHALL state both, because satisfying one of them incidentally is what makes the other fragile. First, the id derives the per-analysis vector-table name, which is interpolated into DDL, so the shape SHALL be one that is safe as a SQL identifier and SHALL bound its length against silent identifier truncation. Second, the id is embedded in the `dataprofile:{analysisId}:` namespace that the workflow lookup matches by prefix, so the shape SHALL exclude the namespace delimiter — without which a purge of one analysis would match another whose id extends it, and sweep that analysis's workflows into the cancel and the cascading delete.
 
 #### Scenario: A refused identifier destroys nothing
 
-- **GIVEN** an analysis whose derived vector-table name falls outside the permitted identifier shape
+- **GIVEN** an analysis id outside the permitted shape
 - **WHEN** `purgeAnalysis` is called for it
 - **THEN** it returns an error, and every one of the analysis's rows, its messages, and its workflow ledger rows remain
+
+#### Scenario: An id carrying the namespace delimiter is refused
+
+- **GIVEN** an analysis id containing the delimiter that separates the workflow id namespace from its payload
+- **WHEN** `purgeAnalysis` is called for it
+- **THEN** it refuses before any stage runs, so no other analysis whose id extends it can be reached
+
+#### Scenario: An id whose derived table name exceeds the identifier limit is refused
+
+- **GIVEN** an analysis id long enough that its derived vector-table name would be truncated by the database
+- **WHEN** `purgeAnalysis` is called for it
+- **THEN** it returns an error rather than dropping the table that the truncated name resolves to
+
+### Requirement: A purge is not serialized against work still starting on the analysis
+
+`purgeAnalysis` SHALL NOT be specified as serialized against concurrent work on the analysis, and its contract SHALL state the precondition that follows. The mapping from an analysis to its workflows is read once, before any deletion; a run inserted after that read is outside the captured set, and the same purge later deletes the `cortex_runs` row that is the only record naming it. That workflow and everything cascading off it are then attributable to no analysis, and no retry reaches them. A host SHALL therefore quiesce the analysis — no new runs, no new data-profile triggers — before purging it. The operation SHALL NOT claim that a re-run recovers such a workflow, and SHALL NOT enforce the precondition, since it cannot observe a host's in-flight work.
+
+#### Scenario: A run starting mid-purge is not recovered by a retry
+
+- **GIVEN** a run whose workflow starts after the purge has captured its workflow ids
+- **WHEN** the purge completes and is then re-run
+- **THEN** the re-run reports nothing further reclaimed, and the contract does not claim that workflow was recovered
 
 ### Requirement: Purge names what it does not reach
 

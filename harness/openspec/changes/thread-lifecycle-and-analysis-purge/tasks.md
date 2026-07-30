@@ -34,3 +34,16 @@
 - [x] 5.2 `bun test` green with `CORTEX_TEST_PG_URL` exported at a running pgvector Postgres — a bare `bun test` cannot start the testcontainer under podman.
 - [x] 5.3 `bun run format:file` on every touched file under `src/` only.
 - [x] 5.4 Grep the diff for comments citing spec artifacts, change names, task numbers, or PR history and inline the rationale instead; comments state the current constraint, never where it came from.
+
+## 6. Review findings
+
+- [x] 6.1 Retire the `deleteThread` name and ship `purgeThread`, so a stale consumer fails to build rather than upgrading into silent transcript loss.
+- [x] 6.2 Validate the `analysisId` at the entry point against a shape serving both the SQL-identifier and workflow-namespace jobs, with the coupling stated where the guard lives.
+- [x] 6.3 State the quiesce precondition on `purgeAnalysis` and narrow the outcome's re-run promise; report the workflow count as targeted-before-delete rather than reclaimed.
+- [x] 6.4 Distinguish an absent engine schema (nothing to purge) from a missing workflow table beneath one (a failure).
+- [x] 6.5 Carry the engine's stack through the logger adapter instead of dropping it.
+- [x] 6.6 Own the SQL identifier shape in one place, bound its length, and make the presence probe and the drop agree on quoting.
+- [x] 6.7 Cover all seven cascading ledger tables, seed each before asserting its post-purge zero, and pin the set against the live catalog.
+- [x] 6.8 Reclaim each test file's own seeded ledger rows in `afterAll`, scoped by its executor id.
+- [x] 6.9 Extract the duplicated ledger seeder into one shared test fixture.
+
