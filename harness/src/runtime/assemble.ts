@@ -16,7 +16,8 @@
  */
 
 import { createConversationAgent, type ConversationAgentDeps } from "../agents/conversation-agent.js";
-import { createNoopUsageRecorder, type UsageRecorder } from "../billing/usage-recorder.js";
+import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { registerExecuteAnalysis, type ExecuteAnalysisDeps, type ExecuteAnalysisInput, type ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
@@ -36,12 +37,20 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
  * Deps bundles for the durable workflows. `executeAnalysis` is a builder
  * because its `sandboxStepCallable` is the registered sandbox-step callable,
  * which does not exist until registration runs inside `assembleCoreRuntime`.
+ *
+ * Each bag omits `usageRecorder` for the same reason `ConversationAssemblyDeps`
+ * does: the recorder is resolved once below and stamped onto every bag this
+ * call registers, so one runtime reports to one ledger. Leaving it settable
+ * here would let an embedder wire a recorder the workflows use and the
+ * conversation agent does not — a half-wired ledger that reads as a complete
+ * one. The protection has to hold on both sides of the assembly, not just the
+ * conversation side.
  */
 export interface CoreWorkflowDeps {
-    readonly sandboxStep: SandboxStepDeps;
-    readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => ExecuteAnalysisDeps;
-    readonly executeTargetAssessment: ExecuteTargetAssessmentDeps;
-    readonly dataProfile: DataProfileDeps;
+    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder">;
+    readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<ExecuteAnalysisDeps, "usageRecorder">;
+    readonly executeTargetAssessment: Omit<ExecuteTargetAssessmentDeps, "usageRecorder">;
+    readonly dataProfile: Omit<DataProfileDeps, "usageRecorder">;
 }
 
 /** The registered, callable workflow handles. */

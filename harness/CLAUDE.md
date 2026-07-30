@@ -6,7 +6,7 @@ Guidance for Claude Code working with the Cortex **harness** package (`@inflexa-
 
 The harness is Cortex's **host-agnostic agent runtime**: a hand-rolled agent loop and execution boundary for long-running bioinformatics analysis. A single Conversation Agent handles all interactive work (data discovery, analysis planning, workflow triggering, result interpretation, hypothesis exploration), while compute-heavy work (R/Python) runs in isolated sandbox containers driven by DBOS-durable workflows.
 
-The harness ships everything that does not depend on a particular host: the loop, the two provider interfaces, `defineTool`, the dependency-injection composition pattern, the session value objects, the sandbox submit/recv protocol, memory, storage layout, and the five capability **seams** the harness declares (plus the shared `RunLauncher` seam). Embedders provide their own composition root and may swap the local seam realizations for host-specific ones.
+The harness ships everything that does not depend on a particular host: the loop, the two provider interfaces, `defineTool`, the dependency-injection composition pattern, the session value objects, the sandbox submit/recv protocol, memory, storage layout, and the six capability **seams** the harness declares (plus the shared `RunLauncher` seam). Embedders provide their own composition root and may swap the local seam realizations for host-specific ones.
 
 Source lives under `harness/src/...`; this doc uses those paths.
 
@@ -14,7 +14,7 @@ Design decisions are recorded in the OpenSpec specs (`openspec/specs/`), the sin
 
 ### Public interface
 
-`harness/src/index.ts` is the curated front door: it re-exports the embedder-facing surface only — `assembleCoreRuntime`, `createConversationAgent`, the five capability seams + their local adapters (`RunAuthorizer`/`createLocalRunAuthorizer`, `ResolveBilling`/`createNoopBillingResolver`, `ArtifactRegistry`/`createNoopArtifactRegistry`, `RunCharge`/`createNoopRunCharge`, `PreviewPublisher`/`UnavailablePreviewPublisher`), `RunLauncher`/`createDbosRunLauncher`, the `Logger` seam + its realizations (`createConsoleLogger`/`createNoopLogger`/`defaultErrorFields`), `defineTool`, `runAgent`, and the loop/session/provider public types. Prefer importing from `@inflexa-ai/harness` (the bare specifier resolves to this barrel). Every deep subpath (`@inflexa-ai/harness/...`) stays importable for internal wiring; the barrel is additive, not a wall.
+`harness/src/index.ts` is the curated front door: it re-exports the embedder-facing surface only — `assembleCoreRuntime`, `createConversationAgent`, the six capability seams + their local adapters (`RunAuthorizer`/`createLocalRunAuthorizer`, `ResolveBilling`/`createNoopBillingResolver`, `ArtifactRegistry`/`createNoopArtifactRegistry`, `RunCharge`/`createNoopRunCharge`, `UsageRecorder`/`createNoopUsageRecorder`, `PreviewPublisher`/`UnavailablePreviewPublisher`), `RunLauncher`/`createDbosRunLauncher`, the `Logger` seam + its realizations (`createConsoleLogger`/`createNoopLogger`/`defaultErrorFields`), `defineTool`, `runAgent`, and the loop/session/provider public types. Prefer importing from `@inflexa-ai/harness` (the bare specifier resolves to this barrel). Every deep subpath (`@inflexa-ai/harness/...`) stays importable for internal wiring; the barrel is additive, not a wall.
 
 `harness/package.json` is the package manifest: it declares the name `@inflexa-ai/harness`, `type: "module"`, the `exports` map (`.` → `dist/index.js`; `./*` and `./*.js` → `dist/*.js` — the extensioned pattern exists because harness-internal self-imports and consumers alike may write `.js`-suffixed deep specifiers, and a lone `./*` would capture the extension into `*` and resolve them to `dist/*.js.js`), and the `tsc -p tsconfig.json` build that emits `dist/`. At publish time consumers resolve the public surface through that `exports` map. During in-repo development the bare and deep specifiers (`@inflexa-ai/harness`, `@inflexa-ai/harness/*`) resolve through `harness/tsconfig.json`'s `paths` map (bare → `src/index.ts`, `/*` → `src/*`). The manifest declares its own `dependencies`, so the harness's third-party packages resolve from its own install — it is a standalone package, not a workspace member.
 
@@ -29,7 +29,7 @@ bun test                # Unit tests only — DB/DBOS suites need Postgres (see 
 
 **Runtime**: Node.js. Bun is used only for testing (`bun test`).
 
-**Composition**: `assembleCoreRuntime` is the single host-neutral assembly point — it registers the durable workflows with DBOS and builds the conversation agent over the registered callables. The local, dependency-free seam realizations (`createLocalRunAuthorizer`, `createNoopBillingResolver`, `createNoopRunCharge`, `createNoopArtifactRegistry`, `UnavailablePreviewPublisher`, `makeLocalAuth`) are exported from `index.ts`; an embedder constructs them (or its own realizations) and passes them into `assembleCoreRuntime` at its composition root. The local sandbox path creates ephemeral Docker containers per analysis step; session data, lib store, and ref store are host directories bind-mounted into them.
+**Composition**: `assembleCoreRuntime` is the single host-neutral assembly point — it registers the durable workflows with DBOS and builds the conversation agent over the registered callables. The local, dependency-free seam realizations (`createLocalRunAuthorizer`, `createNoopBillingResolver`, `createNoopRunCharge`, `createNoopUsageRecorder`, `createNoopArtifactRegistry`, `UnavailablePreviewPublisher`, `makeLocalAuth`) are exported from `index.ts`; an embedder constructs them (or its own realizations) and passes them into `assembleCoreRuntime` at its composition root. The local sandbox path creates ephemeral Docker containers per analysis step; session data, lib store, and ref store are host directories bind-mounted into them.
 
 **LLM backend** is whatever the wired `ChatProvider`/`EmbeddingProvider` points at — an embedder supplies an AI SDK `LanguageModel` instance or endpoint/key/model configuration (Anthropic or OpenAI-compatible). The local billing seam is a no-op (`createNoopBillingResolver`), so no attribution headers are added.
 
@@ -89,12 +89,13 @@ Both bundles satisfy the structural type `AgentSession` consumed by the loop and
 
 ### Capability Seams
 
-The harness declares five external seams as interfaces and ships trivial OSS realizations; an embedder may swap in cloud-backed ones. The harness's code only ever sees the interface.
+The harness declares six external seams as interfaces and ships trivial OSS realizations; an embedder may swap in cloud-backed ones. The harness's code only ever sees the interface.
 
 - **`RunAuthorizer`** (`execution/run-authorizer.ts`) — the only constructor of a `RunSession`. OSS: `auth/local-run-authorizer.ts` (no remote mint, no revoke).
 - **`ResolveBilling`** (`billing/resolver.ts`) — resolves attribution headers at the wire-call site. OSS: `billing/noop-resolver.ts` (empty headers).
 - **`ArtifactRegistry`** (`execution/artifact-registry.ts`) — records + syncs produced artifacts (`register(input, session)` + `sync(input, session)`, session-scoped). OSS: `createNoopArtifactRegistry` (registers nothing externally — the harness writes the local `cortex_artifacts` ledger itself around the seam; `sync` no-op).
 - **`RunCharge`** (`billing/run-charge.ts`) — run-level billing bracket (`open`/`close`) around `executeAnalysis`. OSS: `createNoopRunCharge`.
+- **`UsageRecorder`** (`billing/usage-recorder.ts`) — per-call LLM token accounting; `record` is fire-and-forget and must not throw or block. OSS: `billing/noop-usage-recorder.ts` (`createNoopUsageRecorder`, drops every record).
 - **`PreviewPublisher`** (`tools/report/preview-publisher.ts`) — publishes report previews. OSS: `UnavailablePreviewPublisher`.
 - **`RunLauncher`** (`execution/run-launcher.ts`) — starts a registered workflow under a caller-chosen id (fire-and-forget `launch` / inline `launchAndAwait`). The DBOS-quarantine seam: tools and the loop never import the durability engine — `execute_plan` / `run_ephemeral` launch through this. Single shared realization `createDbosRunLauncher` (`execution/dbos-run-launcher.ts`).
 

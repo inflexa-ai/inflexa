@@ -7,8 +7,8 @@
  *     the projection into the child input; neither crosses the join, so the join
  *     is tested here.
  *   - The `data-step-usage` run-event part: what the step's loop spent reaches
- *     the run stream once the loop completes, folds latest-wins across a
- *     replayed body, and is absent entirely when the loop reported nothing.
+ *     the run stream once the loop completes, under the step's stable part id,
+ *     and is absent entirely when the loop reported nothing.
  *
  * The usage tests drive `runSandboxStepBody` against a fake DBOS surface and a
  * fake deps bundle, the same shape `execute-analysis.test.ts` uses for the
@@ -322,18 +322,33 @@ describe("sandbox-step data-step-usage part", () => {
         expect(result.usage).toBeUndefined();
     });
 
-    it("folds latest-wins to one part per step id when a replayed body re-emits it", async () => {
-        // DBOS replays a recovered workflow's body, so the emission re-fires. The
-        // id is stable per (runId, stepId), which is what lets the stream's
-        // latest-wins fold collapse the two into one.
+    it("names its emission with the step's stable id, so one step is one part", async () => {
+        // The id is a pure function of (runId, stepId) — the rule every step part
+        // here follows — so re-executing the body names the same part rather than
+        // inventing a second step's worth of usage.
         const input = usageStepInput();
         await runSandboxStepBody(input, usageStepDeps({ inputTokens: 120, outputTokens: 34 }));
         await runSandboxStepBody(input, usageStepDeps({ inputTokens: 120, outputTokens: 34 }));
 
-        expect(usageParts(dbosState.emittedParts).length).toBe(2);
-        const folded = usageParts(foldStream(dbosState.emittedParts));
-        expect(folded.length).toBe(1);
-        expect(folded[0]?.usage).toEqual({ inputTokens: 120, outputTokens: 34 });
+        const emitted = usageParts(dbosState.emittedParts);
+        expect(emitted.length).toBe(2);
+        expect(new Set(emitted.map((p) => p.id))).toEqual(new Set([`step-usage-${USAGE_RUN_ID}-${USAGE_STEP_ID}`]));
+        expect(emitted.map((p) => p.usage)).toEqual([
+            { inputTokens: 120, outputTokens: 34 },
+            { inputTokens: 120, outputTokens: 34 },
+        ]);
+    });
+
+    it("is published as non-reconciling, like its once-per-step siblings", () => {
+        // The registry entry is the contract a consumer folds by. A body-level
+        // `DBOS.writeStream` is checkpointed at its function id, so a replayed body
+        // appends no second row: this part reaches the stream once per step, exactly
+        // as the other terminal step parts do, and claiming otherwise would tell
+        // consumers to fold something that never doubles.
+        expect(isReconciling("data-step-usage")).toBe(false);
+        for (const sibling of ["data-step-summary", "data-step-output", "data-step-blocked"] as const) {
+            expect(isReconciling(sibling)).toBe(isReconciling("data-step-usage"));
+        }
     });
 
     it("emits one part per step id when two steps of the same run report usage", async () => {

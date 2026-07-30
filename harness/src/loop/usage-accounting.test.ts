@@ -15,10 +15,11 @@ import type { LlmUsageRecord, UsageRecorder } from "../billing/usage-recorder.js
 import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage } from "../providers/types.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
+import { createLiteratureReviewerTool } from "../tools/research/literature-reviewer.js";
 import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
 import { runAgent, type AgentFinish, type RunAgentOptions } from "./run-agent.js";
 import { passthroughStep } from "./run-step.js";
-import type { AgentDefinition } from "./types.js";
+import type { AgentDefinition, RunStep } from "./types.js";
 
 // ── Harness helpers ─────────────────────────────────────────────────
 
@@ -50,6 +51,24 @@ function opts(provider: ChatProvider, recorder: UsageRecorder, overrides: Partia
         usageRecorder: recorder,
         ...overrides,
     };
+}
+
+/**
+ * A `RunStep` that caches by step name, standing in for the durability engine:
+ * a second run over the same inputs re-executes the loop body while every step
+ * it already completed returns its recorded value without calling the body.
+ */
+function cachingStep(): { runStep: RunStep; names: string[] } {
+    const cache = new Map<string, unknown>();
+    const names: string[] = [];
+    const runStep: RunStep = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+        names.push(name);
+        if (cache.has(name)) return cache.get(name) as T;
+        const value = await fn();
+        cache.set(name, value);
+        return value;
+    };
+    return { runStep, names };
 }
 
 /** A session inside a run step — the shape that makes record keys replay-stable. */
@@ -228,16 +247,17 @@ describe("runAgent usage records — replay-safe keys", () => {
             makeMessage([textBlock("done")], "end_turn", usage(5, 1)),
         ]);
 
-    it("composes the identical keys from runId, stepId and step name across two identical runs", async () => {
+    it("composes the identical keys from runId, stepId, call path and step name across two identical runs", async () => {
         const first = recordingRecorder();
         await runAgent(agentDef([echoTool]), GO, runFramedSession(), opts(twoCallScript(), first.recorder));
 
         const second = recordingRecorder();
         await runAgent(agentDef([echoTool]), GO, runFramedSession(), opts(twoCallScript(), second.recorder));
 
-        // The loop's own deterministic step names, discriminated by the frame —
-        // not a second numbering scheme that could drift from the durable one.
-        expect(first.records.map((r) => r.recordKey)).toEqual(["run-1:step-a:llm-0", "run-1:step-a:llm-1"]);
+        // The loop's own deterministic step names, discriminated by the frame and
+        // the call path — not a second numbering scheme that could drift from the
+        // durable one.
+        expect(first.records.map((r) => r.recordKey)).toEqual(["run-1:step-a:conversation-agent:llm-0", "run-1:step-a:conversation-agent:llm-1"]);
         expect(second.records.map((r) => r.recordKey)).toEqual(first.records.map((r) => r.recordKey));
     });
 
@@ -253,9 +273,28 @@ describe("runAgent usage records — replay-safe keys", () => {
 
         const keysA = stepA.records.map((r) => r.recordKey);
         const keysB = stepB.records.map((r) => r.recordKey);
-        expect(keysA).toEqual(["run-1:step-a:llm-0", "run-1:step-a:llm-1"]);
-        expect(keysB).toEqual(["run-1:step-b:llm-0", "run-1:step-b:llm-1"]);
+        expect(keysA).toEqual(["run-1:step-a:conversation-agent:llm-0", "run-1:step-a:conversation-agent:llm-1"]);
+        expect(keysB).toEqual(["run-1:step-b:conversation-agent:llm-0", "run-1:step-b:conversation-agent:llm-1"]);
         expect(keysA.filter((k) => keysB.includes(k))).toEqual([]);
+    });
+
+    it("keeps sibling loops sharing one frame disjoint despite identical loop-local step names", async () => {
+        // The post-step describer and the summary writer run under the SAME
+        // `{runId, stepId}`, and each restarts its names at `llm-0`; the
+        // provenance call path is the only thing that separates them.
+        const frame = runFramedSession();
+
+        const describer = recordingRecorder();
+        await runAgent(agentDef([echoTool], 8, "file-describer"), GO, forSubAgent(frame, "file-describer"), opts(twoCallScript(), describer.recorder));
+
+        const writer = recordingRecorder();
+        await runAgent(agentDef([echoTool], 8, "step-summary-writer"), GO, forSubAgent(frame, "step-summary-writer"), opts(twoCallScript(), writer.recorder));
+
+        const describerKeys = describer.records.map((r) => r.recordKey);
+        const writerKeys = writer.records.map((r) => r.recordKey);
+        expect(describerKeys).toEqual(["run-1:step-a:conversation-agent>file-describer:llm-0", "run-1:step-a:conversation-agent>file-describer:llm-1"]);
+        expect(writerKeys).toEqual(["run-1:step-a:conversation-agent>step-summary-writer:llm-0", "run-1:step-a:conversation-agent>step-summary-writer:llm-1"]);
+        expect(describerKeys.filter((k) => writerKeys.includes(k))).toEqual([]);
     });
 
     it("drops the stepId segment for a frame that carries none", async () => {
@@ -265,7 +304,7 @@ describe("runAgent usage records — replay-safe keys", () => {
 
         // The parent workflow's loops collide with nothing — their keys are one
         // segment shorter than any step's.
-        expect(records.map((r) => r.recordKey)).toEqual(["run-1:llm-0", "run-1:llm-1"]);
+        expect(records.map((r) => r.recordKey)).toEqual(["run-1:conversation-agent:llm-0", "run-1:conversation-agent:llm-1"]);
         expect(records[0]!.stepId).toBeUndefined();
     });
 
@@ -282,7 +321,7 @@ describe("runAgent usage records — replay-safe keys", () => {
             }),
         );
 
-        expect(records[0]!.recordKey).toBe("run-1:step-a:llm:0");
+        expect(records[0]!.recordKey).toBe("run-1:step-a:conversation-agent:llm:0");
     });
 
     it("mints a distinct key per call outside a RunFrame", async () => {
@@ -297,6 +336,39 @@ describe("runAgent usage records — replay-safe keys", () => {
         const keys = records.map((r) => r.recordKey);
         expect(keys).toHaveLength(2);
         expect(new Set(keys).size).toBe(2);
+    });
+
+    it("re-delivers the same keys on a replay whose steps are all served from the cache", async () => {
+        // The durability semantic this capability rests on: a replayed body
+        // re-executes while every completed step returns its cached value. A
+        // caching `runStep` is what reproduces it — `passthroughStep` re-runs the
+        // provider and so cannot tell record delivery inside the durable step
+        // from delivery around it.
+        const step = cachingStep();
+        let providerCalls = 0;
+        const provider = scriptedProvider((callIndex) => {
+            providerCalls++;
+            return callIndex === 0
+                ? makeMessage([toolUseBlock("tu-fixed", "echo", { label: "x" })], "tool_use", usage(10, 2))
+                : makeMessage([textBlock("done")], "end_turn", usage(5, 1));
+        });
+
+        const first = recordingRecorder();
+        await runAgent(agentDef([echoTool]), GO, runFramedSession(), opts(provider, first.recorder, { runStep: step.runStep }));
+        const callsAfterFirst = providerCalls;
+
+        const replay = recordingRecorder();
+        await runAgent(agentDef([echoTool]), GO, runFramedSession(), opts(provider, replay.recorder, { runStep: step.runStep }));
+
+        // Nothing reached the wire the second time — every LLM and tool step was
+        // served from the cache, exactly as a DBOS replay serves them.
+        expect(providerCalls).toBe(callsAfterFirst);
+        expect(provider.calls).toHaveLength(callsAfterFirst);
+        // Yet the records fired again, with the identical keys: delivery sits
+        // outside the durable step, so an upserting sink counts each call once.
+        expect(first.records.map((r) => r.recordKey)).toEqual(["run-1:step-a:conversation-agent:llm-0", "run-1:step-a:conversation-agent:llm-1"]);
+        expect(replay.records.map((r) => r.recordKey)).toEqual(first.records.map((r) => r.recordKey));
+        expect(replay.records.map((r) => r.usage)).toEqual(first.records.map((r) => r.usage));
     });
 });
 
@@ -317,6 +389,7 @@ function delegateTool(childProvider: ChatProvider, recorder: UsageRecorder, capt
                 runStep: passthroughStep,
                 usageRecorder: recorder,
                 turnUsage: ctx.turnUsage,
+                invocationId: ctx.invocationId,
             });
             capture.finish = result.finish;
             return ok({ delegated: true });
@@ -362,6 +435,62 @@ describe("runAgent usage — sub-agent runs", () => {
         // The child created no accumulator, so it is not the root and reports no turn total.
         expect(capture.finish!.usage).toEqual({ inputTokens: 100, outputTokens: 20 });
         expect(capture.finish!.turnUsage).toBeUndefined();
+    });
+
+    it("keeps parallel invocations of one sub-agent disjoint", async () => {
+        // Both child loops run under the same frame, under the same call path,
+        // and name their first call `llm-0`; the dispatching tool-call id is the
+        // only thing left to tell them apart.
+        const { recorder, records } = recordingRecorder();
+        const capture: { finish?: AgentFinish } = {};
+        const parent = scriptedProvider([
+            makeMessage([toolUseBlock("tu-a", "delegate", {}), toolUseBlock("tu-b", "delegate", {})], "tool_use", usage(10, 2)),
+            makeMessage([textBlock("done")], "end_turn", usage(5, 1)),
+        ]);
+        const child = scriptedProvider(() => makeMessage([textBlock("child done")], "end_turn", usage(100, 20)));
+
+        await runAgent(agentDef([delegateTool(child, recorder, capture)]), GO, runFramedSession(), opts(parent, recorder));
+
+        const childKeys = records.filter((r) => r.agentId === "child-agent").map((r) => r.recordKey);
+        expect(childKeys).toHaveLength(2);
+        expect(new Set(childKeys)).toEqual(
+            new Set(["run-1:step-a:conversation-agent>child-agent:tu-a:llm-0", "run-1:step-a:conversation-agent>child-agent:tu-b:llm-0"]),
+        );
+    });
+
+    it("threads the deps bag and the turn accumulator through a real sub-agent factory", async () => {
+        // The tests above drive a stand-in tool written here, which proves the loop
+        // honours what a tool passes down but not that any shipped factory passes
+        // it. `createLiteratureReviewerTool` is the lightest real one — a provider,
+        // a model label, and empty API keys — so it is what pins the wiring the
+        // factories actually carry: the recorder from its deps, `ctx.turnUsage`,
+        // and `ctx.invocationId`.
+        const { recorder, records } = recordingRecorder();
+        const childProvider = scriptedProvider([makeMessage([textBlock("evidence report")], "end_turn", usage(100, 20))]);
+        const reviewer = createLiteratureReviewerTool({
+            provider: childProvider,
+            model: "claude-test",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            usageRecorder: recorder,
+        });
+        const parent = scriptedProvider([
+            makeMessage([toolUseBlock("tu-lit", "literature_reviewer", { brief: "profile these genes" })], "tool_use", usage(10, 2)),
+            makeMessage([textBlock("done")], "end_turn", usage(5, 1)),
+        ]);
+
+        const { finish } = await runAgent(agentDef([reviewer]), GO, runFramedSession(), opts(parent, recorder));
+
+        const childRecords = records.filter((r) => r.agentId === "literature-reviewer");
+        expect(childRecords).toHaveLength(1);
+        expect(childRecords[0]!.callPath).toEqual(["conversation-agent", "literature-reviewer"]);
+        expect(childRecords[0]!.usage).toEqual({ inputTokens: 100, outputTokens: 20 });
+        // The dispatching tool call's id rides in the key — the discriminator that
+        // only reaches the child because the factory forwards `ctx.invocationId`.
+        expect(childRecords[0]!.recordKey).toBe("run-1:step-a:conversation-agent>literature-reviewer:tu-lit:llm-0");
+
+        // The child folded into the root's accumulator rather than a private one.
+        expect(finish.usage).toEqual({ inputTokens: 15, outputTokens: 3 });
+        expect(finish.turnUsage).toEqual({ inputTokens: 115, outputTokens: 23 });
     });
 
     it("reports no turn total when the caller supplied the accumulator", async () => {

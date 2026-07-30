@@ -28,3 +28,36 @@ export interface TokenUsageRollup {
      */
     readonly reasoningTokens?: number;
 }
+
+/**
+ * The rollup's fields as values — the single enumeration a fold can iterate.
+ *
+ * This shape is declared four times over: here, on the provider seam's
+ * `ChatUsage`, on the loop's mutable `AgentRunUsage`, and on the Zod schema
+ * beside this file. Nothing but this list joins them, and it is deliberately
+ * the *only* thing that does: `contracts/` is the Cortex↔consumer wire
+ * vocabulary and must not import the loop, the providers, or the AI SDK, so a
+ * shared base type is not available to it. What is available is a
+ * dependency-free constant every side may import — the loop folds by iterating
+ * it (`loop/metrics.ts:addChatUsage`), and the declarations that cannot be
+ * expressed in terms of it are pinned to it by key-set assertions at their own
+ * sites, which is why adding a sixth count in one place fails `tsc` instead of
+ * silently going unfolded.
+ *
+ * `satisfies` rejects a name that is not a field; the assertion below rejects a
+ * field that is not named. Both directions are needed — either alone leaves one
+ * kind of drift compiling.
+ */
+export const TOKEN_USAGE_FIELDS = [
+    "inputTokens",
+    "outputTokens",
+    "cacheCreationInputTokens",
+    "cacheReadInputTokens",
+    "reasoningTokens",
+] as const satisfies readonly (keyof TokenUsageRollup)[];
+
+/** One token-usage field name. */
+export type TokenUsageField = (typeof TOKEN_USAGE_FIELDS)[number];
+
+type _AssertFieldsComplete = Exclude<keyof TokenUsageRollup, TokenUsageField> extends never ? true : never;
+const _assertFieldsComplete: _AssertFieldsComplete = true;

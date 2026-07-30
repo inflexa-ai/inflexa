@@ -189,4 +189,38 @@ describe("runToTerminal", () => {
         expect(finish.usage).toEqual({ inputTokens: 23, outputTokens: 9 });
         expect(finish.turnUsage).toEqual(finish.usage!);
     });
+
+    it("leaves both rollups absent when neither pass reported usage", async () => {
+        const cell = { value: null as string | null };
+        const tool = submitTool(cell);
+        // Both passes run — the first ends on prose, the salvage one submits —
+        // and no reply carries usage, so the summed rollups must stay absent
+        // rather than collapse to an all-zero `{}` nobody reported.
+        const provider = scriptedProvider((_i, request) => {
+            const last = request.messages.at(-1);
+            const isSalvage = last?.role === "user" && typeof last.content === "string" && last.content === NUDGE;
+            return isSalvage
+                ? makeMessage([toolUseBlock("t1", "submit", { answer: "salvaged" })], "tool_use")
+                : makeMessage([textBlock("thinking")], "end_turn");
+        });
+
+        const { finish } = await runToTerminal(
+            agentDef([tool]),
+            GO,
+            makeSession(),
+            {
+                provider,
+                signal: new AbortController().signal,
+                emit: () => {},
+                runStep: passthroughStep,
+            },
+            { resolved: () => cell.value !== null, tools: [tool], nudge: NUDGE },
+        );
+
+        expect(cell.value).toBe("salvaged");
+        expect("usage" in finish).toBe(false);
+        expect("turnUsage" in finish).toBe(false);
+        expect(finish.usage).toBeUndefined();
+        expect(finish.turnUsage).toBeUndefined();
+    });
 });

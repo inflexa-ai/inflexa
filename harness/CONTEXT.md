@@ -42,7 +42,7 @@ The harness's identity model is **host-agnostic**: a session carries an *opaque*
 - **`Credential` (opaque)** — A branded value the harness never reads. The harness only ever *forwards* it; its concrete shape is defined entirely embedder-side. The variant an OSS reader meets is the trivial local one. Branding makes the "never branch on credential kind" promise type-enforced.
 - **`AuthContext` (opaque auth capability)** — The `auth` field every session carries and the **sole source** of credential/scope behind a session (there is no top-level `orgId`/`credential` field). The harness forwards it untouched and never downcasts it; embedder adapters may downcast their own concrete shape. The OSS build supplies a trivial empty `auth` (`makeLocalAuth`, `auth/local-auth-context.ts`); the local harness never inspects it.
 
-### The five seams
+### The six seams
 
 Each seam is an interface the harness declares; an embedder binds one realization at the composition root.
 
@@ -50,6 +50,7 @@ Each seam is an interface the harness declares; an embedder binds one realizatio
 - **`ResolveBilling`** (`billing/resolver.ts`) — returns a ready-to-attach call-attribution header map the provider spreads at the LLM/embedding call site; resolved lazily, only at the wire boundary. OSS realization: `createNoopBillingResolver` returns `{}` (empty headers).
 - **`ArtifactRegistry`** (`execution/artifact-registry.ts`) — post-step artifact recording (content-attested lineage): `register` the step's manifest + `sync` its bytes to permanent storage, both session-scoped (the adapter authenticates per-run off the session). OSS realization: `createNoopArtifactRegistry` — registers nothing externally and reports zero failures (the local `cortex_artifacts` ledger is written by the harness around the seam); `sync` is a no-op (bytes already live in the local workspace tree).
 - **`RunCharge`** (`billing/run-charge.ts`) — the run-level billing bracket `executeAnalysis` opens at init and closes on the terminal path (one of four reasons). Local realization: `createNoopRunCharge` — no-op.
+- **`UsageRecorder`** (`billing/usage-recorder.ts`) — one attributed `LlmUsageRecord` per completed LLM call, delivered from the loop; fire-and-forget by contract, so a realization must neither throw nor block, and consumers upsert on the record's replay-stable `recordKey`. Local realization: `createNoopUsageRecorder` (`billing/noop-usage-recorder.ts`) — drops every record.
 - **`PreviewPublisher`** (`tools/report/preview-publisher.ts`) — report preview URL publishing. Local realization: `UnavailablePreviewPublisher` — reports still build; preview URL minting is gated.
 - **`RunLauncher`** (`execution/run-launcher.ts`) — starts a registered workflow under a caller-chosen id (`launch` fire-and-forget, `launchAndAwait` inline with cancel-on-abort, cancellation hidden behind a discriminated `LaunchOutcome`). The DBOS quarantine seam: it is why `execute_plan` / `run_ephemeral` do not import the durability engine. Single host-neutral realization `createDbosRunLauncher` (`execution/dbos-run-launcher.ts`) shared by every embedder.
 

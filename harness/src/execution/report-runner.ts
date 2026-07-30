@@ -111,6 +111,13 @@ export interface ReportRunnerOptions {
      * report-builder loop's tokens land in the turn total its root reports.
      */
     readonly turnUsage?: AgentRunUsage;
+    /**
+     * The dispatching tool call's id (`ctx.invocationId`), which discriminates
+     * the builder loop's usage record keys from those of a sibling iteration
+     * dispatched in the same round — same frame, same call path, same
+     * loop-local step names.
+     */
+    readonly invocationId?: string;
 }
 
 export type ReportRunnerResult =
@@ -247,6 +254,7 @@ export async function runReportIteration(deps: ReportRunnerDeps, opts: ReportRun
                     usageRecorder: deps.usageRecorder,
                     // Fold the builder's calls into the turn total the root loop reports.
                     turnUsage: opts.turnUsage,
+                    invocationId: opts.invocationId,
                 },
                 {
                     tools: [buildReportTool, submitReportTool],

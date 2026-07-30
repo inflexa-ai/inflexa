@@ -31,6 +31,7 @@
 
 import { type Counter, type Histogram, metrics } from "@opentelemetry/api";
 
+import { TOKEN_USAGE_FIELDS, type TokenUsageField } from "../contracts/usage.js";
 import type { ChatUsage } from "../providers/types.js";
 
 interface Instruments {
@@ -94,10 +95,21 @@ export interface AgentRunUsage {
     reasoningTokens?: number;
 }
 
+// This module is where the three declarations of the usage shape meet: it folds
+// a `ChatUsage` into an `AgentRunUsage` by iterating `TOKEN_USAGE_FIELDS`, the
+// contracts-side list the wire rollup is defined by. `contracts/` cannot import
+// either of these types (it must stay free of the loop and the provider seam),
+// so the assertions pinning them to that list live here, on the consuming side.
+// Key-set equality in both directions is what makes them bite: an `extends`
+// check would accept a shape carrying an extra count, which is precisely the
+// drift that leaves a new field silently unfolded and unreported.
+type _AssertRunUsageFields = Exclude<keyof AgentRunUsage, TokenUsageField> | Exclude<TokenUsageField, keyof AgentRunUsage> extends never ? true : never;
+const _assertRunUsageFields: _AssertRunUsageFields = true;
+
 /** Fold one call's reported usage into a run's running total. */
 export function addChatUsage(total: AgentRunUsage, usage: ChatUsage | undefined): void {
     if (usage === undefined) return;
-    for (const key of ["inputTokens", "outputTokens", "cacheCreationInputTokens", "cacheReadInputTokens", "reasoningTokens"] as const) {
+    for (const key of TOKEN_USAGE_FIELDS) {
         const value = usage[key];
         if (value !== undefined) total[key] = (total[key] ?? 0) + value;
     }

@@ -1100,6 +1100,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                         usageRecorder: deps.usageRecorder,
                         // Fold the planner's calls into the turn total the root loop reports.
                         turnUsage: ctx.turnUsage,
+                        // Keeps the usage record keys of two parallel dispatches disjoint —
+                        // same frame, same call path, same loop-local step names.
+                        invocationId: ctx.invocationId,
                     },
                     {
                         tools: innerTools.terminal,
