@@ -42,6 +42,34 @@ const runResolvesAbortedWithPartial: ChatTurnSeams["run"] = (_agent, initial) =>
 const runResolvesAbortedEmpty: ChatTurnSeams["run"] = (_agent, initial) =>
     Promise.resolve({ messages: [...initial], finish: { reason: "aborted", cappedOut: false, truncationRecoveries: 0 } });
 /**
+ * A whole-turn rollup as a provider reports one. It deliberately carries the cache and reasoning
+ * breakdowns alongside the two headline counts: those are breakdowns OF `inputTokens`/`outputTokens`,
+ * so an engine that folded them in anywhere would show up as an inflated headline figure here.
+ */
+const TURN_USAGE = { inputTokens: 12_400, outputTokens: 3100, cacheReadInputTokens: 9800, reasoningTokens: 900 } as const;
+/** What the TOP-LEVEL loop alone reported — deliberately smaller than {@link TURN_USAGE}, which includes its sub-agents. */
+const LOOP_OWN_USAGE = { inputTokens: 4000, outputTokens: 1000 } as const;
+/** What an interrupted turn had spent by the time the abort landed. */
+const PARTIAL_USAGE = { inputTokens: 800, outputTokens: 120 } as const;
+
+/**
+ * A `run` seam that finishes cleanly reporting BOTH figures the harness offers: `usage` (this loop's
+ * own calls) and `turnUsage` (the whole turn, every descendant sub-agent loop included). The engine
+ * passes no accumulator into `runAgent`, so its loop is the turn's root and `turnUsage` is the one to
+ * carry — having both here is what makes a regression to `usage` visible.
+ */
+const runOkWithUsage: ChatTurnSeams["run"] = (_agent, initial) =>
+    Promise.resolve({
+        messages: [...initial, assistantMessage],
+        finish: { reason: "stop", cappedOut: false, truncationRecoveries: 0, usage: { ...LOOP_OWN_USAGE }, turnUsage: { ...TURN_USAGE } },
+    });
+/** A `run` seam that resolves an "aborted" finish reporting what the turn had already spent. */
+const runResolvesAbortedWithUsage: ChatTurnSeams["run"] = (_agent, initial) =>
+    Promise.resolve({
+        messages: [...initial, partialAssistant],
+        finish: { reason: "aborted", cappedOut: false, truncationRecoveries: 0, turnUsage: { ...PARTIAL_USAGE } },
+    });
+/**
  * A `run` seam that throws the AbortError the streaming provider re-throws verbatim on cancellation
  * (name "AbortError"). The abort classification keys on the error's NAME, not merely on `signal.aborted`.
  */
@@ -206,6 +234,79 @@ describe("runChatTurn", () => {
             expect(outcome.fallbackText).toBe("the answer");
             expect(outcome.appendError).toEqual(DB_ERROR);
         }
+    });
+});
+
+// The turn's own total rides the outcome rather than being read back from the usage ledger: a
+// chat-path usage record is attributed to a thread, never to a turn, so the ledger structurally
+// cannot answer "what did THIS turn cost". These pin what the engine forwards, and — just as
+// importantly — when it forwards nothing.
+describe("runChatTurn carries the turn's usage rollup", () => {
+    test("an ok turn carries the finish's rollup whole, per quantity", async () => {
+        const { history } = recordingHistory();
+        const outcome = await runWith({ prepare: prepareOk, run: runOkWithUsage, history, signal: new AbortController().signal });
+        expect(outcome.kind).toBe("ok");
+        // Whole, not reduced: every quantity the provider reported survives, and the two headline
+        // counts are exactly what was reported — nothing folded the cache/reasoning breakdowns in.
+        if (outcome.kind === "ok") expect(outcome.turnUsage).toEqual(TURN_USAGE);
+    });
+
+    test("the rollup is the TURN's, not the root loop's own — a sub-agent's spend is included", async () => {
+        const { history } = recordingHistory();
+        const outcome = await runWith({ prepare: prepareOk, run: runOkWithUsage, history, signal: new AbortController().signal });
+        if (outcome.kind !== "ok") throw new Error(`expected ok, got ${outcome.kind}`);
+        // The finish offered both. Reading `usage` would report only the top-level loop's calls and
+        // silently undercount every turn that dispatched a sub-agent.
+        expect(outcome.turnUsage?.inputTokens).toBe(TURN_USAGE.inputTokens);
+        expect(outcome.turnUsage?.inputTokens ?? 0).toBeGreaterThan(LOOP_OWN_USAGE.inputTokens);
+    });
+
+    test("an interrupted turn carries what it spent before the abort", async () => {
+        const { history } = recordingHistory();
+        const outcome = await runWith({ prepare: prepareOk, run: runResolvesAbortedWithUsage, history, signal: new AbortController().signal });
+        expect(outcome.kind).toBe("aborted");
+        if (outcome.kind === "aborted") expect(outcome.turnUsage).toEqual(PARTIAL_USAGE);
+    });
+
+    test("a turn whose calls reported nothing carries NO rollup — no key, and no zeroed stand-in", async () => {
+        const { history } = recordingHistory();
+        const outcome = await runWith({ prepare: prepareOk, run: runOk, history, signal: new AbortController().signal });
+        expect(outcome.kind).toBe("ok");
+        if (outcome.kind === "ok") expect(outcome.turnUsage).toBeUndefined();
+        // Absence is structural, not a field holding `undefined`: a consumer that tests for the key
+        // must read "nothing was reported", never "reported as unknown".
+        expect("turnUsage" in outcome).toBe(false);
+    });
+
+    test("a failed turn carries no rollup — a run that THREW resolved no finish to read one from", async () => {
+        const { history } = recordingHistory();
+        const outcome = await runWith({
+            prepare: prepareOk,
+            run: () => Promise.reject(new Error("provider 503")),
+            history,
+            signal: new AbortController().signal,
+        });
+        expect(outcome.kind).toBe("failed");
+        expect("turnUsage" in outcome).toBe(false);
+    });
+
+    test("the carried rollup is a snapshot — the harness mutating its accumulator afterwards cannot change it", async () => {
+        // `AgentRunUsage`'s fields are mutable and the value travels into a Solid store, so the engine
+        // hands out something it owns rather than an alias of the loop's accumulator.
+        const live = { inputTokens: 100, outputTokens: 10 };
+        const { history } = recordingHistory();
+        const outcome = await runWith({
+            prepare: prepareOk,
+            run: (_agent, initial) =>
+                Promise.resolve({
+                    messages: [...initial, assistantMessage],
+                    finish: { reason: "stop", cappedOut: false, truncationRecoveries: 0, turnUsage: live },
+                }),
+            history,
+            signal: new AbortController().signal,
+        });
+        live.inputTokens = 999_999;
+        if (outcome.kind === "ok") expect(outcome.turnUsage?.inputTokens).toBe(100);
     });
 });
 

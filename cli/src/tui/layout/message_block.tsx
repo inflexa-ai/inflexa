@@ -14,6 +14,7 @@ import { Bold, Fg, Italic } from "../components/emphasis.tsx";
 import { entryDegraded, resolveEntryPath } from "../../modules/harness/artifact_open.ts";
 import { openArtifact, openArtifactFolder } from "../hooks/artifacts.ts";
 import { activeRunProgress, runsSnapshot, RUN_STATUS_TERMINAL } from "../hooks/sidebar_live.ts";
+import type { TurnUsage } from "../../modules/harness/turn.ts";
 import type { AskCardPart, MessageRole, OpenableCardPart, Part } from "../../types/session.ts";
 
 /**
@@ -54,6 +55,30 @@ export function resolveRunCardState(runId: string): RunCardState | undefined {
     };
 }
 
+/**
+ * The turn's spend as the meta line carries it — an input figure and an output figure,
+ * `12.4k in · 3.1k out`, through the shared `Number.formatTokens` vocabulary.
+ *
+ * TWO figures, never one. The rollup's other three quantities are breakdowns OF these two — the two
+ * cache counts are part of `inputTokens`, reasoning part of `outputTokens` — so adding anything
+ * together here would count a cached prefix twice and produce a number whose meaning changes with
+ * each provider's cache reporting. The breakdowns are deliberately not rendered on this line either:
+ * a header has room for the headline pair, and a breakdown is only honest where there is space to
+ * label what it is a breakdown of.
+ *
+ * A quantity the provider never reported contributes NO figure rather than a zero, so a rollup with
+ * neither headline count yields `""` and the caller appends nothing.
+ *
+ * Exported for its unit test — the "never summed" property is a claim about this arithmetic, and a
+ * character frame that merely contains two numbers cannot pin which numbers they are.
+ */
+export function formatTurnUsage(usage: TurnUsage): string {
+    const figures: string[] = [];
+    if (usage.inputTokens !== undefined) figures.push(`${usage.inputTokens.formatTokens()} in`);
+    if (usage.outputTokens !== undefined) figures.push(`${usage.outputTokens.formatTokens()} out`);
+    return figures.join(` ${GLYPHS.middot} `);
+}
+
 /** Props for {@link MessageBlock}. */
 export type MessageBlockProps = {
     /** 1-based position of this turn in the rendered conversation, shown beside the role label. */
@@ -62,6 +87,13 @@ export type MessageBlockProps = {
     role: MessageRole;
     /** Assistant-only turn duration in ms; shown beside the number. Omitted on user turns and before the turn finishes. */
     durationMs?: number;
+    /**
+     * Assistant-only: what the whole turn consumed, rendered beside the duration as an input figure and
+     * an output figure. Omitted whenever the run reported nothing — the meta line then shows the
+     * duration alone, with no zero and no placeholder, because "no provider reported anything" and
+     * "nothing was spent" are different facts and only the second one is a number.
+     */
+    turnUsage?: TurnUsage;
     /**
      * Assistant-only: the turn was interrupted after it had streamed output, so the header carries a muted
      * "interrupted" marker. Two sources feed one flag — the live abort path sets it directly, and a
@@ -87,11 +119,17 @@ export type MessageBlockProps = {
  * accessors and flips to the stored text once the part completes.
  */
 export function MessageBlock(props: MessageBlockProps) {
-    // `· #N`, plus `· <dur>` for a completed assistant turn (via the shared Date.formatDuration
-    // vocabulary). User turns and not-yet-finished assistant turns show only the number.
+    // `· #N`, plus `· <dur>` and `· <in> · <out>` for a completed assistant turn (via the shared
+    // Date.formatDuration / Number.formatTokens vocabularies). User turns and not-yet-finished
+    // assistant turns show only the number.
     const meta = (): string => {
-        const dur = props.role === "assistant" && props.durationMs !== undefined ? ` ${GLYPHS.middot} ${Date.formatDuration(props.durationMs)}` : "";
-        return `  ${GLYPHS.middot} #${props.index}${dur}`;
+        const assistant = props.role === "assistant";
+        const dur = assistant && props.durationMs !== undefined ? ` ${GLYPHS.middot} ${Date.formatDuration(props.durationMs)}` : "";
+        const usage = assistant && props.turnUsage !== undefined ? formatTurnUsage(props.turnUsage) : "";
+        // Guarded so an unreported turn appends nothing at all — not a separator with empty figures
+        // after it, which would read as a measurement that failed to print.
+        const spend = usage === "" ? "" : ` ${GLYPHS.middot} ${usage}`;
+        return `  ${GLYPHS.middot} #${props.index}${dur}${spend}`;
     };
     // Body indent, kept gutter-aligned across roles. An assistant body pads by space.md (2). A user
     // body rides a left border rule (the quoted-content idiom), whose glyph eats one gutter cell — so it

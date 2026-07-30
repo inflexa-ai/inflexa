@@ -23,7 +23,15 @@ import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setu
 import { workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { eventDepth, isSubAgentEvent, readAskPart, readPlanCard, readRunCard, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "../../modules/harness/artifact_open.ts";
-import { buildChatSession, healTailOrphan, retractTailTurn, runChatTurn, type HealOutcome, type TurnOutcome } from "../../modules/harness/turn.ts";
+import {
+    buildChatSession,
+    healTailOrphan,
+    retractTailTurn,
+    runChatTurn,
+    type HealOutcome,
+    type TurnOutcome,
+    type TurnUsage,
+} from "../../modules/harness/turn.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { leaderSeq, sequenceLabel } from "../keymap.ts";
 import { harnessRuntime } from "./boot.ts";
@@ -65,6 +73,14 @@ export type UIMessage = {
     parts: Part[];
     /** Assistant-only turn duration in ms, set when the turn finishes; undefined otherwise. */
     durationMs?: number;
+    /**
+     * Assistant-only: what the whole turn consumed, sub-agent loops included, set when the turn
+     * finishes IF any call reported usage. Absent means nothing was reported — never that nothing was
+     * spent — so the meta line renders no figure at all rather than a zero, and a reloaded transcript
+     * (which has no rollup to re-derive; the ledger attributes to a thread, not a turn) simply shows
+     * the message without one.
+     */
+    turnUsage?: TurnUsage;
     /**
      * Marker for an aborted turn that streamed output into this assistant message before the user
      * interrupted it: a message block renders a muted "interrupted" suffix. Set on an interrupted turn
@@ -702,15 +718,24 @@ function drainOpenTools(): void {
 }
 
 /**
- * Stamp the assistant turn's wall-clock duration (fulfilling {@link UIMessage.durationMs}'s promise).
- * A fresh field write via `produce` so Solid reconciles the edit. No-op if the message is gone.
+ * Stamp what the finished assistant turn COST: its wall-clock duration (fulfilling
+ * {@link UIMessage.durationMs}'s promise) and, when the run reported one, its token rollup
+ * ({@link UIMessage.turnUsage}). One write for both because they are stamped at the same three
+ * moments and read on the same meta line — splitting them would be two `produce` passes over the
+ * store for one settlement. Fresh field writes via `produce` so Solid reconciles the edit; no-op if
+ * the message is gone.
+ *
+ * An absent `turnUsage` is left absent rather than written as `undefined`: nothing reported is not
+ * zero spent, and the field's absence is what the meta line reads to render no figure at all.
  */
-function stampDuration(assistantId: string, startedAt: number): void {
+function stampTurnCost(assistantId: string, startedAt: number, turnUsage: TurnUsage | undefined): void {
     const durationMs = Date.now() - startedAt;
     setMessages(
         produce((msgs) => {
             const msg = msgs.find((m) => m.id === assistantId);
-            if (msg) msg.durationMs = durationMs;
+            if (!msg) return;
+            msg.durationMs = durationMs;
+            if (turnUsage) msg.turnUsage = turnUsage;
         }),
     );
 }
@@ -807,7 +832,8 @@ export function turnFailureMessage(cause: unknown): string {
  * Reduce the engine's {@link TurnOutcome} onto the store for the CURRENT turn (the caller's C1 guard
  * has already dropped a superseded turn's outcome, so `assistantId` still identifies a live message):
  * flush the streamed text (or the engine's `fallbackText` on a delta-less turn), close any open tool
- * chip, stamp the turn's duration, surface an append fault non-fatally, and set the coarse status.
+ * chip, stamp what the turn cost (its duration and, when the run reported one, its token rollup),
+ * surface an append fault non-fatally, and set the coarse status.
  * `failed`/`prepare_failed`/`thread_gone` also raise the error banner with an actionable line;
  * `aborted` returns to idle with no error (the user cancelled), having flushed what streamed.
  * `prepare_failed`/`thread_gone` bail before the loop, so they pop the empty assistant bubble instead.
@@ -836,7 +862,7 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
             }
             commitStream();
             drainOpenTools();
-            stampDuration(assistantId, startedAt);
+            stampTurnCost(assistantId, startedAt, outcome.turnUsage);
             reportAppendError(outcome.appendError);
             setChatStatus("idle");
             return;
@@ -850,7 +876,7 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
             } else {
                 commitStream();
                 drainOpenTools();
-                stampDuration(assistantId, startedAt);
+                stampTurnCost(assistantId, startedAt, outcome.turnUsage);
                 markInterrupted(assistantId);
             }
             reportAppendError(outcome.appendError);
@@ -859,7 +885,7 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
         case "failed":
             commitStream();
             drainOpenTools();
-            stampDuration(assistantId, startedAt);
+            stampTurnCost(assistantId, startedAt, outcome.turnUsage);
             setLastTurnFailure(outcome.cause);
             setErrorMsg(turnFailureMessage(outcome.cause));
             reportAppendError(outcome.appendError);
