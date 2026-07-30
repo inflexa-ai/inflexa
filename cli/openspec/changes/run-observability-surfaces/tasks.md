@@ -60,7 +60,7 @@
 - [x] 9.1 Run `bun run typecheck` and `bun run lint`
 - [x] 9.2 Run `bun test` and compare failures against the pre-existing baseline on `main` (the subprocess-timing tests in `inflexa_tool` / `launchWithBinary` fail on `main` under full-suite load and are out of scope)
 - [x] 9.3 Run `bun run format:file` on every changed file under `src/`
-- [ ] 9.4 Drive the real TUI against a live run and confirm the activity line changes as the agent makes tool calls — BLOCKED in the implementing environment: no `~/.inflexa/config.json`, so no model/provider wiring, and a real run spends the operator's model budget. Every layer beneath it is covered by automated tests; this is the one end-to-end confirmation only the operator can make
+- [x] 9.4 Drive the real TUI against a live run and confirm the activity line changes as the agent makes tool calls — CONFIRMED by the operator against a live run: the activity line keeps changing as the agent works. This was the one check no test could make. The real seam (`realRunPanelSeams.subscribeActivity`, which calls the harness stream and filters for step activity) is unreachable from the suite by construction — it needs a booted durability runtime and a real workflow emitting real parts, so both sides are covered and the join between them is not
 - [x] 9.5 Validate with `openspec validate run-observability-surfaces`
 
 ## 10. The legend carries the region; the hint row goes
