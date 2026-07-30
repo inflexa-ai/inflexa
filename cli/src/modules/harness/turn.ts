@@ -8,6 +8,7 @@ import {
     runAgent,
     type AgentChat,
     type AgentDefinition,
+    type AgentFinish,
     type AgentSession,
     type AskApproval,
     type AskRequest,
@@ -33,6 +34,25 @@ import { enterChatTurn } from "./agent_switch.ts";
 // never a deep path, never the DBOS SDK.
 
 /**
+ * What one whole turn spent, per quantity — the harness's own rollup shape, carried
+ * WHOLE rather than reduced to a number. Its five fields are not siblings and must
+ * never be summed: `cacheCreationInputTokens`/`cacheReadInputTokens` are breakdowns
+ * *of* `inputTokens` and `reasoningTokens` a breakdown *of* `outputTokens`, so a
+ * single total would count a cached prefix (and reasoning) twice.
+ *
+ * Each field stays absent until some call actually reported it, so "the provider told
+ * us nothing" never masquerades as a measured zero — the discipline every surface
+ * downstream inherits.
+ *
+ * Derived from {@link AgentFinish} rather than imported: the harness exports the
+ * finish but not the `AgentRunUsage` behind it, and the house rule admits only the
+ * package barrel, never a deep path. `Readonly` because what the engine hands out is a
+ * SNAPSHOT — the harness's own accumulator is mutable, and callers must not write to
+ * the copy they are given.
+ */
+export type TurnUsage = Readonly<NonNullable<AgentFinish["turnUsage"]>>;
+
+/**
  * The result of running one chat turn. The three `runAgent`-reaching kinds
  * (`ok`/`aborted`/`failed`) each carry an optional {@link TurnOutcome.appendError}
  * because `appendTurn` runs unconditionally on all of them (the partial turn
@@ -40,6 +60,14 @@ import { enterChatTurn } from "./agent_switch.ts";
  * to the turn's own fate rather than collapsing two independent failures into
  * one. `prepare_failed`/`thread_gone` bail BEFORE `runAgent`, so they never
  * append and never carry an append error.
+ *
+ * Those same three kinds also carry an optional {@link TurnUsage}. It rides here rather
+ * than being read back out of the usage ledger because the ledger structurally cannot
+ * answer "what did THIS turn cost": a chat-path usage record is attributed to a thread,
+ * never to a turn. The run's finish already holds the whole-turn total, so reading it
+ * costs nothing and is definitionally correct. An interrupted or failed turn reports
+ * whatever it spent before it ended; only a run that never resolved at all has nothing
+ * to report.
  *
  * - `ok` — the loop finished; `fallbackText` is `finalText(result.messages)`,
  *   the turn's final assistant text (a streamed surface suppresses it as a
@@ -53,9 +81,9 @@ import { enterChatTurn } from "./agent_switch.ts";
  *   by `prepareChatTurn`, so deletion never surfaces here).
  */
 export type TurnOutcome =
-    | { readonly kind: "ok"; readonly fallbackText: string; readonly appendError?: DbError }
-    | { readonly kind: "aborted"; readonly appendError?: DbError }
-    | { readonly kind: "failed"; readonly cause: unknown; readonly appendError?: DbError }
+    | { readonly kind: "ok"; readonly fallbackText: string; readonly turnUsage?: TurnUsage; readonly appendError?: DbError }
+    | { readonly kind: "aborted"; readonly turnUsage?: TurnUsage; readonly appendError?: DbError }
+    | { readonly kind: "failed"; readonly cause: unknown; readonly turnUsage?: TurnUsage; readonly appendError?: DbError }
     | { readonly kind: "prepare_failed"; readonly cause: unknown }
     | { readonly kind: "thread_gone" };
 
@@ -135,8 +163,19 @@ export function buildChatSession(agentId: string, analysisId: string, threadId: 
     };
 }
 
-/** Which runAgent branch was taken, paired with the messages to persist for it. */
-type RunPhase = { readonly kind: "ok"; readonly fallbackText: string } | { readonly kind: "aborted" } | { readonly kind: "failed"; readonly cause: unknown };
+/**
+ * Which runAgent branch was taken, paired with the messages to persist for it.
+ *
+ * `turnUsage` rides on ALL THREE branches, not only the clean one: the abort and the
+ * failure spent real tokens before they ended, and dropping their rollup here would be
+ * the same "unreported" / "nothing spent" conflation the absent-is-never-zero rule
+ * exists to prevent. It is genuinely absent only where the run never resolved — the
+ * throw arm has no finish to read — and on a run whose calls reported nothing.
+ */
+type RunPhase =
+    | { readonly kind: "ok"; readonly fallbackText: string; readonly turnUsage?: TurnUsage }
+    | { readonly kind: "aborted"; readonly turnUsage?: TurnUsage }
+    | { readonly kind: "failed"; readonly cause: unknown; readonly turnUsage?: TurnUsage };
 
 /**
  * Run one chat turn headlessly: `prepareChatTurn` (ownership check, title seed,
@@ -201,9 +240,19 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
                 // partial loop output is persisted with the same shape a clean turn uses. An empty partial
                 // degenerates to `[userMessage]`, matching the no-output retract window's durable behavior.
                 const toPersist = [userMessage, ...result.messages.slice(initial.length)];
+                // `turnUsage`, never `usage`: the options above carry no accumulator, so by the harness's
+                // contract THIS loop is the turn's root and its finish's `turnUsage` covers every
+                // descendant sub-agent loop, where `usage` would report only this loop's own calls.
+                //
+                // Copied rather than aliased. The accumulator's fields are mutable and this value travels
+                // into a Solid store, so the engine hands out something it owns instead of depending on
+                // the producer's current choice to spread its own. ABSENCE is preserved by construction:
+                // the harness omits the field entirely when no call reported anything, so an unreported
+                // turn carries no rollup rather than a zeroed one.
+                const turnUsage: TurnUsage | undefined = result.finish.turnUsage ? { ...result.finish.turnUsage } : undefined;
                 return result.finish.reason === "aborted"
-                    ? { phase: { kind: "aborted" }, toPersist }
-                    : { phase: { kind: "ok", fallbackText: finalText(result.messages) }, toPersist };
+                    ? { phase: { kind: "aborted", ...(turnUsage ? { turnUsage } : {}) }, toPersist }
+                    : { phase: { kind: "ok", fallbackText: finalText(result.messages), ...(turnUsage ? { turnUsage } : {}) }, toPersist };
             },
             // `runAgent` threw rather than resolving. For an abort this is the DEFENSIVE path — one that
             // never reached the streaming wrapper (e.g. the signal fired before the first model call), so
@@ -232,15 +281,19 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         // log it here so the whole DbError survives even when the surface only shows a terse toast.
         if (appendError) getLogger("harness").warn({ appendError }, "chat turn append failed");
 
+        // Forwarded by conditional spread on every branch, so a turn that reported nothing carries NO
+        // `turnUsage` key at all rather than one holding `undefined` — the outcome must be readable as
+        // "absent" by a consumer that only checks for the field.
+        const spend = run.phase.turnUsage ? { turnUsage: run.phase.turnUsage } : {};
         switch (run.phase.kind) {
             case "ok":
-                return { kind: "ok", fallbackText: run.phase.fallbackText, appendError };
+                return { kind: "ok", fallbackText: run.phase.fallbackText, ...spend, appendError };
             case "aborted":
-                return { kind: "aborted", appendError };
+                return { kind: "aborted", ...spend, appendError };
             case "failed":
                 // The one place the full run failure survives — the banner collapses it to a one-liner.
                 getLogger("harness").error({ cause: run.phase.cause }, "chat turn failed");
-                return { kind: "failed", cause: run.phase.cause, appendError };
+                return { kind: "failed", cause: run.phase.cause, ...spend, appendError };
             default: {
                 const exhaustive: never = run.phase;
                 throw new Error(`unhandled run phase: ${JSON.stringify(exhaustive)}`);

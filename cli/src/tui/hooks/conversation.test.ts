@@ -840,6 +840,34 @@ describe("send() turn cleanup", () => {
         expect(messages[1]?.durationMs).toBeGreaterThanOrEqual(0);
     });
 
+    // What a turn cost rides the finished assistant message beside its duration. The engine reports a
+    // rollup only when some call reported one, and the store must preserve that: absent means nothing
+    // was reported, which is a different fact from nothing having been spent.
+    test("a reported rollup is stamped on the assistant turn beside its duration, whole", async () => {
+        // The cache and reasoning quantities are breakdowns OF the two headline counts, so a store that
+        // reduced the rollup to a total would double-count the cached prefix. It is carried verbatim.
+        const turnUsage = { inputTokens: 12_400, outputTokens: 3100, cacheReadInputTokens: 9800, reasoningTokens: 900 };
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", fallbackText: "hi", turnUsage }));
+        expect(typeof messages[1]?.durationMs).toBe("number");
+        expect(messages[1]?.turnUsage).toEqual(turnUsage);
+    });
+
+    test("an outcome with no rollup leaves the message without one — the duration alone, never a zeroed usage", async () => {
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", fallbackText: "hi" }));
+        expect(typeof messages[1]?.durationMs).toBe("number");
+        expect(messages[1]?.turnUsage).toBeUndefined();
+    });
+
+    test("an interrupted turn that streamed output keeps what it spent before the abort", async () => {
+        const turnUsage = { inputTokens: 800, outputTokens: 120 };
+        // A delta makes this a turn that produced content, so the abort marks the message rather than
+        // dropping the empty shell — which is the only abort shape with a message left to stamp.
+        const seams = fakeSeams({ kind: "aborted", turnUsage }, (emit) => void emit({ type: "text-delta", text: "the ans" }));
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        expect(messages[1]?.interrupted).toBe(true);
+        expect(messages[1]?.turnUsage).toEqual(turnUsage);
+    });
+
     test("a pre-run failure pops the empty assistant bubble", async () => {
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "prepare_failed", cause: new Error("pg down") }));
         // Only the user message remains — the empty assistant bubble was removed.
