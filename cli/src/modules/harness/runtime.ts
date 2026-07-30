@@ -68,6 +68,7 @@ import { createLaunchDirTool } from "./launch_dir_tool.ts";
 import { createManageInputsTool } from "./inputs_tool.ts";
 import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
 import { buildExecuteAnalysisDeps, buildExecuteTargetAssessmentDeps, buildSandboxStepDeps, type RunEngineComposition, type AgentBackend } from "./run_deps.ts";
+import { createUsageRecorder } from "./usage_recorder.ts";
 import { clearAgentSwitch, createSwappableProvider, installAgentSwitch } from "./agent_switch.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
@@ -831,6 +832,12 @@ async function bootHarnessRuntimeOnce(
         // realization a TUI surface answers and enumerates asks through; its expiry
         // sweep runs in `beforeLaunch` below, once state init has created the ledger.
         const askGateway = createAskGateway({ pool });
+        // ONE usage recorder for the whole runtime, handed to `assembleCoreRuntime` below, which stamps
+        // it onto the conversation agent AND every workflow deps bag it registers — so every loop the
+        // cli can reach (chat, planner and the other sub-agents, data profiling, every run step) reports
+        // to one ledger. There is no per-turn or per-call construction: a second instance would be a
+        // second writer of the same table with nothing to gain from the split.
+        const usageRecorder = createUsageRecorder({ logger });
 
         // ONE holder of the sandbox agent's provenance emitters, stamped WITH the boot `{provider}/{model}`
         // name and injected as STABLE delegating handles into the run-engine deps bundles below. The
@@ -992,7 +999,11 @@ async function bootHarnessRuntimeOnce(
         // assemble the durable cohort → `beforeLaunch` → launch — plus the
         // graceful-shutdown handle wired to close this pool.
         const booted = await seams.boot({
-            core: { conversation, workflows, resourcePolicy: cfg.resourcePolicy },
+            // `usageRecorder` rides on `core` rather than inside either deps bag because
+            // `assembleCoreRuntime` owns the stamping: both bag types OMIT the field precisely so an
+            // embedder cannot half-wire a ledger the workflows report to and the conversation agent
+            // does not. One supply point here is the whole guarantee.
+            core: { conversation, workflows, resourcePolicy: cfg.resourcePolicy, usageRecorder },
             pool: composition.pool,
             skillsDir: cfg.skillsDir,
             dbos: {

@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
 import { ok, okAsync, err } from "neverthrow";
-import { createSandboxClient, type CreateSandboxClientConfig, type EmbeddingProvider } from "@inflexa-ai/harness";
+import { createSandboxClient, type CoreRuntimeDeps, type CreateSandboxClientConfig, type EmbeddingProvider, type LlmUsageRecord } from "@inflexa-ai/harness";
 
 import { ContainerRuntimeError, runtimes } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
@@ -28,6 +28,13 @@ function cliproxyConnection(provider: string, agents: ResolvedModelConnection["a
 
 let skillsDir: string;
 let templatesDir: string;
+
+/**
+ * The `core` bundle the last boot handed to the harness — i.e. exactly what `assembleCoreRuntime`
+ * receives. Captured rather than asserted inline so the seam-wiring tests can interrogate it after the
+ * fact instead of piling more expectations into the `boot` stub.
+ */
+let lastCore: CoreRuntimeDeps | null = null;
 
 function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHarnessConfig {
     skillsDir = join(tmpdir(), `harness-runtime-test-skills-${randomUUIDv7()}`);
@@ -110,6 +117,7 @@ function recordingSeams(calls: string[]): BootSeams {
         },
         boot: async (deps) => {
             calls.push("boot");
+            lastCore = deps.core;
             // The shape assertions that used to live in the `assemble` seam now
             // inspect `deps.core`: the real `bootHarness` calls `assembleCoreRuntime`
             // over it internally (child-before-parent registration is the harness's
@@ -229,6 +237,7 @@ beforeEach(() => {
 
 afterEach(() => {
     __resetHarnessRuntimeForTest();
+    lastCore = null;
     rmSync(skillsDir, { recursive: true, force: true });
     rmSync(templatesDir, { recursive: true, force: true });
 });
@@ -813,6 +822,71 @@ describe("bootHarnessRuntime", () => {
         expect(calls).not.toContain("postgres");
         expect(calls).not.toContain("boot");
         expect(calls).not.toContain("ingress");
+    });
+});
+
+// The usage-recorder seam. `assembleCoreRuntime` takes the recorder on `core` and stamps it onto the
+// conversation agent AND each workflow deps bag itself — which is why `ConversationAssemblyDeps`,
+// `sandboxStep`, `buildExecuteAnalysis`, `executeTargetAssessment`, and `dataProfile` all `Omit` the
+// field. So the embedder's entire obligation, and everything these tests can and should pin, is: supply
+// exactly ONE recorder at the single composition root, on `core`, and never a private one on a bag. A
+// bag carrying its own would be the half-wired ledger the harness's `Omit` exists to make unrepresentable.
+describe("bootHarnessRuntime — the usage-recorder seam", () => {
+    /** A record shaped like a chat-path call, used to prove the supplied recorder is inert-but-live rather than merely present. */
+    function chatRecord(): LlmUsageRecord {
+        return {
+            recordKey: `boot-probe-${randomUUIDv7()}`,
+            agentId: "tui-chat",
+            callPath: ["tui-chat"],
+            scope: { kind: "analysis", analysisId: "ana-boot-probe", threadId: "thr-boot-probe" },
+            usage: { inputTokens: 1, outputTokens: 1 },
+        };
+    }
+
+    test("supplies exactly one recorder on core, reaching the conversation, workflow, and data-profile loops through it", async () => {
+        const calls: string[] = [];
+        await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
+
+        const core = lastCore;
+        expect(core?.usageRecorder?.record).toBeInstanceOf(Function);
+        // Each bag the cohort registers — the conversation agent's, both run-engine workflows', the
+        // target-assessment workflow's, and the data profile's — arrives WITHOUT a recorder of its own,
+        // so the one on `core` is the only thing any of them can be stamped with.
+        const child = async () => ({ status: "complete" as const, durationMs: 0, finishReason: null, error: null });
+        const bags = [
+            core?.conversation,
+            core?.workflows.sandboxStep,
+            core?.workflows.buildExecuteAnalysis(child),
+            core?.workflows.executeTargetAssessment,
+            core?.workflows.dataProfile,
+        ];
+        for (const bag of bags) {
+            expect(bag).toBeDefined();
+            expect(Object.hasOwn(bag ?? {}, "usageRecorder")).toBe(false);
+        }
+    });
+
+    test("the supplied recorder is the ledger realization, and absorbs a record without throwing", async () => {
+        const calls: string[] = [];
+        await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
+
+        // Not the harness's `createNoopUsageRecorder` fallback: this one writes, and it is total — the
+        // loop delivers bare, so a throw here would fail the turn that made the call.
+        expect(() => lastCore?.usageRecorder?.record(chatRecord())).not.toThrow();
+    });
+
+    test("the recorder is built once per runtime, not per boot call", async () => {
+        const calls: string[] = [];
+        const seams = recordingSeams(calls);
+        const cfg = testConfig();
+        await bootHarnessRuntime({ seams, config: cfg });
+        const first = lastCore?.usageRecorder;
+
+        // The second call rides the memoized runtime, so `boot` — and with it the recorder
+        // construction — never runs again. One runtime reports to one ledger through one instance.
+        await bootHarnessRuntime({ seams, config: cfg });
+        expect(lastCore?.usageRecorder).toBe(first);
+        expect(calls.filter((c) => c === "boot")).toHaveLength(1);
     });
 });
 
