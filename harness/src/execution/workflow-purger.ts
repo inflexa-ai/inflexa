@@ -31,6 +31,11 @@ export interface WorkflowPurger {
     findByIdPrefix(prefix: string): ResultAsync<string[], DbError>;
     /** Cancel the given workflows so no executor keeps writing behind a purge. Unknown ids are ignored. */
     cancel(workflowIds: readonly string[]): ResultAsync<void, DbError>;
-    /** Delete the given workflows, and their descendants when `includeDescendants`. Resolves to how many workflows were deleted. */
+    /**
+     * Delete the given workflows, and their descendants when `includeDescendants`.
+     * Resolves to how many workflows the delete targeted, counted immediately before
+     * it — a post-fact tally is not available, because the engine owns the delete and
+     * reports no count of its own.
+     */
     deleteWorkflows(workflowIds: readonly string[], includeDescendants?: boolean): ResultAsync<number, DbError>;
 }

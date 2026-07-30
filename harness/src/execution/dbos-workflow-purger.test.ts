@@ -3,8 +3,13 @@
  * rig — a plain Postgres schema has no `dbos` schema to reach. Those tables are
  * SHARED by every test in the process and are partitioned only by unique workflow
  * ids, so every row here is seeded under an id minted by `rig.nextWorkflowId` and
- * every delete is scoped to those ids. A broad delete would destroy other tests'
- * rows.
+ * every delete is scoped to those ids.
+ *
+ * Rows a delete under test deliberately leaves standing would otherwise outlive
+ * the process, since dropping the per-test schema takes nothing out of `dbos`. So
+ * `afterAll` deletes exactly the rows this file wrote, scoped to the `executor_id`
+ * literal it stamps on all of them and nothing else in the process writes. A
+ * delete broader than that literal would destroy other tests' rows.
  *
  * Rows are seeded directly rather than by running workflows: the assertions are
  * about which rows a delete reaches (descendants, and the tables that cascade off
@@ -15,53 +20,46 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
+import { createDbosLedgerSeeder, type DbosLedgerSeeder } from "../__tests__/setup/dbos-ledger.js";
 import { setupDbosForTests, type DbosTestRig } from "../__tests__/setup/dbos.js";
 import { createDbosWorkflowPurger } from "./dbos-workflow-purger.js";
 import type { WorkflowPurger } from "./workflow-purger.js";
 
+/**
+ * Stamped on every `dbos.workflow_status` row this file writes, and read back by
+ * `afterAll` to reclaim them. Deliberately not the rig's executor id, so the
+ * launched engine's recovery pass never claims a seeded PENDING row.
+ */
+const SEEDED_EXECUTOR_ID = "purger-test";
+
+/**
+ * The cascading tables seeded beside each status row. A dependent row is here to
+ * show a delete reaching past `workflow_status`, and these are the ones the
+ * assertions below read back — seeding the tables nothing counts would only make
+ * the fixture wider, not the claim stronger.
+ */
+const SEEDED_CASCADE_TABLES = ["operation_outputs", "streams"] as const;
+
 describe("createDbosWorkflowPurger", () => {
     let rig: DbosTestRig;
     let purger: WorkflowPurger;
+    let ledger: DbosLedgerSeeder;
 
     beforeAll(async () => {
         rig = await setupDbosForTests("dbos_workflow_purger");
         purger = createDbosWorkflowPurger({ pool: rig.pool });
+        ledger = createDbosLedgerSeeder({ pool: rig.pool, executorId: SEEDED_EXECUTOR_ID, cascadeTables: SEEDED_CASCADE_TABLES });
     });
 
     afterAll(async () => {
+        // Before the pool goes: every status row this file seeded, and — through the
+        // same cascade the purger relies on — every dependent row seeded beside it.
+        await rig.pool.query({
+            text: `DELETE FROM dbos.workflow_status WHERE executor_id = $1`,
+            values: [SEEDED_EXECUTOR_ID],
+        });
         await rig.drop();
     });
-
-    /**
-     * One workflow plus a row in each table that cascades off it. `executor_id` is
-     * deliberately not the rig's executor id, so the launched engine's recovery pass
-     * never claims a seeded PENDING row.
-     */
-    async function seedWorkflow(workflowId: string, parentId?: string): Promise<void> {
-        await rig.pool.query({
-            text: `INSERT INTO dbos.workflow_status (workflow_uuid, status, name, executor_id, parent_workflow_id)
-                   VALUES ($1, 'PENDING', 'purger-test-workflow', 'purger-test', $2)`,
-            values: [workflowId, parentId ?? null],
-        });
-        await rig.pool.query({
-            text: `INSERT INTO dbos.operation_outputs (workflow_uuid, function_id, function_name, output)
-                   VALUES ($1, 0, 'purger-test-step', '"done"')`,
-            values: [workflowId],
-        });
-        await rig.pool.query({
-            text: `INSERT INTO dbos.streams (workflow_uuid, key, value, "offset")
-                   VALUES ($1, 'events', '"event"', 0)`,
-            values: [workflowId],
-        });
-    }
-
-    async function countIn(table: "workflow_status" | "operation_outputs" | "streams", workflowIds: readonly string[]): Promise<number> {
-        const { rows } = await rig.pool.query<{ n: number }>({
-            text: `SELECT COUNT(*)::int AS n FROM dbos.${table} WHERE workflow_uuid = ANY($1)`,
-            values: [[...workflowIds]],
-        });
-        return rows[0]?.n ?? 0;
-    }
 
     async function statusOf(workflowId: string): Promise<string | null> {
         const { rows } = await rig.pool.query<{ status: string | null }>({
@@ -78,43 +76,43 @@ describe("createDbosWorkflowPurger", () => {
         const grandchild = rig.nextWorkflowId("purge-grandchild-");
         const bystander = rig.nextWorkflowId("purge-bystander-");
 
-        await seedWorkflow(parent);
-        await seedWorkflow(childA, parent);
-        await seedWorkflow(childB, parent);
-        await seedWorkflow(grandchild, childA);
-        await seedWorkflow(bystander);
+        await ledger.seedWorkflow(parent);
+        await ledger.seedWorkflow(childA, parent);
+        await ledger.seedWorkflow(childB, parent);
+        await ledger.seedWorkflow(grandchild, childA);
+        await ledger.seedWorkflow(bystander);
 
         const family = [parent, childA, childB, grandchild];
-        expect(await countIn("workflow_status", family)).toBe(4);
-        expect(await countIn("operation_outputs", family)).toBe(4);
-        expect(await countIn("streams", family)).toBe(4);
+        expect(await ledger.countRows("workflow_status", family)).toBe(4);
+        expect(await ledger.countRows("operation_outputs", family)).toBe(4);
+        expect(await ledger.countRows("streams", family)).toBe(4);
 
         const deleted = (await purger.deleteWorkflows([parent], true))._unsafeUnwrap();
         expect(deleted).toBe(4);
 
-        expect(await countIn("workflow_status", family)).toBe(0);
-        expect(await countIn("operation_outputs", family)).toBe(0);
-        expect(await countIn("streams", family)).toBe(0);
+        expect(await ledger.countRows("workflow_status", family)).toBe(0);
+        expect(await ledger.countRows("operation_outputs", family)).toBe(0);
+        expect(await ledger.countRows("streams", family)).toBe(0);
 
         // An unrelated workflow with no ancestry in the deleted set keeps every row.
-        expect(await countIn("workflow_status", [bystander])).toBe(1);
-        expect(await countIn("operation_outputs", [bystander])).toBe(1);
-        expect(await countIn("streams", [bystander])).toBe(1);
+        expect(await ledger.countRows("workflow_status", [bystander])).toBe(1);
+        expect(await ledger.countRows("operation_outputs", [bystander])).toBe(1);
+        expect(await ledger.countRows("streams", [bystander])).toBe(1);
     });
 
     it("leaves descendants alone when descendants are not requested", async () => {
         const parent = rig.nextWorkflowId("shallow-parent-");
         const child = rig.nextWorkflowId("shallow-child-");
-        await seedWorkflow(parent);
-        await seedWorkflow(child, parent);
+        await ledger.seedWorkflow(parent);
+        await ledger.seedWorkflow(child, parent);
 
         const deleted = (await purger.deleteWorkflows([parent]))._unsafeUnwrap();
         expect(deleted).toBe(1);
 
-        expect(await countIn("workflow_status", [parent])).toBe(0);
-        expect(await countIn("workflow_status", [child])).toBe(1);
-        expect(await countIn("operation_outputs", [child])).toBe(1);
-        expect(await countIn("streams", [child])).toBe(1);
+        expect(await ledger.countRows("workflow_status", [parent])).toBe(0);
+        expect(await ledger.countRows("workflow_status", [child])).toBe(1);
+        expect(await ledger.countRows("operation_outputs", [child])).toBe(1);
+        expect(await ledger.countRows("streams", [child])).toBe(1);
     });
 
     it("succeeds and reports nothing deleted for an unknown id", async () => {
@@ -127,7 +125,7 @@ describe("createDbosWorkflowPurger", () => {
 
     it("reports nothing deleted on a second delete of the same workflow", async () => {
         const workflowId = rig.nextWorkflowId("twice-");
-        await seedWorkflow(workflowId);
+        await ledger.seedWorkflow(workflowId);
 
         expect((await purger.deleteWorkflows([workflowId], true))._unsafeUnwrap()).toBe(1);
         expect((await purger.deleteWorkflows([workflowId], true))._unsafeUnwrap()).toBe(0);
@@ -145,7 +143,7 @@ describe("createDbosWorkflowPurger", () => {
         const unrelated = rig.nextWorkflowId("unrelated-");
 
         for (const id of [...inNamespace, twin, unrelated]) {
-            await seedWorkflow(id);
+            await ledger.seedWorkflow(id);
         }
 
         const found = (await purger.findByIdPrefix(namespace))._unsafeUnwrap();
@@ -161,9 +159,9 @@ describe("createDbosWorkflowPurger", () => {
         const parent = rig.nextWorkflowId("cancel-parent-");
         const child = rig.nextWorkflowId("cancel-child-");
         const untouched = rig.nextWorkflowId("cancel-untouched-");
-        await seedWorkflow(parent);
-        await seedWorkflow(child, parent);
-        await seedWorkflow(untouched);
+        await ledger.seedWorkflow(parent);
+        await ledger.seedWorkflow(child, parent);
+        await ledger.seedWorkflow(untouched);
 
         (await purger.cancel([parent]))._unsafeUnwrap();
 
@@ -179,20 +177,33 @@ describe("createDbosWorkflowPurger", () => {
 });
 
 /**
- * A pool standing in for a database whose `dbos` schema does not exist. The rig
- * always launches an engine, which creates that schema, so the absent-ledger path
- * is unreachable against it — and it is the path a host purging from a process that
- * never launched the runtime takes.
+ * A pool standing in for a database whose ledger queries all fail. The rig always
+ * launches an engine, which creates the `dbos` schema and its tables, so neither
+ * unreachable-ledger path is exercisable against it — and one of them is the path a
+ * host purging from a process that never launched the runtime takes.
  *
- * @param code the SQLSTATE the pool's queries fail with
+ * Every query fails with `code`, except the purger's schema probe, which is
+ * answered from `systemSchema`. Answering the two separately is what lets a test
+ * pin which of them the purger keys its recovery on: the same SQLSTATE comes back
+ * whether the schema was never created or its `workflow_status` table went missing
+ * beneath it.
+ *
+ * @param code the SQLSTATE the pool's ledger queries fail with
+ * @param systemSchema whether the probe finds the engine's schema
  */
-function failingPool(code: string): Pool {
+function failingPool(code: string, systemSchema: "present" | "absent"): Pool {
     const failure = Object.assign(new Error(`relation "dbos.workflow_status" does not exist (${code})`), { code });
     const fake: Record<string, unknown> = {
         // Read once, for the pool size the engine client derives its polling limit from.
         options: {},
     };
-    fake.query = () => Promise.reject(failure);
+    const textOf = (config: unknown): string => {
+        if (typeof config === "string") return config;
+        if (typeof config === "object" && config !== null && "text" in config) return String(config.text);
+        return "";
+    };
+    fake.query = (config: unknown) =>
+        textOf(config).includes("information_schema.schemata") ? Promise.resolve({ rows: [{ present: systemSchema === "present" }] }) : Promise.reject(failure);
     // `pg` returns the pool from `on`, which is where the engine client registers its
     // own `error` and `connect` handlers.
     fake.on = () => fake;
@@ -202,12 +213,13 @@ function failingPool(code: string): Pool {
     return fake as unknown as Pool;
 }
 
-describe("createDbosWorkflowPurger against an absent ledger", () => {
-    // SQLSTATE `undefined_table` — what Postgres answers when the schema was never created.
+describe("createDbosWorkflowPurger against an unreachable ledger", () => {
+    // SQLSTATE `undefined_table` — Postgres's answer for a table that is not there,
+    // whether because its schema was never created or because it alone is missing.
     const UNDEFINED_TABLE = "42P01";
 
     it("reads a missing dbos schema as nothing to purge", async () => {
-        const purger = createDbosWorkflowPurger({ pool: failingPool(UNDEFINED_TABLE) });
+        const purger = createDbosWorkflowPurger({ pool: failingPool(UNDEFINED_TABLE, "absent") });
 
         expect((await purger.findByIdPrefix("dataprofile:never-launched:"))._unsafeUnwrap()).toEqual([]);
         expect((await purger.cancel(["never-launched-workflow"]))._unsafeUnwrap()).toBeUndefined();
@@ -215,11 +227,26 @@ describe("createDbosWorkflowPurger against an absent ledger", () => {
         expect((await purger.deleteWorkflows(["never-launched-workflow"]))._unsafeUnwrap()).toBe(0);
     });
 
+    it("keeps a missing ledger table under a schema that exists on the error channel", async () => {
+        // An SDK rename, a manual drop, or a half-applied migration leaves the schema
+        // standing with `workflow_status` gone, and answers the same SQLSTATE a runtime
+        // that never launched does. Reading that as an empty ledger would report a
+        // successful purge for an analysis whose rows were never reclaimed.
+        const purger = createDbosWorkflowPurger({ pool: failingPool(UNDEFINED_TABLE, "present") });
+
+        expect((await purger.findByIdPrefix("dataprofile:broken-ledger:"))._unsafeUnwrapErr().op).toBe("workflowPurger.findByIdPrefix");
+        expect((await purger.cancel(["broken-ledger-workflow"]))._unsafeUnwrapErr().op).toBe("workflowPurger.cancel");
+        expect((await purger.deleteWorkflows(["broken-ledger-workflow"], true))._unsafeUnwrapErr().op).toBe("workflowPurger.countDoomed");
+        expect((await purger.deleteWorkflows(["broken-ledger-workflow"]))._unsafeUnwrapErr().op).toBe("workflowPurger.countDoomed");
+    });
+
     it("keeps every other failure on the error channel", async () => {
         // SQLSTATE `insufficient_privilege`: a ledger that exists and cannot be read is
         // not an empty one, and reporting it as nothing to purge would claim a
-        // reclamation that never happened.
-        const purger = createDbosWorkflowPurger({ pool: failingPool("42501") });
+        // reclamation that never happened. The probe answers that no schema exists, so
+        // a recovery resting on the probe rather than on the SQLSTATE would swallow all
+        // three of these.
+        const purger = createDbosWorkflowPurger({ pool: failingPool("42501", "absent") });
 
         expect((await purger.findByIdPrefix("dataprofile:denied:"))._unsafeUnwrapErr().op).toBe("workflowPurger.findByIdPrefix");
         expect((await purger.cancel(["denied-workflow"]))._unsafeUnwrapErr().op).toBe("workflowPurger.cancel");

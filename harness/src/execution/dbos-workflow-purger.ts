@@ -30,26 +30,39 @@ import type { Logger } from "../lib/logger.js";
 import type { WorkflowPurger } from "./workflow-purger.js";
 
 /**
- * SQLSTATE `undefined_table`. The engine creates its schema on first launch, so a
- * deployment that has never launched one has no ledger at all — an absent ledger
- * is nothing to purge rather than a failed purge.
+ * The schema the engine keeps its ledger in. The raw SQL below names it literally,
+ * `DBOSClient` defaults to it, and the schema probe asks after this same name — the
+ * SDK accepts a `systemDatabaseSchemaName`, so moving a deployment's ledger has to
+ * move all three together.
+ */
+const SYSTEM_SCHEMA = "dbos";
+
+/**
+ * SQLSTATE `undefined_table` — the answer both when the engine never created its
+ * schema and when `workflow_status` is gone from beneath a schema that exists. Only
+ * the first is nothing to purge, so the code on its own settles nothing.
  */
 const UNDEFINED_TABLE = "42P01";
 
-function ledgerIsAbsent(e: DbError): boolean {
+function isUndefinedTable(e: DbError): boolean {
     const cause: unknown = e.cause;
     return cause !== null && typeof cause === "object" && "code" in cause && cause.code === UNDEFINED_TABLE;
-}
-
-/** Recover an absent ledger into `fallback`; every other failure stays on the error channel. */
-function whenLedgerAbsent<T>(fallback: T): (e: DbError) => ResultAsync<T, DbError> {
-    return (e) => (ledgerIsAbsent(e) ? okAsync(fallback) : errAsync(e));
 }
 
 /**
  * Route the client's own diagnostics — pool errors and idle-client errors — onto
  * the injected sink. Left unset, the SDK builds a console logger of its own, and
  * a host whose UI owns stdout discards those records entirely.
+ *
+ * The SDK renders every entry to a string before delegating, and splits a failure
+ * across both parameters: the text arrives as the entry, the stack — with any
+ * `cause` chain already folded into it — as `metadata.stack`. So the entry is the
+ * record's message at every level, `error` included, and engine wording stays
+ * queryable in one place instead of the message at three levels and a field at the
+ * fourth. The stack rides beside it under the key `defaultErrorFields` uses.
+ * `errorFields` is not the tool here: it normalizes a thrown value, and an entry
+ * the SDK has already rendered takes its `String(...)` branch, which emits a bare
+ * message and drops the one stack the SDK bothered to hand over.
  */
 function asEngineLogger(logger: Logger): DLogger {
     const render = (entry: unknown): string => (typeof entry === "string" ? entry : String(entry));
@@ -57,7 +70,7 @@ function asEngineLogger(logger: Logger): DLogger {
         debug: (entry) => logger.debug(render(entry)),
         info: (entry) => logger.info(render(entry)),
         warn: (entry) => logger.warn(render(entry)),
-        error: (entry) => logger.error("engine client failure", logger.errorFields(entry)),
+        error: (entry, metadata) => logger.error(render(entry), metadata?.stack === undefined ? undefined : { stack: metadata.stack }),
     };
 }
 
@@ -78,20 +91,55 @@ export function createDbosWorkflowPurger({ pool, logger: injected }: DbosWorkflo
     // is lazy so building a purger stays free for a host that never purges.
     let pending: Promise<DBOSClient> | undefined;
     const engine = (): Promise<DBOSClient> => {
-        // The connection string is read only when the client builds its own pool, and
-        // by the schema-migration path this client never runs. A pool is supplied
-        // here, so there is no url to thread through the seam.
+        // `create` never initializes the system database, and initialization is the
+        // only path that reads the connection string once a pool is supplied — so the
+        // url is unreachable from this client rather than merely untaken, and there is
+        // none to thread through the seam.
         pending ??= DBOSClient.create({ systemDatabaseUrl: "", systemDatabasePool: pool, logger: asEngineLogger(logger) });
         return pending;
     };
 
     /**
-     * How many ledger rows the delete is about to take, read immediately before it.
-     * The engine's delete reports no count, and the count is what lets a caller
-     * narrate what it reclaimed and see zero for an analysis already purged. This is
-     * a read only: the walk it mirrors selects the same set the delete targets —
-     * requested ids that exist, plus their descendants when asked — while the delete
-     * itself and its cascades stay engine-owned.
+     * Whether the engine's schema exists at all — the only thing that separates a
+     * ledger the engine never created from one that is broken. It costs a round trip
+     * only on the failure path that consults it, and a positive answer is memoized for
+     * the purger's lifetime, since nothing drops the schema once the engine has made
+     * it. A negative answer is deliberately not memoized: a purger can be built before
+     * the launch that creates the schema, and caching absence would go on reading a
+     * ledger that has since broken as one that was never there.
+     */
+    let schemaConfirmed = false;
+    const systemSchemaExists = (): ResultAsync<boolean, DbError> => {
+        if (schemaConfirmed) return okAsync(true);
+        return tryQuery("workflowPurger.systemSchemaPresent", async () => {
+            const { rows } = await pool.query<{ present: boolean }>({
+                text: `SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS present`,
+                values: [SYSTEM_SCHEMA],
+            });
+            return rows[0]?.present ?? false;
+        }).map((present) => {
+            schemaConfirmed = present;
+            return present;
+        });
+    };
+
+    /**
+     * Recover a ledger the engine never created into `fallback`. A missing table
+     * beneath a schema that does exist stays on the error channel along with every
+     * other failure — an SDK rename, a manual drop, or a half-applied migration
+     * reaches the caller as one, rather than as a purge that reclaimed nothing.
+     */
+    function whenLedgerAbsent<T>(fallback: T): (e: DbError) => ResultAsync<T, DbError> {
+        return (e) =>
+            isUndefinedTable(e) ? systemSchemaExists().andThen((present): ResultAsync<T, DbError> => (present ? errAsync(e) : okAsync(fallback))) : errAsync(e);
+    }
+
+    /**
+     * How many ledger rows the delete is about to take, read immediately before it,
+     * because the engine's delete reports no count of its own. This is a read only:
+     * the walk it mirrors selects the same set the delete targets — requested ids that
+     * exist, plus their descendants when asked — while the delete itself and its
+     * cascades stay engine-owned.
      */
     const countDoomed = (workflowIds: string[], includeDescendants: boolean): ResultAsync<number, DbError> =>
         tryQuery("workflowPurger.countDoomed", async () => {
@@ -140,9 +188,8 @@ export function createDbosWorkflowPurger({ pool, logger: injected }: DbosWorkflo
             if (workflowIds.length === 0) return okAsync(undefined);
             return tryMutation("workflowPurger.cancel", async () => {
                 const client = await engine();
-                // Descendants are cancelled too. The delete side reaches them, so a cancel
-                // that stopped only the roots would leave child step executors running and
-                // re-materializing rows the delete has already taken.
+                // Descendants too: the delete side reaches them, so roots-only
+                // cancellation would leave child step executors writing behind it.
                 await client.cancelWorkflows([...workflowIds], { cancelChildren: true });
             })
                 .map(() => {
