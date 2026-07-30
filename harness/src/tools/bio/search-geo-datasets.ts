@@ -48,7 +48,7 @@ export const searchGeoDatasetsTool = defineTool({
     id: "search_geo_datasets",
     description:
         "Search NCBI GEO for public gene-expression datasets by disease, tissue, or experimental condition — use it to find external validation cohorts or to cite published data. " +
-        "Returns totalFound plus datasets[]: { accession (GSE…/GDS…), title, summary (truncated to 500 chars), platform, sampleCount, organism, pubmedIds }. " +
+        "Returns totalFound plus datasets[]: { accession (GSE…/GDS…), title, summary (truncated to 300 chars), platform, sampleCount, organism, pubmedIds }. " +
         "HARD CAVEAT: this tool returns metadata only, and sandbox containers have no network — never plan an in-sandbox step that downloads a GEO dataset. " +
         "Bringing the data itself in is a capability of the surrounding environment, not of this tool: consult the tools you actually have rather than assuming it is possible or that it is not. " +
         "An empty datasets array is a valid 'nothing matched' — do not retry the identical query.",
@@ -66,9 +66,15 @@ export const searchGeoDatasetsTool = defineTool({
             .describe(
                 "'gse' (default) — GEO Series: raw submitter-deposited studies, far more numerous. 'gds' — curated DataSets: fewer, but normalized and value-added.",
             ),
-        limit: z.number().int().min(1).max(50).default(15).describe("Max datasets to return (default 15, max 50)."),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(50)
+            .default(10)
+            .describe("Max datasets to return (default 10, max 50). totalFound reports the true match count regardless."),
     }),
-    execute: async ({ query, organism, datasetType = "gse", limit = 15 }) => {
+    execute: async ({ query, organism, datasetType = "gse", limit = 10 }) => {
         let searchQuery = query;
         // Escape backslashes first, then quotes, so a `\` in the organism value
         // cannot smuggle an unescaped `"` past the escaping and break out of the
@@ -98,7 +104,7 @@ export const searchGeoDatasetsTool = defineTool({
                 return {
                     accession: r.accession ?? r.gse ?? `GDS${id}`,
                     title: r.title ?? "",
-                    summary: (r.summary ?? "").slice(0, 500),
+                    summary: (r.summary ?? "").slice(0, 300),
                     platform: r.gpl ?? r.platform ?? null,
                     sampleCount: r.n_samples ? Number(r.n_samples) : null,
                     organism: r.taxon ?? null,

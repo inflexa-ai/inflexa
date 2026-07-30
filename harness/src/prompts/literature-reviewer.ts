@@ -19,11 +19,12 @@ turn and forces a retry.
 - \`search_interactions\` — accepts up to **100 identifiers per call**. If you
   need more, **batch across multiple calls** rather than truncating your
   list. Shape: \`{ identifiers: ["TP53", "BRCA1", ...], limit: 50 }\`.
-- \`search_gene\` / \`search_pathway\` / \`lookup_go_term\` — single identifier per call.
-- \`search_bgee_expression\` / \`get_impc_ko_profile\` — single human gene
-  symbol per call. Empty/null fields are valid "no data" outcomes
-  (Bgee may have no calls for dog or macaque; many human genes are
-  not yet IMPC-phenotyped). Do NOT retry on empty output.
+- \`search_gene\` — batches up to 200 symbols; \`lookup_annotation\` takes one
+  term or accession per call.
+- \`gene_preclinical_profile\` — single human gene symbol per call; returns
+  baseline expression and mouse-KO phenotype together. Empty/null fields are
+  valid "no data" outcomes (Bgee may have no calls for dog or macaque; many
+  human genes are not yet IMPC-phenotyped). Do NOT retry on empty output.
 - \`pubmed({action:"fulltext"})\` — single \`pmcId\` per call (from a \`details\` result). Use sparingly.
 
 Batching beats truncation: if you have 300 identifiers to look up in
@@ -36,10 +37,11 @@ For each gene, pathway, or feature in the brief:
 
 1. **Gene/protein lookup** — use \`search_gene\` to get function, aliases,
    associated diseases, and expression patterns.
-2. **Pathway context** — use \`search_pathway\` to find pathways involving
-   the gene. Note which pathways connect multiple genes from the brief.
-3. **GO terms** — use \`lookup_go_term\` for functional annotations when
-   the gene's role is unclear from the gene search alone.
+2. **Pathway context** — use \`lookup_annotation({vocabulary:"pathways"})\` to
+   find pathways involving the gene. Note which pathways connect multiple
+   genes from the brief.
+3. **GO terms** — use \`lookup_annotation({vocabulary:"go"})\` for functional
+   annotations when the gene's role is unclear from the gene search alone.
 4. **Protein interactions** — use \`search_interactions\` to find
    interaction partners, especially those that also appear in the brief.
 5. **Literature evidence** — use \`pubmed({action:"search"})\` with targeted queries
@@ -47,11 +49,11 @@ For each gene, pathway, or feature in the brief:
    Use \`pubmed({action:"details"})\` for the most relevant hits. Use
    \`pubmed({action:"fulltext"})\` only for highly relevant papers that need
    deeper reading.
-6. **Preclinical grounding** — when the brief asks about target safety,
-   tissue expression, model-organism suitability, or KO consequences,
-   call \`search_bgee_expression\` for cross-species baseline expression
-   and \`get_impc_ko_profile\` for mouse-KO phenotype + viability. Both
-   take a single human gene symbol and tolerate "no data" cleanly.
+6. **Preclinical grounding** — when the brief asks about tissue expression,
+   model-organism suitability, or KO consequences, call
+   \`gene_preclinical_profile\`, which returns cross-species baseline
+   expression and mouse-KO phenotype + viability together. It takes a single
+   human gene symbol and tolerates "no data" cleanly.
 
 ## Depth Guidelines
 

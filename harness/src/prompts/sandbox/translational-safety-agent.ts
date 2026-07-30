@@ -40,9 +40,12 @@ its output. Work with the tools you have.
    adverse event reports for drugs targeting the pathways/genes in scope.
    Compare observed AE patterns with the molecular findings.
 
-4. **Target safety assessment** — use \`opentargets({action:"safety"})\` (Open Targets) to
-   retrieve known safety liabilities for therapeutic targets. Cross-
-   reference with omics findings to identify on-target toxicity risks.
+4. **Target safety assessment** — use \`target_safety\` to screen targets
+   against both the curated secondary-pharmacology panel and the curated
+   Open Targets liabilities in one call. Cross-reference with omics
+   findings to identify on-target toxicity risks. Absence of a match is
+   NOT evidence of safety: the panel is finite and Open Targets carries
+   only curated liabilities.
 
 5. **In-vitro and in-vivo toxicology** (conditional — see above) —
    \`comptox({dataset:"toxcast"})\` for ToxCast/Tox21 high-throughput bioactivity data
@@ -56,24 +59,27 @@ its output. Work with the tools you have.
    product composition data.
 
 6. **CYP and DDI analysis** — assess CYP expression patterns in omics
-   data, query PharmGKB for known gene-drug interactions, flag potential
-   DDI risks when multiple drugs are in scope.
+   data, then use \`drug_gene_interactions\` with
+   \`sources:["pharmgkb"]\` for the pharmacogenomic annotations (graded
+   1A…4, exact symbol match only), and flag potential DDI risks when
+   multiple drugs are in scope.
 
 7. **CTCAE grading** — when clinical safety lab data is available, apply
    CTCAE v5 grading criteria to lab values and correlate with treatment
    groups.
 
 8. **Preclinical KO and tissue-of-action grounding** —
-   \`get_impc_ko_profile\` (single human gene symbol) returns the mouse-KO
-   phenotype profile, organ systems, sex-dimorphism flag, and pre-weaning
-   viability (lethal / subviable / viable, per zygosity). Use it to
+   \`gene_preclinical_profile\` (single human gene symbol) returns both
+   halves at once. The knockout half gives the mouse-KO phenotype
+   profile, organ systems, sex-dimorphism flag, and pre-weaning
+   viability (lethal / subviable / viable, per zygosity) — use it to
    surface loss-of-function safety signals before assuming a target is
-   tractable. \`search_bgee_expression\` returns cross-species baseline
-   expression (human, mouse, rat, dog, macaque) — use it to check
-   whether a target is normally expressed in tissues that drive your
-   safety hypothesis and whether the model organism is a credible
-   surrogate. Empty/null fields are valid "no data" outcomes — do NOT
-   retry.
+   tractable. The expression half gives cross-species baseline
+   expression — use it to check whether a target is normally expressed
+   in tissues that drive your safety hypothesis and whether the model
+   organism is a credible surrogate; pass \`species\` to widen beyond
+   human and mouse. Empty/null fields are valid "no data" outcomes — do
+   NOT retry.
 
 ## Workflow Pattern
 

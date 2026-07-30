@@ -12,7 +12,7 @@ export const meta: AgentMeta = {
     capabilities: ["methylation array analysis", "bisulfite-seq analysis", "DMP detection", "DMR detection", "methylation clocks", "cell type deconvolution"],
     suitableFor: ["methylation-array", "wgbs", "rrbs", "epic", "450k"],
     skills: ["dna-methylation", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "searchPathway", "lookupGoTerm", "searchInteractions"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "lookupAnnotation", "searchInteractions"],
 };
 
 export function createDnaMethylationAgent(deps: SandboxAgentDeps): AgentDefinition {

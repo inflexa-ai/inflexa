@@ -52,47 +52,48 @@ const inputSchema = z
         dataset: z
             .enum(["toxcast", "hazard", "chemical", "exposure"])
             .describe(
-                "Which CompTox dataset to query. " +
-                    "'toxcast' — ToxCast/Tox21 in-vitro high-throughput screening; profiles toxicological liability across hundreds of assay endpoints (nuclear receptors, stress response, " +
-                    "mitochondrial toxicity), e.g. 'is this compound an endocrine disruptor?'. Returns the resolved chemical plus assay results — endpoint name, AC50, hit call, sorted by " +
-                    "AC50 ascending — alongside totalAssays, activeAssays and activeHitRate, which always describe the full tested panel rather than the returned slice. " +
-                    "'hazard' — ToxValDB / ToxRefDB IN-VIVO hazard: the points of departure a safety evaluation rests on. Returns dose-response rows (toxvalType such as NOAEL/LOAEL/LD50/BMD, " +
-                    "with value, units, study type and duration, species, exposure route, effect), genotoxicity assay summaries, and cancer classifications. " +
-                    "'chemical' — identity and physicochemical property profile from the CompTox Chemicals Dashboard, and the way to obtain the DTXSID the other datasets key off. Returns " +
-                    "DTXSID, CASRN, SMILES, InChIKey, formula and mass, plus (unless includeProperties is false) experimental and predicted property summaries — logP, water solubility, " +
-                    "vapor pressure, melting/boiling point, bioconcentration factor, Henry's law constant. " +
-                    "'exposure' — the exposure half of a risk assessment (e.g. pairing a ToxCast AC50 against predicted exposure for a bioactivity-exposure ratio). Returns SEEM predictions " +
-                    "(production volume and per-pathway exposure probabilities — dietary, residential, pesticide, industrial; NOT a daily-intake dose), HTTK toxicokinetic parameters, " +
-                    "reported functional-use categories, and consumer-product composition.",
+                "Which CompTox dataset to query; each names its return fields.\n" +
+                    "'toxcast' — ToxCast/Tox21 in-vitro HTS across hundreds of endpoints (nuclear receptors, stress response, mitochondrial toxicity): 'is " +
+                    "this an endocrine disruptor?'. → the resolved chemical plus assay rows (endpoint, AC50, hit call; AC50 ascending), and totalAssays / " +
+                    "activeAssays / activeHitRate, which always describe the FULL tested panel, not the returned slice.\n" +
+                    "'hazard' — ToxValDB / ToxRefDB IN-VIVO hazard: the points of departure a safety evaluation rests on. → dose-response rows (toxvalType " +
+                    "NOAEL/LOAEL/LD50/BMD with value, units, study type and duration, species, route, effect), genotoxicity summaries, cancer classifications.\n" +
+                    "'chemical' — identity and physicochemical profile, and the way to get the DTXSID the other datasets key off. → DTXSID, CASRN, SMILES, " +
+                    "InChIKey, formula, mass, plus (unless includeProperties is false) experimental and predicted properties — logP, water solubility, vapor " +
+                    "pressure, melting/boiling point, bioconcentration factor, Henry's law constant.\n" +
+                    "'exposure' — the exposure half of a risk assessment (e.g. an AC50 against predicted exposure for a bioactivity-exposure ratio). → SEEM " +
+                    "predictions (production volume and per-pathway probabilities: dietary, residential, pesticide, industrial — NOT a daily-intake dose), " +
+                    "HTTK toxicokinetic parameters, reported functional uses, consumer-product composition.",
             ),
         query: z
             .string()
             .describe(
-                "Chemical identifier (all datasets). A DTXSID (e.g. 'DTXSID7020182') is used directly with no lookup; a CASRN (e.g. '80-05-7'), a chemical name (e.g. 'bisphenol A'), " +
-                    "or — for dataset 'chemical' — an InChIKey is resolved by EXACT match, so a non-canonical or misspelled name yields found: false.",
+                "Chemical identifier (all datasets). A DTXSID ('DTXSID7020182') is used directly; a CASRN ('80-05-7'), a name ('bisphenol A'), or — for " +
+                    "dataset 'chemical' — an InChIKey is resolved by EXACT match, so a non-canonical or misspelled name yields found: false.",
             ),
         dataType: z
             .enum(["toxval", "genetox", "cancer", "seem", "httk", "functional-use", "product-data", "all"])
             .optional()
             .describe(
-                "Which sections to fetch — datasets 'hazard' and 'exposure' only; ignored by 'toxcast' and 'chemical', which each return one dataset. Default 'all'. " +
-                    "For dataset 'hazard': 'toxval' (ToxValDB dose-response values — NOAELs, LOAELs, LD50s, BMDs), 'genetox' (genotoxicity assay summaries), 'cancer' (cancer " +
-                    "classifications — IARC/EPA/NTP and similar), or 'all'. " +
-                    "For dataset 'exposure': 'seem' (SEEM exposure-pathway predictions and production volume), 'httk' (high-throughput toxicokinetic parameters — clearance, Css, protein " +
-                    "binding, …), 'functional-use' (reported chemical use categories), 'product-data' (consumer-product composition), or 'all'. " +
-                    "'all' fetches every section of that dataset concurrently.",
+                "Which sections to fetch — datasets 'hazard' and 'exposure' only, ignored by the single-dataset 'toxcast' and 'chemical'. Default 'all', " +
+                    "which fetches every section of that dataset concurrently. " +
+                    "'hazard': 'toxval' (dose-response — NOAELs, LOAELs, LD50s, BMDs), 'genetox' (genotoxicity summaries), 'cancer' (IARC/EPA/NTP-style " +
+                    "classifications). " +
+                    "'exposure': 'seem' (exposure-pathway predictions + production volume), 'httk' (toxicokinetics — clearance, Css, protein binding), " +
+                    "'functional-use' (reported use categories), 'product-data' (consumer-product composition).",
             ),
         activeOnly: z
             .boolean()
             .optional()
             .describe(
-                "Dataset 'toxcast' only. Default true — return only hit (active) assays. Set false for the whole tested panel including inactives, needed to judge selectivity or a low hit rate.",
+                "'toxcast' only. Default true — hit (active) assays only. False for the whole tested panel including inactives, needed to judge selectivity " +
+                    "or a low hit rate.",
             ),
         includeProperties: z
             .boolean()
             .optional()
             .describe(
-                "Dataset 'chemical' only. Default true — also fetch the experimental/predicted property summaries. Set false to skip that second call when only identity and mass are needed.",
+                "'chemical' only. Default true — also fetch experimental/predicted properties. False skips that second call when only identity and mass are needed.",
             ),
         limit: z
             .number()
@@ -101,9 +102,10 @@ const inputSchema = z
             .max(200)
             .optional()
             .describe(
-                "Max rows returned; ignored by dataset 'chemical'. Defaults and ceilings differ per dataset: 'toxcast' default 50, max 200, applied after the activeOnly filter; " +
-                    "'hazard' default 30, max 100, applied to toxval and genetox only — cancer ALWAYS returns every row; 'exposure' default 25, max 100, applied to functional-use and " +
-                    "product-data only — seem and httk are ALWAYS returned whole.",
+                "Max rows; ignored by 'chemical'. Per dataset: 'toxcast' default 25 / max 200, applied after activeOnly and AC50-ascending so the default " +
+                    "keeps the most potent hits; 'hazard' default 30 / max 100, applied to toxval and genetox only — cancer always returns every row (only " +
+                    "ever a handful); 'exposure' default 25 / max 100, applied to functional-use and product-data only — seem is one record and httk a short " +
+                    "parameter list, both returned whole.",
             ),
     })
     .refine((d) => (d.dataset !== "toxcast" && d.dataset !== "chemical") || d.dataType === undefined || d.dataType === "all", {
@@ -140,13 +142,13 @@ export function createComptoxTool(deps: { apiKey: string }) {
     return defineTool({
         id: "comptox",
         description:
-            "Query EPA's CompTox (CTX) chemical-safety databases — pick the dataset with `dataset`: 'toxcast' (in-vitro HTS bioactivity), 'hazard' (in-vivo hazard: NOAEL/LOAEL/LD50, " +
-            "genotoxicity, cancer classifications), 'chemical' (identity + physicochemical/ADMET properties), 'exposure' (SEEM exposure predictions, toxicokinetics, uses, products). " +
-            "See `dataset` for what each returns. Every dataset resolves the same `query` (DTXSID, CASRN, or exact chemical name) to a DTXSID first. " +
-            "Requires EPA_CCTE_API_KEY — a missing key fails the call terminally: do NOT retry, tell the user the key needs configuring and proceed without EPA data. " +
-            "found: false means the query did not resolve to a chemical — valid no-data, do not retry the same string; a present-but-empty section is likewise valid no-data. " +
-            "This is environmental/industrial-chemical safety data: for drug-like compounds prefer the PubChem or ChEMBL tools — dataset 'chemical' returns `detail.pubchemCid`, which " +
-            "bridges back to them.",
+            "EPA's CompTox (CTX) chemical-safety databases — four datasets behind `dataset`: 'toxcast' (in-vitro HTS bioactivity), 'hazard' (in-vivo: " +
+            "NOAEL/LOAEL/LD50, genotoxicity, cancer), 'chemical' (identity + physicochemical/ADMET), 'exposure' (SEEM predictions, toxicokinetics, uses, " +
+            "products). See `dataset` for what each returns; all four resolve `query` to a DTXSID first.\n" +
+            "Requires EPA_CCTE_API_KEY — a missing key fails terminally: do NOT retry, tell the user the key needs configuring and proceed without EPA data.\n" +
+            "found: false means the query did not resolve to a chemical; a present-but-empty section is likewise valid no-data. Do not retry either.\n" +
+            "This is environmental/industrial-chemical data: for drug-like compounds prefer PubChem or ChEMBL — dataset 'chemical' returns " +
+            "`detail.pubchemCid` to bridge back.",
         inputSchema,
         execute: async (input): Promise<Result<ComptoxOutput, ToolError>> => {
             const headers = getEpaCcteHeaders(deps.apiKey);
@@ -160,7 +162,7 @@ export function createComptoxTool(deps: { apiKey: string }) {
                 case "toxcast": {
                     const bioactivity = await fetchToxcastBioactivity(dtxsid, headers, {
                         activeOnly: input.activeOnly ?? true,
-                        limit: input.limit ?? 50,
+                        limit: input.limit ?? 25,
                     });
                     return ok({ found: true as const, chemical: { dtxsid, preferredName, casrn, ...bioactivity } });
                 }

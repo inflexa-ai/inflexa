@@ -1,10 +1,10 @@
+import type { Logger } from "../../lib/logger.js";
 import type { Tool } from "../define-tool.js";
 
-import { createPubMedTool } from "./pubmed.js";
-import { createSearchClinvarTool } from "./search-clinvar.js";
-import { createSearchDrugbankTool } from "./search-drugbank.js";
-import { createSearchDisgenetTool } from "./search-disgenet.js";
 import { createComptoxTool } from "./comptox.js";
+import { createDrugGeneInteractionsTool } from "./drug-gene-interactions.js";
+import { createGeneDiseaseEvidenceTool } from "./gene-disease-evidence.js";
+import { createPubMedTool } from "./pubmed.js";
 
 /**
  * API keys for the external bio/chem data sources. Threaded from the
@@ -22,35 +22,47 @@ export interface BioToolKeys {
 }
 
 /**
- * The NCBI-backed literature tools, built from the shared key slice.
+ * The NCBI-backed literature tool, built from the shared key slice.
  *
  * `pubmed` is the consolidated literature tool (search / details / fulltext
- * behind one `action`); `searchClinvar` remains its own single-endpoint tool.
+ * behind one `action`). ClinVar is no longer its own tool — it is one of the
+ * corpora behind `gene_disease_evidence`, which also needs the NCBI key.
  */
 export function createNcbiTools(keys: BioToolKeys): {
     pubmed: Tool;
-    searchClinvar: Tool;
 } {
     return {
         pubmed: createPubMedTool({ ncbiApiKey: keys.ncbi }),
-        searchClinvar: createSearchClinvarTool({ ncbiApiKey: keys.ncbi }),
     };
 }
 
 /**
- * The DrugBank / DisGeNET / EPA CompTox tools, built from the key slice.
+ * The keyed multi-source tools.
  *
- * `comptox` is the consolidated EPA CTX tool (toxcast / hazard / chemical /
- * exposure behind one `dataset`), built over the shared EPA_CCTE key.
+ * Each of these fans out over several corpora and needs more than one key, so
+ * they are built together from the whole slice rather than per source:
+ * `geneDiseaseEvidence` spans the GWAS Catalog (public), DisGeNET (keyed) and
+ * ClinVar (NCBI key), and `drugGeneInteractions` spans DGIdb (public), DrugBank
+ * (keyed) and PharmGKB (public). A tool whose key is absent degrades that one
+ * corpus to `unavailable` in its `perSource` report rather than failing.
  */
-export function createChemDbTools(keys: BioToolKeys): {
-    searchDrugbank: Tool;
-    searchDisgenet: Tool;
+export function createChemDbTools(
+    keys: BioToolKeys,
+    deps: { readonly logger?: Logger } = {},
+): {
+    geneDiseaseEvidence: Tool;
+    drugGeneInteractions: Tool;
     comptox: Tool;
 } {
     return {
-        searchDrugbank: createSearchDrugbankTool({ apiKey: keys.drugbank }),
-        searchDisgenet: createSearchDisgenetTool({ apiKey: keys.disgenet }),
+        geneDiseaseEvidence: createGeneDiseaseEvidenceTool({
+            disgenetApiKey: keys.disgenet,
+            ...(keys.ncbi ? { ncbiApiKey: keys.ncbi } : {}),
+        }),
+        drugGeneInteractions: createDrugGeneInteractionsTool({
+            drugbankApiKey: keys.drugbank,
+            ...(deps.logger ? { logger: deps.logger } : {}),
+        }),
         comptox: createComptoxTool({ apiKey: keys.epaCcte }),
     };
 }

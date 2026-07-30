@@ -240,15 +240,16 @@ safety, toxicity, or treatment outcomes:
    route these to the cheminformatics-agent (which focuses on
    compound characterization, not repurposing).
 
-8. **Anchor off-target safety with the curated panel.** When the
-   research question involves a drug candidate, target selectivity,
-   or off-target liability assessment, include an early
-   \`check_safety_panel\` step (executed by the
-   translational-safety-agent or drug-repurposing-agent) against
-   the candidate's known targets. This gives downstream
+8. **Anchor off-target safety early.** When the research question
+   involves a drug candidate, target selectivity, or off-target
+   liability assessment, include an early \`target_safety\` step
+   (executed by the translational-safety-agent or
+   drug-repurposing-agent) against the candidate's known targets. It
+   screens the curated secondary-pharmacology panel and the curated
+   Open Targets liabilities in one call, giving downstream
    interpretation a deterministic anchor before the deeper analyses
-   those sandbox agents run — \`opentargets({action:"safety"})\`,
-   \`comptox({dataset:"toxcast"})\`, or PRISM signatures.
+   those sandbox agents run — \`comptox({dataset:"toxcast"})\` or
+   PRISM signatures.
 
 Do NOT add translational steps speculatively — only when the research
 question or data context explicitly supports them.

@@ -195,10 +195,26 @@ describe("pubmed — action 'details'", () => {
                     doi: "10.1038/s41568-021-00001",
                     meshTerms: ["Breast Neoplasms"],
                     pmcId: "PMC7654321",
+                    // The true sizes travel even when the lists are not trimmed.
+                    authorCount: 1,
+                    meshTermCount: 1,
                 },
             ],
             notFound: ["99999999"],
         });
+    });
+
+    it("trims the author and MeSH lists while reporting their true sizes", async () => {
+        stubNcbi((url) => (url.pathname.includes("idconv") ? json({ records: [] }) : xml(EFETCH_XML)));
+
+        const { ctx } = makeToolContext();
+        const result = (await tool.execute({ action: "details", pmids: ["12345678"], maxAuthors: 0, maxMeshTerms: 0 }, ctx))._unsafeUnwrap();
+
+        const article = result.articles[0]!;
+        expect(article.authors).toEqual([]);
+        expect(article.authorCount).toBe(1);
+        expect(article.meshTerms).toEqual([]);
+        expect(article.meshTermCount).toBe(1);
     });
 
     it("leaves pmcId null when the article has no open-access counterpart in PMC", async () => {
@@ -240,7 +256,45 @@ describe("pubmed — action 'fulltext'", () => {
                 { heading: "Introduction", text: "BRCA1 is a tumour suppressor." },
                 { heading: "Results", text: "We observed resistance.\n\nIt was dose dependent." },
             ],
+            // The outline covers every section, so a follow-up can name one.
+            outline: [
+                { heading: "Introduction", chars: 29, included: true },
+                { heading: "Results", chars: 47, included: true },
+            ],
+            totalChars: 76,
+            returnedChars: 76,
+            truncated: false,
         });
+    });
+
+    it("filters to the named sections, leaving the rest in the outline", async () => {
+        stubNcbi(() => xml(PMC_XML));
+
+        const { ctx } = makeToolContext();
+        const result = (await tool.execute({ action: "fulltext", pmcId: "PMC7654321", sections: ["results"] }, ctx))._unsafeUnwrap();
+
+        expect(result.sections.map((s) => s.heading)).toEqual(["Results"]);
+        expect(result.outline.map((o) => [o.heading, o.included])).toEqual([
+            ["Introduction", false],
+            ["Results", true],
+        ]);
+        expect(result.truncated).toBe(true);
+        expect(result.totalChars).toBe(76);
+    });
+
+    it("returns the whole body when it fits inside the budget", async () => {
+        stubNcbi(() => xml(PMC_XML));
+
+        const { ctx } = makeToolContext();
+        const result = (await tool.execute({ action: "fulltext", pmcId: "PMC7654321", maxChars: 500 }, ctx))._unsafeUnwrap();
+
+        expect(result.sections).toHaveLength(2);
+        expect(result.truncated).toBe(false);
+        expect(result.returnedChars).toBe(result.totalChars);
+    });
+
+    it("rejects a maxChars below the schema floor", () => {
+        expect(tool.inputSchema.safeParse({ action: "fulltext", pmcId: "PMC7654321", maxChars: 50 }).success).toBe(false);
     });
 
     it("returns available: false for an article that is not open-access (not is_error)", async () => {
@@ -306,7 +360,8 @@ describe("pubmed — input validation", () => {
     it("accepts each action with its own identifier, applying the search defaults", () => {
         const search = tool.inputSchema.safeParse({ action: "search", query: "BRCA1" });
         expect(search.success).toBe(true);
-        expect(search.success && search.data).toMatchObject({ maxResults: 10, sort: "relevance" });
+        // `execute` owns the defaults now, so the parsed input carries only what was passed.
+        expect(search.success && search.data).toMatchObject({ action: "search", query: "BRCA1" });
 
         expect(tool.inputSchema.safeParse({ action: "details", pmids: ["12345678"] }).success).toBe(true);
         expect(tool.inputSchema.safeParse({ action: "fulltext", pmcId: "PMC7654321" }).success).toBe(true);

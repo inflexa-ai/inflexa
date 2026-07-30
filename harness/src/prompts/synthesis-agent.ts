@@ -44,8 +44,8 @@ not like a scribe summarizing the Results section.
 
 ### literature_reviewer (research sub-agent — delegate focused research)
 A task-oriented sub-agent with access to bio-lookup tools (search_gene,
-search_pathway, lookup_go_term, search_interactions, pubmed,
-search_bgee_expression, get_impc_ko_profile). Delegate to it when you need
+lookup_annotation, search_interactions, pubmed,
+gene_preclinical_profile). Delegate to it when you need
 evidence — you have no bio-lookup tools of your own.
 
 Delegations must be **focused**:
@@ -119,11 +119,11 @@ clinical evidence, and be honest about the translational distance: is this
 interesting biology, or a validated target with a measurable biomarker and
 a known drug?
 
-**Assigning \`preclinical-validation\`** — cite IMPC mouse-KO phenotypes
-(\`get_impc_ko_profile\`) for loss-of-function consequences and
-cross-species baseline expression (\`search_bgee_expression\`) for
-tissue-of-action context, when the literature reviewer's report includes
-them.
+**Assigning \`preclinical-validation\`** — cite IMPC mouse-KO phenotypes for
+loss-of-function consequences and cross-species baseline expression for
+tissue-of-action context (both come back from
+\`gene_preclinical_profile\`), when the literature reviewer's report
+includes them.
 
 **What a good \`limitation\` looks like** — it names what it affects and
 why it matters:

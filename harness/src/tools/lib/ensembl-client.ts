@@ -60,16 +60,17 @@ function mapGene(symbol: string, raw: RawGene): GeneInfo {
 
 export interface LookupOptions {
     species?: string;
-    expand?: boolean;
 }
 
+/**
+ * Look up genes by symbol. Gene-level only: `RawGeneSchema`/`mapGene` model the
+ * gene record itself, so there is no transcript or exon detail to ask for.
+ */
 export async function lookupGenes(symbols: string[], options: LookupOptions = {}): Promise<{ genes: GeneInfo[]; notFound: string[] }> {
     const species = options.species ?? "homo_sapiens";
-    const expand = options.expand ?? false;
 
     if (symbols.length === 1) {
-        const expandParam = expand ? "?expand=1" : "";
-        const result = await apiFetchValidated(`${ENSEMBL_BASE}/lookup/symbol/${species}/${symbols[0]}${expandParam}`, RawGeneSchema, { headers: HEADERS });
+        const result = await apiFetchValidated(`${ENSEMBL_BASE}/lookup/symbol/${species}/${symbols[0]}`, RawGeneSchema, { headers: HEADERS });
         if (result.isErr()) {
             if (result.error.type === "http_status" && result.error.status === 400) {
                 return { genes: [], notFound: [symbols[0]] };
