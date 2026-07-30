@@ -7,7 +7,7 @@ once its run reaches a terminal status, a compact outcome line carrying the term
 completion count, and the duration, with the failure reason when it did not succeed.
 
 The card SHALL NOT carry a live progress meter at any point in its life. Live run progress belongs
-to the sidebar RUNS section and the run-activity panel; a meter here puts the same `done/total`
+to the sidebar RUNS section and the activity panel; a meter here puts the same `done/total`
 figure on screen three times for one run, and the panel's own counts are deliberately rendered as
 bare text precisely so that two surfaces do not read as two widgets showing one run — an argument
 that fails the moment a third meter exists. The card's role is the conversation's memory of a

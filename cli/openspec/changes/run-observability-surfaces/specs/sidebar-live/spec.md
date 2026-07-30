@@ -32,7 +32,7 @@ partial or empty one, and SHALL be reported so the condition is diagnosable rath
 
 - **GIVEN** a refresh has been abandoned at its bound
 - **WHEN** the next poll tick fires
-- **THEN** it proceeds rather than being skipped, and the sidebar and run panel resume updating
+- **THEN** it proceeds rather than being skipped, and the sidebar and activity panel resume updating
 
 #### Scenario: An abandoned refresh preserves the last good snapshots
 

@@ -2,7 +2,7 @@
 
 ### Requirement: A sticky panel shows the focused run's frontier
 
-The chat shell SHALL carry a run-activity panel between the message stream and the input,
+The chat shell SHALL carry a activity panel between the message stream and the input,
 showing exactly one **subject** at a time at the chat column's width. A subject is either an
 analysis run or the analysis's data profile — the two kinds of long-running work a user waits
 on — and the panel SHALL render only what is true of the subject it is showing.

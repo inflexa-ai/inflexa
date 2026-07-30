@@ -55,7 +55,7 @@ export type RunsSnapshot = { kind: "not_ready" } | { kind: "unavailable" } | { k
 /**
  * Live progress of ONE non-terminal run — the feed for that run's block in the sidebar RUNS section
  * (the run-block vocabulary: the segmented bar, `done/total`, and the ordered steps) and for the
- * run-activity panel's frontier.
+ * activity panel's frontier.
  */
 export type ActiveRunProgress = {
     /** The run this progress belongs to — the map key, carried inline so a consumer holding one entry still knows whose it is. */
@@ -79,13 +79,13 @@ export type ActiveRunProgress = {
      *
      * Carried here rather than inferred by a consumer because the carry-forward is invisible from
      * outside: a stale entry and a fresh one are the same shape, so a surface that must mute itself
-     * on a blip (the run-activity panel) has no other way to tell them apart.
+     * on a blip (the activity panel) has no other way to tell them apart.
      */
     stale: boolean;
 };
 
 /**
- * Live progress of the analysis's data profile while it is running — the run-activity panel's second
+ * Live progress of the analysis's data profile while it is running — the activity panel's second
  * kind of subject.
  *
  * Carries only what a profile HAS. There is no completion count and no step list because a profile is
@@ -130,7 +130,7 @@ export type ActiveProfileProgress = {
 export type ActiveRunProgressMap = ReadonlyMap<string, ActiveRunProgress>;
 
 /**
- * One thing the run-activity panel can be showing. A discriminated union rather than a widened run,
+ * One thing the activity panel can be showing. A discriminated union rather than a widened run,
  * because the two kinds genuinely differ in what they have: a profile has no steps and no
  * denominator, and making those optional on one shape would push a guard into every consumer while
  * leaving "a profile with three running steps" representable.
@@ -156,7 +156,7 @@ export const activeRunProgress = activeRun;
 export const activeProfileProgress = activeProfile;
 
 /**
- * The live subjects the run-activity panel can show: every active run, then the running profile.
+ * The live subjects the activity panel can show: every active run, then the running profile.
  *
  * Runs come FIRST, and that ordering is deliberate — it is the one place this module departs from
  * ordering by recency. The two kinds differ in PROVENANCE, not in recency: a profile is auto-triggered

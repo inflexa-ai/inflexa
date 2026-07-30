@@ -27,7 +27,7 @@ import { openArtifact } from "./hooks/artifacts.ts";
 import { resolveEntryPath } from "../modules/harness/artifact_open.ts";
 import { driveForceReprofile, profileWorkInFlight } from "./hooks/profile_parity.ts";
 import { RUN_STATUS_TERMINAL, absTime, absTimeShort, idTail, shortRunName } from "./hooks/sidebar_live.ts";
-import { restoreRunPanel } from "./hooks/run_panel.ts";
+import { restoreActivityPanel } from "./hooks/activity_panel.ts";
 import { chatStatus } from "./hooks/status.ts";
 import { keybindLabel } from "./keymap.ts";
 import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
@@ -1745,11 +1745,11 @@ export const commands: Command[] = [
         // The panel's chord is a toggle; this command is restore-ONLY. A user reaches the palette
         // precisely because they lost the panel and do not recall the chord, so a toggle here could
         // hide it a second time and read as the command having done nothing.
-        id: "view.run-panel",
-        title: "Show run panel",
-        description: "Bring back the live run activity panel",
+        id: "view.activity-panel",
+        title: "Show activity panel",
+        description: "Bring back the live activity panel",
         category: "View",
-        run: () => restoreRunPanel(),
+        run: () => restoreActivityPanel(),
     },
     {
         id: "view.design-gallery",

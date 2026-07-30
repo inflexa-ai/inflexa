@@ -4,18 +4,18 @@ import { okAsync, errAsync } from "neverthrow";
 
 import { __resetSidebarLiveForTest, refreshSidebarData, type ActiveRunProgress, type RefreshSeams } from "./sidebar_live.ts";
 import {
-    __resetRunPanelForTest,
+    __resetActivityPanelForTest,
     activeSubjectCount,
     focusedSubject,
     focusedSubjectActivity,
     focusedSubjectPosition,
     focusNextSubject,
-    restoreRunPanel,
-    runPanelVisible,
-    toggleRunPanel,
-    watchRunPanel,
-    type RunPanelSeams,
-} from "./run_panel.ts";
+    restoreActivityPanel,
+    activityPanelVisible,
+    toggleActivityPanel,
+    watchActivityPanel,
+    type ActivityPanelSeams,
+} from "./activity_panel.ts";
 import type { CortexRunRow, DataProfileStatus, StepActivityPart, StepExecutionRow } from "@inflexa-ai/harness";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 
@@ -164,7 +164,7 @@ type OpenedSubscription = {
 };
 
 /** Panel seams whose subscription is a push channel the test drives. */
-type FakePanelSeams = RunPanelSeams & {
+type FakePanelSeams = ActivityPanelSeams & {
     /** Deliver a part to whichever subscription is currently live (a no-op when none is). */
     push: (part: StepActivityPart) => void;
     /** Every subscription opened, in order, torn-down ones included. */
@@ -215,14 +215,14 @@ function panelSeams(initial: string | null): FakePanelSeams {
 
 afterEach(() => {
     __resetSidebarLiveForTest();
-    __resetRunPanelForTest();
+    __resetActivityPanelForTest();
 });
 
-describe("run panel focus", () => {
+describe("activity panel focus", () => {
     test("with no active subject the panel is invisible and holds nothing", async () => {
         await refreshSidebarData("analysis-1", seamsFor([]));
         expect(focusedSubject()).toBeNull();
-        expect(runPanelVisible()).toBe(false);
+        expect(activityPanelVisible()).toBe(false);
         expect(activeSubjectCount()).toBe(0);
         expect(focusedSubjectPosition()).toBe(0);
     });
@@ -230,7 +230,7 @@ describe("run panel focus", () => {
     test("with one active run it focuses that run without being asked", async () => {
         await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
         expect(focusedRunSubject()?.runId).toBe("run-a");
-        expect(runPanelVisible()).toBe(true);
+        expect(activityPanelVisible()).toBe(true);
         expect(activeSubjectCount()).toBe(1);
         expect(focusedSubjectPosition()).toBe(1);
     });
@@ -272,15 +272,15 @@ describe("run panel focus", () => {
         await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a", status: "completed" }), runRow({ runId: "run-b" })]));
         expect(focusedRunSubject()?.runId).toBe("run-b");
         expect(activeSubjectCount()).toBe(1);
-        expect(runPanelVisible()).toBe(true);
+        expect(activityPanelVisible()).toBe(true);
     });
 
     test("the last run finishing empties the panel", async () => {
         await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
-        expect(runPanelVisible()).toBe(true);
+        expect(activityPanelVisible()).toBe(true);
         await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a", status: "completed" })]));
         expect(focusedRunSubject()).toBeNull();
-        expect(runPanelVisible()).toBe(false);
+        expect(activityPanelVisible()).toBe(false);
     });
 
     test("advancing steps from the run on screen, not from a stale preference", async () => {
@@ -310,7 +310,7 @@ describe("run panel focus", () => {
         // Still run-a, still visible — a blip must never read as completion.
         expect(focusedRunSubject()?.runId).toBe("run-a");
         expect(focusedRunSubject()?.stale).toBe(true);
-        expect(runPanelVisible()).toBe(true);
+        expect(activityPanelVisible()).toBe(true);
 
         // And it recovers on the next good read.
         await refreshSidebarData("analysis-1", seamsFor(both));
@@ -318,7 +318,7 @@ describe("run panel focus", () => {
     });
 });
 
-describe("run panel focus across subject kinds", () => {
+describe("activity panel focus across subject kinds", () => {
     test("navigation moves between a run and the profile, wrapping past the last", async () => {
         await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })], { profile: profileRow() }));
         expect(activeSubjectCount()).toBe(2);
@@ -358,13 +358,13 @@ describe("run panel focus across subject kinds", () => {
         expect(focusedRunSubject()?.runId).toBe("run-a");
         expect(activeSubjectCount()).toBe(1);
         expect(focusedSubjectPosition()).toBe(1);
-        expect(runPanelVisible()).toBe(true);
+        expect(activityPanelVisible()).toBe(true);
     });
 
     test("a profile finishing with nothing else active empties the panel", async () => {
         await refreshSidebarData("analysis-1", seamsFor([], { profile: profileRow() }));
         expect(focusedSubject()?.kind).toBe("profile");
-        expect(runPanelVisible()).toBe(true);
+        expect(activityPanelVisible()).toBe(true);
 
         await refreshSidebarData(
             "analysis-1",
@@ -374,15 +374,15 @@ describe("run panel focus across subject kinds", () => {
         expect(focusedSubject()).toBeNull();
         expect(activeSubjectCount()).toBe(0);
         expect(focusedSubjectPosition()).toBe(0);
-        expect(runPanelVisible()).toBe(false);
+        expect(activityPanelVisible()).toBe(false);
     });
 });
 
-describe("run panel dismissal", () => {
+describe("activity panel dismissal", () => {
     test("dismissing hides the panel while leaving the run untouched", async () => {
         await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
-        toggleRunPanel();
-        expect(runPanelVisible()).toBe(false);
+        toggleActivityPanel();
+        expect(activityPanelVisible()).toBe(false);
         // The run itself is untouched: it is still active, still focused, still in the rail's snapshot.
         expect(focusedRunSubject()?.runId).toBe("run-a");
         expect(activeSubjectCount()).toBe(1);
@@ -394,45 +394,45 @@ describe("run panel dismissal", () => {
         // (or one issued while the panel was already back) would hide it again and read as the
         // command having done nothing.
         await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
-        toggleRunPanel();
-        expect(runPanelVisible()).toBe(false);
-        restoreRunPanel();
-        restoreRunPanel();
-        restoreRunPanel();
-        expect(runPanelVisible()).toBe(true);
+        toggleActivityPanel();
+        expect(activityPanelVisible()).toBe(false);
+        restoreActivityPanel();
+        restoreActivityPanel();
+        restoreActivityPanel();
+        expect(activityPanelVisible()).toBe(true);
     });
 
     test("restore brings it back, and is idempotent when already visible", async () => {
         await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
-        toggleRunPanel();
-        expect(runPanelVisible()).toBe(false);
-        restoreRunPanel();
-        expect(runPanelVisible()).toBe(true);
-        restoreRunPanel();
-        expect(runPanelVisible()).toBe(true);
+        toggleActivityPanel();
+        expect(activityPanelVisible()).toBe(false);
+        restoreActivityPanel();
+        expect(activityPanelVisible()).toBe(true);
+        restoreActivityPanel();
+        expect(activityPanelVisible()).toBe(true);
     });
 
     test("a dismissal expires once no run is active, so a later run is not silently invisible", async () => {
         await createRoot(async (dispose) => {
-            watchRunPanel(panelSeams(null));
+            watchActivityPanel(panelSeams(null));
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
-            toggleRunPanel();
-            expect(runPanelVisible()).toBe(false);
+            toggleActivityPanel();
+            expect(activityPanelVisible()).toBe(false);
 
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a", status: "completed" })]));
             // Nothing active → the dismissal has no referent left, so it clears.
-            expect(runPanelVisible()).toBe(false); // still nothing to show
+            expect(activityPanelVisible()).toBe(false); // still nothing to show
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-b" })]));
-            expect(runPanelVisible()).toBe(true);
+            expect(activityPanelVisible()).toBe(true);
             dispose();
         });
     });
 });
 
-describe("run panel activity label", () => {
+describe("activity panel activity label", () => {
     test("the focused run's activity is published verbatim", async () => {
         await createRoot(async (dispose) => {
-            watchRunPanel(panelSeams("Running script deseq2.R"));
+            watchActivityPanel(panelSeams("Running script deseq2.R"));
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
             // Delivery is async; let its microtask settle.
             await Promise.resolve();
@@ -450,7 +450,7 @@ describe("run panel activity label", () => {
         // focused run — passed the whole suite while the live panel showed a phrase from minutes ago.
         await createRoot(async (dispose) => {
             const seams = panelSeams("Running script deseq2.R");
-            watchRunPanel(seams);
+            watchActivityPanel(seams);
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
@@ -469,7 +469,7 @@ describe("run panel activity label", () => {
 
     test("an unresolvable label is null, never a fabricated placeholder", async () => {
         await createRoot(async (dispose) => {
-            watchRunPanel(panelSeams(null));
+            watchActivityPanel(panelSeams(null));
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
@@ -481,7 +481,7 @@ describe("run panel activity label", () => {
     test("a step that has settled stops describing work, rather than freezing on its last phrase", async () => {
         await createRoot(async (dispose) => {
             const seams = panelSeams("Running script deseq2.R");
-            watchRunPanel(seams);
+            watchActivityPanel(seams);
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
@@ -491,7 +491,7 @@ describe("run panel activity label", () => {
             // yet), so the panel stays — but with no activity line, which is the honest reading.
             seams.push(activityPart("run-a", "Step complete", { phase: "complete" }));
             expect(focusedSubjectActivity()).toBeNull();
-            expect(runPanelVisible()).toBe(true);
+            expect(activityPanelVisible()).toBe(true);
             dispose();
         });
     });
@@ -499,7 +499,7 @@ describe("run panel activity label", () => {
     test("with two steps in flight the newest report wins", async () => {
         await createRoot(async (dispose) => {
             const seams = panelSeams(null);
-            watchRunPanel(seams);
+            watchActivityPanel(seams);
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
@@ -524,7 +524,7 @@ describe("run panel activity label", () => {
     test("no active run clears the label rather than leaving the last run's showing", async () => {
         await createRoot(async (dispose) => {
             const seams = panelSeams("Running script deseq2.R");
-            watchRunPanel(seams);
+            watchActivityPanel(seams);
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
@@ -539,11 +539,11 @@ describe("run panel activity label", () => {
     });
 });
 
-describe("run panel activity subscription", () => {
+describe("activity panel activity subscription", () => {
     test("one subscription per focused run, held across the sidebar's poll", async () => {
         await createRoot(async (dispose) => {
             const seams = panelSeams("Running script deseq2.R");
-            watchRunPanel(seams);
+            watchActivityPanel(seams);
             const runs = [runRow({ runId: "run-a" })];
             await refreshSidebarData("analysis-1", seamsFor(runs));
             await Promise.resolve();
@@ -563,7 +563,7 @@ describe("run panel activity subscription", () => {
     test("moving focus tears the old subscription down and opens one on the new run", async () => {
         await createRoot(async (dispose) => {
             const seams = panelSeams("Running script deseq2.R");
-            watchRunPanel(seams);
+            watchActivityPanel(seams);
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
             await Promise.resolve();
             expect(seams.subscribed()).toBe("run-a");
@@ -585,7 +585,7 @@ describe("run panel activity subscription", () => {
         // generation token is what makes that harmless, and this drives exactly that race.
         await createRoot(async (dispose) => {
             const seams = panelSeams(null);
-            watchRunPanel(seams);
+            watchActivityPanel(seams);
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
             await Promise.resolve();
             const stale = seams.opened()[0];
@@ -603,7 +603,7 @@ describe("run panel activity subscription", () => {
     test("unmounting the screen tears the subscription down", async () => {
         const seams = panelSeams("Running script deseq2.R");
         await createRoot(async (dispose) => {
-            watchRunPanel(seams);
+            watchActivityPanel(seams);
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             expect(seams.subscribed()).toBe("run-a");
@@ -615,7 +615,7 @@ describe("run panel activity subscription", () => {
     test("no subscription is opened while the runtime is not booted", async () => {
         await createRoot(async (dispose) => {
             const seams: FakePanelSeams = { ...panelSeams("Running script deseq2.R"), runtime: () => null };
-            watchRunPanel(seams);
+            watchActivityPanel(seams);
             await refreshSidebarData("analysis-1", seamsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             expect(seams.opened()).toHaveLength(0);
@@ -625,7 +625,7 @@ describe("run panel activity subscription", () => {
     });
 });
 
-describe("run panel activity for a focused profile", () => {
+describe("activity panel activity for a focused profile", () => {
     test("the label follows the profiler's work across successive reports", async () => {
         // A profile's live path end to end, and the one place the two kinds genuinely differ: the
         // stream is addressed by the workflow id the ledger row records rather than by the subject's
@@ -635,7 +635,7 @@ describe("run panel activity for a focused profile", () => {
             // starting from nothing is what makes the two pushes below two OBSERVED changes rather
             // than one change away from whatever the seam handed over at attach.
             const seams = panelSeams(null);
-            watchRunPanel(seams);
+            watchActivityPanel(seams);
             await refreshSidebarData("analysis-1", seamsFor([], { profile: profileRow() }));
             await Promise.resolve();
             await Promise.resolve();
@@ -666,7 +666,7 @@ describe("run panel activity for a focused profile", () => {
         // re-adding the check fails a test instead of silently breaking profiles.
         await createRoot(async (dispose) => {
             const seams = panelSeams(null);
-            watchRunPanel(seams);
+            watchActivityPanel(seams);
             await refreshSidebarData("analysis-1", seamsFor([], { profile: profileRow() }));
             await Promise.resolve();
             await Promise.resolve();

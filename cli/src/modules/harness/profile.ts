@@ -368,7 +368,7 @@ export async function readNewestWorkflowStep(
  * {@link readNewestWorkflowStep}. A UUID contains no LIKE wildcards, so the
  * pattern is literal apart from the trailing `%`.
  *
- * Shared by the headless run wait (`run.ts`) and the TUI's run-activity panel
+ * Shared by the headless run wait (`run.ts`) and the TUI's activity panel
  * rather than written twice: the `runId-N` child-id scheme is a contract with
  * the harness's workflow naming, and two copies of it would drift the moment
  * that scheme changes, leaving one surface silently reading only the parent.

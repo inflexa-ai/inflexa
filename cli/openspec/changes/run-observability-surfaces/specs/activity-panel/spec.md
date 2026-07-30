@@ -2,7 +2,7 @@
 
 ### Requirement: A sticky panel shows the focused run's frontier
 
-The chat shell SHALL carry a run-activity panel between the message stream and the input,
+The chat shell SHALL carry a activity panel between the message stream and the input,
 showing exactly one run at a time at the chat column's width. Its content SHALL be the
 run's **frontier** — the run's name, its completion count and elapsed time, and for the
 step (or steps) currently running: the step's human name, its owning agent, a live activity

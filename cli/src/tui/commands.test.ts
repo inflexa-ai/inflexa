@@ -542,20 +542,20 @@ describe("session flows", () => {
 // the sidebar toggle is. A user who dismissed the panel and does not recall the chord needs the
 // palette entry, which is precisely why it is restore-only rather than a second toggle: a toggle
 // there could hide the panel a second time and read as the command having done nothing.
-describe("run-panel palette command", () => {
+describe("activity-panel palette command", () => {
     test("restore is reachable from the palette, in the View category", () => {
-        const cmd = commands.find((c) => c.id === "view.run-panel");
+        const cmd = commands.find((c) => c.id === "view.activity-panel");
         expect(cmd).toBeDefined();
         expect(cmd!.category).toBe("View");
         // Discoverable by what a user would actually type after losing the panel.
-        expect(`${cmd!.title} ${cmd!.description}`.toLowerCase()).toContain("run panel");
+        expect(`${cmd!.title} ${cmd!.description}`.toLowerCase()).toContain("activity panel");
     });
 
     test("the command is restore-only, not a second toggle", () => {
-        const cmd = commands.find((c) => c.id === "view.run-panel")!;
-        // Behaviour is asserted in run_panel.test.ts, where an active run can be seeded; what matters
+        const cmd = commands.find((c) => c.id === "view.activity-panel")!;
+        // Behaviour is asserted in activity_panel.test.ts, where an active run can be seeded; what matters
         // here is that the palette entry calls the restore, never the toggle — a toggle in the palette
         // could hide the panel a second time and read as the command having done nothing.
-        expect(cmd.run.toString()).toContain("restoreRunPanel");
+        expect(cmd.run.toString()).toContain("restoreActivityPanel");
     });
 });

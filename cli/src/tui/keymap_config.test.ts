@@ -88,12 +88,12 @@ describe("keybind resolution — config override", () => {
     });
 });
 
-describe("run-activity panel bindings", () => {
+describe("activity panel bindings", () => {
     // The panel's two actions are ordinary remappable app keybindings — the point of this block is
     // that nothing about them is special-cased: they resolve, they relabel, and they remap like any
     // other, which is what lets the panel derive its displayed hints from the chords.
     test("both panel actions resolve to Ctrl chords — never Alt, which terminals deliver unreliably", () => {
-        for (const id of ["app.run-panel-next", "app.run-panel-toggle"] as const) {
+        for (const id of ["app.activity-panel-next", "app.activity-panel-toggle"] as const) {
             const chord = resolveKeybind(id);
             expect(chord.ctrl).toBe(true);
             expect(chord.alt).toBe(false);
@@ -103,13 +103,29 @@ describe("run-activity panel bindings", () => {
     });
 
     test("the panel's labels are lowercase and derived, so a remap re-advertises itself", () => {
-        expect(keybindLabel("app.run-panel-next")).toBe("ctrl+n");
-        expect(keybindLabel("app.run-panel-toggle")).toBe("ctrl+r");
+        expect(keybindLabel("app.activity-panel-next")).toBe("ctrl+n");
+        expect(keybindLabel("app.activity-panel-toggle")).toBe("ctrl+r");
 
-        writeKeybinds({ "app.run-panel-next": "ctrl+9", "app.run-panel-toggle": "ctrl+0" });
+        writeKeybinds({ "app.activity-panel-next": "ctrl+9", "app.activity-panel-toggle": "ctrl+0" });
         // The panel renders exactly these strings — it never hand-writes a key beside an action.
-        expect(keybindLabel("app.run-panel-next")).toBe("ctrl+9");
-        expect(keybindLabel("app.run-panel-toggle")).toBe("ctrl+0");
+        expect(keybindLabel("app.activity-panel-next")).toBe("ctrl+9");
+        expect(keybindLabel("app.activity-panel-toggle")).toBe("ctrl+0");
+    });
+
+    test("a config written against the panel's former ids still binds", () => {
+        // A keybind id is a key in the user's config file, so renaming one without honouring the old
+        // name would make an existing override stop matching and silently revert to the default —
+        // the failure a user can only diagnose as a chord that randomly stopped working.
+        writeKeybinds({ "app.run-panel-next": "ctrl+9", "app.run-panel-toggle": "ctrl+0" });
+
+        expect(keybindLabel("app.activity-panel-next")).toBe("ctrl+9");
+        expect(keybindLabel("app.activity-panel-toggle")).toBe("ctrl+0");
+    });
+
+    test("a current id wins over the legacy one, so a config carrying both is unambiguous", () => {
+        writeKeybinds({ "app.activity-panel-next": "ctrl+9", "app.run-panel-next": "ctrl+8" });
+
+        expect(keybindLabel("app.activity-panel-next")).toBe("ctrl+9");
     });
 
     test("the panel's chords collide with no other app binding", () => {
@@ -125,7 +141,7 @@ describe("run-activity panel bindings", () => {
             // so a binding cannot exist without appearing there.
             useBindings(() => ({
                 bindings: [
-                    { chord: leaderSeq("p"), run: () => {}, desc: "Toggle run panel", group: "View" },
+                    { chord: leaderSeq("p"), run: () => {}, desc: "Toggle activity panel", group: "View" },
                     { chord: leaderSeq("]"), run: () => {}, desc: "Next active run", group: "View" },
                 ],
             }));
@@ -133,7 +149,7 @@ describe("run-activity panel bindings", () => {
             expect(dispatchKey(key("x", { ctrl: true }))).toBe(true); // the leader → pending
             const next = reachableKeys();
             const byStroke = new Map(next.map((n) => [n.stroke, n]));
-            expect(byStroke.get("p")).toMatchObject({ desc: "Toggle run panel", group: "View" });
+            expect(byStroke.get("p")).toMatchObject({ desc: "Toggle activity panel", group: "View" });
             expect(byStroke.get("]")).toMatchObject({ desc: "Next active run", group: "View" });
             dispatchKey(key("escape")); // abandon the pending sequence
         });
@@ -145,8 +161,8 @@ describe("run-activity panel bindings", () => {
             let toggled = 0;
             useBindings(() => ({
                 bindings: [
-                    { chord: resolveKeybind("app.run-panel-next"), run: () => next++ },
-                    { chord: resolveKeybind("app.run-panel-toggle"), run: () => toggled++ },
+                    { chord: resolveKeybind("app.activity-panel-next"), run: () => next++ },
+                    { chord: resolveKeybind("app.activity-panel-toggle"), run: () => toggled++ },
                 ],
             }));
 

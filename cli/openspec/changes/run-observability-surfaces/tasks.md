@@ -7,7 +7,7 @@
 ## 1. Consume the harness run-event stream
 
 - [x] 1.1 Confirm the seam's subscription signature carries no durability-engine type before building on it
-- [x] 1.2 Add a run-activity source in `src/tui/hooks/run_panel.ts` that subscribes to the focused run and holds the current step-activity, following the injectable-seams pattern the module already uses so it is testable offline
+- [x] 1.2 Add a run-activity source in `src/tui/hooks/activity_panel.ts` that subscribes to the focused run and holds the current step-activity, following the injectable-seams pattern the module already uses so it is testable offline
 - [x] 1.3 Tear the subscription down when focus moves to another run, when the run terminates, and when the screen unmounts; ensure a stale subscription can never write over a newer one
 - [x] 1.4 Resolve the panel's label from the folded activity for the running step, omitting the line when none has been reported
 
