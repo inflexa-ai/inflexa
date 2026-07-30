@@ -481,10 +481,10 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         signal,
         emit,
         runStep: passthroughStep,
+        resolved: () => holder.outcome !== null,
     } as const;
 
     await runToTerminal(agent, [{ role: "user", content: prompt }], input.session, loopDeps, {
-        resolved: () => holder.outcome !== null,
         tools: [submitTool, blockerTool],
         nudge:
             "You ended without calling a terminal tool. You MUST call " +

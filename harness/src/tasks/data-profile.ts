@@ -358,9 +358,9 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     signal,
                     emit: () => {},
                     runStep: durableStep,
+                    resolved: () => capturedProfile !== null,
                 },
                 {
-                    resolved: () => capturedProfile !== null,
                     tools: [submitProfileTool],
                     nudge:
                         "You stopped without calling submit_profile, so no profile was " +

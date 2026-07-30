@@ -58,9 +58,9 @@ describe("runToTerminal", () => {
                 emit: () => {},
                 runStep: passthroughStep,
                 toolChoice: "required",
+                resolved: () => cell.value !== null,
             },
             {
-                resolved: () => cell.value !== null,
                 tools: [submitTool(cell)],
                 nudge: NUDGE,
             },
@@ -96,8 +96,9 @@ describe("runToTerminal", () => {
                 signal: new AbortController().signal,
                 emit: () => {},
                 runStep: passthroughStep,
+                resolved: () => cell.value !== null,
             },
-            { resolved: () => cell.value !== null, tools: [tool], nudge: NUDGE },
+            { tools: [tool], nudge: NUDGE },
         );
 
         expect(cell.value).toBe("salvaged");
@@ -118,8 +119,9 @@ describe("runToTerminal", () => {
                 signal: ac.signal,
                 emit: () => {},
                 runStep: passthroughStep,
+                resolved: () => cell.value !== null,
             },
-            { resolved: () => cell.value !== null, tools: [submitTool(cell)], nudge: NUDGE },
+            { tools: [submitTool(cell)], nudge: NUDGE },
         );
 
         expect(cell.value).toBeNull();
@@ -145,8 +147,9 @@ describe("runToTerminal", () => {
                 signal: new AbortController().signal,
                 emit: () => {},
                 runStep,
+                resolved: () => cell.value !== null,
             },
-            { resolved: () => cell.value !== null, tools: [tool], nudge: NUDGE },
+            { tools: [tool], nudge: NUDGE },
         );
 
         // First run used bare `llm-0`; the salvage run's steps are all prefixed,
