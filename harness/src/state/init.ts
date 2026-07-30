@@ -211,12 +211,20 @@ CREATE INDEX IF NOT EXISTS idx_cortex_regulatory_chunks_metadata
 -- workflow and sandbox agent loops use the DBOS step cache, never this
 -- table (see the harness-thread-store spec). The (thread_id, seq) primary key already serves
 -- (thread_id, seq DESC) reads, so no separate index is needed.
+--
+-- message_envelope is JSON, not JSONB, and must stay that way. JSONB stores a
+-- re-sorted parse tree rather than the document it was given, so a tool call's
+-- input — and every other free-form payload, which has no schema to be
+-- normalized back against on read — comes back key-reordered. Those bytes are
+-- re-sent to the provider on the next turn, where a reordered prefix misses the
+-- prompt cache. JSON stores the text verbatim. Nothing indexes this column, and
+-- the JSON operators retractLastTurn uses work the same on either type.
 CREATE TABLE IF NOT EXISTS messages (
   thread_id     TEXT NOT NULL,
   seq           BIGINT NOT NULL,
   role          TEXT,
   content_jsonb JSONB,
-  message_envelope JSONB,
+  message_envelope JSON,
   tokens        INTEGER NOT NULL,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (thread_id, seq)
@@ -424,7 +432,22 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                 // carry the NOT NULL floor, which would reject a clear. Idempotent:
                 // dropping an absent NOT NULL no-ops, so this is a no-op on fresh DBs.
                 "ALTER TABLE cortex_analysis_state ALTER COLUMN data_profile_status DROP NOT NULL",
-                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS message_envelope JSONB",
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS message_envelope JSON",
+                // Demote an existing JSONB envelope column to JSON (see the CREATE
+                // TABLE comment). Type-guarded because ALTER ... TYPE rewrites the
+                // whole table and this runs at every boot; scoped to
+                // current_schema() so parallel test schemas never see each other.
+                // Rows already written as JSONB carry over as they stand — their
+                // original key order is not recoverable.
+                `DO $$ BEGIN
+                  IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = current_schema() AND table_name = 'messages'
+                      AND column_name = 'message_envelope' AND data_type = 'jsonb'
+                  ) THEN
+                    ALTER TABLE messages ALTER COLUMN message_envelope TYPE JSON USING message_envelope::text::json;
+                  END IF;
+                END $$`,
                 // Grant key an 'always' records the standing grant under. Nullable
                 // and unbackfilled: every new row writes it (command when absent), and
                 // orphaned legacy pending rows are swept to 'expired' before any answer

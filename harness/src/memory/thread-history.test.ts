@@ -148,6 +148,115 @@ describe("appendTurn / loadRecent round-trip", () => {
     });
 });
 
+// --- marshalling fidelity (prompt-cache regression guard) -------------------
+
+/**
+ * Assert a loaded window matches what was sent as SERIALIZED BYTES — the form
+ * the provider receives, and the form its prompt cache keys on. `toEqual` is
+ * key-order-blind and cannot see a store that re-sorts object keys, which is
+ * exactly what a re-sent prefix must not do.
+ */
+function assertMarshalsVerbatim(sent: readonly ModelMessage[], loaded: readonly ModelMessage[]): void {
+    expect(loaded).toHaveLength(sent.length);
+    for (const [i, message] of sent.entries()) {
+        expect(JSON.stringify(loaded[i])).toBe(JSON.stringify(message));
+    }
+}
+
+describe("envelope marshalling fidelity", () => {
+    it("re-sends a persisted tool-calling turn byte-identical to the turn it stored", async () => {
+        // Keys deliberately out of alphabetical and length order — a store that
+        // sorts them rewrites every one of these payloads.
+        const turn: ModelMessage[] = [
+            userText("profile the staged counts matrix"),
+            assistantToolUse("toolu_1", "execute_command", {
+                script: "summarize.R",
+                timeout: 600,
+                env: { OMP_NUM_THREADS: "4", R_LIBS: "/mnt/libs" },
+            }),
+            {
+                role: "tool",
+                content: [
+                    {
+                        type: "tool-result",
+                        toolCallId: "toolu_1",
+                        toolName: "execute_command",
+                        output: { type: "json", value: { stdout: "done", exitCode: 0, artifacts: ["counts.rds"] } },
+                    },
+                ],
+            },
+            assistantText("The matrix has 18,204 genes across 12 samples."),
+        ];
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+
+        assertMarshalsVerbatim(turn, (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap());
+    });
+
+    it("preserves key order in every free-form payload a ModelMessage can carry", async () => {
+        // The three payloads with no schema to be normalized back against on read:
+        // a tool call's `input`, a json tool result's `value`, a `providerOptions` bag.
+        const turn: ModelMessage[] = [
+            {
+                role: "user",
+                content: "run it",
+                providerOptions: { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } },
+            },
+            assistantToolUse("toolu_2", "write_file", { path: "/a/b.R", mode: "w", content: "x", nested: { z: 1, a: 2 } }),
+            {
+                role: "tool",
+                content: [
+                    {
+                        type: "tool-result",
+                        toolCallId: "toolu_2",
+                        toolName: "write_file",
+                        output: { type: "json", value: { zebra: 1, alpha: 2, nested: { z: "last", a: "first" } } },
+                    },
+                ],
+            },
+            {
+                role: "assistant",
+                content: [{ type: "reasoning", text: "weighing options", providerOptions: { anthropic: { signature: "SIG-abc==", zebra: "z", alpha: "a" } } }],
+            },
+        ];
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+
+        assertMarshalsVerbatim(turn, (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap());
+    });
+
+    it("holds the earlier turns of a thread byte-identical as later turns land on top", async () => {
+        // The cache guarantee end to end: a prefix already sent reads back
+        // unchanged after more turns land behind it.
+        const turn1 = [userText("first question"), assistantToolUse("toolu_3", "search_gene", { symbol: "EGFR", species: "human", limit: 5 })];
+        const turn2 = [userToolResult("toolu_3", JSON.stringify({ hits: 3 })), assistantText("EGFR is well characterized.")];
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        const afterFirst = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        const afterSecond = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+
+        assertMarshalsVerbatim(turn1, afterFirst);
+        expect(JSON.stringify(afterSecond.slice(0, turn1.length))).toBe(JSON.stringify(afterFirst));
+        assertMarshalsVerbatim([...turn1, ...turn2], afterSecond);
+    });
+
+    it("drops a NUL byte from a tool result instead of losing the whole turn", async () => {
+        // A `jsonb` column rejected the insert outright, taking the turn's whole
+        // transaction with it; a `json` column stores the byte but then refuses to
+        // run the boundary predicate's JSON operators over that row. So the write
+        // scrubs it: the turn survives, and its tail stays retractable. The loop
+        // strips NUL where it builds a tool result, so on the harness's own path
+        // the stored row and the message it sent live are already identical.
+        const NUL = String.fromCharCode(0);
+        (await history.appendTurn(THREAD, [userText("read the binary header"), userToolResult("toolu_4", `MAGIC${NUL}rest`)]))._unsafeUnwrap();
+
+        assertMarshalsVerbatim(
+            [userText("read the binary header"), userToolResult("toolu_4", "MAGICrest")],
+            (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap(),
+        );
+        expect((await history.retractLastTurn(THREAD))._unsafeUnwrap()).toEqual({ kind: "retracted", messages: 2 });
+    });
+});
+
 // --- thread activity --------------------------------------------------------
 
 describe("appendTurn thread activity", () => {

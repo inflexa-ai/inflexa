@@ -1,9 +1,10 @@
 /**
- * Input sanitization — two pure, always-on functions applied once to the
- * incoming user message by the chat route (change 6). Never applied to
- * assistant messages or tool results.
+ * Input sanitization — pure, always-on text functions, not a plug-in pipeline.
+ * What runs is exactly what is declared here.
  *
- * Two pure functions, not a plug-in pipeline. What runs is exactly these two.
+ * `normalizeUnicode` and `redactSecrets` are applied once to the incoming user
+ * message by the chat route (change 6), and never to assistant messages or tool
+ * results. `stripNulCharacters` is the exception — it applies to tool results.
  */
 
 /**
@@ -22,6 +23,30 @@ const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
  */
 export function normalizeUnicode(text: string): string {
     return text.normalize("NFC").replace(CONTROL_CHARS, "");
+}
+
+/**
+ * NUL (U+0000) — the one character a stored message cannot carry. Postgres
+ * refuses it inside JSON: a `jsonb` column rejects the insert outright, and a
+ * `json` column accepts it but errors the moment a JSON operator reads that row
+ * ("U+0000 cannot be converted to text"), which is what `retractLastTurn`'s
+ * boundary predicate does. Either way one NUL byte poisons a thread, and it
+ * arrives through no fault of the model: tool results carry raw command output
+ * and file bytes, which is why they are otherwise left unsanitized.
+ */
+// eslint-disable-next-line no-control-regex -- matching NUL is the intent; see above.
+const NUL = /\u0000/g;
+
+/**
+ * Strip every NUL from `text`. Applied where a tool result is built — so the
+ * loop's in-memory message and the stored row agree byte-for-byte and the
+ * prompt-cache prefix survives the round trip — and again where the turn is
+ * written, which holds the invariant for writers that are not the loop. User
+ * input needs no separate treatment: `normalizeUnicode` already strips NUL along
+ * with the rest of the C0 range.
+ */
+export function stripNulCharacters(text: string): string {
+    return text.replace(NUL, "");
 }
 
 /**

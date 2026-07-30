@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { normalizeUnicode, redactSecrets } from "./input-sanitization.js";
+import { normalizeUnicode, redactSecrets, stripNulCharacters } from "./input-sanitization.js";
 
 describe("redactSecrets", () => {
     const cases: ReadonlyArray<{ label: string; secret: string }> = [
@@ -63,5 +63,24 @@ describe("normalizeUnicode", () => {
 
     it("leaves newline and tab intact", () => {
         expect(normalizeUnicode("a\nb\tc")).toBe("a\nb\tc");
+    });
+});
+
+describe("stripNulCharacters", () => {
+    const NUL = String.fromCharCode(0);
+
+    it("removes every NUL from a string", () => {
+        expect(stripNulCharacters(`MAGIC${NUL}rest${NUL}${NUL}end`)).toBe("MAGICrestend");
+    });
+
+    it("leaves a string with no NUL untouched", () => {
+        expect(stripNulCharacters("plain\ttext\nhere")).toBe("plain\ttext\nhere");
+    });
+
+    it("keeps the other control characters a tool result may legitimately carry", () => {
+        // Unlike `normalizeUnicode`, this strips ONE character — an ANSI escape or
+        // a form feed in captured stdout is content, and storage accepts it.
+        const ESC = String.fromCharCode(0x1b);
+        expect(stripNulCharacters(`a${ESC}[0mb`)).toBe(`a${ESC}[0mb`);
     });
 });

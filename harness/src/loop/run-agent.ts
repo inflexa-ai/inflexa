@@ -2,6 +2,7 @@ import { jsonSchema, tool as aiTool, type FinishReason, type ToolSet, type ToolC
 import type { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
+import { stripNulCharacters } from "../input-sanitization.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { classifyProviderError } from "../providers/errors.js";
@@ -368,8 +369,14 @@ async function execute(tu: ToolCallPart, tool: Tool, input: unknown, ctx: ToolCo
     }
 }
 
+/**
+ * Normalize a tool's return value to plain JSON, stripping NUL from every string
+ * it holds ({@link stripNulCharacters}). The reviver sees values, not keys — a
+ * NUL in an object KEY would still reach the row, but keys come from tool result
+ * types rather than scanned bytes, so nothing produces one.
+ */
 function jsonValue(value: unknown) {
-    return JSON.parse(JSON.stringify(value ?? null));
+    return JSON.parse(JSON.stringify(value ?? null), (_key, v: unknown) => (typeof v === "string" ? stripNulCharacters(v) : v));
 }
 
 function successResult(toolCall: ToolCallPart, value: unknown): ToolResultPart {
@@ -381,12 +388,15 @@ function successResult(toolCall: ToolCallPart, value: unknown): ToolResultPart {
     };
 }
 
+// NUL is stripped from the prose BEFORE it is serialized: past the stringify it
+// is the six-character escape \u0000 — legitimate JSON text, and no longer
+// distinguishable from an error that happens to quote that escape.
 function toolErrorContent(value: unknown): string {
     if (isToolError(value)) {
-        return JSON.stringify({ error: value.error, retryable: value.retryable });
+        return JSON.stringify({ error: stripNulCharacters(value.error), retryable: value.retryable });
     }
     const { retryable } = classifyProviderError(value);
-    const error = value instanceof Error ? value.message : String(value);
+    const error = stripNulCharacters(value instanceof Error ? value.message : String(value));
     return JSON.stringify({ error, retryable });
 }
 
@@ -395,7 +405,8 @@ function errorResult(toolCall: ToolCallPart, content: string): ToolResultPart {
         type: "tool-result",
         toolCallId: toolCall.toolCallId,
         toolName: toolCall.toolName,
-        output: { type: "error-text", value: content },
+        // A thrown tool error routinely quotes stderr verbatim — as exposed to NUL as a success payload.
+        output: { type: "error-text", value: stripNulCharacters(content) },
     };
 }
 
