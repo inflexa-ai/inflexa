@@ -208,6 +208,30 @@ may not describe the current inputs — the input set changed, or a re-profile i
 running or has failed over it); `pending`; `failed`; and `absent` (never profiled,
 or the analysis has no input files).
 
+The `failed` state SHALL NOT imply a verdict on the analysis's current input files.
+It reports a past attempt, and the harness cannot determine on its own whether that
+attempt covered the files the analysis holds now: the tool reads one ledger row, and
+the current input set is the embedder's knowledge, not the harness's. Reporting a
+failure without that qualification is what invites the wrong inference.
+
+The variant SHALL therefore carry `failedAt` — the time the failure was recorded, or
+null when the row records none — and its message SHALL state that the failure is a
+record of an earlier attempt whose relationship to the current inputs this row cannot
+establish. A timestamp is reported because it is a fact the row actually holds and an
+agent can act on: an agent that knows when the input set last changed can compare the
+two itself.
+
+The tool SHALL NOT report a staleness verdict it cannot derive. In particular it SHALL
+NOT expose a field whose value is constant on this path, because a field that cannot
+discriminate carries no information while implying that it does — and the tool
+description, being the whole of what an agent knows about the tool, SHALL NOT advertise
+distinctions the implementation cannot produce.
+
+Where a prior profile DID survive the failure, the row is served as `stale` rather than
+`failed`, and that path SHALL continue to name the changed input set through the single
+shared staleness predicate. This requirement adds no second definition of staleness and
+no sixth lifecycle state.
+
 #### Scenario: A completed profile is served in full
 
 - **WHEN** an agent calls `inspect_data_profile` on an analysis with a completed profile
@@ -218,6 +242,31 @@ or the analysis has no input files).
 - **GIVEN** input files added since the profile was taken
 - **WHEN** an agent calls `inspect_data_profile`
 - **THEN** it receives `state: "stale"` carrying the previous profile AND a `staleReason` naming the changed input set
+
+#### Scenario: A failure is reported as a past attempt, not a verdict
+
+- **GIVEN** a `failed` profile row with no earlier result
+- **WHEN** an agent calls `inspect_data_profile`
+- **THEN** it receives `state: "failed"` with `failedAt` naming when the failure was recorded
+- **AND** the message states the failure is an earlier attempt whose relation to the current inputs this row cannot establish
+
+#### Scenario: A row recording no failure time still answers
+
+- **GIVEN** a `failed` profile row whose recorded completion time is absent
+- **WHEN** an agent calls `inspect_data_profile`
+- **THEN** it receives `failedAt: null` rather than a fabricated or omitted value
+
+#### Scenario: No underivable staleness verdict is exposed
+
+- **WHEN** an agent calls `inspect_data_profile` on a `failed` row
+- **THEN** the result SHALL NOT carry a field purporting to say whether the input set changed since the failure
+- **AND** the tool description SHALL NOT advertise such a distinction
+
+#### Scenario: A surviving prior profile is served as stale, not failed
+
+- **GIVEN** a profile row whose latest attempt failed but which still carries an earlier result
+- **WHEN** an agent calls `inspect_data_profile`
+- **THEN** it receives `state: "stale"` with a `staleReason` naming the failed re-profile
 
 #### Scenario: A paged file scope never truncates silently
 

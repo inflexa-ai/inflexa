@@ -29,7 +29,8 @@ the columns: `analysis_id` (TEXT, PRIMARY KEY), `status` (TEXT, NOT NULL),
 `data_profile_status` (TEXT, **nullable**, default `'pending'`),
 `data_profile_error` (TEXT, nullable), `data_profile_started_at` (TEXT,
 nullable), `data_profile_completed_at` (TEXT, nullable), `data_profile_result`
-(JSONB, nullable), `seed_input_file_ids` (JSONB, nullable), `created_at` (TEXT,
+(JSONB, nullable), `data_profile_workflow_id` (TEXT, nullable),
+`seed_input_file_ids` (JSONB, nullable), `created_at` (TEXT,
 NOT NULL), `updated_at` (TEXT, NOT NULL).
 
 `billing_context` SHALL hold the billing-attribution headers (`Record<string,
@@ -41,6 +42,30 @@ re-profiling, the distinction being made at the API layer by the presence of
 `clearDataProfile` writes it when an analysis's input set empties (see the
 data-profile-rerun spec), and startup SHALL drop the legacy NOT NULL constraint
 from databases created before the column became nullable.
+
+`data_profile_workflow_id` SHALL hold the DBOS workflow id of the profile attempt
+that owns the row, written by the workflow body rather than by the trigger — the
+ledger claim happens before the workflow id is minted, so only the body can report
+the id of the attempt that actually started. The write SHALL be conditional on the
+row still being `running`, so a late write cannot stamp an id onto a settled row.
+
+Every claim into `running` SHALL clear the column, and `clearDataProfile` SHALL clear
+it too. The claim is the moment a new attempt takes the row, so any id already there
+belongs to a finished attempt: left in place it would leave a `running` row naming a
+stream that has already drained, and a consumer would subscribe and observe nothing
+with no way to distinguish that from a profile yet to report. NULL says "not
+addressable yet", which is exactly true until the new body records its own id. This
+is deliberately asymmetric with `data_profile_result`, which a re-profile claim
+preserves: the result is content that stays valid until replaced, while the id is a
+pointer to a live stream.
+
+The column is nullable, and absence is a
+normal state with two ordinary causes: a row claimed whose body has not yet
+recorded its id, and a row written before the column existed. Both read back as
+"this profile's stream is not addressable", which is true in each case. A consumer
+resolves which durable event stream carries an analysis's profile activity from
+this column, and SHALL NOT reconstruct it by pattern-matching workflow ids in
+durability-engine tables (see the data-profile-observation spec).
 
 The `data_profile_result` JSONB SHALL hold the profiler's full output, not a
 summary of it: the dataset-level classification (`summary`, `domain`, `subtype`,
@@ -89,6 +114,41 @@ is dropped on startup).
   `data_profile_started_at` SHALL be refreshed, `data_profile_error` and
   `data_profile_completed_at` SHALL be cleared, and `data_profile_result` SHALL
   retain its prior value (NOT cleared)
+
+#### Scenario: The profile workflow id is recorded by the body and read back
+
+- **WHEN** a data-profile workflow body runs its first durable step
+- **THEN** `data_profile_workflow_id` SHALL hold that workflow's DBOS id
+- **AND** the data-profile status read SHALL expose it as `workflowId`
+
+#### Scenario: A re-profile replaces the recorded workflow id
+
+- **WHEN** a new profile attempt claims a row that already recorded a prior
+  attempt's workflow id
+- **THEN** the claim SHALL clear `data_profile_workflow_id`, so the row never names a
+  finished attempt while it is `running`
+- **AND** `data_profile_workflow_id` SHALL become the new attempt's id once that
+  attempt's body records it
+
+#### Scenario: A settled row keeps its recorded id
+
+- **WHEN** a profile reaches `completed` or `failed`
+- **THEN** `data_profile_workflow_id` SHALL retain the id of the attempt that produced
+  it, so a consumer can still address that profile's drained stream
+- **AND** only a subsequent claim or clear SHALL remove it
+
+#### Scenario: A settled row is not stamped by a late write
+
+- **GIVEN** a profile row whose status is `completed` or `failed`
+- **WHEN** a workflow-id write for that analysis is attempted
+- **THEN** the row is unchanged, because the write requires a `running` status
+
+#### Scenario: A row predating the column reads back without one
+
+- **WHEN** the data-profile status is read for a row written before
+  `data_profile_workflow_id` existed
+- **THEN** `workflowId` SHALL be null and the read SHALL otherwise succeed
+  unchanged
 
 #### Scenario: Suspend and resume on budget exhaustion
 
