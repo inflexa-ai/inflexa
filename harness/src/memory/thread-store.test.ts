@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
+import type { DbError } from "../lib/db-result.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { createThreadStore, type ThreadStore } from "./thread-store.js";
 import { createThreadHistory } from "./thread-history.js";
@@ -20,6 +22,60 @@ beforeEach(async () => {
 afterEach(async () => {
     await drop();
 });
+
+// --- storage probes ---------------------------------------------------------
+// The lifecycle verbs differ only in what they leave on disk, so every one of
+// them is asserted against the raw rows rather than through the store's own
+// filtered reads.
+
+/** Persist one two-message turn, giving a thread messages a verb must keep or take. */
+function appendTwoMessageTurn(threadId: string): ResultAsync<void, DbError> {
+    return createThreadHistory(pool).appendTurn(threadId, [
+        { role: "user", content: [{ type: "text", text: "hi" }] },
+        { role: "assistant", content: [{ type: "text", text: "hello" }] },
+    ]);
+}
+
+async function messageCount(threadId: string): Promise<number> {
+    const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM messages WHERE thread_id = $1", [threadId]);
+    return Number(rows[0]!.count);
+}
+
+async function threadRowCount(threadId: string): Promise<number> {
+    const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_analysis_threads WHERE thread_id = $1", [threadId]);
+    return Number(rows[0]!.count);
+}
+
+/**
+ * The tombstone as text, or `null` for a live/absent row. Text, not a `Date`:
+ * the driver parses `timestamptz` at millisecond resolution, where two stamps
+ * taken this close together compare equal and a re-stamp would go unnoticed.
+ */
+async function readTombstone(threadId: string): Promise<string | null> {
+    const { rows } = await pool.query<{ deleted_at: string | null }>(
+        "SELECT deleted_at::text AS deleted_at FROM cortex_analysis_threads WHERE thread_id = $1",
+        [threadId],
+    );
+    return rows[0]?.deleted_at ?? null;
+}
+
+/**
+ * A thread's timestamps, read twice over for two different jobs. The text
+ * copies detect a write at all — the driver parses `timestamptz` at millisecond
+ * resolution, so a stamp rewritten within the same tick reads back as the value
+ * it replaced. The `Date` copy of `updated_at` is what the store's own parsed
+ * `updatedAt` can be compared against, both truncated from the same underlying
+ * value.
+ */
+async function readStamps(threadId: string): Promise<{ createdAt: string; updatedAt: string; updatedAtDate: Date; deletedAt: string | null }> {
+    const { rows } = await pool.query<{ created_at: string; updated_at: string; updated_at_date: Date; deleted_at: string | null }>(
+        `SELECT created_at::text AS created_at, updated_at::text AS updated_at, updated_at AS updated_at_date, deleted_at::text AS deleted_at
+     FROM cortex_analysis_threads WHERE thread_id = $1`,
+        [threadId],
+    );
+    const row = rows[0]!;
+    return { createdAt: row.created_at, updatedAt: row.updated_at, updatedAtDate: row.updated_at_date, deletedAt: row.deleted_at };
+}
 
 describe("createThread + getThread", () => {
     it("round-trips a thread by id (2.1)", async () => {
@@ -75,6 +131,8 @@ describe("createThread + getThread", () => {
 describe("updateTitle", () => {
     it("changes only the title and bumps updated_at (2.2)", async () => {
         (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Old" }))._unsafeUnwrap();
+        const before = await readStamps("t1");
+        expect(before.deletedAt).toBeNull();
 
         const updated = (await store.updateTitle("t1", "New title"))._unsafeUnwrap();
         expect(updated).not.toBeNull();
@@ -83,6 +141,39 @@ describe("updateTitle", () => {
 
         const read = (await store.getThread("t1"))._unsafeUnwrap();
         expect(read!.title).toBe("New title");
+
+        // Read the row raw so the claim covers every column, not just the two the
+        // store projects: the activity clock has to have moved, and nothing else
+        // the row holds may have been rewritten alongside the title.
+        const after = await readStamps("t1");
+        expect(after.updatedAt).not.toBe(before.updatedAt);
+        expect(after.createdAt).toBe(before.createdAt);
+        expect(after.deletedAt).toBeNull();
+        // The returned row is the post-update row, not the one that was read to
+        // find it — its stamp is the one now on disk.
+        expect(updated!.updatedAt.getTime()).toBe(after.updatedAtDate.getTime());
+    });
+
+    it("leaves a stamp fresher than its own clock unmoved while still renaming", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Old" }))._unsafeUnwrap();
+        // Put the row's activity clock an hour past anything this statement can
+        // read, standing in for the fresher stamp a turn append leaves behind when
+        // it commits between this rename's start and its write. A bump that
+        // assigns the current time rewinds the row by that hour.
+        await pool.query("UPDATE cortex_analysis_threads SET updated_at = NOW() + interval '1 hour' WHERE thread_id = $1", ["t1"]);
+        const before = await readStamps("t1");
+
+        const updated = (await store.updateTitle("t1", "Renamed"))._unsafeUnwrap();
+
+        // The rename lands...
+        expect(updated).not.toBeNull();
+        expect(updated!.title).toBe("Renamed");
+        expect((await store.getThread("t1"))._unsafeUnwrap()!.title).toBe("Renamed");
+        // ...and the fresher stamp survives it, byte-identical on disk and in the
+        // row the call hands back.
+        const after = await readStamps("t1");
+        expect(after.updatedAt).toBe(before.updatedAt);
+        expect(updated!.updatedAt.getTime()).toBe(before.updatedAtDate.getTime());
     });
 
     it("is a no-op on a missing thread", async () => {
@@ -90,18 +181,12 @@ describe("updateTitle", () => {
     });
 });
 
-describe("deleteThread (soft delete)", () => {
+describe("archiveThread (soft delete)", () => {
     it("excludes the thread from get/list while the row and messages persist (2.2, 2.3)", async () => {
-        const history = createThreadHistory(pool);
-        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Doomed" }))._unsafeUnwrap();
-        (
-            await history.appendTurn("t1", [
-                { role: "user", content: [{ type: "text", text: "hi" }] },
-                { role: "assistant", content: [{ type: "text", text: "hello" }] },
-            ])
-        )._unsafeUnwrap();
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Archived" }))._unsafeUnwrap();
+        (await appendTwoMessageTurn("t1"))._unsafeUnwrap();
 
-        (await store.deleteThread("t1"))._unsafeUnwrap();
+        (await store.archiveThread("t1"))._unsafeUnwrap();
 
         // Absent from get + list.
         expect((await store.getThread("t1"))._unsafeUnwrap()).toBeNull();
@@ -113,9 +198,114 @@ describe("deleteThread (soft delete)", () => {
         expect(rowResult.rows).toHaveLength(1);
         expect(rowResult.rows[0]!.deleted_at).not.toBeNull();
 
-        // Messages still exist.
-        const msgResult = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM messages WHERE thread_id = $1", ["t1"]);
-        expect(Number(msgResult.rows[0]!.count)).toBe(2);
+        expect(await messageCount("t1")).toBe(2);
+    });
+
+    it("preserves the original tombstone when archived twice", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Archived" }))._unsafeUnwrap();
+        (await store.archiveThread("t1"))._unsafeUnwrap();
+        const first = await readTombstone("t1");
+        expect(first).not.toBeNull();
+
+        (await store.archiveThread("t1"))._unsafeUnwrap();
+
+        expect(await readTombstone("t1")).toBe(first);
+    });
+
+    it("is a no-op on an absent thread", async () => {
+        (await store.archiveThread("missing"))._unsafeUnwrap();
+        expect(await threadRowCount("missing")).toBe(0);
+    });
+});
+
+describe("unarchiveThread", () => {
+    it("returns the thread to get/list with its messages readable", async () => {
+        const history = createThreadHistory(pool);
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Back" }))._unsafeUnwrap();
+        (await appendTwoMessageTurn("t1"))._unsafeUnwrap();
+        const before = (await history.loadRecent("t1", 1_000_000))._unsafeUnwrap();
+        (await store.archiveThread("t1"))._unsafeUnwrap();
+
+        (await store.unarchiveThread("t1"))._unsafeUnwrap();
+
+        const read = (await store.getThread("t1"))._unsafeUnwrap();
+        expect(read).not.toBeNull();
+        expect(read!.title).toBe("Back");
+        const page = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
+        expect(page.threads.map((t) => t.threadId)).toContain("t1");
+        expect(await readTombstone("t1")).toBeNull();
+        expect((await history.loadRecent("t1", 1_000_000))._unsafeUnwrap()).toEqual(before);
+    });
+
+    it("is a no-op on a live thread", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Live" }))._unsafeUnwrap();
+        const before = (await store.getThread("t1"))._unsafeUnwrap();
+
+        (await store.unarchiveThread("t1"))._unsafeUnwrap();
+
+        const after = (await store.getThread("t1"))._unsafeUnwrap();
+        expect(after).toEqual(before);
+    });
+
+    it("is a no-op on an absent thread", async () => {
+        (await store.unarchiveThread("missing"))._unsafeUnwrap();
+        expect(await threadRowCount("missing")).toBe(0);
+    });
+});
+
+describe("deleteThread (hard delete)", () => {
+    it("removes the thread row and every one of its messages", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Doomed" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "t2", analysisId: ANALYSIS_A, title: "Spared" }))._unsafeUnwrap();
+        (await appendTwoMessageTurn("t1"))._unsafeUnwrap();
+        (await appendTwoMessageTurn("t2"))._unsafeUnwrap();
+
+        (await store.deleteThread("t1"))._unsafeUnwrap();
+
+        expect((await store.getThread("t1"))._unsafeUnwrap()).toBeNull();
+        expect(await threadRowCount("t1")).toBe(0);
+        expect(await messageCount("t1")).toBe(0);
+        // The delete is thread-scoped: a sibling thread keeps its row and messages.
+        expect(await threadRowCount("t2")).toBe(1);
+        expect(await messageCount("t2")).toBe(2);
+    });
+
+    it("succeeds on an absent thread", async () => {
+        const deleted = await store.deleteThread("missing");
+        expect(deleted.isOk()).toBe(true);
+    });
+
+    it("makes no claim on a turn that commits after it", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Raced" }))._unsafeUnwrap();
+        (await appendTwoMessageTurn("t1"))._unsafeUnwrap();
+
+        (await store.deleteThread("t1"))._unsafeUnwrap();
+        // A writer the store cannot observe lands its turn after the delete. It
+        // neither errors nor is prevented, and what it writes is past the reach of
+        // any later thread- or analysis-scoped reclamation — which is why a host
+        // stops writes to a thread before deleting it.
+        (await appendTwoMessageTurn("t1"))._unsafeUnwrap();
+
+        expect(await messageCount("t1")).toBe(2);
+        expect(await threadRowCount("t1")).toBe(0);
+    });
+
+    it("leaves the row and its messages intact when the delete fails partway", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Survivor" }))._unsafeUnwrap();
+        (await appendTwoMessageTurn("t1"))._unsafeUnwrap();
+
+        // Fail the metadata-row delete only, so the messages delete has already
+        // succeeded inside the transaction when the failure lands — the partway
+        // state the shared transaction exists to undo.
+        await pool.query(`CREATE FUNCTION boom() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'simulated delete failure'; END; $$ LANGUAGE plpgsql`);
+        await pool.query("CREATE TRIGGER boom_trg BEFORE DELETE ON cortex_analysis_threads FOR EACH ROW EXECUTE FUNCTION boom()");
+
+        // The failing statement names which half broke, so the surviving messages
+        // below are the rollback's work and not a messages delete that never ran.
+        expect((await store.deleteThread("t1"))._unsafeUnwrapErr()).toMatchObject({ op: "thread-store.deleteThread.thread" });
+
+        expect(await threadRowCount("t1")).toBe(1);
+        expect(await messageCount("t1")).toBe(2);
     });
 });
 
