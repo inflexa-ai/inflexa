@@ -341,13 +341,12 @@ function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { v
 // ── Inner tools (fresh instance per outer tool invocation) ─────────
 
 /**
- * The planner's inner tools. `all` is the full surface handed to the loop;
- * `terminal` is the subset that records an outcome (`submit_plan`,
- * `request_clarification`, `report_blocker`). The terminal subset is what the
- * salvage turn re-offers if the planner ends without an outcome.
+ * The planner's inner tools. Only terminal tools enter the loop
+ * (`submit_plan`, `request_clarification`, `report_blocker`); environment
+ * inventories are read before the loop and injected into its seed message.
+ * The terminal list is re-offered if salvage is needed.
  */
 interface InnerTools {
-    readonly all: Tool[];
     readonly terminal: Tool[];
 }
 
@@ -356,15 +355,7 @@ interface InnerTools {
  * shared `holder` so the outer `execute` reads the terminal outcome after the
  * loop finishes.
  */
-function buildInnerTools(
-    holder: OutcomeHolder,
-    persistCtx: PersistContext,
-    pool: Pool,
-    resourcePolicy: ResourcePolicy | undefined,
-    // The two environment stores travel together as one bag rather than as a pair
-    // of adjacent optional strings, which would be silently swappable at the call site.
-    stores: EnvironmentStorePaths,
-): InnerTools {
+function buildInnerTools(holder: OutcomeHolder, persistCtx: PersistContext, pool: Pool, resourcePolicy: ResourcePolicy | undefined): InnerTools {
     const submitPlanTool = defineTool({
         id: "submit_plan",
         description:
@@ -460,16 +451,17 @@ function buildInnerTools(
             "could fix and submit.",
     });
 
-    // Environment discovery is non-terminal and read-only: it lets the planner check what
-    // reference data this environment holds, and what a step will actually be able to
-    // import, before committing a step to needing either. Both read host-side, so no
-    // sandbox exists or is needed at plan time — which is the whole point, since a plan
-    // that assumes an absent package fails only once the run reaches that step.
-    const listAvailableRefs = createListAvailableRefsTool(stores.refStorePath === undefined ? {} : { refStorePath: stores.refStorePath });
-    const listAvailablePackages = createListAvailablePackagesTool(stores.packagesFile === undefined ? {} : { packagesFile: stores.packagesFile });
-
     const terminal = [submitPlanTool, requestClarificationTool, reportBlockerTool];
-    return { all: [listAvailableRefs, listAvailablePackages, ...terminal], terminal };
+    return { terminal };
+}
+
+function inventoryContent(label: string, result: Awaited<ReturnType<Tool["execute"]>>): string {
+    if (result.isErr()) return `## ${label}\n\nInventory lookup failed: ${result.error.error}`;
+    const value = result.value;
+    if (typeof value === "object" && value !== null && "content" in value && typeof value.content === "string") {
+        return `## ${label}\n\n${value.content}`;
+    }
+    return `## ${label}\n\n${JSON.stringify(value)}`;
 }
 
 // ── Outcome shaping ─────────────────────────────────────────────────
@@ -629,9 +621,21 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             const profileStatus = await loadDataProfileStatus(deps.pool, analysisId).unwrapOr(null);
             const dataContextBlock = renderDataContext(classifyGrounding(profileStatus));
 
+            // Reference data and package availability are mandatory grounding,
+            // not optional planner lookups. Read both inventories host-side before
+            // the loop and put their rendered content in the planner's seed.
+            const listAvailableRefs = createListAvailableRefsTool(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath });
+            const listAvailablePackages = createListAvailablePackagesTool(deps.packagesFile === undefined ? {} : { packagesFile: deps.packagesFile });
+            const [refsResult, packagesResult] = await Promise.all([listAvailableRefs.execute({}, ctx), listAvailablePackages.execute({}, ctx)]);
+            const groundingBlock = [inventoryContent("Available Reference Data", refsResult), inventoryContent("Available Packages", packagesResult)].join(
+                "\n\n",
+            );
+
             const prompt = [
                 ...(priorPlanBlock ? [priorPlanBlock, ""] : []),
                 ...(dataContextBlock ? [dataContextBlock, ""] : []),
+                groundingBlock,
+                "",
                 "## Research Question",
                 input.researchQuestion,
                 ...(input.analystNotes ? ["", "## Analyst Notes (from the user — facts about the data the profile does not record)", input.analystNotes] : []),
@@ -644,12 +648,12 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 analysisId,
                 parentPlanId: input.parentPlanId ?? null,
             };
-            const innerTools = buildInnerTools(holder, persistCtx, deps.pool, deps.resourcePolicy, deps);
+            const innerTools = buildInnerTools(holder, persistCtx, deps.pool, deps.resourcePolicy);
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
                 model: deps.conversation.model,
-                tools: innerTools.all,
+                tools: innerTools.terminal,
                 maxIterations: PLANNER_MAX_ITERATIONS,
             };
 
