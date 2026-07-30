@@ -24,7 +24,8 @@ import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import { agentModels, bootState } from "../hooks/boot.ts";
 import { openThread } from "../hooks/thread.ts";
 import type { AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
-import { getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
+import { getAnalysisUsageTotals, getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
+import type { LlmUsageTotals } from "../../db/primary_query.ts";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
@@ -187,6 +188,53 @@ const SINGLE_CELL_GLYPHS: ReadonlySet<string> = new Set(
 );
 
 /**
+ * The USAGE section's single row: the text and the tone it carries. A reported figure pair is
+ * foreground text (it is data); every absence is muted, so "nothing to report" never reads as a
+ * measurement. Lives here rather than beside {@link profileLineOf} because its fit check needs
+ * {@link RAIL_CONTENT_WIDTH}, declared just above.
+ */
+export type UsageLine = { role: keyof ThemeColors; text: string };
+
+/**
+ * Map an analysis's ledger totals to the USAGE row.
+ *
+ * TWO figures, never one. The ledger's cache and reasoning counts are breakdowns OF the input and
+ * output counts — a cached prefix is already part of `inputTokens` — so adding any of them together
+ * would count that prefix twice and yield a number whose meaning shifts with each provider's cache
+ * reporting. Where the rail cannot hold both figures the tail one is DROPPED rather than folded into
+ * the other: a dropped figure is one the reader can go find elsewhere, a combined one is a figure
+ * that lies. The two breakdowns are not rendered at all — the rail's 37 cells have no room to label
+ * what they are breakdowns of, and an unlabelled third number invites exactly the addition this avoids.
+ *
+ * `calls` is what separates the two absences. No rows at all is a muted absence; rows whose providers
+ * reported no figures say so, because "nothing was spent" is not a fact the ledger holds and a zeroed
+ * pair would assert it.
+ *
+ * Exported for its unit test: "these are the two reported numbers, never their sum" and "the tail
+ * figure is dropped, never folded in" are claims about this arithmetic, and a character frame holding
+ * two numbers cannot pin WHICH numbers they are.
+ */
+export function usageLineOf(totals: LlmUsageTotals): UsageLine {
+    if (totals.calls === 0) return { role: "fgMuted", text: "no usage recorded" };
+    const figures: string[] = [];
+    if (totals.inputTokens !== undefined) figures.push(`${totals.inputTokens.formatTokens()} in`);
+    if (totals.outputTokens !== undefined) figures.push(`${totals.outputTokens.formatTokens()} out`);
+    if (figures.length === 0) {
+        return { role: "fgMuted", text: `${totals.calls} call${totals.calls === 1 ? "" : "s"} ${GLYPHS.middot} no figures reported` };
+    }
+    const joined = (xs: readonly string[]): string => xs.join(` ${GLYPHS.middot} `);
+    // Every character in a figure is ASCII or GLYPHS.middot — single-cell by the registry's contract
+    // (see SINGLE_CELL_GLYPHS) — so `.length` measures terminal cells exactly here. Only a ledger
+    // summed into the trillions overflows 37 cells with today's formatter, but the drop is a rule
+    // about what the rail may show, not an observation about current widths. The tail figure goes
+    // first so what survives is stable rather than dependent on which quantity happens to be larger,
+    // and a lone over-long figure is kept and allowed to wrap — dropping it would leave the section
+    // asserting nothing at all.
+    while (figures.length > 1 && joined(figures).length > RAIL_CONTENT_WIDTH) figures.pop();
+    return { role: "fg", text: joined(figures) };
+}
+
+/**
  * A sidebar section: a bold muted LABEL over its content rows. When a `value` is supplied AND it
  * fits beside the label on one rail row — the label, a one-cell gap, and the value all within
  * {@link RAIL_CONTENT_WIDTH} — the header collapses to a single `LABEL … value` row (label keeps its
@@ -247,12 +295,21 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
 
 /**
  * The toggleable sidebar (full-height; spans the main row beside both the stream and the input).
- * Fixed width (`size.railWidth`), NOT mouse-resizable. Four sections in fixed order — SESSION,
- * ANALYSIS, DATA PROFILE, RUNS — following the pipeline: the analysis's inputs feed the DATA PROFILE,
- * and the profile feeds the RUNS. ANALYSIS renders live SQLite-backed data; SESSION, DATA PROFILE and
- * RUNS render live Postgres data from the `thread` / `sidebar_live` stores (their snapshots degrade
- * gracefully before boot / on a read failure). Nothing here is mock. There is deliberately no
- * CONTEXT/token-cost section — no real accounting source exists to render.
+ * Fixed width (`size.railWidth`), NOT mouse-resizable. Six sections in fixed order — SESSION,
+ * ANALYSIS, DATA PROFILE, RUNS, USAGE, MODELS. The first four follow the pipeline (the analysis's
+ * inputs feed the DATA PROFILE, and the profile feeds the RUNS); USAGE then reports what all of that
+ * work consumed, and MODELS closes with the models it ran on — the accounting reads after the work it
+ * accounts for, and the configuration footer stays last.
+ *
+ * ANALYSIS and USAGE render live SQLite-backed data; SESSION, DATA PROFILE and RUNS render live
+ * Postgres data from the `thread` / `sidebar_live` stores, and MODELS the boot store (each snapshot
+ * degrades gracefully before boot / on a read failure). Nothing here is mock.
+ *
+ * USAGE reads the CLI's OWN local token ledger rather than anything behind the booted runtime, so it
+ * neither gates on boot state nor polls: the figures are durable locally and readable while the engine
+ * is cold. It refreshes on the two edges this component already observes — the message count advancing
+ * as a turn completes, and a `run.observed` bus event as a run progresses.
+ *
  * Reads the pure `getAnchor` (NOT `resolveAnchor`, which writes a sighting heartbeat), so
  * rendering the sidebar never touches disk — the no-litter rule for passive flows.
  */
@@ -289,18 +346,34 @@ export function Sidebar(props: SidebarProps) {
         const a = anchor();
         return a ? (a.markerWritten ? GLYPHS.check : GLYPHS.warning) : "";
     };
-    // The input count is a DB read with no reactive dependency of its own, so input-change bus
-    // events tick a version signal the memo reads — the picker (and any future writer) updates
-    // the sidebar live without a session swap. Filtered to THIS analysis: provenance events for
-    // other analyses must not trigger re-reads.
+    // The input count and the usage total are both DB reads with no reactive dependency of their own,
+    // so bus events tick a version signal each memo reads — the picker (and any future writer) updates
+    // the sidebar live without a session swap. ONE subscription serves both: a second Bus.on for a
+    // second number would be two lifecycles to keep paired with one cleanup. Filtered to THIS analysis
+    // first — every bus member is analysis-scoped, and another analysis's events must move neither
+    // number.
     const [inputsVersion, setInputsVersion] = createSignal(0);
-    const onInputEvent = (e: StampedEvent): void => {
-        if (e.type !== "prov.input_added" && e.type !== "prov.input_removed") return;
+    const [usageVersion, setUsageVersion] = createSignal(0);
+    const onSidebarEvent = (e: StampedEvent): void => {
         if (ws.analysis?.id !== e.analysisId) return;
-        setInputsVersion((v) => v + 1);
+        switch (e.type) {
+            case "prov.input_added":
+            case "prov.input_removed":
+                setInputsVersion((v) => v + 1);
+                break;
+            // A TRIGGER only — the pushed run snapshot is never rendered, and carries no token figures
+            // to render anyway. Re-reading the ledger keeps it the single source with one staleness
+            // rule, the same discipline `hooks/sidebar_live.ts` applies to this event's other consumer.
+            case "run.observed":
+                setUsageVersion((v) => v + 1);
+                break;
+            // Every other provenance member is a chain fact neither number reads.
+            default:
+                break;
+        }
     };
-    Bus.on("inflexa", onInputEvent);
-    onCleanup(() => Bus.off("inflexa", onInputEvent));
+    Bus.on("inflexa", onSidebarEvent);
+    onCleanup(() => Bus.off("inflexa", onSidebarEvent));
 
     const inputCount = createMemo(() => {
         inputsVersion();
@@ -310,6 +383,24 @@ export function Sidebar(props: SidebarProps) {
             (xs) => xs.length,
             () => 0,
         );
+    });
+
+    // The open analysis's cumulative spend, read synchronously from the local ledger on the same
+    // pattern the ANALYSIS section's reads use — a SQLite aggregate needs neither the injected-seam
+    // indirection nor the bounded poll that `sidebar_live`'s Postgres reads do.
+    //
+    // Two triggers, both already here: the message count advances when a turn completes (its calls are
+    // recorded by then, since the recorder writes inside the loop), and `run.observed` fires as a run
+    // progresses. Neither is a clock, so a background run's tokens land at the next observation rather
+    // than the instant they are spent — acceptable for a cumulative figure, where lag understates but
+    // never misleads. A failed read is a degraded row, never a thrown render: the rail keeps every
+    // other section.
+    const usageLine = createMemo((): UsageLine => {
+        usageVersion();
+        props.messageCount();
+        const a = ws.analysis;
+        if (!a) return { role: "fgMuted", text: "no analysis" };
+        return getAnalysisUsageTotals(a.id).match(usageLineOf, () => ({ role: "fgMuted", text: "unavailable" }));
     });
 
     // DATA PROFILE / RUNS live data comes from the module store (see `hooks/sidebar_live.ts`), which
@@ -477,6 +568,16 @@ export function Sidebar(props: SidebarProps) {
                             </Show>
                         </Match>
                     </Switch>
+                </Section>
+
+                {/* One row, whatever the state — the figures ride a content row rather than the
+                    Section's label-row `value` slot, because that slot always paints the section
+                    foreground and two of the three states are deliberately muted; a value that
+                    changed rows with its tone would make the rail jump between renders. */}
+                <Section label="USAGE">
+                    <text>
+                        <Fg role={usageLine().role}>{usageLine().text}</Fg>
+                    </text>
                 </Section>
 
                 <Section label="MODELS">

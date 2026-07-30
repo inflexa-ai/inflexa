@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createSignal } from "solid-js";
 import { errAsync, okAsync } from "neverthrow";
 import { testRender } from "@opentui/solid";
 import { parseColor, rgbToHex, type RGBA } from "@opentui/core";
@@ -9,15 +10,18 @@ import { parseColor, rgbToHex, type RGBA } from "@opentui/core";
 import { freshDb } from "../../test_support/db.ts";
 import { renderFrame } from "../../test_support/tui.ts";
 import { str256 } from "../../lib/types.ts";
+import { Bus } from "../../lib/bus.ts";
 import { DEFAULT_THEME_ID, GLYPHS, themes } from "../../lib/design_system.ts";
 import { createAnalysis, addInputs } from "../../modules/analysis/analysis.ts";
+import { db } from "../../db/primary.ts";
 import { getAnchor } from "../../db/primary_query.ts";
+import { upsertLlmUsage, type LlmUsageEntry } from "../../db/primary_mutation.ts";
 import { setTheme } from "../theme.ts";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
 import { __resetSidebarLiveForTest, absTime, absTimeShort, idTail, refreshSidebarData, relAge, type RefreshSeams } from "../hooks/sidebar_live.ts";
 import { __resetOpenThreadForTest, refreshOpenThread, type ThreadSeams } from "../hooks/thread.ts";
 import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
-import { Sidebar } from "./sidebar.tsx";
+import { Sidebar, usageLineOf } from "./sidebar.tsx";
 import type { Analysis } from "../../types/analysis.ts";
 import type { CortexRunRow, DataProfileStatus, DbError, StepExecutionRow, Thread } from "@inflexa-ai/harness";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
@@ -313,6 +317,11 @@ describe("Sidebar SESSION section", () => {
      * Whether `needle` renders on a line the SESSION section owns — the rows between its label row and
      * the next section's. Line-scoped rather than frame-scoped because the rail's placeholder strings
      * are shared with DATA PROFILE / RUNS, and each captured row also carries the rail border + scrollbar.
+     *
+     * The `ANALYSIS` terminator ENCODES the rail's fixed section order: a section inserted between
+     * SESSION and ANALYSIS would silently widen this slice and let a foreign row satisfy an assertion
+     * here. Any reordering has to revisit this helper (and `usageHas` below) rather than trusting a
+     * green suite.
      */
     function sessionHas(frame: string, needle: string): boolean {
         const lines = frame.split("\n");
@@ -843,5 +852,253 @@ describe("Sidebar RUNS — concurrent runs", () => {
         expect(tall).toContain("a1");
         expect(tall).toContain("b1");
         expect(tall).toContain("c1");
+    });
+});
+
+// The USAGE section reads the CLI's OWN local ledger — no seam, no injected read, no booted runtime —
+// so every case here writes real rows through `upsertLlmUsage` and asserts what the rail row says. The
+// arithmetic claims ("these two numbers, never their sum") are asserted on `usageLineOf` instead: a
+// character frame containing two numbers cannot pin WHICH numbers they are.
+describe("Sidebar USAGE section", () => {
+    /**
+     * Whether `needle` renders on a line the USAGE section owns — the rows between its label row and
+     * MODELS's. Frame-scoped assertions would be wrong here: "unavailable" is shared with SESSION /
+     * DATA PROFILE / RUNS, so a whole-frame `toContain` passes on another section's degraded row.
+     * Like {@link sessionHas}, the MODELS terminator encodes the rail's fixed section order.
+     */
+    function usageHas(frame: string, needle: string): boolean {
+        const lines = frame.split("\n");
+        const start = lines.findIndex((l) => l.includes("USAGE"));
+        if (start < 0) return false;
+        const after = lines.slice(start + 1);
+        const end = after.findIndex((l) => l.includes("MODELS"));
+        return (end < 0 ? after : after.slice(0, end)).some((l) => l.includes(needle));
+    }
+
+    /** A real analysis (so the rail's anchor/input reads resolve) whose id the ledger rows are scoped to. */
+    function analysisIn(dir: string, name: string) {
+        writeFileSync(join(dir, "one.txt"), "x");
+        return createAnalysis({ cwd: dir, name: str256(name)._unsafeUnwrap(), inputPaths: [join(dir, "one.txt")] })._unsafeUnwrap();
+    }
+
+    /** One chat-shaped ledger row for `analysisId`; the reported figures are the interesting part. */
+    function usageEntry(analysisId: string, over: Partial<LlmUsageEntry> = {}): LlmUsageEntry {
+        return {
+            recordKey: "rec-1",
+            recordedAt: 1_000,
+            agentId: "orchestrator",
+            callPath: "orchestrator",
+            scopeKind: "analysis",
+            scopeId: analysisId,
+            threadId: "thr-1",
+            usage: { inputTokens: 12_400, outputTokens: 3_100 },
+            ...over,
+        };
+    }
+
+    /** The sidebar under a live analysis, with a caller-driven message count (the section's turn-completion trigger). */
+    function usageNode(analysis: Analysis, dir: string, messageCount: () => number) {
+        const ws = wsFor(analysis, dir);
+        return () => (
+            <WorkspaceContext.Provider value={ws}>
+                <box width="100%" height="100%">
+                    <Sidebar messageCount={messageCount} />
+                </box>
+            </WorkspaceContext.Provider>
+        );
+    }
+
+    /** The fg of the first captured span whose text contains `needle`, or undefined if none rendered. */
+    function spanFg(setup: Awaited<ReturnType<typeof testRender>>, needle: string): RGBA | undefined {
+        for (const line of setup.captureSpans().lines) {
+            for (const span of line.spans) {
+                if (span.text.includes(needle)) return span.fg;
+            }
+        }
+        return undefined;
+    }
+
+    test("the cache and reasoning counts are folded into neither figure, and no sum is rendered", () => {
+        // Summing the input side would give 21.4k, the output side 3.8k, and all five 25.2k. None of
+        // those is a number any provider reported, which is the whole reason two figures are rendered.
+        const line = usageLineOf({ calls: 4, inputTokens: 12_400, outputTokens: 3_100, cacheReadInputTokens: 9_000, reasoningTokens: 700 });
+        expect(line).toEqual({ role: "fg", text: `12.4k in ${GLYPHS.middot} 3.1k out` });
+    });
+
+    test("no rows at all is a muted absence; rows whose providers reported nothing say so instead", () => {
+        // `calls` is the only thing that separates the two — the token sums are absent in both cases,
+        // and rendering them identically would claim an analysis had made no calls when it had.
+        expect(usageLineOf({ calls: 0 })).toEqual({ role: "fgMuted", text: "no usage recorded" });
+        expect(usageLineOf({ calls: 1 })).toEqual({ role: "fgMuted", text: `1 call ${GLYPHS.middot} no figures reported` });
+        expect(usageLineOf({ calls: 7 })).toEqual({ role: "fgMuted", text: `7 calls ${GLYPHS.middot} no figures reported` });
+    });
+
+    test("a quantity the providers never reported contributes no figure rather than a zero", () => {
+        expect(usageLineOf({ calls: 2, inputTokens: 900 })).toEqual({ role: "fg", text: "900 in" });
+        expect(usageLineOf({ calls: 2, outputTokens: 1_500 })).toEqual({ role: "fg", text: "1.5k out" });
+    });
+
+    test("a pair too wide for the rail drops the tail figure rather than combining the two", () => {
+        // 37 usable cells: `10000000000.0M in · 10000000000.0M out` is 38, so the pair cannot ride one
+        // row. The rule is drop-never-combine — a summed figure would fit and be wrong.
+        const line = usageLineOf({ calls: 1, inputTokens: 1e16, outputTokens: 1e16 });
+        expect(line).toEqual({ role: "fg", text: "10000000000.0M in" });
+        expect(line.text).not.toContain("out");
+    });
+
+    test("the figures render before the runtime is ready — the ledger is local and needs no boot", async () => {
+        const a = analysisIn(dirA, "alpha");
+        upsertLlmUsage(usageEntry(a.id, { usage: { inputTokens: 12_400, outputTokens: 3_100, cacheReadInputTokens: 9_000 } }))._unsafeUnwrap();
+
+        const frame = await renderFrame(
+            usageNode(a, dirA, () => 0),
+            { width: 44, height: 34 },
+        );
+
+        // The Postgres-backed sections are still degraded (nothing has booted)...
+        expect(frame).toContain("runtime not ready");
+        // ...and the local ledger reports anyway, as two figures.
+        expect(usageHas(frame, "12.4k in")).toBe(true);
+        expect(usageHas(frame, "3.1k out")).toBe(true);
+        // Neither a sum of the headline pair (15.5k) nor of everything reported (24.5k) appears, and the
+        // cache breakdown is not rendered beside them where it could be mistaken for a third addend.
+        expect(usageHas(frame, "15.5k")).toBe(false);
+        expect(usageHas(frame, "24.5k")).toBe(false);
+        expect(usageHas(frame, "9.0k")).toBe(false);
+    });
+
+    test("an analysis with no rows reads as a muted absence, not a zero — and the tone is the distinction", async () => {
+        // A character frame carries no color, so "muted absence rather than a zero figure" is only
+        // provable on the resolved span fg. github-light is the sharpest case: its pure-#ffffff bg makes
+        // an unresolved foreground invisible rather than merely off-palette.
+        setTheme("github-light");
+        const a = analysisIn(dirA, "alpha");
+        const setup = await testRender(
+            usageNode(a, dirA, () => 0),
+            { width: 44, height: 34 },
+        );
+        try {
+            await setup.renderOnce();
+            expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
+            // No zero figure anywhere: "nothing recorded" and "zero spent" are different facts.
+            expect(usageHas(setup.captureCharFrame(), "0 in")).toBe(false);
+
+            const absent = spanFg(setup, "no usage recorded");
+            expect(absent).toBeDefined();
+            expect(absent && rgbToHex(absent)).not.toBe("#ffffff");
+            expect(absent && parseColor(themes["github-light"].colors.fgMuted).equals(absent)).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("reported figures paint the section foreground, so data and absence never read alike", async () => {
+        setTheme("github-light");
+        const a = analysisIn(dirA, "alpha");
+        upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
+        const setup = await testRender(
+            usageNode(a, dirA, () => 0),
+            { width: 44, height: 34 },
+        );
+        try {
+            await setup.renderOnce();
+            const figures = spanFg(setup, "12.4k in");
+            expect(figures).toBeDefined();
+            expect(figures && rgbToHex(figures)).not.toBe("#ffffff");
+            expect(figures && parseColor(themes["github-light"].colors.fg).equals(figures)).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a failed ledger read degrades to 'unavailable' and every other section still renders", async () => {
+        const a = analysisIn(dirA, "alpha");
+        // Drop the table out from under the read: a genuine query failure, not a stubbed one, so the
+        // Result branch the section takes is the one production would take.
+        db()._unsafeUnwrap().run("DROP TABLE llm_usage");
+
+        const frame = await renderFrame(
+            usageNode(a, dirA, () => 0),
+            { width: 44, height: 34 },
+        );
+
+        expect(usageHas(frame, "unavailable")).toBe(true);
+        for (const label of ["SESSION", "ANALYSIS", "DATA PROFILE", "RUNS", "USAGE", "MODELS"]) {
+            expect(frame).toContain(label);
+        }
+        // The rail still carries the sections' own content, not just their labels.
+        expect(frame).toContain("1 input");
+    });
+
+    test("a completed turn advances the figures with no timer elapsing", async () => {
+        const a = analysisIn(dirA, "alpha");
+        const [count, setCount] = createSignal(0);
+        // eslint-disable-next-line solid/reactivity -- the accessor IS read in a tracked scope: usageNode returns a component that passes it straight to <Sidebar messageCount>. The rule cannot follow a getter through a node factory.
+        const setup = await testRender(usageNode(a, dirA, count), { width: 44, height: 34 });
+        try {
+            await setup.renderOnce();
+            expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
+
+            // The turn's calls land in the ledger, then the message count advances — the order the real
+            // path takes, since the recorder writes inside the loop and the store grows at the finish.
+            upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
+            setCount(1);
+            await setup.renderOnce();
+            await setup.renderOnce();
+
+            const frame = setup.captureCharFrame();
+            expect(usageHas(frame, "12.4k in")).toBe(true);
+            expect(usageHas(frame, "3.1k out")).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a background run's observation advances the figures; a foreign analysis's does not", async () => {
+        const a = analysisIn(dirA, "alpha");
+        const b = analysisIn(dirB, "bravo");
+        const setup = await testRender(
+            usageNode(a, dirA, () => 0),
+            { width: 44, height: 34 },
+        );
+        try {
+            await setup.renderOnce();
+            expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
+
+            upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
+
+            // A run in ANOTHER analysis must not re-read this one's ledger — the row above is already
+            // written, so a section that repainted here would be repainting on an unfiltered event.
+            Bus.emit("inflexa", { type: "run.observed", analysisId: b.id, snapshot: { runId: "run-1", status: "running", steps: [] } });
+            await setup.renderOnce();
+            await setup.renderOnce();
+            expect(usageHas(setup.captureCharFrame(), "no usage recorded")).toBe(true);
+
+            // This analysis's observation is the trigger. The event carries no figures — the section
+            // re-reads the ledger rather than rendering anything the payload holds.
+            Bus.emit("inflexa", { type: "run.observed", analysisId: a.id, snapshot: { runId: "run-1", status: "running", steps: [] } });
+            await setup.renderOnce();
+            await setup.renderOnce();
+
+            const frame = setup.captureCharFrame();
+            expect(usageHas(frame, "12.4k in")).toBe(true);
+            expect(usageHas(frame, "3.1k out")).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("the section survives the short-terminal sweep — it scrolls out of view, never breaks the rail", async () => {
+        const a = analysisIn(dirA, "alpha");
+        upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
+        // Size-dependent layout defects hide at any single height (CLAUDE.md → Layout).
+        for (const height of [10, 14, 18, 24, 34]) {
+            const frame = await renderFrame(
+                usageNode(a, dirA, () => 0),
+                { width: 44, height },
+            );
+            expect(frame).toContain("SESSION");
+            expect(frame).toContain("ANALYSIS");
+        }
     });
 });
