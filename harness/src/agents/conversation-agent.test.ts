@@ -117,6 +117,16 @@ describe("createConversationAgent", () => {
         }
     });
 
+    test("defers the broad research catalog while keeping orchestration tools eager", () => {
+        const tools = new Map(buildAgent().tools.map((tool) => [tool.id, tool]));
+        for (const id of ["search_gene", "pubmed", "chembl", "comptox", "literature_reviewer", "generate_analogy_report"]) {
+            expect(tools.get(id)?.deferLoading, id).toBe(true);
+        }
+        for (const id of ["list_available_refs", "inspect_data_profile", "generate_plan", "execute_analysis", "show_user", "workspace_search"]) {
+            expect(tools.get(id)?.deferLoading, id).toBe(false);
+        }
+    });
+
     test("tool ids are unique and definitions() emits valid AI SDK schemas", () => {
         const agent = buildAgent();
         // createRegistry throws on a duplicate id.

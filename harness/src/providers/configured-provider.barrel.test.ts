@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { jsonSchema, tool as aiTool } from "ai";
 
 import { createConfiguredAiSdkProvider } from "@inflexa-ai/harness";
 import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps } from "@inflexa-ai/harness";
@@ -46,12 +47,12 @@ function openaiJson(text: string, model: string): Response {
  * provider bound at construction (the request itself carries no model field),
  * and replies with a response echoing that body's `model`.
  */
-function capturingFetch(respond: (text: string, model: string) => Response): { fetch: FetchLike; bodies: Array<{ model?: string }> } {
-    const bodies: Array<{ model?: string }> = [];
+function capturingFetch(respond: (text: string, model: string) => Response): { fetch: FetchLike; bodies: Array<Record<string, unknown>> } {
+    const bodies: Array<Record<string, unknown>> = [];
     const fetch: FetchLike = async (_input, init) => {
-        const body = init?.body ? (JSON.parse(String(init.body)) as { model?: string }) : {};
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
         bodies.push(body);
-        return respond("Hello, world", body.model ?? "");
+        return respond("Hello, world", typeof body.model === "string" ? body.model : "");
     };
     return { fetch, bodies };
 }
@@ -60,6 +61,16 @@ const request: ChatRequest = {
     system: "You are a test model.",
     messages: [{ role: "user", content: "Say hello." }],
     tools: {},
+};
+const requestWithDeferredTool: ChatRequest = {
+    ...request,
+    tools: {
+        search_gene: aiTool({
+            description: "Search for a gene.",
+            inputSchema: jsonSchema({ type: "object", properties: { query: { type: "string" } } }),
+        }),
+    },
+    deferredToolNames: ["search_gene"],
 };
 
 describe("provider configuration front door", () => {
@@ -105,6 +116,81 @@ describe("provider configuration front door", () => {
             message: { role: "assistant", content: [{ type: "text", text: "Hello, world" }] },
         });
         expect(provider.capabilities.toolCalling).toBe(true);
+    });
+
+    it("realizes deferred tools as Anthropic tool search plus defer_loading", async () => {
+        const cap = capturingFetch(anthropicJson);
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "anthropic",
+                baseURL: "http://models.local/anthropic",
+                apiKey: "test-key",
+                model: "claude-opus-4-7",
+                fetch: cap.fetch,
+            },
+            resolveBilling: async () => ({}),
+        });
+
+        const result = await provider.chat(requestWithDeferredTool, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        const tools = cap.bodies[0]!.tools as Array<Record<string, unknown>>;
+        expect(tools).toContainEqual(
+            expect.objectContaining({
+                name: "search_gene",
+                defer_loading: true,
+            }),
+        );
+        expect(tools).toContainEqual(
+            expect.objectContaining({
+                type: "tool_search_tool_bm25_20251119",
+                name: "tool_search_tool_bm25",
+            }),
+        );
+    });
+
+    it("passes deferred-tool metadata through for any Anthropic model", async () => {
+        const cap = capturingFetch(anthropicJson);
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "anthropic",
+                baseURL: "http://models.local/anthropic",
+                apiKey: "test-key",
+                model: "claude-opus-4-1",
+                fetch: cap.fetch,
+            },
+            resolveBilling: async () => ({}),
+        });
+
+        const result = await provider.chat(requestWithDeferredTool, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        const tools = cap.bodies[0]!.tools as Array<Record<string, unknown>>;
+        expect(tools).toContainEqual(expect.objectContaining({ name: "search_gene", defer_loading: true }));
+        expect(tools).toContainEqual(expect.objectContaining({ type: "tool_search_tool_bm25_20251119" }));
+    });
+
+    it("keeps deferred hints eager on an OpenAI-compatible provider", async () => {
+        const cap = capturingFetch(openaiJson);
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "openai-compatible",
+                name: "self-hosted",
+                baseURL: "http://models.local/v1",
+                apiKey: "test-key",
+                model: "local-tool-model",
+                fetch: cap.fetch,
+            },
+            resolveBilling: async () => ({}),
+        });
+
+        const result = await provider.chat(requestWithDeferredTool, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        const body = JSON.stringify(cap.bodies[0]);
+        expect(body).not.toContain("defer_loading");
+        expect(body).not.toContain("tool_search");
+        expect(cap.bodies[0]!.tools).toHaveLength(1);
     });
 
     it("builds two provider instances over one connection, each carrying its own bound model", async () => {

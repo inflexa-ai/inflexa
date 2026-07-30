@@ -23,6 +23,11 @@ export interface ChatRequest {
     readonly system: string;
     readonly messages: readonly ModelMessage[];
     readonly tools: ToolSet;
+    /**
+     * Tool names a capable provider may expose through on-demand discovery.
+     * Unsupported providers ignore the hint and send every definition eagerly.
+     */
+    readonly deferredToolNames?: readonly string[];
     readonly toolChoice?: "auto" | "none" | "required" | { readonly type: "tool"; readonly toolName: string };
     readonly providerOptions?: ProviderOptions;
 }

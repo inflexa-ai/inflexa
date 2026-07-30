@@ -85,6 +85,12 @@ export interface Tool<Input = unknown, Output = unknown> {
     readonly inputSchema: z.ZodType;
     readonly jsonSchema: Record<string, unknown>;
     readonly executionMode: ToolExecutionMode;
+    /**
+     * Hint that a capable provider may keep this definition out of the initial
+     * model context and make it discoverable on demand. Providers without
+     * deferred-tool support send it eagerly, so this never removes capability.
+     */
+    readonly deferLoading?: boolean;
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
@@ -93,6 +99,7 @@ export interface ToolDefinition<Schema extends z.ZodType, Output> {
     readonly description: string;
     readonly inputSchema: Schema;
     readonly executionMode?: ToolExecutionMode;
+    readonly deferLoading?: boolean;
     execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
@@ -125,6 +132,7 @@ export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition
         inputSchema: def.inputSchema,
         jsonSchema,
         executionMode,
+        deferLoading: def.deferLoading ?? false,
         execute: def.execute,
     };
 }

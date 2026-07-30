@@ -196,6 +196,43 @@ describe("runAgent — provider capability gate", () => {
     });
 });
 
+describe("runAgent — deferred tool loading", () => {
+    it("forwards one stable loading plan on every ordinary model call", async () => {
+        const deferredEcho = defineTool({
+            id: "echo",
+            description: "Echo the label.",
+            inputSchema: z.object({ label: z.string() }),
+            deferLoading: true,
+            execute: async ({ label }) => ok({ label }),
+        });
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "echo", { label: "x" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        await runAgent(agentDef([deferredEcho]), GO, makeSession(), opts(provider));
+
+        expect(provider.calls[0]!.deferredToolNames).toEqual(["echo"]);
+        expect(provider.calls[1]!.deferredToolNames).toBe(provider.calls[0]!.deferredToolNames);
+    });
+
+    it("does not dispatch provider-executed tool-search calls", async () => {
+        const provider = scriptedProvider([
+            makeMessage(
+                [toolUseBlock("srv-1", "__harness_anthropic_tool_search", { query: "echo" }, true), toolUseBlock("tu-1", "echo", { label: "x" })],
+                "tool_use",
+            ),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider));
+
+        const results = toolResultParts(messages[2]);
+        expect(results.map((result) => result.toolCallId)).toEqual(["tu-1"]);
+        expect(outputValue(results[0]!)).toEqual({ label: "x" });
+    });
+});
+
 // ── executionMode partition (see the harness-tools spec) ─────────────
 
 describe("runAgent — workflow tools run unwrapped, in order", () => {

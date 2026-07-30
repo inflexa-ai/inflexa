@@ -98,6 +98,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             }),
         ]),
     );
+    const deferredToolNames = agent.tools.filter((tool) => tool.deferLoading).map((tool) => tool.id);
 
     // Approval resolves once to the caller's seam, or the deny-by-default one
     // when it wires none: a tool that pauses for a user decision where no
@@ -140,6 +141,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             system: agent.systemPrompt,
             messages,
             tools: toolDefs,
+            deferredToolNames,
             providerOptions,
         };
         const reply = await resultStep(runStep)(formatStepName.llm(i), () => provider.chat(request, session, signal));
@@ -225,7 +227,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // because it is the one call whose write is pure waste, and the
     // cache_write_tokens counter is what makes that waste visible.
     const wrapUp = await resultStep(runStep)(formatStepName.llm(agent.maxIterations), () =>
-        provider.chat({ system: agent.systemPrompt, messages, tools: {}, toolChoice: "none", providerOptions }, session, signal),
+        provider.chat({ system: agent.systemPrompt, messages, tools: {}, deferredToolNames: [], toolChoice: "none", providerOptions }, session, signal),
     );
     addChatUsage(usage, wrapUp.usage);
 
@@ -251,7 +253,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
 
 function toolCallParts(message: Extract<ModelMessage, { role: "assistant" }>): ToolCallPart[] {
     if (typeof message.content === "string") return [];
-    return message.content.filter((part): part is ToolCallPart => part.type === "tool-call");
+    return message.content.filter((part): part is ToolCallPart => part.type === "tool-call" && part.providerExecuted !== true);
 }
 
 /** Whether an aborted partial carries any content worth persisting — an empty partial contributes no message. */

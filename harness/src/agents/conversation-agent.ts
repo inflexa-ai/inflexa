@@ -194,35 +194,36 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
     const chemDb = createChemDbTools(bioKeys);
+    const deferred = (tool: Tool): Tool => ({ ...tool, deferLoading: true });
 
     const tools: Tool[] = [
         // Bio-lookup.
-        searchGeneTool,
-        searchPathwayTool,
-        lookupGoTermTool,
-        searchInteractionsTool,
+        deferred(searchGeneTool),
+        deferred(searchPathwayTool),
+        deferred(lookupGoTermTool),
+        deferred(searchInteractionsTool),
         // Literature (search / details / fulltext behind one action).
-        ncbi.pubmed,
+        deferred(ncbi.pubmed),
         // ChEMBL (compounds / drug / mechanism / bioactivity / targets behind one action).
-        chemblTool,
+        deferred(chemblTool),
         // PubChem (compound / crossrefs / assays behind one action).
-        pubchemTool,
+        deferred(pubchemTool),
         // Translational medicine.
-        openTargetsTool,
+        deferred(openTargetsTool),
         // Genetic evidence — SNP-trait associations for target validation / MR support.
-        searchGwasCatalogTool,
-        searchPharmgkbTool,
-        searchFaersTool,
-        searchClinicalTrialsTool,
-        searchGeoDatasetsTool,
-        createSearchDgidbTool({ ...(deps.logger ? { logger: deps.logger } : {}) }),
+        deferred(searchGwasCatalogTool),
+        deferred(searchPharmgkbTool),
+        deferred(searchFaersTool),
+        deferred(searchClinicalTrialsTool),
+        deferred(searchGeoDatasetsTool),
+        deferred(createSearchDgidbTool({ ...(deps.logger ? { logger: deps.logger } : {}) })),
         // Preclinical.
-        searchBgeeExpressionTool,
-        getImpcKoProfileTool,
+        deferred(searchBgeeExpressionTool),
+        deferred(getImpcKoProfileTool),
         // Off-target liability.
-        checkSafetyPanelTool,
+        deferred(checkSafetyPanelTool),
         // EPA CompTox (toxcast / hazard / chemical / exposure behind one dataset).
-        chemDb.comptox,
+        deferred(chemDb.comptox),
         // What reference data this install actually holds. The conversation agent is
         // where provisioning is decided — an embedder may give it a way to install more,
         // and a host that does asks the user to approve the download. Deciding that
@@ -268,9 +269,9 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createShowPlanTool(pool),
         showFileTool,
         // Batch literature/biology research (sub-agent as a loop-driving tool).
-        createLiteratureReviewerTool({ provider, model, bioKeys }),
+        deferred(createLiteratureReviewerTool({ provider, model, bioKeys })),
         // Cross-domain analogy generation (sub-agent as a loop-driving tool).
-        createGenerateAnalogyReportTool({ provider, model, bioKeys }),
+        deferred(createGenerateAnalogyReportTool({ provider, model, bioKeys })),
         // Workspace semantic search + raw read/grep over the read seam.
         createWorkspaceSearchTool(pool, embedding),
         createReadFileTool(workspaceFs),

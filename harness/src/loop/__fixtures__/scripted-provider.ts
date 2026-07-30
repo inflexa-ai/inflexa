@@ -5,7 +5,7 @@ import type { AgentSession as Session } from "../../auth/types.js";
 
 export type TextBlock = { type: "text"; text: string };
 export type ThinkingBlock = { type: "reasoning"; text: string; providerOptions?: { anthropic: { signature: string } } };
-export type ToolUseBlock = { type: "tool-call"; toolCallId: string; toolName: string; input: unknown };
+export type ToolUseBlock = { type: "tool-call"; toolCallId: string; toolName: string; input: unknown; providerExecuted?: boolean };
 export type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock;
 
 function mapFinishReason(finishReason: ChatResponse["finishReason"] | "tool_use" | "end_turn" | "max_tokens" | "refusal"): ChatResponse["finishReason"] {
@@ -43,8 +43,8 @@ export function thinkingBlock(thinking: string, signature: string): ThinkingBloc
     return { type: "reasoning", text: thinking, providerOptions: { anthropic: { signature } } };
 }
 
-export function toolUseBlock(id: string, name: string, input: unknown): ToolUseBlock {
-    return { type: "tool-call", toolCallId: id, toolName: name, input };
+export function toolUseBlock(id: string, name: string, input: unknown, providerExecuted = false): ToolUseBlock {
+    return { type: "tool-call", toolCallId: id, toolName: name, input, ...(providerExecuted ? { providerExecuted: true } : {}) };
 }
 
 export interface ScriptedProvider extends ChatProvider {

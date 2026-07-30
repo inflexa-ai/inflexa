@@ -9,8 +9,9 @@ import { scopeWorkloadId, type AgentSession } from "../auth/types.js";
 import type { ResolveBilling } from "../billing/resolver.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { prepareAnthropicDeferredTools } from "./deferred-tools.js";
 import { classifyProviderError, type ProviderError, toProviderError } from "./errors.js";
-import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities } from "./types.js";
+import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities, ToolSet } from "./types.js";
 
 /**
  * The harness-owned retry envelope. The AI SDK's built-in retry exposes only a
@@ -28,6 +29,7 @@ export interface AiSdkProviderDeps {
     readonly model: LanguageModel;
     readonly resolveBilling: ResolveBilling;
     readonly capabilities?: Partial<ProviderCapabilities>;
+    readonly prepareTools?: (tools: ToolSet, deferredToolNames: readonly string[]) => ToolSet;
     readonly logger?: Logger;
 }
 
@@ -297,6 +299,19 @@ function sanitizeMessages(messages: readonly ModelMessage[]): ModelMessage[] {
 export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const capabilities: ProviderCapabilities = { toolCalling: deps.capabilities?.toolCalling ?? true };
     const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
+    const preparedTools = new WeakMap<ToolSet, Map<string, ToolSet>>();
+
+    function toolsFor(req: ChatRequest): ToolSet {
+        if (deps.prepareTools === undefined || req.deferredToolNames === undefined || req.deferredToolNames.length === 0) return req.tools;
+        const key = [...req.deferredToolNames].sort().join("\0");
+        const byLoadingPlan = preparedTools.get(req.tools);
+        const cached = byLoadingPlan?.get(key);
+        if (cached !== undefined) return cached;
+        const tools = deps.prepareTools(req.tools, req.deferredToolNames);
+        if (byLoadingPlan === undefined) preparedTools.set(req.tools, new Map([[key, tools]]));
+        else byLoadingPlan.set(key, tools);
+        return tools;
+    }
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
@@ -310,7 +325,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         model: deps.model,
                         system: req.system,
                         messages: sanitizeMessages(req.messages),
-                        tools: req.tools,
+                        tools: toolsFor(req),
                         toolChoice: req.toolChoice ?? "auto",
                         stopWhen: [],
                         // The harness envelope owns retries; leaving the SDK default in
@@ -347,7 +362,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     model: deps.model,
                     system: req.system,
                     messages: sanitizeMessages(req.messages),
-                    tools: req.tools,
+                    tools: toolsFor(req),
                     toolChoice: req.toolChoice ?? "auto",
                     stopWhen: [],
                     maxRetries: 0,
@@ -430,6 +445,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             model: provider.chat(config.model),
             resolveBilling: deps.resolveBilling,
             capabilities: config.capabilities,
+            prepareTools: prepareAnthropicDeferredTools,
             logger: deps.logger,
         });
     }

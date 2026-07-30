@@ -37,6 +37,25 @@ describe("defineTool", () => {
         expect(tool.executionMode).toBe("step");
     });
 
+    it("defaults to eager loading and preserves an explicit deferred hint", () => {
+        const eager = defineTool({
+            id: "eager-tool",
+            description: "Loaded in the initial context.",
+            inputSchema: z.object({}),
+            execute: async () => ok({ done: true }),
+        });
+        const deferred = defineTool({
+            id: "deferred-tool",
+            description: "Discoverable on demand.",
+            inputSchema: z.object({}),
+            deferLoading: true,
+            execute: async () => ok({ done: true }),
+        });
+
+        expect(eager.deferLoading).toBe(false);
+        expect(deferred.deferLoading).toBe(true);
+    });
+
     it("preserves explicit workflow and inline execution modes", () => {
         const workflow = defineTool({
             id: "workflow-tool",
