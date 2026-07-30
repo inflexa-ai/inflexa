@@ -21,11 +21,24 @@ export type ResolvedContext =
 /** Flags that override cwd-based resolution; each is an id-or-name reference. */
 export type ContextFlags = { analysis?: IdOrName; project?: IdOrName };
 
+/** How a context resolve treats the anchors it walks through. Shaped as an opt-in: omitting it keeps the user-driven default. */
+export type ContextOptions = {
+    /**
+     * Passed straight to {@link resolveAnchor} (default `true`, so an omitted option resolves exactly
+     * as a user-driven command always has). Set `false` for a command that must not write: reporting
+     * on an analysis is not a sighting of its folder, and a command an agent may run unprompted (an
+     * `auto` policy) would otherwise make `lastSeen` measure agent polling rather than the user's
+     * presence. Self-healing a moved anchor's cached path is NOT gated by this — that is the shared
+     * resolver's repair on every read command, not something a caller initiates.
+     */
+    touch?: boolean;
+};
+
 /**
  * Decide what bare `inflexa` operates on, by the spec's precedence. Pure data — the picker,
  * prompts, and "loud context" printing live in the CLI/TUI layer.
  */
-export function resolveContext(cwd: string, flags: ContextFlags): Result<ResolvedContext, DbError> {
+export function resolveContext(cwd: string, flags: ContextFlags, opts?: ContextOptions): Result<ResolvedContext, DbError> {
     // 1. Explicit flags win outright.
     if (flags.analysis) {
         return findAnalysis(flags.analysis).andThen((analysis): Result<ResolvedContext, DbError> => {
@@ -33,7 +46,7 @@ export function resolveContext(cwd: string, flags: ContextFlags): Result<Resolve
             if (!analysis) return listRecentAnalyses().map((analyses) => ({ kind: "pick", analyses }));
             // The analysis's anchor row may be gone (user edited the DB) — fall back to cwd for display
             // rather than failing; the analysis is still openable.
-            return resolveAnchor(analysis.anchorId).map((resolved) => ({
+            return resolveAnchor(analysis.anchorId, opts).map((resolved) => ({
                 kind: "analysis",
                 analysis,
                 anchorPath: resolvedPathOrCached(resolved) ?? cwd,
@@ -61,7 +74,7 @@ export function resolveContext(cwd: string, flags: ContextFlags): Result<Resolve
         // routine desync, not an error: fall back to the marker's own directory for the anchor path and
         // carry on — listAnalysesForAnchorAt returns nothing, so this resolves to an empty anchor the
         // user can start an analysis in (which re-establishes the row from the marker).
-        return resolveAnchor(marker.anchorId).andThen((resolved) => {
+        return resolveAnchor(marker.anchorId, opts).andThen((resolved) => {
             const anchorPath = resolvedPathOrCached(resolved) ?? found.dir;
             return listAnalysesForAnchorAt(cwd).map((analyses): ResolvedContext => {
                 const [only] = analyses;
@@ -99,9 +112,12 @@ export function describeContext(ctx: ResolvedContext): string {
  * analysis resolves directly; multiple/ambiguous/empty each fail with the fix. Lives
  * here (not in a command module) so every analysis-scoped command reduces context the
  * same way — `emptyHint` is the only per-command difference (its "how to start" line).
+ *
+ * `opts` reaches {@link resolveContext} unchanged; see {@link ContextOptions} for when a
+ * command opts out of the sighting heartbeat.
  */
-export function resolveSingleAnalysis(flags: ContextFlags, emptyHint: string): Analysis {
-    const ctx = resolveContext(process.cwd(), flags).match((c) => c, dieOn("Failed to resolve context"));
+export function resolveSingleAnalysis(flags: ContextFlags, emptyHint: string, opts?: ContextOptions): Analysis {
+    const ctx = resolveContext(process.cwd(), flags, opts).match((c) => c, dieOn("Failed to resolve context"));
     const listCandidates = (analyses: Analysis[]): string => analyses.map((a) => `  - ${a.id}  ${a.name}`).join("\n");
     switch (ctx.kind) {
         case "analysis":
