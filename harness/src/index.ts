@@ -47,13 +47,8 @@ export type { PreviewPublisher, PreviewMintResult } from "./tools/report/preview
 export { createDbosRunLauncher } from "./execution/dbos-run-launcher.js";
 export type { RunLauncher, LaunchOptions } from "./execution/run-launcher.js";
 
-// Seam: workflow-ledger reclamation — the reclaim direction of the
-// durability-engine quarantine `RunLauncher` holds for launching. An analysis's
-// sandbox transcripts, run-event streams, and workflow inputs live in the
-// engine's own ledger rather than the `cortex_*` tables, and this seam cancels
-// and deletes them by workflow id, so no caller names an engine type.
-// `createDbosWorkflowPurger` is the single shared realization and needs only a
-// pool, so a host that never launched the engine can still purge.
+// Seam: workflow-ledger reclamation — cancels and deletes an analysis's rows in
+// the durability engine's own ledger, so no caller names an engine type.
 export { createDbosWorkflowPurger } from "./execution/dbos-workflow-purger.js";
 export type { DbosWorkflowPurgerDeps } from "./execution/dbos-workflow-purger.js";
 export type { WorkflowPurger } from "./execution/workflow-purger.js";
@@ -269,12 +264,8 @@ export { upsertAnalysis } from "./state/analyses.js";
 export { clearDataProfile, loadDataProfileStatus, tryRetryDataProfile, reconcileOrphanedDataProfile } from "./state/data-profile.js";
 export type { DataProfileInputFile, DataProfileResult, DataProfileStatus } from "./state/data-profile.js";
 
-// Analysis reclamation. `purgeAnalysis` takes an `analysisId` and nothing else:
-// every keyed `cortex_*` row, the analysis's dynamic vector table, and its
-// workflow ledger rows (through the injected `WorkflowPurger`) are all derivable
-// from that id, so a host enumerates no tables and supplies no run list. Every
-// stage is idempotent — an unknown or already-purged analysis succeeds reporting
-// zeroes — and workspace files on disk stay the embedder's to dispose of.
+// Analysis reclamation — `purgeAnalysis` reclaims an analysis's whole Postgres
+// footprint from its id alone; workspace files stay the embedder's to dispose of.
 export { createAnalysisPurge } from "./state/purge-analysis.js";
 export type { AnalysisPurge, AnalysisPurgeDeps, AnalysisPurgeOutcome } from "./state/purge-analysis.js";
 
