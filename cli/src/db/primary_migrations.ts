@@ -119,6 +119,59 @@ export const migrations: Migration[] = [
             DROP TABLE IF EXISTS sessions;
         `,
     },
+    {
+        // The local LLM-usage ledger: one row per completed LLM call the harness reports through its
+        // UsageRecorder seam. `record_key` IS the identity — the harness guarantees that key is stable
+        // across every replay of the same call, so minting a synthetic id beside it would create two
+        // things that must agree about what "the same call" is. Writes upsert on it; a usage row is an
+        // observation, not an entity, so it carries no id/created_at/updated_at triple (the same
+        // exception analysis_inputs takes). Column order still follows the house rule: identity
+        // (record_key + its arrival stamp) first, then core data — there is no foreign-key group here.
+        //
+        // NO foreign key on any column, deliberately. `scope_id` is minted harness-side and includes
+        // synthetic workload ids this database will never hold (the embedding boot probe and the
+        // embedding setup verifier both drive agent loops under invented analysis ids). The recorder is
+        // contractually forbidden to throw, so a referential constraint would fire on exactly the rows
+        // it must never fail on. `thread_id`/`run_id`/`step_id` are attribution too, not relations.
+        //
+        // The scope rides as a discriminant + id rather than a single analysis_id so both variants of
+        // the harness's Scope union are representable and neither is silently discarded; a per-analysis
+        // read simply constrains scope_kind = 'analysis'.
+        //
+        // Every token column is nullable with NO NOT NULL and NO DEFAULT. Absent must stay
+        // distinguishable from zero: 'NOT NULL DEFAULT 0' would rewrite "this provider does not report
+        // cache reads" into "this provider reported zero cache reads", an unknown dressed as a
+        // measurement. Reads aggregate with SUM(), which skips NULLs and itself yields NULL for a group
+        // in which nothing was reported, so the distinction survives aggregation as well. The five are
+        // named for the harness ChatUsage fields they carry, one column per field.
+        //
+        // Exactly one index, on (scope_kind, scope_id): every surface filters the scope first and the
+        // model/agent breakdowns group underneath that filter. No run_id or served_model_id index —
+        // nothing queries by either without a scope, and an index whose only justification is a query
+        // no surface makes is write cost with no reader.
+        version: 3,
+        up: `
+            CREATE TABLE llm_usage (
+                record_key TEXT PRIMARY KEY,
+                recorded_at INTEGER NOT NULL,
+                agent_id TEXT NOT NULL,
+                call_path TEXT NOT NULL,
+                scope_kind TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                thread_id TEXT,
+                run_id TEXT,
+                step_id TEXT,
+                requested_model_id TEXT,
+                served_model_id TEXT,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cache_creation_input_tokens INTEGER,
+                cache_read_input_tokens INTEGER,
+                reasoning_tokens INTEGER
+            );
+            CREATE INDEX idx_llm_usage_scope ON llm_usage(scope_kind, scope_id);
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

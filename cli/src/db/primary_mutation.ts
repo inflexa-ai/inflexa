@@ -193,6 +193,106 @@ export function relocateRawInputPrefix(fromPrefix: string, toPrefix: string): Re
     });
 }
 
+// --- Data model: LLM usage ledger ---
+
+/**
+ * What a provider reported for ONE call, named for the harness `ChatUsage` fields it carries.
+ *
+ * Every quantity is independently optional and an absent one means "not reported", never zero — a
+ * provider that reports totals without a cache breakdown is legitimate, and flattening that to `0`
+ * would turn an unknown into a measurement. The five are NOT addable: cache-creation, cache-read, and
+ * reasoning counts are breakdowns *of* the input and output counts, so nothing here or downstream
+ * combines them into a single figure.
+ */
+export type LlmUsageTokens = {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+    reasoningTokens?: number;
+};
+
+/** One ledger row as the storage layer takes it — the harness's `LlmUsageRecord` already flattened to columns by its caller. */
+export type LlmUsageEntry = {
+    /** The harness's idempotency key, stable across every replay of the same call. It is the row's whole identity. */
+    recordKey: string;
+    /**
+     * When the record was observed, epoch millis. The harness stamps no time on a record (its own
+     * decision), so arrival at this sink is the only clock available — the caller stamps `Date.now()`
+     * as it hands the record over. An upsert of an existing key deliberately leaves the stored value
+     * alone, so the ledger's time axis records when the work happened, not when a replay re-delivered it.
+     */
+    recordedAt: number;
+    /** The agent that made the call — a sub-agent records under its own id. */
+    agentId: string;
+    /** The record's provenance path, already joined into one string by the caller. */
+    callPath: string;
+    /** The harness `Scope` discriminant, stored so both variants stay representable (`"analysis"` | `"target-assessment"`). */
+    scopeKind: string;
+    /** The scoped workload id. Not a foreign key: it may name a workload this database never held. */
+    scopeId: string;
+    threadId?: string;
+    runId?: string;
+    stepId?: string;
+    requestedModelId?: string;
+    servedModelId?: string;
+    usage: LlmUsageTokens;
+};
+
+/**
+ * Persists one usage record, upserting on the harness's `recordKey`.
+ *
+ * The harness guarantees key stability, NOT at-most-once delivery: a replayed durable workflow body
+ * re-fires `record` with a byte-identical key, so this must never insert a second row or fail on the
+ * clash. `DO UPDATE` over `DO NOTHING` follows the seam's contract literally — on a pure replay the
+ * two are equivalent (the replayed body reports the cached call's identical figures), but on a genuine
+ * step retry that re-executes the call for real, last-writer-wins reflects the retry's actual spend
+ * where `DO NOTHING` would pin the abandoned attempt's.
+ *
+ * `recorded_at` is deliberately absent from the conflict update (see {@link LlmUsageEntry.recordedAt}),
+ * as is the attribution — the same key is the same call, so its agent, path, scope, and frame cannot
+ * have changed. Unreported token quantities bind as SQL NULL, never `0`.
+ */
+export function upsertLlmUsage(entry: LlmUsageEntry): Result<void, DbError> {
+    return tryMutation("upsertLlmUsage", (conn) => {
+        conn.query(
+            `INSERT INTO llm_usage (
+                 record_key, recorded_at, agent_id, call_path, scope_kind, scope_id,
+                 thread_id, run_id, step_id, requested_model_id, served_model_id,
+                 input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, reasoning_tokens
+             )
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(record_key) DO UPDATE SET
+                 requested_model_id = excluded.requested_model_id,
+                 served_model_id = excluded.served_model_id,
+                 input_tokens = excluded.input_tokens,
+                 output_tokens = excluded.output_tokens,
+                 cache_creation_input_tokens = excluded.cache_creation_input_tokens,
+                 cache_read_input_tokens = excluded.cache_read_input_tokens,
+                 reasoning_tokens = excluded.reasoning_tokens`,
+        ).run(
+            entry.recordKey,
+            entry.recordedAt,
+            entry.agentId,
+            entry.callPath,
+            entry.scopeKind,
+            entry.scopeId,
+            // `?? null` on every optional: bun:sqlite binds `null` as SQL NULL but rejects `undefined`,
+            // and NULL is precisely the "not reported" the ledger must preserve.
+            entry.threadId ?? null,
+            entry.runId ?? null,
+            entry.stepId ?? null,
+            entry.requestedModelId ?? null,
+            entry.servedModelId ?? null,
+            entry.usage.inputTokens ?? null,
+            entry.usage.outputTokens ?? null,
+            entry.usage.cacheCreationInputTokens ?? null,
+            entry.usage.cacheReadInputTokens ?? null,
+            entry.usage.reasoningTokens ?? null,
+        );
+    });
+}
+
 // --- Data model: provenance ---
 
 /**

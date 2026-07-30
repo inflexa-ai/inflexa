@@ -21,7 +21,7 @@ function tableNames(db: Database): string[] {
 describe("runMigrations", () => {
     test("creates the full schema", () => {
         const tables = tableNames(migratedMemoryDb());
-        for (const table of ["anchors", "projects", "analyses", "analysis_inputs", "_migrations"]) {
+        for (const table of ["anchors", "projects", "analyses", "analysis_inputs", "llm_usage", "_migrations"]) {
             expect(tables).toContain(table);
         }
     });
@@ -44,12 +44,45 @@ describe("runMigrations", () => {
         expect(columns).toContain("provenance_prev_chain_hash");
     });
 
+    test("llm_usage token columns are nullable with no default", () => {
+        // The absent-means-not-reported discipline is easiest to lose right here: a `NOT NULL DEFAULT 0`
+        // on any of these would silently rewrite "this provider does not report cache reads" into "this
+        // provider reported zero cache reads" — an unknown turned into a measurement, and no read-side
+        // care could recover the difference afterwards. PRAGMA table_info states both halves directly.
+        const columns = migratedMemoryDb().query<{ name: string; notnull: number; dflt_value: string | null }, []>("PRAGMA table_info(llm_usage)").all();
+        for (const name of ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "reasoning_tokens"]) {
+            const column = columns.find((c) => c.name === name);
+            expect(column).toBeDefined();
+            expect(column?.notnull).toBe(0);
+            expect(column?.dflt_value).toBeNull();
+        }
+        // The attribution half of the same contract, pinned beside it: these five are what makes a row
+        // answerable at all, so they are the only NOT NULL columns besides the key and its stamp.
+        for (const name of ["recorded_at", "agent_id", "call_path", "scope_kind", "scope_id"]) {
+            expect(columns.find((c) => c.name === name)?.notnull).toBe(1);
+        }
+    });
+
+    test("llm_usage is keyed by the harness record key and declares no foreign key", () => {
+        const db = migratedMemoryDb();
+        const primaryKey = db
+            .query<{ name: string; pk: number }, []>("PRAGMA table_info(llm_usage)")
+            .all()
+            .filter((c) => c.pk > 0)
+            .map((c) => c.name);
+        expect(primaryKey).toEqual(["record_key"]);
+        // No FK, deliberately: scope ids are minted harness-side and include synthetic workload ids this
+        // database never holds, while the recorder is contractually forbidden to throw — a referential
+        // constraint would fire on exactly the rows it must not fail on.
+        expect(db.query("PRAGMA foreign_key_list(llm_usage)").all()).toEqual([]);
+    });
+
     test("records every applied version in the _migrations ledger", () => {
         const versions = migratedMemoryDb()
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2]);
+        expect(versions).toEqual([1, 2, 3]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
@@ -70,10 +103,11 @@ describe("runMigrations", () => {
     });
 
     test("leaves exactly the surviving lookup indexes", () => {
-        // The name claims exactness, so assert the COMPLETE set rather than containment: a sixth index
+        // The name claims exactness, so assert the COMPLETE set rather than containment: a further index
         // appearing, or one of these quietly disappearing, has to fail here. `sql IS NOT NULL` excludes
         // SQLite's implicit sqlite_autoindex_* entries — they back the PRIMARY KEY / UNIQUE constraints
-        // and are not indexes this schema declares.
+        // and are not indexes this schema declares. The ledger contributes exactly one: no run_id or
+        // served_model_id index, because nothing queries by either without a scope.
         const indexes = migratedMemoryDb()
             .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL ORDER BY name")
             .all()
@@ -82,6 +116,7 @@ describe("runMigrations", () => {
             "idx_analyses_anchor",
             "idx_analyses_project",
             "idx_analysis_inputs_analysis",
+            "idx_llm_usage_scope",
             "uq_analysis_inputs_anchored",
             "uq_analysis_inputs_unanchored",
         ]);
@@ -159,7 +194,7 @@ describe("migration 2: dropping the chat tables", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2]);
+        expect(versions).toEqual([1, 2, 3]);
 
         const tables = tableNames(db);
         for (const table of ["sessions", "messages", "parts"]) {

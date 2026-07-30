@@ -266,3 +266,131 @@ export function getAnalysisIntegrity(id: string): Result<AnalysisIntegrity | nul
         };
     });
 }
+
+// --- Data model: LLM usage ledger ---
+
+/**
+ * Per-quantity ledger totals over one group of calls.
+ *
+ * Each token quantity is absent when NO row in the group reported it — `SUM()` skips NULLs and
+ * returns NULL for an all-absent group, and that NULL is carried through as an absent key rather than
+ * flattened to `0`, so "the provider never reported cache reads" stays distinguishable from "the
+ * provider reported zero cache reads". The five are breakdowns of one another (cache and reasoning
+ * counts are details *of* the input and output counts), so nothing adds them together — consumption is
+ * reported as an input figure and an output figure, never as one combined number.
+ *
+ * `calls` is how many ledger rows the group holds. It is what separates "no usage recorded" from
+ * "calls recorded whose provider reported no figures", which the all-absent totals alone cannot say.
+ */
+export type LlmUsageTotals = {
+    calls: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+    reasoningTokens?: number;
+};
+
+/** One group of {@link LlmUsageTotals} keyed by the model that actually answered; `servedModelId` is `null` for calls whose endpoint reported no served model. */
+export type LlmUsageByModel = {
+    servedModelId: string | null;
+    totals: LlmUsageTotals;
+};
+
+/** One group of {@link LlmUsageTotals} keyed by the agent that spent them — a sub-agent's calls group under its own id. */
+export type LlmUsageByAgent = {
+    agentId: string;
+    totals: LlmUsageTotals;
+};
+
+/** An aggregate row of `llm_usage`. Every sum is nullable because SQLite's `SUM()` yields NULL over a group in which the quantity was never reported. */
+type LlmUsageTotalsRow = {
+    calls: number;
+    input_tokens: number | null;
+    output_tokens: number | null;
+    cache_creation_input_tokens: number | null;
+    cache_read_input_tokens: number | null;
+    reasoning_tokens: number | null;
+};
+
+function llmUsageTotalsFromRow(r: LlmUsageTotalsRow): LlmUsageTotals {
+    // Each quantity is written only when the sum is non-NULL, so an unreported one comes back as an
+    // ABSENT key. `?? 0` here would be the exact defect the nullable columns exist to prevent.
+    const totals: LlmUsageTotals = { calls: r.calls };
+    if (r.input_tokens !== null) totals.inputTokens = r.input_tokens;
+    if (r.output_tokens !== null) totals.outputTokens = r.output_tokens;
+    if (r.cache_creation_input_tokens !== null) totals.cacheCreationInputTokens = r.cache_creation_input_tokens;
+    if (r.cache_read_input_tokens !== null) totals.cacheReadInputTokens = r.cache_read_input_tokens;
+    if (r.reasoning_tokens !== null) totals.reasoningTokens = r.reasoning_tokens;
+    return totals;
+}
+
+// Aliased to the underlying column names so one row type and one mapper serve the total and both
+// breakdowns. Each quantity is summed on its own — there is deliberately no expression here that
+// combines two of them.
+const LLM_USAGE_TOTAL_COLS = `COUNT(*) AS calls,
+     SUM(input_tokens) AS input_tokens,
+     SUM(output_tokens) AS output_tokens,
+     SUM(cache_creation_input_tokens) AS cache_creation_input_tokens,
+     SUM(cache_read_input_tokens) AS cache_read_input_tokens,
+     SUM(reasoning_tokens) AS reasoning_tokens`;
+
+// The ledger stores the harness `Scope` discriminant alongside the workload id, so a per-analysis read
+// has to name the variant it wants. Must stay equal to the analysis variant's `kind` in the harness's
+// Scope union, which is what the recorder writes into the column.
+const ANALYSIS_SCOPE = "analysis";
+
+/**
+ * What one analysis has consumed across every recorded call.
+ *
+ * Rows are matched by scope id alone, with no join to `analyses`, so an analysis the user has since
+ * deleted still reports its spend and — equally — another analysis's rows can never leak into this
+ * one. An analysis with no rows at all reads back as `calls: 0` with every quantity absent; that is a
+ * legitimate answer, not a miss, which is why this returns totals rather than `T | null`.
+ */
+export function getAnalysisUsageTotals(analysisId: string): Result<LlmUsageTotals, DbError> {
+    return tryQuery("getAnalysisUsageTotals", (conn) => {
+        // A bare aggregate with no GROUP BY always yields exactly one row (all-NULL sums over an empty
+        // set), so the non-null assertion in the cast holds unconditionally.
+        const row = conn
+            .query(`SELECT ${LLM_USAGE_TOTAL_COLS} FROM llm_usage WHERE scope_kind = ? AND scope_id = ?`)
+            .get(ANALYSIS_SCOPE, analysisId) as LlmUsageTotalsRow;
+        return llmUsageTotalsFromRow(row);
+    });
+}
+
+/**
+ * An analysis's consumption broken down by the model that actually served each call — the answer to
+ * "which model spent this". Ordered by the served id for a stable report; SQLite sorts the NULL group
+ * (calls whose endpoint reported no served model) first. Empty when the analysis has no rows.
+ */
+export function listAnalysisUsageByModel(analysisId: string): Result<LlmUsageByModel[], DbError> {
+    return tryQuery("listAnalysisUsageByModel", (conn) => {
+        const rows = conn
+            .query(
+                `SELECT served_model_id, ${LLM_USAGE_TOTAL_COLS}
+                 FROM llm_usage WHERE scope_kind = ? AND scope_id = ?
+                 GROUP BY served_model_id ORDER BY served_model_id`,
+            )
+            .all(ANALYSIS_SCOPE, analysisId) as (LlmUsageTotalsRow & { served_model_id: string | null })[];
+        return rows.map((r) => ({ servedModelId: r.served_model_id, totals: llmUsageTotalsFromRow(r) }));
+    });
+}
+
+/**
+ * An analysis's consumption broken down by the agent that made each call — the answer to "which agent
+ * spent this", with sub-agent loops appearing under their own ids. Ordered by agent id for a stable
+ * report. Empty when the analysis has no rows.
+ */
+export function listAnalysisUsageByAgent(analysisId: string): Result<LlmUsageByAgent[], DbError> {
+    return tryQuery("listAnalysisUsageByAgent", (conn) => {
+        const rows = conn
+            .query(
+                `SELECT agent_id, ${LLM_USAGE_TOTAL_COLS}
+                 FROM llm_usage WHERE scope_kind = ? AND scope_id = ?
+                 GROUP BY agent_id ORDER BY agent_id`,
+            )
+            .all(ANALYSIS_SCOPE, analysisId) as (LlmUsageTotalsRow & { agent_id: string })[];
+        return rows.map((r) => ({ agentId: r.agent_id, totals: llmUsageTotalsFromRow(r) }));
+    });
+}
