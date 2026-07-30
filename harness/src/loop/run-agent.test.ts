@@ -290,6 +290,48 @@ describe("runAgent — tool-error boundary", () => {
         expect(outputValue(result)).toEqual({ answer: 42 });
     });
 
+    it("strips NUL from a tool result so the turn can be stored", async () => {
+        // A NUL byte cannot survive the message store, and tool results are the one
+        // message content built from raw command output and file bytes.
+        const NUL = String.fromCharCode(0);
+        const binary = defineTool({
+            id: "binary_tool",
+            description: "Returns bytes read off disk.",
+            inputSchema: z.object({}),
+            execute: async () => ok({ header: `MAGIC${NUL}rest`, lines: [`a${NUL}b`] }),
+        });
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "binary_tool", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
+
+        const { messages } = await runAgent(agentDef([binary]), GO, makeSession(), opts(provider));
+
+        const result = toolResultParts(messages[2])[0]!;
+        expect(outputValue(result)).toEqual({ header: "MAGICrest", lines: ["ab"] });
+        expect(JSON.stringify(messages)).not.toContain("\\u0000");
+    });
+
+    it("strips NUL from a thrown tool error's message", async () => {
+        const NUL = String.fromCharCode(0);
+        const noisy = defineTool({
+            id: "noisy_tool",
+            description: "Throws with stderr quoted verbatim.",
+            inputSchema: z.object({}),
+            execute: async () => {
+                throw new Error(`segfault${NUL} core dumped`);
+            },
+        });
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "noisy_tool", {})], "tool_use"),
+            makeMessage([textBlock("recovered")], "end_turn"),
+        ]);
+
+        const { messages } = await runAgent(agentDef([noisy]), GO, makeSession(), opts(provider));
+
+        const result = toolResultParts(messages[2])[0]!;
+        expect(isErrorResult(result)).toBe(true);
+        expect(String(outputValue(result))).toContain("segfault core dumped");
+        expect(JSON.stringify(messages)).not.toContain("\\u0000");
+    });
+
     it("maps an err(ToolError) Result to an is_error tool_result verbatim", async () => {
         const errTool = defineTool({
             id: "err_tool",

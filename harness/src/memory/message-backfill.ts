@@ -28,7 +28,7 @@ export async function backfillAiSdkMessageEnvelopes(client: PoolClient): Promise
                 role: row.role,
                 content: row.content_jsonb,
             });
-            await client.query("UPDATE messages SET message_envelope = $1::jsonb WHERE thread_id = $2 AND seq = $3::bigint", [
+            await client.query("UPDATE messages SET message_envelope = $1::json WHERE thread_id = $2 AND seq = $3::bigint", [
                 JSON.stringify(envelopeMessage(message)),
                 row.thread_id,
                 row.seq,

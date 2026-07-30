@@ -26,6 +26,7 @@ import { type Histogram, metrics } from "@opentelemetry/api";
 import { ResultAsync, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
+import { stripNulCharacters } from "../input-sanitization.js";
 import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
 import { countTokens } from "./count-tokens.js";
 import {
@@ -162,6 +163,23 @@ const GENUINE_USER_START_SQL = `message_envelope->'message'->>'role' = 'user'
                          AND message_envelope->'message'->'providerOptions'->'${HARNESS_PROVIDER_NAMESPACE}'->>'${SYNTHETIC_MESSAGE_KEY}' IS DISTINCT FROM 'true'`;
 
 /**
+ * Serialize a message's storage envelope, dropping NUL from every string it
+ * carries ({@link stripNulCharacters}).
+ *
+ * A stored NUL does not break the insert on a `json` column, nor the whole-row
+ * reads — it breaks {@link GENUINE_USER_START_SQL}, whose JSON operators refuse
+ * to walk a document containing one, so a single poisoned row would make the
+ * thread's tail unretractable. The loop already strips NUL where it builds a
+ * tool result, so this scrubs nothing on the harness's own path; it holds the
+ * invariant for every other writer.
+ *
+ * The replacer sees values, not keys — the same accepted limit as the loop's.
+ */
+function serializeEnvelope(message: ModelMessage): string {
+    return JSON.stringify(envelopeMessage(message), (_key, value: unknown) => (typeof value === "string" ? stripNulCharacters(value) : value));
+}
+
+/**
  * Group rows (oldest-first) into turns at genuine-user-start boundaries.
  * Generic over the row shape so the token-windowed read (`loadRecent`) and
  * the display read (`loadPage`) share it, each supplying its own start
@@ -266,12 +284,13 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                             chain.andThen(() =>
                                 tryMutation("thread-history.appendTurn.insert", () =>
                                     client.query(
+                                        // `::json`, never `::jsonb` — see the column comment in the state-init DDL.
                                         `INSERT INTO messages (thread_id, seq, message_envelope, tokens)
-                     VALUES ($1, $2, $3::jsonb, $4)
+                     VALUES ($1, $2, $3::json, $4)
                      ON CONFLICT (thread_id, seq) DO UPDATE
                        SET message_envelope = EXCLUDED.message_envelope,
                            tokens = EXCLUDED.tokens`,
-                                        [threadId, startSeq + i, JSON.stringify(envelopeMessage(message)), countTokens(message.content)],
+                                        [threadId, startSeq + i, serializeEnvelope(message), countTokens(message.content)],
                                     ),
                                 ).map(() => undefined),
                             ),
