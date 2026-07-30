@@ -217,3 +217,38 @@ describe("Number.prototype.formatBytes", () => {
         expect((-Infinity).formatBytes()).toBe("0 B");
     });
 });
+
+describe("Number.prototype.formatTokens", () => {
+    test("renders whole tokens below the first unit step", () => {
+        expect((0).formatTokens()).toBe("0");
+        expect((812).formatTokens()).toBe("812");
+        expect((999).formatTokens()).toBe("999"); // upper edge of the whole-token range
+    });
+
+    test("each unit steps at 1000 of the one below it — a decimal basis, unlike formatBytes", () => {
+        expect((1000).formatTokens()).toBe("1.0k"); // the tokens→k boundary
+        expect((12_400).formatTokens()).toBe("12.4k");
+        expect((999_900).formatTokens()).toBe("999.9k"); // upper edge of the k range
+        expect((1_000_000).formatTokens()).toBe("1.0M"); // the k→M boundary
+        expect((3_200_000).formatTokens()).toBe("3.2M");
+    });
+
+    test("M is the top unit — a billions-scale count keeps counting in M rather than colliding with the byte unit", () => {
+        expect((1_000_000_000).formatTokens()).toBe("1000.0M");
+    });
+
+    test("a count that rounds up at the top of a range promotes instead of printing a unit that does not exist", () => {
+        expect((999.6).formatTokens()).toBe("1.0k");
+        expect((999_960).formatTokens()).toBe("1.0M");
+    });
+
+    test("clamps a negative count to 0", () => {
+        expect((-5).formatTokens()).toBe("0");
+    });
+
+    test("a non-finite count renders 0 rather than a NaN string", () => {
+        expect(NaN.formatTokens()).toBe("0");
+        expect(Infinity.formatTokens()).toBe("0");
+        expect((-Infinity).formatTokens()).toBe("0");
+    });
+});
