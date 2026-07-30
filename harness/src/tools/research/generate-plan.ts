@@ -626,7 +626,10 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // the loop and put their rendered content in the planner's seed.
             const listAvailableRefs = createListAvailableRefsTool(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath });
             const listAvailablePackages = createListAvailablePackagesTool(deps.packagesFile === undefined ? {} : { packagesFile: deps.packagesFile });
-            const [refsResult, packagesResult] = await Promise.all([listAvailableRefs.execute({}, ctx), listAvailablePackages.execute({}, ctx)]);
+            // A path-separator query matches every reference path and selects the
+            // tool's recursive leaf scan, so the seed contains usable file paths,
+            // not only top-level directory summaries.
+            const [refsResult, packagesResult] = await Promise.all([listAvailableRefs.execute({ query: "/" }, ctx), listAvailablePackages.execute({}, ctx)]);
             const groundingBlock = [inventoryContent("Available Reference Data", refsResult), inventoryContent("Available Packages", packagesResult)].join(
                 "\n\n",
             );
