@@ -31,8 +31,6 @@ export const DEFAULT_SALVAGE_ITERATIONS = 3;
 
 /** Describes how to salvage a run that never reached its terminal tool. */
 export interface TerminalSalvage {
-    /** True once the agent recorded its terminal outcome (reads the closure cell). */
-    readonly resolved: () => boolean;
     /** Terminal tools offered on the salvage turn (submit / blocker / …). Must be
      *  the same instances the first run used — they close over the outcome cell. */
     readonly tools: readonly Tool[];
@@ -61,12 +59,8 @@ export async function runToTerminal(
     opts: RunAgentOptions,
     salvage: TerminalSalvage,
 ): Promise<RunAgentResult> {
-    const terminalOpts: RunAgentOptions = {
-        ...opts,
-        resolved: salvage.resolved,
-    };
-    const first = await runAgent(agent, initial, session, terminalOpts);
-    if (salvage.resolved() || opts.signal.aborted) return first;
+    const first = await runAgent(agent, initial, session, opts);
+    if (opts.resolved?.() || opts.signal.aborted) return first;
 
     const salvageAgent: AgentDefinition = {
         ...agent,
@@ -74,7 +68,7 @@ export async function runToTerminal(
         maxIterations: salvage.maxIterations ?? DEFAULT_SALVAGE_ITERATIONS,
     };
     const salvageOpts: RunAgentOptions = {
-        ...terminalOpts,
+        ...opts,
         formatStepName: salvageStepNames(opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER),
     };
     return runAgent(salvageAgent, [...first.messages, { role: "user", content: salvage.nudge }], session, salvageOpts);

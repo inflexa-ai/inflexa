@@ -668,13 +668,13 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                         signal,
                         emit: ctx.emit,
                         runStep: passthroughStep,
+                        resolved: () => holder.outcome !== null,
                         // Planner prose is unusable: every meaningful outcome is
                         // a tool call, and the terminal predicate stops the loop
                         // as soon as one is recorded.
                         toolChoice: "required",
                     },
                     {
-                        resolved: () => holder.outcome !== null,
                         tools: innerTools.terminal,
                         nudge:
                             "You ended without a terminal outcome. Call submit_plan with " +

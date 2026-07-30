@@ -234,9 +234,9 @@ export async function runReportIteration(deps: ReportRunnerDeps, opts: ReportRun
                     signal: opts.signal,
                     emit: opts.emit,
                     runStep: passthroughStep,
+                    resolved: () => outcome !== undefined,
                 },
                 {
-                    resolved: () => outcome !== undefined,
                     tools: [buildReportTool, submitReportTool],
                     nudge:
                         "You stopped without calling submit_report, so this report version " +
