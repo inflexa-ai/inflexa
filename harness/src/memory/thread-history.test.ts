@@ -308,7 +308,7 @@ describe("appendTurn thread activity", () => {
     it("leaves a soft-deleted thread's tombstone unmoved while persisting the turn", async () => {
         const store = createThreadStore(pool);
         (await store.createThread({ threadId: THREAD, analysisId: ANALYSIS, title: "Deleted" }))._unsafeUnwrap();
-        (await store.deleteThread(THREAD))._unsafeUnwrap();
+        (await store.archiveThread(THREAD))._unsafeUnwrap();
 
         // Read the timestamp as text: the driver parses `timestamptz` into a JS
         // `Date`, and at millisecond resolution a bump this fast can land inside

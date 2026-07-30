@@ -10,15 +10,29 @@
  * the vocabulary is conversation-shaped on purpose — reaching for it inside
  * a workflow step feels immediately wrong.
  *
- * Delete is soft: `deleteThread` sets `deleted_at`; `getThread` and
- * `listThreads` filter `deleted_at IS NULL`, so the row (and its messages)
- * survive a delete and a tombstoned thread is indistinguishable from absent.
+ * Three lifecycle verbs with distinct guarantees. `archiveThread` is
+ * recoverable: it stamps `deleted_at`, and because `getThread`/`listThreads`
+ * filter `deleted_at IS NULL` an archived thread is indistinguishable from an
+ * absent one while its row and every one of its `messages` rows stay in
+ * storage. `unarchiveThread` clears the stamp and the thread reads as it did.
+ * `deleteThread` is not recoverable: it removes the `messages` rows and the
+ * metadata row in one transaction, so a failure partway leaves both — never a
+ * thread stripped of its transcript, nor a transcript with nothing naming it.
+ *
+ * A hard delete creates no orphan of its own, but it is NOT serialized against
+ * a concurrent `appendTurn`: `messages` carries no foreign key to
+ * `cortex_analysis_threads`, and the append deliberately tolerates a missing
+ * metadata row. A turn committing after the delete therefore persists messages
+ * under a `thread_id` that no longer resolves to an analysis, leaving them
+ * unreachable by any later thread- or analysis-scoped reclamation. Stop writes
+ * to a thread — unbind it from any live conversation — before deleting it; this
+ * store cannot observe a host's in-flight turns, so it does not enforce that.
  */
 
 import { type ResultAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
-import { type DbError, tryMutation, tryQuery } from "../lib/db-result.js";
+import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
 
 /** One conversation thread's metadata, as returned by the store. */
 export interface Thread {
@@ -56,11 +70,29 @@ export interface ThreadStore {
      * `created_at`). Returns the live row.
      */
     createThread(input: CreateThreadInput): ResultAsync<Thread, DbError>;
-    /** The live thread by id, or `null` if absent or soft-deleted. */
+    /** The live thread by id, or `null` if absent or archived. */
     getThread(threadId: string): ResultAsync<Thread | null, DbError>;
-    /** Set only the title (and bump `updated_at`). No-op on a missing/deleted row. */
+    /**
+     * Set only the title, bumping `updated_at` forward — never behind the stamp
+     * the row already carries. No-op on a missing/archived row.
+     */
     updateTitle(threadId: string, title: string): ResultAsync<Thread | null, DbError>;
-    /** Soft-delete: set `deleted_at`. The row and its messages remain. */
+    /**
+     * Soft-delete: stamp `deleted_at` so the thread leaves `getThread` and
+     * `listThreads`. The row and every one of its messages remain, and an
+     * already-archived thread keeps the stamp it got the first time.
+     */
+    archiveThread(threadId: string): ResultAsync<void, DbError>;
+    /**
+     * Clear `deleted_at`, returning the thread and its messages to view exactly
+     * as they read before the archive. No-op on a live or absent thread.
+     */
+    unarchiveThread(threadId: string): ResultAsync<void, DbError>;
+    /**
+     * Hard delete: remove the thread's `messages` rows and its
+     * `cortex_analysis_threads` row in one transaction. Unrecoverable — nothing
+     * of the thread survives. A `thread_id` with no row succeeds as a no-op.
+     */
     deleteThread(threadId: string): ResultAsync<void, DbError>;
     /** Live threads for one analysis, newest-updated first, paginated. */
     listThreads(input: ListThreadsInput): ResultAsync<ThreadPage, DbError>;
@@ -105,7 +137,7 @@ export function createThreadStore(pool: Pool): ThreadStore {
         ).andThen(({ rows }) => {
             if (rows[0]) return okAsync<Thread, DbError>(toThread(rows[0]));
             // Row already existed — ON CONFLICT DO NOTHING returns nothing. Read it
-            // back (it may be soft-deleted; return it regardless so the caller sees
+            // back (it may be archived; return it regardless so the caller sees
             // the existing row's identity).
             return tryQuery("thread-store.createThread.readback", () =>
                 pool.query<ThreadRow>(
@@ -131,8 +163,16 @@ export function createThreadStore(pool: Pool): ThreadStore {
     function updateTitle(threadId: string, title: string): ResultAsync<Thread | null, DbError> {
         return tryMutation("thread-store.updateTitle", () =>
             pool.query<ThreadRow>(
+                // `updated_at` is the listing's activity clock, and a rename is not its
+                // only writer — a turn append touches the same column, and a rename that
+                // starts before one can still reach the row after it. Taking the LATER of
+                // the two makes the bump forward-only, so a rename can never pull the
+                // column back behind a stamp the row already carries, no matter which
+                // writer set it or how long this statement waited to run. `NOW()` cannot
+                // give that: it reads this transaction's START time, not the moment the
+                // row is actually written.
                 `UPDATE cortex_analysis_threads
-         SET title = $2, updated_at = NOW()
+         SET title = $2, updated_at = GREATEST(updated_at, clock_timestamp())
          WHERE thread_id = $1 AND deleted_at IS NULL
          RETURNING thread_id, analysis_id, title, created_at, updated_at`,
                 [threadId, title],
@@ -140,15 +180,46 @@ export function createThreadStore(pool: Pool): ThreadStore {
         ).map(({ rows }) => (rows[0] ? toThread(rows[0]) : null));
     }
 
-    function deleteThread(threadId: string): ResultAsync<void, DbError> {
-        return tryMutation("thread-store.deleteThread", () =>
+    function archiveThread(threadId: string): ResultAsync<void, DbError> {
+        return tryMutation("thread-store.archiveThread", () =>
             pool.query(
+                // The tombstone guard is what makes a second archive change nothing:
+                // the stamp records when the thread left view, and re-stamping it
+                // would push that moment forward on every repeat.
                 `UPDATE cortex_analysis_threads
          SET deleted_at = NOW()
          WHERE thread_id = $1 AND deleted_at IS NULL`,
                 [threadId],
             ),
         ).map(() => undefined);
+    }
+
+    function unarchiveThread(threadId: string): ResultAsync<void, DbError> {
+        return tryMutation("thread-store.unarchiveThread", () =>
+            pool.query(
+                // `updated_at` is untouched on purpose: it orders the listing by
+                // conversation activity, and restoring a thread to view is not
+                // activity — a restored thread lands back where its last turn left it.
+                `UPDATE cortex_analysis_threads
+         SET deleted_at = NULL
+         WHERE thread_id = $1 AND deleted_at IS NOT NULL`,
+                [threadId],
+            ),
+        ).map(() => undefined);
+    }
+
+    function deleteThread(threadId: string): ResultAsync<void, DbError> {
+        // One transaction for both statements: `messages` is attributable to an
+        // analysis only by joining through `cortex_analysis_threads`, so a metadata
+        // row removed without its messages strands them beyond the reach of any
+        // later reclamation. Either the pair goes or neither does.
+        return withTransaction(pool, "thread-store.deleteThread", (client) =>
+            tryMutation("thread-store.deleteThread.messages", () => client.query("DELETE FROM messages WHERE thread_id = $1", [threadId]))
+                .andThen(() =>
+                    tryMutation("thread-store.deleteThread.thread", () => client.query("DELETE FROM cortex_analysis_threads WHERE thread_id = $1", [threadId])),
+                )
+                .map(() => undefined),
+        );
     }
 
     function listThreads(input: ListThreadsInput): ResultAsync<ThreadPage, DbError> {
@@ -184,5 +255,5 @@ export function createThreadStore(pool: Pool): ThreadStore {
         });
     }
 
-    return { createThread, getThread, updateTitle, deleteThread, listThreads };
+    return { createThread, getThread, updateTitle, archiveThread, unarchiveThread, deleteThread, listThreads };
 }
