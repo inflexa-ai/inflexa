@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import type { ToolResultPart } from "ai";
 import type { Pool } from "pg";
 
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
@@ -43,33 +42,6 @@ const INPUT = {
     researchQuestion: "Which genes are differentially expressed?",
 };
 
-interface ValidateOutput {
-    valid: boolean;
-    issues: { path: string; code: "schema" | "semantic"; message: string }[];
-}
-
-/** The tool-result part the loop fed back to the model for `toolName`. */
-function toolResultFor(provider: ScriptedProvider, toolName: string): ToolResultPart | undefined {
-    for (const call of provider.calls) {
-        for (const message of call.messages) {
-            if (message.role !== "tool") continue;
-            const part = message.content.find((p) => p.type === "tool-result" && p.toolName === toolName);
-            if (part) return part as ToolResultPart;
-        }
-    }
-    return undefined;
-}
-
-/** Read a successful tool result's JSON payload, failing loudly on an error result. */
-function validateOutput(provider: ScriptedProvider): ValidateOutput {
-    const part = toolResultFor(provider, "validate_plan");
-    expect(part).toBeDefined();
-    // "error-text" is what the loop's Zod boundary emits when it rejects input
-    // before `execute` — validate_plan must never bounce a candidate that way.
-    expect(part!.output.type).toBe("json");
-    return (part!.output as { type: "json"; value: unknown }).value as ValidateOutput;
-}
-
 /** The seed the planner was actually handed — the bytes the model saw, not what the caller passed. */
 function plannerSeed(provider: ScriptedProvider): string {
     const first = provider.calls[0]?.messages[0];
@@ -85,15 +57,6 @@ function dataContextBlock(seed: string): string {
     const rest = seed.slice(start + "## Data Context".length);
     const end = rest.indexOf("\n## ");
     return end === -1 ? rest : rest.slice(0, end);
-}
-
-/** Script: validate a candidate, then bail out terminally so nothing is persisted. */
-function validateThenBlock(candidate: unknown): ScriptedProvider {
-    return scriptedProvider([
-        makeMessage([toolUseBlock("t1", "validate_plan", { plan: candidate })], "tool_use"),
-        makeMessage([toolUseBlock("t2", "report_blocker", { reason: "measurement complete" })], "tool_use"),
-        makeMessage([textBlock("Reported.")], "end_turn"),
-    ]);
 }
 
 /** Script: bail out terminally on the first turn — the seed is all this measures. */
@@ -191,7 +154,7 @@ describe("generatePlan loop-driving tool", () => {
 
     /** Rebuild the tool per test — the provider is the only thing that varies. */
     function toolFor(provider: ScriptedProvider): Tool {
-        return createGeneratePlanTool({ provider, pool, model: "claude-test" });
+        return createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool });
     }
 
     // ── Outcome shaping ──────────────────────────────────────────────
@@ -213,6 +176,8 @@ describe("generatePlan loop-driving tool", () => {
 
         expect(result.event).toBe("error");
         expect(result.error).toBe("Data is incompatible with every available agent.");
+        expect(provider.calls).toHaveLength(1);
+        expect(provider.calls[0]!.toolChoice).toBe("required");
 
         // The planner ran on a derived child Session, offered every terminal tool. Only the
         // terminal set is asserted: those are what can record an outcome, so a missing one
@@ -235,8 +200,7 @@ describe("generatePlan loop-driving tool", () => {
         return scriptedProvider((callIndex) => {
             if (callIndex === 0) return makeMessage([toolUseBlock("t1", "list_available_refs", { query: "regulon" })], "tool_use");
             if (callIndex === 1) return makeMessage([toolUseBlock("t2", "report_blocker", { reason: "probe only" })], "tool_use");
-            // Without a terminal end_turn the loop keeps requesting tools until it hits
-            // its iteration cap — the blocker records an outcome, it does not stop the loop.
+            // A third call would mean the terminal outcome failed to stop the loop.
             return makeMessage([textBlock("Reported.")], "end_turn");
         });
     }
@@ -252,7 +216,7 @@ describe("generatePlan loop-driving tool", () => {
         await writeFile(join(root, "managed", "collectri-human", "2.0", "CollecTRI_regulons.csv"), "source,target");
 
         const provider = refsProbe();
-        await createGeneratePlanTool({ provider, pool, model: "claude-test", refStorePath: root }).execute(INPUT, toolContext());
+        await createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, refStorePath: root }).execute(INPUT, toolContext());
 
         expect(Object.keys(provider.calls[0]!.tools)).toContain("list_available_refs");
         expect(transcript(provider)).toContain("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
@@ -286,42 +250,6 @@ describe("generatePlan loop-driving tool", () => {
         expect(result.question).toBe("Which two conditions should be contrasted?");
     });
 
-    it("validate_plan reports a malformed candidate as data instead of rejecting it at the input boundary", async () => {
-        // Structurally broken: no title, steps is not an array. A strict
-        // inputSchema would bounce this at the loop's Zod boundary and never
-        // reach `execute` — leaving the planner with nothing to fix.
-        const provider = validateThenBlock({ steps: "one DE step", analytical_narrative: 42 });
-
-        await toolFor(provider).execute(INPUT, toolContext());
-
-        const output = validateOutput(provider);
-        expect(output.valid).toBe(false);
-        expect(output.issues.length).toBeGreaterThan(0);
-        expect(output.issues.some((i) => i.code === "schema")).toBe(true);
-        expect(output.issues.every((i) => i.path.startsWith("plan"))).toBe(true);
-    });
-
-    it("validate_plan reports semantic issues a schema cannot express", async () => {
-        // Schema-valid, semantically broken: depends_on points at a step that
-        // does not exist in the plan.
-        const provider = validateThenBlock(validCandidate({ depends_on: ["T9S9"] }));
-
-        await toolFor(provider).execute(INPUT, toolContext());
-
-        const output = validateOutput(provider);
-        expect(output.valid).toBe(false);
-        expect(output.issues.some((i) => i.code === "semantic")).toBe(true);
-        expect(JSON.stringify(output.issues)).toContain("T9S9");
-    });
-
-    it("validate_plan accepts a clean candidate", async () => {
-        const provider = validateThenBlock(validCandidate());
-
-        await toolFor(provider).execute(INPUT, toolContext());
-
-        expect(validateOutput(provider)).toEqual({ valid: true, issues: [] });
-    });
-
     it("errors when the planner ends without a terminal tool call", async () => {
         // Prose every turn — including the terminal-salvage continuation — so no
         // terminal outcome is ever recorded.
@@ -337,7 +265,7 @@ describe("generatePlan loop-driving tool", () => {
 
     describe("data context", () => {
         it("takes no dataset field from the caller at all", () => {
-            const schema = createGeneratePlanTool({ provider: scriptedProvider([]), pool, model: "claude-test" }).jsonSchema as {
+            const schema = createGeneratePlanTool({ conversation: { provider: scriptedProvider([]), model: "claude-test" }, pool }).jsonSchema as {
                 properties: Record<string, unknown>;
                 required?: string[];
             };
@@ -379,11 +307,7 @@ describe("generatePlan loop-driving tool", () => {
             // A real analysis with a NULL profile status — the honest "never profiled"
             // state `loadDataProfileStatus` collapses to null.
             await seedAnalysis(pool, analysisId, { dpStatus: null });
-            const provider = scriptedProvider([
-                makeMessage([toolUseBlock("t1", "validate_plan", { plan: validCandidate() })], "tool_use"),
-                makeMessage([toolUseBlock("t2", "submit_plan", { plan: validCandidate() })], "tool_use"),
-                makeMessage([textBlock("Submitted.")], "end_turn"),
-            ]);
+            const provider = scriptedProvider([makeMessage([toolUseBlock("t1", "submit_plan", { plan: validCandidate() })], "tool_use")]);
 
             const result = (await toolFor(provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
 

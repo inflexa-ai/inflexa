@@ -11,11 +11,10 @@
  * database already holds, and it would lose fidelity at every hop.
  *
  * The tool drives an internal "planner" agent that communicates outcomes
- * EXCLUSIVELY via four terminal tool calls:
+ * EXCLUSIVELY via three terminal tool calls:
  *
- *   - validate_plan(plan)       → non-terminal dry-run: an any-shape candidate
- *                                 in, {valid, issues} out (schema + semantic)
- *   - submit_plan(plan)         → terminal success: re-validates + persists
+ *   - submit_plan(plan)         → terminal success: re-validates + persists;
+ *                                 rejected candidates return structured issues
  *   - request_clarification(…)  → terminal: planner needs more context
  *   - report_blocker(reason)    → terminal: no viable plan
  *
@@ -59,8 +58,8 @@ import { insertPlan, loadDataProfileStatus, loadPlan, type DataProfileResult, ty
 const PLANNER_AGENT_ID = "planner";
 
 /**
- * Budget for the planner's internal loop: 1 draft + ~3 validate/fix
- * cycles + 1 submit + headroom.
+ * Budget for the planner's internal loop: one draft/submit attempt plus
+ * correction retries and headroom.
  */
 const PLANNER_MAX_ITERATIONS = 13;
 
@@ -344,8 +343,7 @@ function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { v
 /**
  * The planner's inner tools. `all` is the full surface handed to the loop;
  * `terminal` is the subset that records an outcome (`submit_plan`,
- * `request_clarification`, `report_blocker`) — `validate_plan` is a
- * non-terminal dry-run and is excluded. The terminal subset is what the
+ * `request_clarification`, `report_blocker`). The terminal subset is what the
  * salvage turn re-offers if the planner ends without an outcome.
  */
 interface InnerTools {
@@ -367,31 +365,6 @@ function buildInnerTools(
     // of adjacent optional strings, which would be silently swappable at the call site.
     stores: EnvironmentStorePaths,
 ): InnerTools {
-    const validatePlanTool = defineTool({
-        id: "validate_plan",
-        description:
-            "Dry-run a candidate plan and get back everything that is wrong with it. " +
-            "Takes the plan in ANY shape: a malformed, partial, or wrong-typed " +
-            "candidate is REPORTED, not rejected. Returns {valid, issues[]} covering " +
-            "both schema problems (missing / wrong-typed fields) and the semantic " +
-            "checks a schema cannot express (unknown agent IDs, DAG cycles, dangling " +
-            "depends_on references, duplicate step IDs, resource ceilings). The " +
-            "authoritative field-by-field plan schema is the arg schema of " +
-            "submit_plan — this tool deliberately does not restate it. Non-terminal: " +
-            "call as often as needed to iterate toward a clean plan, then submit_plan.",
-        // Deliberately permissive: a structurally-invalid candidate must reach
-        // `execute` so the model gets a structured {valid:false, issues} result —
-        // including semantic issues — instead of a bare Zod rejection at the loop's
-        // input boundary. `execute` re-parses against PlannerPlanSchema itself.
-        inputSchema: z.object({
-            plan: z.unknown().describe("The candidate plan, in any shape. Field-by-field schema: see submit_plan."),
-        }),
-        execute: async (input) => {
-            const result = fullyValidate(input.plan, resourcePolicy);
-            return ok(result.valid ? { valid: true as const, issues: [] as ValidationIssue[] } : { valid: false as const, issues: result.issues });
-        },
-    });
-
     const submitPlanTool = defineTool({
         id: "submit_plan",
         description:
@@ -400,9 +373,16 @@ function buildInnerTools(
             "rejection returns {accepted: false, issues} — fix and call again, " +
             "or switch to report_blocker if the plan cannot be made valid. This " +
             "arg schema is the authoritative plan contract.",
-        // Strict: a malformed plan must not reach submission. `execute` still
-        // re-validates (schema + semantic) — it does not lean on this boundary.
-        inputSchema: z.object({ plan: PlannerPlanSchema }),
+        // Permissive on purpose: every candidate reaches `execute`, where the
+        // model gets structured schema and semantic issues in one response.
+        // The field-by-field contract remains visible in this tool's description
+        // and the validation below is authoritative.
+        inputSchema: z.object({
+            // Keep the authoritative shape visible to the model while the
+            // permissive branch lets malformed candidates reach execute for
+            // structured issue reporting.
+            plan: z.union([PlannerPlanSchema, z.unknown()]).describe("Candidate plan; malformed values are reported in issues."),
+        }),
         execute: async (input): Promise<Result<SubmitPlanOutput, ToolError>> => {
             if (holder.outcome !== null) {
                 return ok({
@@ -489,7 +469,7 @@ function buildInnerTools(
     const listAvailablePackages = createListAvailablePackagesTool(stores.packagesFile === undefined ? {} : { packagesFile: stores.packagesFile });
 
     const terminal = [submitPlanTool, requestClarificationTool, reportBlockerTool];
-    return { all: [validatePlanTool, listAvailableRefs, listAvailablePackages, ...terminal], terminal };
+    return { all: [listAvailableRefs, listAvailablePackages, ...terminal], terminal };
 }
 
 // ── Outcome shaping ─────────────────────────────────────────────────
@@ -549,15 +529,20 @@ function shapeOutcome(args: ShapeOutcomeArgs): PlanningAgentOutput {
 // ── Outer tool ──────────────────────────────────────────────────────
 
 export interface GeneratePlanDeps extends EnvironmentStorePaths {
-    /** The LLM seam the planner loop runs on. */
-    readonly provider: ChatProvider;
+    /**
+     * The conversation-role backend the planner is pinned to. Keeping the
+     * provider and its model label in one value prevents composition roots from
+     * accidentally pairing the planner with the sandbox or utility role.
+     */
+    readonly conversation: {
+        readonly provider: ChatProvider;
+        readonly model: string;
+    };
     /** Database pool — plan persistence and prior-plan loading. */
     readonly pool: Pool;
-    /** Model id — provenance / metric label; the provider owns the wire model. */
-    readonly model: string;
     /**
      * Host resource policy — stated to the planner as concrete per-step
-     * ceilings and enforced by `validate_plan`. Absent, the prompt keeps its
+     * ceilings and enforced by `submit_plan`. Absent, the prompt keeps its
      * default guidance and validation skips the ceiling check.
      */
     readonly resourcePolicy?: ResourcePolicy;
@@ -663,7 +648,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
-                model: deps.model,
+                model: deps.conversation.model,
                 tools: innerTools.all,
                 maxIterations: PLANNER_MAX_ITERATIONS,
             };
@@ -679,10 +664,14 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                     [{ role: "user", content: prompt }],
                     forSubAgent(ctx.session, PLANNER_AGENT_ID),
                     {
-                        provider: deps.provider,
+                        provider: deps.conversation.provider,
                         signal,
                         emit: ctx.emit,
                         runStep: passthroughStep,
+                        // Planner prose is unusable: every meaningful outcome is
+                        // a tool call, and the terminal predicate stops the loop
+                        // as soon as one is recorded.
+                        toolChoice: "required",
                     },
                     {
                         resolved: () => holder.outcome !== null,
