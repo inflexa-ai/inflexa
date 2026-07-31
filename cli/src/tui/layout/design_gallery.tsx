@@ -401,7 +401,10 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         explicitly; a result-less block would derive it anyway. Contrast State 4, whose
                         result fixture keeps the outcome on its own line below the panel.
                         `denied` is a refused approval — the soft warning glyph, not the error cross. */}
-                    <ToolBlock name="grep" detail="src/**/*.ts" status="running" inlineStatus={true} />
+                    {/* Every detail here is the shape the named tool's own `describeCall` really
+                        produces — `grep` reports `<pattern> in <path>`, not a glob. An exhibit showing
+                        a shape no tool can emit teaches the wrong thing about the surface. */}
+                    <ToolBlock name="grep" detail="TP53 in runs/r1/step-2/output" status="running" inlineStatus={true} />
                     <ToolBlock name="read_file" detail="src/db/types.ts :55-105" status="ok" durationMs={1240} inlineStatus={true} />
                     <ToolBlock name="write_file" detail="out/report.html" status="error" durationMs={320} inlineStatus={true} />
                     <ToolBlock name="execute_analysis" detail="plan_01J8F2QK" status="denied" durationMs={4} inlineStatus={true} />

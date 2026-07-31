@@ -138,3 +138,35 @@ describe("ToolBlock detail reflow", () => {
         expect(nameRow).toContain("890ms");
     });
 });
+
+describe("ToolBlock detail measurement", () => {
+    // The fit test measures what is painted AFTER the marker gutter, because `contentWidth` has
+    // already subtracted it. Charging the gutter a second time split two cells early — invisible on
+    // a wide terminal, and only catchable by a fixture sized into those exact two cells.
+    //
+    // At width 100: contentWidth = 100 − 40 rail − 2 − 2 gutter = 56. The name line costs
+    // 9 (`read_file`) + 1 + 33 (detail) + 13 (status ` ✓ ok · 14ms`) = 56 — a fit by exactly zero
+    // cells. Charging the gutter again would make it 58 and push this to its own row.
+    test("a detail that fills the line exactly stays on the name line", async () => {
+        const exact = "runs/2026-07-30/step-2/out.md.bak";
+        expect(exact).toHaveLength(33);
+
+        const frame = await frameWith(() => <ToolBlock name="read_file" detail={exact} status="ok" durationMs={14} />, 100, 8, "read_file");
+        expect(frame.split("\n")[rowOf(frame, "read_file")]).toContain(exact);
+    });
+
+    // `.length` counts UTF-16 units; a terminal draws an East Asian glyph in two cells. Measuring
+    // with the former keeps a line inline that cannot fit, and it then overflows the gutter it was
+    // measured to protect. These 24 characters draw 48 columns, so the same string that fits by
+    // `.length` (24 + 23 = 47 ≤ 56) must NOT fit by columns (48 + 23 = 71 > 56).
+    test("a double-width detail is measured in columns, not code units", async () => {
+        const wide = "遺伝子発現解析の結果をまとめた出力ファイル一覧";
+        expect(wide.length).toBeLessThan(30);
+        expect(Bun.stringWidth(wide)).toBeGreaterThan(40);
+
+        const frame = await frameWith(() => <ToolBlock name="read_file" detail={wide} status="ok" durationMs={14} />, 100, 8, "read_file");
+        const nameRowIdx = rowOf(frame, "read_file");
+        expect(rowOf(frame, wide)).toBeGreaterThan(nameRowIdx);
+        expect(frame.split("\n")[nameRowIdx]).not.toContain(wide);
+    });
+});
