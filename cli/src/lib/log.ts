@@ -1,6 +1,9 @@
 import { mkdirSync, openSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import pino from "pino";
+// Type-only: erased at compile, so this low-level module gains no runtime edge on the
+// harness package. The realization below is a pure adapter over our own pino instance.
+import type { LogFields, Logger } from "@inflexa-ai/harness";
 
 import { env } from "./env.ts";
 
@@ -95,6 +98,60 @@ const root = pino(
 
 export function getLogger(module: string): pino.Logger {
     return root.child({ module });
+}
+
+/**
+ * Realize the harness's `Logger` seam over a pino child.
+ *
+ * The harness names no logging library — pino is the cli's choice, so the mapping
+ * belongs here rather than in the published package. Two shape differences to
+ * bridge: the seam is message-first (`slog`/winston/console order) where pino is
+ * object-first, and `named()` renders a `[a.b]` prefix onto the message where
+ * pino's `child` binds fields.
+ *
+ * `named` deliberately prefixes the message rather than binding a `module` field:
+ * `getLogger("harness")` already owns that field, and the harness's records have
+ * always read `[dbos] launched` in the log file. Binding it instead would silently
+ * restyle every existing line.
+ *
+ * `errorFields` defers to pino's own `err` serializer by handing the raw value
+ * through under `err` — pino renders type/message/stack from it, which is strictly
+ * richer than the harness's string mapping and is exactly why the seam puts this
+ * on the interface.
+ *
+ * It lives beside `getLogger` rather than at a composition root because it has two
+ * callers that reach the harness independently: the embedder root wiring
+ * `bootHarness`, and the chat turn engine wiring `runAgent`. A private copy in
+ * either is how one of them ends up silent.
+ */
+function pinoAsHarnessLogger(pino: pino.Logger, names: readonly string[] = []): Logger {
+    function prefixed(msg: string): string {
+        return names.length > 0 ? `[${names.join(".")}] ${msg}` : msg;
+    }
+    function emit(level: "debug" | "info" | "warn" | "error"): (msg: string, fields?: LogFields) => void {
+        return (msg, fields) => pino[level](fields ?? {}, prefixed(msg));
+    }
+    return {
+        debug: emit("debug"),
+        info: emit("info"),
+        warn: emit("warn"),
+        error: emit("error"),
+        with: (fields) => pinoAsHarnessLogger(pino.child(fields), names),
+        named: (name) => pinoAsHarnessLogger(pino, [...names, name]),
+        errorFields: (err) => ({ err }),
+    };
+}
+
+/**
+ * The harness `Logger` for one module namespace — the seam realization every
+ * harness entry point in the cli passes down.
+ *
+ * Every path that hands the harness a logger MUST come through here. A harness
+ * deps bag that omits it resolves to `createNoopLogger()` and the component goes
+ * silent, which reads exactly like a component that never ran.
+ */
+export function harnessLogger(module: string): Logger {
+    return pinoAsHarnessLogger(getLogger(module));
 }
 
 export function addLogStream(stream: pino.DestinationStream): void {

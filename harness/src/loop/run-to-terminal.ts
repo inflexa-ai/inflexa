@@ -24,11 +24,33 @@
 import type { AgentSession } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Tool } from "../tools/define-tool.js";
-import { DEFAULT_STEP_NAME_FORMATTER, runAgent, type RunAgentOptions, type RunAgentResult, type StepNameFormatter } from "./run-agent.js";
+import { DEFAULT_STEP_NAME_FORMATTER, runAgent, type AgentFinish, type RunAgentOptions, type RunAgentResult, type StepNameFormatter } from "./run-agent.js";
 import type { AgentDefinition, LoopMessage } from "./types.js";
 
 /** Default salvage budget: one submit plus a validation-fix retry or two. */
 export const DEFAULT_SALVAGE_ITERATIONS = 3;
+
+/**
+ * What a salvage continuation was and how it went — present only when one ran.
+ *
+ * The two finishes answer different questions and a diagnostician needs both: a
+ * first run that ended `max_iterations` spent its whole budget failing to submit,
+ * while one that ended `stop` gave up on prose after a single turn. Those call for
+ * opposite responses, and the returned `RunAgentResult` carries only the second
+ * run's finish, which is the same for either.
+ */
+export interface SalvageRecord {
+    /** How the FIRST run ended — the reason a salvage was needed at all. */
+    readonly firstFinish: AgentFinish;
+    /** How the salvage continuation itself ended. */
+    readonly finish: AgentFinish;
+}
+
+/** A `runToTerminal` outcome: the driving run's result, plus the salvage account. */
+export interface RunToTerminalResult extends RunAgentResult {
+    /** Null when the first run reached its terminal tool and no salvage was needed. */
+    readonly salvage: SalvageRecord | null;
+}
 
 /** Describes how to salvage a run that never reached its terminal tool. */
 export interface TerminalSalvage {
@@ -59,25 +81,34 @@ export async function runToTerminal(
     session: AgentSession,
     opts: RunAgentOptions,
     salvage: TerminalSalvage,
-): Promise<RunAgentResult> {
+): Promise<RunToTerminalResult> {
     const first = await runAgent(agent, initial, session, opts);
-    if (opts.resolved?.() || opts.signal.aborted) return first;
+    if (opts.resolved?.() || opts.signal.aborted) return { ...first, salvage: null };
 
+    const salvageBudget = salvage.maxIterations ?? DEFAULT_SALVAGE_ITERATIONS;
     // Reported here rather than in `runAgent` because the loop cannot know it is being
     // salvaged: it sees an ordinary run with a small budget and a restricted tool set.
     // Only this wrapper holds the fact that a first attempt ended without its outcome.
-    (opts.logger ?? createNoopLogger())
-        .named("loop")
-        .warn("salvaging a run that never reached its terminal tool", { agentId: agent.id, callPath: session.provenance.callPath });
+    // The first run's finish rides along because it is the whole diagnosis of WHY a
+    // salvage was needed, and it is the field the second run's result overwrites.
+    (opts.logger ?? createNoopLogger()).named("loop").warn("salvaging a run that never reached its terminal tool", {
+        agentId: agent.id,
+        callPath: session.provenance.callPath,
+        firstFinishReason: first.finish.reason,
+        firstCappedOut: first.finish.cappedOut,
+        salvageTools: salvage.tools.map((t) => t.id),
+        salvageMaxIterations: salvageBudget,
+    });
 
     const salvageAgent: AgentDefinition = {
         ...agent,
         tools: [...salvage.tools],
-        maxIterations: salvage.maxIterations ?? DEFAULT_SALVAGE_ITERATIONS,
+        maxIterations: salvageBudget,
     };
     const salvageOpts: RunAgentOptions = {
         ...opts,
         formatStepName: salvageStepNames(opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER),
     };
-    return runAgent(salvageAgent, [...first.messages, { role: "user", content: salvage.nudge }], session, salvageOpts);
+    const salvaged = await runAgent(salvageAgent, [...first.messages, { role: "user", content: salvage.nudge }], session, salvageOpts);
+    return { ...salvaged, salvage: { firstFinish: first.finish, finish: salvaged.finish } };
 }

@@ -144,6 +144,12 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
 
     let iterations = 0;
     let truncationRecoveries = 0;
+    // Counted rather than listed: the finish record stays one bounded line for a run of
+    // any length, and "50 iterations, 49 tool calls, 47 of them errored" already separates
+    // a productive long run from a loop stuck retrying one failing call. The per-iteration
+    // `debug` records name the tools when that distinction is not enough.
+    let toolCallCount = 0;
+    let toolErrorCount = 0;
 
     // Resolved once, not per iteration: an identical options object across every
     // call is itself part of the cache contract — the request prefix has to be
@@ -155,7 +161,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // what keeps the default level affordable for an agent that runs long; the
     // per-iteration detail lives at `debug`, where paying per iteration is the point.
     const logFinish = (level: "info" | "warn", reason: AgentFinish["reason"], cappedOut: boolean): void => {
-        log[level]("run finished", { iterations, reason, cappedOut, truncationRecoveries, usage });
+        log[level]("run finished", { iterations, reason, cappedOut, truncationRecoveries, toolCalls: toolCallCount, toolErrors: toolErrorCount, usage });
     };
 
     // The user said no. A subsequent model call would only let the agent argue
@@ -224,13 +230,10 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             const results = await dispatchTools(earlier, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool);
             for (let idx = 0; idx < earlier.length; idx++) {
                 const tu = earlier[idx]!;
-                await emit({
-                    type: "tool-finished",
-                    source,
-                    toolUseId: tu.toolCallId,
-                    name: tu.toolName,
-                    isError: isErrorOutput(results[idx]!),
-                });
+                const isError = isErrorOutput(results[idx]!);
+                toolCallCount++;
+                if (isError) toolErrorCount++;
+                await emit({ type: "tool-finished", source, toolUseId: tu.toolCallId, name: tu.toolName, isError });
             }
             results.push(errorResult(trailing, TRUNCATED_TOOL_USE_ERROR));
             messages.push({ role: "tool", content: results });
@@ -252,16 +255,22 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input });
         }
         const results = await dispatchTools(toolCalls, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool);
+        const erroredTools: string[] = [];
         for (let idx = 0; idx < toolCalls.length; idx++) {
             const tu = toolCalls[idx]!;
-            await emit({
-                type: "tool-finished",
-                source,
-                toolUseId: tu.toolCallId,
-                name: tu.toolName,
-                isError: isErrorOutput(results[idx]!),
-            });
+            const isError = isErrorOutput(results[idx]!);
+            toolCallCount++;
+            if (isError) {
+                toolErrorCount++;
+                erroredTools.push(tu.toolName);
+            }
+            await emit({ type: "tool-finished", source, toolUseId: tu.toolCallId, name: tu.toolName, isError });
         }
+        // A tool result the model sees as an error is otherwise invisible to every sink:
+        // it is not a thrown failure, so nothing else reports it, and the loop simply
+        // feeds it back and continues. A run that ends badly is usually a run whose tool
+        // calls were failing, and this is where that shows.
+        if (erroredTools.length > 0) log.debug("tool results returned errors", { iteration: i, tools: erroredTools });
         messages.push({ role: "tool", content: results });
         if (hasDenial(results)) return stopOnDenial(i);
         if (opts.resolved?.()) return stopOnResolved(i);
