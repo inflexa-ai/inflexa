@@ -141,6 +141,35 @@ describe("theme-contrast AA: un-captured spans use the theme fg, not white", () 
             setup.renderer.destroy();
         }
     });
+
+    // `denied` exists precisely so a refused approval does NOT read as a fault. A character frame proves
+    // the word painted; only the resolved color proves it painted in the soft warning tier rather than
+    // the error tier, which is the whole distinction. Measured on a light and a dark theme, because a
+    // wrong role can still score well on dark and be caught only where the palette is unforgiving.
+    for (const themeId of [LIGHT, DEFAULT_THEME_ID] as const) {
+        test(`a denied ToolBlock status renders in the warning role on ${themeId}`, async () => {
+            setTheme(themeId);
+            const { setup } = await renderUntil(
+                () => (
+                    <box width="100%" height="100%">
+                        <ToolBlock name="execute_analysis" detail="plan_01J8F2QK" status="denied" durationMs={4} />
+                    </box>
+                ),
+                "denied",
+            );
+            try {
+                const fg = spanFg(setup, "denied");
+                expect(fg).toBeDefined();
+                expect(fg && rgbToHex(fg)).not.toBe(WHITE);
+                expect(fg && parseColor(themes[themeId].colors.warning).equals(fg)).toBe(true);
+                // Distinct from BOTH terminal tiers — a denial is neither a failure nor a success.
+                expect(fg && parseColor(themes[themeId].colors.error).equals(fg)).toBe(false);
+                expect(fg && parseColor(themes[themeId].colors.success).equals(fg)).toBe(false);
+            } finally {
+                setup.renderer.destroy();
+            }
+        });
+    }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,7 +283,7 @@ const BLOCKS: BlockCase[] = [
     {
         name: "ToolBlock",
         node: () => (
-            <ToolBlock name={mockToolCall.name} target={mockToolCall.target} result={mockToolCall.result} filetype={mockToolCall.filetype} status="ok" />
+            <ToolBlock name={mockToolCall.name} detail={mockToolCall.detail} result={mockToolCall.result} filetype={mockToolCall.filetype} status="ok" />
         ),
         until: "read_file",
     },

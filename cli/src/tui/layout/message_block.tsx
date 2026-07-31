@@ -132,7 +132,7 @@ export function MessageBlock(props: MessageBlockProps) {
                         return (
                             <ToolBlock
                                 name={part.name}
-                                target={part.target}
+                                detail={part.detail}
                                 result={part.result}
                                 filetype={part.filetype}
                                 status={part.status}

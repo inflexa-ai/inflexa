@@ -153,7 +153,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                 <State n="4" label="tool call & result">
                     <ToolBlock
                         name={mockToolCall.name}
-                        target={mockToolCall.target}
+                        detail={mockToolCall.detail}
                         result={mockToolCall.result}
                         filetype={mockToolCall.filetype}
                         status={mockToolCall.status}
@@ -394,15 +394,30 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         ].join("\n")}
                     />
                 </State>
-                <State n="15" label="live tool activity — running / done (with duration) / error">
+                <State n="15" label="live tool activity — running / done (with duration) / error / denied">
                     {/* The harness emit adapter mints these from tool-started/tool-finished: no result
                         panel (live events carry no output), so the outcome folds onto the name line
-                        (`▸ name target  ✓ ok · 14ms`). `inlineStatus` is pinned true to document the form
+                        (`▸ name detail  ✓ ok · 14ms`). `inlineStatus` is pinned true to document the form
                         explicitly; a result-less block would derive it anyway. Contrast State 4, whose
-                        result fixture keeps the outcome on its own line below the panel. */}
-                    <ToolBlock name="grep" target="src/**/*.ts" status="running" inlineStatus={true} />
-                    <ToolBlock name="read_file" target="src/db/types.ts :55-105" status="ok" durationMs={1240} inlineStatus={true} />
-                    <ToolBlock name="write_file" target="out/report.html" status="error" durationMs={320} inlineStatus={true} />
+                        result fixture keeps the outcome on its own line below the panel.
+                        `denied` is a refused approval — the soft warning glyph, not the error cross. */}
+                    <ToolBlock name="grep" detail="src/**/*.ts" status="running" inlineStatus={true} />
+                    <ToolBlock name="read_file" detail="src/db/types.ts :55-105" status="ok" durationMs={1240} inlineStatus={true} />
+                    <ToolBlock name="write_file" detail="out/report.html" status="error" durationMs={320} inlineStatus={true} />
+                    <ToolBlock name="execute_analysis" detail="plan_01J8F2QK" status="denied" durationMs={4} inlineStatus={true} />
+                    <text fg={theme().fgMuted}>the fit is width-dependent — a detail the name line cannot hold drops to its own row, never cut:</text>
+                    {/* Near the harness's 120-character detail cap, so this exhibit reflows on any
+                        terminal narrower than ~190 columns. A shorter path fits on a wide terminal and
+                        the exhibit then silently demonstrates the opposite of its own caption. */}
+                    <ToolBlock
+                        name="read_file"
+                        detail="runs/2026-07-30T09-14-22Z/step-4-pathway-enrichment-and-gsea/output/hallmark_gsea_ranked_by_normalized_enrichment.csv"
+                        status="ok"
+                        durationMs={14}
+                        inlineStatus={true}
+                    />
+                    <text fg={theme().fgMuted}>a tool that declares no describeCall hook renders exactly as before:</text>
+                    <ToolBlock name="search_semantic_scholar" status="ok" durationMs={890} inlineStatus={true} />
                 </State>
                 <State n="16" label="harness cards — plan card & run card">
                     <MessageBlock index={1} role="assistant" parts={[mockPlanCard]} streamPartId={noStreamId} streamText={noStreamText} />
