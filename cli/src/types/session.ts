@@ -38,10 +38,10 @@ export type ThinkingPart = {
 
 /**
  * A tool/verb invocation and its outcome. The harness emit adapter mints this
- * from live `tool-started`/`tool-finished` events (name + status + duration);
- * the fixture-driven gallery also fills `target`/`result`/`filetype` to show the
- * richer result panel. Those three are OPTIONAL because live harness tool events
- * carry no target/result/filetype — only the name, outcome, and timing.
+ * from live `tool-started`/`tool-finished` events (name + detail + status +
+ * duration); the fixture-driven gallery also fills `result`/`filetype` to show
+ * the richer result panel. Those two are OPTIONAL because live harness tool
+ * events carry no result payload — only the name, detail, outcome, and timing.
  */
 export type ToolCallPart = {
     id: string;
@@ -50,14 +50,26 @@ export type ToolCallPart = {
     type: "tool-call";
     /** Tool/verb name, e.g. `read_file`. */
     name: string;
-    /** What the tool acted on, e.g. a file path with a line range. Absent for live harness tool events. */
-    target?: string;
+    /**
+     * One line naming what this particular call is doing, e.g. `hypothesis retire h3`.
+     *
+     * Computed harness-side by the called tool's own `describeCall` hook, which is typechecked
+     * against that tool's input schema. It is OPAQUE display text: never split it, key on it, or
+     * derive fields from it — doing so would rebuild the schema coupling the hook exists to remove.
+     * Absent for a tool that declares no hook, and for an input its schema rejects.
+     */
+    detail?: string;
     /** The tool's textual result/output, rendered in a `<code>` block. Absent for live harness tool events. */
     result?: string;
     /** Source filetype for syntax highlighting of `result` (e.g. `ts`). Absent for live harness tool events. */
     filetype?: string;
-    /** Lifecycle of the call — `running` on start, `ok`/`error` on finish. */
-    status: "running" | "ok" | "error";
+    /**
+     * Lifecycle of the call — `running` on start, then the harness outcome on finish.
+     *
+     * `denied` is a refused approval, and is deliberately not folded into `error`: the tool did not
+     * fail, the user declined it. Reporting a decision as a fault misattributes it to the machine.
+     */
+    status: "running" | "ok" | "error" | "denied";
     /**
      * What the innermost sub-agent working inside this call is doing right now, or absent.
      *

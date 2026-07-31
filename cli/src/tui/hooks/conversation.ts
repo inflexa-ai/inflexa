@@ -5,6 +5,7 @@ import { createStore, produce } from "solid-js/store";
 import {
     contentToCortexMessages,
     createCardResolver,
+    createDetailResolver,
     createStreamingChat,
     createThreadHistory,
     type DbError,
@@ -12,6 +13,7 @@ import {
     type Pool,
     type RetractOutcome,
     type ThreadHistory,
+    type Tool,
 } from "@inflexa-ai/harness";
 
 import { describeCause, findAuthCause } from "../../lib/cause.ts";
@@ -289,7 +291,7 @@ function beginStreamSegment(): void {
  * appending a finished part when no matching `tool-started` was seen (should not happen, but the
  * transcript stays honest either way). A fresh object so Solid reconciles the status/duration edit.
  */
-function updateToolPart(toolUseId: string, name: string, status: "ok" | "error", durationMs: number | undefined): void {
+function updateToolPart(toolUseId: string, name: string, status: "ok" | "error" | "denied", durationMs: number | undefined, detail: string | undefined): void {
     const id = currentAssistantId;
     if (!id) return;
     setMessages(
@@ -304,6 +306,9 @@ function updateToolPart(toolUseId: string, name: string, status: "ok" | "error",
                 // `activity` is dropped, not carried: it described work in flight, and a finished
                 // call has an outcome instead. Leaving it would strand "planner: bash" under a chip
                 // that already says `ok · 14ms`.
+                // `detail` is NOT overwritten from the finished event: the started event already set the
+                // identical value (the loop computes it once per call), so rewriting it would only risk
+                // blanking a good detail if a finish ever arrived without one.
                 msg.parts[idx] = { ...(msg.parts[idx] as ToolCallPart), status, durationMs, activity: undefined };
             } else {
                 msg.parts.push({
@@ -312,6 +317,7 @@ function updateToolPart(toolUseId: string, name: string, status: "ok" | "error",
                     messageId: id,
                     type: "tool-call",
                     name,
+                    ...(detail !== undefined ? { detail } : {}),
                     status,
                     durationMs,
                     createdAt: Date.now(),
@@ -477,6 +483,10 @@ export function applyEmitEvent(event: EmitEventArg): void {
             // Extract primitives at receipt; never retain the event.
             const toolUseId = event.toolUseId;
             const name = event.name;
+            // Opaque display text the harness computed from this call's input via the tool's own
+            // `describeCall`. Copied, never parsed — interpreting it here would rebuild exactly the
+            // schema coupling that hook exists to remove.
+            const detail = event.detail;
             openTools.set(toolUseId, Date.now());
             // A new call starts with no innermost agent known, so the depth bar drops. Without this
             // reset the first call's deepest nesting would gate every later call's activity line.
@@ -487,6 +497,7 @@ export function applyEmitEvent(event: EmitEventArg): void {
                 messageId: currentAssistantId ?? "",
                 type: "tool-call",
                 name,
+                ...(detail !== undefined ? { detail } : {}),
                 status: "running",
                 createdAt: Date.now(),
             });
@@ -499,11 +510,14 @@ export function applyEmitEvent(event: EmitEventArg): void {
             closeStreamSegment();
             const toolUseId = event.toolUseId;
             const name = event.name;
-            const isError = event.isError;
+            // The harness outcome maps straight onto the part's status: `denied` stays distinct from
+            // `error` so a refused approval is not reported as a tool failure.
+            const outcome = event.outcome;
+            const detail = event.detail;
             const startedAt = openTools.get(toolUseId);
             openTools.delete(toolUseId);
             const durationMs = startedAt !== undefined ? Date.now() - startedAt : undefined;
-            updateToolPart(toolUseId, name, isError ? "error" : "ok", durationMs);
+            updateToolPart(toolUseId, name, outcome, durationMs, detail);
             return;
         }
         default:
@@ -677,10 +691,11 @@ function reportAppendError(e: DbError | undefined): void {
  * honestly" the REPL printer does in its own `finishTurn`. `error` is the terminal state (the part
  * status union has no `interrupted`), and the part already carries its name from `tool-started`, so
  * the empty `name` here is never read (`updateToolPart` only uses it on the never-taken append path).
+ * The same reasoning covers the absent detail: the part already carries the one `tool-started` set.
  */
 function drainOpenTools(): void {
     for (const [toolUseId, startedAt] of openTools) {
-        updateToolPart(toolUseId, "", "error", Date.now() - startedAt);
+        updateToolPart(toolUseId, "", "error", Date.now() - startedAt, undefined);
     }
     openTools.clear();
     deepestSubAgentDepth = 0;
@@ -898,18 +913,18 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
                 parts.push({ id: randomUUIDv7(), sessionId, messageId: m.id, type: "text", text: part.text, createdAt: 0 });
                 break;
             case "tool-call":
-                // History-replayed calls arrive `finished`, and `isError` selects ok/error here.
-                // LIMITATION: the harness reconstruction does not yet thread `is_error` through, so
-                // `isError` is always false today and a reloaded tool renders `ok` even if it errored
-                // live. This branch is contract-correct and needs no change once a harness-side
-                // follow-up carries the real outcome through.
+                // History-replayed calls arrive `finished`, carrying the outcome the converter recovered
+                // by pairing each stored call with its `tool-result` block. An absent outcome means the
+                // call had no paired result — a transcript whose `tool` row was never appended — which
+                // the converter reports as `ok`, so mirror that rather than inventing a failure.
                 parts.push({
                     id: part.toolCallId || randomUUIDv7(),
                     sessionId,
                     messageId: m.id,
                     type: "tool-call",
                     name: part.toolName,
-                    status: part.isError ? "error" : "ok",
+                    ...(part.detail !== undefined ? { detail: part.detail } : {}),
+                    status: part.outcome ?? "ok",
                     createdAt: 0,
                 });
                 break;
@@ -960,8 +975,21 @@ export type LoadSeams = {
     readonly runtime: () => HarnessRuntime | null;
     /** One turn-paginated page of the thread. Real: `createThreadHistory(pool).loadPage`. */
     readonly loadPage: (pool: Pool, threadId: string, page: number, perPage: number) => ReturnType<ThreadHistory["loadPage"]>;
-    /** Reconstruct display messages from a page (builds the card resolver internally). Real: below. */
-    readonly toCortex: (pool: Pool, analysisId: string, messages: Parameters<typeof contentToCortexMessages>[0]) => Promise<CortexMsg[]>;
+    /**
+     * Reconstruct display messages from a page (builds the card and detail resolvers internally).
+     * Real: below.
+     *
+     * `tools` is the agent's composed tool list. It is passed in rather than reached for here because
+     * the detail resolver must cover embedder-contributed tools (`run_inflexa` and friends), which
+     * exist only on the assembled agent — and because a seam that reaches for the runtime itself would
+     * stop being substitutable by the test fakes below it.
+     */
+    readonly toCortex: (
+        pool: Pool,
+        analysisId: string,
+        messages: Parameters<typeof contentToCortexMessages>[0],
+        tools: readonly Tool[],
+    ) => Promise<CortexMsg[]>;
 };
 
 const realLoadSeams: LoadSeams = {
@@ -971,12 +999,15 @@ const realLoadSeams: LoadSeams = {
     // tool_use rows; `unwrapOrThrow` inside it THROWS on a storage fault, so `contentToCortexMessages`
     // is bridged to a Result in `loadMessages` (neverthrow-first: a harness throw becomes our error state).
     // An unresolvable workspace root (moved/deleted anchor) degrades preview cards to chips rather than
-    // failing the whole history load (the local-state desync rule).
-    toCortex: (pool, analysisId, messages) =>
-        workspaceRootForAnalysisId(analysisId).match(
-            (root) => contentToCortexMessages(messages, createCardResolver(pool, analysisId, root)),
-            () => contentToCortexMessages(messages, async () => null),
-        ),
+    // failing the whole history load (the local-state desync rule). The detail resolver is pure and
+    // storage-free, so it survives that degradation and rides both branches.
+    toCortex: (pool, analysisId, messages, tools) => {
+        const resolveDetail = createDetailResolver(tools);
+        return workspaceRootForAnalysisId(analysisId).match(
+            (root) => contentToCortexMessages(messages, { resolveCard: createCardResolver(pool, analysisId, root), resolveDetail }),
+            () => contentToCortexMessages(messages, { resolveDetail }),
+        );
+    },
 };
 
 // Monotonic token ordering EVERY asynchronous write to the message store. Two producers write it —
@@ -1057,7 +1088,9 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
     }
     const rows = rowPages.flat();
 
-    const mapped = await ResultAsync.fromPromise(seams.toCortex(runtime.pool, analysisId, rows), (e): unknown => e);
+    // The composed roster — harness tools plus the host tools wired at the runtime's composition root —
+    // so a reloaded `run_inflexa` call rebuilds its detail instead of dropping to a bare name.
+    const mapped = await ResultAsync.fromPromise(seams.toCortex(runtime.pool, analysisId, rows, runtime.conversationAgent.tools), (e): unknown => e);
     if (myLoad !== loadGeneration) return;
     mapped.match(
         // Trailing cap is in MESSAGES (see the unit note in {@link loadMessages}'s doc and on

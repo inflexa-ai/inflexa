@@ -82,7 +82,7 @@ export const mockToolCall: ToolCallPart = {
     messageId: "mock-msg-assistant",
     type: "tool-call",
     name: "read_file",
-    target: "src/db/types.ts :55-105",
+    detail: "src/db/types.ts :55-105",
     result: "export interface Anchor {\n  uuid: AnchorId\n  cached_path: string\n}",
     filetype: "ts",
     status: "ok",

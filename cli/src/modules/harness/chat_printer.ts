@@ -300,8 +300,10 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
                 return;
             case "tool-started": {
                 const name = event.name;
+                // Opaque display text the harness computed from this call's input — printed, never parsed.
+                const detail = event.detail;
                 openTools.set(event.toolUseId, { name, startedAt: Date.now() });
-                sink.out(`\n  [tool] ${name} running...\n`);
+                sink.out(`\n  [tool] ${name}${detail === undefined ? "" : ` ${detail}`} running...\n`);
                 return;
             }
             case "tool-finished": {
@@ -309,7 +311,10 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
                 const started = openTools.get(event.toolUseId);
                 openTools.delete(event.toolUseId);
                 const dur = started ? ` (${formatMs(Date.now() - started.startedAt)})` : "";
-                sink.out(event.isError ? `  [tool] ${name} error\n` : `  [tool] ${name} done${dur}\n`);
+                // Three outcomes get three words. `denied` is the user's own refusal of an approval, so
+                // printing it as `error` would report their decision as a fault of the tool.
+                const outcome = event.outcome === "error" ? "error" : event.outcome === "denied" ? "denied" : `done${dur}`;
+                sink.out(`  [tool] ${name} ${outcome}\n`);
                 return;
             }
             default: {

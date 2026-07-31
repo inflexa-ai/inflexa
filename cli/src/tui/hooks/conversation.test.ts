@@ -131,7 +131,7 @@ describe("send() drives the adapter + engine", () => {
     test("tool started/finished pair into one part with an outcome + duration", async () => {
         const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
             void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", input: {} });
-            void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", isError: false });
+            void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
         const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
@@ -145,11 +145,59 @@ describe("send() drives the adapter + engine", () => {
     test("tool error outcome is honored", async () => {
         const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
             void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t9", name: "write_file", input: {} });
-            void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t9", name: "write_file", isError: true });
+            void emit({
+                type: "tool-finished",
+                source: { agentId: "tui-chat", callPath: ["tui-chat"] },
+                toolUseId: "t9",
+                name: "write_file",
+                outcome: "error",
+            });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
         const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
         expect(tool?.status).toBe("error");
+    });
+
+    // A denial is the user refusing an approval. Folding it into `error` would report their own
+    // decision as a fault of the tool, which is why the harness reports three outcomes and not two.
+    test("a denied outcome is distinct from an error", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t7", name: "execute_analysis", input: {} });
+            void emit({
+                type: "tool-finished",
+                source: { agentId: "tui-chat", callPath: ["tui-chat"] },
+                toolUseId: "t7",
+                name: "execute_analysis",
+                outcome: "denied",
+            });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        expect(tool?.status).toBe("denied");
+    });
+
+    test("a described call carries its detail from tool-started onward", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            const src = { agentId: "tui-chat", callPath: ["tui-chat"] };
+            void emit({ type: "tool-started", source: src, toolUseId: "t2", name: "update_working_memory", input: {}, detail: "hypothesis retire h3" });
+            void emit({ type: "tool-finished", source: src, toolUseId: "t2", name: "update_working_memory", outcome: "ok", detail: "hypothesis retire h3" });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        expect(tool?.detail).toBe("hypothesis retire h3");
+        expect(tool?.status).toBe("ok");
+    });
+
+    test("a call from a tool with no hook carries no detail", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            const src = { agentId: "tui-chat", callPath: ["tui-chat"] };
+            void emit({ type: "tool-started", source: src, toolUseId: "t3", name: "search_semantic_scholar", input: {} });
+            void emit({ type: "tool-finished", source: src, toolUseId: "t3", name: "search_semantic_scholar", outcome: "ok" });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        // Absent, never an empty string — the block keys its layout off the field being undefined.
+        expect(tool?.detail).toBeUndefined();
     });
 
     // Sub-agent events used to be discarded outright, which made a long tool call indistinguishable
@@ -205,7 +253,7 @@ describe("send() drives the adapter + engine", () => {
                     source: { agentId: "tui-chat", callPath: ["tui-chat"] },
                     toolUseId: "t1",
                     name: "plan_analysis",
-                    isError: false,
+                    outcome: "ok",
                 });
             });
             await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
@@ -232,7 +280,7 @@ describe("send() drives the adapter + engine", () => {
         const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
             // No tool-started for this id — the finish must still render as a finished chip via the
             // fallback append path in updateToolPart, not vanish.
-            void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "orphan", name: "grep", isError: false });
+            void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "orphan", name: "grep", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
         const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
@@ -671,7 +719,7 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
         const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
             void emit({ type: "text-delta", text: "Reading the schema. " });
             void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", input: {} });
-            void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", isError: false });
+            void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", outcome: "ok" });
             void emit({ type: "text-delta", text: "It carries a slug column." });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
@@ -1018,7 +1066,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
         const seams = fakeSeams({ kind: "ok", fallbackText: "THE FINAL ANSWER" }, (emit) => {
             void emit({ type: "text-delta", text: "thinking..." });
             void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
-            void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
+            void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
         });
         await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
 
@@ -1047,7 +1095,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
         // (the common bare-tool_use first iteration), so the prose must render BELOW the chip.
         const seams = fakeSeams({ kind: "ok", fallbackText: "streamed answer" }, (emit) => {
             void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
-            void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
+            void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
             void emit({ type: "text-delta", text: "streamed answer" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
@@ -1068,7 +1116,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
         // so the fallback landed above the chip; the drop-empty fix reopens a fresh segment after it.
         const seams = fakeSeams({ kind: "ok", fallbackText: "the answer" }, (emit) => {
             void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
-            void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
+            void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
         });
         await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
 
@@ -1132,7 +1180,7 @@ describe("live emission order matches transcript reload order", () => {
             name: "tool-first, answer streamed",
             drive: (emit) => {
                 void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
-                void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
+                void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
                 void emit({ type: "text-delta", text: "answer" });
             },
             fallbackText: "answer",
@@ -1145,7 +1193,7 @@ describe("live emission order matches transcript reload order", () => {
             name: "tool-first, answer only as fallback",
             drive: (emit) => {
                 void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
-                void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
+                void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
             },
             fallbackText: "final",
             reloadParts: [
@@ -1158,7 +1206,7 @@ describe("live emission order matches transcript reload order", () => {
             drive: (emit) => {
                 void emit({ type: "text-delta", text: "before " });
                 void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
-                void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
+                void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
                 void emit({ type: "text-delta", text: "after" });
             },
             fallbackText: "after",
@@ -1197,6 +1245,47 @@ describe("live emission order matches transcript reload order", () => {
             expect(liveKinds).toEqual(shape.reloadParts.map((p) => p.type));
         });
     }
+});
+
+// The reconstructed tool part's outcome and detail. Before the converter paired each stored call with
+// its `tool-result` block, every reloaded call reported success — so a call the user had watched fail
+// came back wearing a green check. These pin the recovered values end of the mapping.
+describe("reload maps a reconstructed tool call's outcome and detail", () => {
+    /** One reconstructed assistant message carrying a single tool-call part. */
+    function reloadToolPart(part: Record<string, unknown>): ToolCallPart | undefined {
+        const msg = cortexToUiMessage(
+            { id: "m1", role: "assistant", parts: [{ type: "tool-call", toolCallId: "t1", toolName: "read_file", ...part }] } as unknown as CortexMsg,
+            SID,
+        );
+        const found = msg.parts.find((p) => p.type === "tool-call");
+        return found?.type === "tool-call" ? found : undefined;
+    }
+
+    test("a failed call reloads as failed", () => {
+        expect(reloadToolPart({ outcome: "error" })?.status).toBe("error");
+    });
+
+    test("a refused call reloads as denied, not as an error", () => {
+        expect(reloadToolPart({ outcome: "denied" })?.status).toBe("denied");
+    });
+
+    test("a successful call reloads as ok", () => {
+        expect(reloadToolPart({ outcome: "ok" })?.status).toBe("ok");
+    });
+
+    // The converter reports `ok` for a call whose `tool` row was never appended, so an absent outcome
+    // must not be read as a failure — the transcript is incomplete, not unsuccessful.
+    test("a call with no recovered outcome reloads as ok", () => {
+        expect(reloadToolPart({})?.status).toBe("ok");
+    });
+
+    test("a rebuilt detail rides the reconstructed part", () => {
+        expect(reloadToolPart({ outcome: "ok", detail: "runs/r1/s2/output/summary.md" })?.detail).toBe("runs/r1/s2/output/summary.md");
+    });
+
+    test("a call the resolver could not describe carries no detail", () => {
+        expect(reloadToolPart({ outcome: "ok" })?.detail).toBeUndefined();
+    });
 });
 
 // A load fired at the boot-ready edge and superseded by that same edge's submit: pre-fix the dropped

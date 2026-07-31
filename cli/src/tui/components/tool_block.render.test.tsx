@@ -30,7 +30,7 @@ function rowOf(frame: string, needle: string): number {
 
 describe("ToolBlock status placement", () => {
     test("inline form (no result): name and status share one row", async () => {
-        const frame = await frameWith(() => <ToolBlock name="grep" target="src/x.ts" status="ok" durationMs={14} />, 60, 6, "grep");
+        const frame = await frameWith(() => <ToolBlock name="grep" detail="src/x.ts" status="ok" durationMs={14} />, 60, 6, "grep");
         const nameRow = frame.split("\n")[rowOf(frame, "grep")];
         // The whole outcome (label + duration) folds onto the name line — nothing drops below it.
         expect(nameRow).toContain("grep");
@@ -40,7 +40,7 @@ describe("ToolBlock status placement", () => {
 
     test("result form (result present): status sits on its own row below the panel", async () => {
         const frame = await frameWith(
-            () => <ToolBlock name="read_file" target="src/db.ts" result="RESULTBODY" filetype="text" status="ok" durationMs={14} />,
+            () => <ToolBlock name="read_file" detail="src/db.ts" result="RESULTBODY" filetype="text" status="ok" durationMs={14} />,
             60,
             12,
             "RESULTBODY",
@@ -61,7 +61,7 @@ describe("ToolBlock status placement", () => {
     for (const height of [6, 8]) {
         test(`inline form at width 40, height ${height}: the status survives the soft-wrap`, async () => {
             const frame = await frameWith(
-                () => <ToolBlock name="read_file" target="src/some/really/long/path/that/should/wrap.ts" status="error" durationMs={320} />,
+                () => <ToolBlock name="read_file" detail="src/some/really/long/path/that/should/wrap.ts" status="error" durationMs={320} />,
                 40,
                 height,
                 "read_file",
@@ -72,4 +72,69 @@ describe("ToolBlock status placement", () => {
             expect(frame).toContain("320ms");
         });
     }
+});
+
+// The reflow is width-driven, so ONE fixture is swept across widths that produce each form — a single
+// width would hide whichever form it does not happen to trigger. The property under test is that
+// nothing is ever CUT: a workspace path's tail names the file, and the detail is one opaque harness
+// string the block is not allowed to parse, so it cannot elide the middle intelligently.
+const LONG_DETAIL = "runs/2026-07-30/step-2/output/summary.md";
+
+describe("ToolBlock detail reflow", () => {
+    test("wide terminal: a detail that fits rides the name line", async () => {
+        const frame = await frameWith(() => <ToolBlock name="read_file" detail={LONG_DETAIL} status="ok" durationMs={14} />, 120, 6, "read_file");
+        const nameRow = frame.split("\n")[rowOf(frame, "read_file")];
+        expect(nameRow).toContain(LONG_DETAIL);
+        expect(nameRow).toContain("ok");
+        expect(nameRow).toContain("14ms");
+    });
+
+    test("narrower terminal: the same detail drops to its own row, whole", async () => {
+        const frame = await frameWith(() => <ToolBlock name="read_file" detail={LONG_DETAIL} status="ok" durationMs={14} />, 100, 8, "read_file");
+        const nameRowIdx = rowOf(frame, "read_file");
+        expect(rowOf(frame, LONG_DETAIL)).toBeGreaterThan(nameRowIdx);
+        // Only the detail moves. The status stays beside the name, which is what puts it in a
+        // near-constant column across split blocks instead of floating behind a variable-length detail.
+        expect(frame.split("\n")[nameRowIdx]).toContain("ok");
+        expect(frame.split("\n")[nameRowIdx]).not.toContain(LONG_DETAIL);
+    });
+
+    // The sidebar-open chat column the spec mandates. The detail is wider than the indented row here,
+    // so it soft-wraps INSIDE its own box across two rows. The property is that no character is lost:
+    // a `toContain` on the whole string cannot express that, because the wrap splits it — so rejoin the
+    // indented rows and compare. Truncation would fail this where a bare glyph check would not.
+    test("width 40 (sidebar open): a wrapped detail loses no characters", async () => {
+        const frame = await frameWith(() => <ToolBlock name="read_file" detail={LONG_DETAIL} status="ok" durationMs={14} />, 40, 10, "read_file");
+        const rejoined = frame
+            .split("\n")
+            .filter((line) => line.startsWith("  ") && line.trim().length > 0)
+            .map((line) => line.trim())
+            .join("");
+        expect(rejoined).toBe(LONG_DETAIL);
+        expect(frame).not.toContain("…");
+    });
+
+    // Both subordinate rows carry their indent on a wrapping <box>, because opentui ignores padding on
+    // a text renderable — the prop form renders flush against the gutter and silently stops reading as
+    // subordinate. Nothing else catches that: the characters are all present either way.
+    test("the reflowed detail and the activity row are both indented under the call", async () => {
+        const frame = await frameWith(
+            () => <ToolBlock name="read_file" detail={LONG_DETAIL} status="running" activity="planner: bash" />,
+            100,
+            10,
+            "read_file",
+        );
+        const lines = frame.split("\n");
+        expect(lines[rowOf(frame, LONG_DETAIL)]).toMatch(/^ {2}\S/);
+        expect(lines[rowOf(frame, "planner: bash")]).toMatch(/^ {2}\S/);
+        // The name line itself stays flush — the marker gutter is what the rows indent under.
+        expect(lines[rowOf(frame, "read_file")]).toMatch(/^\S/);
+    });
+
+    test("a hookless tool with no detail renders exactly as before", async () => {
+        const frame = await frameWith(() => <ToolBlock name="search_semantic_scholar" status="ok" durationMs={890} />, 120, 6, "search_semantic_scholar");
+        const nameRow = frame.split("\n")[rowOf(frame, "search_semantic_scholar")];
+        expect(nameRow).toContain("ok");
+        expect(nameRow).toContain("890ms");
+    });
 });
