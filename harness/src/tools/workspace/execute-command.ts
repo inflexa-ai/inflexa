@@ -55,6 +55,14 @@ const ExecuteCommandInputSchema = z.object({
     timeoutSeconds: z.number().int().positive().optional().describe("Per-command timeout in seconds; capped by the step deadline."),
 });
 
+/** Extensions that mark an argv token as the thing being run, not a flag or a data path. */
+const SCRIPT_EXTENSIONS = /\.(py|R|r|sh|js|ts|ipynb)$/;
+
+/** The first script-like token in an argv, or `undefined` when none looks like one. */
+function scriptToken(command: readonly string[]): string | undefined {
+    return command.find((arg) => SCRIPT_EXTENSIONS.test(arg));
+}
+
 export interface ExecuteCommandDeps {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
@@ -111,6 +119,12 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
             "analysis results via 'python -c' / inline one-liners and read them from " +
             "stdout; that work is lost. Write a script and persist its outputs to output/.",
         inputSchema: ExecuteCommandInputSchema,
+        // The script is what a reader recognises, and it survives a long
+        // invocation whose flags would otherwise push it past the length cap.
+        // When nothing in the argv looks like a script, the joined argv is the
+        // best account of the call there is. `env` never rides along — it
+        // carries secrets by design.
+        describeCall: ({ command }) => scriptToken(command) ?? command.join(" "),
         execute: async ({ command, cwd, env, timeoutSeconds }, ctx) => {
             const execId = `${workflowId}:${stepId}:${nextFunctionId()}`;
 

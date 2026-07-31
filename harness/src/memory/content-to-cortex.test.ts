@@ -3,12 +3,16 @@ import type { ModelMessage } from "ai";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ok } from "neverthrow";
 import type { Pool } from "pg";
+import { z } from "zod";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { insertPlan, upsertPlan } from "../state/plans.js";
 import { insertRun } from "../state/runs.js";
 import { adHocPlanId, adHocRunId } from "../tools/analysis-invocation.js";
+import { defineTool } from "../tools/define-tool.js";
+import { createDetailResolver } from "../tools/detail-resolver.js";
 import { envelopeMessage, markInterruptedMessage, syntheticRecordMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { contentToCortexMessages } from "./content-to-cortex.js";
 import { createCardResolver } from "./reconstruct-cards.js";
@@ -67,7 +71,7 @@ describe("contentToCortexMessages", () => {
         // post-tool-result text from the second are merged in order.
         expect(cortex[1]!.parts).toEqual([
             { type: "text", text: "Sure, running it." },
-            { type: "tool-call", toolCallId: "call-1", toolName: "run_pca", status: "finished" },
+            { type: "tool-call", toolCallId: "call-1", toolName: "run_pca", status: "finished", outcome: "ok" },
             { type: "text", text: "Here are the results." },
         ]);
 
@@ -110,11 +114,11 @@ describe("contentToCortexMessages", () => {
 
         // All five tool calls plus the trailing text live in the one assistant message.
         expect(cortex[1]!.parts).toEqual([
-            { type: "tool-call", toolCallId: "call-0", toolName: "read_file", status: "finished" },
-            { type: "tool-call", toolCallId: "call-1", toolName: "read_file", status: "finished" },
-            { type: "tool-call", toolCallId: "call-2", toolName: "read_file", status: "finished" },
-            { type: "tool-call", toolCallId: "call-3", toolName: "read_file", status: "finished" },
-            { type: "tool-call", toolCallId: "call-4", toolName: "read_file", status: "finished" },
+            { type: "tool-call", toolCallId: "call-0", toolName: "read_file", status: "finished", outcome: "ok" },
+            { type: "tool-call", toolCallId: "call-1", toolName: "read_file", status: "finished", outcome: "ok" },
+            { type: "tool-call", toolCallId: "call-2", toolName: "read_file", status: "finished", outcome: "ok" },
+            { type: "tool-call", toolCallId: "call-3", toolName: "read_file", status: "finished", outcome: "ok" },
+            { type: "tool-call", toolCallId: "call-4", toolName: "read_file", status: "finished", outcome: "ok" },
             { type: "text", text: "Here is the report." },
         ]);
     });
@@ -266,17 +270,19 @@ describe("contentToCortexMessages", () => {
                     ],
                 }),
             ],
-            // Stub resolver: recognises show_plan, declines everything else.
-            async (block) =>
-                block.type === "tool_use" && block.name === "show_plan" ? ({ type: "data-plan", id: "pres-x", planId: "pln-abc12345" } as never) : null,
+            {
+                // Stub resolver: recognises show_plan, declines everything else.
+                resolveCard: async (block) =>
+                    block.type === "tool_use" && block.name === "show_plan" ? ({ type: "data-plan", id: "pres-x", planId: "pln-abc12345" } as never) : null,
+            },
         );
 
         expect(cortex[0]!.parts).toEqual([
             { type: "text", text: "Here's the plan." },
             // show_plan → reconstructed card (not a generic tool-call chip)
             { type: "data-plan", id: "pres-x", planId: "pln-abc12345" },
-            // unrecognised tool → generic chip fallback
-            { type: "tool-call", toolCallId: "call-10", toolName: "run_pca", status: "finished" },
+            // unrecognised tool → generic chip fallback; no paired result, so `ok`
+            { type: "tool-call", toolCallId: "call-10", toolName: "run_pca", status: "finished", outcome: "ok" },
         ]);
     });
 
@@ -341,7 +347,7 @@ describe("contentToCortexMessages", () => {
                     ],
                 }),
             ],
-            createCardResolver(pool, analysisId, "/tmp/cortex-test-no-previews"),
+            { resolveCard: createCardResolver(pool, analysisId, "/tmp/cortex-test-no-previews") },
         );
 
         expect(cortex[0]!.parts[0]).toEqual({ type: "text", text: "Starting the run." });
@@ -405,7 +411,7 @@ describe("contentToCortexMessages", () => {
                     content: [{ type: "tool-call", toolCallId: "call-ep", toolName: "execute_analysis", input: { mode: "plan", planId } }],
                 }),
             ],
-            createCardResolver(pool, analysisId, "/tmp/cortex-test-no-previews"),
+            { resolveCard: createCardResolver(pool, analysisId, "/tmp/cortex-test-no-previews") },
         );
 
         const card = cortex[0]!.parts[0] as unknown as Record<string, unknown>;
@@ -477,7 +483,7 @@ describe("contentToCortexMessages", () => {
                     ],
                 }),
             ],
-            createCardResolver(pool, analysisId, "/tmp/cortex-test-no-previews"),
+            { resolveCard: createCardResolver(pool, analysisId, "/tmp/cortex-test-no-previews") },
         );
 
         expect(cortex[0]!.parts[0]).toMatchObject({
@@ -517,7 +523,7 @@ describe("contentToCortexMessages", () => {
                         ],
                     }),
                 ],
-                createCardResolver(pool, analysisId, workspaceRoot),
+                { resolveCard: createCardResolver(pool, analysisId, workspaceRoot) },
             );
 
             expect(cortex[0]!.parts).toEqual([
@@ -537,6 +543,7 @@ describe("contentToCortexMessages", () => {
                     toolCallId: "toolu_y",
                     toolName: "legacy_workspace_read_file",
                     status: "finished",
+                    outcome: "ok",
                 },
             ]);
         } finally {
@@ -552,7 +559,7 @@ describe("contentToCortexMessages", () => {
                     content: [{ type: "tool-call", toolCallId: "toolu_z", toolName: "iterate_report", input: {} }],
                 }),
             ],
-            createCardResolver(pool, "analysis-no-preview", "/tmp/cortex-test-no-previews"),
+            { resolveCard: createCardResolver(pool, "analysis-no-preview", "/tmp/cortex-test-no-previews") },
         );
 
         expect(cortex[0]!.parts).toEqual([
@@ -561,6 +568,7 @@ describe("contentToCortexMessages", () => {
                 toolCallId: "toolu_z",
                 toolName: "iterate_report",
                 status: "finished",
+                outcome: "ok",
             },
         ]);
     });
@@ -569,7 +577,7 @@ describe("contentToCortexMessages", () => {
         const input = { kind: "echart", title: "DE", spec: { series: [{ type: "scatter" }] }, dataPath: "runs/run-abc/step-2/output/de.csv" };
         const cortex = await contentToCortexMessages(
             [stored(0, { role: "assistant", content: [{ type: "tool-call", toolCallId: "call-su", toolName: "show_user", input }] })],
-            createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews"),
+            { resolveCard: createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews") },
         );
 
         const card = cortex[0]!.parts[0] as unknown as Record<string, unknown>;
@@ -587,12 +595,12 @@ describe("contentToCortexMessages", () => {
                     ],
                 }),
             ],
-            createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews"),
+            { resolveCard: createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews") },
         );
 
         // The live tool rejected this path and emitted nothing; the reload path must not resurrect an
         // unvalidated path, so the card is dropped and a generic tool chip stands in.
-        expect(cortex[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "call-su", toolName: "show_user", status: "finished" }]);
+        expect(cortex[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "call-su", toolName: "show_user", status: "finished", outcome: "ok" }]);
     });
 
     it("reconstructs a data-file-reference card from a show_file tool-call", async () => {
@@ -602,7 +610,7 @@ describe("contentToCortexMessages", () => {
         };
         const cortex = await contentToCortexMessages(
             [stored(0, { role: "assistant", content: [{ type: "tool-call", toolCallId: "call-sf", toolName: "show_file", input }] })],
-            createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews"),
+            { resolveCard: createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews") },
         );
 
         expect(cortex[0]!.parts[0]).toMatchObject({
@@ -624,10 +632,10 @@ describe("contentToCortexMessages", () => {
                     content: [{ type: "tool-call", toolCallId: "call-sf", toolName: "show_file", input: { files: [{ path: "../../etc/passwd" }] } }],
                 }),
             ],
-            createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews"),
+            { resolveCard: createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews") },
         );
 
-        expect(cortex[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "call-sf", toolName: "show_file", status: "finished" }]);
+        expect(cortex[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "call-sf", toolName: "show_file", status: "finished", outcome: "ok" }]);
     });
 });
 
@@ -695,5 +703,129 @@ describe("ThreadHistory.loadPage", () => {
         const page = (await history.loadPage(THREAD, 0, 40))._unsafeUnwrap();
         const seqs = page.messages.map((m) => m.seq);
         expect(seqs).toEqual(Array.from({ length: 24 }, (_, i) => i));
+    });
+});
+
+// ── Reloaded outcome and detail (tool-call-detail) ──────────────────
+
+/** A `read_file` stand-in whose hook names the path — the reload resolver's subject. */
+const reloadReadFile = defineTool({
+    id: "read_file",
+    description: "Read a workspace file.",
+    inputSchema: z.object({ path: z.string() }),
+    describeCall: ({ path }) => path,
+    execute: async () => ok({}),
+});
+
+/** One assistant row holding a `read_file` call, paired with the supplied result output. */
+function callWithResult(output: { type: string; value?: unknown; reason?: string }): StoredMessage[] {
+    return [
+        stored(0, {
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "call-r", toolName: "read_file", input: { path: "output/summary.md" } }],
+        }),
+        stored(1, {
+            role: "tool",
+            content: [{ type: "tool-result", toolCallId: "call-r", toolName: "read_file", output: output as never }],
+        }),
+    ];
+}
+
+describe("contentToCortexMessages — reloaded outcome", () => {
+    it("reports a failed call as an error rather than a success", async () => {
+        const cortex = await contentToCortexMessages(callWithResult({ type: "error-text", value: '{"error":"boom","retryable":true}' }));
+
+        expect(cortex[0]!.parts[0]).toMatchObject({ type: "tool-call", toolCallId: "call-r", outcome: "error" });
+    });
+
+    it("reports a denied call as denied, distinct from an error", async () => {
+        const cortex = await contentToCortexMessages(callWithResult({ type: "execution-denied", reason: "The user rejected this action." }));
+
+        expect(cortex[0]!.parts[0]).toMatchObject({ type: "tool-call", toolCallId: "call-r", outcome: "denied" });
+    });
+
+    it("reports a successful call as ok", async () => {
+        const cortex = await contentToCortexMessages(callWithResult({ type: "json", value: { status: "ok" } }));
+
+        expect(cortex[0]!.parts[0]).toMatchObject({ type: "tool-call", toolCallId: "call-r", outcome: "ok" });
+    });
+
+    it("reports ok for a call whose tool row was never appended", async () => {
+        const cortex = await contentToCortexMessages([
+            stored(0, {
+                role: "assistant",
+                content: [{ type: "tool-call", toolCallId: "call-orphan", toolName: "read_file", input: { path: "a.csv" } }],
+            }),
+        ]);
+
+        expect(cortex[0]!.parts[0]).toMatchObject({ type: "tool-call", toolCallId: "call-orphan", outcome: "ok" });
+    });
+
+    it("pairs each call with its own result across a multi-call turn", async () => {
+        const cortex = await contentToCortexMessages([
+            stored(0, {
+                role: "assistant",
+                content: [
+                    { type: "tool-call", toolCallId: "call-a", toolName: "read_file", input: { path: "a.csv" } },
+                    { type: "tool-call", toolCallId: "call-b", toolName: "read_file", input: { path: "b.csv" } },
+                ],
+            }),
+            stored(1, {
+                role: "tool",
+                content: [
+                    { type: "tool-result", toolCallId: "call-a", toolName: "read_file", output: { type: "json", value: {} } },
+                    { type: "tool-result", toolCallId: "call-b", toolName: "read_file", output: { type: "error-text", value: "missing" } },
+                ],
+            }),
+        ]);
+
+        expect(cortex[0]!.parts).toMatchObject([
+            { toolCallId: "call-a", outcome: "ok" },
+            { toolCallId: "call-b", outcome: "error" },
+        ]);
+    });
+});
+
+describe("contentToCortexMessages — reloaded detail", () => {
+    it("rebuilds the detail through a supplied resolver", async () => {
+        const cortex = await contentToCortexMessages(callWithResult({ type: "json", value: {} }), {
+            resolveDetail: createDetailResolver([reloadReadFile]),
+        });
+
+        expect(cortex[0]!.parts[0]).toMatchObject({ type: "tool-call", detail: "output/summary.md", outcome: "ok" });
+    });
+
+    it("omits detail entirely when no resolver is supplied, changing nothing else", async () => {
+        const rows = callWithResult({ type: "json", value: {} });
+
+        const without = await contentToCortexMessages(rows);
+        const with_ = await contentToCortexMessages(rows, { resolveDetail: createDetailResolver([reloadReadFile]) });
+
+        expect("detail" in (without[0]!.parts[0] as object)).toBe(false);
+        // The detail is the only difference between the two conversions.
+        const { detail, ...rest } = with_[0]!.parts[0] as unknown as Record<string, unknown>;
+        expect(detail).toBe("output/summary.md");
+        expect(without[0]!.parts[0]).toEqual(rest as never);
+    });
+
+    it("omits detail for a tool the supplied list does not describe", async () => {
+        const cortex = await contentToCortexMessages(callWithResult({ type: "json", value: {} }), {
+            resolveDetail: createDetailResolver([]),
+        });
+
+        expect("detail" in (cortex[0]!.parts[0] as object)).toBe(false);
+    });
+
+    it("stores no detail — the persisted row is the model transcript only", async () => {
+        const turn: ModelMessage[] = [
+            { role: "user", content: [{ type: "text", text: "read it" }] },
+            { role: "assistant", content: [{ type: "tool-call", toolCallId: "call-s", toolName: "read_file", input: { path: "output/summary.md" } }] },
+        ];
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+
+        const { rows } = await pool.query<{ message_envelope: unknown }>("SELECT message_envelope FROM messages WHERE thread_id = $1", [THREAD]);
+
+        expect(rows).toHaveLength(2);
+        expect(JSON.stringify(rows)).not.toContain("detail");
     });
 });

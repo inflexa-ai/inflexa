@@ -10,6 +10,7 @@
 
 import type { ModelMessage } from "ai";
 
+import type { ToolCallDetail, ToolOutcome } from "../contracts/chat-events.js";
 import type { ChatStreamEvent } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
 
@@ -70,13 +71,26 @@ export type EmitEvent =
           readonly toolUseId: string;
           readonly name: string;
           readonly input: unknown;
+          /**
+           * One line naming what this call is doing, from the tool's own
+           * `describeCall` hook. Absent — never empty — when the tool declares no
+           * hook or the detail could not be produced (see `tool-detail.ts`).
+           */
+          readonly detail?: ToolCallDetail;
       }
     | {
           readonly type: "tool-finished";
           readonly source: EventSource;
           readonly toolUseId: string;
           readonly name: string;
-          readonly isError: boolean;
+          /**
+           * How the call ended. Three states rather than an error boolean: a
+           * denial is the user's decision, not a fault, and the loop already
+           * treats the two differently in control flow.
+           */
+          readonly outcome: ToolOutcome;
+          /** The same detail the matching `tool-started` carried. */
+          readonly detail?: ToolCallDetail;
       };
 
 /**

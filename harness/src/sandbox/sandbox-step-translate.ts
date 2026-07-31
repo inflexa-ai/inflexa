@@ -7,6 +7,7 @@
  */
 
 import type { ChatDataPart, EmitFn } from "../loop/types.js";
+import type { ToolDetailResolver } from "../tools/detail-resolver.js";
 
 /**
  * Stable reconciliation id for a step's reconciling parts
@@ -23,43 +24,29 @@ export function stepPartId(kind: string, runId: string, stepId: string): string 
     return `${kind}-${runId}-${stepId}`;
 }
 
-/** Friendly live-activity label per sandbox tool id. Falls back to the raw
- *  tool name so a newly added tool still reads sensibly. */
-const TOOL_ACTIVITY: Readonly<Record<string, string>> = {
-    execute_command: "Running script",
-    write_file: "Writing file",
-    edit_file: "Editing file",
-    read_file: "Reading file",
-    grep: "Searching files",
-    list_files: "Listing files",
-};
-
-/** Last path segment of a posix/win path-like string. */
-function baseName(p: string): string {
-    const parts = p.split(/[\\/]/);
-    return parts[parts.length - 1] || p;
-}
-
-/** Display file name for a tool's live-activity label, or null when the input
- *  carries no sensible name. Path tools (`write_file`/`edit_file`/`read_file`)
- *  carry `path`; `execute_command` carries an argv `command` whose first
- *  script-like token names what's running. */
-function activityFileName(name: string, input: unknown): string | null {
-    if (input === null || typeof input !== "object") return null;
-    const obj = input as Record<string, unknown>;
-    if (name === "execute_command") {
-        const cmd = obj.command;
-        if (!Array.isArray(cmd)) return null;
-        const script = cmd.find((a): a is string => typeof a === "string" && /\.(py|R|r|sh|js|ts|ipynb)$/.test(a));
-        return script ? baseName(script) : null;
-    }
-    return typeof obj.path === "string" && obj.path.length > 0 ? baseName(obj.path) : null;
-}
-
-export function activityForTool(name: string, input?: unknown): string {
-    const label = TOOL_ACTIVITY[name] ?? `Running ${name}`;
-    const file = activityFileName(name, input);
-    return file ? `${label} ${file}` : label;
+/**
+ * The live-activity phrase for one tool call: the tool's name, then its own
+ * description of this call when it has one.
+ *
+ * The description comes from the tool's `describeCall` hook, resolved through
+ * `resolveDetail` — the same resolver the chat chip and the reloaded transcript
+ * use. A caller supplies the resolver for the agent whose calls it is
+ * describing, because a sandbox agent's tool list is not the conversation
+ * roster's and no single list serves both.
+ *
+ * The name always leads, and that is load-bearing rather than cosmetic. This
+ * phrase is rendered alone, with no tool name beside it — unlike the chat chip,
+ * which prints the name itself and can afford a bare detail. `write_file` and
+ * `edit_file` both describe a call by its path, so a detail on its own would
+ * render a write and an edit of the same file identically.
+ *
+ * A tool with no hook, an unknown tool, and an input its schema rejects all fall
+ * back to the name alone. No verb is added: the phrase is carried on a part that
+ * already states the phase, so "Running" would only restate it.
+ */
+export function activityForTool(name: string, input?: unknown, resolveDetail?: ToolDetailResolver): string {
+    const detail = resolveDetail?.(name, input);
+    return detail === undefined ? name : `${name} ${detail}`;
 }
 
 /** On-change working-tree delta the sandbox executor posts per exec (paths

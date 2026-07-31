@@ -18,5 +18,8 @@ export const searchGeneTool = defineTool({
         symbols: z.array(z.string()).min(1).max(200).describe("Gene symbols to look up (e.g. ['BRCA1', 'TP53'])"),
         species: z.string().default("homo_sapiens").describe("Species name (e.g. 'homo_sapiens', 'mus_musculus')"),
     }),
+    // The symbols are the call. A batch of 200 exceeds the length cap and is
+    // trimmed at the emit site, which is the right place for that decision.
+    describeCall: ({ symbols }) => symbols.join(", "),
     execute: async ({ symbols, species }) => ok(await lookupGenes(symbols, { species })),
 });

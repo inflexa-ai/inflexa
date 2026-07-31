@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import { ok } from "neverthrow";
+import { z } from "zod";
 
+import { defineTool } from "../tools/define-tool.js";
+import { createDetailResolver } from "../tools/detail-resolver.js";
+import { createEditFileTool } from "../tools/workspace/edit-file.js";
+import { createWriteFileTool } from "../tools/workspace/write-file.js";
 import { activityForTool, applyTreeDelta, sandboxTreeDelta, stepPartId } from "./sandbox-step-translate.js";
 
 describe("stepPartId", () => {
@@ -27,31 +33,48 @@ describe("stepPartId", () => {
 });
 
 describe("activityForTool", () => {
-    it("maps known sandbox tools to friendly live labels", () => {
-        expect(activityForTool("execute_command")).toBe("Running script");
-        expect(activityForTool("write_file")).toBe("Writing file");
-        expect(activityForTool("read_file")).toBe("Reading file");
+    // The real sandbox mutate tools, so this covers the hooks a step actually calls.
+    const resolveDetail = createDetailResolver([
+        createWriteFileTool({ mutator: {} as never }),
+        createEditFileTool({ mutator: {} as never, workspaceFilesystem: {} as never, workingDir: "/a/runs/r1/s1" }),
+        defineTool({
+            id: "list_files",
+            description: "Lists files. Declares no hook.",
+            inputSchema: z.object({ dir: z.string() }),
+            execute: async () => ok({}),
+        }),
+    ]);
+
+    it("phrases a call as the tool's name plus its own hook's description", () => {
+        expect(activityForTool("write_file", { path: "scripts/run.py", content: "" }, resolveDetail)).toBe("write_file scripts/run.py");
+        expect(activityForTool("edit_file", { path: "output/sub/result.csv", old_string: "a", new_string: "b" }, resolveDetail)).toBe(
+            "edit_file output/sub/result.csv",
+        );
     });
 
-    it("falls back to the raw name for an unknown tool", () => {
-        expect(activityForTool("list_available_packages")).toBe("Running list_available_packages");
+    // This phrase renders alone, with no tool name beside it — so a bare detail would make a write and
+    // an edit of the same path indistinguishable, which is the very confusion the hook exists to end.
+    it("keeps a write and an edit of the same path apart", () => {
+        const path = { path: "output/result.csv" };
+        const write = activityForTool("write_file", { ...path, content: "" }, resolveDetail);
+        const edit = activityForTool("edit_file", { ...path, old_string: "a", new_string: "b" }, resolveDetail);
+        expect(write).not.toBe(edit);
     });
 
-    it("appends the file name (not the path) for path-bearing tools", () => {
-        expect(activityForTool("write_file", { path: "scripts/run.py" })).toBe("Writing file run.py");
-        expect(activityForTool("edit_file", { path: "output/sub/result.csv" })).toBe("Editing file result.csv");
-        expect(activityForTool("read_file", { path: "data/inputs/x.h5ad" })).toBe("Reading file x.h5ad");
+    it("names the tool when it declares no hook", () => {
+        expect(activityForTool("list_files", { dir: "output" }, resolveDetail)).toBe("list_files");
     });
 
-    it("names the script token from an execute_command argv", () => {
-        expect(activityForTool("execute_command", { command: ["python", "scripts/run.py"] })).toBe("Running script run.py");
-        expect(activityForTool("execute_command", { command: ["Rscript", "analysis/fit.R"] })).toBe("Running script fit.R");
+    it("names the tool when no resolver is supplied at all", () => {
+        expect(activityForTool("write_file", { path: "scripts/run.py" })).toBe("write_file");
+        expect(activityForTool("list_available_packages")).toBe("list_available_packages");
     });
 
-    it("keeps the bare label when no file name is derivable", () => {
-        expect(activityForTool("execute_command", { command: ["ls", "-la"] })).toBe("Running script");
-        expect(activityForTool("write_file", {})).toBe("Writing file");
-        expect(activityForTool("grep", { pattern: "foo" })).toBe("Searching files");
+    it("names the tool for a call the resolver cannot describe", () => {
+        // Absent from the supplied list.
+        expect(activityForTool("execute_command", { command: ["python", "run.py"] }, resolveDetail)).toBe("execute_command");
+        // Present, but the input does not satisfy its schema.
+        expect(activityForTool("write_file", { pathname: "scripts/run.py" }, resolveDetail)).toBe("write_file");
     });
 });
 

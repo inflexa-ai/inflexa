@@ -40,6 +40,7 @@ import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
 import { runAgent } from "../loop/run-agent.js";
 import { durableStep } from "../loop/run-step.js";
 import { activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta, stepPartId } from "../sandbox/sandbox-step-translate.js";
+import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
 import { forSubAgent, type RunSession } from "../auth/types.js";
 import type { FileMetadataEntry } from "../execution/artifact-metadata.js";
@@ -453,6 +454,10 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
         blockerHolder,
     });
 
+    // Built over THIS agent's tools, not a shared table: a sandbox agent's roster
+    // differs per agent type, and each tool describes its own calls.
+    const resolveDetail = createDetailResolver(agent.tools, logger);
+
     // Forward every loop event onto the child's own DBOS `"events"` stream
     // (the route fans-in parent + every active child stream — Pattern A).
     // Pre-shaped chat data parts (e.g. `data-sandbox-event` from `run-exec.ts`)
@@ -569,7 +574,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
         // envelope, and surface each tool call as live step activity.
         await safeEmit({ type: "data-loop-event" as const, data: { stepId: input.stepId, event } });
         if (event.type === "tool-started") {
-            await emitActivity("executing", activityForTool(event.name, event.input));
+            await emitActivity("executing", activityForTool(event.name, event.input, resolveDetail));
         }
     };
 

@@ -1,7 +1,14 @@
 import { describe, expect, it } from "bun:test";
+import { ok } from "neverthrow";
+import { z } from "zod";
 
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { LogFields, Logger } from "../lib/logger.js";
+import { defineTool } from "../tools/define-tool.js";
+import { createDetailResolver } from "../tools/detail-resolver.js";
+import { createExecuteCommandTool } from "../tools/workspace/execute-command.js";
+import { createReadFileTool } from "../tools/workspace/read-file.js";
+import { createWriteFileTool } from "../tools/workspace/write-file.js";
 import { createProfileActivityEmitter, type ProfileActivityEmitter } from "./data-profile-activity.js";
 
 // The data-profile workflow body is not reachable from a unit test — it needs a launched durability
@@ -15,6 +22,31 @@ import { createProfileActivityEmitter, type ProfileActivityEmitter } from "./dat
 // by the operator against a live profile.
 
 const FRAME = { runId: "data-profile", stepId: "profile" } as const;
+
+/**
+ * A resolver over the profiler's real tools, plus its hookless `submit_profile`.
+ * The workflow body builds the same thing from `agentDef.tools`; the phrases a
+ * user reads come from the tools themselves, not from a table here.
+ */
+const resolveDetail = createDetailResolver([
+    createExecuteCommandTool({
+        sandboxClient: {} as never,
+        sandbox: {} as never,
+        workflowId: "wf-1",
+        stepId: "profile",
+        nextFunctionId: () => "1",
+        deadlineMs: () => 0,
+        defaultCwd: "/analysis/runs/data-profile/profile",
+    }),
+    createReadFileTool({} as never, "/analysis/runs/data-profile/profile"),
+    createWriteFileTool({ mutator: {} as never }),
+    defineTool({
+        id: "submit_profile",
+        description: "Submit the profiling results. Declares no hook.",
+        inputSchema: z.object({}),
+        execute: async () => ok({ status: "accepted" }),
+    }),
+]);
 
 /** The reconciling id every emission shares — the shared per-step construction over the frame above. */
 const ACTIVITY_ID = "step-activity-data-profile-profile";
@@ -59,14 +91,14 @@ describe("profile activity emitter — the phases and their phrases", () => {
 
         await emitter.sandboxInit();
         await emitter.agentStarting();
-        await emitter.forTool("execute_command", { command: ["Rscript", "profile.R"] });
+        await emitter.forTool("execute_command", { command: ["Rscript", "profile.R"] }, resolveDetail);
         await emitter.indexing();
         await emitter.complete();
 
         expect(parts.map((p) => [p.phase, p.activity])).toEqual([
             ["sandbox-init", "Starting sandbox"],
             ["executing", "Running data-profiler"],
-            ["executing", "Running script profile.R"],
+            ["executing", "execute_command profile.R"],
             ["indexing", "Indexing input descriptions for search"],
             ["complete", "Profile complete"],
         ]);
@@ -101,31 +133,34 @@ describe("profile activity emitter — the phases and their phrases", () => {
     });
 });
 
-describe("profile activity emitter — tool phrases come from the shared translator", () => {
+describe("profile activity emitter — tool phrases come from the called tool's own hook", () => {
     it("names the script an execute_command is running", async () => {
         const { parts, emitter } = recorder();
 
-        await emitter.forTool("execute_command", { command: ["python3", "/analysis/runs/data-profile/profile/scripts/profile.py"] });
+        await emitter.forTool("execute_command", { command: ["python3", "/analysis/runs/data-profile/profile/scripts/profile.py"] }, resolveDetail);
 
-        expect(parts[0]!.activity).toBe("Running script profile.py");
+        expect(parts[0]!.activity).toBe("execute_command /analysis/runs/data-profile/profile/scripts/profile.py");
     });
 
     it("names the file a path-bearing tool is touching", async () => {
         const { parts, emitter } = recorder();
 
-        await emitter.forTool("read_file", { path: "/analysis/data/inputs/f1/counts.csv" });
-        await emitter.forTool("write_file", { path: "scripts/profile.py" });
+        await emitter.forTool("read_file", { path: "/analysis/data/inputs/f1/counts.csv" }, resolveDetail);
+        await emitter.forTool("write_file", { path: "scripts/profile.py", content: "" }, resolveDetail);
 
-        expect(parts.map((p) => p.activity)).toEqual(["Reading file counts.csv", "Writing file profile.py"]);
+        expect(parts.map((p) => p.activity)).toEqual(["read_file /analysis/data/inputs/f1/counts.csv", "write_file scripts/profile.py"]);
     });
 
-    it("falls back to the bare tool name when the input carries no usable name", async () => {
+    it("names the tool when nothing can describe the call", async () => {
         const { parts, emitter } = recorder();
 
-        await emitter.forTool("execute_command", { command: ["ls", "-la"] });
-        await emitter.forTool("submit_profile", {});
+        // A hookless tool, and a tool absent from the supplied list.
+        await emitter.forTool("submit_profile", {}, resolveDetail);
+        await emitter.forTool("list_available_packages", {}, resolveDetail);
+        // No resolver at all — the shape a caller that wires none gets.
+        await emitter.forTool("read_file", { path: "a.csv" });
 
-        expect(parts.map((p) => p.activity)).toEqual(["Running script", "Running submit_profile"]);
+        expect(parts.map((p) => p.activity)).toEqual(["submit_profile", "list_available_packages", "read_file"]);
     });
 });
 

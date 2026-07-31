@@ -35,6 +35,7 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { defineTool } from "../tools/define-tool.js";
+import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { renderWorkspace } from "../prompts/briefing.js";
 import type { SandboxClient } from "../sandbox/client.js";
@@ -389,6 +390,9 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
 
             const baseAgent = createDataProfilerAgent(sandboxAgentDeps);
             const agentDef = { ...baseAgent, tools: [...baseAgent.tools, submitProfileTool] };
+            // The profiler's own roster, `submit_profile` included, so every call it
+            // makes is phrased by the tool that was called.
+            const resolveDetail = createDetailResolver(agentDef.tools, logger);
 
             const signal = new AbortController().signal;
 
@@ -412,7 +416,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     // function id and an unawaited write would race the next operation for the
                     // counter and desynchronise the recorded sequence on replay.
                     emit: async (event) => {
-                        if (event.type === "tool-started") await activity.forTool(event.name, event.input);
+                        if (event.type === "tool-started") await activity.forTool(event.name, event.input, resolveDetail);
                     },
                     runStep: durableStep,
                     resolved: () => capturedProfile !== null,

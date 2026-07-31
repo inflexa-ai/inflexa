@@ -77,7 +77,7 @@ export interface ToolContext {
 
 /**
  * A packaged tool: identity, the Zod input contract, the emitted AI SDK input
- * schema, execution mode, and the executor.
+ * schema, execution mode, the optional call-description hook, and the executor.
  */
 export interface Tool<Input = unknown, Output = unknown> {
     readonly id: string;
@@ -85,6 +85,8 @@ export interface Tool<Input = unknown, Output = unknown> {
     readonly inputSchema: z.ZodType;
     readonly jsonSchema: Record<string, unknown>;
     readonly executionMode: ToolExecutionMode;
+    /** See {@link ToolDefinition.describeCall}. Absent when the tool declares none. */
+    describeCall?(input: Input): string;
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
@@ -93,6 +95,32 @@ export interface ToolDefinition<Schema extends z.ZodType, Output> {
     readonly description: string;
     readonly inputSchema: Schema;
     readonly executionMode?: ToolExecutionMode;
+    /**
+     * One line naming what THIS call is doing — the call-time counterpart of
+     * `description`. `description` self-describes the tool at attach time, so an
+     * agent knows what it holds; `describeCall` self-describes one invocation, so
+     * a surface can render four `update_working_memory` calls as four distinct
+     * lines instead of four identical chips.
+     *
+     * It lives here, beside `inputSchema`, because that is the one place the
+     * compiler checks the two against each other. A host-side formatter reading
+     * `input.path` by string key breaks silently the day the schema moves; this
+     * one fails to build. The tool author writes it because the tool author knows
+     * which field matters.
+     *
+     * Synchronous and pure — no I/O, no ambient state. Dispatch is what the user
+     * waits on, and a description must never be able to fail a call: the loop
+     * validates the input against `inputSchema` first, guards the call, and drops
+     * the detail on any failure (see the tool-call-detail capability).
+     *
+     * Return whatever reads best. Normalization — one line, control characters
+     * removed, secrets redacted, length capped — happens once at the emit site,
+     * never here.
+     *
+     * OPTIONAL, and absence is a normal state: a tool without it is observable
+     * exactly as it is today. The hook never reaches the model.
+     */
+    describeCall?(input: z.infer<Schema>): string;
     execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
@@ -125,6 +153,9 @@ export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition
         inputSchema: def.inputSchema,
         jsonSchema,
         executionMode,
+        // Spread rather than assigned: a tool that declares no hook carries no
+        // `describeCall` key at all, so "has a hook" is one property check.
+        ...(def.describeCall === undefined ? {} : { describeCall: def.describeCall }),
         execute: def.execute,
     };
 }

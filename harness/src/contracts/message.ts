@@ -7,6 +7,7 @@
  * narrows the union member without any `as` cast.
  */
 
+import type { ToolCallDetail, ToolOutcome } from "./chat-events.js";
 import type { CortexChatPart } from "./chat-parts.js";
 
 /** A plain assistant/user text run. */
@@ -27,7 +28,13 @@ export interface ToolCallPart {
     toolCallId: string;
     toolName: string;
     status: "started" | "finished";
-    isError?: boolean;
+    /**
+     * How the call ended. Absent while `status` is `"started"` — the outcome is
+     * not known yet. See {@link ToolOutcome}.
+     */
+    outcome?: ToolOutcome;
+    /** See {@link ToolCallDetail}. Absent when no detail was produced. */
+    detail?: ToolCallDetail;
 }
 
 /** The discriminated union of every part the chat path can carry. */

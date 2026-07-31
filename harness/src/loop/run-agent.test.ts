@@ -763,3 +763,187 @@ describe("runAgent — event provenance", () => {
         expect(events.map((e) => e.type)).toContain("tool-finished");
     });
 });
+
+// ── Call detail and the three-way outcome (tool-call-detail) ─────────
+
+/** Every `tool-started` / `tool-finished` event a run emitted, in order. */
+function toolEvents(events: readonly EmitEvent[]): Extract<EmitEvent, { type: "tool-started" | "tool-finished" }>[] {
+    return events.filter((e): e is Extract<EmitEvent, { type: "tool-started" | "tool-finished" }> => e.type === "tool-started" || e.type === "tool-finished");
+}
+
+/** Run one scripted turn, returning the tool events it emitted. */
+async function runCapturingToolEvents(
+    tools: Tool[],
+    provider: ScriptedProvider,
+    overrides: Partial<RunAgentOptions> = {},
+): Promise<Extract<EmitEvent, { type: "tool-started" | "tool-finished" }>[]> {
+    const events: EmitEvent[] = [];
+    await runAgent(
+        agentDef(tools),
+        GO,
+        makeSession(),
+        opts(provider, {
+            ...overrides,
+            emit: (e) => {
+                events.push(e as EmitEvent);
+            },
+        }),
+    );
+    return toolEvents(events);
+}
+
+/** A `read` tool describing its call by path; `fail` makes `execute` throw. */
+function describedRead(fail = false): Tool {
+    return defineTool({
+        id: "read",
+        description: "Read a path.",
+        inputSchema: z.object({ path: z.string() }),
+        describeCall: ({ path }) => path,
+        execute: async ({ path }) => {
+            if (fail) throw new Error("disk on fire");
+            return ok({ path });
+        },
+    });
+}
+
+describe("runAgent — tool call detail", () => {
+    it("carries the same detail on both events of a described call", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "read", { path: "output/summary.md" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([describedRead()], provider);
+
+        expect(events).toHaveLength(2);
+        expect(events[0]).toMatchObject({ type: "tool-started", name: "read", detail: "output/summary.md" });
+        expect(events[1]).toMatchObject({ type: "tool-finished", name: "read", detail: "output/summary.md", outcome: "ok" });
+    });
+
+    it("omits the field entirely for a tool with no hook", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "echo", { label: "x" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([echoTool()], provider);
+
+        expect(events).toHaveLength(2);
+        for (const event of events) {
+            expect("detail" in event).toBe(false);
+        }
+    });
+
+    it("normalizes the detail at the emit site", async () => {
+        const noisy = defineTool({
+            id: "noisy",
+            description: "Returns an unnormalized detail.",
+            inputSchema: z.object({ text: z.string() }),
+            describeCall: ({ text }) => text,
+            execute: async () => ok({}),
+        });
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "noisy", { text: `line one\nline two ${"z".repeat(400)}` })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([noisy], provider);
+        const detail = (events[0] as { detail?: string }).detail!;
+
+        expect(detail).not.toContain("\n");
+        expect(detail).toHaveLength(120);
+    });
+
+    it("dispatches normally when the hook throws, emitting no detail", async () => {
+        const broken = defineTool({
+            id: "broken-hook",
+            description: "Its describeCall throws.",
+            inputSchema: z.object({ path: z.string() }),
+            describeCall: () => {
+                throw new Error("hook is broken");
+            },
+            execute: async ({ path }) => ok({ path }),
+        });
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "broken-hook", { path: "a.csv" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([broken], provider);
+
+        expect(events[1]).toMatchObject({ type: "tool-finished", outcome: "ok" });
+        expect("detail" in events[0]!).toBe(false);
+        // The tool still ran and produced a real result.
+        expect(provider.calls).toHaveLength(2);
+    });
+
+    it("emits no detail for an input the tool's schema rejects", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "read", { pathname: "wrong-key.md" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([describedRead()], provider);
+
+        expect("detail" in events[0]!).toBe(false);
+        expect(events[1]).toMatchObject({ type: "tool-finished", outcome: "error" });
+    });
+});
+
+describe("runAgent — tool-finished outcome", () => {
+    it("reports ok for a successful call", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "read", { path: "a.csv" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([describedRead()], provider);
+
+        expect(events[1]).toMatchObject({ type: "tool-finished", outcome: "ok" });
+    });
+
+    it("reports error for a thrown tool failure", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "read", { path: "a.csv" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([describedRead(true)], provider);
+
+        expect(events[1]).toMatchObject({ type: "tool-finished", outcome: "error" });
+    });
+
+    it("reports denied — not error — for a rejected approval", async () => {
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "guarded", {})], "tool_use")]);
+
+        const events = await runCapturingToolEvents([guardedTool()], provider, {
+            ask: async () => {
+                throw new AskRejectedError("nope");
+            },
+        });
+
+        expect(events[1]).toMatchObject({ type: "tool-finished", outcome: "denied" });
+    });
+
+    it("reports error for input that fails validation and is never executed", async () => {
+        let executed = false;
+        const strict = defineTool({
+            id: "strict",
+            description: "Requires a numeric count.",
+            inputSchema: z.object({ count: z.number() }),
+            execute: async () => {
+                executed = true;
+                return ok({});
+            },
+        });
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "strict", { count: "not a number" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([strict], provider);
+
+        expect(events[1]).toMatchObject({ type: "tool-finished", outcome: "error" });
+        expect(executed).toBe(false);
+    });
+});

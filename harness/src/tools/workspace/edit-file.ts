@@ -103,6 +103,8 @@ export function createEditFileTool(deps: EditFileDeps) {
             "/ `out_of_scope` / `file_not_found` / `not_found` / `not_unique` data " +
             "variants — never throws on expected outcomes.",
         inputSchema: EditFileInputSchema,
+        // The path only. The replaced text is file content, not a description.
+        describeCall: ({ path }) => path,
         execute: async ({ path, old_string, new_string, replace_all }, ctx): Promise<Result<EditFileResult, ToolError>> => {
             const read = unwrapOrThrow(
                 await deps.workspaceFilesystem.readFile({

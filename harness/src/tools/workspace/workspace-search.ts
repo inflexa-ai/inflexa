@@ -56,6 +56,7 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
                 .describe('Restrict results to one entry type: "input", "output", "summary", or "synthesis"'),
             limit: z.number().int().min(1).max(50).default(8).describe("Maximum number of results to return"),
         }),
+        describeCall: ({ query, type }) => (type === undefined ? query : `${query} (${type})`),
         execute: async ({ query, type, limit }, ctx) => {
             const [vector] = unwrapOrThrow(await embedding.embed([query], ctx.session));
             if (!vector) return ok({ results: [] });

@@ -94,6 +94,11 @@ export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string)
             "back as a `binary` data variant rather than decoded garbage. Missing " +
             "paths and paths outside the analysis tree return a data variant — not an error.",
         inputSchema: ReadFileInputSchema,
+        describeCall: ({ path, headLines, tailLines }) => {
+            if (headLines !== undefined) return `${path} (first ${headLines} lines)`;
+            if (tailLines !== undefined) return `${path} (last ${tailLines} lines)`;
+            return path;
+        },
         execute: async ({ path, headLines, tailLines }, ctx): Promise<Result<ReadFileOutput, ToolError>> => {
             if (headLines !== undefined && tailLines !== undefined) {
                 return ok({

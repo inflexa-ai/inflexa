@@ -156,6 +156,10 @@ export function createInspectRunTool(pool: Pool, clock: InspectRunClock = system
             "For a user-directed check, waitForTerminalSeconds can wait once for 1-30 seconds; if the cutoff returns in_progress, stop polling for that turn. " +
             "Default response is lightweight — pass includeDiagnostics:true to add error/duration/retry telemetry.",
         inputSchema,
+        // The two calls do different work: one inspects a named run, the other
+        // pages the list. Naming the run id is what separates repeated polls of
+        // the same run from polls of different ones.
+        describeCall: (input) => (input.runId === undefined ? `run list (page ${input.page ?? 1})` : input.runId),
         execute: async (input, ctx): Promise<Result<InspectRunOutput, ToolError>> => {
             const resourceId = scopeResource(ctx.session.scope).resourceId;
             const verbose = input.includeDiagnostics === true;

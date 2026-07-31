@@ -198,7 +198,7 @@ describe("AI SDK message envelope runtime path", () => {
                 role: "assistant",
                 parts: [
                     { type: "text", text: "Visible" },
-                    { type: "tool-call", toolCallId: "call-1", toolName: "show_plan", status: "finished" },
+                    { type: "tool-call", toolCallId: "call-1", toolName: "show_plan", status: "finished", outcome: "ok" },
                 ],
             },
         ]);

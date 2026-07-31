@@ -15,10 +15,14 @@ export const TextDeltaEventSchema = z.object({
     source: EventSourceSchema,
 });
 
+/** Mirrors the `ToolOutcome` union — three states, never a boolean. */
+export const ToolOutcomeSchema = z.enum(["ok", "error", "denied"]);
+
 export const ToolStartedEventSchema = z.object({
     type: z.literal("tool-started"),
     toolUseId: z.string(),
     name: z.string(),
+    detail: z.string().optional(),
     source: EventSourceSchema,
 });
 
@@ -26,7 +30,8 @@ export const ToolFinishedEventSchema = z.object({
     type: z.literal("tool-finished"),
     toolUseId: z.string(),
     name: z.string(),
-    isError: z.boolean(),
+    outcome: ToolOutcomeSchema,
+    detail: z.string().optional(),
     source: EventSourceSchema,
 });
 
