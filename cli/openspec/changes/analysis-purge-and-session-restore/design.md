@@ -18,8 +18,8 @@ Separately, archiving a conversation is now called what it is. `deleteThread` is
 **Non-Goals:**
 
 - Reclaiming analyses already deleted. Their ids are gone from SQLite, so they need a discovery pass of their own — a separate change, and one that must never run automatically, since a restored older `agent.db` would present live analyses as reclaimable.
-- A hard-delete surface for a single conversation. `purgeThread` exists in the harness; nothing in the product asks for it yet, and shipping an unrecoverable verb before a use case is a liability.
-- Serialising the purge against work still starting. The harness states that precondition, and the existing quiescence gate already enforces it here.
+- Serialising a purge against work still starting. The harness states that precondition and cannot enforce it — it cannot observe a host's in-flight work — so meeting it is this change's job, not something to build machinery for. Both purge surfaces meet it with a gate ahead of their confirmation: the analysis delete with the existing workspace busy check, the conversation delete with the chat's own activity state. Neither holds a lock; both refuse and let the user retry.
+- Restoring a conversation by binding it to the chat. Restore returns a thread to the listing and stops there — the switch picker is how a user opens one, and yanking them off what they are reading would be a navigation they never asked for.
 
 ## Decisions
 
@@ -35,7 +35,13 @@ Separately, archiving a conversation is now called what it is. `deleteThread` is
 
 **A missing runtime refuses the delete.** Without a booted harness there is no pool, so no purge is possible, and proceeding would recreate the orphan. Refusing makes deletion unavailable while the harness is down — an accepted cost, because the alternative is a silent permanent leak, and the existing quiescence gate already teaches the user that deletion waits for a settled workspace.
 
+**A conversation hard-delete ships, and only it is gated on a running turn.** `purgeThread` gives the product a verb the archive cannot undo, so the two conversation commands are separated by more than wording: Remove archives and Restore reverses it, while Delete erases and spends the danger ritual. The quiescence gate follows the same split. `appendTurn` writes `messages` with no foreign key to the thread row and tolerates that row being absent — a deliberate design, so a turn never fails over its metadata — which means a turn committing after a purge lands rows attributable to no analysis and reachable by no reclamation. That is a permanent loss, so Delete refuses while a turn is streaming. An archive costs nothing of the kind: the turn's messages land on a tombstoned row and Restore brings the thread back with them, so Remove is deliberately left ungated rather than made uniformly cautious.
+
+The gate is the chat's own activity state, not the analysis-wide busy check the analysis delete uses. A running data profile or workflow writes nothing into `messages`, so refusing a conversation delete for one would block the user over state that cannot be harmed; and the check is already thread-scoped, because the flow only ever purges the open conversation.
+
 **Restore is a separate command, not a toggle in the switcher.** `SelectDialog` composes `FixedList`, whose items are fixed for the dialog's lifetime, so a toggle key inside the open picker cannot re-render the list. Rebuilding the picker on `DynamicList` would be design-system work for a rare action. A distinct palette entry costs nothing, is discoverable by search, and matches how every other deliberate action is reached.
+
+**The restore picker walks the whole listing.** The store widens the set rather than switching to an archived-only one — the right call, since a caller can narrow a widened set but cannot widen a narrowed one — so the archived rows come back among the live ones, ordered by activity. Archiving deliberately leaves `updated_at` alone, so every archived row sorts behind every live one used since; on an analysis with more conversations than a page holds, one page can contain no archived rows at all and the picker's empty state would then state outright that nothing was ever removed. So the picker pages until the set is exhausted, and where it cannot — a failed page, or a walk that outruns its bound — it says so rather than presenting a partial set as complete. A rare, deliberate action can afford the round trips; being told nothing was archived when something was is not a cost it can afford.
 
 **Signing before writing.** The export currently writes the document and then signs it, so a signing failure leaves an unsigned file on disk under a notice claiming the opposite. Building the sidecar first and writing both only on success makes the claim true. Routing the delete flow through this path is what forces the issue: a rare inconsistency becomes a routine one.
 
