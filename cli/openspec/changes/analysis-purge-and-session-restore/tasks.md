@@ -34,19 +34,19 @@
 
 ## 6. Session hard delete
 
-- [ ] 6.1 Add `purgeThread` to `SessionSeams`, realized over `createThreadStore(pool).purgeThread`.
-- [ ] 6.2 Add a `session.purge` palette command ("Delete session") using `ConfirmDeleteDialog` with its danger tone and name-typing ritual, wording that says the transcript is erased, then the same unbind-and-land tail the removal flow uses.
-- [ ] 6.3 Tests: the transcript is gone, the changed-thread refusal holds, and the flow lands on a surviving conversation.
+- [x] 6.1 Add `purgeThread` to `SessionSeams`, realized over `createThreadStore(pool).purgeThread`.
+- [x] 6.2 Add a `session.purge` palette command ("Delete session") using `ConfirmDeleteDialog` with its danger tone and name-typing ritual, wording that says the transcript is erased, then the same unbind-and-land tail the removal flow uses.
+- [x] 6.3 Tests: the transcript is gone, the changed-thread refusal holds, and the flow lands on a surviving conversation.
 
 ## 7. Prune reclaims Postgres
 
-- [ ] 7.1 In `runPrune`, after confirmation, obtain a pool through `ensurePostgresReady` (starting the stack when it is down) and drain it when the command ends.
-- [ ] 7.2 Purge every analysis of every dead anchor — ids from `listAnalysesByAnchor` — BEFORE any SQLite delete, since those rows carry the only copy of the ids.
-- [ ] 7.3 Abort with every row intact when Postgres cannot be provisioned or a purge fails, reporting that nothing was lost.
-- [ ] 7.4 Tests: purge precedes the SQLite delete for every analysis, an unreachable Postgres deletes nothing, and a failed purge leaves the prune retryable.
+- [x] 7.1 In `runPrune`, after confirmation, obtain a pool through `ensurePostgresReady` (starting the stack when it is down) and drain it when the command ends.
+- [x] 7.2 Purge every analysis of every dead anchor — ids from `listAnalysesByAnchor` — BEFORE any SQLite delete, since those rows carry the only copy of the ids.
+- [x] 7.3 Abort with every row intact when Postgres cannot be provisioned or a purge fails, reporting that nothing was lost.
+- [x] 7.4 Tests: purge precedes the SQLite delete for every analysis, an unreachable Postgres deletes nothing, and a failed purge leaves the prune retryable.
 
 ## 8. Verification (groups 6-7)
 
-- [ ] 8.1 `bun run typecheck` clean.
-- [ ] 8.2 The changed test files pass individually — never the full suite.
-- [ ] 8.3 `bun run lint` clean, and `bun run format:file` on every changed file under `src/`.
+- [x] 8.1 `bun run typecheck` clean.
+- [x] 8.2 The changed test files pass individually — never the full suite.
+- [x] 8.3 `bun run lint` clean, and `bun run format:file` on every changed file under `src/`.
