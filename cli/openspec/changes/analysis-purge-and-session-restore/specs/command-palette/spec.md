@@ -62,3 +62,30 @@ The palette's provenance export SHALL build the signature sidecar BEFORE writing
 
 - **WHEN** the export runs and signing succeeds
 - **THEN** the provenance document and its sidecar are both written and the destination is reported
+
+### Requirement: Delete session erases the conversation
+
+The palette SHALL provide a "Delete session" command that hard-deletes the open conversation through the harness thread store's `purgeThread`, removing its metadata row and every one of its messages, offered under the same conditions as removal — an analysis open, a thread bound, and the runtime booted.
+
+Unlike removal, this command SHALL spend the app's danger ritual: the confirmation SHALL carry danger chrome and require the user to type the conversation's name back. That ritual is reserved for actions that cannot be undone, and this is the first thread action that qualifies — removal keeps every message and is reversible through restore, which is exactly why it does not use it. The wording SHALL state that the transcript is erased and that this cannot be undone, so the two commands are never mistaken for each other.
+
+The flow SHALL refuse when the bound thread changed while the confirmation was open, and afterwards SHALL land the user on whatever the analysis has left, unbinding the scope first — the same landing removal performs, for the same reason.
+
+A deleted conversation SHALL NOT appear in the restore listing, because nothing remains to restore.
+
+#### Scenario: Deleting a session erases its transcript
+
+- **GIVEN** an open conversation with persisted messages
+- **WHEN** "Delete session" is confirmed by typing its name
+- **THEN** the thread row and every one of its messages are gone, and it appears in neither the session picker nor the restore listing
+
+#### Scenario: Delete demands the name, remove does not
+
+- **WHEN** "Delete session" is invoked
+- **THEN** the confirmation carries danger chrome and requires the conversation's name to be typed, unlike "Remove session"
+
+#### Scenario: The session changed under the confirmation
+
+- **GIVEN** a delete confirmation opened for one conversation
+- **WHEN** the bound thread changed before it was confirmed
+- **THEN** nothing is deleted and the user is told to reopen the command
