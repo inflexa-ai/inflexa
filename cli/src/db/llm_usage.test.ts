@@ -3,7 +3,16 @@ import { beforeEach, describe, expect, test } from "bun:test";
 
 import { freshDb } from "../test_support/db.ts";
 import { deleteAnalysis, insertAnalysis, insertAnchor, upsertLlmUsage, type LlmUsageEntry } from "./primary_mutation.ts";
-import { getAnalysisUsageTotals, listAnalysisUsageByAgent, listAnalysisUsageByModel } from "./primary_query.ts";
+import {
+    getAnalysisUnattributedUsageTotals,
+    getAnalysisUsageTotals,
+    listAnalysisUsageByAgent,
+    listAnalysisUsageByModel,
+    listAnalysisUsageByRun,
+    listAnalysisUsageBySession,
+    listRunUsageByStep,
+    type LlmUsageTotals,
+} from "./primary_query.ts";
 import { asStr256 } from "../lib/types.ts";
 
 // freshDb() hands back the same singleton connection the mutation/query functions drive internally, so
@@ -185,6 +194,167 @@ describe("reading the ledger", () => {
         upsertLlmUsage(entry({ recordKey: "r1", requestedModelId: "sonnet", usage: { inputTokens: 10 } }))._unsafeUnwrap();
 
         expect(listAnalysisUsageByModel("ana-1")._unsafeUnwrap()).toEqual([{ servedModelId: null, totals: { calls: 1, inputTokens: 10 } }]);
+    });
+});
+
+describe("the where-it-ran grains", () => {
+    // Chat-shaped rows carry a thread; run-shaped rows carry a run (and a step inside one); a row with
+    // neither is the background/boot-time work the unattributed bucket exists for. `entry`'s default
+    // threadId is dropped wherever it would contradict the frame under test.
+    function chat(recordKey: string, threadId: string, usage: LlmUsageEntry["usage"]): void {
+        upsertLlmUsage(entry({ recordKey, threadId, usage }))._unsafeUnwrap();
+    }
+    function runCall(recordKey: string, runId: string, stepId: string | undefined, usage: LlmUsageEntry["usage"]): void {
+        upsertLlmUsage(entry({ recordKey, threadId: undefined, runId, stepId, usage }))._unsafeUnwrap();
+    }
+    function loose(recordKey: string, usage: LlmUsageEntry["usage"]): void {
+        upsertLlmUsage(entry({ recordKey, threadId: undefined, usage }))._unsafeUnwrap();
+    }
+
+    test("an analysis's threads are reported as separate session groups", () => {
+        chat("c1", "thr-a", { inputTokens: 100, outputTokens: 10 });
+        chat("c2", "thr-a", { inputTokens: 50, outputTokens: 5 });
+        chat("c3", "thr-b", { inputTokens: 20, outputTokens: 2 });
+
+        expect(listAnalysisUsageBySession("ana-1")._unsafeUnwrap()).toEqual([
+            { threadId: "thr-a", totals: { calls: 2, inputTokens: 150, outputTokens: 15 } },
+            { threadId: "thr-b", totals: { calls: 1, inputTokens: 20, outputTokens: 2 } },
+        ]);
+    });
+
+    test("a chat-only analysis yields sessions and no runs", () => {
+        chat("c1", "thr-a", { inputTokens: 100 });
+
+        expect(listAnalysisUsageBySession("ana-1")._unsafeUnwrap()).toHaveLength(1);
+        expect(listAnalysisUsageByRun("ana-1")._unsafeUnwrap()).toEqual([]);
+    });
+
+    test("a run launched from a chat is counted under the run, never also under its session", () => {
+        chat("c1", "thr-a", { inputTokens: 100, outputTokens: 10 });
+        // The recorder writes a run frame without a thread; the session read excludes run rows anyway,
+        // so a row carrying BOTH still reports once — under the frame it actually ran in.
+        upsertLlmUsage(entry({ recordKey: "r1", threadId: "thr-a", runId: "run-1", usage: { inputTokens: 900, outputTokens: 90 } }))._unsafeUnwrap();
+
+        expect(listAnalysisUsageBySession("ana-1")._unsafeUnwrap()).toEqual([{ threadId: "thr-a", totals: { calls: 1, inputTokens: 100, outputTokens: 10 } }]);
+        expect(listAnalysisUsageByRun("ana-1")._unsafeUnwrap()).toEqual([{ runId: "run-1", totals: { calls: 1, inputTokens: 900, outputTokens: 90 } }]);
+    });
+
+    test("rows are ordered by input then output then calls — never by a constructed total", () => {
+        // `small` reports the larger OUTPUT and more calls, and its input+cacheRead would beat `big`'s
+        // input; only the input-led lexicographic order the design pins puts `big` first.
+        runCall("r1", "run-big", undefined, { inputTokens: 500, outputTokens: 1 });
+        runCall("r2", "run-small", undefined, { inputTokens: 400, outputTokens: 900, cacheReadInputTokens: 300 });
+        runCall("r3", "run-small", undefined, { inputTokens: 0, outputTokens: 0 });
+
+        expect(
+            listAnalysisUsageByRun("ana-1")
+                ._unsafeUnwrap()
+                .map((g) => g.runId),
+        ).toEqual(["run-big", "run-small"]);
+    });
+
+    test("a group whose provider reported nothing keeps its call count and reads back absent, sorted last", () => {
+        runCall("r1", "run-silent", undefined, {});
+        runCall("r2", "run-silent", undefined, {});
+        runCall("r3", "run-loud", undefined, { inputTokens: 5, outputTokens: 1 });
+
+        const groups = listAnalysisUsageByRun("ana-1")._unsafeUnwrap();
+        expect(groups).toEqual([
+            { runId: "run-loud", totals: { calls: 1, inputTokens: 5, outputTokens: 1 } },
+            // Two calls happened and are counted; every figure is an unknown, not a zero.
+            { runId: "run-silent", totals: { calls: 2 } },
+        ]);
+        expect("inputTokens" in groups[1]!.totals).toBe(false);
+    });
+
+    test("a run's step grain excludes another run's steps", () => {
+        runCall("r1", "run-1", "s1_load", { inputTokens: 100, outputTokens: 10 });
+        runCall("r2", "run-1", "s2_align", { inputTokens: 60, outputTokens: 6 });
+        runCall("r3", "run-1", "s2_align", { inputTokens: 40, outputTokens: 4 });
+        // Same step SLUG under a different run — plan step ids are unique only within their plan, so
+        // this is exactly the leak the run predicate exists to stop.
+        runCall("r4", "run-2", "s2_align", { inputTokens: 7_000, outputTokens: 700 });
+
+        // The two steps tie on both figures, so the call count breaks it — the third and last key.
+        expect(listRunUsageByStep("ana-1", "run-1")._unsafeUnwrap()).toEqual([
+            { stepId: "s2_align", totals: { calls: 2, inputTokens: 100, outputTokens: 10 } },
+            { stepId: "s1_load", totals: { calls: 1, inputTokens: 100, outputTokens: 10 } },
+        ]);
+    });
+
+    test("a run's calls outside any step group under an absent step id", () => {
+        runCall("r1", "run-1", undefined, { inputTokens: 30 });
+        runCall("r2", "run-1", "s1_load", { inputTokens: 10 });
+
+        expect(listRunUsageByStep("ana-1", "run-1")._unsafeUnwrap()).toEqual([
+            { stepId: null, totals: { calls: 1, inputTokens: 30 } },
+            { stepId: "s1_load", totals: { calls: 1, inputTokens: 10 } },
+        ]);
+    });
+
+    test("calls carrying neither a thread nor a run are reported, not dropped", () => {
+        loose("b1", { inputTokens: 400, outputTokens: 40 });
+
+        expect(listAnalysisUsageBySession("ana-1")._unsafeUnwrap()).toEqual([]);
+        expect(listAnalysisUsageByRun("ana-1")._unsafeUnwrap()).toEqual([]);
+        expect(getAnalysisUnattributedUsageTotals("ana-1")._unsafeUnwrap()).toEqual({ calls: 1, inputTokens: 400, outputTokens: 40 });
+    });
+
+    test("an analysis with nothing unattributed reads back as zero calls with every quantity absent", () => {
+        chat("c1", "thr-a", { inputTokens: 100 });
+
+        expect(getAnalysisUnattributedUsageTotals("ana-1")._unsafeUnwrap()).toEqual({ calls: 0 });
+    });
+
+    test("every grain is scoped to its analysis and cannot see another's rows", () => {
+        chat("c1", "thr-a", { inputTokens: 100 });
+        runCall("r1", "run-1", "s1", { inputTokens: 200 });
+        upsertLlmUsage(entry({ recordKey: "x1", scopeId: "ana-2", threadId: "thr-z", usage: { inputTokens: 999 } }))._unsafeUnwrap();
+        upsertLlmUsage(entry({ recordKey: "x2", scopeId: "ana-2", threadId: undefined, runId: "run-1", usage: { inputTokens: 999 } }))._unsafeUnwrap();
+
+        expect(listAnalysisUsageBySession("ana-1")._unsafeUnwrap()).toEqual([{ threadId: "thr-a", totals: { calls: 1, inputTokens: 100 } }]);
+        expect(listAnalysisUsageByRun("ana-1")._unsafeUnwrap()).toEqual([{ runId: "run-1", totals: { calls: 1, inputTokens: 200 } }]);
+        // Same run id under a sibling analysis: the scope predicate, not the run id, is what isolates it.
+        expect(listRunUsageByStep("ana-1", "run-1")._unsafeUnwrap()).toEqual([{ stepId: "s1", totals: { calls: 1, inputTokens: 200 } }]);
+    });
+
+    test("the session, run, and unattributed figures sum per quantity to the analysis headline", () => {
+        // A fixture carrying all three shapes at once — chat turns, a run with steps, and a call with
+        // neither frame — because the partition only means anything when every bucket is populated.
+        chat("c1", "thr-a", { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 60 });
+        chat("c2", "thr-b", { inputTokens: 50, outputTokens: 5, reasoningTokens: 2 });
+        runCall("r1", "run-1", "s1_load", { inputTokens: 300, outputTokens: 30, cacheCreationInputTokens: 12 });
+        runCall("r2", "run-1", "s2_align", { inputTokens: 200, outputTokens: 20 });
+        runCall("r3", "run-2", undefined, { inputTokens: 7, outputTokens: 1 });
+        loose("b1", { inputTokens: 400, outputTokens: 40, reasoningTokens: 3 });
+
+        const headline = getAnalysisUsageTotals("ana-1")._unsafeUnwrap();
+        const parts: LlmUsageTotals[] = [
+            ...listAnalysisUsageBySession("ana-1")
+                ._unsafeUnwrap()
+                .map((g) => g.totals),
+            ...listAnalysisUsageByRun("ana-1")
+                ._unsafeUnwrap()
+                .map((g) => g.totals),
+            getAnalysisUnattributedUsageTotals("ana-1")._unsafeUnwrap(),
+        ];
+
+        // Per quantity, never as one number: summing across quantities is the arithmetic every surface
+        // here is forbidden to do, and a test that did it would be asserting the wrong property.
+        const quantities = ["inputTokens", "outputTokens", "cacheCreationInputTokens", "cacheReadInputTokens", "reasoningTokens"] as const;
+        for (const q of quantities) {
+            const summed = parts.reduce((acc, p) => acc + (p[q] ?? 0), 0);
+            expect({ [q]: summed }).toEqual({ [q]: headline[q] ?? 0 });
+        }
+        expect(parts.reduce((acc, p) => acc + p.calls, 0)).toBe(headline.calls);
+
+        // And the run grain's steps reconcile with their own run, one level down.
+        const runOne = listAnalysisUsageByRun("ana-1")
+            ._unsafeUnwrap()
+            .find((g) => g.runId === "run-1");
+        const steps = listRunUsageByStep("ana-1", "run-1")._unsafeUnwrap();
+        expect(steps.reduce((acc, s) => acc + (s.totals.inputTokens ?? 0), 0)).toBe(runOne?.totals.inputTokens ?? 0);
+        expect(steps.reduce((acc, s) => acc + s.totals.calls, 0)).toBe(runOne?.totals.calls ?? 0);
     });
 });
 
