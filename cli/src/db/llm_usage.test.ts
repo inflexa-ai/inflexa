@@ -1,16 +1,27 @@
 import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
+// The harness's own value for the profile's synthetic run id. Imported here for the same reason the
+// query layer imports it: a copy of the string would keep this suite green through a rename there,
+// which is exactly the silent coupling the export exists to remove.
+import { DATA_PROFILE_RUN_LITERAL } from "@inflexa-ai/harness/contracts/data-profile.js";
+
 import { freshDb } from "../test_support/db.ts";
 import { deleteAnalysis, insertAnalysis, insertAnchor, upsertLlmUsage, type LlmUsageEntry } from "./primary_mutation.ts";
 import {
+    getAnalysisDataProfileUsageTotals,
     getAnalysisUnattributedUsageTotals,
     getAnalysisUsageTotals,
+    getRunUsageTotals,
+    getSessionUsageTotalsIncludingRuns,
     listAnalysisUsageByAgent,
     listAnalysisUsageByModel,
     listAnalysisUsageByRun,
     listAnalysisUsageBySession,
     listRunUsageByStep,
+    listSessionUsageByAgent,
+    listSessionUsageByModel,
+    listUsageTotalsByAnalysis,
     type LlmUsageTotals,
 } from "./primary_query.ts";
 import { asStr256 } from "../lib/types.ts";
@@ -318,14 +329,18 @@ describe("the where-it-ran grains", () => {
         expect(listRunUsageByStep("ana-1", "run-1")._unsafeUnwrap()).toEqual([{ stepId: "s1", totals: { calls: 1, inputTokens: 200 } }]);
     });
 
-    test("the session, run, and unattributed figures sum per quantity to the analysis headline", () => {
-        // A fixture carrying all three shapes at once — chat turns, a run with steps, and a call with
-        // neither frame — because the partition only means anything when every bucket is populated.
+    test("the session, run, data-profile, and unattributed figures sum per quantity to the analysis headline", () => {
+        // A fixture carrying all four shapes at once — chat turns, a run with steps, the data profile,
+        // and a call with neither frame — because the partition only means anything when every bucket
+        // is populated. The profile is what makes this test load-bearing after its rows stopped
+        // appearing among the runs: excluded there and reported nowhere, it would vanish from the
+        // parts while still counting toward the headline, and this assertion is what catches that.
         chat("c1", "thr-a", { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 60 });
         chat("c2", "thr-b", { inputTokens: 50, outputTokens: 5, reasoningTokens: 2 });
         runCall("r1", "run-1", "s1_load", { inputTokens: 300, outputTokens: 30, cacheCreationInputTokens: 12 });
         runCall("r2", "run-1", "s2_align", { inputTokens: 200, outputTokens: 20 });
         runCall("r3", "run-2", undefined, { inputTokens: 7, outputTokens: 1 });
+        runCall("p1", DATA_PROFILE_RUN_LITERAL, "profile", { inputTokens: 900, outputTokens: 90, cacheReadInputTokens: 500 });
         loose("b1", { inputTokens: 400, outputTokens: 40, reasoningTokens: 3 });
 
         const headline = getAnalysisUsageTotals("ana-1")._unsafeUnwrap();
@@ -336,6 +351,7 @@ describe("the where-it-ran grains", () => {
             ...listAnalysisUsageByRun("ana-1")
                 ._unsafeUnwrap()
                 .map((g) => g.totals),
+            getAnalysisDataProfileUsageTotals("ana-1")._unsafeUnwrap(),
             getAnalysisUnattributedUsageTotals("ana-1")._unsafeUnwrap(),
         ];
 
@@ -355,6 +371,205 @@ describe("the where-it-ran grains", () => {
         const steps = listRunUsageByStep("ana-1", "run-1")._unsafeUnwrap();
         expect(steps.reduce((acc, s) => acc + (s.totals.inputTokens ?? 0), 0)).toBe(runOne?.totals.inputTokens ?? 0);
         expect(steps.reduce((acc, s) => acc + s.totals.calls, 0)).toBe(runOne?.totals.calls ?? 0);
+    });
+});
+
+// The shape a single real analysis actually produced, reproduced row for row. Every read added for
+// the per-entity surfaces is asserted against it rather than against a fixture invented to suit them,
+// because the two facts that make those reads necessary are properties of THIS shape: a run's calls
+// carry the thread that launched them, and the data profile carries no thread at all.
+describe("the real ledger's shape", () => {
+    const THREAD = "019f1111-2222-7333-8444-5555555c2974";
+    const RUN = "01821111-2222-7333-8444-55555555d70ae";
+
+    // Figures spread across the calls that produced them rather than parked on one row: the reads
+    // under test are aggregates, and a group of one proves nothing about summing.
+    function spread(prefix: string, calls: number, input: number, output: number, frame: Partial<LlmUsageEntry>): void {
+        for (let i = 0; i < calls; i++) {
+            // The remainder rides the first row so the per-row shares sum EXACTLY to the group total.
+            const share = (total: number): number => Math.floor(total / calls) + (i === 0 ? total % calls : 0);
+            upsertLlmUsage(
+                entry({ recordKey: `${prefix}-${i}`, threadId: undefined, ...frame, usage: { inputTokens: share(input), outputTokens: share(output) } }),
+            )._unsafeUnwrap();
+        }
+    }
+
+    beforeEach(() => {
+        // The run: 47 calls, and stamped with the thread that launched it — the fact that makes "this
+        // session" ambiguous by a factor of 74.
+        spread("run", 47, 809_233, 40_431, { runId: RUN, threadId: THREAD, agentId: "planner", servedModelId: "opus-4" });
+        // The data profile: no thread at all, so it belongs to no session and has one possible home.
+        spread("prof", 4, 55_534, 3_195, { runId: DATA_PROFILE_RUN_LITERAL, agentId: "data-profiler", servedModelId: "haiku-4" });
+        // The conversation's own turn.
+        spread("chat", 1, 11_083, 2_863, { threadId: THREAD, agentId: "conversation", servedModelId: "opus-4" });
+    });
+
+    test("the data profile reports as its own grain and never among the runs", () => {
+        expect(getAnalysisDataProfileUsageTotals("ana-1")._unsafeUnwrap()).toEqual({ calls: 4, inputTokens: 55_534, outputTokens: 3_195 });
+        // The whole point of the exclusion: a row a reader cannot cross-reference against any run
+        // listing no longer sits in the run table.
+        expect(listAnalysisUsageByRun("ana-1")._unsafeUnwrap()).toEqual([{ runId: RUN, totals: { calls: 47, inputTokens: 809_233, outputTokens: 40_431 } }]);
+    });
+
+    test("one run's totals read back without pulling the whole run grouping", () => {
+        expect(getRunUsageTotals("ana-1", RUN)._unsafeUnwrap()).toEqual({ calls: 47, inputTokens: 809_233, outputTokens: 40_431 });
+        // A run this analysis never had is zero calls with every quantity absent — a legitimate answer,
+        // not a miss, matching every other totals read here.
+        expect(getRunUsageTotals("ana-1", "run-that-never-ran")._unsafeUnwrap()).toEqual({ calls: 0 });
+    });
+
+    test("the inclusive session totals exceed the session grain by exactly the run it launched", () => {
+        const inclusive = getSessionUsageTotalsIncludingRuns("ana-1", THREAD)._unsafeUnwrap();
+        const grain = listAnalysisUsageBySession("ana-1")
+            ._unsafeUnwrap()
+            .find((g) => g.threadId === THREAD)?.totals;
+        const run = getRunUsageTotals("ana-1", RUN)._unsafeUnwrap();
+
+        // The 74× gap the design names: the conversation's own turn against the run it started.
+        expect(grain).toEqual({ calls: 1, inputTokens: 11_083, outputTokens: 2_863 });
+        expect(inclusive).toEqual({ calls: 48, inputTokens: 820_316, outputTokens: 43_294 });
+
+        // Neither read is wrong; they differ by the whole of the run and by nothing else. Asserted as a
+        // difference rather than as two literals so a future fixture change cannot make both drift
+        // together and leave the relationship untested.
+        // Typed as the read's own shape so the expectation may carry an absent quantity: a partition
+        // asserted only over quantities that happen to be present is not the assertion we want.
+        const difference: LlmUsageTotals = {
+            calls: inclusive.calls - (grain?.calls ?? 0),
+            inputTokens: (inclusive.inputTokens ?? 0) - (grain?.inputTokens ?? 0),
+            outputTokens: (inclusive.outputTokens ?? 0) - (grain?.outputTokens ?? 0),
+        };
+        expect(difference).toEqual({ calls: run.calls, inputTokens: run.inputTokens, outputTokens: run.outputTokens });
+        // And the profile is in neither: it carries no thread, so no session can absorb it.
+        expect(inclusive.inputTokens).not.toBe(820_316 + 55_534);
+    });
+
+    test("a session's model and agent groupings cover its runs and exclude the profile", () => {
+        // Both the turn and the run it launched served on opus-4, so they fold into one group; the
+        // profile's haiku-4 calls carry no thread and cannot appear.
+        expect(listSessionUsageByModel("ana-1", THREAD)._unsafeUnwrap()).toEqual([
+            { servedModelId: "opus-4", totals: { calls: 48, inputTokens: 820_316, outputTokens: 43_294 } },
+        ]);
+        // By agent is where the fold is visible: the run's planner loop reports under its own id rather
+        // than under the conversation that started it.
+        expect(listSessionUsageByAgent("ana-1", THREAD)._unsafeUnwrap()).toEqual([
+            { agentId: "conversation", totals: { calls: 1, inputTokens: 11_083, outputTokens: 2_863 } },
+            { agentId: "planner", totals: { calls: 47, inputTokens: 809_233, outputTokens: 40_431 } },
+        ]);
+    });
+
+    test("a session's groupings cannot see another thread's or another analysis's rows", () => {
+        spread("other", 1, 777, 77, { threadId: "thr-other", agentId: "conversation", servedModelId: "opus-4" });
+        upsertLlmUsage(entry({ recordKey: "x1", scopeId: "ana-2", threadId: THREAD, usage: { inputTokens: 999 } }))._unsafeUnwrap();
+
+        expect(getSessionUsageTotalsIncludingRuns("ana-1", THREAD)._unsafeUnwrap().inputTokens).toBe(820_316);
+        expect(listSessionUsageByModel("ana-1", THREAD)._unsafeUnwrap()).toHaveLength(1);
+        expect(getSessionUsageTotalsIncludingRuns("ana-1", "thr-never-opened")._unsafeUnwrap()).toEqual({ calls: 0 });
+    });
+
+    test("several analyses' totals come back from one read, keyed by analysis", () => {
+        upsertLlmUsage(entry({ recordKey: "y1", scopeId: "ana-2", usage: { inputTokens: 500, outputTokens: 50 } }))._unsafeUnwrap();
+
+        // A duplicate id and an analysis with no rows at all: the map is total over what was ASKED for,
+        // so a picker draws every row it listed without a second lookup or a missing-key branch.
+        const totals = listUsageTotalsByAnalysis(["ana-1", "ana-2", "ana-1", "ana-never"])._unsafeUnwrap();
+
+        expect(totals.size).toBe(3);
+        expect(totals.get("ana-1")).toEqual({ calls: 52, inputTokens: 875_850, outputTokens: 46_489 });
+        expect(totals.get("ana-2")).toEqual({ calls: 1, inputTokens: 500, outputTokens: 50 });
+        expect(totals.get("ana-never")).toEqual({ calls: 0 });
+        // The batched answer is the per-analysis answer — a picker showing one figure and a detail
+        // screen showing the other would be the failure this equality rules out.
+        expect(totals.get("ana-1")).toEqual(getAnalysisUsageTotals("ana-1")._unsafeUnwrap());
+        expect(totals.get("ana-never")).toEqual(getAnalysisUsageTotals("ana-never")._unsafeUnwrap());
+    });
+
+    test("an empty list of analyses answers with an empty map", () => {
+        // `IN ()` is a syntax error in SQLite, so the short-circuit is what keeps a picker with nothing
+        // to draw from failing rather than rendering nothing.
+        expect(listUsageTotalsByAnalysis([])._unsafeUnwrap().size).toBe(0);
+    });
+
+    test("the grains still sum per quantity to the headline with the profile partitioned out", () => {
+        const headline = getAnalysisUsageTotals("ana-1")._unsafeUnwrap();
+        const parts: LlmUsageTotals[] = [
+            ...listAnalysisUsageBySession("ana-1")
+                ._unsafeUnwrap()
+                .map((g) => g.totals),
+            ...listAnalysisUsageByRun("ana-1")
+                ._unsafeUnwrap()
+                .map((g) => g.totals),
+            getAnalysisDataProfileUsageTotals("ana-1")._unsafeUnwrap(),
+            getAnalysisUnattributedUsageTotals("ana-1")._unsafeUnwrap(),
+        ];
+
+        // Per quantity, never as one number — summing across quantities is the arithmetic every
+        // surface here is forbidden to do.
+        const summed: LlmUsageTotals = {
+            calls: parts.reduce((acc, p) => acc + p.calls, 0),
+            inputTokens: parts.reduce((acc, p) => acc + (p.inputTokens ?? 0), 0),
+            outputTokens: parts.reduce((acc, p) => acc + (p.outputTokens ?? 0), 0),
+        };
+        expect(summed).toEqual({ calls: headline.calls, inputTokens: headline.inputTokens, outputTokens: headline.outputTokens });
+        // The inclusive session read is NOT a part of the partition — adding it would count the run
+        // twice, which is the whole reason the grain read exists beside it.
+        expect(getSessionUsageTotalsIncludingRuns("ana-1", THREAD)._unsafeUnwrap().calls).toBeGreaterThan(
+            listAnalysisUsageBySession("ana-1")._unsafeUnwrap()[0]?.totals.calls ?? 0,
+        );
+    });
+});
+
+describe("absent means not reported, at every new read", () => {
+    // One quantity reported and four never mentioned, across all three frames. Every read below must
+    // carry the reported one and OMIT the other four — a `?? 0` anywhere in the query layer would make
+    // each of these assertions fail on a key that should not exist.
+    const THREAD = "thr-silent";
+    const RUN = "run-silent";
+
+    function absentKeys(totals: LlmUsageTotals): string[] {
+        return (["outputTokens", "cacheCreationInputTokens", "cacheReadInputTokens", "reasoningTokens"] as const).filter((k) => !(k in totals));
+    }
+
+    beforeEach(() => {
+        upsertLlmUsage(entry({ recordKey: "s-chat", threadId: THREAD, usage: { inputTokens: 10 } }))._unsafeUnwrap();
+        upsertLlmUsage(entry({ recordKey: "s-run", threadId: THREAD, runId: RUN, usage: { inputTokens: 20 } }))._unsafeUnwrap();
+        upsertLlmUsage(entry({ recordKey: "s-prof", threadId: undefined, runId: DATA_PROFILE_RUN_LITERAL, usage: { inputTokens: 30 } }))._unsafeUnwrap();
+    });
+
+    test("a quantity no row reported is missing from every new read, never zeroed", () => {
+        const reads: [string, LlmUsageTotals][] = [
+            ["data profile", getAnalysisDataProfileUsageTotals("ana-1")._unsafeUnwrap()],
+            ["run totals", getRunUsageTotals("ana-1", RUN)._unsafeUnwrap()],
+            ["session inclusive", getSessionUsageTotalsIncludingRuns("ana-1", THREAD)._unsafeUnwrap()],
+            ["session by model", listSessionUsageByModel("ana-1", THREAD)._unsafeUnwrap()[0]!.totals],
+            ["session by agent", listSessionUsageByAgent("ana-1", THREAD)._unsafeUnwrap()[0]!.totals],
+            ["batched analysis totals", listUsageTotalsByAnalysis(["ana-1"])._unsafeUnwrap().get("ana-1")!],
+        ];
+
+        for (const [name, totals] of reads) {
+            // Named in the assertion so a failure says WHICH read started reporting a zero.
+            expect({ [name]: absentKeys(totals) }).toEqual({
+                [name]: ["outputTokens", "cacheCreationInputTokens", "cacheReadInputTokens", "reasoningTokens"],
+            });
+            expect(totals.inputTokens).toBeGreaterThan(0);
+        }
+    });
+
+    test("a group whose provider reported nothing keeps its calls and reports no figures at all", () => {
+        upsertLlmUsage(entry({ recordKey: "q1", threadId: "thr-quiet", runId: "run-quiet", usage: {} }))._unsafeUnwrap();
+        upsertLlmUsage(entry({ recordKey: "q2", threadId: "thr-quiet", runId: "run-quiet", usage: {} }))._unsafeUnwrap();
+
+        // Two calls happened; every figure is an unknown. `calls` is the only thing that separates this
+        // from an analysis that never ran anything, which is why it is never absent.
+        expect(getRunUsageTotals("ana-1", "run-quiet")._unsafeUnwrap()).toEqual({ calls: 2 });
+        expect(getSessionUsageTotalsIncludingRuns("ana-1", "thr-quiet")._unsafeUnwrap()).toEqual({ calls: 2 });
+        expect(listSessionUsageByAgent("ana-1", "thr-quiet")._unsafeUnwrap()).toEqual([{ agentId: "orchestrator", totals: { calls: 2 } }]);
+        expect(listUsageTotalsByAnalysis(["ana-1"])._unsafeUnwrap().get("ana-1")).not.toHaveProperty("outputTokens");
+    });
+
+    test("an analysis that never profiled reports zero profile calls rather than nothing at all", () => {
+        // Same discipline as the unattributed read: a grain with no rows is still a report.
+        expect(getAnalysisDataProfileUsageTotals("ana-never-profiled")._unsafeUnwrap()).toEqual({ calls: 0 });
     });
 });
 

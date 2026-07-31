@@ -169,8 +169,18 @@ describe("usage grain subcommands (e2e)", () => {
         expect(runs.exitCode).toBe(0);
         expect(runs.stdout).toContain('Runs for "My Analysis"');
         expect(runs.stdout).toMatch(new RegExp(`${RUN_ID}\\s+2\\s+24\\.3k\\s+1\\.5k`));
-        // Work under neither frame is named in both grain tables, so each accounts for the headline.
-        expect(runs.stdout).toContain("(no session or run)");
+
+        // Work under neither frame is carried by the analysis report — the one report that also prints
+        // the headline it is part of — and by neither grain table, so summing the two printed grain
+        // reports cannot count it twice. Each grain instead signposts it, figure-free.
+        const report = runCli(["usage", "--analysis", "My Analysis"], { cwd });
+        expect(report.exitCode).toBe(0);
+        expect(report.stdout).toMatch(/\(no session or run\)\s+1\s+800\s+80/);
+        for (const grain of [sessions.stdout, runs.stdout]) {
+            expect(grain).not.toContain("(no session or run)");
+            expect(grain).not.toContain("800");
+            expect(grain).toContain("Calls belonging to no session or run are reported by `inflexa usage`.");
+        }
 
         const steps = runCli(["usage", "steps", "--run", RUN_ID, "--analysis", "My Analysis"], { cwd });
         expect(steps.exitCode).toBe(0);

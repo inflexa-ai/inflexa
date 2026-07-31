@@ -15,6 +15,7 @@
  */
 
 import {
+    getAnalysisDataProfileUsageTotals,
     getAnalysisUnattributedUsageTotals,
     getAnalysisUsageTotals,
     listAnalysisUsageByAgent,
@@ -48,14 +49,33 @@ const NO_SERVED_MODEL = `(${NOT_REPORTED})`;
 
 /**
  * Row label for calls belonging to NEITHER a session nor a run — background and boot-time work, which
- * runs under an analysis scope carrying no frame of either kind.
+ * runs under an analysis scope carrying no frame of either kind. The label says exactly which absence
+ * it is, so it is never read as "the calls this table missed".
  *
- * The same row appears in the session report AND in the run report, which is deliberate: it is one set
- * of calls, and each grain has to name it or its own table would not account for everything the
- * analysis headline holds. The label says exactly which absence it is, so a reader of either table
- * never mistakes it for "the calls this grain missed".
+ * It labels a row in ONE report: the analysis report below, beside the headline these calls are part
+ * of. See `runUsage` for why the grain tables name the bucket without carrying its figures.
  */
 const NO_FRAME = "(no session or run)";
+
+/**
+ * The grain reports' signpost to the bucket they do not carry. Deliberately carries NO figure — not
+ * the token counts, not even the call count — because the whole point of moving the bucket out of the
+ * grain tables is that its figures live in exactly one printed report; a count here would put one of
+ * them back into two, which is the same defect in smaller type.
+ */
+const UNATTRIBUTED_SIGNPOST = "Calls belonging to no session or run are reported by `inflexa usage`.";
+
+/**
+ * The grain reports' signpost to the data profile, on the same figure-free terms as
+ * {@link UNATTRIBUTED_SIGNPOST}.
+ *
+ * It matters most in `usage runs`, where the profile's rows used to print as a run: a reader who saw
+ * them there and no longer does needs to be told they moved rather than left. `usage sessions` carries
+ * it for the same reason it carries the unattributed one — the profile stamps no thread, so it can
+ * never appear under a session either, and a grain report that stays silent about consumption it
+ * structurally cannot hold is where a reader starts doubting the ledger.
+ */
+const DATA_PROFILE_SIGNPOST = "The data profile's calls are reported by `inflexa usage`.";
 
 /** Row label for a run's calls that ran outside any step — its plan and synthesis frames. */
 const NO_STEP = "(no step)";
@@ -119,11 +139,46 @@ export function runUsage(flags: ContextFlags): void {
         return;
     }
 
+    const dataProfile = getAnalysisDataProfileUsageTotals(analysis.id).match((t) => t, dieOn("Failed to read data-profile usage"));
+    const unattributed = getAnalysisUnattributedUsageTotals(analysis.id).match((t) => t, dieOn("Failed to read unattributed usage"));
     const byModel = listAnalysisUsageByModel(analysis.id).match((g) => g, dieOn("Failed to read usage by model"));
     const byAgent = listAnalysisUsageByAgent(analysis.id).match((g) => g, dieOn("Failed to read usage by agent"));
 
     console.log(`\n  Usage for "${analysis.name}" — ${plural(totals.calls, "call")}\n`);
     for (const line of headlineLines(totals)) console.log(line);
+
+    // The data profile is a grain of its own, not a run — it has no run row, no run listing shows it,
+    // and it is the only grain that runs at most once per analysis. That last part is why it prints as
+    // a nested figure block like the headline rather than as a one-row table: there is nothing to
+    // enumerate, and the block carries the cache breakdown a profile's long cached prefixes actually
+    // produce, which a two-column grain table would drop.
+    //
+    // Its calls stay in the by-model and by-agent tables below — those are analysis-wide and always
+    // were. The grain sections partition WHERE the work ran; the breakdown tables cut the same
+    // headline a different way, and reporting a call in both is not double-counting.
+    if (dataProfile.calls > 0) {
+        console.log(`\n  Data profile — ${plural(dataProfile.calls, "call")}\n`);
+        for (const line of headlineLines(dataProfile)) console.log(line);
+    }
+
+    // Where the where-it-ran partition reconciles, and the ONLY report that carries the unattributed
+    // figures. The grain subcommands each print one grain; this report prints the headline, so it is
+    // the one place a bucket that belongs to no grain can be named without a reader having to decide
+    // which table it is a member of. Printing it in `usage sessions` AND `usage runs` — one set of
+    // calls in two tables — meant summing the two printed reports counted it twice, and it summed
+    // into a grain column it was never a member of.
+    //
+    // The considered alternative was keeping it in both grain reports as a trailing note outside the
+    // table. Rejected: it is the same figures in two reports either way, and a note a reader can still
+    // add up is only a typographic hint that they shouldn't. The grains instead carry a figure-free
+    // signpost, so the bucket stays discoverable from wherever the reader started.
+    //
+    // Shown only when it holds calls, matching the usage dialog: a section announcing the absence of
+    // work that never happened is noise, not information.
+    if (unattributed.calls > 0) {
+        console.log("\n  Unattributed\n");
+        for (const line of breakdownLines("where", [{ label: NO_FRAME, totals: unattributed }])) console.log(line);
+    }
 
     console.log("\n  By served model\n");
     const modelGroups = byModel.map((g) => ({ label: g.servedModelId ?? NO_SERVED_MODEL, totals: g.totals }));
@@ -153,41 +208,71 @@ export function runUsage(flags: ContextFlags): void {
  * figures. A grain holding groups whose providers reported nothing is a report and prints as one; a
  * grain holding no groups is not a report at all, and an empty table or a zeroed row would read as
  * "this analysis spent nothing here", which is a claim the ledger cannot make.
+ *
+ * `notes` trail BOTH branches — an emptied grain is exactly when a reader most needs to be told that
+ * consumption they can see elsewhere is accounted for somewhere they haven't looked yet. Each is
+ * printed on its own line rather than joined, so a grain missing two buckets names them separately
+ * instead of running them into one sentence a reader has to parse apart.
  */
-function printGrain(heading: string, column: string, groups: readonly { label: string; totals: LlmUsageTotals }[], emptyLine: string): void {
+function printGrain(
+    heading: string,
+    column: string,
+    groups: readonly { label: string; totals: LlmUsageTotals }[],
+    emptyLine: string,
+    notes: readonly string[] = [],
+): void {
     if (groups.length === 0) {
-        console.log(`\n  ${emptyLine}\n`);
-        return;
+        console.log(`\n  ${emptyLine}`);
+    } else {
+        console.log(`\n  ${heading}\n`);
+        for (const line of breakdownLines(column, groups)) console.log(line);
     }
-    console.log(`\n  ${heading}\n`);
-    for (const line of breakdownLines(column, groups)) console.log(line);
+    for (const note of notes) console.log(`\n  ${note}`);
     console.log();
+}
+
+/**
+ * The signposts a grain report owes its reader: one per bucket that holds calls and that this grain
+ * structurally cannot show. Both are figure-free by design (see {@link UNATTRIBUTED_SIGNPOST}), so
+ * each read here is for its call COUNT alone — whether there is anything to point at.
+ *
+ * Shared by the session and run grains because the two buckets are invisible to both: the data profile
+ * stamps no thread and is not a run, and unattributed calls carry neither frame.
+ */
+function grainSignposts(analysisId: string): string[] {
+    const dataProfile = getAnalysisDataProfileUsageTotals(analysisId).match((t) => t, dieOn("Failed to read data-profile usage"));
+    const unattributed = getAnalysisUnattributedUsageTotals(analysisId).match((t) => t, dieOn("Failed to read unattributed usage"));
+
+    const notes: string[] = [];
+    if (dataProfile.calls > 0) notes.push(DATA_PROFILE_SIGNPOST);
+    if (unattributed.calls > 0) notes.push(UNATTRIBUTED_SIGNPOST);
+    return notes;
 }
 
 /** `inflexa usage sessions [--analysis <id|name>]` — what each of the analysis's conversations consumed. */
 export function runUsageSessions(flags: ContextFlags): void {
     const analysis = resolveSingleAnalysis(flags, EMPTY_HINT, { touch: false });
     const sessions = listAnalysisUsageBySession(analysis.id).match((g) => g, dieOn("Failed to read usage by session"));
-    const unattributed = getAnalysisUnattributedUsageTotals(analysis.id).match((t) => t, dieOn("Failed to read unattributed usage"));
 
     // A session's figures cover its own chat turns; a run launched from that conversation reports
-    // under `usage runs`, because attribution follows the frame the call actually ran in.
+    // under `usage runs`, because attribution follows the frame the call actually ran in. The sidebar
+    // folds a session's runs INTO it instead and says so — both readings are legitimate and they
+    // differ by the whole of a run, which is why each surface names the one it shows.
     const groups = sessions.map((g) => ({ label: g.threadId, totals: g.totals }));
-    if (unattributed.calls > 0) groups.push({ label: NO_FRAME, totals: unattributed });
 
-    printGrain(`Sessions for "${analysis.name}"`, "session", groups, `No session usage recorded for "${analysis.name}".`);
+    printGrain(`Sessions for "${analysis.name}"`, "session", groups, `No session usage recorded for "${analysis.name}".`, grainSignposts(analysis.id));
 }
 
 /** `inflexa usage runs [--analysis <id|name>]` — what each of the analysis's runs consumed. */
 export function runUsageRuns(flags: ContextFlags): void {
     const analysis = resolveSingleAnalysis(flags, EMPTY_HINT, { touch: false });
     const runs = listAnalysisUsageByRun(analysis.id).match((g) => g, dieOn("Failed to read usage by run"));
-    const unattributed = getAnalysisUnattributedUsageTotals(analysis.id).match((t) => t, dieOn("Failed to read unattributed usage"));
 
+    // Runs only: the data profile rides the same ledger column but has no run row for a reader to
+    // cross-reference this table against, so it reports as its own grain in `inflexa usage`.
     const groups = runs.map((g) => ({ label: g.runId, totals: g.totals }));
-    if (unattributed.calls > 0) groups.push({ label: NO_FRAME, totals: unattributed });
 
-    printGrain(`Runs for "${analysis.name}"`, "run", groups, `No run usage recorded for "${analysis.name}".`);
+    printGrain(`Runs for "${analysis.name}"`, "run", groups, `No run usage recorded for "${analysis.name}".`, grainSignposts(analysis.id));
 }
 
 /** A run id with its dashes removed — the space an abbreviation is matched against from the right. */
