@@ -15,6 +15,7 @@ import type { AskCardPart, TextPart, ThinkingPart, ToolCallPart, FileEditPart, P
 import type { ActiveProfileProgress, ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import type { SessionUsageSnapshot } from "../components/dialog/usage_dialog.tsx";
 import type { LlmUsageTotals } from "../../db/primary_query.ts";
+import type { RunStepUsage } from "../components/dialog/run_detail_dialog.tsx";
 
 /** A run step's lifecycle state (mirrors `RunStepView.state`). */
 export type StepState = "done" | "running" | "failed" | "queued";
@@ -703,17 +704,25 @@ export const mockRunUsage: ReadonlyMap<string, LlmUsageTotals> = new Map([
 ]);
 
 /**
- * MOCK: what each step of {@link mockRunSteps} consumed, keyed by step id — read per opened run and
- * handed to the detail dialog as data, the same contract {@link mockRunUsage} has for the run itself.
+ * MOCK: what {@link mockRunSteps} consumed per step, plus the run-level calls no step accounts for —
+ * read per opened run and handed to the detail dialog as data, the same contract {@link mockRunUsage}
+ * has for the run itself.
  *
  * `pathway-enrichment` is deliberately ABSENT and `synthesis` deliberately reports nothing: a step
  * that never ran and a step whose provider measured nothing both carry no figure, and the exhibit has
- * to show that a run's step list is not a column of figures with holes punched in it. The three
- * present figures do NOT add up to the run's 809.2k above, which is also deliberate — a run's own
- * calls (planning, synthesis dispatch) are not attributed to any step.
+ * to show that a run's step list is not a column of figures with holes punched in it.
+ *
+ * The three step figures deliberately do not add up to the run's 47 calls / 809.2k above; the
+ * `unattributed` remainder is exactly the difference, so the exhibit shows the headline RECONCILING
+ * with what is under it. That gap is a real state (planning and any run-level dispatch belong to no
+ * step), and showing it closed is the point — a reader who can see 47 calls and count 32 has found
+ * what looks like a broken ledger.
  */
-export const mockRunStepUsage: ReadonlyMap<string, LlmUsageTotals> = new Map([
-    ["qc-normalize", { calls: 8, inputTokens: 121_400, outputTokens: 6_200 }],
-    ["fit-de-model", { calls: 21, inputTokens: 402_900, outputTokens: 18_700 }],
-    ["synthesis", { calls: 3 }],
-]);
+export const mockRunStepUsage: RunStepUsage = {
+    byStep: new Map([
+        ["qc-normalize", { calls: 8, inputTokens: 121_400, outputTokens: 6_200 }],
+        ["fit-de-model", { calls: 21, inputTokens: 402_900, outputTokens: 18_700 }],
+        ["synthesis", { calls: 3 }],
+    ]),
+    unattributed: { calls: 15, inputTokens: 284_900, outputTokens: 15_500 },
+};

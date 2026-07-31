@@ -91,4 +91,36 @@ describe("runDetailLines", () => {
         // The figure is ADDITIVE: every line the run already had survives, in order.
         expect(with_.filter((l) => !l.startsWith("usage "))).toEqual(without);
     });
+
+    test("the run's step-less calls are named under the headline, so the total reconciles", () => {
+        const lines = runDetailLines(
+            run(),
+            { calls: 47, inputTokens: 809_200, outputTokens: 40_400 },
+            { calls: 15, inputTokens: 284_900, outputTokens: 15_500 },
+        );
+
+        expect(lines).toContain(`  outside any step 284.9k in ${GLYPHS.middot} 15.5k out ${GLYPHS.middot} 15 calls`);
+        // Indented UNDER the headline it is a part of, and immediately after it: the remainder means
+        // nothing on its own, and levelling it would read as a second, unrelated total.
+        const headline = lines.findIndex((l) => l.startsWith("usage "));
+        expect(lines[headline + 1]).toStartWith("  outside any step ");
+    });
+
+    test("a step-less call whose provider reported nothing is still named", () => {
+        // The case the line most has to cover: the headline counted the call, no step shows it, and
+        // there is no figure anywhere to hint at the gap. Gating the line on figures would hide it.
+        const lines = runDetailLines(run(), { calls: 4, inputTokens: 100 }, { calls: 1 });
+
+        expect(lines).toContain(`  outside any step not reported ${GLYPHS.middot} 1 call`);
+    });
+
+    test("a fully attributed run carries no remainder line", () => {
+        const attributed = runDetailLines(run(), { calls: 4, inputTokens: 100 }, null);
+        const zeroCalls = runDetailLines(run(), { calls: 4, inputTokens: 100 }, { calls: 0 });
+
+        // `null` (every call has a step) and a zero-call remainder are the same statement, and neither
+        // is a gap worth a line — an "outside any step" row on a run that has none reads as a defect.
+        for (const lines of [attributed, zeroCalls]) expect(lines.some((l) => l.includes("outside any step"))).toBe(false);
+        expect(zeroCalls).toEqual(attributed);
+    });
 });
