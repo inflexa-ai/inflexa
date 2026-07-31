@@ -1,7 +1,9 @@
 /**
  * Reconcile content-attests inputs (see the artifact-manifest spec): the path-only provenance frame
  * leaves every input ref hashless; reconcile fills the hash from the immutable
- * on-disk bytes, and fails fast when an attested input is missing.
+ * on-disk bytes, and drops from lineage every ref it cannot hash — a directory,
+ * a resolution outside the analysis tree, a path that is not there — so no
+ * hashless edge is ever registered and no step dies over one.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -244,59 +246,126 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
         }
     });
 
-    test("throws when an attested input is missing at reconcile (fail-fast)", async () => {
-        const { sessionPath, root, collector, manifest } = await setup({ writeUpstream: false });
+    test("drops an input that is not present at reconcile instead of failing the step", async () => {
+        const { sessionPath, root, upstreamRel, collector, manifest } = await setup({ writeUpstream: false });
         try {
-            await expect(
-                reconcileManifestWithDisk({
-                    workspaceRoot: root,
-                    resourceId: RID,
-                    runId: "run-001",
-                    stepId: "de",
-                    agentId: "agent-x",
-                    manifest,
-                    collector,
-                }),
-            ).rejects.toThrow(/cannot attest input/);
+            const result = await reconcileManifestWithDisk({
+                workspaceRoot: root,
+                resourceId: RID,
+                runId: "run-001",
+                stepId: "de",
+                agentId: "agent-x",
+                manifest,
+                collector,
+            });
+
+            // The step's own output still reconciles, and the unhashable ref
+            // leaves both the tracked inputs and every record that cited it —
+            // registration never sees a hashless edge.
+            expect(result.manifest).toHaveLength(1);
+            expect(collector.getTrackedInputs().some((r) => r.path === `/${RID}/${upstreamRel}`)).toBe(false);
+            expect(collector.getRecords().flatMap((r) => r.inputs)).toHaveLength(0);
         } finally {
             await rm(sessionPath, { recursive: true, force: true });
         }
     });
 
-    test("names the unattestable input and its throw site in the log", async () => {
-        // The regression this change exists for: a step failed this way repeatedly
-        // in the field and the operator log said nothing, because the throw was
-        // console.error'd (discarded by the host) and the raised message is scrubbed
-        // downstream. The record below is the ONLY account of which input died.
+    test("names the dropped input and its drop site in the log", async () => {
+        // A dropped edge is invisible by nature — the lineage graph simply lacks
+        // it — so this record is the only account of which input the step lost
+        // and why. It is also how a reader tells a noisy capture layer from an
+        // artifact that genuinely vanished under the step.
         const { sessionPath, root, upstreamRel, collector, manifest } = await setup({ writeUpstream: false });
         const logger = createCapturingLogger();
         try {
-            await expect(
-                reconcileManifestWithDisk({
-                    workspaceRoot: root,
-                    resourceId: RID,
-                    runId: "run-001",
-                    stepId: "de",
-                    agentId: "agent-x",
-                    manifest,
-                    collector,
-                    logger,
-                }),
-            ).rejects.toThrow();
+            await reconcileManifestWithDisk({
+                workspaceRoot: root,
+                resourceId: RID,
+                runId: "run-001",
+                stepId: "de",
+                agentId: "agent-x",
+                manifest,
+                collector,
+                logger,
+            });
 
-            const errors = logger.records.filter((r) => r.level === "error");
-            expect(errors).toHaveLength(1);
-            expect(errors[0]!.msg).toBe("[reconcile-manifest] cannot attest input — not present at reconcile");
-            expect(errors[0]!.fields).toMatchObject({
-                // Which step died, which input, and how it was classified — the read's
+            const warns = logger.records.filter((r) => r.level === "warn");
+            expect(warns).toHaveLength(1);
+            expect(warns[0]!.msg).toBe("[reconcile-manifest] dropping input not present at reconcile from lineage");
+            expect(warns[0]!.fields).toMatchObject({
+                // Which step, which input, and how it was classified — the read's
                 // `source` is what says whether the step ever declared this input.
                 runId: "run-001",
                 stepId: "de",
                 agentId: "agent-x",
                 path: `/${RID}/${upstreamRel}`,
                 source: "upstream",
-                throwSite: "input-enoent",
+                dropSite: "input-enoent",
             });
+            expect(logger.records.filter((r) => r.level === "error")).toHaveLength(0);
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+
+    test("a traceback's source-file probe under an upstream step does not fail the step", async () => {
+        // The reported failure, end to end. The step ran a script living in its
+        // upstream's `scripts/` directory; the script died with an uncaught
+        // pandas KeyError, and CPython's traceback printer looked for the Cython
+        // source of the frame by probing "<entry>/hashtable_class_helper.pxi"
+        // for every sys.path entry — sys.path[0] being that same directory. The
+        // Python audit hook fires before the open, so the failed probe was
+        // reported as a read; the path classifies `upstream` (a declared
+        // dependency), which is attested. The step had already finished its work
+        // when reconcile killed it over a file that never existed.
+        const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
+        const root = join(sessionPath, RID);
+        const logger = createCapturingLogger();
+        const phantomRel = "runs/run-001/qc/scripts/hashtable_class_helper.pxi";
+        const scriptRel = "runs/run-001/qc/scripts/qc.py";
+        try {
+            await mkdir(join(root, "runs/run-001/qc/scripts"), { recursive: true });
+            await writeFile(join(root, scriptRel), "import pandas as pd\n");
+            await mkdir(join(root, "runs/run-001/de/output"), { recursive: true });
+            await writeFile(join(root, "runs/run-001/de/output/result.csv"), "result\n1\n");
+
+            const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001", dependsOn: ["qc"] });
+            feedExecFrame({
+                collector,
+                mountRoot: `/${RID}`,
+                command: ["python3", `/${RID}/${scriptRel}`],
+                exitCode: 1,
+                durationMs: 100,
+                provenance: {
+                    disabled: false,
+                    reads: [
+                        { path: `/${RID}/${scriptRel}`, layers: ["python"] },
+                        { path: `/${RID}/${phantomRel}`, layers: ["python"] },
+                    ],
+                    writes: [{ path: `/${RID}/runs/run-001/de/output/result.csv`, layers: ["inotify"] }],
+                    deletes: [],
+                },
+            });
+            const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" }];
+
+            const result = await reconcileManifestWithDisk({
+                workspaceRoot: root,
+                resourceId: RID,
+                runId: "run-001",
+                stepId: "de",
+                agentId: "agent-x",
+                manifest,
+                collector,
+                logger,
+            });
+
+            expect(result.manifest).toHaveLength(1);
+            // The probe is gone; the real read of the script it was probing for
+            // survives, attested.
+            const tracked = collector.getTrackedInputs();
+            expect(tracked.map((r) => r.path)).toEqual([`/${RID}/${scriptRel}`]);
+            expect(tracked[0]!.hash).toBe(await computeSha256File(join(root, scriptRel)));
+            expect(logger.records.filter((r) => r.level === "error")).toHaveLength(0);
         } finally {
             await rm(sessionPath, { recursive: true, force: true });
         }
@@ -371,19 +440,23 @@ describe("reconcileManifestWithDisk — undeclared sibling reads", () => {
         }
     });
 
-    test("the same read, if tracked, is still terminal — the refusal is what avoids it", async () => {
+    test("the same read, if tracked, is dropped at reconcile — the refusal is what avoids the edge", async () => {
         // Guards the test above from passing vacuously: force the ref into the
-        // collector the way an admissible classification would, and reconcile
-        // still fails fast. Fail-fast on genuine drift is deliberately retained.
+        // collector the way an admissible classification would, and it reaches
+        // reconcile, which drops it and says so. Refusing at classification is
+        // what keeps the edge from ever being asserted; reconcile is the backstop
+        // that keeps an asserted-then-vanished one from being registered.
         const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
         const root = join(sessionPath, RID);
         const outRel = "output/result.csv";
+        const scratchRel = "runs/run-001/norm/output/_scratch.csv";
+        const logger = createCapturingLogger();
         try {
             await mkdir(join(root, "runs/run-001/de/output"), { recursive: true });
             await writeFile(join(root, "runs/run-001/de", outRel), "result\n1\n");
 
             const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001", dependsOn: ["qc"] });
-            collector.trackInputAccess(`/${RID}`, "runs/run-001/norm/output/_scratch.csv", null, {
+            collector.trackInputAccess(`/${RID}`, scratchRel, null, {
                 source: "upstream",
                 stepId: "norm",
                 runId: "run-001",
@@ -391,17 +464,22 @@ describe("reconcileManifestWithDisk — undeclared sibling reads", () => {
 
             const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: outRel, size: 0, type: "output", hash: "" }];
 
-            await expect(
-                reconcileManifestWithDisk({
-                    workspaceRoot: root,
-                    resourceId: RID,
-                    runId: "run-001",
-                    stepId: "de",
-                    agentId: "agent-x",
-                    manifest,
-                    collector,
-                }),
-            ).rejects.toThrow(/cannot attest input/);
+            const result = await reconcileManifestWithDisk({
+                workspaceRoot: root,
+                resourceId: RID,
+                runId: "run-001",
+                stepId: "de",
+                agentId: "agent-x",
+                manifest,
+                collector,
+                logger,
+            });
+
+            expect(result.manifest).toHaveLength(1);
+            expect(collector.getTrackedInputs()).toEqual([]);
+            const warns = logger.records.filter((r) => r.level === "warn");
+            expect(warns).toHaveLength(1);
+            expect(warns[0]!.fields).toMatchObject({ path: `/${RID}/${scratchRel}`, dropSite: "input-enoent" });
         } finally {
             await rm(sessionPath, { recursive: true, force: true });
         }

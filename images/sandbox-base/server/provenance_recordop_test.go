@@ -1,16 +1,23 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
 // The watch dir as provenanceWatchDirs builds it: absolute, trailing slash.
 const testWatchDir = "/019f6a20-1a3b-7000-a942-ae871e5de040/"
 
+// The watch-dir cases assert what the bound does, so they answer every presence
+// probe with true: none of their paths exists on the machine running the test,
+// and a tracker on the real filesystem would drop them for being absent — the
+// guard under test would then pass while doing nothing.
 func newTestTracker() *ProvenanceTracker {
 	return &ProvenanceTracker{
-		watchDirs: []string{testWatchDir},
-		ops:       make(map[string]map[string]map[string]bool),
+		watchDirs:  []string{testWatchDir},
+		ops:        make(map[string]map[string]map[string]bool),
+		pathExists: func(string) bool { return true },
 	}
 }
 
@@ -61,6 +68,62 @@ func TestRecordOp_KeepsInTreeRead(t *testing.T) {
 	got := recordedPaths(pt, "read")
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("in-tree read must survive; want [%s], got %v", want, got)
+	}
+}
+
+// realTracker watches a temp dir and probes the real filesystem, so the
+// presence rule is exercised against actual files rather than a stub.
+func realTracker(t *testing.T) (*ProvenanceTracker, string) {
+	t.Helper()
+	root := t.TempDir()
+	return &ProvenanceTracker{
+		watchDirs: []string{root + string(filepath.Separator)},
+		ops:       make(map[string]map[string]map[string]bool),
+	}, root
+}
+
+func TestRecordOp_DropsReadOfAbsentPath(t *testing.T) {
+	// The reported failure: a step's script died with an uncaught pandas
+	// KeyError, and CPython's traceback printer looked for the Cython source of
+	// the frame by probing "<entry>/hashtable_class_helper.pxi" for every
+	// sys.path entry. The script's own directory is sys.path[0] and lives in the
+	// analysis tree, so the audit hook — which fires before the open, not after
+	// — reported an in-tree read of a file that never existed. The host then
+	// failed the step trying to hash it.
+	pt, root := realTracker(t)
+	phantom := filepath.Join(root, "runs", "r1", "T1S1", "scripts", "hashtable_class_helper.pxi")
+	pt.recordOp("read", phantom, "python")
+
+	if got := recordedPaths(pt, "read"); len(got) != 0 {
+		t.Fatalf("a read of a path that is not there must not be recorded; got %v", got)
+	}
+}
+
+func TestRecordOp_KeepsReadOfPresentPath(t *testing.T) {
+	pt, root := realTracker(t)
+	want := filepath.Join(root, "counts.csv")
+	if err := os.WriteFile(want, []byte("gene,count\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	pt.recordOp("read", want, "python")
+
+	got := recordedPaths(pt, "read")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("a read of a file that is there must survive; want [%s], got %v", want, got)
+	}
+}
+
+func TestRecordOp_KeepsWriteOfAbsentPath(t *testing.T) {
+	// A write is reported before the file it creates exists — the presence rule
+	// is about reads only. Phantom writes are dropped host-side at reconcile,
+	// where the file has had its chance to appear.
+	pt, root := realTracker(t)
+	want := filepath.Join(root, "runs", "r1", "T1S2", "output", "de.csv")
+	pt.recordOp("write", want, "python")
+
+	got := recordedPaths(pt, "write")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("a write must survive an absent path; want [%s], got %v", want, got)
 	}
 }
 

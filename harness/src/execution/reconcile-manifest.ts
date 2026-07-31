@@ -128,13 +128,23 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
  *
  * `artifacts`-source reads are the step's OWN files (mutating, dropped by the
  * registration translator), so they are not attested and not hashed here.
- * Lineage attestation is fail-fast for drift: an input that should be on disk
- * and is not (ENOENT) throws rather than registering a hashless edge. A read
- * that resolves OUTSIDE the analysis tree is dropped from lineage instead —
- * the sandbox can legitimately open paths above its mount (`/{resourceId}/..`
- * is the container root) and a capture layer may report them; that is out of
- * scope, not drift, and failing the step over it killed real analyses in the
- * field. Dropping still registers no hashless edge, which is the invariant.
+ *
+ * The invariant is that no hashless edge is ever registered; a ref that cannot
+ * be hashed is therefore dropped from lineage, whatever put it out of reach:
+ * a read resolving to a directory (an `ls` of a mount), one resolving OUTSIDE
+ * the analysis tree (the sandbox can legitimately open paths above its mount —
+ * `/{resourceId}/..` is the container root), and one naming a path that is not
+ * there at all. None of the three is drift, and failing the step over any of
+ * them killed real analyses in the field.
+ *
+ * A missing path in particular is far likelier to be a read that never happened
+ * than an artifact that vanished: the capture layers report *attempted* opens,
+ * not completed ones — the Python audit hook fires ahead of the open, R's
+ * `trace()` at call entry — so every failed open is reported exactly like a
+ * successful one. Nothing was consumed, so there is no edge to attest.
+ *
+ * Fail-fast is retained for a `stat` that fails any OTHER way: the file is there
+ * and cannot be read, which says something is wrong with the tree itself.
  */
 async function fillInputHashesFromDisk(
     collector: ProvenanceCollector,
@@ -151,12 +161,12 @@ async function fillInputHashesFromDisk(
         if (ref.source === "artifacts") continue;
         if (hasValidContentHash(ref.hash)) continue;
 
-        // Every throw below is logged before it is raised, and every drop is
-        // logged as it happens. The thrown message reaches `failStep` as one
+        // Every drop is logged as it happens, and the one remaining throw is
+        // logged before it is raised. The thrown message reaches `failStep` as one
         // opaque string and everything downstream of that is scrubbed, so naming
         // the site and the offending ref HERE is the only account of why a step
-        // died — the read's `source` in particular says whether the step declared
-        // this input at all.
+        // died — or of which edge its lineage lost. The read's `source` in
+        // particular says whether the step declared this input at all.
         const attestation = { path: ref.path, source: ref.source, refRunId: ref.runId, refStepId: ref.stepId };
 
         // `ref.path` is the absolute container path `/{resourceId}/...`; strip the
@@ -185,10 +195,13 @@ async function fillInputHashesFromDisk(
             info = await stat(hostPath);
         } catch (err) {
             if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-                logger.error("cannot attest input — not present at reconcile", { ...attestation, hostPath, throwSite: "input-enoent" });
-                throw new Error(`[reconcile-manifest] cannot attest input ${ref.path}: not present at reconcile (stepId=${stepId} runId=${runId})`, {
-                    cause: err,
-                });
+                // Warn, not debug: a capture layer named a file this step never
+                // consumed, and the count of those is how a reader tells a noisy
+                // hook from an artifact that genuinely vanished under the step.
+                logger.warn("dropping input not present at reconcile from lineage", { ...attestation, hostPath, dropSite: "input-enoent" });
+                lineageInputDropped.add(1, { agent_id: agentId, step_id: stepId, reason: "missing" });
+                collector.dropInput(ref);
+                continue;
             }
             logger.error("cannot attest input — stat failed", { ...attestation, hostPath, throwSite: "input-stat", ...logger.errorFields(err) });
             throw err;

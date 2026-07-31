@@ -20,5 +20,6 @@ export const lineageInputDropped = meter.createCounter("cortex.artifact.reconcil
     description:
         "Tracked input reads dropped from lineage at reconcile because they are " +
         "not content-attestable files of the analysis (directory reads, " +
-        "out-of-tree resolutions). Tagged by agent_id, step_id, reason.",
+        "out-of-tree resolutions, paths absent at reconcile). Tagged by " +
+        "agent_id, step_id, reason.",
 });

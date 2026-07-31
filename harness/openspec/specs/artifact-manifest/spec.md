@@ -16,7 +16,7 @@ the `ArtifactRegistry` call, never by the manifest. Disk is the source of truth
 for *what was produced*; the collector is the source of truth for *what it was
 derived from*.
 
-**Content-attested lineage, fail-fast for integrity.** The sandbox provenance
+**Content-attested lineage; no hashless edge ever registered.** The sandbox provenance
 frame is path-only — it reports
 which files were read and written, never their bytes. So Cortex recomputes
 SHA-256 hashes from disk at `reconcileManifestWithDisk` for **every surviving
@@ -31,19 +31,25 @@ mount does not establish that — it bounds what *this* step writes, while every
 sibling has its own directory mounted read-write over the same host inodes and
 mutates it freely. This makes the registered hash equal `sha256sum` of
 the bytes the sync target receives at upload time. The reconcile/register/sync
-stages are pulled out of the best-effort net: a tracked input **file** that is
-missing at reconcile, and a registry rejection, are **terminal** — they fail the
-step loudly rather than orphaning real outputs green.
+stages are pulled out of the best-effort net: a registry rejection is
+**terminal** — it fails the step loudly rather than orphaning real outputs green.
 
-Genuine *file* drift fails fast. A read that is not a content-attestable file of
-this analysis is dropped from lineage instead — a **directory** (e.g. `ls` of a
-mount), and a read **resolving outside the analysis tree** (e.g. `/{resourceId}/..`,
-the container root, which the sandbox may legitimately open). Neither is drift:
-nothing about the analysis changed and no edge is at risk, so dropping upholds
-"never register a hashless lineage edge" exactly as a throw would, without
-destroying a legitimate analysis over an untracked read. The enrichment stages —
-file-metadata, step-summary, vector-index — stay best-effort and keep degrading
-via `safeRun`, because they are search/UX quality, not integrity.
+A ref that cannot be hashed is dropped from lineage, whatever put it out of
+reach: a **directory** (e.g. `ls` of a mount), a read **resolving outside the
+analysis tree** (e.g. `/{resourceId}/..`, the container root, which the sandbox
+may legitimately open), and a read naming a path that is **not there at all**.
+None of the three is drift. The last one is not even evidence that something
+was read: the capture layers report *attempted* operations — the Python audit
+hook fires ahead of the open, R's `trace()` at call entry — so a read that failed
+arrives indistinguishable from one that succeeded, and CPython's own traceback
+printer manufactures them by the dozen (a relative Cython `co_filename` sends it
+opening `<entry>/<basename>` down all of `sys.path`). Dropping upholds "never
+register a hashless lineage edge" exactly as a throw would, without destroying a
+legitimate analysis that has already produced its outputs; what remains terminal
+is a `stat` that fails some *other* way, where the file is there and cannot be
+read. The enrichment stages — file-metadata, step-summary, vector-index — stay
+best-effort and keep degrading via `safeRun`, because they are search/UX quality,
+not integrity.
 
 The ledger is a thin index: identity (`path`, `hash`, `size`), provenance
 (`source_step`, `source_run`), and optional external registration state
@@ -118,10 +124,11 @@ dropped via `collector.dropInput` and SHALL NOT fail the step:
 
 - An input resolving to a **directory** (e.g. `ls` of a mount) → dropped, logged at debug.
 - An input resolving **outside the analysis tree**, at either the container-prefix or the workspace-root bound → dropped, logged at **warn** with the ref and a `boundSite` discriminator; the workspace-root record also carries the resolved host path (the container-prefix bound rejects the path before a host mapping exists).
+- An input naming a path that is **not present** at reconcile (`ENOENT`) → dropped, logged at **warn** with the ref, its resolved host path, and `dropSite: "input-enoent"`.
 
 Every input drop SHALL increment the `cortex.artifact.reconcile.input_dropped`
 counter, tagged `agent_id`, `step_id`, and `reason` (`directory`,
-`container-prefix`, or `workspace-root`).
+`container-prefix`, `workspace-root`, or `missing`).
 
 An out-of-tree read is out of scope rather than drift: the analysis tree mounts
 at `/{resourceId}`, so a reported read of `/{resourceId}/..` names the container
@@ -135,9 +142,25 @@ deliberate: a directory read is ordinary, whereas an out-of-tree read means a
 capture layer reported something it should have filtered — not worth a dead
 analysis, but worth noticing.
 
-Fail-fast SHALL remain for genuine drift: an input **file** that is missing at
-reconcile (`ENOENT`) SHALL throw, as SHALL an unexpected `stat` failure, never
-registering a hashless lineage edge.
+An absent path is not drift either, and for a reason that belongs to the capture
+layers: they report **attempted** operations, not completed ones. The Python
+audit hook fires on the `open` audit event, which CPython raises before the open
+is attempted; R's `trace()` fires at call entry over a
+`normalizePath(mustWork = FALSE)` name. A read that failed therefore arrives
+indistinguishable from one that succeeded, and the commonest source of them is
+ordinary: displaying an uncaught traceback whose frame carries a relative
+`co_filename` (every Cython frame — pandas' `.pxi`/`.pyx`) makes CPython open
+`<entry>/<basename>` for every `sys.path` entry until one succeeds, and the
+entries under the analysis mount become reported reads of files that were never
+there. Nothing was consumed, so there is no edge to attest, and the step that
+already produced its outputs is not made more correct by dying. Warn rather than
+debug for the same reason as an out-of-tree read: the count of these is how a
+reader tells a noisy capture layer from an artifact that genuinely vanished
+under a step.
+
+Fail-fast SHALL remain for a `stat` that fails any **other** way — the file is
+there and cannot be read, which says something is wrong with the tree itself —
+and no drop SHALL ever register a hashless lineage edge.
 
 #### Scenario: Phantom file is dropped silently
 
@@ -152,11 +175,18 @@ registering a hashless lineage edge.
 - **WHEN** `reconcileManifestWithDisk` runs
 - **THEN** `computeSha256File` IS invoked for `output/clean.csv` and the entry's hash and size are set from the on-disk bytes
 
-#### Scenario: A missing input file fails the step
+#### Scenario: An input that is not present at reconcile is dropped, not failed
 
 - **GIVEN** the collector tracked a non-`artifacts` input read whose file is absent at reconcile time
 - **WHEN** `fillInputHashesFromDisk` runs
-- **THEN** it throws, the step fails loudly, and no hashless lineage edge is registered
+- **THEN** `collector.dropInput` is called for that ref, a warn record naming the ref, its resolved `hostPath`, and `dropSite: "input-enoent"` is emitted, `cortex.artifact.reconcile.input_dropped` is incremented with `reason: "missing"`, and the step does NOT fail
+- **AND** the step's real outputs still reconcile and register, and no hashless lineage edge is registered
+
+#### Scenario: A traceback's source-file probe does not fail the step
+
+- **GIVEN** a step whose script lives in a declared dependency's `scripts/` directory and died with an uncaught pandas `KeyError`, so the capture layer reported a read of `runs/{runId}/{depStepId}/scripts/hashtable_class_helper.pxi` — a `sys.path` probe for the Cython frame's source, which never existed
+- **WHEN** `fillInputHashesFromDisk` runs
+- **THEN** the ref is dropped from lineage and the step completes, while the real read of the script itself is attested with its on-disk hash
 
 #### Scenario: A directory read is dropped from lineage, not failed
 
