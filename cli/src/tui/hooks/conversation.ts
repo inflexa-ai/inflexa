@@ -987,7 +987,19 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
     }
     // Re-derive the live abort flag from the durable field, set only when true (matching the live path,
     // which leaves it absent otherwise) — so a restarted app renders the muted marker the live view showed.
-    return { id: m.id, role, parts, ...(m.interrupted === true ? { interrupted: true } : {}) };
+    //
+    // Same treatment for the turn's stored rollup: `appendTurn` writes it onto the turn's assistant row
+    // and the harness hands it back here, so a reloaded transcript carries the figure the live header
+    // showed rather than dropping to the absent state. Set only when present, which keeps the ONE
+    // meaning absence has on this field — no provider reported anything — rather than adding a second
+    // (this transcript was reloaded). The duration beside it is genuinely not durable and stays absent.
+    return {
+        id: m.id,
+        role,
+        parts,
+        ...(m.interrupted === true ? { interrupted: true } : {}),
+        ...(m.usage ? { turnUsage: m.usage } : {}),
+    };
 }
 
 /**

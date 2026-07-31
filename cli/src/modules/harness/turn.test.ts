@@ -82,12 +82,12 @@ const runAborts: ChatTurnSeams["run"] = () => {
 /** A `ThreadHistory` whose `appendTurn` records its payload; the read methods are unused here. */
 function recordingHistory(append: () => ResultAsync<void, DbError> = () => okAsync(undefined)): {
     history: ThreadHistory;
-    appended: { threadId: string; messages: readonly ModelMessage[] }[];
+    appended: { threadId: string; messages: readonly ModelMessage[]; turnUsage: Parameters<ThreadHistory["appendTurn"]>[2] }[];
 } {
-    const appended: { threadId: string; messages: readonly ModelMessage[] }[] = [];
+    const appended: { threadId: string; messages: readonly ModelMessage[]; turnUsage: Parameters<ThreadHistory["appendTurn"]>[2] }[] = [];
     const history: ThreadHistory = {
-        appendTurn: (threadId, messages) => {
-            appended.push({ threadId, messages });
+        appendTurn: (threadId, messages, turnUsage) => {
+            appended.push({ threadId, messages, turnUsage });
             return append();
         },
         loadRecent: () => okAsync([]),
@@ -173,7 +173,7 @@ describe("runChatTurn", () => {
         }
         // The loop output (only the assistant reply, sliced past `initial`) is
         // appended after the standalone user message.
-        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage, assistantMessage] }]);
+        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage, assistantMessage], turnUsage: undefined }]);
     });
 
     test("a resolved aborted finish persists [userMessage, ...partial] and returns aborted", async () => {
@@ -182,7 +182,7 @@ describe("runChatTurn", () => {
         const { history, appended } = recordingHistory();
         const outcome = await runWith({ prepare: prepareOk, run: runResolvesAbortedWithPartial, history, signal: new AbortController().signal });
         expect(outcome.kind).toBe("aborted");
-        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage, partialAssistant] }]);
+        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage, partialAssistant], turnUsage: undefined }]);
     });
 
     test("a resolved aborted finish with an empty partial persists [userMessage] alone", async () => {
@@ -190,7 +190,7 @@ describe("runChatTurn", () => {
         const outcome = await runWith({ prepare: prepareOk, run: runResolvesAbortedEmpty, history, signal: new AbortController().signal });
         expect(outcome.kind).toBe("aborted");
         // No loop output beyond `initial`, so the slice is empty and only the user turn is persisted.
-        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage] }]);
+        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage], turnUsage: undefined }]);
     });
 
     test("an AbortError under an aborted signal persists [userMessage] only and returns aborted", async () => {
@@ -201,7 +201,7 @@ describe("runChatTurn", () => {
         controller.abort();
         const outcome = await runWith({ prepare: prepareOk, run: runAborts, history, signal: controller.signal });
         expect(outcome.kind).toBe("aborted");
-        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage] }]);
+        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage], turnUsage: undefined }]);
     });
 
     test("a provider failure racing an abort is failed (cause preserved), never masked as aborted", async () => {
@@ -215,7 +215,7 @@ describe("runChatTurn", () => {
         const outcome = await runWith({ prepare: prepareOk, run: () => Promise.reject(cause), history, signal: controller.signal });
         expect(outcome.kind).toBe("failed");
         if (outcome.kind === "failed") expect(outcome.cause).toBe(cause);
-        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage] }]);
+        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage], turnUsage: undefined }]);
     });
 
     test("a non-abort throw with a non-aborted signal is a failed outcome carrying the cause", async () => {
@@ -224,7 +224,7 @@ describe("runChatTurn", () => {
         const outcome = await runWith({ prepare: prepareOk, run: () => Promise.reject(cause), history, signal: new AbortController().signal });
         expect(outcome.kind).toBe("failed");
         if (outcome.kind === "failed") expect(outcome.cause).toBe(cause);
-        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage] }]);
+        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage], turnUsage: undefined }]);
     });
 
     test("prepare failure short-circuits before runAgent — nothing is appended", async () => {
@@ -305,6 +305,31 @@ describe("runChatTurn carries the turn's usage rollup", () => {
         });
         expect(outcome.kind).toBe("failed");
         expect("turnUsage" in outcome).toBe(false);
+    });
+
+    test("the rollup is also PERSISTED, so a reloaded transcript is not a wall of unreported turns", async () => {
+        // The outcome above reaches only the store this process is holding. Without the third argument
+        // the harness has nothing to write onto the turn's assistant row, and every past turn reloads
+        // with its figure absent — which under the absent-is-not-zero rule reads as "no provider
+        // reported anything", a claim about the turn that is false.
+        const { history, appended } = recordingHistory();
+        await runWith({ prepare: prepareOk, run: runOkWithUsage, history, signal: new AbortController().signal });
+        expect(appended).toHaveLength(1);
+        expect(appended[0]?.turnUsage).toEqual(TURN_USAGE);
+    });
+
+    test("an interrupted turn persists what it spent, and a turn that reported nothing persists nothing", async () => {
+        // The abort spent real tokens before it landed, so dropping its rollup at the write would be
+        // the same unreported/nothing-spent conflation the whole ledger is built to avoid...
+        const aborted = recordingHistory();
+        await runWith({ prepare: prepareOk, run: runResolvesAbortedWithUsage, history: aborted.history, signal: new AbortController().signal });
+        expect(aborted.appended[0]?.turnUsage).toEqual(PARTIAL_USAGE);
+
+        // ...while a turn whose calls reported nothing writes `undefined`, never a zeroed stand-in the
+        // reload would then render as a measurement.
+        const silent = recordingHistory();
+        await runWith({ prepare: prepareOk, run: runOk, history: silent.history, signal: new AbortController().signal });
+        expect(silent.appended[0]?.turnUsage).toBeUndefined();
     });
 
     test("the carried rollup is a snapshot — the harness mutating its accumulator afterwards cannot change it", async () => {

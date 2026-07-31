@@ -1188,6 +1188,34 @@ describe("MESSAGE_CAP is coupled to loadPage's perPage clamp", () => {
     });
 });
 
+// A turn's cost is the one meta fact that IS durable — the engine hands it to `appendTurn` and the
+// harness writes it onto the turn's own assistant row — so reload has to carry it back onto the
+// message. Without this the transcript reads as a wall of turns nobody measured, which under the
+// absent-is-not-zero rule is a false claim about every one of them rather than a missing decoration.
+describe("a reloaded turn keeps the figure the live header showed", () => {
+    test("a stored rollup lands on the message; absence stays structurally absent", () => {
+        const stored = { inputTokens: 49_600, outputTokens: 42 };
+        const withUsage = cortexToUiMessage({ id: "m1", role: "assistant", parts: [{ type: "text", text: "hi" }], usage: stored } as unknown as CortexMsg, SID);
+        expect(withUsage.turnUsage).toEqual(stored);
+
+        // No stored rollup means no key — not a key holding `undefined`. Absence has exactly ONE
+        // meaning on this field (no provider reported anything), and a reload that introduced a second
+        // one would make the header unable to say which it is showing.
+        const without = cortexToUiMessage({ id: "m2", role: "assistant", parts: [{ type: "text", text: "hi" }] } as unknown as CortexMsg, SID);
+        expect("turnUsage" in without).toBe(false);
+    });
+
+    test("the duration is NOT reconstructed — only what is actually stored comes back", () => {
+        // Deliberate: the turn's elapsed time is not persisted anywhere, and a header that invented one
+        // would be fabricating a meta value, which the message-block contract forbids outright.
+        const m = cortexToUiMessage(
+            { id: "m1", role: "assistant", parts: [{ type: "text", text: "hi" }], usage: { inputTokens: 10 } } as unknown as CortexMsg,
+            SID,
+        );
+        expect(m.durationMs).toBeUndefined();
+    });
+});
+
 // The whole live/reload contract as ONE harness: the same turn fed through the live adapter (`send` →
 // `applyEmitEvent`) and through the reload path (`cortexToUiMessage` over the rows the harness would
 // reconstruct, in stored order) must yield the SAME part-type sequence. `content-to-cortex` preserves
