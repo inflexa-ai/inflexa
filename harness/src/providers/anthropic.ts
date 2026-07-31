@@ -17,6 +17,8 @@ export interface AnthropicProviderDeps {
     readonly resolveBilling: ResolveBilling;
     readonly fetch?: FetchLike;
     readonly logger?: Logger;
+    /** Output-token ceiling per request. Defaults to `DEFAULT_MAX_OUTPUT_TOKENS`. */
+    readonly maxOutputTokens?: number;
 }
 
 /**
@@ -36,6 +38,7 @@ export function createAnthropicProvider(deps: AnthropicProviderDeps): ChatProvid
             model: deps.model,
             fetch: deps.fetch,
             capabilities: { toolCalling: true },
+            ...(deps.maxOutputTokens !== undefined ? { maxOutputTokens: deps.maxOutputTokens } : {}),
         },
     });
 }

@@ -94,7 +94,7 @@ export type { AnthropicProviderDeps } from "./providers/anthropic.js";
 // union discriminated over the `anthropic` and `openai-compatible` kinds — with
 // `ConfiguredAiSdkProviderDeps` as its argument shape. `createAnthropicProvider`
 // above is a convenience over this union's `anthropic` arm.
-export { createConfiguredAiSdkProvider } from "./providers/ai-sdk.js";
+export { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "./providers/ai-sdk.js";
 export type { AiSdkProviderConfig, ConfiguredAiSdkProviderDeps } from "./providers/ai-sdk.js";
 export { createEmbeddingProvider } from "./providers/embedding.js";
 export type { EmbeddingProviderDeps } from "./providers/embedding.js";

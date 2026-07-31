@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { makeSession } from "./__fixtures__/session.js";
+import { DEFAULT_MAX_OUTPUT_TOKENS } from "./ai-sdk.js";
 import { createAnthropicProvider } from "./anthropic.js";
 import type { ChatRequest, FetchLike } from "./types.js";
 
@@ -134,5 +135,24 @@ describe("createAnthropicProvider", () => {
                 },
             },
         ]);
+    });
+
+    it("carries the output-token ceiling on the streaming path as well as the generate path", async () => {
+        // The cap has to ride both calls: chatStream drives the interactive turn,
+        // so a ceiling applied only to generateText would leave chat truncating.
+        const cap = capturingFetch();
+        const provider = createAnthropicProvider({
+            baseURL: "http://billing.test/anthropic",
+            token: "test-token",
+            model: "claude-opus-4-7",
+            resolveBilling: async () => ({}),
+            fetch: cap.fetch,
+        });
+
+        for await (const _event of provider.chatStream(request, makeSession())) {
+            // drain
+        }
+
+        expect((cap.bodies[0] as { max_tokens?: number }).max_tokens).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
     });
 });
