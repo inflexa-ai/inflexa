@@ -481,29 +481,28 @@ describe("RunBlock step usage figure", () => {
         return () => <RunBlock name="cohort-screen" tag="T9S2" done={1} total={3} steps={steps} maxSteps={maxSteps} hint={false} heading={false} />;
     }
 
-    test("on a WIDE mount the figure trails its step's own row, flush at the far edge", async () => {
+    test("on a WIDE mount the figure joins the row's middot-separated facts", async () => {
         const figure = `${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`;
         const frame = await renderFrame(block(figuredSteps(figure)), { width: 80, height: 14 });
         const lines = frame.split("\n");
         const s2 = lines.findIndex((l) => /\bS2\b/.test(l));
         expect(s2).toBeGreaterThanOrEqual(0);
-        // Pushed to the trailing edge, not butted against the label: the figures form a column the eye
-        // can run down and compare, which is the whole reason they share the row rather than trailing
-        // wherever each step's name happened to end.
-        expect(lines[s2]!.trimEnd().endsWith(figure)).toBe(true);
-        expect(lines[s2]!.indexOf(figure)).toBeGreaterThan(lines[s2]!.indexOf("S2") + 20);
+        expect(lines[s2]).toContain(`${GLYPHS.middot} ${figure}`);
         // No second row for it, so the step list stays one row per step and reads as a list of steps
         // rather than as steps interleaved with measurements.
         expect(lines.findIndex((l) => /\bS3\b/.test(l))).toBe(s2 + 1);
     });
 
-    test("the trailing figures align with each other, whatever their steps are named", async () => {
-        // The alignment IS the feature. Two steps whose labels differ in length must still put their
-        // figures in the same column, or the column is not comparable and the flex bought nothing.
+    test("the figure sits directly after the step's other facts, never pushed to an edge", async () => {
+        // Flushing it right was tried and reverted: it aligns a column only while the row's left side is
+        // stable, and a running step gains an age and a retried one a count — so the gap breathed as the
+        // run progressed and the figure read as detached from the step it belongs to. Two steps whose
+        // labels differ in length must therefore put their figures at DIFFERENT columns now.
+        const figure = `${GLYPHS.arrowUp}9.1k`;
         const frame = await renderFrame(
             block([
-                { label: "S1", state: "done", usageFigure: `${GLYPHS.arrowUp}9.1k` },
-                { label: "a-much-longer-step-name", state: "done", usageFigure: `${GLYPHS.arrowUp}9.1k` },
+                { label: "S1", state: "done", usageFigure: figure },
+                { label: "a-much-longer-step-name", state: "done", usageFigure: figure },
             ]),
             { width: 80, height: 14 },
         );
@@ -512,24 +511,69 @@ describe("RunBlock step usage figure", () => {
             .filter((l) => l.includes(GLYPHS.arrowUp))
             .map((l) => l.indexOf(GLYPHS.arrowUp));
         expect(cols).toHaveLength(2);
-        expect(cols[0]).toBe(cols[1]!);
+        expect(cols[1]! - cols[0]!).toBe("a-much-longer-step-name".length - "S1".length);
     });
 
-    test("on the RAIL the figure takes its own indented line under the step it belongs to", async () => {
-        const frame = await renderFrame(block(figuredSteps(`${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`), size.railStepRows), {
-            width: size.railWidth,
-            height: 14,
-        });
+    test("the RAIL reads the same sequence — no narrow-mount exception for the figure", async () => {
+        const figure = `${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`;
+        const frame = await renderFrame(block(figuredSteps(figure), size.railStepRows), { width: size.railWidth, height: 14 });
         const lines = frame.split("\n");
         const s2 = lines.findIndex((l) => /\bS2\b/.test(l));
         expect(s2).toBeGreaterThanOrEqual(0);
-        // Directly beneath its own step — the association is visual, and the row above stays a step row.
-        // Inline here would soft-wrap mid-token: a real step name plus an elapsed age already fills the
-        // rail's ~32 usable cells, which is the measurement this split exists for.
-        expect(lines[s2 + 1]).toContain(`${GLYPHS.arrowUp}42.6k`);
-        expect(lines[s2]).not.toContain(GLYPHS.arrowUp);
-        // Steps with no figure gain no row at all, so an ordinary run is exactly as tall as before.
-        expect(lines.findIndex((l) => /\bS3\b/.test(l))).toBe(s2 + 2);
+        // The figure used to take its own line here, on the measurement that a trailing figure wraps the
+        // rail. That measurement assumed short identifier-shaped labels; real plan steps are sentences,
+        // so the row wraps either way and the extra line bought nothing — see the wrapping case below.
+        expect(lines[s2]).toContain(`${GLYPHS.middot} ${figure}`);
+        // ...so the step list is one entry per step again, with no row spent on the figure.
+        expect(lines.findIndex((l) => /\bS3\b/.test(l))).toBe(s2 + 1);
+    });
+
+    test("a sentence-shaped label wraps with or without the figure, and the figure costs no extra line", async () => {
+        // The case the rail actually renders: plan step labels are sentences, not identifiers. Both
+        // shapes wrap the label; what the figure must not do is add a THIRD line to a row already
+        // taking two, which is exactly what the old own-line placement did.
+        const label = "Clean and parse clinical metadata";
+        const rows = async (usageFigure: string | undefined): Promise<number> => {
+            const frame = await renderFrame(
+                block([{ label, state: "running", startedAt: new Date(Date.now() - 15_000).toISOString(), usageFigure }], size.railStepRows),
+                {
+                    width: size.railWidth,
+                    height: 14,
+                },
+            );
+            // The progress bar carries the only `/` on screen; every other kept line is a step's.
+            return frame.split("\n").filter((l) => l.trim() !== "" && !l.includes("/")).length;
+        };
+        const withFigure = await rows(`${GLYPHS.arrowUp}12.2k ${GLYPHS.arrowDown}233`);
+        // Guards the comparison below from passing on two empty counts, and states the shape being
+        // asserted: the label wraps, so this step is TWO rows either way.
+        expect(withFigure).toBe(2);
+        expect(withFigure).toBe(await rows(undefined));
+    });
+
+    test("the separators keep their own decoration tone, whatever the facts around them are painted", async () => {
+        // The reason `Sep` is its own span: a retry count is `warning` and an age is muted, so a
+        // separator glued to either neighbour would make the row's punctuation change colour as a step
+        // retried. `fgSubtle` is the decoration tier the contrast floor exempts from 4.5:1 — punctuation
+        // must not carry the weight of the measurements it separates.
+        setTheme("github-light");
+        const started = new Date(Date.now() - 90_000).toISOString();
+        const setup = await testRender(block([{ label: "S1", state: "running", startedAt: started, attempts: 3, usageFigure: `${GLYPHS.arrowUp}9.1k` }]), {
+            width: 80,
+            height: 10,
+        });
+        try {
+            await setup.renderOnce();
+            const seps = setup
+                .captureSpans()
+                .lines.flatMap((l) => l.spans)
+                .filter((sp) => sp.text.includes(GLYPHS.middot));
+            // One before the age, one before the retry count, one before the figure.
+            expect(seps).toHaveLength(3);
+            for (const sp of seps) expect(rgbToHex(sp.fg)).toBe(rgbToHex(parseColor(themes["github-light"].colors.fgSubtle)));
+        } finally {
+            setup.renderer.destroy();
+        }
     });
 
     test("a step handed no figure renders none — the block invents nothing", async () => {

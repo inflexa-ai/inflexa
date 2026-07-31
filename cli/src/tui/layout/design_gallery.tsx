@@ -175,13 +175,12 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     />
                 </State>
                 <State n="5" label="long-running run / task">
-                    {/* The WIDE mount: a step's token figure rides its own row, as one more of that
-                        step's facts. The rail mount (State 18) puts it on an indented line instead —
-                        measured there, where a trailing figure soft-wraps mid-token. Steps whose calls
-                        reported nothing carry no figure at all (the queued row): absence is silence,
-                        never a zero. */}
+                    {/* A step's token figure joins the row's middot-separated facts as one more of them,
+                        on this mount and on the rail (State 18) alike. Steps whose calls reported nothing
+                        carry no figure at all (the queued row): absence is silence, never a zero. */}
                     <text fg={theme().fgMuted}>
-                        steps carry their token figure inline where there is room; a step with nothing reported carries none (the queued row):
+                        steps read as one middot-separated sequence — agent, age, retries, token figure; a step with nothing reported carries none (the queued
+                        row):
                     </text>
                     <RunBlock name={mockRun.name} tag={mockRun.tag} done={mockRun.done} total={mockRun.total} steps={runSteps} />
                 </State>
@@ -607,8 +606,8 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         Driven from the long-run fixture. */}
                     <text fg={theme().fgMuted}>
                         under the newest run row in the sidebar while it is non-terminal; long runs window their steps behind counted elision markers — click
-                        one to slide the window a step (rail step cap, heading off). This is the mount the per-step figure line was measured against: it costs a
-                        row, and `maxSteps` caps STEPS, never rows:
+                        one to slide the window a step (rail step cap, heading off). Step labels here are sentences, so a row wraps whether or not it carries a
+                        figure — which is why the figure is inline on this mount too, and why `maxSteps` caps STEPS, never rows:
                     </text>
                     <RunBlock
                         name={mockLongRun.name}

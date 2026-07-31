@@ -4,6 +4,7 @@ import { useRenderer } from "@opentui/solid";
 import { theme } from "../theme.ts";
 import { GLYPHS, space, MARKERS } from "../../lib/design_system.ts";
 import { Fg } from "./emphasis.tsx";
+import { Sep } from "./separator.tsx";
 
 /** A run step's display shape (domain-agnostic; the mock model + the harness step ledger map onto this). */
 export type RunStepView = {
@@ -46,9 +47,9 @@ export type RunStepView = {
      * and by tests with no ledger in sight; and a figure that arrives already written cannot be
      * re-spelled at this call site, which is what keeps every surface printing the one notation.
      *
-     * WHERE it lands depends on the mount: inline on the step's own row where there is room, on its own
-     * indented line under the step on the rail — see the render sites, and `maxSteps` for what "where
-     * there is room" means here.
+     * Rendered as one more of the step's middot-separated facts, on every mount — the row already wraps
+     * for a sentence-shaped label, so a narrow-mount exception would spend an extra line without
+     * preventing the wrap it was meant to prevent.
      *
      * Absent when the step's calls reported nothing — never a zeroed figure. Absence here means no
      * provider ever reported a quantity, which is a different fact from "this step spent nothing", and
@@ -323,62 +324,68 @@ export function RunBlock(props: RunBlockProps) {
                         // the difference between "slow" and "failing repeatedly".
                         const retries = (): string | null => (step.attempts !== undefined && step.attempts > 1 ? `${GLYPHS.multiply}${step.attempts}` : null);
                         return (
-                            <box flexDirection="column" width="100%">
-                                {/* The step's identity leads and its figure trails, at the row's two edges —
-                                    the same reading the labelled figure gives its own two arms, and for the
-                                    same reason: a column of figures the eye runs down is comparable, where
-                                    figures that start wherever the step name happened to end are not.
-                                    A row box rather than one `<text>`: spans flow, only siblings can be
-                                    pushed apart. The leading text grows into the slack; the trailing one is
-                                    explicitly unshrinkable because an unsized renderable defaults to
-                                    `flexShrink: 1` and would otherwise be squeezed instead of pushing. */}
-                                <box flexDirection="row" width="100%">
-                                    <text flexGrow={1} flexShrink={1}>
-                                        <Fg role={m.role}>{`${m.glyph} `}</Fg>
-                                        <Fg role={step.state === "queued" || step.state === "skipped" ? "fgMuted" : "fg"}>{step.label}</Fg>
-                                        {/* The owning agent only where there is room. `maxSteps` marks the narrow
-                                            rail mount, whose ~37 usable cells cannot hold a step name AND an agent
-                                            AND an age — measured: the agent tag pushes the elapsed age and the
-                                            retry count off the row entirely. The rail answers "which step"; the
-                                            wide mounts (run-detail dialog, gallery) answer "and who is running it". */}
-                                        <Show when={props.maxSteps === undefined && step.agent}>
-                                            {(a: Accessor<string>) => <Fg role="tool">{` [${a()}]`}</Fg>}
-                                        </Show>
-                                        <Show when={age()}>{(a: Accessor<string>) => <Fg role="fgMuted">{` ${a()}`}</Fg>}</Show>
-                                        <Show when={retries()}>{(r: Accessor<string>) => <Fg role="warning">{` ${r()}`}</Fg>}</Show>
-                                    </text>
-                                    {/* On a WIDE mount the figure rides the step's own row, where it reads as
-                                        one of that step's facts rather than as a second entry in the list.
-                                        `maxSteps === undefined` is the same wide-mount discriminator the agent
-                                        tag uses — one rule for "is there room", not two that can disagree. */}
-                                    <Show when={props.maxSteps === undefined && step.usageFigure}>
-                                        {(figure: Accessor<string>) => (
-                                            <text flexShrink={0}>
-                                                <Fg role="fgMuted">{` ${figure()}`}</Fg>
-                                            </text>
+                            <box flexDirection="column">
+                                {/* Label, then every fact about the step in one middot-separated sequence —
+                                    the vocabulary the run picker's meta line and the chat turn's header
+                                    already read in.
+
+                                    Flushing the figure to the row's trailing edge was tried and reverted.
+                                    It buys a comparable column only while the row's left side is STABLE,
+                                    and it is not: a running step gains an age, a retried one a count, an
+                                    expanded one its agent. So the gap breathed as the run progressed and
+                                    the figure read as detached from the step it belongs to — worst while
+                                    watching it live, which is when this block is actually read. Comparing
+                                    steps against each other is what the detail dialog's `usage` line and
+                                    `inflexa usage steps` are for; this row's job is one step's facts. */}
+                                <text>
+                                    <Fg role={m.role}>{`${m.glyph} `}</Fg>
+                                    <Fg role={step.state === "queued" || step.state === "skipped" ? "fgMuted" : "fg"}>{step.label}</Fg>
+                                    {/* The owning agent only where there is room. `maxSteps` marks the narrow
+                                        rail mount, whose ~37 usable cells cannot hold a step name AND an agent
+                                        AND an age — measured: the agent tag pushes the elapsed age and the
+                                        retry count off the row entirely. The rail answers "which step"; the
+                                        wide mounts (run-detail dialog, gallery) answer "and who is running it".
+
+                                        No separator before it: the brackets already delimit it, and a middot
+                                        outside a bracket reads as separating the row from a parenthesis. */}
+                                    <Show when={props.maxSteps === undefined && step.agent}>{(a: Accessor<string>) => <Fg role="tool">{` [${a()}]`}</Fg>}</Show>
+                                    <Show when={age()}>
+                                        {(a: Accessor<string>) => (
+                                            <>
+                                                <Sep />
+                                                <Fg role="fgMuted">{a()}</Fg>
+                                            </>
                                         )}
                                     </Show>
-                                </box>
-                                {/* On the RAIL the figure takes its own line, for the same measured reason
-                                    the blocker below does: that mount leaves ~32 cells for the whole row,
-                                    and a plan's step name plus its elapsed age already fills them — a
-                                    trailing `↑12.4k ↓1.1k` (13 more) soft-wraps mid-token on every step
-                                    that has one. An indented line reads as structure where a wrap reads as
-                                    damage, and it is the shape this block already uses for a step's second
-                                    fact. Muted TEXT tier, not the fgSubtle decoration tier: it is a
-                                    measurement and must clear the 4.5:1 floor. Steps whose calls reported
-                                    nothing carry no figure, so an ordinary run adds no rows at all.
+                                    <Show when={retries()}>
+                                        {(r: Accessor<string>) => (
+                                            <>
+                                                <Sep />
+                                                <Fg role="warning">{r()}</Fg>
+                                            </>
+                                        )}
+                                    </Show>
+                                    {/* The figure is one more of those facts, on EVERY mount — no narrow-rail
+                                        exception. It had one, on the measurement that a trailing figure
+                                        soft-wraps the ~32-cell rail row; that measurement assumed short
+                                        identifier-shaped labels. Real plan steps are sentences ("Clean and
+                                        parse clinical metadata"), so the row wraps with or without the
+                                        figure, and the separate line was not preventing a wrap — it was
+                                        adding a third line to a row that already took two.
 
-                                    This is the second thing (after a blocked reason) that makes a step
-                                    occupy more than one row, which `maxSteps` — a cap on STEPS, never on
-                                    rows — has never promised to bound. */}
-                                <Show when={props.maxSteps !== undefined && step.usageFigure}>
-                                    {(figure: Accessor<string>) => (
-                                        <text>
-                                            <Fg role="fgMuted">{`  ${figure()}`}</Fg>
-                                        </text>
-                                    )}
-                                </Show>
+                                        A step whose calls reported nothing carries no figure, so an ordinary
+                                        run's rows are unchanged. Muted TEXT tier, not the `fgSubtle`
+                                        decoration tier around it: this is a measurement and must clear the
+                                        4.5:1 floor. */}
+                                    <Show when={step.usageFigure}>
+                                        {(figure: Accessor<string>) => (
+                                            <>
+                                                <Sep />
+                                                <Fg role="fgMuted">{figure()}</Fg>
+                                            </>
+                                        )}
+                                    </Show>
+                                </text>
                                 {/* The blocker's own line rather than a suffix: a reason is a sentence, and
                                     appending it would push the label out of a 40-column rail on every
                                     blocked step. Indented under its step so the association is visual. */}

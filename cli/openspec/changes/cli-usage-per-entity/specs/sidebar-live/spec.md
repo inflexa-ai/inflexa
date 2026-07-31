@@ -93,6 +93,8 @@ While no work is active the poll is disarmed by design, so the section's currenc
 
 The DATA PROFILE section SHALL carry the data profile's own recorded figures, and each run row in the RUNS section SHALL carry that run's. Each SHALL use the COMPACT form: the figure decorates a row whose subject is the entity, so it must annotate without competing with the name it sits under.
 
+The figure SHALL join the facts its row already carries, separated in the same vocabulary — never on a line of its own. It had one, justified by a measurement that appending ~13 cells soft-wraps a rail row; the row wraps regardless, because a plan title is a sentence and already spans two or three rail rows, so the separate line was adding a further one rather than preventing a wrap. Inline, a run's spend reads beside its age, which is where a reader looks for it.
+
 The profile's figures have no other home: its calls carry no thread, so they belong to no session and appear in no session figure. Rendering them on the section that names the profile is what keeps recorded consumption from being invisible in the rail while still counting toward the analysis.
 
 An entity whose calls reported nothing SHALL render a muted absence rather than a zero, and a failed usage read SHALL leave the section's other content intact — a missing figure SHALL never remove the entity it decorates.
@@ -102,6 +104,11 @@ An entity whose calls reported nothing SHALL render a muted absence rather than 
 - **GIVEN** a completed data profile whose calls were recorded
 - **WHEN** the sidebar renders
 - **THEN** the DATA PROFILE section carries its figures
+
+#### Scenario: A run's spend reads beside its age
+
+- **WHEN** a run row renders with recorded figures
+- **THEN** the figure sits on that row after the run's age, separated in the row's own vocabulary, not on a line beneath it
 
 #### Scenario: A run row carries its own figures
 
@@ -120,6 +127,24 @@ An entity whose calls reported nothing SHALL render a muted absence rather than 
 The data-profile details view and the run-detail dialog SHALL each carry the entity's recorded figures as one more property line, in the same `label value` vocabulary as the timings above it and in the LABELLED form — a full-width panel being read deliberately, unlike the rail's decorations. The run-detail dialog SHALL additionally carry the run's call count beside its figures, which is the only thing distinguishing a run whose provider reported nothing from a run that made no calls at all.
 
 Each STEP listed in the run-detail dialog SHALL carry that step's own recorded figures, in the COMPACT form, matching what the rail's live run block shows while the run is in flight — a finished run reviewed here must read the same as it did while it was running, or the reader learns two layouts for one thing.
+
+A step's figure SHALL join that row's other facts in the one separated sequence the row already reads in — the owning agent, the elapsed age, the retry count — on EVERY mount, and SHALL NOT be flushed to the row's trailing edge or given a line of its own.
+
+Not flushed, because flushing aligns a comparable column only while the row's left side is stable, and it is not: a running step gains an age, a retried one a count, an expanded one its agent. The gap then breathes as the run progresses and the figure reads as detached from the step it belongs to — worst while the run is being watched live. Comparing steps against each other belongs to the surfaces built for it; this row reports ONE step's facts.
+
+No line of its own either, and no narrow-rail exception. That exception existed, justified by a measurement that a trailing figure soft-wraps the rail's row — a measurement taken against short identifier-shaped labels. Real plan step labels are sentences, so the row wraps whether or not it carries a figure, and the separate line was not preventing a wrap: it was adding a third line to a row already taking two.
+
+#### Scenario: A step's figure stays with the step's other facts
+
+- **GIVEN** two steps whose labels differ in length, each carrying a figure
+- **WHEN** the step list renders
+- **THEN** each figure follows its own step's facts rather than aligning to a shared trailing column
+
+#### Scenario: A wrapping label costs the same rows with a figure as without
+
+- **GIVEN** a step whose label is long enough to wrap the rail's width
+- **WHEN** it renders with a figure and without one
+- **THEN** it occupies the same number of rows in both cases
 
 The step figures SHALL be read once for the OPENED run rather than batched across every row the picker drew: a picker lists many runs and the reader opens one, so batching would query every listed run's steps to serve the one that gets picked. The read SHALL be handed to the dialog as data, keeping it pure and drivable offline by the design gallery.
 

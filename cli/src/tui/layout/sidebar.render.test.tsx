@@ -1452,10 +1452,11 @@ describe("Sidebar per-entity figures", () => {
         const bRow = rows.findIndex((l) => l.includes(idTail("run-bbbbbb")));
         expect(aRow).toBeGreaterThanOrEqual(0);
         expect(bRow).toBeGreaterThan(aRow);
-        // Each figure sits directly under its own row — the association is what makes two runs of
-        // differing consumption readable at all.
-        expect(rows[aRow + 1]).toContain(`${GLYPHS.arrowUp}809.2k`);
-        expect(rows[bRow + 1]).toContain(`${GLYPHS.arrowUp}1.2k`);
+        // Each figure sits ON its own row, beside that run's age — the association is what makes two
+        // runs of differing consumption readable at all, and a row of its own was costing the section a
+        // line without buying anything a middot does not.
+        expect(rows[aRow]).toContain(`${GLYPHS.middot} ${GLYPHS.arrowUp}809.2k`);
+        expect(rows[bRow]).toContain(`${GLYPHS.middot} ${GLYPHS.arrowUp}1.2k`);
     });
 
     test("a failed usage read leaves the run row rendered, without its figure", async () => {
