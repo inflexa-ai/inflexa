@@ -12,6 +12,9 @@ import { backfillAiSdkMessageEnvelopes } from "../memory/message-backfill.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 
+// No ';' may appear anywhere in this text, comments included: it is executed by
+// splitting on ';' (see `DDL.split` below), so a semicolon inside a comment cuts
+// the statement it precedes in half and Postgres rejects the fragment.
 const DDL = `
 -- Analysis-level state (status, context, data-profile tracking, billing identity).
 --
@@ -231,6 +234,25 @@ CREATE INDEX IF NOT EXISTS idx_cortex_regulatory_chunks_metadata
 -- re-sent to the provider on the next turn, where a reordered prefix misses the
 -- prompt cache. JSON stores the text verbatim. Nothing indexes this column, and
 -- the JSON operators retractLastTurn uses work the same on either type.
+--
+-- reported_usage holds a whole turn's TokenUsageRollup — what providers reported
+-- for the turn this row completed — and is written only on the LAST assistant row
+-- of a turn, so a reloaded transcript can show the figure the live turn showed.
+-- It is NOT the tokens column beside it, and the two must never be read for
+-- each other: tokens is an offline js-tiktoken estimate stamped on EVERY row so
+-- the read path can window by budget without a provider round trip, and it exists
+-- for rows no provider ever saw. reported_usage is a provider's own report, and
+-- covers a turn rather than a row. Both are plausible-looking integers on one row,
+-- which is exactly why the column names carry the distinction.
+--
+-- Nullable with no default: absent means nothing was reported, and a zero would
+-- claim a turn cost nothing. A row written before this column existed is absent
+-- for the same reason, so the migration needs no backfill.
+--
+-- JSONB here, unlike message_envelope above. The verbatim-bytes requirement that
+-- forces JSON on the envelope is about model content that is re-sent to the
+-- provider. This record is harness-generated, has a fixed field set, and never
+-- reaches a prompt, so it does not share that requirement.
 CREATE TABLE IF NOT EXISTS messages (
   thread_id     TEXT NOT NULL,
   seq           BIGINT NOT NULL,
@@ -238,6 +260,7 @@ CREATE TABLE IF NOT EXISTS messages (
   content_jsonb JSONB,
   message_envelope JSON,
   tokens        INTEGER NOT NULL,
+  reported_usage JSONB,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (thread_id, seq)
 );
@@ -445,6 +468,11 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                 // dropping an absent NOT NULL no-ops, so this is a no-op on fresh DBs.
                 "ALTER TABLE cortex_analysis_state ALTER COLUMN data_profile_status DROP NOT NULL",
                 "ALTER TABLE messages ADD COLUMN IF NOT EXISTS message_envelope JSON",
+                // The turn's reported usage rollup (see the CREATE TABLE comment).
+                // Purely additive: nullable with no default, so adding it rewrites no
+                // row and every pre-existing message reads back with no rollup — which
+                // is the honest value, the figures having never been recorded.
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS reported_usage JSONB",
                 // Demote an existing JSONB envelope column to JSON (see the CREATE
                 // TABLE comment). Type-guarded because ALTER ... TYPE rewrites the
                 // whole table and this runs at every boot; scoped to

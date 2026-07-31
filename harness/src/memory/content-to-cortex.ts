@@ -124,7 +124,9 @@ async function rowToParts(message: StoredMessage["message"], outcomes: Map<strin
  * `options.resolveDetail` reconstructs each call's one-line detail; both are
  * optional and each tool-call part reports its outcome either way.
  * A row carrying the interruption marker sets `interrupted: true` on the message
- * it lands in, including when coalesced into an assistant run.
+ * it lands in, including when coalesced into an assistant run; a row carrying a
+ * stored turn rollup sets `usage` the same way, so a reloaded conversation shows
+ * the cost the live turn showed without a second query.
  *
  * Coalescing mirrors the live SSE shape. The agent loop persists each assistant
  * step (typically a single `tool_use`) as its own row, and the `tool_result`
@@ -167,9 +169,16 @@ export async function contentToCortexMessages(messages: readonly StoredMessage[]
         // assistant run it trailed, so fold the flag onto the previous emitted assistant.
         const interrupted = isInterruptedMessage(message.message);
         if (parts.length === 0) {
-            if (interrupted) {
-                const prev = out[out.length - 1];
-                if (prev && prev.role === "assistant") prev.interrupted = true;
+            // A row's stored rollup is a fact about the turn, not about what the row
+            // renders — so like the interruption marker it is read before the
+            // zero-parts drop and folded onto the assistant run it trailed. Without
+            // this, a turn whose last assistant row held only unrendered blocks
+            // (reasoning alone) would lose the figure to the drop, which is the exact
+            // disappearance persisting it exists to fix.
+            const prev = out[out.length - 1];
+            if (prev && prev.role === "assistant") {
+                if (interrupted) prev.interrupted = true;
+                if (message.usage) prev.usage = message.usage;
             }
             continue;
         }
@@ -187,10 +196,16 @@ export async function contentToCortexMessages(messages: readonly StoredMessage[]
         if (prev && prev.role === role && role === "assistant") {
             prev.parts.push(...parts);
             if (interrupted) prev.interrupted = true;
+            // Coalescing is what rebuilds the one-bubble-per-turn shape, and the rollup
+            // rides the turn's LAST assistant row — so the run keeps whichever of its
+            // rows carried one. Assigning rather than merging is deliberate: two rollups
+            // in one run would mean two turns were merged, which coalescing never does.
+            if (message.usage) prev.usage = message.usage;
             continue;
         }
         const cortex: CortexMessage = { id: String(message.seq), role, parts };
         if (interrupted) cortex.interrupted = true;
+        if (message.usage) cortex.usage = message.usage;
         out.push(cortex);
     }
     return out;

@@ -4,8 +4,9 @@ import { metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import type { Pool } from "pg";
 
+import type { TokenUsageRollup } from "../contracts/usage.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
-import { isInterruptedMessage, markInterruptedMessage, syntheticRecordMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
+import { envelopeMessage, isInterruptedMessage, markInterruptedMessage, syntheticRecordMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { countTokens } from "./count-tokens.js";
 import { __resetThreadHistoryMetricsForTest, createThreadHistory, EVICTION_BLOCK_TURNS, type ThreadHistory } from "./thread-history.js";
 import { createThreadStore } from "./thread-store.js";
@@ -886,5 +887,146 @@ describe("host-appended synthetic records", () => {
         const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(outcome).toEqual({ kind: "retracted", messages: 2 });
         expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual([...turn1, notice]);
+    });
+});
+
+// --- turn usage rollup ------------------------------------------------------
+
+describe("appendTurn turn usage rollup", () => {
+    const ROLLUP: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340, cacheReadInputTokens: 900 };
+
+    /**
+     * Every row's stored rollup, oldest-first. Asserted at the column rather than
+     * through `loadPage`, because "on this row and on NO other" is a storage fact:
+     * a read that folded the figure onto a neighbour would satisfy a display-level
+     * assertion while the write was placing it wrong.
+     */
+    async function storedRollups(threadId = THREAD): Promise<(TokenUsageRollup | null)[]> {
+        const { rows } = await pool.query<{ reported_usage: TokenUsageRollup | null }>(
+            "SELECT reported_usage FROM messages WHERE thread_id = $1 ORDER BY messages.seq ASC",
+            [threadId],
+        );
+        return rows.map((r) => r.reported_usage);
+    }
+
+    it("stores the rollup on the turn's last assistant row and on no other", async () => {
+        // A serial-tool turn: two assistant rows, and only the LAST one ends the turn.
+        const turn = [
+            userText("run the comparison"),
+            assistantToolUse("call-1", "run_pca", { k: 2 }),
+            userToolResult("call-1", "done"),
+            assistantText("here are the results"),
+        ];
+        (await history.appendTurn(THREAD, turn, ROLLUP))._unsafeUnwrap();
+
+        expect(await storedRollups()).toEqual([null, null, null, ROLLUP]);
+    });
+
+    it("stores no rollup when the caller supplies none", async () => {
+        (await history.appendTurn(THREAD, [userText("question one"), assistantText("answer one")]))._unsafeUnwrap();
+
+        expect(await storedRollups()).toEqual([null, null]);
+    });
+
+    it("stores a rollup that reports no quantity at all as absent, not as a rollup of absences", async () => {
+        // Both shapes a caller can hand over for "nothing was reported". Storing
+        // either as a rollup would make a turn that was TOLD nothing read back as a
+        // turn that SPENT nothing — the distinction the whole capability rests on.
+        (await history.appendTurn(THREAD, [userText("question one"), assistantText("answer one")], {}))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, [userText("question two"), assistantText("answer two")], { inputTokens: undefined }))._unsafeUnwrap();
+
+        expect(await storedRollups()).toEqual([null, null, null, null]);
+    });
+
+    it("succeeds and stores nothing for a turn that persisted no assistant message", async () => {
+        // An abort before any output. There is no row on which the figure would mean
+        // anything, so it is dropped rather than parked on the user's own message.
+        const appended = await history.appendTurn(THREAD, [userText("aborted before any reply")], ROLLUP);
+
+        expect(appended.isOk()).toBe(true);
+        expect(await storedRollups()).toEqual([null]);
+    });
+
+    it("leaves neither messages nor rollup when the turn's transaction rolls back", async () => {
+        // Fail the SECOND insert, so the rollup-bearing row is the one that never
+        // lands and a surviving first row is exactly what a leak would look like.
+        await pool.query(
+            `CREATE FUNCTION boom_insert() RETURNS trigger AS $$ BEGIN
+               IF NEW.seq = 1 THEN RAISE EXCEPTION 'simulated insert failure'; END IF;
+               RETURN NEW;
+             END; $$ LANGUAGE plpgsql`,
+        );
+        await pool.query("CREATE TRIGGER boom_insert_trg BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION boom_insert()");
+
+        const appended = await history.appendTurn(THREAD, [userText("question one"), assistantText("answer one")], ROLLUP);
+
+        expect(appended.isErr()).toBe(true);
+        expect(await storedRollups()).toEqual([]);
+    });
+
+    it("takes the rollup with it when the tail turn is retracted", async () => {
+        // Free by construction — the rollup is a column on the row — and pinned here
+        // so a future move to a side table cannot silently orphan a turn's cost
+        // behind a transcript that no longer holds the turn.
+        (await history.appendTurn(THREAD, [userText("first question"), assistantText("first answer")], ROLLUP))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, [userText("second question"), assistantText("second answer")], ROLLUP))._unsafeUnwrap();
+        expect(await storedRollups()).toEqual([null, ROLLUP, null, ROLLUP]);
+
+        (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+
+        expect(await storedRollups()).toEqual([null, ROLLUP]);
+    });
+
+    it("reads a row written before the column existed back as absent", async () => {
+        // The migration is additive with no backfill, so a pre-existing row is
+        // indistinguishable from a turn that reported nothing — the honest value,
+        // those figures never having been recorded. An INSERT naming neither the
+        // column nor a default is exactly that row.
+        await pool.query("INSERT INTO messages (thread_id, seq, message_envelope, tokens) VALUES ($1, 0, $2::json, 4)", [
+            THREAD,
+            JSON.stringify(envelopeMessage(userText("written before rollups existed"))),
+        ]);
+
+        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
+        expect(page.messages[0]!.usage).toBeUndefined();
+        // Absent, not present-and-undefined: a consumer spreading the row must not
+        // acquire a `usage` key that overwrites one.
+        expect("usage" in page.messages[0]!).toBe(false);
+    });
+
+    it("surfaces the stored rollup on the display read", async () => {
+        const turn = [userText("question one"), assistantText("answer one")];
+        (await history.appendTurn(THREAD, turn, ROLLUP))._unsafeUnwrap();
+
+        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
+        expect(page.messages.map((m) => m.usage)).toEqual([undefined, ROLLUP]);
+        // Nothing else about the display read changes — same rows, same order.
+        expect(page.messages.map((m) => m.message)).toEqual(turn);
+    });
+});
+
+// --- windowing is independent of the rollup ---------------------------------
+
+describe("loadRecent ignores the stored rollup", () => {
+    it("windows identically with and without rollups, including ones dwarfing the tokens counts", async () => {
+        // The regression this guards is silent: budgeting on the rollup would stop
+        // evicting on exactly the threads that reported nothing, and would evict
+        // nearly everything on a thread whose rollups dwarf its `tokens` counts.
+        const huge: TokenUsageRollup = { inputTokens: 5_000_000, outputTokens: 5_000_000 };
+        const labels = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
+        for (const label of labels) {
+            (await history.appendTurn("with-rollups", labeledTurn(label), huge))._unsafeUnwrap();
+            (await history.appendTurn("no-rollups", labeledTurn(label)))._unsafeUnwrap();
+        }
+        const budget = turnCost(labeledTurn("a")) * 3;
+
+        const withRollups = (await history.loadRecent("with-rollups", budget))._unsafeUnwrap();
+        const withoutRollups = (await history.loadRecent("no-rollups", budget))._unsafeUnwrap();
+
+        expect(withRollups).toEqual(withoutRollups);
+        // Eviction must actually have happened, or the equality above compares two
+        // full windows and proves nothing about budgeting.
+        expect(withRollups.length).toBeLessThan(labels.length * 2);
+        expect(windowCost(withRollups)).toBeLessThanOrEqual(budget);
     });
 });

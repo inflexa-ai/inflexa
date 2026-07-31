@@ -7,6 +7,12 @@ import { ok } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 
+// Imported through the PUBLIC package specifiers a consumer would use, not the
+// relative paths the rest of this file uses for harness-internal helpers — the
+// rollup is shipped for an embedder, and a type it cannot import is not delivered.
+import type { CortexMessage } from "@inflexa-ai/harness/contracts/message.js";
+import type { TokenUsageRollup } from "@inflexa-ai/harness/contracts/usage.js";
+
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { insertPlan, upsertPlan } from "../state/plans.js";
 import { insertRun } from "../state/runs.js";
@@ -24,8 +30,8 @@ let pool: Pool;
 let drop: () => Promise<void>;
 let history: ThreadHistory;
 
-function stored(seq: number, message: ModelMessage): StoredMessage {
-    return { seq, envelope: envelopeMessage(message), message };
+function stored(seq: number, message: ModelMessage, usage?: TokenUsageRollup): StoredMessage {
+    return { seq, envelope: envelopeMessage(message), message, ...(usage === undefined ? {} : { usage }) };
 }
 
 beforeEach(async () => {
@@ -256,6 +262,82 @@ describe("contentToCortexMessages", () => {
         expect(cortex).toHaveLength(2);
         expect("interrupted" in cortex[0]!).toBe(false);
         expect("interrupted" in cortex[1]!).toBe(false);
+    });
+
+    it("carries a stored rollup onto the message its row produces", async () => {
+        const usage: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "user", content: "run it" }),
+            stored(1, { role: "assistant", content: [{ type: "text", text: "done" }] }, usage),
+        ]);
+
+        expect(cortex[1]!.usage).toEqual(usage);
+        // The user's own message never carries the turn's cost — it did not incur it.
+        expect("usage" in cortex[0]!).toBe(false);
+    });
+
+    it("keeps the rollup its last row carried when an assistant run is coalesced", async () => {
+        // Coalescing is what rebuilds the one-bubble-per-turn shape, and the rollup
+        // rides the turn's last assistant row — so the merged bubble must keep it.
+        const usage: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: "run_pca", input: {} }] }),
+            stored(1, { role: "assistant", content: [{ type: "text", text: "here are the results" }] }, usage),
+        ]);
+
+        expect(cortex).toHaveLength(1);
+        expect(cortex[0]!.usage).toEqual(usage);
+    });
+
+    it("folds the rollup onto the prior assistant run when its row renders no parts", async () => {
+        // Same reasoning as the interruption fold above: the rollup is a fact about
+        // the TURN, not about what the row renders, so a last assistant row holding
+        // only non-renderable content must not take the figure down with it — that
+        // disappearance is exactly what persisting the rollup exists to fix.
+        const usage: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "assistant", content: [{ type: "text", text: "here are the results" }] }),
+            stored(
+                1,
+                { role: "assistant", content: [{ type: "reasoning", text: "wrapping up", providerOptions: { anthropic: { signature: "sig" } } }] },
+                usage,
+            ),
+        ]);
+
+        expect(cortex).toHaveLength(1);
+        expect(cortex[0]!.usage).toEqual(usage);
+        expect(cortex[0]!.parts).toEqual([{ type: "text", text: "here are the results" }]);
+    });
+
+    it("omits the usage field entirely on rows stored without a rollup", async () => {
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "user", content: "hi" }),
+            stored(1, { role: "assistant", content: [{ type: "text", text: "hello" }] }),
+        ]);
+
+        expect(cortex).toHaveLength(2);
+        expect("usage" in cortex[0]!).toBe(false);
+        expect("usage" in cortex[1]!).toBe(false);
+    });
+
+    it("delivers a reloaded turn's rollup end to end, through the public message type", async () => {
+        // The whole point, exercised the way an embedder meets it: append with the
+        // rollup `AgentFinish.turnUsage` carried, reload, and read the figure off the
+        // `CortexMessage` — no second query, no correlation, no host-side ledger.
+        const usage: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340, cacheReadInputTokens: 900 };
+        const turn: ModelMessage[] = [
+            { role: "user", content: [{ type: "text", text: "Run PCA" }] },
+            { role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: "run_pca", input: { k: 2 } }] },
+            { role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: "run_pca", output: { type: "text", value: "ok" } }] },
+            { role: "assistant", content: [{ type: "text", text: "Here are the results." }] },
+        ];
+        (await history.appendTurn(THREAD, turn, usage))._unsafeUnwrap();
+
+        const page = (await history.loadPage(THREAD, 0, 100))._unsafeUnwrap();
+        const cortex: CortexMessage[] = await contentToCortexMessages(page.messages);
+
+        expect(cortex.map((m) => m.role)).toEqual(["user", "assistant"]);
+        expect(cortex[1]!.usage).toEqual(usage);
     });
 
     it("reconstructs a display card from a tool-call block via resolveCard", async () => {
