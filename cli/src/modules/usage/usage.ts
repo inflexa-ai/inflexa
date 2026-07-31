@@ -26,23 +26,11 @@ import {
     type LlmUsageTotals,
 } from "../../db/primary_query.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
+import { NOT_REPORTED } from "../../lib/usage_format.ts";
 import { resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
 
 /** The `empty`-context hint for the usage command (see `resolveSingleAnalysis`). */
 const EMPTY_HINT = "No analysis here. Run `inflexa` to start or open one, then ask what it has consumed.";
-
-/**
- * Rendered in place of any quantity the provider never reported. Deliberately a WORD, not a dash and
- * never a `0`: the ledger's central discipline is that an absent figure is an unknown rather than a
- * measurement, and a surface that renders it as zero erases exactly the distinction the nullable
- * columns exist to preserve. One spelling in the headline and in every table, so a reader never has
- * to learn two vocabularies for the same fact.
- *
- * Exported because the TUI's usage dialog reports the same figures and must say the same word. It is
- * the vocabulary that is shared, not the composition — the dialog paints label and figure in
- * different theme roles, which a pre-joined line cannot express.
- */
-export const NOT_REPORTED = "not reported";
 
 /** Group label for calls whose endpoint reported no served model id — the absence of an id, not a model actually named this. */
 const NO_SERVED_MODEL = `(${NOT_REPORTED})`;

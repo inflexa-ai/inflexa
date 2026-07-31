@@ -481,12 +481,51 @@ describe("RunBlock step usage figure", () => {
         return () => <RunBlock name="cohort-screen" tag="T9S2" done={1} total={3} steps={steps} maxSteps={maxSteps} hint={false} heading={false} />;
     }
 
-    test("the figure renders on its own indented line under the step it belongs to", async () => {
-        const frame = await renderFrame(block(figuredSteps(`${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`)), { width: 40, height: 14 });
+    test("on a WIDE mount the figure trails its step's own row, flush at the far edge", async () => {
+        const figure = `${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`;
+        const frame = await renderFrame(block(figuredSteps(figure)), { width: 80, height: 14 });
+        const lines = frame.split("\n");
+        const s2 = lines.findIndex((l) => /\bS2\b/.test(l));
+        expect(s2).toBeGreaterThanOrEqual(0);
+        // Pushed to the trailing edge, not butted against the label: the figures form a column the eye
+        // can run down and compare, which is the whole reason they share the row rather than trailing
+        // wherever each step's name happened to end.
+        expect(lines[s2]!.trimEnd().endsWith(figure)).toBe(true);
+        expect(lines[s2]!.indexOf(figure)).toBeGreaterThan(lines[s2]!.indexOf("S2") + 20);
+        // No second row for it, so the step list stays one row per step and reads as a list of steps
+        // rather than as steps interleaved with measurements.
+        expect(lines.findIndex((l) => /\bS3\b/.test(l))).toBe(s2 + 1);
+    });
+
+    test("the trailing figures align with each other, whatever their steps are named", async () => {
+        // The alignment IS the feature. Two steps whose labels differ in length must still put their
+        // figures in the same column, or the column is not comparable and the flex bought nothing.
+        const frame = await renderFrame(
+            block([
+                { label: "S1", state: "done", usageFigure: `${GLYPHS.arrowUp}9.1k` },
+                { label: "a-much-longer-step-name", state: "done", usageFigure: `${GLYPHS.arrowUp}9.1k` },
+            ]),
+            { width: 80, height: 14 },
+        );
+        const cols = frame
+            .split("\n")
+            .filter((l) => l.includes(GLYPHS.arrowUp))
+            .map((l) => l.indexOf(GLYPHS.arrowUp));
+        expect(cols).toHaveLength(2);
+        expect(cols[0]).toBe(cols[1]!);
+    });
+
+    test("on the RAIL the figure takes its own indented line under the step it belongs to", async () => {
+        const frame = await renderFrame(block(figuredSteps(`${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`), size.railStepRows), {
+            width: size.railWidth,
+            height: 14,
+        });
         const lines = frame.split("\n");
         const s2 = lines.findIndex((l) => /\bS2\b/.test(l));
         expect(s2).toBeGreaterThanOrEqual(0);
         // Directly beneath its own step — the association is visual, and the row above stays a step row.
+        // Inline here would soft-wrap mid-token: a real step name plus an elapsed age already fills the
+        // rail's ~32 usable cells, which is the measurement this split exists for.
         expect(lines[s2 + 1]).toContain(`${GLYPHS.arrowUp}42.6k`);
         expect(lines[s2]).not.toContain(GLYPHS.arrowUp);
         // Steps with no figure gain no row at all, so an ordinary run is exactly as tall as before.

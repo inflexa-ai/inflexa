@@ -63,6 +63,7 @@ import {
     listAnalysisInputs,
     countAnalysesByProject,
     listAnalysisUsageByRun,
+    listRunUsageByStep,
     listUsageTotalsByAnalysis,
     type LlmUsageTotals,
 } from "../db/primary_query.ts";
@@ -1937,11 +1938,21 @@ async function openRunsPicker(ctx: Workspace): Promise<void> {
             emptyText="no runs"
             onCancel={() => ctx.closeDialog()}
             onSelect={(run: CortexRunRow) => {
+                // Read at SELECT, not with the run totals above: this is one query per run the user
+                // actually opens, where hoisting it into the batch would query every drawn row's steps
+                // to serve the one row that gets picked. It is a local SQLite read on an indexed scope,
+                // so it costs nothing worth deferring, and a failure degrades to an empty map — the
+                // steps still list, they just carry no figures.
+                const stepUsage = listRunUsageByStep(analysis.id, run.runId).match(
+                    (groups) => new Map(groups.flatMap((g) => (g.stepId === null ? [] : [[g.stepId, g.totals] as const]))),
+                    () => new Map<string, LlmUsageTotals>(),
+                );
                 ctx.openDialog(() => (
                     <RunDetailDialog
                         run={run}
                         loadSteps={(runId) => queryStepsByRun(runtime.pool, runId)}
                         usage={usageByRun.get(run.runId)}
+                        stepUsage={stepUsage}
                         onClose={() => ctx.closeDialog()}
                     />
                 ));

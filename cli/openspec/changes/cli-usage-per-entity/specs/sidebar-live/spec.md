@@ -14,11 +14,18 @@ The sidebar SHALL render a USAGE section carrying the token figures recorded for
 
 The section SHALL use the LABELLED form. Consumption is what this section is FOR — it is the only rail section whose entire subject is a number, and it is read deliberately rather than scanned — so it can afford the words and gains nothing from terseness. The compact form is reserved for the figures DECORATING the DATA PROFILE and RUNS rows, whose subject is the entity and where a labelled figure would crowd the name it annotates.
 
+Its two arms SHALL share one row at the section's opposite edges, with the cache quantities indented beneath input, per `usage-figure-rendering`. The section SHALL NOT stack the arms: a rail row is the scarcest thing it spends, and the nesting that has to be preserved is the one BETWEEN an arm and its parts, not one between the two arms.
+
 Runs are included deliberately. A conversation's own calls can be a small fraction of what it caused — a chat turn that launches a run may itself spend a few thousand tokens while the run spends hundreds of thousands — and a headline reporting only the former immediately after the user launched the latter understates by orders of magnitude. The rail shows the run's own figure directly above, so the containment is visible rather than concealed. This is a different reading from the session GRAIN reported by `usage-breakdown`, which excludes runs so the grains partition the analysis total; each surface SHALL make clear which reading it shows.
 
 The section's source is the CLI's own local ledger, not the harness ledger behind the booted runtime, so its figure is readable before the runtime is `ready` and while it is stopped. The section SHALL NOT gate itself on boot state.
 
 An analysis with no open session, and a session with no recorded usage, SHALL each render a muted absence distinguished by tone from a zero. A read failure SHALL render an unavailable state and SHALL NOT crash the sidebar or suppress the sections around it, matching how every other section degrades.
+
+#### Scenario: The two arms share a row
+
+- **WHEN** the USAGE section renders a figure carrying cache quantities
+- **THEN** input and output sit on one row at the section's two edges, with the cache quantities indented on the rows beneath
 
 #### Scenario: The session figure includes the run it launched
 
@@ -107,6 +114,35 @@ An entity whose calls reported nothing SHALL render a muted absence rather than 
 - **GIVEN** a usage read that fails for a run
 - **WHEN** the RUNS section renders
 - **THEN** the run row still renders with its status and progress, without its figure
+
+### Requirement: The profile and run detail dialogs report usage as a property, and the run's steps report their own
+
+The data-profile details view and the run-detail dialog SHALL each carry the entity's recorded figures as one more property line, in the same `label value` vocabulary as the timings above it and in the LABELLED form — a full-width panel being read deliberately, unlike the rail's decorations. The run-detail dialog SHALL additionally carry the run's call count beside its figures, which is the only thing distinguishing a run whose provider reported nothing from a run that made no calls at all.
+
+Each STEP listed in the run-detail dialog SHALL carry that step's own recorded figures, in the COMPACT form, matching what the rail's live run block shows while the run is in flight — a finished run reviewed here must read the same as it did while it was running, or the reader learns two layouts for one thing.
+
+The step figures SHALL be read once for the OPENED run rather than batched across every row the picker drew: a picker lists many runs and the reader opens one, so batching would query every listed run's steps to serve the one that gets picked. The read SHALL be handed to the dialog as data, keeping it pure and drivable offline by the design gallery.
+
+A step the ledger has nothing for SHALL carry no figure — never a zeroed one — and SHALL still render its row. A failed usage read SHALL leave the dialog fully rendered without figures; a missing decoration SHALL never remove the record it decorates.
+
+The steps' figures SHALL NOT be presented as summing to the run's own figure. A run spends tokens outside any step (planning, synthesis dispatch), so the step rows are a partial view of the run's total by construction.
+
+#### Scenario: The profile's spend reads as one of its properties
+
+- **WHEN** the data-profile details view opens on a profile whose calls were recorded
+- **THEN** it carries a `usage` line in the labelled form, among the status and timing lines
+
+#### Scenario: A run's steps each report their own spend
+
+- **GIVEN** an opened run whose steps have recorded calls
+- **WHEN** the run-detail dialog renders its step list
+- **THEN** each step carries its own compact figure, beneath its own row
+
+#### Scenario: A step the ledger has nothing for keeps its row
+
+- **GIVEN** a run one of whose steps made no calls, and another whose calls reported no quantity
+- **WHEN** the step list renders
+- **THEN** both steps render without a figure, and neither shows a zero
 
 ### Requirement: Active-run step views carry each step's recorded usage
 

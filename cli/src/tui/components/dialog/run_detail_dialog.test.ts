@@ -62,7 +62,9 @@ describe("runDetailLines", () => {
     test("the run's figures ride as one more property line, in the shared notation", () => {
         const lines = runDetailLines(run(), { calls: 47, inputTokens: 809_200, outputTokens: 40_400 });
 
-        expect(lines).toContain(`usage ↑809.2k ↓40.4k ${GLYPHS.middot} 47 calls`);
+        // The LABELLED form: a `label value` property line among the timings, in a full-width dialog
+        // being read deliberately — not the rail's compact decoration on a 37-cell row.
+        expect(lines).toContain(`usage 809.2k in ${GLYPHS.middot} 40.4k out ${GLYPHS.middot} 47 calls`);
         // The five quantities are never combined: 849.6k is input+output.
         expect(lines.join("\n")).not.toContain("849.6k");
     });
@@ -72,13 +74,13 @@ describe("runDetailLines", () => {
 
         expect(lines).toContain(`usage not reported ${GLYPHS.middot} 1 call`);
         // Never a zero: "the provider measured nothing" is not "nothing was spent".
-        expect(lines.some((l) => l.includes("↑0"))).toBe(false);
+        expect(lines.some((l) => l.includes("0 in") || l.includes("0 out"))).toBe(false);
     });
 
     test("a half figure keeps the arm it has rather than inventing the one it lacks", () => {
         const lines = runDetailLines(run(), { calls: 2, outputTokens: 40 });
 
-        expect(lines).toContain(`usage ↓40 ${GLYPHS.middot} 2 calls`);
+        expect(lines).toContain(`usage 40 out ${GLYPHS.middot} 2 calls`);
     });
 
     test("no usage handed in omits the line entirely — the run's other properties are unchanged", () => {

@@ -5,8 +5,7 @@ import type { ResultAsync } from "neverthrow";
 import type { CortexRunRow, DbError, StepExecutionRow } from "@inflexa-ai/harness";
 
 import { GLYPHS } from "../../../lib/design_system.ts";
-import { formatTokenFigure } from "../../../lib/usage_format.ts";
-import { NOT_REPORTED } from "../../../modules/usage/usage.ts";
+import { formatTokenFigure, formatTokenFigureLabelled, NOT_REPORTED } from "../../../lib/usage_format.ts";
 import type { LlmUsageTotals } from "../../../db/primary_query.ts";
 import { theme } from "../../theme.ts";
 import { KEYS, chordLabel } from "../../keymap.ts";
@@ -38,6 +37,17 @@ export type RunDetailDialogProps = {
      * entirely rather than printed as a zero.
      */
     usage?: LlmUsageTotals;
+    /**
+     * What each of the run's STEPS consumed, keyed by step id — the same figures the rail's live run
+     * block carries, so a finished run reviewed here reads the same as it did while it was running.
+     * Handed in as data for the same reason {@link RunDetailDialogProps.usage} is: the caller owns the
+     * ledger reads, and this dialog stays pure and showcaseable with no database in sight.
+     *
+     * A step the map has no entry for carries no figure — never a zeroed one. Absent covers the step
+     * that made no calls, the step whose provider reported nothing, and the read that failed; none of
+     * those is a measurement, and only the run's own `usage` line above can distinguish them.
+     */
+    stepUsage?: ReadonlyMap<string, LlmUsageTotals>;
     /** Wired to every non-commit close (esc, click-outside, ctrl+c) and the q/enter close keys. */
     onClose: () => void;
 };
@@ -49,11 +59,12 @@ export type RunDetailDialogProps = {
  * vocabulary `profileDetailLines` pins for the profile dialog. The error renders verbatim on
  * failure, one line per source line.
  *
- * `usage` is one more property of the run, printed in that same vocabulary and in the one shared
- * token notation — never a second dialect of it. It is a PARAMETER rather than a lookup so this stays
- * pure: the caller batches the ledger read across every row it drew. Passing nothing omits the line,
- * which covers both "this run has no recorded calls" and "the usage read failed" — neither is a
- * figure, and a zero would assert one.
+ * `usage` is one more property of the run, printed in that same vocabulary and in the LONG token form
+ * — `label value` like every line around it, in a full-width dialog being read deliberately rather
+ * than a rail column being scanned. It is a PARAMETER rather than a lookup so this stays pure: the
+ * caller batches the ledger read across every row it drew. Passing nothing omits the line, which
+ * covers both "this run has no recorded calls" and "the usage read failed" — neither is a figure, and
+ * a zero would assert one.
  */
 export function runDetailLines(run: CortexRunRow, usage?: LlmUsageTotals): string[] {
     const lines: string[] = [`status: ${run.status}`];
@@ -70,7 +81,7 @@ export function runDetailLines(run: CortexRunRow, usage?: LlmUsageTotals): strin
         // The call count rides beside the figure because it is the only thing that tells a run whose
         // provider reported nothing from a run that made no calls at all — the two-armed figure reads
         // identically ("not reported") in both.
-        lines.push(`usage ${formatTokenFigure(usage) || NOT_REPORTED} ${GLYPHS.middot} ${usage.calls} ${usage.calls === 1 ? "call" : "calls"}`);
+        lines.push(`usage ${formatTokenFigureLabelled(usage) || NOT_REPORTED} ${GLYPHS.middot} ${usage.calls} ${usage.calls === 1 ? "call" : "calls"}`);
     }
     if (run.error) {
         lines.push("");
@@ -104,7 +115,25 @@ export function RunDetailDialog(props: RunDetailDialogProps): JSX.Element {
     const [steps, setSteps] = createSignal<StepsState>({ kind: "loading" });
     onMount(() => {
         void props.loadSteps(props.run.runId).match(
-            (rows) => setSteps({ kind: "loaded", views: rows.map((r) => ({ label: r.stepId, state: stepStateOf(r.status), startedAt: r.startedAt })) }),
+            /* eslint-disable-next-line solid/reactivity -- read-once by contract: the step figures are a point-in-time capture handed in at open, exactly like the run row and its totals, and this resolve callback runs once from onMount */
+            (rows) =>
+                setSteps({
+                    kind: "loaded",
+                    views: rows.map((r) => {
+                        // Written HERE rather than in `RunBlock`, because that component takes its step
+                        // figures already written — one contract for the live rail, this dialog, and the
+                        // gallery, none of which can then disagree about the notation.
+                        const figure = formatTokenFigure(props.stepUsage?.get(r.stepId) ?? {});
+                        return {
+                            label: r.stepId,
+                            state: stepStateOf(r.status),
+                            startedAt: r.startedAt,
+                            // Absent, not "", so a step that reported nothing adds no row at all — the
+                            // same absence rule every other figure on this surface follows.
+                            ...(figure === "" ? {} : { usageFigure: figure }),
+                        };
+                    }),
+                }),
             () => setSteps({ kind: "unavailable" }),
         );
     });

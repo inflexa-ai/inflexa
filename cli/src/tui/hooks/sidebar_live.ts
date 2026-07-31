@@ -18,7 +18,7 @@ import { Bus } from "../../lib/bus.ts";
 import { getLogger } from "../../lib/log.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
-import { formatTokenFigure } from "../../lib/usage_format.ts";
+import { formatTokenFigure, formatTokenFigureLabelled } from "../../lib/usage_format.ts";
 import { getAnalysisDataProfileUsageTotals, getRunUsageTotals, listRunUsageByStep } from "../../db/primary_query.ts";
 import type { LlmUsageByStep, LlmUsageTotals } from "../../db/primary_query.ts";
 // The CLI's own storage error, aliased because this module already imports the harness's identically
@@ -298,7 +298,11 @@ export function profileDetailLines(snap: ProfileSnapshot): string[] {
             // Omitted when nothing was reported, exactly as `started`/`completed` are omitted when the
             // ledger holds no stamp — an unconditional line would have to print a zero, which asserts
             // a measurement the ledger does not hold.
-            const usage = snap.usage ? formatTokenFigure(snap.usage) : "";
+            //
+            // The LONG form, unlike the compact figure the rail's DATA PROFILE section carries for the
+            // same profile: this is a `label value` property line in a full-width dialog being read
+            // deliberately, where the rail's is a decoration scanned in a 37-cell column.
+            const usage = snap.usage ? formatTokenFigureLabelled(snap.usage) : "";
             if (usage !== "") lines.push(`usage ${usage}`);
             if (p.status === "failed" && p.error) {
                 lines.push("");

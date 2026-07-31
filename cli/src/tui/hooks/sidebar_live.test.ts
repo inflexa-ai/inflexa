@@ -1045,10 +1045,13 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
         const lines = profileDetailLines(loaded({}, { calls: 4, inputTokens: 55_500, outputTokens: 3_200 }));
         // Its calls carry no thread, so they belong to no session and appear in no session figure —
         // this dialog and the rail's DATA PROFILE section are the only places they are visible at all.
-        expect(lines).toContain(`usage ${GLYPHS.arrowUp}55.5k ${GLYPHS.arrowDown}3.2k`);
+        // The LABELLED form, unlike the compact figure the rail's DATA PROFILE section carries for this
+        // same profile: this is a property line in a full-width dialog, read rather than scanned.
+        const usage = `usage 55.5k in ${GLYPHS.middot} 3.2k out`;
+        expect(lines).toContain(usage);
         // Placed among the properties, not after the summary/files prose — the same `label value`
         // vocabulary as `started` / `duration`.
-        expect(lines.indexOf(`usage ${GLYPHS.arrowUp}55.5k ${GLYPHS.arrowDown}3.2k`)).toBeLessThan(lines.indexOf("line one"));
+        expect(lines.indexOf(usage)).toBeLessThan(lines.indexOf("line one"));
     });
 
     test("a profile with nothing reported carries no usage line rather than a zeroed one", () => {

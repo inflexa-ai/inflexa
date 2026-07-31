@@ -6,7 +6,7 @@ import type { JSX } from "solid-js";
 import type { DbError as HarnessDbError, StepExecutionRow } from "@inflexa-ai/harness";
 
 import { DEFAULT_THEME_ID, GLYPHS, size, themes } from "../../lib/design_system.ts";
-import { formatTokenFigure, tokenFigureDetail } from "../../lib/usage_format.ts";
+import { formatTokenFigure, formatTokenFigureLabelled, tokenFigureDetail } from "../../lib/usage_format.ts";
 import { contrast } from "../../test_support/contrast.ts";
 import { setTheme } from "../theme.ts";
 import { useKeymapRoot } from "../keymap.ts";
@@ -192,7 +192,9 @@ const CASES: FigureCase[] = [
                 />
             </DialogShowcase>
         ),
-        figure: formatTokenFigure(mockRunUsage.get(mockCortexRuns[0]!.runId)!),
+        // The LONG form on this line, unlike every other case in this table: a `label value` property
+        // line in a full-width dialog spends words where a rail decoration cannot.
+        figure: formatTokenFigureLabelled(mockRunUsage.get(mockCortexRuns[0]!.runId)!),
         surface: colors.bgRaised,
         size: { width: 100, height: 30 },
     },
