@@ -40,6 +40,15 @@ export type SidebarProps = {
     onOpenProfile?: () => void;
     /** Open the runs details view (wired to the RUNS section's click + leader key). */
     onOpenRuns?: () => void;
+    /**
+     * Open the usage breakdown dialog (wired to the USAGE section's click).
+     *
+     * Click only, deliberately: the section click is the affordance DATA PROFILE and RUNS already
+     * teach, so a user who has learned it reaches for it here without being told. No chord is
+     * reserved for it — an unused keybinding is a claim on the keymap that has to be paid for
+     * whether or not anyone presses it, and one can be added later against the live map.
+     */
+    onOpenUsage?: () => void;
 };
 
 // Short session handle, per the wireframe ("S·2f9a"). Undefined while no thread is bound, so the
@@ -263,7 +272,7 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
         return props.label.length + space.sm + chars.length <= RAIL_CONTENT_WIDTH;
     };
     // The arrow reads `props.onActivate` at click time (reactive-safe, and the section activation is
-    // inert on the sections that pass none — only DATA PROFILE / RUNS supply a callback).
+    // inert on the sections that pass none — only DATA PROFILE / RUNS / USAGE supply a callback).
     return (
         <box flexDirection="column" paddingTop={1} onMouseUp={() => props.onActivate?.()}>
             <Show
@@ -574,7 +583,7 @@ export function Sidebar(props: SidebarProps) {
                     Section's label-row `value` slot, because that slot always paints the section
                     foreground and two of the three states are deliberately muted; a value that
                     changed rows with its tone would make the rail jump between renders. */}
-                <Section label="USAGE">
+                <Section label="USAGE" onActivate={props.onOpenUsage}>
                     <text>
                         <Fg role={usageLine().role}>{usageLine().text}</Fg>
                     </text>

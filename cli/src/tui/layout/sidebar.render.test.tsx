@@ -22,6 +22,7 @@ import { __resetSidebarLiveForTest, absTime, absTimeShort, idTail, refreshSideba
 import { __resetOpenThreadForTest, refreshOpenThread, type ThreadSeams } from "../hooks/thread.ts";
 import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
 import { Sidebar, usageLineOf } from "./sidebar.tsx";
+import { readAnalysisUsage } from "../components/dialog/usage_dialog.tsx";
 import type { Analysis } from "../../types/analysis.ts";
 import type { CortexRunRow, DataProfileStatus, DbError, StepExecutionRow, Thread } from "@inflexa-ai/harness";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
@@ -1083,6 +1084,46 @@ describe("Sidebar USAGE section", () => {
             const frame = setup.captureCharFrame();
             expect(usageHas(frame, "12.4k in")).toBe(true);
             expect(usageHas(frame, "3.1k out")).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("clicking the section activates it, and the dialog it opens needs no booted runtime", async () => {
+        const a = analysisIn(dirA, "alpha");
+        upsertLlmUsage(usageEntry(a.id))._unsafeUnwrap();
+        // `idle`, never `ready`: the whole point of the USAGE section is that it answers from the CLI's
+        // own SQLite with the durable engine, its Postgres, and the model proxy all cold. Booting one
+        // here would make this test unable to fail for the reason it exists.
+        __setBootStateForTest({ phase: "idle" });
+
+        let opened = 0;
+        const ws = wsFor(a, dirA);
+        const setup = await testRender(
+            () => (
+                <WorkspaceContext.Provider value={ws}>
+                    <box width="100%" height="100%">
+                        <Sidebar messageCount={() => 0} onOpenUsage={() => opened++} />
+                    </box>
+                </WorkspaceContext.Provider>
+            ),
+            { width: 44, height: 34 },
+        );
+        try {
+            await setup.renderOnce();
+            const lines = setup.captureCharFrame().split("\n");
+            const y = lines.findIndex((l) => l.includes("USAGE"));
+            expect(y).toBeGreaterThanOrEqual(0);
+
+            await setup.mockMouse.click(lines[y]!.indexOf("USAGE"), y);
+            await setup.renderOnce();
+            expect(opened).toBe(1);
+
+            // And the read behind it answers from the same cold storage the row itself painted from —
+            // the dialog's whole snapshot resolves with no runtime in sight.
+            const snapshot = readAnalysisUsage(a.id)._unsafeUnwrap();
+            expect(snapshot.totals).toEqual({ calls: 1, inputTokens: 12_400, outputTokens: 3_100 });
+            expect(snapshot.sessions).toHaveLength(1);
         } finally {
             setup.renderer.destroy();
         }
