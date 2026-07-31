@@ -37,6 +37,20 @@ export type RunStepView = {
      * than wedged. Absent (or unparseable) → no age, exactly as before; non-running rows never show one.
      */
     startedAt?: string | null;
+    /**
+     * What this step's calls consumed, ALREADY WRITTEN as a token figure (`↑12.4k ↓1.1k`) by
+     * `lib/usage_format.ts` at the point the view was built.
+     *
+     * A pre-rendered string, and threaded onto the view rather than looked up here, for two reasons.
+     * The block renders exactly what it is handed, so it stays drivable offline by the design gallery
+     * and by tests with no ledger in sight; and a figure that arrives already written cannot be
+     * re-spelled at this call site, which is what keeps every surface printing the one notation.
+     *
+     * Absent when the step's calls reported nothing — never a zeroed figure. Absence here means no
+     * provider ever reported a quantity, which is a different fact from "this step spent nothing", and
+     * a `↑0 ↓0` would assert the second while only the first is known.
+     */
+    usageFigure?: string;
 };
 
 /** Props for {@link RunBlock}. */
@@ -318,6 +332,26 @@ export function RunBlock(props: RunBlockProps) {
                                     <Show when={age()}>{(a: Accessor<string>) => <Fg role="fgMuted">{` ${a()}`}</Fg>}</Show>
                                     <Show when={retries()}>{(r: Accessor<string>) => <Fg role="warning">{` ${r()}`}</Fg>}</Show>
                                 </text>
+                                {/* The step's figure gets its OWN line, for the same measured reason the
+                                    blocker below does: the rail mount leaves ~32 cells for the whole row,
+                                    and a plan's step name plus its elapsed age already fills them — a
+                                    trailing `↑12.4k ↓1.1k` (13 more) soft-wraps mid-token on every step
+                                    that has one. An indented line reads as structure where a wrap reads as
+                                    damage, and it is the shape this block already uses for a step's second
+                                    fact. Muted TEXT tier, not the fgSubtle decoration tier: it is a
+                                    measurement and must clear the 4.5:1 floor. Steps whose calls reported
+                                    nothing carry no figure, so an ordinary run adds no rows at all.
+
+                                    This is the second thing (after a blocked reason) that makes a step
+                                    occupy more than one row, which `maxSteps` — a cap on STEPS, never on
+                                    rows — has never promised to bound. */}
+                                <Show when={step.usageFigure}>
+                                    {(figure: Accessor<string>) => (
+                                        <text>
+                                            <Fg role="fgMuted">{`  ${figure()}`}</Fg>
+                                        </text>
+                                    )}
+                                </Show>
                                 {/* The blocker's own line rather than a suffix: a reason is a sentence, and
                                     appending it would push the label out of a 40-column rail on every
                                     blocked step. Indented under its step so the association is visual. */}

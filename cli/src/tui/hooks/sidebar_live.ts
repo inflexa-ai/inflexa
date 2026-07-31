@@ -1,5 +1,5 @@
 import { createSignal, createEffect, createMemo, onCleanup } from "solid-js";
-import { ResultAsync } from "neverthrow";
+import { ResultAsync, type Result } from "neverthrow";
 import {
     loadDataProfileStatus,
     loadPlan,
@@ -18,6 +18,13 @@ import { Bus } from "../../lib/bus.ts";
 import { getLogger } from "../../lib/log.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
+import { formatTokenFigure } from "../../lib/usage_format.ts";
+import { getAnalysisDataProfileUsageTotals, getRunUsageTotals, listRunUsageByStep } from "../../db/primary_query.ts";
+import type { LlmUsageByStep, LlmUsageTotals } from "../../db/primary_query.ts";
+// The CLI's own storage error, aliased because this module already imports the harness's identically
+// named `DbError` for the Postgres-backed reads. The two are different unions from different stores,
+// and the ledger reads below are the local SQLite ones.
+import type { DbError as LedgerError } from "../../db/errors.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { StampedEvent } from "../../types/events.ts";
 import type { Workspace } from "../contexts/workspace.ts";
@@ -43,14 +50,47 @@ import { chatStatus, type ChatStatus } from "./status.ts";
  * attempted); `unavailable` on a `DbError` (never a crash); `absent` when the ledger row is null
  * (the analysis has not been profiled); `loaded` carries the ledger truth.
  */
-export type ProfileSnapshot = { kind: "not_ready" } | { kind: "unavailable" } | { kind: "absent" } | { kind: "loaded"; profile: DataProfileStatus };
+export type ProfileSnapshot =
+    | { kind: "not_ready" }
+    | { kind: "unavailable" }
+    | { kind: "absent" }
+    | {
+          kind: "loaded";
+          profile: DataProfileStatus;
+          /**
+           * What the profile's own calls consumed, from the CLI's local token ledger.
+           *
+           * Carried on the snapshot rather than read by each surface because the profile's figures
+           * have exactly one home and two renderers: the rail's DATA PROFILE section and the details
+           * dialog {@link profileDetailLines} composes. The composer is a pure snapshot→lines
+           * function, so a figure it is not handed is a figure it cannot show.
+           *
+           * Absent when the ledger read failed — a missing figure leaves the section rendered without
+           * one, and never removes the profile it decorates.
+           */
+          usage?: LlmUsageTotals;
+      };
 
 /**
  * The runs section's render input. `not_ready` before the runtime boots; `unavailable` on a
  * `DbError`; `loaded` carries the newest run rows (possibly empty → the section renders "no runs").
  * There is no `absent` kind — an analysis with no runs is a `loaded` empty array, not an absence.
  */
-export type RunsSnapshot = { kind: "not_ready" } | { kind: "unavailable" } | { kind: "loaded"; runs: CortexRunRow[] };
+export type RunsSnapshot =
+    | { kind: "not_ready" }
+    | { kind: "unavailable" }
+    | {
+          kind: "loaded";
+          runs: CortexRunRow[];
+          /**
+           * What each listed run consumed, keyed by run id, from the CLI's local token ledger.
+           *
+           * A run missing from the map is a run whose usage read failed — its row still renders, just
+           * without a figure. Published WITH the rows rather than read at render time so a row and
+           * its figure can never come from two different reads of a moving ledger.
+           */
+          usageByRun?: ReadonlyMap<string, LlmUsageTotals>;
+      };
 
 /**
  * Live progress of ONE non-terminal run — the feed for that run's block in the sidebar RUNS section
@@ -250,6 +290,16 @@ export function profileDetailLines(snap: ProfileSnapshot): string[] {
             } else if (!Number.isNaN(startedMs)) {
                 lines.push(`elapsed ${Date.relativeAge(startedMs)}`);
             }
+            // One more property line, in the same `label value` vocabulary as the timings above, and in
+            // the same notation every other surface prints a figure in. It belongs HERE and nowhere
+            // else in the dialog stack: the profile's calls carry no thread, so they are absent from
+            // every session figure by construction.
+            //
+            // Omitted when nothing was reported, exactly as `started`/`completed` are omitted when the
+            // ledger holds no stamp — an unconditional line would have to print a zero, which asserts
+            // a measurement the ledger does not hold.
+            const usage = snap.usage ? formatTokenFigure(snap.usage) : "";
+            if (usage !== "") lines.push(`usage ${usage}`);
             if (p.status === "failed" && p.error) {
                 lines.push("");
                 for (const line of p.error.split("\n")) lines.push(line);
@@ -501,6 +551,24 @@ export type RefreshSeams = {
     readonly loadSteps: (pool: Pool, runId: string) => ResultAsync<StepExecutionRow[], DbError>;
     /** Read a stored plan — fired once per DISTINCT plan among the active runs. Real: `loadPlan`. */
     readonly loadPlan: (pool: Pool, planId: string, analysisId: string) => ResultAsync<unknown | null, DbError>;
+    // The three reads below hit the CLI's OWN SQLite ledger, not the harness pool — which is why they
+    // take no `Pool` and answer synchronously. They are seams for the same reason the Postgres reads
+    // are: this module's tests run with no database open at all, so an unstubbed read would answer
+    // from whatever file the process happened to have.
+    //
+    // OPTIONAL, unlike every read above, and the difference is a real one rather than a convenience.
+    // The six above decide what the sections SHOW: a fixture that omits one is describing a rail with
+    // no runs and no profile. These three decide only what those sections are DECORATED with, and a
+    // failed read of any of them already means "render the entity without its figure" — so an omitted
+    // seam and a failing one land in exactly the same place, and a fixture asserting about step
+    // windowing or run completion is not made to stub three reads it has no claim about.
+    // {@link realRefreshSeams} supplies all three, so production never takes the omitted path.
+    /** Read the data profile's own totals. Real: {@link getAnalysisDataProfileUsageTotals}. */
+    readonly loadProfileUsage?: (analysisId: string) => Result<LlmUsageTotals, LedgerError>;
+    /** Read ONE run's totals — fired once per LISTED run. Real: {@link getRunUsageTotals}. */
+    readonly loadRunUsage?: (analysisId: string, runId: string) => Result<LlmUsageTotals, LedgerError>;
+    /** Read one run's totals grouped by step — fired once per NON-TERMINAL run, never for a terminal one. Real: {@link listRunUsageByStep}. */
+    readonly loadStepUsage?: (analysisId: string, runId: string) => Result<LlmUsageByStep[], LedgerError>;
 };
 
 const realRefreshSeams: RefreshSeams = {
@@ -510,6 +578,9 @@ const realRefreshSeams: RefreshSeams = {
     loadActiveRuns: queryActiveRunsByAnalysis,
     loadSteps: queryStepsByRun,
     loadPlan: (pool, planId, analysisId) => loadPlan(pool, planId, { analysisId }),
+    loadProfileUsage: getAnalysisDataProfileUsageTotals,
+    loadRunUsage: getRunUsageTotals,
+    loadStepUsage: listRunUsageByStep,
 };
 
 // Monotonic token identifying the newest refresh. Two rapid analysis swaps interleave their async
@@ -550,6 +621,12 @@ function resetSnapshots(): void {
  * reads. One run's failed step read carries that run's previous entry forward, marked `stale`, and
  * cannot affect any other run's entry.
  *
+ * Alongside each of those, the CLI's own token ledger is read for the entity in hand: the profile's
+ * totals, each listed run's totals, and each active run's totals grouped by step. Those reads are
+ * local, synchronous, and strictly decorative — every one of them failing leaves the same entities
+ * rendered, minus their figures. Nothing is read for an entity that is not being published, so the
+ * step-usage read inherits the same zero-query-when-idle property as the step read it accompanies.
+ *
  * Staleness: the refresh claims a {@link refreshGeneration} token at entry and re-checks it after
  * every await; a refresh superseded by a newer swap silently drops rather than writing stale rows.
  */
@@ -578,8 +655,16 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
     const activeRes = await seams.loadActiveRuns(runtime.pool, analysisId);
     if (myRefresh !== refreshGeneration) return;
 
+    // The profile's own spend, read only when there IS a profile row to hang it on. Local SQLite and
+    // synchronous, so it adds no round trip and cannot be superseded mid-read — the generation token
+    // checked above still holds when it is published below.
+    //
+    // A failed read resolves to `undefined`, which the snapshot renders as "no figure" rather than as
+    // an absent profile: a figure is a decoration, and losing one must never take the entity with it.
+    const profileUsage = profileRes.unwrapOr(null) === null ? undefined : seams.loadProfileUsage?.(analysisId).unwrapOr(undefined);
+
     profileRes.match(
-        (row) => setProfile(row === null ? { kind: "absent" } : { kind: "loaded", profile: row }),
+        (row) => setProfile(row === null ? { kind: "absent" } : { kind: "loaded", profile: row, usage: profileUsage }),
         () => setProfile({ kind: "unavailable" }),
     );
 
@@ -634,7 +719,18 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
     }
     const seen = new Set((live ?? []).map((r) => r.runId));
     const merged = [...(live ?? []), ...(listed ?? []).filter((r) => !seen.has(r.runId))];
-    setRuns({ kind: "loaded", runs: merged });
+    // Each listed run's own figures, published WITH its row so the two can never come from two
+    // different reads of a moving ledger. One indexed aggregate per row against a local WAL file —
+    // the same cost Decision 10 already accepts for the per-run step read, at the same cadence — so
+    // the batched by-run grouping is not worth the second shape it would introduce here (that read
+    // enumerates runs and excludes the profile; this one answers about rows already in hand).
+    // A run whose read fails is simply absent from the map and renders without a figure.
+    const usageByRun = new Map<string, LlmUsageTotals>();
+    for (const run of merged) {
+        const totals = seams.loadRunUsage?.(analysisId, run.runId).unwrapOr(null) ?? null;
+        if (totals !== null) usageByRun.set(run.runId, totals);
+    }
+    setRuns({ kind: "loaded", runs: merged, usageByRun });
 
     // EVERY non-terminal run publishes a progress entry, keyed by its run id. A terminal run (or no
     // runs at all) publishes none, and only a non-terminal run fires a step read — so an idle
@@ -692,17 +788,37 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
         const { run, stepRows } = read;
         const plan = run.planId === null ? undefined : plans.get(run.planId);
         const nameByStepId = planStepNames(plan);
-        const steps: RunStepView[] = stepRows.map((r) => ({
-            // The plan's human phrase for the step, falling back to the slug the ledger keys on. This
-            // is the join that answers "what is being worked on" in words: the step row itself
-            // carries only `T{track}S{step}`.
-            label: nameByStepId.get(r.stepId) ?? r.stepId,
-            state: stepStateOf(r.status),
-            startedAt: r.startedAt,
-            agent: r.agentId,
-            blockedReason: r.blockedReason,
-            attempts: r.attempts,
-        }));
+        // This run's per-step figures, read against the SAME run id as the step rows they decorate and
+        // inside the SAME generation guard — so a superseded refresh can never attach one run's spend
+        // to another run's steps. Only runs in `active` reach here, which is what preserves the
+        // idle-costs-nothing property for this read exactly as it holds for the step read itself.
+        //
+        // A failed read yields an empty map, so every step of that run simply carries no figure.
+        const usageByStep = new Map<string, LlmUsageTotals>();
+        for (const group of seams.loadStepUsage?.(analysisId, run.runId).unwrapOr([]) ?? []) {
+            // `stepId: null` is the run's own calls — the plan and synthesis frames it owns directly.
+            // That is an ABSENCE of a step, not a step named this, so it decorates no row here; the
+            // run's row carries it already, inside the run total published above.
+            if (group.stepId !== null) usageByStep.set(group.stepId, group.totals);
+        }
+        const steps: RunStepView[] = stepRows.map((r) => {
+            // Written once, here, rather than handed down as quantities: the block renders what it is
+            // given, and `""` (nothing reported) collapses to an absent field so a step whose
+            // providers reported nothing carries no figure instead of a zeroed one.
+            const figure = formatTokenFigure(usageByStep.get(r.stepId) ?? {});
+            return {
+                // The plan's human phrase for the step, falling back to the slug the ledger keys on. This
+                // is the join that answers "what is being worked on" in words: the step row itself
+                // carries only `T{track}S{step}`.
+                label: nameByStepId.get(r.stepId) ?? r.stepId,
+                state: stepStateOf(r.status),
+                startedAt: r.startedAt,
+                agent: r.agentId,
+                blockedReason: r.blockedReason,
+                attempts: r.attempts,
+                usageFigure: figure === "" ? undefined : figure,
+            };
+        });
         fresh.set(run.runId, {
             runId: run.runId,
             name: runLabelOf(run, plan),

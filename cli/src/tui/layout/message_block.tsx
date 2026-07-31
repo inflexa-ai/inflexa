@@ -3,6 +3,7 @@ import type { Accessor, JSX } from "solid-js";
 
 import { syntaxStyle, theme } from "../theme.ts";
 import { space, GLYPHS, MARKERS, type ThemeColors } from "../../lib/design_system.ts";
+import { formatTokenFigure } from "../../lib/usage_format.ts";
 import { ThinkingBlock } from "../components/thinking_block.tsx";
 import { ToolBlock } from "../components/tool_block.tsx";
 import { DiffBlock } from "../components/diff_block.tsx";
@@ -55,30 +56,6 @@ export function resolveRunCardState(runId: string): RunCardState | undefined {
     };
 }
 
-/**
- * The turn's spend as the meta line carries it — an input figure and an output figure,
- * `12.4k in · 3.1k out`, through the shared `Number.formatTokens` vocabulary.
- *
- * TWO figures, never one. The rollup's other three quantities are breakdowns OF these two — the two
- * cache counts are part of `inputTokens`, reasoning part of `outputTokens` — so adding anything
- * together here would count a cached prefix twice and produce a number whose meaning changes with
- * each provider's cache reporting. The breakdowns are deliberately not rendered on this line either:
- * a header has room for the headline pair, and a breakdown is only honest where there is space to
- * label what it is a breakdown of.
- *
- * A quantity the provider never reported contributes NO figure rather than a zero, so a rollup with
- * neither headline count yields `""` and the caller appends nothing.
- *
- * Exported for its unit test — the "never summed" property is a claim about this arithmetic, and a
- * character frame that merely contains two numbers cannot pin which numbers they are.
- */
-export function formatTurnUsage(usage: TurnUsage): string {
-    const figures: string[] = [];
-    if (usage.inputTokens !== undefined) figures.push(`${usage.inputTokens.formatTokens()} in`);
-    if (usage.outputTokens !== undefined) figures.push(`${usage.outputTokens.formatTokens()} out`);
-    return figures.join(` ${GLYPHS.middot} `);
-}
-
 /** Props for {@link MessageBlock}. */
 export type MessageBlockProps = {
     /** 1-based position of this turn in the rendered conversation, shown beside the role label. */
@@ -119,13 +96,17 @@ export type MessageBlockProps = {
  * accessors and flips to the stored text once the part completes.
  */
 export function MessageBlock(props: MessageBlockProps) {
-    // `· #N`, plus `· <dur>` and `· <in> · <out>` for a completed assistant turn (via the shared
-    // Date.formatDuration / Number.formatTokens vocabularies). User turns and not-yet-finished
-    // assistant turns show only the number.
+    // `· #N`, plus `· <dur>` and `· ↑<in> ↓<out>` for a completed assistant turn, through the shared
+    // Date.formatDuration and token-figure vocabularies. User turns carry no figure — the cost was not
+    // incurred by the party that sent the message — and a not-yet-finished turn has none to carry.
     const meta = (): string => {
         const assistant = props.role === "assistant";
         const dur = assistant && props.durationMs !== undefined ? ` ${GLYPHS.middot} ${Date.formatDuration(props.durationMs)}` : "";
-        const usage = assistant && props.turnUsage !== undefined ? formatTurnUsage(props.turnUsage) : "";
+        // The header carries the headline pair only. The rollup's other three quantities are
+        // breakdowns, and a breakdown is honest only where there is room to label what it is a
+        // breakdown OF — which a one-line header does not have. `formatTokenFigure` renders exactly
+        // that pair, and yields "" when the provider reported neither.
+        const usage = assistant && props.turnUsage !== undefined ? formatTokenFigure(props.turnUsage) : "";
         // Guarded so an unreported turn appends nothing at all — not a separator with empty figures
         // after it, which would read as a measurement that failed to print.
         const spend = usage === "" ? "" : ` ${GLYPHS.middot} ${usage}`;

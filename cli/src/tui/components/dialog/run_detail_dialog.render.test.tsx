@@ -16,8 +16,8 @@ import { GLYPHS } from "../../../lib/design_system.ts";
  * resolve — a `ResultAsync.match` lands on a microtask, after the first paint — so a test asserting
  * on loaded steps must ask for at least one.
  */
-async function frameOf(run: CortexRunRow, loadSteps: RunDetailDialogProps["loadSteps"], settle = 0): Promise<string> {
-    const setup = await testRender(() => <RunDetailDialog run={run} loadSteps={loadSteps} onClose={() => {}} />, {
+async function frameOf(run: CortexRunRow, loadSteps: RunDetailDialogProps["loadSteps"], settle = 0, usage?: RunDetailDialogProps["usage"]): Promise<string> {
+    const setup = await testRender(() => <RunDetailDialog run={run} loadSteps={loadSteps} usage={usage} onClose={() => {}} />, {
         width: 90,
         height: 36,
     });
@@ -103,6 +103,18 @@ describe("RunDetailDialog", () => {
         const frame = await frameOf(run({ status: "failed", error: "step s2 blew up" }), () => okAsync<StepExecutionRow[], DbError>([]), 2);
         expect(frame).toContain("status: failed");
         expect(frame).toContain("step s2 blew up");
+    });
+
+    test("the run's figures paint beside its other properties, and are absent when none were handed in", async () => {
+        const steps = () => okAsync<StepExecutionRow[], DbError>([]);
+        const withUsage = await frameOf(run(), steps, 2, { calls: 47, inputTokens: 809_200, outputTokens: 40_400 });
+        const without = await frameOf(run(), steps, 2);
+
+        expect(withUsage).toContain("↑809.2k ↓40.4k");
+        expect(withUsage).toContain("47 calls");
+        // A run the ledger knows nothing about carries no line at all — not a zeroed one.
+        expect(without).not.toContain("usage ");
+        expect(without).not.toContain("↑");
     });
 
     test("a failed step fetch degrades to the muted line, never a crash", async () => {

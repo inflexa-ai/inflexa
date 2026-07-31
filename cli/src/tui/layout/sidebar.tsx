@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 import { useTerminalDimensions } from "@opentui/solid";
 import type { CortexRunRow } from "@inflexa-ai/harness";
@@ -22,10 +22,14 @@ import {
 } from "../hooks/sidebar_live.ts";
 import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import { agentModels, bootState } from "../hooks/boot.ts";
+import { chatStatus } from "../hooks/status.ts";
+import type { ChatStatus } from "../hooks/status.ts";
 import { openThread } from "../hooks/thread.ts";
 import type { AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
-import { getAnalysisUsageTotals, getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
+import { getAnchor, getSessionUsageTotalsIncludingRuns, listAnalysisInputs } from "../../db/primary_query.ts";
 import type { LlmUsageTotals } from "../../db/primary_query.ts";
+import { formatTokenFigure, formatTokenFigureLabelled, tokenFigureDetail } from "../../lib/usage_format.ts";
+import type { TokenFigureArm, TokenFigureDetail } from "../../lib/usage_format.ts";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
@@ -197,50 +201,96 @@ const SINGLE_CELL_GLYPHS: ReadonlySet<string> = new Set(
 );
 
 /**
- * The USAGE section's single row: the text and the tone it carries. A reported figure pair is
- * foreground text (it is data); every absence is muted, so "nothing to report" never reads as a
- * measurement. Lives here rather than beside {@link profileLineOf} because its fit check needs
- * {@link RAIL_CONTENT_WIDTH}, declared just above.
+ * What the USAGE section renders: ONE muted message (every absence and every degrade), the whole
+ * figure on one line, or the detailed figure — an arm per line with its breakdowns nested beneath it.
+ *
+ * A union rather than a widened row, because the cases carry genuinely different things and both the
+ * tone rule and the layout fall out of the tag: a message is always muted, so "nothing to report" can
+ * never read as a measurement, while `line` and `detail` are always data-toned. There is deliberately
+ * no case for "a figure plus a note" — a section that could show both would let a caller pair a
+ * reported number with an absence message and leave the reader to work out which one is the answer.
+ *
+ * `line` and `detail` are the same figure in the same (labelled) form and differ only in how many
+ * rows it needs: stacking exists to carry the NESTING, and a figure with no cache or reasoning count
+ * to nest has nothing for the second row to hold.
  */
-export type UsageLine = { role: keyof ThemeColors; text: string };
+export type UsageSection = { kind: "message"; text: string } | { kind: "line"; text: string } | { kind: "detail"; detail: TokenFigureDetail };
 
 /**
- * Map an analysis's ledger totals to the USAGE row.
+ * Map the open session's ledger totals to the USAGE section's render input.
  *
- * TWO figures, never one. The ledger's cache and reasoning counts are breakdowns OF the input and
- * output counts — a cached prefix is already part of `inputTokens` — so adding any of them together
- * would count that prefix twice and yield a number whose meaning shifts with each provider's cache
- * reporting. Where the rail cannot hold both figures the tail one is DROPPED rather than folded into
- * the other: a dropped figure is one the reader can go find elsewhere, a combined one is a figure
- * that lies. The two breakdowns are not rendered at all — the rail's 37 cells have no room to label
- * what they are breakdowns of, and an unlabelled third number invites exactly the addition this avoids.
+ * `calls` is what separates the two absences. No rows at all is a plain muted absence; rows whose
+ * providers reported no figures say so instead, because "nothing was spent" is not a fact the ledger
+ * holds and a zeroed figure would assert it.
  *
- * `calls` is what separates the two absences. No rows at all is a muted absence; rows whose providers
- * reported no figures say so, because "nothing was spent" is not a fact the ledger holds and a zeroed
- * pair would assert it.
+ * The LABELLED form throughout, per the section's own capability spec: consumption is what this
+ * section is FOR — the only rail section whose entire subject is a number — so it is read
+ * deliberately rather than scanned and can afford the words. The compact arrow form is reserved for
+ * the figures DECORATING the DATA PROFILE and RUNS rows, where the subject is the entity and words
+ * would crowd the name they annotate.
  *
- * Exported for its unit test: "these are the two reported numbers, never their sum" and "the tail
- * figure is dropped, never folded in" are claims about this arithmetic, and a character frame holding
- * two numbers cannot pin WHICH numbers they are.
+ * Nothing here adds anything to anything. The cache counts are breakdowns OF input and the reasoning
+ * count of output, so the detailed figure NESTS them under the arm they are part of rather than
+ * listing them beside it — levelling them is what would invite a reader to add a cached prefix to the
+ * total it is already inside. With nothing to nest there is nothing for stacking to express, so the
+ * two arms ride one line — the rail's rows are its scarcest resource and this section shares them
+ * with five others.
+ *
+ * Exported for its unit test: "this is the reported pair, never a sum" and "a call with no reported
+ * quantities is not a zero" are claims about this mapping, and a character frame holding two numbers
+ * cannot pin WHICH numbers they are.
  */
-export function usageLineOf(totals: LlmUsageTotals): UsageLine {
-    if (totals.calls === 0) return { role: "fgMuted", text: "no usage recorded" };
-    const figures: string[] = [];
-    if (totals.inputTokens !== undefined) figures.push(`${totals.inputTokens.formatTokens()} in`);
-    if (totals.outputTokens !== undefined) figures.push(`${totals.outputTokens.formatTokens()} out`);
-    if (figures.length === 0) {
-        return { role: "fgMuted", text: `${totals.calls} call${totals.calls === 1 ? "" : "s"} ${GLYPHS.middot} no figures reported` };
+export function usageSectionOf(totals: LlmUsageTotals): UsageSection {
+    if (totals.calls === 0) return { kind: "message", text: "no usage recorded" };
+    const detail = tokenFigureDetail(totals);
+    if (detail.input === null && detail.output === null) {
+        return { kind: "message", text: `${totals.calls} call${totals.calls === 1 ? "" : "s"} ${GLYPHS.middot} no figures reported` };
     }
-    const joined = (xs: readonly string[]): string => xs.join(` ${GLYPHS.middot} `);
-    // Every character in a figure is ASCII or GLYPHS.middot — single-cell by the registry's contract
-    // (see SINGLE_CELL_GLYPHS) — so `.length` measures terminal cells exactly here. Only a ledger
-    // summed into the trillions overflows 37 cells with today's formatter, but the drop is a rule
-    // about what the rail may show, not an observation about current widths. The tail figure goes
-    // first so what survives is stable rather than dependent on which quantity happens to be larger,
-    // and a lone over-long figure is kept and allowed to wrap — dropping it would leave the section
-    // asserting nothing at all.
-    while (figures.length > 1 && joined(figures).length > RAIL_CONTENT_WIDTH) figures.pop();
-    return { role: "fg", text: joined(figures) };
+    const nests = detail.input?.breakdown.length || detail.output?.breakdown.length;
+    return nests ? { kind: "detail", detail } : { kind: "line", text: formatTokenFigureLabelled(totals) };
+}
+
+/**
+ * The one-line figure a tracked entity — the data profile, a run row — carries beneath its own line,
+ * or `null` when it carries none at all.
+ *
+ * Three states from two facts. A reported figure is data-toned. Calls recorded whose providers
+ * reported no quantity is a muted em dash, the absence vocabulary the rail already uses for a time it
+ * does not have — never a zero, which would claim the calls cost nothing. And an entity with no
+ * ledger rows at all, or whose usage read failed, gets NOTHING: the RUNS section is not the place to
+ * announce that a run predates the ledger, and a failed decoration must never remove the entity it
+ * decorates.
+ *
+ * Exported for its unit test — the ladder is three tones and a character frame carries no color.
+ */
+export type EntityFigure = { role: keyof ThemeColors; text: string };
+
+/** Map an entity's ledger totals (absent when the read failed) to its figure line — see {@link EntityFigure}. */
+export function entityFigureOf(totals: LlmUsageTotals | undefined): EntityFigure | null {
+    if (totals === undefined || totals.calls === 0) return null;
+    const figure = formatTokenFigure(totals);
+    return figure === "" ? { role: "fgMuted", text: GLYPHS.emDash } : { role: "fg", text: figure };
+}
+
+/**
+ * An entity's figure line: indented under the row it belongs to, so the association is visual rather
+ * than positional. Renders nothing when there is no figure, which is what keeps an ordinary run row a
+ * single line.
+ *
+ * Its own line rather than a suffix, for the reason measured on the rail: a run row already carries a
+ * plan title and an absolute finish time inside ~37 cells, and appending 13 more soft-wraps it
+ * mid-token. This is the same shape `RunBlock` gives a step's second fact.
+ */
+function EntityFigureLine(props: { figure: EntityFigure | null }): JSX.Element {
+    return (
+        <Show when={props.figure} keyed>
+            {(f: EntityFigure) => (
+                <text>
+                    <Fg role={f.role}>{`  ${f.text}`}</Fg>
+                </text>
+            )}
+        </Show>
+    );
 }
 
 /**
@@ -314,10 +364,24 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
  * Postgres data from the `thread` / `sidebar_live` stores, and MODELS the boot store (each snapshot
  * degrades gracefully before boot / on a read failure). Nothing here is mock.
  *
+ * Every section reports the entity it names, scoped to what is open: USAGE is the open SESSION's
+ * consumption INCLUDING the runs that session launched — a chat turn that starts a run may itself
+ * spend a few thousand tokens while the run spends hundreds of thousands, so a headline reporting the
+ * former alone understates by orders of magnitude. That is a different reading from the session grain
+ * `inflexa usage sessions` reports, which excludes runs so the grains still partition the analysis
+ * total; the containment is visible rather than concealed because each run's own figure sits directly
+ * above. The data profile is in NEITHER: its calls carry no thread, so its figures have exactly one
+ * home, which is the DATA PROFILE section.
+ *
  * USAGE reads the CLI's OWN local token ledger rather than anything behind the booted runtime, so it
- * neither gates on boot state nor polls: the figures are durable locally and readable while the engine
- * is cold. It refreshes on the two edges this component already observes — the message count advancing
- * as a turn completes, and a `run.observed` bus event as a run progresses.
+ * neither gates on boot state nor arms a timer of its own: the figures are durable locally and
+ * readable while the engine is cold. It refreshes on three edges this component already observes —
+ * the chat status leaving `busy` (a turn actually completing), a `run.observed` bus event as a run
+ * progresses, and `sidebar_live`'s bounded poll, which it rides by reading the snapshots that poll
+ * republishes. It deliberately does NOT depend on the conversation's message count: the assistant
+ * message is pushed when a turn STARTS, so a memo keyed on it reads the ledger before any of that
+ * turn's calls were recorded, and past the store's message cap the push-and-shift leaves the length
+ * unchanged and the memo never fires again.
  *
  * Reads the pure `getAnchor` (NOT `resolveAnchor`, which writes a sighting heartbeat), so
  * rendering the sidebar never touches disk — the no-litter rule for passive flows.
@@ -384,6 +448,21 @@ export function Sidebar(props: SidebarProps) {
     Bus.on("inflexa", onSidebarEvent);
     onCleanup(() => Bus.off("inflexa", onSidebarEvent));
 
+    // Turn completion, stated directly rather than inferred from a store's length: a turn's calls are
+    // recorded inside the loop, so the moment the chat stops being busy the ledger already holds them.
+    // The edge is "out of busy", not "busy → idle" — a turn that ends in `error` spent whatever it
+    // spent before failing, and a figure that skipped those tokens would be wrong in exactly the
+    // situation a user is most likely to go looking at it.
+    //
+    // `prev` is closure-local to this mount and seeded from the current status, so the effect's
+    // initial synchronous run never fires a false edge. Mirrors `watchSidebarData`'s own trigger 2.
+    let prevStatus: ChatStatus = chatStatus();
+    createEffect(() => {
+        const status = chatStatus();
+        if (prevStatus === "busy" && status !== "busy") setUsageVersion((v) => v + 1);
+        prevStatus = status;
+    });
+
     const inputCount = createMemo(() => {
         inputsVersion();
         const a = ws.analysis;
@@ -394,22 +473,62 @@ export function Sidebar(props: SidebarProps) {
         );
     });
 
-    // The open analysis's cumulative spend, read synchronously from the local ledger on the same
-    // pattern the ANALYSIS section's reads use — a SQLite aggregate needs neither the injected-seam
-    // indirection nor the bounded poll that `sidebar_live`'s Postgres reads do.
+    // The open session's cumulative spend — the conversation's own calls AND every run it launched —
+    // read synchronously from the local ledger on the same pattern the ANALYSIS section's reads use.
+    // A SQLite aggregate needs neither the injected-seam indirection nor a poll of its own.
     //
-    // Two triggers, both already here: the message count advances when a turn completes (its calls are
-    // recorded by then, since the recorder writes inside the loop), and `run.observed` fires as a run
-    // progresses. Neither is a clock, so a background run's tokens land at the next observation rather
-    // than the instant they are spent — acceptable for a cumulative figure, where lag understates but
-    // never misleads. A failed read is a degraded row, never a thrown render: the rail keeps every
-    // other section.
-    const usageLine = createMemo((): UsageLine => {
+    // Three triggers, none of them a clock this section owns: the version signal above (bumped on the
+    // busy edge and on `run.observed`), and the two `sidebar_live` snapshots read below. A failed read
+    // is a degraded row, never a thrown render: the rail keeps every other section.
+    const usageSection = createMemo((): UsageSection => {
         usageVersion();
-        props.messageCount();
+        // Read for the SUBSCRIPTION, not the value. `sidebar_live` republishes both snapshots as fresh
+        // objects on every refresh it performs — including each tick of the bounded poll it already
+        // arms while work is active and disarms when it is not — so reading them here puts this
+        // section on exactly that cadence. A second interval would be a second thing to keep armed and
+        // disarmed in step with the first, for a figure that is cumulative and whose lag understates.
+        runsSnapshot();
+        profileSnapshot();
         const a = ws.analysis;
-        if (!a) return { role: "fgMuted", text: "no analysis" };
-        return getAnalysisUsageTotals(a.id).match(usageLineOf, () => ({ role: "fgMuted", text: "unavailable" }));
+        if (!a) return { kind: "message", text: "no analysis" };
+        // A session identity cannot be resolved before boot, and the figure is a session's — so say
+        // there is no session rather than silently widening to the analysis, which would report a
+        // different question's answer under this section's label.
+        const threadId = ws.sessionId;
+        if (threadId === null) return { kind: "message", text: "no open session" };
+        return getSessionUsageTotalsIncludingRuns(a.id, threadId).match(usageSectionOf, (): UsageSection => ({ kind: "message", text: "unavailable" }));
+    });
+    // The arms to stack, in order, each followed by its own nested breakdowns. An absent arm is dropped
+    // rather than rendered as a zero, which is the same rule the formatter applies to both written forms.
+    const usageArms = createMemo((): readonly TokenFigureArm[] => {
+        const section = usageSection();
+        if (section.kind !== "detail") return [];
+        return [section.detail.input, section.detail.output].filter((arm): arm is TokenFigureArm => arm !== null);
+    });
+    // The whole figure on ONE line, for the case where neither arm has anything nested under it. The
+    // labelled form is 24 cells at `formatTokens`'s top unit against a 37-cell rail, so it never wraps
+    // (pinned in `usage_format.test.ts`).
+    const usageLine = createMemo((): string | null => {
+        const section = usageSection();
+        return section.kind === "line" ? section.text : null;
+    });
+    const usageMessage = createMemo((): string | null => {
+        const section = usageSection();
+        return section.kind === "message" ? section.text : null;
+    });
+
+    // The data profile's own figures, taken from the snapshot the live store already publishes rather
+    // than read again here: the same totals feed the details dialog, whose composer is a pure
+    // snapshot→lines function, so one read behind one generation guard serves both.
+    const profileFigure = createMemo((): EntityFigure | null => {
+        const snap = profileSnapshot();
+        return entityFigureOf(snap.kind === "loaded" ? snap.usage : undefined);
+    });
+    // Each listed run's figures, keyed by run id — the same publish as the rows themselves, so a row
+    // and its figure can never disagree about which read they came from.
+    const runFigures = createMemo((): ReadonlyMap<string, LlmUsageTotals> => {
+        const snap = runsSnapshot();
+        return snap.kind === "loaded" ? (snap.usageByRun ?? new Map()) : new Map();
     });
 
     // DATA PROFILE / RUNS live data comes from the module store (see `hooks/sidebar_live.ts`), which
@@ -517,6 +636,11 @@ export function Sidebar(props: SidebarProps) {
                         {profileLine().glyph !== null ? <Fg role={profileLine().role}>{`${profileLine().glyph} `}</Fg> : null}
                         <Fg role="fgMuted">{profileLine().text}</Fg>
                     </text>
+                    {/* The profile's spend belongs HERE and nowhere else in the rail: its calls carry no
+                        thread, so they belong to no session and appear in no session figure. Without
+                        this line the work would be invisible in the rail while still counting toward
+                        the analysis. */}
+                    <EntityFigureLine figure={profileFigure()} />
                 </Section>
 
                 <Section label="RUNS" onActivate={props.onOpenRuns}>
@@ -552,6 +676,10 @@ export function Sidebar(props: SidebarProps) {
                                                     <Fg role={m.role}>{`${m.glyph} `}</Fg>
                                                     <Fg role="fgMuted">{`${label()} ${GLYPHS.middot} ${when}`}</Fg>
                                                 </text>
+                                                {/* This run's own spend, under its own row — the containment the
+                                                USAGE section's session figure folds in, shown directly so the
+                                                reader can see what that headline is made of. */}
+                                                <EntityFigureLine figure={entityFigureOf(runFigures().get(run.runId))} />
                                                 {/* This run's live progress, directly under its own row. NON-keyed Show:
                                                 each poll mints a fresh snapshot object, and keyed would tear down and
                                                 remount the RunBlock every tick — non-keyed updates props in place.
@@ -579,14 +707,54 @@ export function Sidebar(props: SidebarProps) {
                     </Switch>
                 </Section>
 
-                {/* One row, whatever the state — the figures ride a content row rather than the
-                    Section's label-row `value` slot, because that slot always paints the section
-                    foreground and two of the three states are deliberately muted; a value that
-                    changed rows with its tone would make the rail jump between renders. */}
+                {/* Content rows, never the Section's label-row `value` slot: that slot always paints
+                    the section foreground while every absence state here is deliberately muted, and a
+                    value that changed rows with its tone would make the rail jump between renders.
+
+                    The LABELLED form (`820.3k in`), not the compact arrows the DATA PROFILE and RUNS
+                    rows carry: this section's entire subject is the number, so it is read rather than
+                    scanned and the words cost it nothing — while a labelled figure on a row whose
+                    subject is a run would crowd the name it annotates. Both come from the same arm, so
+                    the rail and a run row can never disagree about a value, only about its writing.
+
+                    With something to nest, one line per ARM and that arm's breakdowns indented beneath
+                    it — never the two arms on one row with the cache counts under them. Nesting is the
+                    only thing that states "this is a part of that", and cache write / cache read are
+                    parts OF the input total: put them on the same visual level as the arms and the
+                    reader is invited to add a cached prefix to the total it is already inside. With
+                    nothing to nest, the two arms ride one line instead of spending a second rail row
+                    to express a relationship that is not there. */}
                 <Section label="USAGE" onActivate={props.onOpenUsage}>
-                    <text>
-                        <Fg role={usageLine().role}>{usageLine().text}</Fg>
-                    </text>
+                    <Show when={usageMessage()} keyed>
+                        {(text: string) => (
+                            <text>
+                                <Fg role="fgMuted">{text}</Fg>
+                            </text>
+                        )}
+                    </Show>
+                    <Show when={usageLine()} keyed>
+                        {(text: string) => (
+                            <text>
+                                <Fg role="fg">{text}</Fg>
+                            </text>
+                        )}
+                    </Show>
+                    <For each={usageArms()}>
+                        {(arm) => (
+                            <>
+                                <text>
+                                    <Fg role="fg">{arm.labelled}</Fg>
+                                </text>
+                                <For each={arm.breakdown}>
+                                    {(part) => (
+                                        <text>
+                                            <Fg role="fgMuted">{`  ${part.label} ${part.value}`}</Fg>
+                                        </text>
+                                    )}
+                                </For>
+                            </>
+                        )}
+                    </For>
                 </Section>
 
                 <Section label="MODELS">

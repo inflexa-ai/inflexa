@@ -4,7 +4,7 @@ import { testRender } from "@opentui/solid";
 import { parseColor, rgbToHex } from "@opentui/core";
 import { renderFrame } from "../../test_support/tui.ts";
 
-import { DEFAULT_THEME_ID, size, themes } from "../../lib/design_system.ts";
+import { DEFAULT_THEME_ID, GLYPHS, size, themes } from "../../lib/design_system.ts";
 import { setTheme } from "../theme.ts";
 import { RunBlock, type RunStepView } from "./run_block.tsx";
 
@@ -456,6 +456,79 @@ describe("RunBlock running-step elapsed age", () => {
                 }
                 expect(ageFg).not.toBeNull();
                 expect(parseColor(themes[id].colors.fgMuted).equals(parseColor(ageFg!))).toBe(true);
+            } finally {
+                setup.renderer.destroy();
+            }
+        });
+    }
+});
+
+// The step figure is handed to the block already written, so these drive it with plain strings and no
+// ledger in sight — which is the property that keeps the block gallery-drivable and testable offline.
+describe("RunBlock step usage figure", () => {
+    afterEach(() => setTheme(DEFAULT_THEME_ID));
+
+    /** A three-row run where only the running step reports a figure. */
+    function figuredSteps(figure: string | undefined): RunStepView[] {
+        return [
+            { label: "S1", state: "done" },
+            { label: "S2", state: "running", usageFigure: figure },
+            { label: "S3", state: "queued" },
+        ];
+    }
+
+    function block(steps: RunStepView[], maxSteps?: number) {
+        return () => <RunBlock name="cohort-screen" tag="T9S2" done={1} total={3} steps={steps} maxSteps={maxSteps} hint={false} heading={false} />;
+    }
+
+    test("the figure renders on its own indented line under the step it belongs to", async () => {
+        const frame = await renderFrame(block(figuredSteps(`${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`)), { width: 40, height: 14 });
+        const lines = frame.split("\n");
+        const s2 = lines.findIndex((l) => /\bS2\b/.test(l));
+        expect(s2).toBeGreaterThanOrEqual(0);
+        // Directly beneath its own step — the association is visual, and the row above stays a step row.
+        expect(lines[s2 + 1]).toContain(`${GLYPHS.arrowUp}42.6k`);
+        expect(lines[s2]).not.toContain(GLYPHS.arrowUp);
+        // Steps with no figure gain no row at all, so an ordinary run is exactly as tall as before.
+        expect(lines.findIndex((l) => /\bS3\b/.test(l))).toBe(s2 + 2);
+    });
+
+    test("a step handed no figure renders none — the block invents nothing", async () => {
+        const frame = await renderFrame(block(figuredSteps(undefined)), { width: 40, height: 14 });
+        expect(frame).not.toContain(GLYPHS.arrowUp);
+        expect(frame).not.toContain(GLYPHS.arrowDown);
+        // ...and every step still renders.
+        for (const n of [1, 2, 3]) expect(new RegExp(`\\bS${n}\\b`).test(frame)).toBe(true);
+    });
+
+    test("the figure fits the rail mount without wrapping, which is why it is not a row suffix", async () => {
+        // The narrow mount: the sidebar passes `maxSteps`, and the rail leaves the step list roughly
+        // `railWidth − border − paddings − the block's own indent + rule` cells.
+        const figure = `${GLYPHS.arrowUp}820.3k ${GLYPHS.arrowDown}43.3k`;
+        const frame = await renderFrame(block(figuredSteps(figure), size.railStepRows), { width: size.railWidth, height: 14 });
+        const lines = frame.split("\n");
+        const row = lines.find((l) => l.includes(GLYPHS.arrowUp)) ?? "";
+        // The WHOLE figure landed on one row — a wrap would leave the down arm on the next line.
+        expect(row).toContain(figure);
+    });
+
+    // The figure is information, not decoration, so it must clear the 4.5:1 text floor on both a dark
+    // and a light theme (github-light's pure-white bg is where an unresolved foreground goes invisible).
+    for (const id of ["tokyo-night", "github-light"] as const) {
+        test(`under ${id} the figure paints the muted TEXT tier, not an opentui default`, async () => {
+            setTheme(id);
+            const setup = await testRender(block(figuredSteps(`${GLYPHS.arrowUp}42.6k`)), { width: 40, height: 14 });
+            try {
+                await setup.renderOnce();
+                let fg: string | null = null;
+                for (const line of setup.captureSpans().lines) {
+                    for (const span of line.spans) {
+                        if (span.text.includes(`${GLYPHS.arrowUp}42.6k`)) fg = rgbToHex(span.fg);
+                    }
+                }
+                expect(fg).not.toBeNull();
+                expect(fg).not.toBe("#ffffff");
+                expect(fg).toBe(rgbToHex(parseColor(themes[id].colors.fgMuted)));
             } finally {
                 setup.renderer.destroy();
             }
