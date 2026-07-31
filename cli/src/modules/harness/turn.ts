@@ -290,7 +290,15 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
 
         // Persist unconditionally — the partial turn must survive an abort/throw. The
         // append fault is carried on the outcome, never conflated with the turn's fate.
-        const appendError = (await history.appendTurn(threadId, run.toPersist)).match(
+        //
+        // The rollup rides along so the turn's figure survives the reload that the live one does not:
+        // the outcome below reaches only the store this process is holding, and a transcript loaded
+        // from the thread would otherwise show every past turn's cost as absent — which under the
+        // absent-is-not-zero rule reads as "no provider reported anything", a claim about the turn that
+        // is false. The harness writes it onto the turn's own assistant row and hands it back on read.
+        // Passed on EVERY branch for the same reason it rides on all three phases: an aborted or failed
+        // turn spent real tokens, and only a run that never resolved has nothing to record.
+        const appendError = (await history.appendTurn(threadId, run.toPersist, run.phase.turnUsage)).match(
             (): DbError | undefined => undefined,
             (e): DbError | undefined => e,
         );
