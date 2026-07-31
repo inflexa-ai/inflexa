@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { okAsync, errAsync, type ResultAsync } from "neverthrow";
-import type { AgentChat, AgentDefinition, DbError, EmitFn, ModelMessage, Pool, ThreadHistory } from "@inflexa-ai/harness";
+import type { AgentChat, AgentDefinition, DbError, EmitFn, LlmUsageRecord, ModelMessage, Pool, ThreadHistory, UsageRecorder } from "@inflexa-ai/harness";
 
 import { buildChatSession, healTailOrphan, runChatTurn, type ChatTurnSeams, type TurnOutcome } from "./turn.ts";
 
@@ -97,8 +97,24 @@ function recordingHistory(append: () => ResultAsync<void, DbError> = () => okAsy
     return { history, appended };
 }
 
+/**
+ * A recorder that keeps what it was handed. Total and synchronous, matching the seam's own contract
+ * (`record` neither throws nor awaits) — a stub that violated it would make a passing turn prove less
+ * than it appears to.
+ */
+function recordingRecorder(): UsageRecorder & { records: LlmUsageRecord[] } {
+    const records: LlmUsageRecord[] = [];
+    return { records, record: (r: LlmUsageRecord) => void records.push(r) };
+}
+
 /** Drive one turn with the given seams/history/signal, filling the fixed primitives. */
-function runWith(opts: { prepare: ChatTurnSeams["prepare"]; run: ChatTurnSeams["run"]; history: ThreadHistory; signal: AbortSignal }): Promise<TurnOutcome> {
+function runWith(opts: {
+    prepare: ChatTurnSeams["prepare"];
+    run: ChatTurnSeams["run"];
+    history: ThreadHistory;
+    signal: AbortSignal;
+    usageRecorder?: UsageRecorder;
+}): Promise<TurnOutcome> {
     return runChatTurn(
         {
             pool,
@@ -108,6 +124,7 @@ function runWith(opts: { prepare: ChatTurnSeams["prepare"]; run: ChatTurnSeams["
             session,
             emit: noopEmit,
             signal: opts.signal,
+            usageRecorder: opts.usageRecorder ?? recordingRecorder(),
             analysisId: ANALYSIS_ID,
             threadId: THREAD_ID,
             userInput: USER_INPUT,
@@ -307,6 +324,69 @@ describe("runChatTurn carries the turn's usage rollup", () => {
         });
         live.inputTokens = 999_999;
         if (outcome.kind === "ok") expect(outcome.turnUsage?.inputTokens).toBe(100);
+    });
+});
+
+// What the engine hands `runAgent` is the whole of this loop's accounting: the harness reads the
+// recorder off the OPTIONS bag and falls back to its no-op when the field is absent, never consulting
+// the agent definition. So the bag is the artifact worth asserting on — a test that hands `runAgent` a
+// fake and checks the fake ran proves the loop happened, not that anything was accounted for, which is
+// how the conversation agent went unrecorded while a scenario claiming its coverage passed.
+//
+// `usage_ledger.test.ts` closes the loop with the REAL `runAgent` and a real persisted row; these pin
+// the composition itself, including the branches where a turn ends badly and its spend must still count.
+describe("runChatTurn hands runAgent the caller's usage recorder", () => {
+    /** Run one turn, returning the options `runChatTurn` composed for the loop. */
+    async function optionsFor(
+        run: ChatTurnSeams["run"],
+        usageRecorder: UsageRecorder,
+        signal = new AbortController().signal,
+    ): Promise<Parameters<ChatTurnSeams["run"]>[3]> {
+        let captured: Parameters<ChatTurnSeams["run"]>[3] | undefined;
+        const { history } = recordingHistory();
+        await runWith({
+            prepare: prepareOk,
+            run: (agent, initial, s, opts) => {
+                captured = opts;
+                return run(agent, initial, s, opts);
+            },
+            history,
+            signal,
+            usageRecorder,
+        });
+        if (captured === undefined) throw new Error("runAgent was never reached");
+        return captured;
+    }
+
+    test("the composed options carry the caller's recorder, not a no-op stand-in", async () => {
+        const recorder = recordingRecorder();
+        const opts = await optionsFor(runOk, recorder);
+        // Identity, not merely presence: a `createNoopUsageRecorder()` here would satisfy the type,
+        // satisfy every other assertion in this file, and drop every call the turn made.
+        expect(opts.usageRecorder).toBe(recorder);
+    });
+
+    test("it rides the options unconditionally, on the abort and failure branches too", async () => {
+        // Unlike `ask`, which is conditionally spread because the harness resolves an absent one to a
+        // deny-by-default policy, an absent recorder is not a policy — it is silence. A turn that ends
+        // in an abort or a provider failure spent real tokens before it ended.
+        const aborting = new AbortController();
+        aborting.abort();
+        for (const [run, signal] of [
+            [runResolvesAbortedWithPartial, new AbortController().signal],
+            [runAborts, aborting.signal],
+            [() => Promise.reject(new Error("provider 503")), new AbortController().signal],
+        ] as const) {
+            const recorder = recordingRecorder();
+            expect((await optionsFor(run, recorder, signal)).usageRecorder).toBe(recorder);
+        }
+    });
+
+    test("the turn carries no accumulator, so the loop it starts is the turn's root", async () => {
+        // The reason the outcome reads `finish.turnUsage` rather than `finish.usage`: a loop handed no
+        // `turnUsage` creates its own and reports the whole turn's total, sub-agent loops included.
+        const opts = await optionsFor(runOk, recordingRecorder());
+        expect(opts.turnUsage).toBeUndefined();
     });
 });
 

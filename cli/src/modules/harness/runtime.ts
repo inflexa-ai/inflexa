@@ -34,6 +34,7 @@ import {
     type RegisterReaperDeps,
     type RunAuthorizer,
     type RunLauncher,
+    type UsageRecorder,
     type WatchdogDeps,
 } from "@inflexa-ai/harness";
 
@@ -150,6 +151,17 @@ export type HarnessRuntime = {
      * `executeAnalysis` parent.
      */
     readonly conversationAgent: AgentDefinition;
+    /**
+     * The ONE {@link UsageRecorder} realization this runtime booted with — the same instance
+     * `assembleCoreRuntime` stamps onto every workflow deps bag.
+     *
+     * On the handle because a loop the CLI invokes directly cannot get it any other way: `runAgent`
+     * takes its recorder from the options bag it is called with and silently falls back to the no-op
+     * when the field is absent, so an agent assembled WITH a recorder still records nothing when its
+     * loop is driven without one. The chat turn is that loop, and this is how it reaches it — see the
+     * construction site's comment for why the composition root alone was never sufficient.
+     */
+    readonly usageRecorder: UsageRecorder;
     /**
      * The shared connection's identity (provider slug + mode) the runtime booted on — the fact the TUI
      * status surface renders beside the per-agent models. Stamped once
@@ -833,10 +845,20 @@ async function bootHarnessRuntimeOnce(
         // sweep runs in `beforeLaunch` below, once state init has created the ledger.
         const askGateway = createAskGateway({ pool });
         // ONE usage recorder for the whole runtime, handed to `assembleCoreRuntime` below, which stamps
-        // it onto the conversation agent AND every workflow deps bag it registers — so every loop the
-        // cli can reach (chat, planner and the other sub-agents, data profiling, every run step) reports
-        // to one ledger. There is no per-turn or per-call construction: a second instance would be a
-        // second writer of the same table with nothing to gain from the split.
+        // it onto the conversation agent AND every workflow deps bag it registers. There is no per-turn
+        // or per-call construction: a second instance would be a second writer of the same table with
+        // nothing to gain from the split.
+        //
+        // What that supply point actually guarantees is narrower than it looks, and the gap is where
+        // the conversation agent went unrecorded for the whole of its first release. `runAgent` reads
+        // its recorder from the OPTIONS BAG it is invoked with — never off the agent definition — and
+        // falls back to the harness's no-op when the field is absent. So the stamping covers exactly
+        // the loops whose options the harness itself builds: the workflow bodies (every run step, the
+        // data profile) and the sub-agent tools, which construct their options from deps that carry it.
+        // A loop the CLI invokes DIRECTLY is covered only by that call site passing this recorder, and
+        // there is one such loop — the chat turn (`runChatTurn` in `turn.ts`), which reaches it through
+        // {@link HarnessRuntime.usageRecorder} below. An omission there is silent by construction: the
+        // turn succeeds, the live figure still renders from the finish rollup, and nothing is written.
         const usageRecorder = createUsageRecorder({ logger });
 
         // ONE holder of the sandbox agent's provenance emitters, stamped WITH the boot `{provider}/{model}`
@@ -1048,6 +1070,7 @@ async function bootHarnessRuntimeOnce(
             triggerDeps: { pool, runAuthorizer, workflow: core.workflows.dataProfile },
             runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer, budget: cfg.resourcePolicy.budget },
             conversationAgent: core.conversationAgent,
+            usageRecorder,
             // The connection's identity the boot resolved — surfaced by the status UI, immutable across
             // live role-model swaps (the connection is shared by all roles, so a swap changes only a
             // model), so `provider`/`mode` are read straight off the connection.

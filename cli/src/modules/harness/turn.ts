@@ -18,6 +18,7 @@ import {
     type Pool,
     type RetractOutcome,
     type ThreadHistory,
+    type UsageRecorder,
 } from "@inflexa-ai/harness";
 
 import { getLogger, harnessLogger } from "../../lib/log.ts";
@@ -109,6 +110,19 @@ export type RunChatTurnArgs = {
     readonly session: AgentSession;
     /** The surface's event sink — loop/tool/data events flow here during `runAgent`. */
     readonly emit: EmitFn;
+    /**
+     * The booted runtime's ONE {@link UsageRecorder} (`runtime.usageRecorder`), forwarded into this
+     * turn's `runAgent` options so the conversation agent's own calls land in the ledger.
+     *
+     * REQUIRED, not optional, and that is the whole point of it being here. `runAgent` reads its
+     * recorder from the options bag and falls back to the harness's no-op when the field is absent —
+     * it never reads one off the agent definition — so an assembled-with-a-recorder conversation agent
+     * still recorded nothing for as long as this argument did not exist. The failure is silent: the
+     * turn succeeds, the message header still shows a figure (that comes from the finish rollup, not
+     * the ledger), and no row is written. A required field is what makes the omission a compile error
+     * at every call site instead of a fact someone has to notice in a ledger months later.
+     */
+    readonly usageRecorder: UsageRecorder;
     /** Turn-scoped cancellation — the caller aborts it; on abort the engine persists `[userMessage, ...partial]` from the resolved run. */
     readonly signal: AbortSignal;
     /**
@@ -192,7 +206,7 @@ type RunPhase =
  * console here — presentation is entirely the transport's concern.
  */
 export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = realTurnSeams): Promise<TurnOutcome> {
-    const { pool, conversationAgent, chat, history, session, emit, signal, analysisId, threadId, userInput, ask } = args;
+    const { pool, conversationAgent, chat, history, session, emit, signal, analysisId, threadId, userInput, ask, usageRecorder } = args;
 
     // Bracket the whole turn as in-flight agent work: an agent switch requested
     // mid-turn defers to the turn boundary, and the `finally` settling this token lands a pending switch
@@ -225,6 +239,9 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
                 signal,
                 emit,
                 runStep: passthroughStep,
+                // UNCONDITIONAL, unlike `ask`'s spread: an absent recorder is not a policy the
+                // harness resolves for us, it is the no-op that drops every call this loop makes.
+                usageRecorder,
                 // The loop's own account of the turn: iteration count, stop reason, whether it
                 // capped out, and its tool-call/error tallies. `emit` does not cover this — the
                 // surface filters sub-agent traffic off by `callPath` depth, so a planner or

@@ -281,6 +281,9 @@ async function runTurn(
             session,
             emit: printer.emit,
             signal: controller.signal,
+            // Same recorder the runtime stamped onto every workflow: the REPL drives the same loop the
+            // TUI does, so it carries the same accounting — see `RunChatTurnArgs.usageRecorder`.
+            usageRecorder: runtime.usageRecorder,
             analysisId,
             threadId,
             userInput,
