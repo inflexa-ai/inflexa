@@ -66,6 +66,9 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
             "bytes per line — narrow your path or pattern if you hit the cap. " +
             "No matches and out-of-scope paths return data variants, not errors.",
         inputSchema: GrepInputSchema,
+        // Both fields, because either alone loses the call: the same pattern over
+        // two trees and two patterns over one tree are both ordinary sequences.
+        describeCall: ({ pattern, path }) => `${pattern} in ${path}`,
         execute: async ({ pattern, path, ignoreCase }, ctx): Promise<Result<GrepOutput, ToolError>> => {
             let regex: RegExp;
             try {

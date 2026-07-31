@@ -53,7 +53,8 @@
 - [x] 8.6 `search_gene` — the symbols.
 - [x] 8.7 `execute_analysis` — the mode and the plan id.
 - [x] 8.8 Sandbox mutate tools (`write_file`, `edit_file`, `execute_command`) — the path, or the script-like token from the argv. These feed the activity line, not a chat chip; they replace what `activityFileName` did in task 7.1.
-- [x] 8.9 One test per hook asserting the exact string for a representative input.
+- [x] 8.9 Workspace read tools that the deleted `activityFileName` covered generically (`grep`, `list_files`) — the pattern and the tree, and the directory. That helper appended the base name of ANY input carrying a `path`, so these two already showed a file name on the activity line; without a hook they are the one group this change would make strictly less informative.
+- [x] 8.10 One test per hook asserting the exact string for a representative input.
 
 ## 9. Verify
 

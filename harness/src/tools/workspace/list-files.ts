@@ -35,6 +35,8 @@ export function createListFilesTool(fs: WorkspaceFilesystem, workingDir?: string
             "else: it never reaches a directory outside the analysis, including the host process's current " +
             "working directory. Missing and out-of-scope paths return a data variant, not an error.",
         inputSchema: ListFilesInputSchema,
+        // The directory IS the call — two listings differ by nothing else.
+        describeCall: ({ path }) => path,
         execute: async ({ path }, ctx): Promise<Result<ListFilesOutput, ToolError>> => {
             const result = unwrapOrThrow(await fs.list({ session: ctx.session, path, workingDir }));
             switch (result.kind) {

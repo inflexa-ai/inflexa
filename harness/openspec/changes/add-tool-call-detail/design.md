@@ -101,13 +101,22 @@ The phrase is `name`, then the detail when one resolves; a hookless tool yields 
 
 No verb is prepended. The phrase rides a part that already carries the step phase, so "Running" would restate what the part already says. The cost is accepted: the old table's hand-written prose (`Writing file x.csv`) reads more naturally than `write_file x.csv`, but that prose was exactly the unchecked, drift-prone mapping being deleted, and it cannot be kept without keeping the table.
 
+**Deleting the table obliges this change to cover what the table covered.** `activityFileName` was not keyed by name for the file part: it appended the base name of ANY input carrying a `path` field. So `grep` and `list_files` already showed a file name on the activity line without ever appearing in `TOOL_ACTIVITY`, and a hook roster drawn only from the table's named entries would leave those two strictly less informative than before. They get hooks here for that reason. The rule generalises: a surface a generic fallback covered needs per-tool coverage before that fallback is removed, because the tools it silently served do not announce themselves.
+
+Two further costs of the deletion, both accepted:
+
+- **The phrase names a path, not a base name.** `baseName(script)` gave `run.py`; the hook gives `scripts/run.py`. The longer form is right for a chat chip, where two steps' `run.py` are otherwise the same string, and it is merely longer on the activity line. One reduction rule cannot serve both surfaces, and the hook is the surface-independent one.
+- **`grep` names two fields where the old label named one.** `pattern in path` is longer than `Searching files x.csv`, and it has to be: one pattern over two trees and two patterns over one tree are both ordinary sequences, so either field alone reproduces the indistinguishable-call problem.
+
 ## Risks / Trade-offs
 
 **A hook leaks a secret into a transcript** → Redaction runs at the single emit site (D2), not in tool code, so coverage does not depend on thirty authors. `run_inflexa` argv and workspace paths are the realistic carriers.
 
 **The wire vocabulary stays unexercised** → `CortexChatEvent` has no consumer in this repository (recorded in `cli/openspec/changes/archive/2026-07-08-embed-conversation-agent/design.md`), so `detail` and the outcome on those types cannot be caught by an in-repo test. Mitigation: the Zod schemas in `src/contracts/schemas/chat-events.ts` are updated in the same change and are unit-testable on their own, and the wire types are declared from the same source of truth as the loop event.
 
-**Hook coverage stays partial and the transcript reads ragged** → Accepted and transitional. The conversation roster holds about 30 tools; this change covers seven of the highest-ambiguity ones and the rest degrade to today's rendering.
+**Hook coverage stays partial and the transcript reads ragged** → Accepted and transitional. The conversation roster holds about 30 tools; this change covers the highest-ambiguity ones plus every tool the deleted `activityFileName` fallback served (D8), and the rest degrade to today's rendering.
+
+**A hook's own schema throws during validation, and the throw escapes** → The detail is computed under a guard that wraps the `safeParse` as well as the hook call. `safeParse` returns an error for a rejected value but THROWS for a schema it cannot run synchronously — an async refinement, or a refinement whose own predicate throws. A tool list is open by design (an embedder contributes through the host-tools seam), so such a schema is reachable, and a parse outside the guard would carry that throw out of the loop and end the turn — the one outcome D4 forbids.
 
 **A hook author encodes structure into the string** → A host that parses it recreates the coupling D1 removes. Mitigation: state the prohibition in the spec, and treat any delimiter convention appearing in a hook as the signal to widen the contract to `{verb, target}` deliberately.
 
@@ -137,5 +146,5 @@ This change is **harness-only**. `cli/` is deliberately untouched and does not t
 
 Two consequences of the harness work that the cli change inherits:
 
-- The activity line for a hooked tool is now the detail alone (`scripts/run.py`), not a name-keyed verb phrase (`Running script run.py`). The `TOOL_ACTIVITY` table that produced the verb is deleted — one source of truth was the point — and a hookless tool still reads `Running <name>`.
+- The activity line for a hooked tool is the tool name plus its own description (`write_file scripts/run.py`), not a name-keyed verb phrase (`Writing file run.py`). The `TOOL_ACTIVITY` table that produced the verb is deleted — one source of truth was the point — and a hookless tool reads the bare tool name. See D8 for why the name leads and for what the deletion obliged.
 - A tool call that only succeeds after `repairToolInput` emits no detail (D3). This is the accepted loss; do not add a second computation in the cli to recover it.

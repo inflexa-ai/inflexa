@@ -31,6 +31,25 @@ export type { ToolCallDetail };
 export const DETAIL_MAX_LENGTH = 120;
 
 /**
+ * Cap `text` at `max` CODE POINTS, not UTF-16 units.
+ *
+ * `String.prototype.slice` cuts at a fixed unit index, which can land between the
+ * two halves of a surrogate pair and emit a lone surrogate — a terminal paints
+ * that as a replacement character, so the cap would corrupt the very tail it is
+ * supposed to merely shorten. Iterating the string yields whole code points.
+ *
+ * Code points, not display columns, is the right unit here: this cap is a safety
+ * valve against a runaway hook, so its job is to bound the payload. A column
+ * measurement would claim knowledge of the renderer's font metrics that the
+ * harness does not have — the host measures columns, because only the host knows
+ * how wide its own line is.
+ */
+function capCodePoints(text: string, max: number): string {
+    const points = Array.from(text);
+    return points.length <= max ? text : points.slice(0, max).join("").trimEnd();
+}
+
+/**
  * Normalize whatever a hook returned into an emittable detail, or `undefined`.
  *
  * In order: reject anything that is not a usable string, strip control
@@ -51,8 +70,7 @@ export function normalizeDetail(raw: unknown): ToolCallDetail | undefined {
     const oneLine = normalizeUnicode(raw).replace(/\s+/g, " ").trim();
     if (oneLine.length === 0) return undefined;
 
-    const redacted = redactSecrets(oneLine);
-    const capped = redacted.length > DETAIL_MAX_LENGTH ? redacted.slice(0, DETAIL_MAX_LENGTH).trimEnd() : redacted;
+    const capped = capCodePoints(redactSecrets(oneLine), DETAIL_MAX_LENGTH);
     return capped.length === 0 ? undefined : capped;
 }
 
@@ -73,10 +91,18 @@ export function computeDetail(tool: Tool, rawInput: unknown, log: Logger): ToolC
     const describeCall = tool.describeCall;
     if (describeCall === undefined) return undefined;
 
-    const parsed = tool.inputSchema.safeParse(rawInput);
-    if (!parsed.success) return undefined;
-
     try {
+        // The parse is INSIDE the guard, not before it. `safeParse` returns an
+        // error for a rejected value but THROWS for a schema it cannot run
+        // synchronously: an async refinement raises "Encountered Promise during
+        // synchronous parse", and a refinement whose predicate throws raises
+        // whatever it threw. Refinements survive `defineTool` because
+        // `z.toJSONSchema` ignores them, so such a schema reaches here intact —
+        // and a tool list is open, since an embedder contributes its own through
+        // the host-tools seam. Outside the guard that throw would escape the loop
+        // and kill the turn. A description must never be able to fail a call.
+        const parsed = tool.inputSchema.safeParse(rawInput);
+        if (!parsed.success) return undefined;
         return normalizeDetail(describeCall(parsed.data));
     } catch (err) {
         // `debug`, not `warn`: a broken description is a cosmetic defect in one

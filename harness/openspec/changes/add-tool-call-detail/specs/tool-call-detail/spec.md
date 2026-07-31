@@ -24,10 +24,18 @@ The loop SHALL compute the detail at dispatch, inside a guard. A hook that throw
 
 The loop SHALL validate the call's input against the tool's `inputSchema` before it calls the hook, and SHALL call the hook only when validation succeeds. A tool-call event is emitted before the loop's dispatch-time validation, so the raw value at the emit site is unvalidated model output; without this parse the hook's declared input type would not hold.
 
+The guard SHALL enclose that validation as well as the hook. Schema validation reports a rejected value as a result, but it raises for a schema it cannot run synchronously — one carrying an asynchronous refinement, or a refinement whose own predicate raises. A tool list is open, because an embedder contributes tools through the host-tools seam, so such a schema is reachable and its failure SHALL be absorbed like any other.
+
 #### Scenario: A throwing hook does not break the call
 
 - **GIVEN** a tool whose `describeCall` throws
 - **WHEN** the loop dispatches that call
+- **THEN** the tool executes normally, its events carry no detail, and the turn is unaffected
+
+#### Scenario: A schema that throws during validation does not break the call
+
+- **GIVEN** a tool that declares a hook and whose `inputSchema` raises when it validates
+- **WHEN** the loop computes the detail for a call to it
 - **THEN** the tool executes normally, its events carry no detail, and the turn is unaffected
 
 #### Scenario: An input that fails validation produces no detail
@@ -134,6 +142,8 @@ The live-activity phrase a workflow reports for a sandbox or data-profile tool c
 
 A caller SHALL supply the tool list of the agent whose calls it describes. A tool with no hook SHALL fall back to the tool name alone.
 
+Every tool that the replaced surface described SHALL keep a description. The removed name table read a `path` field from any input generically, so it served tools it never named; a hook roster drawn only from its named entries would make those tools less informative than before the change.
+
 The phrase SHALL lead with the tool name, and SHALL append the detail after it when one resolves. This surface renders the phrase on its own, with no tool name beside it — unlike a chat chip, which prints the name itself and can carry a bare detail. A detail alone would therefore report a `write_file` and an `edit_file` of one path identically, because both describe a call by its path.
 
 No verb SHALL be added to the phrase. It is carried on a part that already states the step phase, so a leading verb would only restate it.
@@ -149,6 +159,12 @@ No verb SHALL be added to the phrase. It is carried on a part that already state
 - **GIVEN** `write_file` and `edit_file`, which both describe a call by its path
 - **WHEN** the workflow reports live activity for a call to each against the same path
 - **THEN** the two reported phrases differ
+
+#### Scenario: A tool the removed table served generically keeps its description
+
+- **GIVEN** a workspace tool the removed name table never named, but whose input carries a path it described
+- **WHEN** the workflow reports live activity for a call to it
+- **THEN** the reported phrase still names what the call acts on, not the tool name alone
 
 #### Scenario: A hookless tool still reports a sensible label
 

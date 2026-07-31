@@ -15,6 +15,8 @@ import { createUpdateWorkingMemoryTool } from "./memory/update-working-memory.js
 import { createInspectRunTool } from "./research/inspect-run.js";
 import { createEditFileTool } from "./workspace/edit-file.js";
 import { createExecuteCommandTool } from "./workspace/execute-command.js";
+import { createGrepTool } from "./workspace/grep.js";
+import { createListFilesTool } from "./workspace/list-files.js";
 import { createReadFileTool } from "./workspace/read-file.js";
 import { createWorkspaceSearchTool } from "./workspace/workspace-search.js";
 import { createWriteFileTool } from "./workspace/write-file.js";
@@ -44,6 +46,22 @@ describe("describeCall — conversation roster", () => {
 
         expect(describeCall(tool, { query: "differential expression results", limit: 8 })).toBe("differential expression results");
         expect(describeCall(tool, { query: "qc metrics", type: "summary", limit: 8 })).toBe("qc metrics (summary)");
+    });
+
+    it("grep names the pattern and the tree it searches", () => {
+        const tool = createGrepTool(unused, "/a/runs/r1/s1");
+
+        expect(describeCall(tool, { pattern: "TP53", path: "output" })).toBe("TP53 in output");
+        // Neither field alone identifies the call: one pattern over two trees, and two patterns over
+        // one tree, are both ordinary sequences a reader has to tell apart.
+        expect(describeCall(tool, { pattern: "TP53", path: "data/inputs" })).not.toBe(describeCall(tool, { pattern: "TP53", path: "output" }));
+        expect(describeCall(tool, { pattern: "BRCA1", path: "output" })).not.toBe(describeCall(tool, { pattern: "TP53", path: "output" }));
+    });
+
+    it("list_files names the directory", () => {
+        const tool = createListFilesTool(unused, "/a/runs/r1/s1");
+
+        expect(describeCall(tool, { path: "runs/r1/step-2/output" })).toBe("runs/r1/step-2/output");
     });
 
     it("read_file names the path, plus the head or tail window", () => {
