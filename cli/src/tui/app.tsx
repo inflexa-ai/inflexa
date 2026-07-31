@@ -15,9 +15,9 @@ import * as conversation from "./hooks/conversation.ts";
 import { activeAsk, queuedCount, settleAsk, type PendingAsk } from "./hooks/asks.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
-import { profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
+import { activeRunProgress, idTail, profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
 import { usePromptRecall } from "./hooks/prompt_recall.ts";
-import { watchOpenThread } from "./hooks/thread.ts";
+import { openThread, watchOpenThread } from "./hooks/thread.ts";
 import {
     activeSubjectCount,
     focusedSubject,
@@ -32,6 +32,7 @@ import { watchRunCompletions } from "./hooks/run_completion.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
+import { UsageDialog, readAnalysisUsage, usageStepLines } from "./components/dialog/usage_dialog.tsx";
 import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
 import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, interruptHintLabel, leaderSeq, KEYS, type LayerConfig } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
@@ -45,7 +46,7 @@ import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
 import { watchProfileParity, driveForceReprofile } from "./hooks/profile_parity.ts";
-import { listAnalysisInputs } from "../db/primary_query.ts";
+import { listAnalysisInputs, listRunUsageByStep } from "../db/primary_query.ts";
 import type { Analysis } from "../types/analysis.ts";
 
 type AppProps = {
@@ -534,12 +535,52 @@ export function App(props: AppProps) {
         ));
     }
 
+    // Open the USAGE breakdown: what this analysis has consumed, and where it went. Reads the CLI's
+    // OWN local ledger, so it opens with the durable engine, its Postgres, and the model proxy all
+    // cold — the same property the rail section that launches it has, and the reason there is no boot
+    // gate here (unlike `openRuns`, whose picker needs the live pool).
+    //
+    // Names for runs live in the harness's Postgres and are handed over only if the app ALREADY holds
+    // them: the live progress store's plan titles, and the open thread's own title. Nothing is
+    // fetched — a name is decoration beside the id, never a reason to wait or to fail.
+    function openUsage(): void {
+        const analysis = workspace.analysis;
+        if (!analysis) return;
+        const names = new Map<string, string>();
+        for (const [runId, progress] of activeRunProgress()) names.set(runId, progress.name);
+        const thread = openThread();
+        if (thread.kind === "loaded" && thread.thread.title) names.set(thread.thread.threadId, thread.thread.title);
+        dialogPush(() => (
+            <UsageDialog
+                analysisName={analysis.name}
+                loadUsage={() => readAnalysisUsage(analysis.id)}
+                names={names}
+                // The step view STACKS over the breakdown rather than replacing it (the runs picker →
+                // run detail shape), so dismissing it lands back on the grains the user was comparing.
+                onOpenRun={(runId: string) =>
+                    dialogPush(() => (
+                        <ResultsDialog
+                            title={`Steps ${GLYPHS.emDash} ${names.get(runId) ?? idTail(runId)}`}
+                            lines={listRunUsageByStep(analysis.id, runId).match(usageStepLines, () => [])}
+                            // Both the failed read and a run with no rows land here; neither is a
+                            // figure, and a step table of zeros would assert one.
+                            emptyText="no steps recorded"
+                            onClose={() => dialogClose()}
+                        />
+                    ))
+                }
+                onClose={() => dialogClose()}
+            />
+        ));
+    }
+
     // A text-selection drag released over a Sidebar Section fires its `onMouseUp` (→ open dialog) on the
-    // SAME release the root `onMouseUp={copySelection}` handles — so a drag ending on DATA PROFILE/RUNS
-    // would both copy AND pop the dialog. When a selection is live, treat the release as the tail of that
-    // drag and suppress the open (mirrors the selection-aware ctrl+c guard above). Only the mouse path is
-    // guarded: the leader keys below invoke the unguarded `openProfile`/`openRuns` — a deliberate ctrl+x
-    // d/r keypress carries no drag context and should always open.
+    // SAME release the root `onMouseUp={copySelection}` handles — so a drag ending on DATA PROFILE/RUNS/
+    // USAGE would both copy AND pop the dialog. When a selection is live, treat the release as the tail of
+    // that drag and suppress the open (mirrors the selection-aware ctrl+c guard above). Only the mouse path
+    // is guarded: the leader keys below invoke the unguarded `openProfile`/`openRuns` — a deliberate ctrl+x
+    // d/r keypress carries no drag context and should always open. USAGE has no chord, so the guarded
+    // wrapper is its only door.
     function openProfileFromSidebar(): void {
         if (renderer.getSelection()?.getSelectedText()) return;
         openProfile();
@@ -547,6 +588,10 @@ export function App(props: AppProps) {
     function openRunsFromSidebar(): void {
         if (renderer.getSelection()?.getSelectedText()) return;
         openRuns();
+    }
+    function openUsageFromSidebar(): void {
+        if (renderer.getSelection()?.getSelectedText()) return;
+        openUsage();
     }
 
     // The single root keyboard handler that drives the keymap engine. Every binding below is a
@@ -1095,7 +1140,12 @@ export function App(props: AppProps) {
 
                     {/* Full-height sidebar: spans both the stream and the input; ctrl+b toggles it. */}
                     <Show when={sidebarOpen()}>
-                        <Sidebar messageCount={conversation.messageCount} onOpenProfile={openProfileFromSidebar} onOpenRuns={openRunsFromSidebar} />
+                        <Sidebar
+                            messageCount={conversation.messageCount}
+                            onOpenProfile={openProfileFromSidebar}
+                            onOpenRuns={openRunsFromSidebar}
+                            onOpenUsage={openUsageFromSidebar}
+                        />
                     </Show>
                 </box>
 

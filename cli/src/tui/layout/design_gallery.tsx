@@ -1,7 +1,7 @@
 import type { JSX } from "solid-js";
 import { TextareaRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/solid";
-import { okAsync } from "neverthrow";
+import { err, ok, okAsync } from "neverthrow";
 import type { DbError, StepExecutionRow } from "@inflexa-ai/harness";
 
 import { GLYPHS, size, space } from "../../lib/design_system.ts";
@@ -39,6 +39,11 @@ import { FixedList } from "../components/fixed_list.tsx";
 import { SelectDialog } from "../components/dialog/select_dialog.tsx";
 import { FilePicker } from "../components/dialog/file_picker.tsx";
 import { RunDetailDialog } from "../components/dialog/run_detail_dialog.tsx";
+import { UsageDialog, usageStepLines, type UsageSnapshot } from "../components/dialog/usage_dialog.tsx";
+// Aliased: `DbError` in this file already means the HARNESS's storage error (the run-detail exhibit's
+// step fetch). The usage dialog reads the CLI's own SQLite ledger, whose error union is a different
+// type with the same name, and only the alias keeps the two exhibits from silently swapping them.
+import type { DbError as LocalDbError } from "../../db/errors.ts";
 import {
     absTime,
     idTail,
@@ -68,6 +73,9 @@ import {
     mockCortexRuns,
     mockRunSteps,
     mockDataProfile,
+    mockUsageSnapshot,
+    mockUsageNames,
+    mockUsageSteps,
 } from "./design_gallery_fixtures.ts";
 
 // Nothing streams in the gallery — MessageBlock's streaming accessors are constant stubs.
@@ -466,6 +474,40 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <text fg={theme().fgMuted}>RunDetailDialog — one picked run's metadata + full step list (done / running / failed / queued):</text>
                     <DialogShowcase>
                         <RunDetailDialog run={mockCortexRuns[0]!} loadSteps={() => okAsync<StepExecutionRow[], DbError>(mockRunSteps)} onClose={noop} />
+                    </DialogShowcase>
+                    {/* The USAGE section's dialog. Driven by the REAL composition over a mock snapshot, so
+                        the exhibit cannot drift from what the live rail opens: two figures per row and
+                        never their sum, the absent word where a provider reported nothing, and each row
+                        led by its id tail with a known name only ever beside it. */}
+                    <text fg={theme().fgMuted}>UsageDialog — the analysis headline over its session / run / model / agent grains:</text>
+                    <DialogShowcase>
+                        <UsageDialog
+                            analysisName="rna-seq-2026"
+                            loadUsage={() => ok<UsageSnapshot, LocalDbError>(mockUsageSnapshot)}
+                            names={mockUsageNames}
+                            onOpenRun={noop}
+                            onClose={noop}
+                        />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>UsageDialog — the unavailable state a failed ledger read renders INSIDE the dialog, never instead of it:</text>
+                    <DialogShowcase>
+                        <UsageDialog
+                            analysisName="rna-seq-2026"
+                            loadUsage={() => err<UsageSnapshot, LocalDbError>({ type: "query_failed", op: "gallery", cause: null })}
+                            onOpenRun={noop}
+                            onClose={noop}
+                        />
+                    </DialogShowcase>
+                    {/* The drill-down reuses ResultsDialog verbatim, exactly as the data-profile details do;
+                        the lines come from the real `usageStepLines`. */}
+                    <text fg={theme().fgMuted}>ResultsDialog — one run&apos;s step grain, stacked over the usage dialog when a run row is chosen:</text>
+                    <DialogShowcase>
+                        <ResultsDialog
+                            title={`Steps ${GLYPHS.emDash} ${idTail("99999999-8888-7777-6666-5555ffeeddcc")}`}
+                            lines={usageStepLines(mockUsageSteps)}
+                            emptyText="no steps recorded"
+                            onClose={noop}
+                        />
                     </DialogShowcase>
                 </State>
                 <State n="18" label="sidebar RUNS progress embed — bounded step window, no heading">

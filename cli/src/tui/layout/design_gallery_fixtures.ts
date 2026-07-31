@@ -12,6 +12,8 @@ import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa
 
 import type { AskCardPart, TextPart, ThinkingPart, ToolCallPart, FileEditPart, PlanCardPart, PlanCardStepView, RunCardPart } from "../../types/session.ts";
 import type { ActiveProfileProgress, ActiveRunProgress } from "../hooks/sidebar_live.ts";
+import type { UsageSnapshot } from "../components/dialog/usage_dialog.tsx";
+import type { LlmUsageByStep } from "../../db/primary_query.ts";
 
 /** A run step's lifecycle state (mirrors `RunStepView.state`). */
 export type StepState = "done" | "running" | "failed" | "queued";
@@ -555,3 +557,47 @@ export function galleryProfile(over: Partial<ActiveProfileProgress> = {}): Activ
         ...over,
     };
 }
+
+/**
+ * MOCK: one analysis's ledger snapshot, as the usage dialog reads it.
+ *
+ * Deliberately carries every state the dialog has to render at once: a session, two runs (one of them
+ * a run whose provider reported NO figures, so the absent vocabulary is on screen beside real ones), a
+ * populated unattributed bucket, and a served-model group with no id. The ids are uuid-SHAPED rather
+ * than `mock-*` sentinels because the rows are labelled by their six-character tail — a sentinel id
+ * would render a tail that teaches the reader nothing about what the real surface looks like.
+ */
+export const mockUsageSnapshot: UsageSnapshot = {
+    totals: {
+        calls: 12,
+        inputTokens: 42_600,
+        outputTokens: 3_140,
+        cacheCreationInputTokens: 1_000,
+        cacheReadInputTokens: 38_000,
+        reasoningTokens: 900,
+    },
+    sessions: [{ threadId: "aaaaaaaa-bbbb-cccc-dddd-eeee11112222", totals: { calls: 5, inputTokens: 11_600, outputTokens: 1_200 } }],
+    runs: [
+        { runId: "99999999-8888-7777-6666-5555ffeeddcc", totals: { calls: 5, inputTokens: 30_200, outputTokens: 1_900, reasoningTokens: 900 } },
+        { runId: "77777777-6666-5555-4444-3333aabbccdd", totals: { calls: 1 } },
+    ],
+    unattributed: { calls: 1, inputTokens: 800, outputTokens: 40 },
+    byModel: [
+        { servedModelId: "claude-opus-4", totals: { calls: 11, inputTokens: 42_200, outputTokens: 3_100 } },
+        { servedModelId: null, totals: { calls: 1, inputTokens: 400, outputTokens: 40 } },
+    ],
+    byAgent: [
+        { agentId: "conversation", totals: { calls: 6, inputTokens: 12_400, outputTokens: 1_240 } },
+        { agentId: "bioinformatician", totals: { calls: 6, inputTokens: 30_200, outputTokens: 1_900 } },
+    ],
+};
+
+/** MOCK: the run label the app holds in memory for the first fixture run — decoration BESIDE its id tail, never instead of it. */
+export const mockUsageNames: ReadonlyMap<string, string> = new Map([["99999999-8888-7777-6666-5555ffeeddcc", "Differential expression"]]);
+
+/** MOCK: the step grain of that same run, as the drill-down view reports it. */
+export const mockUsageSteps: LlmUsageByStep[] = [
+    { stepId: "qc-normalize", totals: { calls: 3, inputTokens: 24_000, outputTokens: 1_500 } },
+    { stepId: "differential-expression", totals: { calls: 1, inputTokens: 6_200, outputTokens: 400 } },
+    { stepId: null, totals: { calls: 1, inputTokens: 400 } },
+];
