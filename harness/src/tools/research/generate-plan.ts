@@ -30,9 +30,9 @@ import { z } from "zod";
 
 import { formatAgentCatalog } from "../../agents/sandbox-catalog.js";
 import { composeSystemPrompt } from "../../agents/system-prompt.js";
-import { runToTerminal } from "../../loop/run-to-terminal.js";
+import { DEFAULT_SALVAGE_ITERATIONS, runToTerminal, type RunToTerminalResult } from "../../loop/run-to-terminal.js";
 import { passthroughStep } from "../../loop/run-step.js";
-import type { AgentDefinition } from "../../loop/types.js";
+import type { AgentDefinition, LoopMessage } from "../../loop/types.js";
 import { forSubAgent, scopeResource } from "../../auth/types.js";
 import { type ChatProvider } from "../../providers/types.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
@@ -49,7 +49,7 @@ import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAge
 import { validatePlan } from "../../schemas/validate-plan.js";
 import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
-import type { Logger } from "../../lib/logger.js";
+import type { LogFields, Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { hintForZodIssue } from "../../lib/zod-issues.js";
 import { insertPlan, loadDataProfileStatus, loadPlan, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
@@ -67,6 +67,91 @@ const PLANNER_MAX_ITERATIONS = 13;
 
 /** Wall-clock guard for a single plan-generation invocation. */
 const PLAN_TIMEOUT_MS = 600_000;
+
+// ── Diagnostic bounds ───────────────────────────────────────────────
+//
+// This tool runs on `passthroughStep`: it writes no ledger row and owns no
+// durable stream, so its log records are the ONLY account of an invocation that
+// survives the turn. That makes them worth spending detail on — and makes every
+// one of them a place an unbounded model-authored string could reach a log file.
+// Each bound below is what keeps a record readable and a sink affordable when the
+// planner is behaving at its worst, which is exactly when the record gets read.
+
+/** Issues kept per rejection record. A plan bounces on a handful of distinct faults; the tail repeats. */
+const MAX_LOGGED_ISSUES = 8;
+/** Per-issue message budget — enough to identify the fault, not to reproduce the plan. */
+const MAX_LOGGED_ISSUE_CHARS = 240;
+/** Rejections kept on the finish record. Enough to show whether the planner converged or thrashed. */
+const MAX_LOGGED_REJECTIONS = 6;
+/** Excerpt of the planner's last words — the one artifact that explains a run ending on prose. */
+const MAX_LOGGED_PROSE_CHARS = 800;
+/** Tool-call trace length. The planner's whole budget is ~16 turns, so this rarely truncates. */
+const MAX_LOGGED_TOOL_CALLS = 48;
+
+/** Trim to `max`, marking the cut so a truncated value never reads as a complete one. */
+function bounded(value: string, max: number): string {
+    return value.length <= max ? value : `${value.slice(0, max)}…[+${value.length - max} chars]`;
+}
+
+/**
+ * One `submit_plan` rejection, in the shape a log query wants.
+ *
+ * `codes` separates the two failure families that call for different fixes: a
+ * `schema` count means the planner cannot produce the declared shape, a `semantic`
+ * count means it produces valid JSON describing an impossible DAG. `paths` is what
+ * makes repeated rejections comparable at a glance — identical paths across
+ * attempts is a planner stuck, moving paths is a planner making progress and
+ * merely running out of budget.
+ */
+interface RejectionRecord {
+    readonly attempt: number;
+    readonly issueCount: number;
+    readonly codes: { readonly schema: number; readonly semantic: number };
+    readonly paths: readonly string[];
+    readonly messages: readonly string[];
+}
+
+function toRejectionRecord(attempt: number, issues: readonly ValidationIssue[]): RejectionRecord {
+    const kept = issues.slice(0, MAX_LOGGED_ISSUES);
+    return {
+        attempt,
+        issueCount: issues.length,
+        codes: {
+            schema: issues.filter((i) => i.code === "schema").length,
+            semantic: issues.filter((i) => i.code === "semantic").length,
+        },
+        paths: kept.map((i) => i.path),
+        messages: kept.map((i) => bounded(i.message, MAX_LOGGED_ISSUE_CHARS)),
+    };
+}
+
+/**
+ * What the planner did over one invocation, accumulated by the inner tools.
+ *
+ * The failure this exists for is invisible from the outcome alone: `submit_plan`
+ * is non-terminal on rejection by design, so a planner can spend its entire
+ * iteration budget on submit → reject → fix → reject and end with `holder.outcome`
+ * still null. That reads as "the planner never called a terminal tool" — the same
+ * ending as a planner that stopped on prose after one turn, and the opposite
+ * problem.
+ */
+interface PlannerTrace {
+    submitAttempts: number;
+    /**
+     * True count of rejected attempts — NOT `rejections.length`, which stops at
+     * {@link MAX_LOGGED_REJECTIONS}. A record reporting 16 attempts and 6 rejections
+     * says ten of them were accepted, which is the opposite of what happened.
+     */
+    rejectedAttempts: number;
+    /** The first {@link MAX_LOGGED_REJECTIONS} rejections, in full. */
+    rejections: RejectionRecord[];
+    /** Terminal calls made after an outcome was already recorded — a planner ignoring "stop after this". */
+    duplicateTerminalCalls: number;
+}
+
+function createPlannerTrace(): PlannerTrace {
+    return { submitAttempts: 0, rejectedAttempts: 0, rejections: [], duplicateTerminalCalls: 0 };
+}
 
 // ── Prompt / catalog ────────────────────────────────────────────────
 
@@ -267,8 +352,18 @@ function renderDataContext(grounding: DataGrounding): string {
 /**
  * Persist a validated plan. Returns the planId, or an outcome-ready error
  * with a sanitized message — DB-shape errors never leak to the planner.
+ *
+ * The sanitization is for the model, not for the operator: "plan could not be
+ * saved, please try again" is all the planner may see, and it is useless to
+ * whoever has to fix the cause. The record here is the only place the real
+ * failure survives, so it is written before the message is flattened.
  */
-async function persistPlan(plan: PlannerPlan, ctx: PersistContext, pool: Pool): Promise<{ ok: true; planId: string } | { ok: false; message: string }> {
+async function persistPlan(
+    plan: PlannerPlan,
+    ctx: PersistContext,
+    pool: Pool,
+    logger: Logger,
+): Promise<{ ok: true; planId: string } | { ok: false; message: string }> {
     try {
         const planId = unwrapOrThrow(
             await insertPlan(pool, {
@@ -281,6 +376,12 @@ async function persistPlan(plan: PlannerPlan, ctx: PersistContext, pool: Pool): 
     } catch (err) {
         const raw = err instanceof Error ? err.message : String(err);
         const isParentValidation = /^parent plan .* (?:not found|belongs to a different analysis)$/i.test(raw);
+        logger.error("plan persistence failed", {
+            parentPlanId: ctx.parentPlanId,
+            stepCount: plan.steps.length,
+            classified: isParentValidation ? "invalid_parent_plan" : "write_failed",
+            ...logger.errorFields(err),
+        });
         return {
             ok: false,
             message: isParentValidation ? "parentPlanId is not a valid plan for this analysis" : "plan could not be saved, please try again",
@@ -359,6 +460,7 @@ interface InnerTools {
  */
 function buildInnerTools(
     holder: OutcomeHolder,
+    trace: PlannerTrace,
     persistCtx: PersistContext,
     pool: Pool,
     resourcePolicy: ResourcePolicy | undefined,
@@ -384,6 +486,11 @@ function buildInnerTools(
         }),
         execute: async (input): Promise<Result<SubmitPlanOutput, ToolError>> => {
             if (holder.outcome !== null) {
+                trace.duplicateTerminalCalls++;
+                logger.warn("submit_plan called after a terminal outcome was recorded", {
+                    recordedOutcome: holder.outcome.kind,
+                    duplicateTerminalCalls: trace.duplicateTerminalCalls,
+                });
                 return ok({
                     accepted: false as const,
                     issues: [
@@ -396,13 +503,21 @@ function buildInnerTools(
                 });
             }
 
+            const attempt = ++trace.submitAttempts;
             const result = fullyValidate(input.plan, resourcePolicy);
             if (!result.valid) {
-                logger.debug("submit_plan rejected a plan", { issueCount: result.issues.length, issues: result.issues });
+                trace.rejectedAttempts++;
+                const rejection = toRejectionRecord(attempt, result.issues);
+                if (trace.rejections.length < MAX_LOGGED_REJECTIONS) trace.rejections.push(rejection);
+                // `warn`, not `debug`: a rejection is non-terminal by design, so the model
+                // reads the issues and the invocation carries on — nothing else reports that
+                // an attempt was spent. A run that exhausts its budget on rejections ends
+                // looking identical to one that never tried, and this is the difference.
+                logger.warn("submit_plan rejected a plan", { ...rejection });
                 return ok({ accepted: false as const, issues: result.issues });
             }
 
-            const persisted = await persistPlan(result.plan, persistCtx, pool);
+            const persisted = await persistPlan(result.plan, persistCtx, pool, logger);
             if (!persisted.ok) {
                 holder.outcome = { kind: "persist_error", message: persisted.message };
                 return ok({
@@ -423,6 +538,14 @@ function buildInnerTools(
                 planId: persisted.planId,
                 plan: result.plan,
             };
+            // The attempt count is the cost of this plan, and it is only knowable here.
+            // A plan accepted on attempt 5 is a success that nearly was not one.
+            logger.info("submit_plan accepted a plan", {
+                planId: persisted.planId,
+                attempt,
+                stepCount: result.plan.steps.length,
+                agents: [...new Set(result.plan.steps.map((s) => s.agent))],
+            });
             return ok({ accepted: true as const, planId: persisted.planId });
         },
     });
@@ -438,20 +561,48 @@ function buildInnerTools(
             questionContext: z.string().optional(),
         }),
         execute: async (input) => {
-            if (holder.outcome === null) {
-                holder.outcome = {
-                    kind: "clarification",
-                    question: input.question,
-                    questionContext: input.questionContext,
-                };
+            if (holder.outcome !== null) {
+                trace.duplicateTerminalCalls++;
+                logger.warn("request_clarification called after a terminal outcome was recorded", {
+                    recordedOutcome: holder.outcome.kind,
+                    duplicateTerminalCalls: trace.duplicateTerminalCalls,
+                });
+                return ok({ recorded: true as const });
             }
+            holder.outcome = {
+                kind: "clarification",
+                question: input.question,
+                questionContext: input.questionContext,
+            };
+            // The question is the answer to "why did planning stop?" — and it reaches the
+            // user through the conversation agent, which may paraphrase it into something
+            // that no longer identifies the missing fact.
+            logger.info("planner requested clarification", {
+                question: bounded(input.question, MAX_LOGGED_PROSE_CHARS),
+                submitAttempts: trace.submitAttempts,
+            });
             return ok({ recorded: true as const });
         },
     });
 
     const reportBlockerTool = createReportBlockerToolFor({
         record: (outcome) => {
-            if (holder.outcome === null) holder.outcome = outcome;
+            if (holder.outcome !== null) {
+                trace.duplicateTerminalCalls++;
+                logger.warn("report_blocker called after a terminal outcome was recorded", {
+                    recordedOutcome: holder.outcome.kind,
+                    duplicateTerminalCalls: trace.duplicateTerminalCalls,
+                });
+                return;
+            }
+            holder.outcome = outcome;
+            // A blocker after several rejected submits is a planner giving up on a plan it
+            // could not make valid — a validation problem wearing a blocker's clothes. The
+            // attempt count is what tells those apart, and only this record carries both.
+            logger.warn("planner reported a blocker", {
+                reason: bounded(outcome.reason, MAX_LOGGED_PROSE_CHARS),
+                submitAttempts: trace.submitAttempts,
+            });
         },
         blockedWhen:
             "Ends plan generation with no plan saved. Use it when no valid plan can " +
@@ -464,13 +615,85 @@ function buildInnerTools(
     return { terminal };
 }
 
-function inventoryContent(label: string, result: Awaited<ReturnType<Tool["execute"]>>): string {
-    if (result.isErr()) return `## ${label}\n\nInventory lookup failed: ${result.error.error}`;
+/**
+ * Render one environment inventory into the seed, reporting a lookup that failed.
+ *
+ * A failed lookup is written INTO the prompt as prose the planner then plans
+ * around — a silent degradation of its grounding that no caller is told about and
+ * no outcome distinguishes. The record is what makes "the planner produced a plan
+ * naming packages this install does not have" traceable to its cause.
+ */
+function inventoryContent(label: string, result: Awaited<ReturnType<Tool["execute"]>>, logger: Logger): string {
+    if (result.isErr()) {
+        logger.warn("planner grounding inventory lookup failed", { inventory: label, error: result.error.error });
+        return `## ${label}\n\nInventory lookup failed: ${result.error.error}`;
+    }
     const value = result.value;
     if (typeof value === "object" && value !== null && "content" in value && typeof value.content === "string") {
         return `## ${label}\n\n${value.content}`;
     }
     return `## ${label}\n\n${JSON.stringify(value)}`;
+}
+
+// ── Transcript reading (diagnostics only) ───────────────────────────
+
+/**
+ * The planner's own account of the run, read off the message array `runToTerminal`
+ * returns. Nothing else can produce it: the transcript is ephemeral — a sub-agent
+ * loop on `passthroughStep` persists no messages anywhere — so it is read here or
+ * it is lost with the turn.
+ *
+ * `toolCalls` in order is what shows the SHAPE of a failure at a glance:
+ * `[submit_plan × 13]` is a planner thrashing on validation, `[]` is a planner
+ * that never called anything, and a trailing `report_blocker` on a run that ended
+ * with no outcome means the terminal call was cut off before it executed.
+ */
+function readTranscript(messages: readonly LoopMessage[]): { toolCalls: string[]; truncatedToolCalls: boolean; finalProse: string } {
+    const toolCalls: string[] = [];
+    let finalProse = "";
+    for (const message of messages) {
+        if (message.role !== "assistant" || typeof message.content === "string") {
+            if (message.role === "assistant" && typeof message.content === "string" && message.content.length > 0) finalProse = message.content;
+            continue;
+        }
+        for (const part of message.content) {
+            if (part.type === "tool-call") toolCalls.push(part.toolName);
+            // Last one wins: the closing text of the run is what explains a run that
+            // stopped talking instead of calling its terminal tool.
+            else if (part.type === "text" && part.text.trim().length > 0) finalProse = part.text;
+        }
+    }
+    return {
+        toolCalls: toolCalls.slice(0, MAX_LOGGED_TOOL_CALLS),
+        truncatedToolCalls: toolCalls.length > MAX_LOGGED_TOOL_CALLS,
+        finalProse: bounded(finalProse.trim(), MAX_LOGGED_PROSE_CHARS),
+    };
+}
+
+/**
+ * The loop half of the finish record: how the planner's run ended, and what it
+ * did to get there.
+ *
+ * Built from the `runToTerminal` result that the tool previously discarded
+ * entirely. Without it, `no_outcome` is a single word covering three unrelated
+ * failures — a budget spent on rejected submits (`max_iterations`), a planner that
+ * answered in prose (`stop`), and a reply cut off at the output-token limit
+ * (`length`) — which is why three identical-looking retries taught nobody anything.
+ */
+function loopFields(run: RunToTerminalResult): LogFields {
+    const transcript = readTranscript(run.messages);
+    return {
+        loop: {
+            finishReason: run.finish.reason,
+            cappedOut: run.finish.cappedOut,
+            truncationRecoveries: run.finish.truncationRecoveries,
+            salvaged: run.salvage !== null,
+            ...(run.salvage ? { firstFinishReason: run.salvage.firstFinish.reason, salvageFinishReason: run.salvage.finish.reason } : {}),
+            toolCalls: transcript.toolCalls,
+            ...(transcript.truncatedToolCalls ? { toolCallsTruncated: true } : {}),
+        },
+        ...(transcript.finalProse ? { plannerFinalProse: transcript.finalProse } : {}),
+    };
 }
 
 // ── Outcome shaping ─────────────────────────────────────────────────
@@ -661,13 +884,27 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // the construction-time deps the factory closes over.
             const logger = baseLogger.with({ analysisId });
             const startedAt = Date.now();
+            const trace = createPlannerTrace();
 
             // Every exit routes through here, so "recorded exactly once per invocation" holds
             // by construction rather than by remembering. `elapsedMs` is what separates a
             // planner that gave up early from one still working when the guard cut it — the
             // fixed budget above makes the number readable without any other context.
-            const finish = (shaped: ShapedOutcome): Result<PlanningAgentOutput, ToolError> => {
-                logger[OUTCOME_LEVEL[shaped.kind]]("plan generation finished", { outcome: shaped.kind, elapsedMs: Date.now() - startedAt });
+            //
+            // `extra` carries the loop account on the paths that reached the loop. The two
+            // parent-plan early returns never do, and a record claiming `loop.finishReason`
+            // for a run that never started would be worse than one that omits the field.
+            const finish = (shaped: ShapedOutcome, extra: LogFields = {}): Result<PlanningAgentOutput, ToolError> => {
+                logger[OUTCOME_LEVEL[shaped.kind]]("plan generation finished", {
+                    outcome: shaped.kind,
+                    elapsedMs: Date.now() - startedAt,
+                    submitAttempts: trace.submitAttempts,
+                    rejectedAttempts: trace.rejectedAttempts,
+                    ...(trace.rejections.length > 0 ? { rejections: trace.rejections } : {}),
+                    ...(trace.rejectedAttempts > trace.rejections.length ? { rejectionsTruncated: true } : {}),
+                    ...(trace.duplicateTerminalCalls > 0 ? { duplicateTerminalCalls: trace.duplicateTerminalCalls } : {}),
+                    ...extra,
+                });
                 return ok(shaped.output);
             };
 
@@ -689,7 +926,14 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                         });
                     }
                     priorPlanBlock = formatPriorPlan(input.parentPlanId, priorPlan);
-                } catch {
+                    // `formatPriorPlan` returns null on a stored plan that no longer parses as an
+                    // `AnalysisPlan`. Iteration then silently becomes generation-from-scratch, and
+                    // the user gets a plan that ignored everything they asked to keep.
+                    if (priorPlanBlock === null) {
+                        logger.warn("prior plan did not parse — iterating without it", { parentPlanId: input.parentPlanId });
+                    }
+                } catch (err) {
+                    logger.error("parent plan could not be loaded", { parentPlanId: input.parentPlanId, ...logger.errorFields(err) });
                     return finish({
                         output: { event: "error", error: "Plan iteration failed — parent plan could not be loaded." },
                         kind: "parent_plan_load_failed",
@@ -705,8 +949,22 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // without dataset facts is a real, supported state (see `renderDataContext`),
             // so a ledger read that fails must cost the planner its grounding — never
             // the user their plan.
-            const profileStatus = await loadDataProfileStatus(deps.pool, analysisId).unwrapOr(null);
-            const dataContextBlock = renderDataContext(classifyGrounding(profileStatus));
+            const profileStatus = await loadDataProfileStatus(deps.pool, analysisId).match(
+                (status) => status,
+                (error) => {
+                    // Degrading to "no profile" is correct behaviour and indistinguishable, from
+                    // the outcome, from an analysis that genuinely has none — so the read failure
+                    // is reported here or it is never known to have happened.
+                    logger.warn("data profile read failed — planning without dataset facts", {
+                        dbErrorType: error.type,
+                        ...("op" in error ? { dbOp: error.op } : {}),
+                        ...("cause" in error ? logger.errorFields(error.cause) : {}),
+                    });
+                    return null;
+                },
+            );
+            const grounding = classifyGrounding(profileStatus);
+            const dataContextBlock = renderDataContext(grounding);
 
             // Reference data and package availability are mandatory grounding,
             // not optional planner lookups. Read both inventories host-side before
@@ -717,9 +975,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // tool's recursive leaf scan, so the seed contains usable file paths,
             // not only top-level directory summaries.
             const [refsResult, packagesResult] = await Promise.all([listAvailableRefs.execute({ query: "/" }, ctx), listAvailablePackages.execute({}, ctx)]);
-            const groundingBlock = [inventoryContent("Available Reference Data", refsResult), inventoryContent("Available Packages", packagesResult)].join(
-                "\n\n",
-            );
+            const refsBlock = inventoryContent("Available Reference Data", refsResult, logger);
+            const packagesBlock = inventoryContent("Available Packages", packagesResult, logger);
+            const groundingBlock = [refsBlock, packagesBlock].join("\n\n");
 
             const prompt = [
                 ...(priorPlanBlock ? [priorPlanBlock, ""] : []),
@@ -733,12 +991,40 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 ...(input.userConstraints ? ["", "## User Constraints", input.userConstraints] : []),
             ].join("\n");
 
+            // Opens the invocation. Two things are only knowable here and both are
+            // first-order suspects when a planner runs long and returns nothing: the size
+            // of the seed it was handed, and which of its blocks made it that size. The
+            // reference inventory in particular is a recursive leaf scan of whatever this
+            // install has staged — a quantity the harness does not control and no other
+            // record reports. The census is sizes only: the seed carries the user's
+            // research question and dataset facts, which belong in the model's context and
+            // not in a log file.
+            logger.info("plan generation started", {
+                model: deps.conversation.model,
+                maxIterations: PLANNER_MAX_ITERATIONS,
+                salvageIterations: DEFAULT_SALVAGE_ITERATIONS,
+                timeoutMs: PLAN_TIMEOUT_MS,
+                grounding: grounding.kind,
+                ...(input.parentPlanId ? { parentPlanId: input.parentPlanId } : {}),
+                seedChars: {
+                    total: prompt.length,
+                    priorPlan: priorPlanBlock?.length ?? 0,
+                    dataContext: dataContextBlock.length,
+                    referenceData: refsBlock.length,
+                    packages: packagesBlock.length,
+                    researchQuestion: input.researchQuestion.length,
+                    analystNotes: input.analystNotes?.length ?? 0,
+                    priorRuns: input.priorRuns?.length ?? 0,
+                    userConstraints: input.userConstraints?.length ?? 0,
+                },
+            });
+
             const holder: OutcomeHolder = { outcome: null };
             const persistCtx: PersistContext = {
                 analysisId,
                 parentPlanId: input.parentPlanId ?? null,
             };
-            const innerTools = buildInnerTools(holder, persistCtx, deps.pool, deps.resourcePolicy, logger);
+            const innerTools = buildInnerTools(holder, trace, persistCtx, deps.pool, deps.resourcePolicy, logger);
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
@@ -752,8 +1038,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(PLAN_TIMEOUT_MS)]);
 
             let runError: unknown = null;
+            let run: RunToTerminalResult | null = null;
             try {
-                await runToTerminal(
+                run = await runToTerminal(
                     planner,
                     [{ role: "user", content: prompt }],
                     forSubAgent(ctx.session, PLANNER_AGENT_ID),
@@ -788,6 +1075,13 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                     timedOut: signal.aborted && !ctx.signal.aborted,
                     outerAborted: ctx.signal.aborted,
                 }),
+                {
+                    // A throw leaves no result to read the transcript off, so the cause takes its
+                    // place — `shapeOutcome` folds it into one prose sentence for the model, and
+                    // this is the only place its type and stack survive.
+                    ...(run ? loopFields(run) : {}),
+                    ...(runError ? logger.errorFields(runError) : {}),
+                },
             );
         },
     });

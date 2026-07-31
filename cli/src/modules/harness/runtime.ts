@@ -35,17 +35,14 @@ import {
     type RunAuthorizer,
     type RunLauncher,
     type WatchdogDeps,
-    type LogFields,
-    type Logger,
 } from "@inflexa-ai/harness";
-import type pinoLib from "pino";
 
 import { ensureRuntime, readConfig } from "../../lib/config.ts";
 import { resolveEngineSocket, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
 import { env, providerApiKeyVar, resolveModelApiKey } from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialSource } from "../../lib/credential.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
-import { getLogger } from "../../lib/log.ts";
+import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import { resolvePackagesFile } from "../libs/packages.ts";
@@ -72,43 +69,6 @@ import { createManageInputsTool } from "./inputs_tool.ts";
 import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
 import { buildExecuteAnalysisDeps, buildExecuteTargetAssessmentDeps, buildSandboxStepDeps, type RunEngineComposition, type AgentBackend } from "./run_deps.ts";
 import { clearAgentSwitch, createSwappableProvider, installAgentSwitch } from "./agent_switch.ts";
-
-/**
- * Realize the harness's `Logger` seam over the cli's pino instance.
- *
- * The harness names no logging library — pino is the cli's choice, so the
- * mapping belongs here rather than in the published package. Two shape
- * differences to bridge: the seam is message-first (`slog`/winston/console
- * order) where pino is object-first, and `named()` renders a `[a.b]` prefix onto
- * the message where pino's `child` binds fields.
- *
- * `named` deliberately prefixes the message rather than binding a `module`
- * field: `getLogger("harness")` already owns that field, and the harness's
- * records have always read `[dbos] launched` in the log file. Binding it
- * instead would silently restyle every existing line.
- *
- * `errorFields` defers to pino's own `err` serializer by handing the raw value
- * through under `err` — pino renders type/message/stack from it, which is
- * strictly richer than the harness's string mapping and is exactly why the seam
- * puts this on the interface.
- */
-function pinoAsHarnessLogger(pino: pinoLib.Logger, names: readonly string[] = []): Logger {
-    const prefixed = (msg: string): string => (names.length > 0 ? `[${names.join(".")}] ${msg}` : msg);
-    const emit =
-        (level: "debug" | "info" | "warn" | "error") =>
-        (msg: string, fields?: LogFields): void => {
-            pino[level](fields ?? {}, prefixed(msg));
-        };
-    return {
-        debug: emit("debug"),
-        info: emit("info"),
-        warn: emit("warn"),
-        error: emit("error"),
-        with: (fields) => pinoAsHarnessLogger(pino.child(fields), names),
-        named: (name) => pinoAsHarnessLogger(pino, [...names, name]),
-        errorFields: (err) => ({ err }),
-    };
-}
 
 // The embedded-harness composition root. Boots lazily on the first profile
 // trigger (never from a passive flow — no-litter policy) and holds a process
@@ -517,7 +477,7 @@ async function bootHarnessRuntimeOnce(
     cfg: ResolvedHarnessConfig,
     connection: ResolvedModelConnection,
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
-    const logger = pinoAsHarnessLogger(getLogger("harness"));
+    const logger = harnessLogger("harness");
 
     // A `harness` config block that was present but failed validation: report the
     // offending fields, not a misleading downstream error. Checked first so a bad
@@ -783,7 +743,12 @@ async function bootHarnessRuntimeOnce(
                         fetch: authFetch,
                         capabilities: { toolCalling: true },
                     };
-        const buildProvider = (agentModel: string): ChatProvider => createConfiguredAiSdkProvider({ resolveBilling, config: providerConfigFor(agentModel) });
+        // The logger is what makes the retry envelope visible. It backs off up to 10 times
+        // at up to 30s a wait, so a provider outage shows up as minutes of apparent silence
+        // inside one tool call — indistinguishable, without these records, from a model
+        // thinking hard about a hard question.
+        const buildProvider = (agentModel: string): ChatProvider =>
+            createConfiguredAiSdkProvider({ resolveBilling, config: providerConfigFor(agentModel), logger });
         // Coincident role models share one INNER instance. Each role still gets
         // its own swappable handle below, so switching one never repoints another.
         const providerByModel = new Map<string, ChatProvider>();
@@ -942,6 +907,12 @@ async function bootHarnessRuntimeOnce(
         // with the unavailable preview publisher, report preview short-circuits before
         // any Chrome connection.
         const conversation: ConversationAssemblyDeps = {
+            // Reaches every conversation tool that takes a logger — `generate_plan` above all,
+            // which drives a whole sub-agent loop on `passthroughStep`: no ledger row, no
+            // durable stream, so its records are the only account of an invocation that
+            // outlives the turn. Omitted, it resolves to `createNoopLogger()` and a planner
+            // that failed reports nothing at all.
+            logger,
             provider: conversationProvider,
             utilityProvider,
             pool,

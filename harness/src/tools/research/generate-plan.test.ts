@@ -524,10 +524,14 @@ describe("generatePlan loop-driving tool", () => {
 
             await tool.execute(INPUT, toolContext());
 
-            const rejection = logger.records.filter((r) => r.level === "debug" && r.msg.includes("submit_plan rejected"));
+            // `warn`, not `debug`: a rejection costs an iteration and is otherwise unreported,
+            // so it must survive the default level a host actually runs at.
+            const rejection = logger.records.filter((r) => r.level === "warn" && r.msg.includes("submit_plan rejected"));
             expect(rejection).toHaveLength(1);
+            expect(rejection[0]!.fields).toMatchObject({ attempt: 1, codes: { schema: 0, semantic: 1 } });
             expect(rejection[0]!.fields.issueCount).toBeGreaterThan(0);
-            expect(Array.isArray(rejection[0]!.fields.issues)).toBe(true);
+            expect(rejection[0]!.fields.paths).toEqual(["plan"]);
+            expect(rejection[0]!.fields.messages).toBeArrayOfSize(1);
         });
 
         it("records no rejection when the first submit is accepted", async () => {
@@ -541,6 +545,114 @@ describe("generatePlan loop-driving tool", () => {
             await accepted.tool.execute(INPUT, toolContext("an-log-accept"));
 
             expect(accepted.logger.records.filter((r) => r.msg.includes("rejected"))).toHaveLength(0);
+        });
+
+        it("opens with a seed census, so a run that never returns can be weighed against what it was handed", async () => {
+            const analysisId = "an-log-seed";
+            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: RICH_PROFILE.inputFileIds });
+            const { tool, logger } = loggedToolFor(blockImmediately());
+
+            await tool.execute({ ...INPUT, userConstraints: "Use limma-voom." }, toolContext(analysisId));
+
+            const started = logger.records.filter((r) => r.msg.endsWith("plan generation started"));
+            expect(started).toHaveLength(1);
+            expect(started[0]!.level).toBe("info");
+            expect(started[0]!.fields).toMatchObject({ grounding: "ready", analysisId });
+
+            // Sizes, never content: the seed carries the research question and the dataset's
+            // facts, which belong in the model's context and not in a log file.
+            const seedChars = started[0]!.fields.seedChars as Record<string, number>;
+            expect(seedChars.total).toBeGreaterThan(0);
+            expect(seedChars.dataContext).toBeGreaterThan(0);
+            expect(seedChars.userConstraints).toBe("Use limma-voom.".length);
+            expect(seedChars.priorRuns).toBe(0);
+            const census = JSON.stringify(started[0]!.fields);
+            expect(census).not.toContain(INPUT.researchQuestion);
+            expect(census).not.toContain("limma-voom");
+        });
+
+        it("carries the loop account on a run that ended with no terminal outcome", async () => {
+            // The reported failure: three identical `no_outcome` returns taught nobody
+            // anything, because the word covers a budget spent on rejected submits, a planner
+            // answering in prose, and a reply cut off mid-tool-call alike.
+            const { tool, logger } = loggedToolFor(scriptedProvider(() => makeMessage([textBlock("Let me think about this out loud.")], "end_turn")));
+
+            await tool.execute(INPUT, toolContext());
+
+            const record = outcomeRecord(logger);
+            expect(record.fields.outcome).toBe("no_outcome");
+            expect(record.fields.loop).toMatchObject({ finishReason: "stop", salvaged: true, firstFinishReason: "stop", toolCalls: [] });
+            // The planner's last words — the single artifact that explains a run which stopped
+            // talking instead of calling a terminal tool, and which nothing else preserves.
+            expect(record.fields.plannerFinalProse).toContain("think about this out loud");
+        });
+
+        it("shows a budget spent on rejected submits as exactly that, not as a silent no-outcome", async () => {
+            const analysisId = "an-log-thrash";
+            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: RICH_PROFILE.inputFileIds });
+            // Every turn submits a plan whose `depends_on` names a step that does not exist:
+            // schema-valid, semantically impossible, rejected forever. This is the shape that
+            // burns a whole iteration budget while `holder.outcome` stays null.
+            const { tool, logger } = loggedToolFor(
+                scriptedProvider((i) => makeMessage([toolUseBlock(`t${i}`, "submit_plan", { plan: validCandidate({ depends_on: ["T9S9"] }) })], "tool_use")),
+            );
+
+            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            expect(result.event).toBe("error");
+
+            const record = outcomeRecord(logger);
+            expect(record.fields.outcome).toBe("no_outcome");
+            expect(record.fields.submitAttempts).toBeGreaterThan(1);
+            expect(record.fields.rejectedAttempts).toBeGreaterThan(1);
+            expect(record.fields.loop).toMatchObject({ finishReason: "max_iterations", cappedOut: true, salvaged: true });
+            expect(record.fields.loop).toHaveProperty("toolCalls");
+            expect((record.fields.loop as { toolCalls: string[] }).toolCalls).toContain("submit_plan");
+
+            // Identical `paths` across attempts is the planner stuck on one fault — the
+            // difference between "give it more budget" and "the plan can never be made valid".
+            const rejections = record.fields.rejections as { attempt: number; paths: string[] }[];
+            expect(rejections.length).toBeGreaterThan(1);
+            expect(rejections[0]!.attempt).toBe(1);
+            expect(rejections[0]!.paths).toEqual(rejections[1]!.paths);
+
+            // The kept rejections are capped, the COUNT is not. A record pairing 16 attempts
+            // with 6 rejections reads as ten accepted plans — the opposite of what happened —
+            // so the truncation is stated and the count stays whole.
+            expect(record.fields.rejectedAttempts).toBe(record.fields.submitAttempts);
+            expect(rejections.length).toBeLessThan(record.fields.rejectedAttempts as number);
+            expect(record.fields.rejectionsTruncated).toBe(true);
+        });
+
+        it("names the attempt a plan was accepted on — a success that nearly was not one", async () => {
+            const analysisId = "an-log-late";
+            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: RICH_PROFILE.inputFileIds });
+            const { tool, logger } = loggedToolFor(
+                scriptedProvider([
+                    makeMessage([toolUseBlock("t1", "submit_plan", { plan: validCandidate({ depends_on: ["T9S9"] }) })], "tool_use"),
+                    makeMessage([toolUseBlock("t2", "submit_plan", { plan: validCandidate() })], "tool_use"),
+                    makeMessage([textBlock("Submitted.")], "end_turn"),
+                ]),
+            );
+
+            await tool.execute(INPUT, toolContext(analysisId));
+
+            const accepted = logger.records.filter((r) => r.msg.endsWith("submit_plan accepted a plan"));
+            expect(accepted).toHaveLength(1);
+            expect(accepted[0]!.fields).toMatchObject({ attempt: 2, stepCount: 1 });
+
+            const record = outcomeRecord(logger);
+            expect(record.fields).toMatchObject({ outcome: "plan_submitted", submitAttempts: 2, rejectedAttempts: 1 });
+        });
+
+        it("reports a blocker with the attempt count, separating giving up from never trying", async () => {
+            const { tool, logger } = loggedToolFor(blockImmediately());
+
+            await tool.execute(INPUT, toolContext());
+
+            const blocker = logger.records.filter((r) => r.msg.endsWith("planner reported a blocker"));
+            expect(blocker).toHaveLength(1);
+            expect(blocker[0]!.level).toBe("warn");
+            expect(blocker[0]!.fields).toMatchObject({ reason: "measurement complete", submitAttempts: 0 });
         });
     });
 });

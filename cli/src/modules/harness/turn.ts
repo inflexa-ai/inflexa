@@ -19,7 +19,7 @@ import {
     type ThreadHistory,
 } from "@inflexa-ai/harness";
 
-import { getLogger } from "../../lib/log.ts";
+import { getLogger, harnessLogger } from "../../lib/log.ts";
 import { enterChatTurn } from "./agent_switch.ts";
 
 // The headless chat turn engine. One transport-free sequence —
@@ -181,7 +181,18 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         const userMessage = prepared.userMessage;
 
         const run = await ResultAsync.fromPromise(
-            seams.run(conversationAgent, initial, session, { provider: chat, signal, emit, runStep: passthroughStep, ...(ask ? { ask } : {}) }),
+            seams.run(conversationAgent, initial, session, {
+                provider: chat,
+                signal,
+                emit,
+                runStep: passthroughStep,
+                // The loop's own account of the turn: iteration count, stop reason, whether it
+                // capped out, and its tool-call/error tallies. `emit` does not cover this — the
+                // surface filters sub-agent traffic off by `callPath` depth, so a planner or
+                // literature-reviewer loop is emitted and then dropped. This is where it survives.
+                logger: harnessLogger("harness"),
+                ...(ask ? { ask } : {}),
+            }),
             (e): unknown => e,
         ).match(
             (result): { readonly phase: RunPhase; readonly toPersist: ModelMessage[] } => {
