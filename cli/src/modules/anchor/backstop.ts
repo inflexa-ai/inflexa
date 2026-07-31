@@ -1,10 +1,17 @@
 import { existsSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import { Result } from "neverthrow";
-import type { AnchorMarker } from "../../types/anchor.ts";
+import { err, Result, type ResultAsync } from "neverthrow";
+import { createAnalysisPurge, createDbosWorkflowPurger, createPool } from "@inflexa-ai/harness";
+// The harness's Postgres error union, aliased so it never reads as the SQLite `DbError` this file also
+// carries — the two are different stores with different recoveries, and a prune abort has to name which.
+import type { AnalysisPurgeOutcome, DbError as PgError, Pool } from "@inflexa-ai/harness";
+import type { Anchor, AnchorMarker } from "../../types/anchor.ts";
 import { confirm, dieOn, fail } from "../../lib/cli.ts";
-import { countAnalysesByAnchor, getAnchor, listAnchors } from "../../db/primary_query.ts";
+import type { DbError } from "../../db/errors.ts";
+import { countAnalysesByAnchor, getAnchor, listAnalysesByAnchor, listAnchors } from "../../db/primary_query.ts";
 import { deleteAnalysesForAnchor, deleteAnchor, relocateRawInputPrefix, updateAnchorCachedPath } from "../../db/primary_mutation.ts";
+import { ensurePostgresReady } from "../infra/postgres.ts";
+import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
 import { canonicalPath, readMarker } from "./marker.ts";
 import { resolveAnchor } from "./anchor.ts";
 
@@ -127,9 +134,115 @@ async function relocatePrefix(fromPrefix: string, toPrefix: string): Promise<voi
 }
 
 /**
+ * Why a confirmed prune stopped. Every member leaves the anchors and their analyses in SQLite, which
+ * is what makes `inflexa prune` its own recovery: the folders are still gone, the same rows are still
+ * listed, and the purge is idempotent, so a re-run after the cause is fixed simply completes.
+ */
+export type PruneError =
+    | { type: "postgres_unavailable"; cause: PostgresError }
+    | { type: "purge_failed"; analysisId: string; cause: PgError }
+    | { type: "sqlite_failed"; cause: DbError };
+
+/**
+ * Injectable edges for the prune's reclaim stage, so its ORDER is assertable offline — no container
+ * engine, no Postgres. Order is the whole contract here (see {@link reclaimDeadAnchors}), and a suite
+ * that only proved each stage ran would stay green with the stages swapped, which is precisely the
+ * arrangement that strands every footprint. Production callers omit the argument.
+ */
+export type PruneSeams = {
+    /**
+     * Bring the container stack up and hand back the connection. Real: {@link ensurePostgresReady},
+     * which STARTS a stopped stack rather than refusing — a maintenance command is most often run
+     * because the environment is already in a bad state.
+     */
+    readonly ensurePostgres: () => Promise<Result<PostgresConnection, PostgresError>>;
+    /** Open a pool onto the provisioned connection. Real: the harness's `createPool`. */
+    readonly openPool: (conn: PostgresConnection) => Pool;
+    /** Reclaim one analysis's Postgres footprint. Real: `createAnalysisPurge` over the opened pool. */
+    readonly purgeAnalysis: (pool: Pool, analysisId: string) => ResultAsync<AnalysisPurgeOutcome, PgError>;
+    /** Release the pool this command opened. Real: `pool.end()`. */
+    readonly drainPool: (pool: Pool) => Promise<void>;
+};
+
+const realPruneSeams: PruneSeams = {
+    ensurePostgres: ensurePostgresReady,
+    openPool: (conn) =>
+        createPool({ host: conn.host, port: String(conn.port), database: conn.database, user: conn.user, password: conn.password, sslMode: "disable" }),
+    // Built per prune over the pool this command opened: the purger is a thin adapter over that pool,
+    // so there is nothing to keep alive beyond it.
+    purgeAnalysis: (pool, analysisId) => createAnalysisPurge({ pool, workflows: createDbosWorkflowPurger({ pool }) }).purgeAnalysis(analysisId),
+    drainPool: (pool) =>
+        pool.end().catch(() => {
+            // The reclaim is already decided by the time this runs, so a connection that will not close
+            // cleanly must not turn a completed prune into a failed one.
+        }),
+};
+
+/**
+ * Reclaim the dead anchors' Postgres footprints, then delete their SQLite rows. Exported so the order
+ * below is drivable without a container engine; {@link runPrune} is the production caller and only
+ * reaches here once the user has confirmed.
+ *
+ * The purge runs for EVERY analysis before ANY SQLite delete, because those rows carry the only copy
+ * of the analysis ids and the purge is addressed by id alone. Deleting them first would strand every
+ * one of those footprints beyond the reach of any retry — in bulk, and while reporting success, since
+ * nothing would be left to name what was orphaned. Prune is the path most likely to meet many analyses
+ * at once, which is exactly what makes the wrong order expensive here.
+ *
+ * Any failure returns with every row still present. That is not a partial success to be tidied up
+ * later: the analyses are still listed, the folders are still gone, and the purge is idempotent, so
+ * re-running the command after the cause is fixed is the whole recovery.
+ */
+export async function reclaimDeadAnchors(dead: readonly Anchor[], seams: PruneSeams = realPruneSeams): Promise<Result<void, PruneError>> {
+    const listed = Result.combine(dead.map((a) => listAnalysesByAnchor(a.id)));
+    if (listed.isErr()) return err({ type: "sqlite_failed", cause: listed.error });
+    const analysisIds = listed.value.flat().map((a) => a.id);
+
+    // Provisioning is attempted only after the ids are in hand, so a stack that cannot start costs
+    // nothing but the attempt — and it is attempted at all (rather than refused) because prune is
+    // maintenance: the stack being down is a common REASON to run it, not a reason to block it.
+    const provisioned = await seams.ensurePostgres();
+    if (provisioned.isErr()) return err({ type: "postgres_unavailable", cause: provisioned.error });
+
+    const pool = seams.openPool(provisioned.value);
+    try {
+        // Sequential, and it stops at the first failure: a purge that cannot complete means the rest of
+        // this prune must not proceed, and naming the analysis it stopped on is what makes the abort
+        // notice actionable.
+        for (const analysisId of analysisIds) {
+            const purged = await seams.purgeAnalysis(pool, analysisId);
+            if (purged.isErr()) return err({ type: "purge_failed", analysisId, cause: purged.error });
+        }
+        // The analyses→anchors FK has no ON DELETE CASCADE, so each dead anchor's analyses go first
+        // (their input refs cascade via the analysis FK) and the anchor itself after.
+        return Result.combine(dead.map((a) => deleteAnalysesForAnchor(a.id).andThen(() => deleteAnchor(a.id))))
+            .map(() => undefined)
+            .mapErr((cause): PruneError => ({ type: "sqlite_failed", cause }));
+    } finally {
+        await seams.drainPool(pool);
+    }
+}
+
+/** The abort message for a stopped prune, phrased so the user learns what survived and what to do next. */
+function describePruneAbort(error: PruneError): string {
+    switch (error.type) {
+        case "postgres_unavailable":
+            return `Could not start Postgres, where these analyses' conversations and run history live — nothing was pruned, so nothing was lost.\n  ${error.cause.message}\n  Fix that, then run \`inflexa prune\` again.`;
+        case "purge_failed":
+            return `Could not reclaim analysis ${error.analysisId}'s conversations and run history (${error.cause.type}) — nothing was pruned, so nothing was lost. Run \`inflexa prune\` again once the cause is fixed.`;
+        case "sqlite_failed":
+            return `Failed to prune: ${error.cause.type}`;
+    }
+}
+
+/**
  * `inflexa prune` — drop anchors whose folders are confirmed gone. "Confirmed" means three
  * things together: the anchor had an on-disk marker, its cached folder no longer exists,
  * and reconciliation cannot re-find it. A transient or relocatable miss is never pruned.
+ *
+ * Confirmation buys BOTH stores: each dead anchor's analyses have their Postgres footprint reclaimed
+ * before any SQLite row goes (see {@link reclaimDeadAnchors}). Prune boots no harness runtime, so the
+ * pool it needs comes from the provisioning gate and is drained again when the command ends.
  */
 export async function runPrune(): Promise<void> {
     const anchors = listAnchors().match((a) => a, dieOn("Failed to list anchors"));
@@ -162,10 +275,8 @@ export async function runPrune(): Promise<void> {
         return;
     }
 
-    // The analyses→anchors FK has no ON DELETE CASCADE, so delete each dead anchor's analyses
-    // (their input refs cascade via the analysis FK) before dropping the anchor itself.
-    Result.combine(dead.map((a) => deleteAnalysesForAnchor(a.id).andThen(() => deleteAnchor(a.id)))).match(
+    (await reclaimDeadAnchors(dead)).match(
         () => console.log(`Pruned ${dead.length} anchor(s).`),
-        (error) => fail(`Failed to prune: ${error.type}`, error.cause),
+        (error) => fail(describePruneAbort(error), error.type === "sqlite_failed" ? error.cause.cause : undefined),
     );
 }

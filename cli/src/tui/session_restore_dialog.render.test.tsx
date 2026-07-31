@@ -62,6 +62,7 @@ function seams(page: ThreadPage, notices: Notice[], restored: string[]): Session
             restored.push(threadId);
             return okAsync<void, DbError>(undefined);
         },
+        purgeThread: () => okAsync<void, DbError>(undefined),
         resolveThreadId: async () => null,
         workingDirFor: () => "/work",
         refreshThread: () => {},

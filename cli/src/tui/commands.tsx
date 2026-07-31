@@ -153,6 +153,11 @@ export type SessionSeams = {
     readonly archiveThread: (pool: Pool, threadId: string) => ResultAsync<void, DbError>;
     /** Lift a thread's tombstone so it lists again. Real: `createThreadStore(pool).unarchiveThread`. */
     readonly unarchiveThread: (pool: Pool, threadId: string) => ResultAsync<void, DbError>;
+    /**
+     * Erase a thread: its metadata row AND every one of its messages, with nothing left to restore.
+     * The one thread verb the archive cannot undo. Real: `createThreadStore(pool).purgeThread`.
+     */
+    readonly purgeThread: (pool: Pool, threadId: string) => ResultAsync<void, DbError>;
     /** Pick the thread to open for an analysis — most recent, else a fresh mint. Real: {@link resolveThreadId}. */
     readonly resolveThreadId: (analysisId: string) => Promise<string | null>;
     /** An analysis's live working directory. Real: {@link workingDirFor}. */
@@ -171,6 +176,7 @@ const realSessionSeams: SessionSeams = {
     listThreadsWithArchived: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId, includeArchived: true }),
     archiveThread: (pool, threadId) => createThreadStore(pool).archiveThread(threadId),
     unarchiveThread: (pool, threadId) => createThreadStore(pool).unarchiveThread(threadId),
+    purgeThread: (pool, threadId) => createThreadStore(pool).purgeThread(threadId),
     resolveThreadId,
     workingDirFor,
     refreshThread: (threadId) => void refreshOpenThread(threadId),
@@ -1403,6 +1409,90 @@ export async function confirmSessionDelete(
 }
 
 /**
+ * Erase the open session: confirm by name under the danger ritual, hard-delete the thread and every
+ * message it holds, then land the user on whatever this analysis has left.
+ *
+ * Structurally the removal flow above, and deliberately so — the gate, the read, the changed-thread
+ * refusal and the unbind-before-landing tail are the same facts about the same scope, and letting the
+ * two drift would make one of them wrong. What differs is the confirmation: removal declines the
+ * danger ritual because it erases nothing and restore undoes it, while this is the first thread action
+ * that cannot be taken back, so it spends the ritual and says outright that the transcript is gone.
+ * Reading the two commands side by side in the palette has to be enough to tell them apart, because a
+ * user who mistakes this one for the other has no way back.
+ */
+export async function purgeSessionFlow(ctx: Workspace, seams: SessionSeams = realSessionSeams): Promise<void> {
+    const runtime = seams.runtime();
+    const analysis = ctx.analysis;
+    const threadId = ctx.sessionId;
+    // Reachable only through the palette, whose `enabled` already requires all three — this restates
+    // the gate for the narrowing rather than handling a state the user can actually reach.
+    if (!runtime || !analysis || threadId === null) return;
+    const pool = runtime.pool;
+    // Absence and unreadability are different facts about the user's data, so they get different words
+    // — the same split the removal flow makes, and for the same reason.
+    const read = await readOpenThread(pool, threadId, seams);
+    if (read.kind === "unreadable") {
+        seams.notify({ kind: "error", text: "Could not read this conversation — nothing was deleted." });
+        return;
+    }
+    if (read.kind === "none") {
+        seams.notify({ kind: "info", text: "This conversation has nothing saved yet — there is nothing to delete." });
+        return;
+    }
+    // The costliest window in the app to get wrong: the confirmation would name the conversation the
+    // user just left, and typing that name would erase it — irrecoverably, for a conversation they were
+    // not even looking at.
+    if (ctx.sessionId !== threadId) {
+        seams.notify({ kind: "info", text: "Session changed — reopen delete for this one." });
+        return;
+    }
+    const name = threadLabel(read.thread);
+    ctx.openDialog(() => (
+        <ConfirmDeleteDialog
+            entityLabel="session"
+            entityName={name}
+            // No `verb`: the default IS "Delete", and this is the action that word was reserved for.
+            description={() => <text fg={theme().fgMuted}>Every message in it is erased. This cannot be undone — Restore session cannot bring it back.</text>}
+            onConfirm={() => void confirmSessionPurge(ctx, pool, analysis, threadId, seams)}
+        />
+    ));
+}
+
+/**
+ * Hard-delete the confirmed thread, then land the user on whatever the analysis has left. Lives beside
+ * the confirmation rather than inside its `onConfirm` so the post-confirm ladder is testable headlessly
+ * (the {@link confirmSessionDelete} shape); the dialog owns only the name match and its close.
+ *
+ * The landing repeats the removal flow's unbind-then-open, and the unbind matters more here: the row
+ * the scope names is not merely tombstoned but gone, so a turn submitted across the landing's round
+ * trip would recreate a thread under an id the user just erased.
+ */
+export async function confirmSessionPurge(
+    ctx: Workspace,
+    pool: Pool,
+    analysis: Analysis,
+    threadId: string,
+    seams: SessionSeams = realSessionSeams,
+): Promise<void> {
+    await seams.purgeThread(pool, threadId).match(
+        async () => {
+            seams.notify({ kind: "info", text: "Session deleted — its transcript is gone." });
+            // Unbind BEFORE the landing's Postgres round trip. Across that window the scope would
+            // otherwise still name a thread id whose row no longer exists, and a turn submitted into it
+            // passes every gate: the id is non-null, and the thread store's create would mint the row
+            // back — resurrecting, as an empty conversation, the very thing the user just erased.
+            ctx.openSession(null, ctx.workingDir, analysis);
+            // Re-enter through the analysis-open path: it performs exactly the landing this needs —
+            // bind the surviving most-recent thread, else a fresh mint.
+            await openAnalysis(ctx, analysis, seams);
+        },
+        // The thread is still there and still lists, so nothing is re-landed — leaving the user exactly
+        // where they were is the truthful outcome of a deletion that did not happen.
+        async (e) => seams.notify({ kind: "error", text: `Failed: ${e.type}` }),
+    );
+}
+
+/**
  * A thread whose archive tombstone is known to be set, so the picker can render the moment it left
  * view without a non-null assertion on a column that is nullable for every live row.
  */
@@ -1925,8 +2015,8 @@ export const commands: Command[] = [
         },
     },
     // The session commands are boot-gated: thread metadata lives only in Postgres, so before `ready`
-    // there is nothing to list, retitle, remove, or restore — offering them then would promise a
-    // surface that cannot answer. Rename and delete additionally need a bound thread to act on;
+    // there is nothing to list, retitle, remove, restore, or erase — offering them then would promise a
+    // surface that cannot answer. Rename, remove and delete additionally need a bound thread to act on;
     // restore acts on a thread the user picks, so an unbound scope is no obstacle to it.
     {
         id: "session.switch",
@@ -1961,6 +2051,17 @@ export const commands: Command[] = [
         category: "Session",
         enabled: (ctx) => ctx.analysis !== null && bootState().phase === "ready",
         run: (ctx) => openRestoreSession(ctx),
+    },
+    {
+        id: "session.purge",
+        // The description carries the whole weight of telling this apart from "Remove session", which
+        // sits beside it under the same category: the titles differ by one word, and only one of these
+        // two actions can be undone.
+        title: "Delete session",
+        description: "Permanently erase the current session and every message in it — this cannot be undone",
+        category: "Session",
+        enabled: (ctx) => ctx.analysis !== null && ctx.sessionId !== null && bootState().phase === "ready",
+        run: (ctx) => purgeSessionFlow(ctx),
     },
     {
         id: "project.new",

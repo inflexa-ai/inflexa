@@ -13,6 +13,7 @@ import {
     commitSessionRename,
     commitSessionRestore,
     confirmSessionDelete,
+    confirmSessionPurge,
     deleteAnalysisWith,
     deleteSessionFlow,
     exportProvenanceToFile,
@@ -21,6 +22,7 @@ import {
     openRenameSession,
     openRestoreSession,
     openSwitchSession,
+    purgeSessionFlow,
     type AnalysisDeleteSeams,
     type CommandId,
     type ProvExportSeams,
@@ -123,6 +125,7 @@ describe("session command gating", () => {
             expect(enabledOf("session.rename", BOUND)).toBe(false);
             expect(enabledOf("session.delete", BOUND)).toBe(false);
             expect(enabledOf("session.restore", BOUND)).toBe(false);
+            expect(enabledOf("session.purge", BOUND)).toBe(false);
         }
     });
 
@@ -135,6 +138,9 @@ describe("session command gating", () => {
         expect(enabledOf("session.restore", unbound)).toBe(true);
         expect(enabledOf("session.rename", unbound)).toBe(false);
         expect(enabledOf("session.delete", unbound)).toBe(false);
+        // Erasing needs a bound thread for the same reason removing does — there is no conversation to
+        // name in the confirmation until one is.
+        expect(enabledOf("session.purge", unbound)).toBe(false);
     });
 
     test("ready with a bound thread offers every session command", () => {
@@ -143,6 +149,7 @@ describe("session command gating", () => {
         expect(enabledOf("session.rename", BOUND)).toBe(true);
         expect(enabledOf("session.delete", BOUND)).toBe(true);
         expect(enabledOf("session.restore", BOUND)).toBe(true);
+        expect(enabledOf("session.purge", BOUND)).toBe(true);
     });
 
     test("no analysis in scope: the analysis-scoped session commands stay unavailable", () => {
@@ -150,8 +157,24 @@ describe("session command gating", () => {
         const noAnalysis = scope(null, "thread-bound-1");
         expect(enabledOf("session.switch", noAnalysis)).toBe(false);
         expect(enabledOf("session.delete", noAnalysis)).toBe(false);
+        expect(enabledOf("session.purge", noAnalysis)).toBe(false);
         // The archived listing is per-analysis, so with none open there is no set to draw from.
         expect(enabledOf("session.restore", noAnalysis)).toBe(false);
+    });
+
+    // The two thread verbs sit next to each other under one category and their titles differ by a word,
+    // so the palette row is the only thing a user reads before choosing. One of them cannot be undone.
+    test("remove and delete are separate entries whose descriptions cannot be confused", () => {
+        const remove = commands.find((c) => c.id === "session.delete")!;
+        const purge = commands.find((c) => c.id === "session.purge")!;
+
+        expect(remove.title).toBe("Remove session");
+        expect(purge.title).toBe("Delete session");
+        expect(remove.description).toContain("transcript is kept");
+        expect(purge.description).toContain("cannot be undone");
+        // The recoverable one must never claim permanence, or the word stops meaning anything on the
+        // row where it is true.
+        expect(remove.description).not.toContain("cannot be undone");
     });
 });
 
@@ -248,6 +271,7 @@ describe("session flows", () => {
             listThreadsWithArchived: () => okAsync(threadPage([])),
             archiveThread: () => okAsync<void, DbError>(undefined),
             unarchiveThread: () => okAsync<void, DbError>(undefined),
+            purgeThread: () => okAsync<void, DbError>(undefined),
             resolveThreadId: async () => "thread-resolved",
             workingDirFor: () => "/work",
             refreshThread: (threadId) => {
@@ -541,6 +565,112 @@ describe("session flows", () => {
         expect(t.notices).toHaveLength(1);
         expect(t.notices[0]?.kind).toBe("error");
         expect(w.opened).toEqual([]); // the thread still lists, so nothing is re-landed
+    });
+
+    // The hard delete repeats the removal flow's shape, so what these cases pin is the ONE thing that
+    // must differ: which store verb runs. A delete that quietly archived would look correct from every
+    // notice and every landing, and the transcript the user asked to erase would still be there.
+    test("a confirmed delete erases the thread and re-lands the chat on a surviving conversation", async () => {
+        const purged: string[] = [];
+        let archives = 0;
+        const t = makeSeams({
+            resolveThreadId: async () => "thread-survivor",
+            purgeThread: (_pool, threadId) => {
+                purged.push(threadId);
+                return okAsync<void, DbError>(undefined);
+            },
+            archiveThread: () => {
+                archives += 1;
+                return okAsync<void, DbError>(undefined);
+            },
+        });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await confirmSessionPurge(w.ws, fakePool, ANALYSIS, "thread-1", t.seams);
+
+        expect(purged).toEqual(["thread-1"]);
+        expect(archives).toBe(0); // a tombstone here would keep the transcript the user asked to erase
+        expect(t.notices[0]?.kind).toBe("info");
+        expect(t.notices[0]?.text).toContain("transcript is gone");
+        // Unbound FIRST, then landed — the same tail removal runs, and it matters more here: across the
+        // landing's round trip the scope would otherwise name an id whose row is gone, and a turn
+        // submitted into it would mint that row back as an empty conversation.
+        expect(w.opened).toEqual([
+            { threadId: null, analysisId: ANALYSIS.id },
+            { threadId: "thread-survivor", analysisId: ANALYSIS.id },
+        ]);
+    });
+
+    test("delete refuses to confirm against the session the user has since left", async () => {
+        // The costliest window in the app: the confirmation would name the conversation just left, and
+        // typing that name would erase it — with no restore to undo it.
+        const w = sessionScope(ANALYSIS, "thread-1");
+        let purges = 0;
+        const t = makeSeams({
+            getThread: () => {
+                w.swapTo({ sessionId: "thread-2" });
+                return okAsync(threadRow());
+            },
+            purgeThread: () => {
+                purges += 1;
+                return okAsync<void, DbError>(undefined);
+            },
+        });
+
+        await purgeSessionFlow(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(purges).toBe(0);
+        expect(w.opened).toEqual([]); // nothing erased, so nothing re-landed
+        expect(t.notices[0]?.text).toContain("Session changed");
+    });
+
+    test("delete says there is nothing to erase when the conversation has no saved row", async () => {
+        // Confirming against a name we do not have would ask the user to type a fiction — and for the
+        // one action where a mistyped confirmation is unrecoverable.
+        const t = makeSeams({ getThread: () => okAsync(null) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await purgeSessionFlow(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("info");
+        expect(t.notices[0]?.text).toContain("nothing to delete");
+    });
+
+    test("delete distinguishes a FAILED read from an absent row, and says nothing was deleted", async () => {
+        const t = makeSeams({ getThread: () => errAsync(dbErr) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await purgeSessionFlow(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("error");
+        expect(t.notices[0]?.text).toContain("Could not read");
+        expect(t.notices[0]?.text).toContain("nothing was deleted");
+    });
+
+    test("delete opens the confirmation on a live row, naming the conversation to type back", async () => {
+        const t = makeSeams({ getThread: () => okAsync(threadRow()) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await purgeSessionFlow(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(1);
+        expect(t.notices).toEqual([]);
+    });
+
+    test("a failed delete surfaces the error and leaves the user on the conversation", async () => {
+        const t = makeSeams({ purgeThread: () => errAsync(dbErr) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await confirmSessionPurge(w.ws, fakePool, ANALYSIS, "thread-1", t.seams);
+
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("error");
+        expect(w.opened).toEqual([]); // the thread is still there, so nothing is re-landed
     });
 
     // The moment a removal stamped the tombstone. Distinct from the fixture's activity clock, which the
