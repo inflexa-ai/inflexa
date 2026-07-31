@@ -11,7 +11,7 @@ import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
 import { SelectDialog } from "./components/dialog/select_dialog.tsx";
 import type { SelectItem } from "./components/list_core.tsx";
 import { PlanStepDetailDialog } from "./components/dialog/plan_step_detail_dialog.tsx";
-import { RunDetailDialog } from "./components/dialog/run_detail_dialog.tsx";
+import { RunDetailDialog, type RunStepUsage } from "./components/dialog/run_detail_dialog.tsx";
 import { FilePicker } from "./components/dialog/file_picker.tsx";
 import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
@@ -1944,8 +1944,18 @@ async function openRunsPicker(ctx: Workspace): Promise<void> {
                 // so it costs nothing worth deferring, and a failure degrades to an empty map — the
                 // steps still list, they just carry no figures.
                 const stepUsage = listRunUsageByStep(analysis.id, run.runId).match(
-                    (groups) => new Map(groups.flatMap((g) => (g.stepId === null ? [] : [[g.stepId, g.totals] as const]))),
-                    () => new Map<string, LlmUsageTotals>(),
+                    (groups): RunStepUsage => ({
+                        byStep: new Map(groups.flatMap((g) => (g.stepId === null ? [] : [[g.stepId, g.totals] as const]))),
+                        // The read groups by `step_id` and SQLite groups NULL with itself, so a run's
+                        // step-less calls arrive as one group with a null id. It is carried across
+                        // rather than filtered out with the map keys: the dialog's headline counts
+                        // those calls, so dropping them here is what would make the total disagree
+                        // with the steps below it.
+                        unattributed: groups.find((g) => g.stepId === null)?.totals ?? null,
+                    }),
+                    // A failed read is not a measurement of zero — the steps still list, they just
+                    // carry no figures, and `null` says no remainder is known rather than none exists.
+                    (): RunStepUsage => ({ byStep: new Map(), unattributed: null }),
                 );
                 ctx.openDialog(() => (
                     <RunDetailDialog

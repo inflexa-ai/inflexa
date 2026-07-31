@@ -126,18 +126,15 @@ describe("RunDetailDialog", () => {
 
     test("each step carries its own compact figure, and a step the ledger has nothing for carries none", async () => {
         const steps = [step("s1_load", "completed"), step("s2_assoc", "completed"), step("s3_report", "completed")];
-        const frame = await frameOf(
-            run(),
-            () => okAsync<StepExecutionRow[], DbError>(steps),
-            2,
-            undefined,
-            new Map([
+        const frame = await frameOf(run(), () => okAsync<StepExecutionRow[], DbError>(steps), 2, undefined, {
+            byStep: new Map([
                 ["s1_load", { calls: 8, inputTokens: 121_400, outputTokens: 6_200 }],
                 // Calls recorded whose provider reported no quantity — no figure, never a zeroed one.
                 ["s2_assoc", { calls: 3 }],
                 // `s3_report` is absent from the map entirely: the step made no calls at all.
             ]),
-        );
+            unattributed: null,
+        });
 
         // The COMPACT form on a step row — the row's subject is the step, and the run's own `usage`
         // property line above it is the surface that spends words.
@@ -147,6 +144,28 @@ describe("RunDetailDialog", () => {
         // Exactly one figure painted — the reported-nothing step and the absent one each add none, and
         // a zeroed fallback for either would show up here as a second arrow.
         expect(frame.split(GLYPHS.arrowUp).length - 1).toBe(1);
+    });
+
+    test("a run's step-less spend is shown, not silently dropped between the headline and the steps", async () => {
+        const steps = [step("s1_load", "completed")];
+        const frame = await frameOf(
+            run(),
+            () => okAsync<StepExecutionRow[], DbError>(steps),
+            2,
+            { calls: 12, inputTokens: 300_000, outputTokens: 20_000 },
+            {
+                byStep: new Map([["s1_load", { calls: 8, inputTokens: 121_400, outputTokens: 6_200 }]]),
+                // What `listRunUsageByStep` returns for `step_id IS NULL` — a run-level call with no
+                // step row to hang on. It is the whole reason the prop is not a bare Map.
+                unattributed: { calls: 4, inputTokens: 178_600, outputTokens: 13_800 },
+            },
+        );
+
+        expect(frame).toContain("outside any step 178.6k in");
+        expect(frame).toContain("4 calls");
+        // The step it DOES have still renders its own figure — naming the remainder must not cost the
+        // attributed part its row.
+        expect(frame).toContain(`${GLYPHS.arrowUp}121.4k`);
     });
 
     test("a failed step fetch degrades to the muted line, never a crash", async () => {
