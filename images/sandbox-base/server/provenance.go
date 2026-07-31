@@ -285,24 +285,6 @@ func (pt *ProvenanceTracker) recordOp(op, path, layer string) {
 		return
 	}
 
-	// A read report is a claim of intent, not of consumption. Two layers fire
-	// ahead of the call they observe — the Python audit hook runs before the
-	// open, R's trace() at call entry over a normalizePath(mustWork = FALSE)
-	// name — so a read that fails is reported exactly like one that succeeds.
-	// CPython makes that routine rather than exotic: displaying an uncaught
-	// traceback whose frame carries a relative co_filename (every Cython frame
-	// — pandas' .pxi/.pyx) probes "<entry>/<basename>" for every sys.path entry
-	// until one opens, and the entries under the analysis mount become reads of
-	// files that were never there. The host cannot tell such a probe from an
-	// input and cannot hash it either. Writes and deletes are exempt — a write is
-	// reported before the file it creates exists.
-	if op == "read" && !pt.exists(path) {
-		if sandboxLogLevel == logLevelDebug {
-			log.Printf("[provenance] dropping read report for absent path layer=%s path=%q", layer, path)
-		}
-		return
-	}
-
 	pt.mu.Lock()
 	defer pt.mu.Unlock()
 	opMap := pt.ops[op]
@@ -311,15 +293,43 @@ func (pt *ProvenanceTracker) recordOp(op, path, layer string) {
 		pt.ops[op] = opMap
 	}
 	if opMap[path] == nil {
+		// A read report is a claim of intent, not of consumption. Two layers fire
+		// ahead of the call they observe — the Python audit hook runs before the
+		// open, R's trace() at call entry over a normalizePath(mustWork = FALSE)
+		// name — so a read that fails is reported exactly like one that succeeds.
+		// CPython makes that routine rather than exotic: displaying an uncaught
+		// traceback whose frame carries a relative co_filename (every Cython frame
+		// — pandas' .pxi/.pyx) probes "<entry>/<basename>" for every sys.path entry
+		// until one opens, and the entries under the analysis mount become reads of
+		// files that were never there. The host cannot tell such a probe from an
+		// input and cannot hash it either. Writes and deletes are exempt — a write is
+		// reported before the file it creates exists.
+		//
+		// Probed on first sighting only, which is what keeps a syscall off the hot
+		// path: a frame holds one entry per path however many times it is reported,
+		// and inotify reports EVERY open of every file in the tree, so a script
+		// reading one file in a loop would otherwise pay a stat per iteration. A
+		// later report of a path already in the frame cannot add a path to it, so
+		// there is nothing a second verdict could decide.
+		if op == "read" && !pt.exists(path) {
+			if sandboxLogLevel == logLevelDebug {
+				log.Printf("[provenance] dropping read report for absent path layer=%s path=%q", layer, path)
+			}
+			return
+		}
 		opMap[path] = make(map[string]bool)
 	}
 	opMap[path][layer] = true
 }
 
-// exists reports whether a reported path is present in the container. Only
-// absence answers false: a stat failing any other way — a permission the server
-// lacks and the workload had, a mount hiccup — keeps the report rather than
-// losing a real lineage edge to a transient error.
+// exists reports whether a reported path is present in the container. The
+// question it answers is "would the read this reports have succeeded", so it
+// follows symlinks exactly as the open would: a link whose target is gone fails
+// the open too, and the layer that reported it — firing before the call — could
+// not have told that from a name that never existed. Only absence answers false:
+// a stat failing any other way — a permission the server lacks and the workload
+// had, a mount hiccup — keeps the report rather than losing a real lineage edge
+// to a transient error.
 func (pt *ProvenanceTracker) exists(path string) bool {
 	if pt.pathExists != nil {
 		return pt.pathExists(path)
