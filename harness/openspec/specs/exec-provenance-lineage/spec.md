@@ -9,7 +9,7 @@ contributes a lineage record (which inputs the command read, which script ran),
 and at step teardown the populated collector is handed to registration so the
 injected `ArtifactRegistry` sees real input/script edges instead of empty ones.
 
-Lineage is content-attested and fail-fast (see the artifact-manifest spec). The
+Lineage is content-attested (see the artifact-manifest spec). The
 sandbox provenance frame is path-only: it names the files a
 command read and wrote but never carries their bytes, so input refs arrive with
 empty hashes. `reconcileManifestWithDisk` fills those hashes from disk just
@@ -19,8 +19,8 @@ was a declared dependency, which the scheduler guarantees completed before this
 step started, and a completed step never writes into its tree again. The
 read-only mount does NOT establish this: it bounds what *this* step writes,
 while every other step has its own directory mounted read-write over the same
-host inodes. An input that cannot be hashed is terminal rather than registered
-hashless (see the artifact-manifest spec for the reconcile rules).
+host inodes. An input that cannot be hashed is dropped from lineage rather than
+registered hashless (see the artifact-manifest spec for the reconcile rules).
 
 This is the OSS view of the seam. The OSS build exposes the `ArtifactRegistry`
 interface with `createNoopArtifactRegistry` as its local default; the live
@@ -29,9 +29,7 @@ provenance ledger). The seam result is a flat per-path outcome and carries no
 managed signing vocabulary. The structured
 signing-method payload and any synthesized empty-input collector are a managed
 adapter's concern and are not part of OSS core.
-
 ## Requirements
-
 ### Requirement: Each exec frame is threaded into the step-scoped collector
 
 The sandbox-step body SHALL construct one `ProvenanceCollector` per step, seeded with the step's `stepId`,
@@ -60,9 +58,9 @@ refusal SHALL be logged once per distinct path per step: a refusal reports one f
 will not exist — and that fact does not change when the same file is read again, while reads dedup within a
 frame but not across the many execs a step issues, so an undeduped narration is a steady stream that trains
 a reader to filter away the signal. A frame path that does not lie under the mount SHALL ride onto its `InputRef` verbatim, never with
-the mount root prepended: forging an in-tree name for a foreign path would surface at reconcile as phantom
-drift (a missing file, which fails the step) instead of the out-of-tree read it is (which reconcile drops
-from lineage). Read hashes SHALL be left unset at track time and filled from disk by
+the mount root prepended: reconcile drops both a foreign path and a missing in-tree one, but only the
+verbatim name says which of the two happened, and the drop record is the only account a reader gets of a
+hook-filter leak. Read hashes SHALL be left unset at track time and filled from disk by
 `reconcileManifestWithDisk` before registration. When the frame is absent or `disabled`, `feedExecFrame`
 SHALL record the command with no inputs and no writes rather than throw.
 
@@ -94,13 +92,13 @@ SHALL record the command with no inputs and no writes rather than throw.
 
 - **GIVEN** step `T2S2`, whose `dependsOn` does not contain `T5S1`, and an exec frame reporting a read of `/{rid}/runs/{runId}/T5S1/output/_ct_for_r_BRAF.csv`
 - **WHEN** the tool feeds the frame via `feedExecFrame`
-- **THEN** no `InputRef` is tracked for that path, so `reconcileManifestWithDisk` has nothing to attest and the step does not fail with `lineage_attestation` when `T5S1` later deletes the file
+- **THEN** no `InputRef` is tracked for that path, so `reconcileManifestWithDisk` has nothing to attest and the step's lineage never asserted an edge over a sibling that was still writing
 
 #### Scenario: A read outside the mount keeps its own name
 
 - **GIVEN** an exec whose frame reports a read of `/etc/passwd` — naming nothing under the mount, a path the hooks should have filtered
 - **WHEN** the tool feeds the frame via `feedExecFrame`
-- **THEN** the tracked `InputRef` carries `path: "/etc/passwd"` verbatim, and `reconcileManifestWithDisk` later drops it at the container-prefix bound rather than failing the step
+- **THEN** the tracked `InputRef` carries `path: "/etc/passwd"` verbatim, and `reconcileManifestWithDisk` later drops it at the container-prefix bound, naming that bound rather than reporting a missing in-tree file
 
 #### Scenario: Missing or disabled frame degrades to no inputs
 
@@ -204,3 +202,4 @@ and the bidirectional last-write-wins unlinking applies to both feeds.
 
 - **WHEN** the mutate seam performs its sandbox byte-write exec
 - **THEN** that exec's provenance frame is not threaded through `feedExecFrame` — the in-process file-tool record is the sole attestation, and no command record naming the write interpreter exists for the path
+

@@ -28,8 +28,11 @@ result into the exec frame.
 **The server, not the layers, is the boundary.** Each layer filters by string
 prefix on the path its caller passed, which need not be canonical — so a layer
 can report a path that matches a watch dir textually while naming somewhere
-else. Every report is canonicalized and re-checked against the watch dirs where
-the layers converge; a layer's own filter only keeps a datagram off the socket.
+else. Layer 1 also reports *attempted* operations: both of its hooks fire ahead
+of the call they observe, so a read that fails arrives looking exactly like one
+that succeeded. Every report is canonicalized, re-checked against the watch dirs, and
+— for a read — checked for the path being there at all, where the layers
+converge; a layer's own filter only keeps a datagram off the socket.
 
 This tracking is **production-wired**, not a prototype: the harness's
 `buildMountPlan` sets `PROVENANCE_WATCH_DIRS` to each step's analysis resource
@@ -302,6 +305,28 @@ configured watch dir, at the single point where all layers converge. A watch dir
 itself SHALL NOT be recorded: a read of the mount root is a directory, never an
 attestable file.
 
+At that same point, the server SHALL drop a report of a **read** whose path is
+not present in the container, and SHALL log the drop when running at debug level.
+Only absence drops a report: a `stat` failing any other way — a permission the
+server lacks and the workload had — SHALL keep it rather than lose a real lineage
+edge to a transient error. Reports of **writes** and **deletes** SHALL NOT be
+subject to this check: a write is reported before the file it creates exists, and
+a phantom write is dropped host-side at reconcile, where the file has had its
+chance to appear.
+
+A read report is a claim of intent, not of consumption. Two of the layers fire
+ahead of the call they observe — the Python audit hook runs on the `open` audit
+event, which CPython raises before the open is attempted, and R's `trace()` runs
+at call entry over a `normalizePath(mustWork = FALSE)` name — so a read that
+fails is reported exactly like one that succeeds. (Only Layer 2 reports after the
+fact, gated on `fd >= 0`.) The commonest source is ordinary rather than exotic:
+displaying an uncaught traceback whose frame carries a relative `co_filename` —
+every Cython frame, e.g. pandas' `.pxi`/`.pyx` — makes CPython open
+`<entry>/<basename>` for every `sys.path` entry until one succeeds, and the
+entries under the analysis mount become reported reads of files that were never
+there. The host can neither tell such a probe from an input nor hash it, so it is
+dropped where the layers converge.
+
 Each in-container layer filters by string prefix on whatever path its caller
 passed, and an absolute path need not be canonical: `/{resourceId}/..` literally
 begins with the watch dir `/{resourceId}/` yet names its parent, so it survives
@@ -323,6 +348,24 @@ name the workload used, and the layers report names, not inodes.
 - **WHEN** a script reads `/{resourceId}/data/inputs/test.csv` via `pandas.read_csv` and the command completes
 - **THEN** the exec `provenance` frame's `reads` contains that path
 - **AND** does not contain stdlib paths like `/usr/lib/python3/...`
+
+#### Scenario: A read of a path that is not there is not reported
+
+- **GIVEN** a script that dies with an uncaught pandas `KeyError`, so the audit hook reports a read of `<sys.path entry>/hashtable_class_helper.pxi` under the analysis mount — CPython's probe for the Cython frame's source, which never existed there
+- **WHEN** the server records the report
+- **THEN** the exec `provenance` frame's `reads` does NOT contain that path
+
+#### Scenario: A read of a file that is there survives
+
+- **GIVEN** a layer reporting a read of a file that exists under a watch dir
+- **WHEN** the server records the report
+- **THEN** the exec `provenance` frame's `reads` contains it
+
+#### Scenario: A write to a path that does not exist yet is reported
+
+- **GIVEN** a layer reporting a write to `/{resourceId}/runs/{run}/{step}/output/de.csv` before the file has been created
+- **WHEN** the server records the report
+- **THEN** the exec `provenance` frame's `writes` contains that path
 
 #### Scenario: A read of the mount's parent is not reported
 

@@ -391,9 +391,11 @@ export class ProvenanceCollector {
      * are shared objects). `reconcileManifestWithDisk` calls this for a read that
      * is not a content-attestable file of this analysis: one resolving to a
      * directory (e.g. an `ls` / `list.files` of a mount, which the inotify frame
-     * tracks as an open), or one resolving outside the analysis tree (e.g.
-     * `/{resourceId}/..`, the container root). Neither may reach registration.
-     * Mirrors the output-side non-file and out-of-bounds drops.
+     * tracks as an open), one resolving outside the analysis tree (e.g.
+     * `/{resourceId}/..`, the container root), or one naming a path that is not
+     * there at reconcile (a capture layer reports attempted opens, so a read
+     * that failed is reported like one that succeeded). None may reach
+     * registration. Mirrors the output-side non-file and out-of-bounds drops.
      */
     dropInput(ref: InputRef): void {
         for (const [key, val] of this.inputAccesses) {
