@@ -31,6 +31,7 @@ import type { LlmUsageTotals } from "../../db/primary_query.ts";
 import { formatTokenFigure, tokenFigureDetail } from "../../lib/usage_format.ts";
 import type { TokenQuantities } from "../../lib/usage_format.ts";
 import { TokenFigure } from "../components/token_figure.tsx";
+import { Sep } from "../components/separator.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
@@ -270,21 +271,26 @@ export function entityFigureOf(totals: LlmUsageTotals | undefined): EntityFigure
 }
 
 /**
- * An entity's figure line: indented under the row it belongs to, so the association is visual rather
- * than positional. Renders nothing when there is no figure, which is what keeps an ordinary run row a
- * single line.
+ * An entity's figure, joining the facts its own row already carries rather than taking a line of its
+ * own. Renders nothing when there is no figure, which keeps an ordinary run row exactly what it was.
  *
- * Its own line rather than a suffix, for the reason measured on the rail: a run row already carries a
- * plan title and an absolute finish time inside ~37 cells, and appending 13 more soft-wraps it
- * mid-token. This is the same shape `RunBlock` gives a step's second fact.
+ * It had its own line, justified by a measurement that appending ~13 cells to a run row soft-wraps the
+ * rail. The row wraps anyway: a plan title is a sentence, so the name alone already spans two or three
+ * rail rows and the separate line was adding a further one rather than preventing a wrap. Inline, the
+ * spend reads as one of the run's facts beside its age — which is where a reader looks for it — and
+ * the section gets a row back.
+ *
+ * Spans, not a joined string: the figure's tone is the fact (`fg` reported, muted for an em dash) and
+ * the separator's own tier is neither, so a single-role line could not paint all three.
  */
-function EntityFigureLine(props: { figure: EntityFigure | null }): JSX.Element {
+function EntityFigureSpan(props: { figure: EntityFigure | null }): JSX.Element {
     return (
         <Show when={props.figure} keyed>
             {(f: EntityFigure) => (
-                <text>
-                    <Fg role={f.role}>{`  ${f.text}`}</Fg>
-                </text>
+                <>
+                    <Sep />
+                    <Fg role={f.role}>{f.text}</Fg>
+                </>
             )}
         </Show>
     );
@@ -619,15 +625,14 @@ export function Sidebar(props: SidebarProps) {
                 </Section>
 
                 <Section label="DATA PROFILE" onActivate={props.onOpenProfile}>
+                    {/* The profile's spend belongs HERE and nowhere else in the rail: its calls carry no
+                        thread, so they belong to no session and appear in no session figure. Without it
+                        the work would be invisible in the rail while still counting toward the analysis. */}
                     <text>
                         {profileLine().glyph !== null ? <Fg role={profileLine().role}>{`${profileLine().glyph} `}</Fg> : null}
                         <Fg role="fgMuted">{profileLine().text}</Fg>
+                        <EntityFigureSpan figure={profileFigure()} />
                     </text>
-                    {/* The profile's spend belongs HERE and nowhere else in the rail: its calls carry no
-                        thread, so they belong to no session and appear in no session figure. Without
-                        this line the work would be invisible in the rail while still counting toward
-                        the analysis. */}
-                    <EntityFigureLine figure={profileFigure()} />
                 </Section>
 
                 <Section label="RUNS" onActivate={props.onOpenRuns}>
@@ -659,14 +664,16 @@ export function Sidebar(props: SidebarProps) {
                                         const label = (): string => progress()?.name ?? idTail(run.runId);
                                         return (
                                             <>
+                                                {/* Name, age, spend — one middot-separated sequence. The spend is the
+                                                containment the USAGE section's session figure folds in, shown
+                                                here so the reader can see what that headline is made of. */}
                                                 <text>
                                                     <Fg role={m.role}>{`${m.glyph} `}</Fg>
-                                                    <Fg role="fgMuted">{`${label()} ${GLYPHS.middot} ${when}`}</Fg>
+                                                    <Fg role="fgMuted">{label()}</Fg>
+                                                    <Sep />
+                                                    <Fg role="fgMuted">{when}</Fg>
+                                                    <EntityFigureSpan figure={entityFigureOf(runFigures().get(run.runId))} />
                                                 </text>
-                                                {/* This run's own spend, under its own row — the containment the
-                                                USAGE section's session figure folds in, shown directly so the
-                                                reader can see what that headline is made of. */}
-                                                <EntityFigureLine figure={entityFigureOf(runFigures().get(run.runId))} />
                                                 {/* This run's live progress, directly under its own row. NON-keyed Show:
                                                 each poll mints a fresh snapshot object, and keyed would tear down and
                                                 remount the RunBlock every tick — non-keyed updates props in place.
