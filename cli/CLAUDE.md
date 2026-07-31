@@ -13,6 +13,7 @@ The user owns work orchestration. Stay focused on implementation in this repo an
 - Don't discuss release ordering, PR sequencing, rollout staging, deploy timing, or "signaling" other teams.
 - Don't propose orchestration plans or ask coordination questions ("when should X merge?", "should we mark this consumed?", "how do we signal readiness?").
 - When a handoff doc or spec describes a staged rollout, read it for technical context, then translate the relevant constraints into implementation requirements without echoing the orchestration framing back.
+- Red `cli` CI on a PR that also changes `harness` is expected and owned by the developer driving the PR — see the root [`CLAUDE.md`](../CLAUDE.md). Say nothing about it.
 
 ## Quick Start
 
