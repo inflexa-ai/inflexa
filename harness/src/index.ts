@@ -277,6 +277,17 @@ export type {
     DataProfileTriggerParams,
     DataProfileTriggerResult,
 } from "./tasks/data-profile.js";
+/**
+ * The synthetic run id the data-profile workflow stamps onto its own frame — the profile has no run
+ * row, so this literal is the only thing that identifies its work as the profile's.
+ *
+ * An embedder needs it to READ BACK what the harness recorded: usage accounting carries one run-id
+ * column, so a host reporting "consumption by run" sees profile calls sitting among real runs and can
+ * only separate them by comparing against this value. Exported rather than documented so that
+ * comparison is a compile-time coupling — a host holding a copy of the string would keep compiling
+ * through a rename here and quietly resume reporting the profile as an unnamed run.
+ */
+export { DATA_PROFILE_RUN_LITERAL } from "./contracts/data-profile.js";
 
 // Ledger surface the embedder needs around a trigger: schema init at boot,
 // the analysis-state seed (the trigger's CAS transitions the row this creates

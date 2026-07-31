@@ -62,9 +62,10 @@ import {
 } from "../state/index.js";
 import { createProfileActivityEmitter, type ProfileActivityEmitter } from "./data-profile-activity.js";
 import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
+// The run literal is declared in `contracts/` — a consumer reads it back off recorded usage, and this
+// module is unimportable to one that only wants the string (see the constant's own doc).
+import { DATA_PROFILE_RUN_LITERAL } from "../contracts/data-profile.js";
 
-/** Synthetic run/step literal for the data-profile workflow. */
-const DATA_PROFILE_RUN_LITERAL = "data-profile" as const;
 const DATA_PROFILE_STEP_LITERAL = "profile" as const;
 const DATA_PROFILE_AGENT_ID = "data-profiler" as const;
 
