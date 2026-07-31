@@ -50,3 +50,12 @@
 - [x] 8.1 `bun run typecheck` clean.
 - [x] 8.2 The changed test files pass individually — never the full suite.
 - [x] 8.3 `bun run lint` clean, and `bun run format:file` on every changed file under `src/`.
+
+## 9. Review findings
+
+- [x] 9.1 Refuse `session.purge` while a chat turn is streaming into the open conversation, ahead of the read and the confirmation, via a `chatBusy` seam — and leave `session.delete` (remove) ungated, since an archive is recoverable.
+- [x] 9.2 Walk the widened thread listing page by page in the restore picker so archived rows sorting behind live ones are still found; warn instead of opening an empty picker when a page cannot be read, and warn when the walk hits its bound.
+- [x] 9.3 Name the archive path in the purge-failure notice, the last point at which it is known.
+- [x] 9.4 Correct `PruneError` and `reclaimDeadAnchors` docs: only the failures raised before the SQLite stage leave every row present.
+- [x] 9.5 Reconcile `design.md`'s Non-Goals with what the change ships — the conversation hard-delete and its quiescence gate.
+- [x] 9.6 Tests for 9.1-9.3, `bun run typecheck` clean, and `bun run format:file` on every changed file under `src/`.

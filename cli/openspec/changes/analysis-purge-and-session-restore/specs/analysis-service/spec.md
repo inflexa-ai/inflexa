@@ -10,7 +10,7 @@ The delete flow SHALL ask the user which mode to use, defaulting to keeping the 
 
 The delete flow SHALL purge on BOTH disposal modes. The mode governs the workspace tree alone — every mode already deletes the SQLite row and the signed provenance chain it carries — and keeping the files is the default, so purging only on permanent deletion would leave the ordinary path orphaning its Postgres state exactly as before.
 
-A failed purge SHALL abort the deletion with the SQLite row intact, and SHALL report that nothing was lost. The alternative — deleting the row anyway — would convert a retryable failure into a permanent orphan that no later operation could find. Because the purge is idempotent and a disposal of an already-moved tree reports `absent`, re-running the deletion after such a failure SHALL be a supported recovery.
+A failed purge SHALL abort the deletion with the SQLite row intact, SHALL report that nothing was lost, and SHALL name where an already-archived workspace now sits. That report is the last moment the archive path is known: the disposal has already run, so a retry finds no tree at the live location and truthfully reports the analysis had no files on disk, leaving a user who missed this message no way to learn the artifacts were moved or where to. The alternative — deleting the row anyway — would convert a retryable failure into a permanent orphan that no later operation could find. Because the purge is idempotent and a disposal of an already-moved tree reports `absent`, re-running the deletion after such a failure SHALL be a supported recovery.
 
 The delete flow SHALL refuse when the harness runtime is not booted, and SHALL say why. Without a runtime there is no pool, so no purge is possible, and proceeding would silently recreate the orphaned footprint this ordering exists to prevent.
 
@@ -58,7 +58,13 @@ The delete flow SHALL refuse when the harness runtime is not booted, and SHALL s
 
 - **GIVEN** a deletion whose purge fails after the workspace was archived
 - **WHEN** the failure is reported
-- **THEN** the SQLite row is still present, the user is told nothing was lost, and repeating the deletion succeeds — the disposal reporting `absent` and the purge running again
+- **THEN** the SQLite row is still present, the user is told nothing was lost and where the archived files now sit, and repeating the deletion succeeds — the disposal reporting `absent` and the purge running again
+
+#### Scenario: A failed purge after a permanent deletion names no path
+
+- **GIVEN** a deletion whose purge fails after the workspace was deleted rather than archived
+- **WHEN** the failure is reported
+- **THEN** the user is told nothing was lost and no kept-files location is named, because nothing was kept
 
 #### Scenario: Deletion refuses without a booted runtime
 
