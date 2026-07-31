@@ -21,3 +21,8 @@
 - [x] 3.3 Delta on `exec-provenance-lineage`: the verbatim out-of-mount rationale no longer rests on a missing file failing the step — both are dropped, and the verbatim name is what makes the drop diagnosable.
 - [x] 3.4 Hand-rewrite the **Purpose** sections deltas do not carry: `artifact-manifest` and `exec-provenance-lineage` both claimed an unhashable input is terminal.
 - [x] 3.5 Archived (`openspec archive`); main specs updated and all items validate `--strict`.
+
+## 4. Review follow-ups
+
+- [x] 4.1 Probe a read path on first sighting only, inside the fold that already dedups it — inotify reports every open of every file in the tree, so a script reading one file in a loop paid a stat per iteration on the hot path. A later report cannot add a path to the frame, so a second verdict decides nothing. Regression test counts probes; verified it fails (3 probes) with the check hoisted back above the fold.
+- [x] 4.2 State the symlink semantics rather than leaving them implicit: presence follows symlinks because the question is whether the reported open could have succeeded, and a layer firing before the call cannot distinguish a dead link from a name that never existed. Delta + main spec sentence and two scenarios; Go tests for both directions.

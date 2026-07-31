@@ -113,6 +113,66 @@ func TestRecordOp_KeepsReadOfPresentPath(t *testing.T) {
 	}
 }
 
+func TestRecordOp_ProbesEachReadPathOnce(t *testing.T) {
+	// inotify reports every open of every file in the tree, so a script reading
+	// one file in a loop reaches here thousands of times for one frame entry.
+	// The probe belongs to the entry, not to the report.
+	probes := 0
+	pt := &ProvenanceTracker{
+		watchDirs: []string{testWatchDir},
+		ops:       make(map[string]map[string]map[string]bool),
+		pathExists: func(string) bool {
+			probes++
+			return true
+		},
+	}
+	path := testWatchDir + "data/inputs/f1/counts.csv"
+	pt.recordOp("read", path, "python")
+	pt.recordOp("read", path, "preload")
+	pt.recordOp("read", path, "inotify")
+
+	if probes != 1 {
+		t.Fatalf("a path already in the frame must not be re-probed; got %d probes", probes)
+	}
+	if layers := pt.ops["read"][path]; len(layers) != 3 {
+		t.Fatalf("every layer must still be attributed; got %v", layers)
+	}
+}
+
+func TestRecordOp_DropsReadOfBrokenSymlink(t *testing.T) {
+	// A link whose target is gone fails the open exactly as a name that never
+	// existed does, and the layer reporting it fired before finding that out.
+	pt, root := realTracker(t)
+	link := filepath.Join(root, "counts.csv")
+	if err := os.Symlink(filepath.Join(root, "gone.csv"), link); err != nil {
+		t.Fatalf("symlink fixture: %v", err)
+	}
+	pt.recordOp("read", link, "python")
+
+	if got := recordedPaths(pt, "read"); len(got) != 0 {
+		t.Fatalf("a read through a broken symlink must not be recorded; got %v", got)
+	}
+}
+
+func TestRecordOp_KeepsReadThroughSymlink(t *testing.T) {
+	pt, root := realTracker(t)
+	target := filepath.Join(root, "counts.csv")
+	if err := os.WriteFile(target, []byte("gene,count\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	link := filepath.Join(root, "latest.csv")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink fixture: %v", err)
+	}
+	pt.recordOp("read", link, "python")
+
+	// Under the name the workload used: the layers report names, not inodes.
+	got := recordedPaths(pt, "read")
+	if len(got) != 1 || got[0] != link {
+		t.Fatalf("a read through a live symlink must survive; want [%s], got %v", link, got)
+	}
+}
+
 func TestRecordOp_KeepsWriteOfAbsentPath(t *testing.T) {
 	// A write is reported before the file it creates exists — the presence rule
 	// is about reads only. Phantom writes are dropped host-side at reconcile,

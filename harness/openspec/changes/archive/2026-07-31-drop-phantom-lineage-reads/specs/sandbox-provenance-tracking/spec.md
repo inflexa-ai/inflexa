@@ -20,7 +20,11 @@ attestable file.
 
 At that same point, the server SHALL drop a report of a **read** whose path is
 not present in the container, and SHALL log the drop when running at debug level.
-Only absence drops a report: a `stat` failing any other way — a permission the
+Presence SHALL be resolved the way the open resolves it — **following
+symlinks** — because the question the check asks is whether the reported read
+could have succeeded: a link whose target is gone fails the open too, and a layer
+that fires before the call cannot tell that from a name that never existed. Only
+absence drops a report: a `stat` failing any other way — a permission the
 server lacks and the workload had — SHALL keep it rather than lose a real lineage
 edge to a transient error. Reports of **writes** and **deletes** SHALL NOT be
 subject to this check: a write is reported before the file it creates exists, and
@@ -73,6 +77,18 @@ name the workload used, and the layers report names, not inodes.
 - **GIVEN** a layer reporting a read of a file that exists under a watch dir
 - **WHEN** the server records the report
 - **THEN** the exec `provenance` frame's `reads` contains it
+
+#### Scenario: A read through a broken symlink is not reported
+
+- **GIVEN** a layer reporting a read of an in-tree path that is a symlink whose target no longer exists
+- **WHEN** the server records the report
+- **THEN** the exec `provenance` frame's `reads` does NOT contain it — the open it reports would have failed the same way a name that never existed would
+
+#### Scenario: A read through a live symlink survives under the name the workload used
+
+- **GIVEN** a layer reporting a read of an in-tree symlink whose target exists
+- **WHEN** the server records the report
+- **THEN** the exec `provenance` frame's `reads` contains the link's own path, not the target's
 
 #### Scenario: A write to a path that does not exist yet is reported
 
