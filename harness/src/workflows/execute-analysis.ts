@@ -657,7 +657,17 @@ export function synthesizeFindings(args: {
             analysisId,
             runId,
             completedSteps,
-            session,
+            // Stepped, exactly as a sandbox step's child input is. Synthesis owns a real row in the
+            // step-execution ledger (seeded and updated under `SYNTHESIS_STEP_ID` in the body below),
+            // so it lists as a step everywhere a run's steps are shown. Handing it the bare run session
+            // left every call it makes — the synthesizer loop and each sub-agent it dispatches —
+            // recorded against the run carrying no `stepId`, which made the one step in the list unable
+            // to report a figure the one that had just spent the most.
+            //
+            // It also puts the step id into the replay-stable `recordKey`, which is what it is for:
+            // synthesis and a plan step of the same run can no longer mint the same key from the same
+            // call path.
+            session: forStep(session, SYNTHESIS_STEP_ID),
             emit,
             onProgress: (phase, activity, extra = {}) =>
                 DBOS.writeStream("events", {
