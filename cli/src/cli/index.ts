@@ -189,15 +189,52 @@ export function buildProgram(): Command {
     // the ledger is CLI-owned SQLite precisely so a report about tokens already spent works with the
     // durable engine cold. `--analysis` only selects WHICH analysis to report on, so every value it
     // can carry leaves the command read-only, and it is safe-listed on that basis (design Decision 8).
+    const usage = cli.command("usage").description("Report an analysis's recorded LLM token usage, by served model and by agent");
+
     registerAction(
-        cli
-            .command("usage")
-            .description("Report an analysis's recorded LLM token usage, by served model and by agent")
-            .option("--analysis <id|name>", "Operate on a specific analysis"),
+        usage.option("--analysis <id|name>", "Operate on a specific analysis"),
         { kind: "auto", safeFlags: ["analysis"] },
         async (options: { analysis?: string }) => {
             const { runUsage } = await import("../modules/usage/usage.ts");
             runUsage({ analysis: options.analysis });
+        },
+    );
+
+    // The where-it-ran grains: subcommands, not flags on the report above. Each is read-only over the
+    // same local ledger — no runtime, no Postgres, no network — and each is classified on its own, so
+    // a grain added later cannot widen a sibling's allowlist. `--analysis` and `--run` only SELECT what
+    // to report on, so every value either can carry leaves the command read-only.
+    registerAction(
+        usage
+            .command("sessions")
+            .description("Report what each of the analysis's conversations consumed")
+            .option("--analysis <id|name>", "Operate on a specific analysis"),
+        { kind: "auto", safeFlags: ["analysis"] },
+        async (options: { analysis?: string }) => {
+            const { runUsageSessions } = await import("../modules/usage/usage.ts");
+            runUsageSessions({ analysis: options.analysis });
+        },
+    );
+
+    registerAction(
+        usage.command("runs").description("Report what each of the analysis's runs consumed").option("--analysis <id|name>", "Operate on a specific analysis"),
+        { kind: "auto", safeFlags: ["analysis"] },
+        async (options: { analysis?: string }) => {
+            const { runUsageRuns } = await import("../modules/usage/usage.ts");
+            runUsageRuns({ analysis: options.analysis });
+        },
+    );
+
+    registerAction(
+        usage
+            .command("steps")
+            .description("Report what each step of one run consumed")
+            .requiredOption("--run <id>", "The run to report on, by id or by a trailing abbreviation of one")
+            .option("--analysis <id|name>", "Operate on a specific analysis"),
+        { kind: "auto", safeFlags: ["analysis", "run"] },
+        async (options: { run: string; analysis?: string }) => {
+            const { runUsageSteps } = await import("../modules/usage/usage.ts");
+            runUsageSteps({ run: options.run, analysis: options.analysis });
         },
     );
 

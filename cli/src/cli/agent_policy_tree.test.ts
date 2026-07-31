@@ -74,6 +74,9 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa status": "approval",
     "inflexa up": "blocked",
     "inflexa usage": "auto(analysis)",
+    "inflexa usage runs": "auto(analysis)",
+    "inflexa usage sessions": "auto(analysis)",
+    "inflexa usage steps": "auto(analysis,run)",
 };
 
 // The full surface (dev channel ON) — the release table plus the three dev-only harness entry points.
@@ -116,6 +119,9 @@ const EXPECTED_DEV_ON: Record<string, string> = {
     "inflexa status": "approval",
     "inflexa up": "blocked",
     "inflexa usage": "auto(analysis)",
+    "inflexa usage runs": "auto(analysis)",
+    "inflexa usage sessions": "auto(analysis)",
+    "inflexa usage steps": "auto(analysis,run)",
 };
 
 describe("agent policy — tree-walk exhaustiveness (both channels)", () => {

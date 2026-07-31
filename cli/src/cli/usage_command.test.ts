@@ -131,3 +131,92 @@ describe("usage command (e2e)", () => {
         expect(getAnalysisUsageTotals("ana1")._unsafeUnwrap()).toEqual({ calls: 2, inputTokens: 12_400, outputTokens: 3_100 });
     });
 });
+
+// The grain subcommands, same sandbox and same claim: each answers from the local ledger alone, with
+// no durable engine, no Postgres, and no model proxy running.
+describe("usage grain subcommands (e2e)", () => {
+    const RUN_ID = "11111111-2222-3333-4444-5555aabbccdd";
+
+    /** Chat turns on one thread, a run with two steps, and one call carrying neither frame. */
+    function seedGrains(): void {
+        const base = { recordedAt: 1, agentId: "conversation", callPath: "conversation", scopeKind: "analysis", scopeId: "ana1" } as const;
+        upsertLlmUsage({ ...base, recordKey: "c1", threadId: "thr-a", usage: { inputTokens: 12_000, outputTokens: 3_000 } })._unsafeUnwrap();
+        upsertLlmUsage({
+            ...base,
+            recordKey: "r1",
+            runId: RUN_ID,
+            stepId: "qc_normalize",
+            usage: { inputTokens: 24_000, outputTokens: 1_500 },
+        })._unsafeUnwrap();
+        upsertLlmUsage({ ...base, recordKey: "r2", runId: RUN_ID, usage: { inputTokens: 300, outputTokens: 30 } })._unsafeUnwrap();
+        upsertLlmUsage({ ...base, recordKey: "b1", usage: { inputTokens: 800, outputTokens: 80 } })._unsafeUnwrap();
+    }
+
+    test("each grain reports from the local ledger with no harness runtime booted", () => {
+        seedAnalysis();
+        seedGrains();
+        closeDb();
+        const cwd = tmp();
+
+        const sessions = runCli(["usage", "sessions", "--analysis", "My Analysis"], { cwd });
+        expect(sessions.exitCode).toBe(0);
+        expect(sessions.stdout).toContain('Sessions for "My Analysis"');
+        expect(sessions.stdout).toMatch(/thr-a\s+1\s+12\.0k\s+3\.0k/);
+        // 15.0k is the two figures added; no grain may produce it.
+        expect(sessions.stdout).not.toContain("15.0k");
+
+        const runs = runCli(["usage", "runs", "--analysis", "My Analysis"], { cwd });
+        expect(runs.exitCode).toBe(0);
+        expect(runs.stdout).toContain('Runs for "My Analysis"');
+        expect(runs.stdout).toMatch(new RegExp(`${RUN_ID}\\s+2\\s+24\\.3k\\s+1\\.5k`));
+        // Work under neither frame is named in both grain tables, so each accounts for the headline.
+        expect(runs.stdout).toContain("(no session or run)");
+
+        const steps = runCli(["usage", "steps", "--run", RUN_ID, "--analysis", "My Analysis"], { cwd });
+        expect(steps.exitCode).toBe(0);
+        expect(steps.stdout).toContain(`Steps for run ${RUN_ID}`);
+        expect(steps.stdout).toMatch(/qc_normalize\s+1\s+24\.0k\s+1\.5k/);
+        expect(steps.stdout).toMatch(/\(no step\)\s+1\s+300\s+30/);
+    });
+
+    test("a grain with nothing recorded says so rather than printing an empty table", () => {
+        seedAnalysis();
+        closeDb();
+        const cwd = tmp();
+
+        const sessions = runCli(["usage", "sessions", "--analysis", "My Analysis"], { cwd });
+        expect(sessions.exitCode).toBe(0);
+        expect(sessions.stdout).toContain('No session usage recorded for "My Analysis".');
+        expect(sessions.stdout).not.toContain("calls");
+
+        const runs = runCli(["usage", "runs", "--analysis", "My Analysis"], { cwd });
+        expect(runs.exitCode).toBe(0);
+        expect(runs.stdout).toContain('No run usage recorded for "My Analysis".');
+    });
+
+    test("every grain writes nothing — no marker in the cwd, no sighting heartbeat, and no change to the ledger", () => {
+        seedAnalysis();
+        seedGrains();
+        const anchorBefore = getAnchor("anc1")._unsafeUnwrap();
+        const ledgerBefore = getAnalysisUsageTotals("ana1")._unsafeUnwrap();
+        closeDb();
+        const dir = tmp();
+
+        for (const argv of [
+            ["usage", "sessions", "--analysis", "My Analysis"],
+            ["usage", "runs", "--analysis", "My Analysis"],
+            ["usage", "steps", "--run", RUN_ID, "--analysis", "My Analysis"],
+        ]) {
+            expect(runCli(argv, { cwd: dir }).exitCode).toBe(0);
+        }
+
+        // The passive read leaves the directory untouched — no .inflexa/id minted (no-litter policy).
+        expect(existsSync(join(dir, ".inflexa", "id"))).toBe(false);
+        // Nor may it record a sighting: these are `auto`, so an agent may run them unprompted, and a
+        // heartbeat would make `lastSeen` measure agent polling rather than the user's presence. The
+        // seeded `1` is a stamp no clock read can reproduce, so a write shows as a changed row.
+        expect(getAnchor("anc1")._unsafeUnwrap()).toEqual(anchorBefore);
+        // And none of them may touch what they report on: reading the ledger is not an event in it.
+        expect(getAnalysisUsageTotals("ana1")._unsafeUnwrap()).toEqual(ledgerBefore);
+    });
+});
