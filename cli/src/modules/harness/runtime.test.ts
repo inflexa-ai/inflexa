@@ -828,9 +828,15 @@ describe("bootHarnessRuntime", () => {
 // The usage-recorder seam. `assembleCoreRuntime` takes the recorder on `core` and stamps it onto the
 // conversation agent AND each workflow deps bag itself — which is why `ConversationAssemblyDeps`,
 // `sandboxStep`, `buildExecuteAnalysis`, `executeTargetAssessment`, and `dataProfile` all `Omit` the
-// field. So the embedder's entire obligation, and everything these tests can and should pin, is: supply
-// exactly ONE recorder at the single composition root, on `core`, and never a private one on a bag. A
-// bag carrying its own would be the half-wired ledger the harness's `Omit` exists to make unrepresentable.
+// field. A bag carrying its own would be the half-wired ledger the harness's `Omit` exists to make
+// unrepresentable.
+//
+// Supplying it there is NECESSARY BUT NOT SUFFICIENT, and that gap is why the handle carries it too.
+// `runAgent` reads the recorder from the OPTIONS it is invoked with and falls back to the harness's
+// no-op when the field is absent — it never reads one off the agent definition — so the stamping
+// covers exactly the loops whose options the harness itself builds. A loop the CLI invokes directly
+// (the chat turn) is covered only by that call site passing this instance, which is what
+// `HarnessRuntime.usageRecorder` exists for and what the last test here pins.
 describe("bootHarnessRuntime — the usage-recorder seam", () => {
     /** A record shaped like a chat-path call, used to prove the supplied recorder is inert-but-live rather than merely present. */
     function chatRecord(): LlmUsageRecord {
@@ -873,6 +879,21 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
         // Not the harness's `createNoopUsageRecorder` fallback: this one writes, and it is total — the
         // loop delivers bare, so a throw here would fail the turn that made the call.
         expect(() => lastCore?.usageRecorder?.record(chatRecord())).not.toThrow();
+    });
+
+    test("the handle exposes the SAME instance the composition root supplied, for the loops the cli drives itself", async () => {
+        const calls: string[] = [];
+        const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }))._unsafeUnwrap();
+
+        // Identity, not merely a recorder: the chat turn passes this into its own `runAgent` options,
+        // and a second realization here would be a second writer of one table — while anything OTHER
+        // than the stamped instance would leave the turn's rows in a different accounting than every
+        // workflow's. `turn.ts` is where it is consumed; `usage_ledger.test.ts` proves a row lands.
+        // `defined` rides along so the identity claim cannot pass vacuously on two `undefined`s.
+        expect({ defined: lastCore?.usageRecorder !== undefined, same: runtime.usageRecorder === lastCore?.usageRecorder }).toEqual({
+            defined: true,
+            same: true,
+        });
     });
 
     test("the recorder is built once per runtime, not per boot call", async () => {

@@ -1352,6 +1352,10 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
             session,
             emit: emitForTurn,
             signal: myTurn.signal,
+            // The booted runtime's ONE recorder, forwarded into this turn's `runAgent` options. Without
+            // it the loop silently falls back to the harness's no-op and the conversation agent's calls
+            // never reach the ledger — see `RunChatTurnArgs.usageRecorder`.
+            usageRecorder: runtime.usageRecorder,
             // Bind the ask seam to THIS turn's scope: a `ctx.ask` tool pauses on the runtime gateway
             // carrying the turn's analysis/thread, its abort signal, and its guarded emit sink, so the
             // gateway's `data-ask` emissions and its poll ride the same signal and sink as every other

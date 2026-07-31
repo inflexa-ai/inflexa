@@ -14,12 +14,14 @@ import {
     type ChatUsage,
     type LogFields,
     type Logger,
+    type Pool,
+    type ThreadHistory,
     type Tool,
 } from "@inflexa-ai/harness";
 
 import { freshDb } from "../../test_support/db.ts";
 import { getAnalysisUsageTotals } from "../../db/primary_query.ts";
-import { buildChatSession } from "./turn.ts";
+import { buildChatSession, runChatTurn } from "./turn.ts";
 import { createUsageRecorder } from "./usage_recorder.ts";
 
 // End to end over the real pieces: the harness's own `runAgent` loop, the cli's `createUsageRecorder`
@@ -205,6 +207,59 @@ describe("a chat turn's calls land in the local ledger", () => {
         // Both loops attribute to the one analysis, so the analysis total covers the sub-agent's spend
         // — which is the whole reason a sub-agent records under the same injected realization.
         expect(getAnalysisUsageTotals("ana-nested")._unsafeUnwrap()).toMatchObject({ calls: 3, inputTokens: 250, outputTokens: 57 });
+    });
+
+    // The one test in this file that does NOT hand `runAgent` an options bag of its own making, and
+    // the reason it exists: for a whole release the conversation agent recorded nothing, because
+    // production built that bag without a `usageRecorder` while every test here built one with it.
+    // `runAgent` reads the recorder from its OPTIONS and silently falls back to the no-op, so the
+    // omission cost nothing at runtime — the turn succeeded, the header still showed a figure from the
+    // finish rollup, and no row was written. A test that substitutes `runAgent` and asserts the
+    // substitute was called cannot see that; only the production bag can be asked.
+    //
+    // So `run` here is the REAL `runAgent` and the options it receives are the ones `runChatTurn`
+    // composes. Only `prepare` (Postgres) and the thread store are stood in for, and neither is on the
+    // path between a completed call and a persisted row. A `turn.ts` that dropped the field again
+    // produces zero rows below rather than a green test.
+    test("the conversation agent's own calls reach the ledger through the production chat-turn path", async () => {
+        const session = buildChatSession("tui-chat", "ana-chat-turn", "thr-chat-turn");
+        const chat = scriptedChat([reply([{ type: "text", text: "answered" }], "stop", { inputTokens: 320, outputTokens: 44 })]);
+        const userMessage = { role: "user", content: "go" } as const;
+        // The thread store is Postgres-backed; the append is orthogonal to accounting (the turn carries
+        // its fault separately), so a store that records nothing keeps this test offline without
+        // touching the path under test.
+        const history: ThreadHistory = {
+            appendTurn: () => okAsync(undefined),
+            loadRecent: () => okAsync([]),
+            loadPage: () => okAsync({ messages: [], total: 0, page: 1, perPage: 200, hasMore: false }),
+            retractLastTurn: () => okAsync({ kind: "empty-thread" }),
+        };
+
+        const outcome = await runChatTurn(
+            {
+                // `prepare` is the only thing that would dereference it, and it is stood in for below.
+                pool: {} as unknown as Pool,
+                conversationAgent: agent("tui-chat", []),
+                chat,
+                history,
+                session,
+                emit: () => {},
+                signal: new AbortController().signal,
+                usageRecorder: createUsageRecorder({ logger: silentLogger }),
+                analysisId: "ana-chat-turn",
+                threadId: "thr-chat-turn",
+                userInput: "go",
+            },
+            { prepare: () => Promise.resolve({ kind: "ok", messages: [userMessage], userMessage }), run: runAgent },
+        );
+
+        expect(outcome.kind).toBe("ok");
+        const ledger = rows();
+        expect(ledger).toHaveLength(1);
+        // Under the CONVERSATION agent's own id — the attribution that was missing from every row the
+        // real ledger held, where only sub-agents and workflow agents ever appeared.
+        expect(ledger[0]).toMatchObject({ agent_id: "tui-chat", call_path: "tui-chat", thread_id: "thr-chat-turn", input_tokens: 320, output_tokens: 44 });
+        expect(getAnalysisUsageTotals("ana-chat-turn")._unsafeUnwrap()).toMatchObject({ calls: 1, inputTokens: 320, outputTokens: 44 });
     });
 
     test("a re-delivered record updates its row in place instead of double-counting the turn", async () => {

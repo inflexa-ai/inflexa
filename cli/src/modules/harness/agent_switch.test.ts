@@ -323,6 +323,9 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
                 session: buildChatSession("tui-chat", "an-1", "t-1"),
                 emit: (() => {}) as EmitFn,
                 signal: new AbortController().signal,
+                // The turn's accounting seam. Nothing here records — the `run` seam never completes a
+                // model call — but the engine requires it, which is what stops a call site forgetting it.
+                usageRecorder: { record: () => {} },
                 analysisId: "an-1",
                 threadId: "t-1",
                 userInput: "?",
