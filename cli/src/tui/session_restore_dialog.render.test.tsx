@@ -63,6 +63,7 @@ function seams(page: ThreadPage, notices: Notice[], restored: string[]): Session
             return okAsync<void, DbError>(undefined);
         },
         purgeThread: () => okAsync<void, DbError>(undefined),
+        chatBusy: () => false,
         resolveThreadId: async () => null,
         workingDirFor: () => "/work",
         refreshThread: () => {},

@@ -134,9 +134,16 @@ async function relocatePrefix(fromPrefix: string, toPrefix: string): Promise<voi
 }
 
 /**
- * Why a confirmed prune stopped. Every member leaves the anchors and their analyses in SQLite, which
- * is what makes `inflexa prune` its own recovery: the folders are still gone, the same rows are still
- * listed, and the purge is idempotent, so a re-run after the cause is fixed simply completes.
+ * Why a confirmed prune stopped. Whatever the cause, `inflexa prune` is its own recovery: the folders
+ * are still gone, so a re-run selects the same anchors, and the purge is idempotent, so re-reaching an
+ * analysis already reclaimed costs nothing.
+ *
+ * The two failures raised before the SQLite stage — `postgres_unavailable` and `purge_failed` — leave
+ * every anchor and analysis row present, which is what lets the abort notice say nothing was lost.
+ * `sqlite_failed` carries no such guarantee once the deletes have begun: they are combined over an
+ * eagerly-built array, so each anchor's pair runs whether or not an earlier one failed, and some rows
+ * can already be gone. That is not a state to repair — those analyses were purged before any row was
+ * touched, so nothing is orphaned, and the next run simply finishes the deletes.
  */
 export type PruneError =
     | { type: "postgres_unavailable"; cause: PostgresError }
@@ -189,9 +196,11 @@ const realPruneSeams: PruneSeams = {
  * nothing would be left to name what was orphaned. Prune is the path most likely to meet many analyses
  * at once, which is exactly what makes the wrong order expensive here.
  *
- * Any failure returns with every row still present. That is not a partial success to be tidied up
- * later: the analyses are still listed, the folders are still gone, and the purge is idempotent, so
- * re-running the command after the cause is fixed is the whole recovery.
+ * A failure before the deletes returns with every row still present. Once the deletes begin, some
+ * anchors can already be gone — they are combined over an eagerly-built array, so an early failure
+ * does not stop the rest, and each pair is independent of every other. Neither shape is a partial
+ * success to be tidied up later: every analysis was purged before any row was touched, the folders are
+ * still gone, and the purge is idempotent, so re-running the command is the whole recovery.
  */
 export async function reclaimDeadAnchors(dead: readonly Anchor[], seams: PruneSeams = realPruneSeams): Promise<Result<void, PruneError>> {
     const listed = Result.combine(dead.map((a) => listAnalysesByAnchor(a.id)));

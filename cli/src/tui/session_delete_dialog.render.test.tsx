@@ -55,6 +55,7 @@ function seams(notices: Notice[]): SessionSeams {
         archiveThread: () => okAsync<void, DbError>(undefined),
         unarchiveThread: () => okAsync<void, DbError>(undefined),
         purgeThread: () => okAsync<void, DbError>(undefined),
+        chatBusy: () => false,
         resolveThreadId: async () => "thread-2",
         workingDirFor: () => "/work",
         refreshThread: () => {},
