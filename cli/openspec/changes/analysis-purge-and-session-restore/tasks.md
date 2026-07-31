@@ -28,7 +28,7 @@
 ## 5. Verification
 
 - [x] 5.1 `bun run typecheck` clean.
-- [ ] 5.2 `bun run test` green (`--isolate`; never plain `bun test`).
+- [x] 5.2 `bun run test` green (`--isolate`; never plain `bun test`).
 - [x] 5.3 `bun run lint` clean on every changed file.
 - [x] 5.4 `bun run format:file` on every changed file under `src/`.
 
