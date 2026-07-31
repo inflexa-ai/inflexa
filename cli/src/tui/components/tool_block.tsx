@@ -12,6 +12,18 @@ import { Fg } from "./emphasis.tsx";
  */
 const MIN_CONTENT_WIDTH = 24;
 
+/**
+ * Terminal columns `text` occupies, which is what a fit test needs — `.length` counts UTF-16 units
+ * and is wrong in both directions: an East Asian glyph draws two cells and counts one, a combining
+ * mark draws none and counts one. A detail is an opaque harness string that can carry either (a
+ * search query is model-authored prose), so a mismeasured line overflows into the gutter it was
+ * measured to avoid. `Bun.stringWidth` reports drawn columns — the same reason `refs`' listing
+ * pads with it rather than with `.length`.
+ */
+function cells(text: string): number {
+    return Bun.stringWidth(text);
+}
+
 /** Props for {@link ToolBlock}. */
 export type ToolBlockProps = {
     /** Tool/verb name, e.g. `read_file`. */
@@ -90,19 +102,23 @@ export function ToolBlock(props: ToolBlockProps) {
     // toggleable. The two failure directions are not symmetric: over-subtracting costs one extra
     // row, while under-subtracting lets the line soft-wrap to column 0 and collide with the marker
     // gutter. Bias toward the harmless one.
+    // Already NET of the marker gutter — the same arithmetic plan_card_block uses, where the trailing
+    // `size.gutter` is that gutter. So the fit test below measures only what is painted after it.
     const contentWidth = (): number => Math.max(MIN_CONTENT_WIDTH, dims().width - size.railWidth - space.md - size.gutter);
     const statusWidth = (): number => {
         if (!inline()) return 0;
         const view = statusView(props.status);
-        // space.md lead + single-cell glyph + separating space + label + duration.
-        return space.md + 1 + 1 + view.label.length + duration().length;
+        // space.md lead + single-cell glyph + separating space + label + duration. The glyph counts 1
+        // because GLYPHS is curated to single-cell shapes — that is what keeps the gutter aligned.
+        return space.md + 1 + 1 + cells(view.label) + cells(duration());
     };
-    // The name line's cost with the detail on it — the marker gutter, the name, the space before
-    // the detail, the detail, and the status that follows.
+    // The name line's cost with the detail on it — the name, the space before the detail, the detail,
+    // and the status that follows. The marker gutter is NOT charged here: `contentWidth` already
+    // removed it, and charging it twice would split two cells earlier than the measurement claims.
     const detailFitsNameLine = (): boolean => {
         const detail = props.detail;
         if (detail === undefined) return true;
-        return size.gutter + props.name.length + 1 + detail.length + statusWidth() <= contentWidth();
+        return cells(props.name) + 1 + cells(detail) + statusWidth() <= contentWidth();
     };
     const inlineDetail = (): string | undefined => (detailFitsNameLine() ? props.detail : undefined);
     const reflowedDetail = (): string | undefined => (detailFitsNameLine() ? undefined : props.detail);
