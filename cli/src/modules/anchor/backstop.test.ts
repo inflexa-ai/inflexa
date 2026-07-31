@@ -110,12 +110,23 @@ describe("prune reclaims Postgres before it touches SQLite", () => {
      * order proof: it captures the live SQLite row set at the instant of each call, so a reclaim that
      * deleted first would record an empty store here even though every call still happened.
      */
-    function seams(over: Partial<PruneSeams> = {}): { seams: PruneSeams; purged: string[]; sqliteAtPurge: string[][]; drains: number } {
+    function seams(over: Partial<PruneSeams> = {}): {
+        seams: PruneSeams;
+        purged: string[];
+        sqliteAtPurge: string[][];
+        drains: number;
+        provisions: number;
+    } {
         const purged: string[] = [];
         const sqliteAtPurge: string[][] = [];
-        const state = { drains: 0 };
+        const state = { drains: 0, provisions: 0 };
         const base: PruneSeams = {
-            ensurePostgres: async () => ok<PostgresConnection, PostgresError>(CONN),
+            // Counted, because reaching this seam is itself an effect: the real one starts a container
+            // stack and leaves it running, so a prune with nothing to reclaim must never arrive here.
+            ensurePostgres: async () => {
+                state.provisions += 1;
+                return ok<PostgresConnection, PostgresError>(CONN);
+            },
             openPool: () => fakePool,
             purgeAnalysis: (_pool, analysisId) => {
                 purged.push(analysisId);
@@ -133,6 +144,9 @@ describe("prune reclaims Postgres before it touches SQLite", () => {
             sqliteAtPurge,
             get drains() {
                 return state.drains;
+            },
+            get provisions() {
+                return state.provisions;
             },
         };
     }
@@ -152,6 +166,25 @@ describe("prune reclaims Postgres before it touches SQLite", () => {
         expect(survivingAnalysisIds()).toEqual([]);
         expect(deadAnchor()).toBeNull();
         expect(t.drains).toBe(1);
+        // The count the command reports back, which is what decides whether it tells the user a
+        // container stack is still running behind it.
+        expect(outcome._unsafeUnwrap()).toEqual({ purged: seeded.length });
+    });
+
+    test("an anchor that held no analyses is pruned without provisioning a database at all", async () => {
+        insertAnchor({ id: DEAD_ANCHOR, createdAt: 1, updatedAt: 1, cachedPath: "/gone/forever", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        const t = seams();
+
+        const outcome = await reclaimDeadAnchors([deadAnchor()!], t.seams);
+
+        // Nothing to reclaim ⇒ the gate is never reached, so the user is not charged a container start
+        // — nor left with a running stack — for a prune that needed no database.
+        expect(t.provisions).toBe(0);
+        expect(t.drains).toBe(0);
+        expect(t.purged).toEqual([]);
+        // The anchor is still pruned; skipping the reclaim skips only the reclaim.
+        expect(outcome._unsafeUnwrap()).toEqual({ purged: 0 });
+        expect(deadAnchor()).toBeNull();
     });
 
     test("a Postgres that cannot be provisioned deletes nothing at all", async () => {

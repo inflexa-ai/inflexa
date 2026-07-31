@@ -45,6 +45,12 @@ The gate is the chat's own activity state, not the analysis-wide busy check the 
 
 **Signing before writing.** The export currently writes the document and then signs it, so a signing failure leaves an unsigned file on disk under a notice claiming the opposite. Building the sidecar first and writing both only on success makes the claim true. Routing the delete flow through this path is what forces the issue: a rare inconsistency becomes a routine one.
 
+**Prune meets the purge's quiescence precondition differently from the delete, and deliberately.** `purgeAnalysis` states that a caller quiesces the analysis first — a run started after the id capture is unreachable afterwards — and the analysis delete enforces that with the workspace busy gate, which reads the analysis's active runs. Prune enforces no equivalent, because it cannot: it boots no harness runtime, so it has nothing in-process to observe, and the only evidence it holds is its own selection criterion. That criterion is what stands in for the check: an anchor is pruned only when its folder is confirmed gone, and every run of its analyses reads and writes beneath that folder. Work cannot both be in flight and have nowhere to write.
+
+The residue is a run belonging to a dead anchor's analysis that some *other* process launched and has not yet failed. Prune's purge cancels it, so the window is the interval between the id capture and the cancel, and the loss is that run's ledger rows rather than any user artifact — the artifacts were already gone with the folder. Closing it properly would mean prune taking the per-analysis instance lock for every analysis it touches, which is a larger change than the exposure justifies. Recorded here rather than left to look covered.
+
+**The reclaim stage is skipped when no analysis is involved, and the containers it starts stay up.** The provisioning gate starts the container stack, so running it for a dead anchor that held no analyses would charge the user a container start — and a running database they did not have before — for a prune with nothing to reclaim. The gate is therefore reached only once at least one analysis id is in hand. When it is reached, the stack is left running afterwards and the command says so: prune owns the pool it opened, not the stack, and a maintenance command that tears down containers the user may be relying on would be worse than one that names what it left behind.
+
 ## Risks / Trade-offs
 
 - **Deletion is unavailable when the harness is down** → Accepted, and stated in the refusal. The user is told why and what to do, rather than getting a delete that quietly leaks.
@@ -52,3 +58,5 @@ The gate is the chat's own activity state, not the analysis-wide busy check the 
 - **A retry after a mid-ladder failure reports the disposal as `absent`** → Cosmetically odd, factually correct, and already a supported outcome. Better than making the disposal non-idempotent to improve one notice.
 - **Exporting provenance on a branch the user may not care about costs a flush and a signature** → Bounded, once per deletion, on an action already doing filesystem and database work.
 - **The dialog's new copy is longer** → It has to be: the previous copy was short because it described less than the flow did.
+- **Prune cannot prove an analysis is quiesced before purging it** → Accepted, bounded by the dead-folder criterion and the purge's own cancel; the exposure is ledger rows for a run whose artifacts were already lost with the folder. See the decision above.
+- **`inflexa prune` can leave a container stack running that was not running before** → Accepted and reported in the command's output, with the command that stops it. Stopping containers the user may be depending on is not a prune's call to make.

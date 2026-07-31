@@ -17,7 +17,7 @@ import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
 import { setTheme, theme, type Notice } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
-import { createAnalysisPurge, createDbosWorkflowPurger, createThreadStore, loadPlan, queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
+import { createThreadStore, loadPlan, queryActiveRunsByAnalysis, queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
 import type { AnalysisPurgeOutcome, CortexRunRow, DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
 
 import { agentModels, bootState, harnessRuntime } from "./hooks/boot.ts";
@@ -26,7 +26,7 @@ import { latestPlanCard, sessionOpenables, type SessionOpenable } from "./hooks/
 import { openArtifact } from "./hooks/artifacts.ts";
 import { resolveEntryPath } from "../modules/harness/artifact_open.ts";
 import { driveForceReprofile, profileWorkInFlight } from "./hooks/profile_parity.ts";
-import { RUN_STATUS_TERMINAL, absTime, absTimeShort, idTail, shortRunName } from "./hooks/sidebar_live.ts";
+import { absTime, absTimeShort, idTail, shortRunName } from "./hooks/sidebar_live.ts";
 import { restoreActivityPanel } from "./hooks/activity_panel.ts";
 import { chatStatus } from "./hooks/status.ts";
 import { keybindLabel } from "./keymap.ts";
@@ -45,6 +45,7 @@ import {
     matchAnalysis,
 } from "../modules/analysis/analysis.ts";
 import { writeAgentModel, type AgentName } from "../modules/harness/config.ts";
+import { analysisPurgeFor } from "../modules/harness/purge.ts";
 import { listConnectionModels, validateModelSelection } from "../modules/harness/model_listing.ts";
 import type { ModelAccess } from "../modules/proxy/models.ts";
 import { currentAgentModels, requestAgentModelChange } from "../modules/harness/agent_switch.ts";
@@ -109,6 +110,13 @@ function workingDirFor(a: Analysis): string {
  * profile, or a durable run that outlived the turn that launched it (`execute_analysis` returns before
  * its workflow does). Checked once, before the dialog opens: a modal blocks the composer, so no
  * new work can start between the check and the action.
+ *
+ * The ledger read asks for the analysis's ACTIVE runs rather than a page of its recent ones. A paged
+ * read answers "is anything in flight" only while every live run happens to fall inside the window,
+ * so a long-abandoned `running` row on an analysis with a busy history since would pass the gate.
+ * This gate also carries the delete flow's quiescence precondition — a purge is not serialized
+ * against a run starting under it — and that is not a question a bounded window can answer. The
+ * active set is capped by live concurrency rather than by history, so it needs no bound.
  */
 async function workspaceBusyReason(analysisId: string): Promise<string | null> {
     if (chatStatus() === "busy") return "a chat turn is running";
@@ -118,8 +126,8 @@ async function workspaceBusyReason(analysisId: string): Promise<string | null> {
     // Nothing booted ⇒ no workflow in this process can hold the tree.
     if (!runtime) return null;
 
-    return (await queryRunsByAnalysis(runtime.pool, analysisId, { limit: 20 })).match(
-        (runs) => (runs.some((r) => !RUN_STATUS_TERMINAL[r.status]) ? "a run is in flight" : null),
+    return (await queryActiveRunsByAnalysis(runtime.pool, analysisId)).match(
+        (runs) => (runs.length > 0 ? "a run is in flight" : null),
         // Refuse rather than guess: an unreadable ledger cannot prove the workspace is idle.
         () => "the run ledger is unreadable, so the workspace cannot be confirmed idle",
     );
@@ -880,6 +888,13 @@ const DELETE_NEEDS_HARNESS =
     "Cannot delete while the harness is not running — deleting also reclaims this analysis's conversations and run history, which live in the harness's database.";
 
 /**
+ * Why the thread verbs cannot run without a booted harness: thread metadata lives only in Postgres,
+ * so before `ready` there is nothing to remove, restore, or erase. One string so the flows that raise
+ * it cannot drift into describing the same unavailability two ways.
+ */
+const SESSION_NEEDS_HARNESS = "The harness is not running — this analysis's conversations are unavailable until it starts.";
+
+/**
  * Injectable edges for the delete ladder, so its ORDER is assertable offline — no Postgres, no
  * SQLite, no filesystem. Order is the whole contract here (see {@link deleteAnalysisWith}), and a
  * test that only proves each stage ran would pass with the stages reordered. Production callers omit
@@ -939,14 +954,26 @@ const realAnalysisDeleteSeams: AnalysisDeleteSeams = {
         ),
     exportProvenance: (a) => exportProvenanceToFile(a, "json"),
     disposeWorkspace,
-    // Built per deletion over the booted pool the rest of the flow already uses: the purger is a thin
-    // adapter over that pool, so there is nothing to keep alive between deletions.
-    purgeAnalysis: (pool, analysisId) => createAnalysisPurge({ pool, workflows: createDbosWorkflowPurger({ pool }) }).purgeAnalysis(analysisId),
+    // Resolved through the per-pool memo rather than built here: the booted pool outlives every
+    // deletion made against it, so an adapter per deletion would leave handlers on it that nothing
+    // can take back off (see {@link analysisPurgeFor}).
+    purgeAnalysis: (pool, analysisId) => analysisPurgeFor(pool).purgeAnalysis(analysisId),
     deleteAnalysis,
     listRecentAnalyses,
     openAnalysis,
     notify,
 };
+
+/**
+ * The purge failure, named down to the stage that raised it. A toast is the only channel this flow
+ * has — no second line, and nowhere to print the driver `cause` — so whatever the notice carries is
+ * the whole account the user gets. The type only classes the failure, and the purge's dozen-odd
+ * statements share a handful of types between them, so `op` is what separates a refused analysis id
+ * from a ledger delete that lost its connection halfway through.
+ */
+function describePurgeFailure(e: DbError): string {
+    return `${e.type} at ${e.op}`;
+}
 
 /**
  * Delete an analysis: export its provenance, retire its workspace, reclaim its Postgres footprint,
@@ -1034,7 +1061,7 @@ export async function deleteAnalysisWith(
         const kept = outcome.kind === "archived" ? ` Its files are already at ${outcome.path}.` : "";
         seams.notify({
             kind: "error",
-            text: `Could not reclaim this analysis's stored conversations and run history (${purged.error.type}) — the analysis was NOT deleted, so nothing was lost.${kept} Try the delete again.`,
+            text: `Could not reclaim this analysis's stored conversations and run history (${describePurgeFailure(purged.error)}) — the analysis was NOT deleted, so nothing was lost.${kept} Try the delete again.`,
         });
         return;
     }
@@ -1359,9 +1386,16 @@ export async function deleteSessionFlow(ctx: Workspace, seams: SessionSeams = re
     const runtime = seams.runtime();
     const analysis = ctx.analysis;
     const threadId = ctx.sessionId;
-    // Reachable only through the palette, whose `enabled` already requires all three — this restates
-    // the gate for the narrowing rather than handling a state the user can actually reach.
-    if (!runtime || !analysis || threadId === null) return;
+    // An absent analysis or an unbound thread names no conversation the user could have meant, so the
+    // narrowing is silent; the palette's `enabled` requires both anyway.
+    if (!analysis || threadId === null) return;
+    // The unbooted harness is the one reachable miss, because the leader chord dispatches by command
+    // id and never consults `enabled` — so it speaks rather than swallowing the keystroke, exactly as
+    // {@link openRestoreSession} does for the same bypass.
+    if (!runtime) {
+        seams.notify({ kind: "warn", text: SESSION_NEEDS_HARNESS });
+        return;
+    }
     const pool = runtime.pool;
     // Both refusals below share one cause — no name to confirm against, and asking the user to type a
     // fiction is not a confirmation — but they are not the same fact, so they do not get the same words.
@@ -1449,9 +1483,13 @@ export async function purgeSessionFlow(ctx: Workspace, seams: SessionSeams = rea
     const runtime = seams.runtime();
     const analysis = ctx.analysis;
     const threadId = ctx.sessionId;
-    // Reachable only through the palette, whose `enabled` already requires all three — this restates
-    // the gate for the narrowing rather than handling a state the user can actually reach.
-    if (!runtime || !analysis || threadId === null) return;
+    // The same two gates the removal flow raises, in the same order and for the same reasons: silence
+    // where no conversation is named, a spoken refusal where the chord bypassed `enabled`.
+    if (!analysis || threadId === null) return;
+    if (!runtime) {
+        seams.notify({ kind: "warn", text: SESSION_NEEDS_HARNESS });
+        return;
+    }
     // A turn streaming into this very thread is the one state that makes the purge destructive beyond
     // what the user asked for. `appendTurn` writes its messages with no foreign key and tolerates a
     // missing thread row, so a turn committing after the purge lands rows under a `thread_id` that
