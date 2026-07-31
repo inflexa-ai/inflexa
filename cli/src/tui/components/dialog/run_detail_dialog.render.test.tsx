@@ -16,8 +16,14 @@ import { GLYPHS } from "../../../lib/design_system.ts";
  * resolve — a `ResultAsync.match` lands on a microtask, after the first paint — so a test asserting
  * on loaded steps must ask for at least one.
  */
-async function frameOf(run: CortexRunRow, loadSteps: RunDetailDialogProps["loadSteps"], settle = 0, usage?: RunDetailDialogProps["usage"]): Promise<string> {
-    const setup = await testRender(() => <RunDetailDialog run={run} loadSteps={loadSteps} usage={usage} onClose={() => {}} />, {
+async function frameOf(
+    run: CortexRunRow,
+    loadSteps: RunDetailDialogProps["loadSteps"],
+    settle = 0,
+    usage?: RunDetailDialogProps["usage"],
+    stepUsage?: RunDetailDialogProps["stepUsage"],
+): Promise<string> {
+    const setup = await testRender(() => <RunDetailDialog run={run} loadSteps={loadSteps} usage={usage} stepUsage={stepUsage} onClose={() => {}} />, {
         width: 90,
         height: 36,
     });
@@ -110,11 +116,37 @@ describe("RunDetailDialog", () => {
         const withUsage = await frameOf(run(), steps, 2, { calls: 47, inputTokens: 809_200, outputTokens: 40_400 });
         const without = await frameOf(run(), steps, 2);
 
-        expect(withUsage).toContain("↑809.2k ↓40.4k");
+        // The LONG form: a `label value` property line among the timings, in a full-width dialog being
+        // read deliberately — not the rail's compact decoration on a 37-cell row.
+        expect(withUsage).toContain("usage 809.2k in · 40.4k out");
         expect(withUsage).toContain("47 calls");
         // A run the ledger knows nothing about carries no line at all — not a zeroed one.
         expect(without).not.toContain("usage ");
-        expect(without).not.toContain("↑");
+    });
+
+    test("each step carries its own compact figure, and a step the ledger has nothing for carries none", async () => {
+        const steps = [step("s1_load", "completed"), step("s2_assoc", "completed"), step("s3_report", "completed")];
+        const frame = await frameOf(
+            run(),
+            () => okAsync<StepExecutionRow[], DbError>(steps),
+            2,
+            undefined,
+            new Map([
+                ["s1_load", { calls: 8, inputTokens: 121_400, outputTokens: 6_200 }],
+                // Calls recorded whose provider reported no quantity — no figure, never a zeroed one.
+                ["s2_assoc", { calls: 3 }],
+                // `s3_report` is absent from the map entirely: the step made no calls at all.
+            ]),
+        );
+
+        // The COMPACT form on a step row — the row's subject is the step, and the run's own `usage`
+        // property line above it is the surface that spends words.
+        expect(frame).toContain(`${GLYPHS.arrowUp}121.4k ${GLYPHS.arrowDown}6.2k`);
+        // Every step still lists; a step with no figure loses its second line, not its row.
+        for (const id of ["s1_load", "s2_assoc", "s3_report"]) expect(frame).toContain(id);
+        // Exactly one figure painted — the reported-nothing step and the absent one each add none, and
+        // a zeroed fallback for either would show up here as a second arrow.
+        expect(frame.split(GLYPHS.arrowUp).length - 1).toBe(1);
     });
 
     test("a failed step fetch degrades to the muted line, never a crash", async () => {

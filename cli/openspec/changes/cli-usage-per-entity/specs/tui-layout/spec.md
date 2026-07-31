@@ -4,9 +4,13 @@
 
 `MessageBlock` SHALL render a fixed-width gutter column (2 spaces) whose marker swaps by role, taken from the shared gutter marker set (`markers.ts`): `>` for the user (`theme().user`) and `<` for the assistant (`theme().assistant`), followed by the role label and the markdown body. The gutter width SHALL be constant regardless of marker, so future block types align identically. Streaming assistant text SHALL render from the live stream signal and flush into the message store on completion, exactly as before this change.
 
-An assistant turn's header SHALL carry a meta line of the facts the application actually holds for that turn — its ordinal, its duration, and its recorded token figures in the shared notation (`usage-figure-rendering`). Each SHALL be rendered ONLY when held: a turn whose provider reported no usage SHALL show no figure, and no meta value SHALL be estimated, derived, or otherwise fabricated to fill the line. A user turn SHALL carry no token figure — the cost was not incurred by the party that sent the message.
+An assistant turn's header SHALL carry a meta line of the facts the application actually holds for that turn — its ordinal, its duration, and its recorded token figures in the LABELLED form of the shared notation (`usage-figure-rendering`). Each SHALL be rendered ONLY when held: a turn whose provider reported no usage SHALL show no figure, and no meta value SHALL be estimated, derived, or otherwise fabricated to fill the line. A user turn SHALL carry no token figure — the cost was not incurred by the party that sent the message.
 
-The prohibition this requirement previously carried — that no meta footer be rendered at all, on the grounds that the data is not tracked — no longer describes the system: the turn's usage rollup is now tracked end to end and rendered live. The rule that survives it is the one that mattered, restated above: what is not held is not shown.
+The labelled form here, unlike the rail's rows. This header runs the full width of the stream and carries three or four facts at most, so it has the cells to spend; and it is the one place a figure appears on EVERY turn, which makes it where a reader learns to read the notation at all — words teach it, arrows assume it has already been taught.
+
+The figure SHALL survive a transcript reload. The turn's rollup is persisted onto the turn's own assistant message when the turn is appended, and read back when the transcript loads, so a reopened conversation carries the same figures the live headers showed. Without this, absence on this field would acquire a second meaning — "this turn was reloaded" alongside "no provider reported anything" — and a reader could no longer tell which one a bare header is stating. The duration is deliberately NOT reconstructed: it is genuinely not stored, and inventing one would be exactly the fabrication this requirement forbids.
+
+The prohibition this requirement previously carried — that no meta footer be rendered at all, on the grounds that the data is not tracked — no longer describes the system: the turn's usage rollup is now tracked end to end, rendered live, and persisted. The rule that survives it is the one that mattered, restated above: what is not held is not shown.
 
 A user turn SHALL additionally differentiate itself with a left border rule in the user color (`border={["left"]}`, `theme().user`) on its parts container — the design system's quoted-content idiom. The rule MUST NOT break gutter alignment: the border glyph consumes one cell, so the user body's left padding SHALL shrink by one cell to keep body text in the same column as assistant bodies, and the header line (the `>` marker in the gutter) SHALL stay outside the bordered box. Assistant turns are unchanged.
 
@@ -29,6 +33,12 @@ A user turn SHALL additionally differentiate itself with a left border rule in t
 
 - **GIVEN** a completed turn whose provider reported no usage
 - **THEN** the assistant header carries its ordinal and duration and no token figure
+
+#### Scenario: A reloaded turn still shows its figures
+
+- **GIVEN** a completed turn whose provider reported usage, in a conversation that is then reopened
+- **WHEN** the transcript loads
+- **THEN** the turn's header carries the same figures it showed live, and its duration is absent
 
 #### Scenario: A user turn carries no token figure
 

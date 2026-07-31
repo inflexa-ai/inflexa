@@ -4,14 +4,14 @@ import type { JSX } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 
 import { GLYPHS, space } from "../../../lib/design_system.ts";
-import { formatTokenFigure, tokenFigureDetail, type TokenFigureArm } from "../../../lib/usage_format.ts";
+import { formatTokenFigure, NOT_REPORTED } from "../../../lib/usage_format.ts";
 import { theme } from "../../theme.ts";
 import { KEYS, chordLabel } from "../../keymap.ts";
 import { useDialogBindings, useDialogCancel, useDialogEntry } from "./dialog_host.tsx";
 import { DialogPanel } from "./dialog_panel.tsx";
 import { ScrollPane, SCROLL_HINT } from "../scroll_pane.tsx";
 import { Bold, Fg } from "../emphasis.tsx";
-import { NOT_REPORTED } from "../../../modules/usage/usage.ts";
+import { TokenFigure } from "../token_figure.tsx";
 import {
     getSessionUsageTotalsIncludingRuns,
     listSessionUsageByAgent,
@@ -189,57 +189,6 @@ export function usageBreakdown(snapshot: SessionUsageSnapshot): UsageBreakdown {
     return { header: line(header), lines };
 }
 
-/**
- * One arm of the headline: the LABELLED figure with its own breakdowns stacked under it.
- *
- * Labelled (`806.9k in`) rather than the compact arrows the grouping rows below carry: the headline
- * is this dialog's subject and has a whole panel width to spend, while a grouping row is one of many
- * being compared down a column, where words would push the figures apart. Both writings come from the
- * same arm, so the two halves of this panel can never disagree about a value.
- *
- * A column rather than a row, and the breakdowns indented, because that nesting is the ONLY thing
- * stating "these are parts of the figure above" — levelled onto one line they read as three peers a
- * reader may add. An arm the provider never reported renders the absent word: the column still exists
- * (input is always on the left, output always on the right), it just has nothing to report.
- *
- * `lead` is what puts the two arms at opposite EDGES rather than at the head of one half-panel each.
- * The leading arm grows into all the slack, so the trailing arm — sized to its own content and
- * explicitly unshrinkable, since an unsized box defaults to `flexShrink: 1` and would otherwise be
- * squeezed by the row — is pushed flush against the panel's trailing edge. Two `flexGrow={1}` halves
- * were the defect this replaces: each arm owned half the panel and left-aligned inside it, so the
- * output figure floated mid-panel adjacent to nothing.
- *
- * Both arms keep their contents LEFT-aligned, which is deliberate and is what the trailing arm's
- * `alignItems` must not undo: a right-aligned column would flush its nested quantities against the
- * panel edge too, collapsing the indent that states they are parts of the arm above. The accepted
- * cost is that the trailing arm is as wide as its widest LINE, so an arm whose nested quantity is
- * longer than its figure (`reasoning 9.1k` against `42.4k out`) carries that figure a few cells in
- * from the edge — the arm is still flush, and the indent still reads as an indent.
- */
-function UsageArm(props: { arm: TokenFigureArm | null; lead?: boolean }): JSX.Element {
-    return (
-        <box flexDirection="column" flexGrow={props.lead ? 1 : 0} flexShrink={props.lead ? 1 : 0}>
-            <Show when={props.arm} keyed fallback={<text fg={theme().fgMuted}>{NOT_REPORTED}</text>}>
-                {(arm: TokenFigureArm) => (
-                    <>
-                        <text fg={theme().fg}>
-                            <Bold>{arm.labelled}</Bold>
-                        </text>
-                        <For each={arm.breakdown}>
-                            {(part) => (
-                                <text>
-                                    <Fg role="fgMuted">{`${ROW_INDENT}${part.label} `}</Fg>
-                                    <Fg role="fg">{part.value}</Fg>
-                                </text>
-                            )}
-                        </For>
-                    </>
-                )}
-            </Show>
-        </box>
-    );
-}
-
 /** Props for {@link UsageDialog}. */
 export type UsageDialogProps = {
     /** The analysis the open conversation belongs to; titles the panel. `null` renders the bare title. */
@@ -297,7 +246,6 @@ export function UsageDialog(props: UsageDialogProps): JSX.Element {
                     // fixed value (keyed Show over a read-once snapshot), so re-deriving it inside an
                     // `each`/`when` prop would recompute the same answer on every re-track.
                     const breakdown = usageBreakdown(view);
-                    const detail = tokenFigureDetail(view.totals);
                     return (
                         <Show
                             when={view.totals.calls > 0}
@@ -323,14 +271,12 @@ export function UsageDialog(props: UsageDialogProps): JSX.Element {
                                     doubting the ledger. */}
                                     <Fg role="fgMuted">{` ${GLYPHS.middot} this conversation, runs included`}</Fg>
                                 </text>
-                                {/* Input at the leading edge, output at the trailing one: they are peers
-                                and the reader is comparing them, so each belongs at an edge it can be
-                                found at without scanning. The leading arm grows; the trailing one takes
-                                its natural width — see {@link UsageArm}. */}
-                                <box flexDirection="row" width="100%" flexShrink={0}>
-                                    <UsageArm arm={detail.input} lead />
-                                    <UsageArm arm={detail.output} />
-                                </box>
+                                {/* The LONG form — this dialog's subject is the number and it has a whole
+                                panel width to spend, while the grouping rows below are compared down a
+                                column where words would push the figures apart. Bold here and not on the
+                                rail: a headline sits above its own breakdown tables and has to out-weigh
+                                them, where the rail's section label already does that work. */}
+                                <TokenFigure quantities={view.totals} variant="long" bold />
                                 <box height={space.sm} flexShrink={0} />
                                 <text fg={theme().fgSubtle}>{breakdown.header}</text>
                             </box>

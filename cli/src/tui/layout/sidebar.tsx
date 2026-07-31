@@ -28,8 +28,9 @@ import { openThread } from "../hooks/thread.ts";
 import type { AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
 import { getAnchor, getSessionUsageTotalsIncludingRuns, listAnalysisInputs } from "../../db/primary_query.ts";
 import type { LlmUsageTotals } from "../../db/primary_query.ts";
-import { formatTokenFigure, formatTokenFigureLabelled, tokenFigureDetail } from "../../lib/usage_format.ts";
-import type { TokenFigureArm, TokenFigureDetail } from "../../lib/usage_format.ts";
+import { formatTokenFigure, tokenFigureDetail } from "../../lib/usage_format.ts";
+import type { TokenQuantities } from "../../lib/usage_format.ts";
+import { TokenFigure } from "../components/token_figure.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
@@ -201,20 +202,19 @@ const SINGLE_CELL_GLYPHS: ReadonlySet<string> = new Set(
 );
 
 /**
- * What the USAGE section renders: ONE muted message (every absence and every degrade), the whole
- * figure on one line, or the detailed figure — an arm per line with its breakdowns nested beneath it.
+ * What the USAGE section renders: ONE muted message (every absence and every degrade), or the figure.
  *
- * A union rather than a widened row, because the cases carry genuinely different things and both the
- * tone rule and the layout fall out of the tag: a message is always muted, so "nothing to report" can
- * never read as a measurement, while `line` and `detail` are always data-toned. There is deliberately
- * no case for "a figure plus a note" — a section that could show both would let a caller pair a
- * reported number with an absence message and leave the reader to work out which one is the answer.
+ * A union rather than a widened row, because the cases carry genuinely different things and the tone
+ * rule falls out of the tag: a message is always muted, so "nothing to report" can never read as a
+ * measurement, while a figure is always data-toned. There is deliberately no case for "a figure plus a
+ * note" — a section that could show both would let a caller pair a reported number with an absence
+ * message and leave the reader to work out which one is the answer.
  *
- * `line` and `detail` are the same figure in the same (labelled) form and differ only in how many
- * rows it needs: stacking exists to carry the NESTING, and a figure with no cache or reasoning count
- * to nest has nothing for the second row to hold.
+ * ONE figure case, not the two ("all on one line" / "stacked when something nests") this section used
+ * to carry. The two arms now ride the same row whether or not anything nests under them, so the row
+ * count no longer depends on the data and there is nothing left for a second case to select.
  */
-export type UsageSection = { kind: "message"; text: string } | { kind: "line"; text: string } | { kind: "detail"; detail: TokenFigureDetail };
+export type UsageSection = { kind: "message"; text: string } | { kind: "figure"; quantities: TokenQuantities };
 
 /**
  * Map the open session's ledger totals to the USAGE section's render input.
@@ -230,11 +230,9 @@ export type UsageSection = { kind: "message"; text: string } | { kind: "line"; t
  * would crowd the name they annotate.
  *
  * Nothing here adds anything to anything. The cache counts are breakdowns OF input and the reasoning
- * count of output, so the detailed figure NESTS them under the arm they are part of rather than
- * listing them beside it — levelling them is what would invite a reader to add a cached prefix to the
- * total it is already inside. With nothing to nest there is nothing for stacking to express, so the
- * two arms ride one line — the rail's rows are its scarcest resource and this section shares them
- * with five others.
+ * count of output, so the figure NESTS them under the arm they are part of rather than listing them
+ * beside it — levelling them is what would invite a reader to add a cached prefix to the total it is
+ * already inside.
  *
  * Exported for its unit test: "this is the reported pair, never a sum" and "a call with no reported
  * quantities is not a zero" are claims about this mapping, and a character frame holding two numbers
@@ -246,8 +244,7 @@ export function usageSectionOf(totals: LlmUsageTotals): UsageSection {
     if (detail.input === null && detail.output === null) {
         return { kind: "message", text: `${totals.calls} call${totals.calls === 1 ? "" : "s"} ${GLYPHS.middot} no figures reported` };
     }
-    const nests = detail.input?.breakdown.length || detail.output?.breakdown.length;
-    return nests ? { kind: "detail", detail } : { kind: "line", text: formatTokenFigureLabelled(totals) };
+    return { kind: "figure", quantities: totals };
 }
 
 /**
@@ -498,19 +495,9 @@ export function Sidebar(props: SidebarProps) {
         if (threadId === null) return { kind: "message", text: "no open session" };
         return getSessionUsageTotalsIncludingRuns(a.id, threadId).match(usageSectionOf, (): UsageSection => ({ kind: "message", text: "unavailable" }));
     });
-    // The arms to stack, in order, each followed by its own nested breakdowns. An absent arm is dropped
-    // rather than rendered as a zero, which is the same rule the formatter applies to both written forms.
-    const usageArms = createMemo((): readonly TokenFigureArm[] => {
+    const usageQuantities = createMemo((): TokenQuantities | null => {
         const section = usageSection();
-        if (section.kind !== "detail") return [];
-        return [section.detail.input, section.detail.output].filter((arm): arm is TokenFigureArm => arm !== null);
-    });
-    // The whole figure on ONE line, for the case where neither arm has anything nested under it. The
-    // labelled form is 24 cells at `formatTokens`'s top unit against a 37-cell rail, so it never wraps
-    // (pinned in `usage_format.test.ts`).
-    const usageLine = createMemo((): string | null => {
-        const section = usageSection();
-        return section.kind === "line" ? section.text : null;
+        return section.kind === "figure" ? section.quantities : null;
     });
     const usageMessage = createMemo((): string | null => {
         const section = usageSection();
@@ -711,19 +698,20 @@ export function Sidebar(props: SidebarProps) {
                     the section foreground while every absence state here is deliberately muted, and a
                     value that changed rows with its tone would make the rail jump between renders.
 
-                    The LABELLED form (`820.3k in`), not the compact arrows the DATA PROFILE and RUNS
-                    rows carry: this section's entire subject is the number, so it is read rather than
+                    The LONG form (`820.3k in`), not the compact arrows the DATA PROFILE and RUNS rows
+                    carry: this section's entire subject is the number, so it is read rather than
                     scanned and the words cost it nothing — while a labelled figure on a row whose
                     subject is a run would crowd the name it annotates. Both come from the same arm, so
                     the rail and a run row can never disagree about a value, only about its writing.
 
-                    With something to nest, one line per ARM and that arm's breakdowns indented beneath
-                    it — never the two arms on one row with the cache counts under them. Nesting is the
-                    only thing that states "this is a part of that", and cache write / cache read are
-                    parts OF the input total: put them on the same visual level as the arms and the
-                    reader is invited to add a cached prefix to the total it is already inside. With
-                    nothing to nest, the two arms ride one line instead of spending a second rail row
-                    to express a relationship that is not there. */}
+                    The two arms share ONE row, input at the leading edge and output at the trailing
+                    one, with each arm's parts indented beneath it. Two arms are peers the reader is
+                    comparing, so each belongs at an edge it can be found at without scanning; the
+                    indented parts are what state "these are inside that", which is the one thing the
+                    layout must not level. Stacking the arms instead spent a rail row on a relationship
+                    that is not there — the rail's rows are its scarcest resource and this section
+                    shares them with five others. Same shape as the usage dialog's headline, from the
+                    same component, so the two readings of one figure look like one notation. */}
                 <Section label="USAGE" onActivate={props.onOpenUsage}>
                     <Show when={usageMessage()} keyed>
                         {(text: string) => (
@@ -732,29 +720,9 @@ export function Sidebar(props: SidebarProps) {
                             </text>
                         )}
                     </Show>
-                    <Show when={usageLine()} keyed>
-                        {(text: string) => (
-                            <text>
-                                <Fg role="fg">{text}</Fg>
-                            </text>
-                        )}
+                    <Show when={usageQuantities()} keyed>
+                        {(quantities: TokenQuantities) => <TokenFigure quantities={quantities} variant="long" />}
                     </Show>
-                    <For each={usageArms()}>
-                        {(arm) => (
-                            <>
-                                <text>
-                                    <Fg role="fg">{arm.labelled}</Fg>
-                                </text>
-                                <For each={arm.breakdown}>
-                                    {(part) => (
-                                        <text>
-                                            <Fg role="fgMuted">{`  ${part.label} ${part.value}`}</Fg>
-                                        </text>
-                                    )}
-                                </For>
-                            </>
-                        )}
-                    </For>
                 </Section>
 
                 <Section label="MODELS">

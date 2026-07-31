@@ -22,6 +22,7 @@ import { __resetOpenThreadForTest, refreshOpenThread, type ThreadSeams } from ".
 import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
 import { setChatStatus } from "../hooks/status.ts";
 import { entityFigureOf, Sidebar, usageSectionOf } from "./sidebar.tsx";
+import { tokenFigureDetail } from "../../lib/usage_format.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { CortexRunRow, DataProfileStatus, DbError, StepExecutionRow, Thread } from "@inflexa-ai/harness";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
@@ -952,25 +953,27 @@ describe("Sidebar USAGE section", () => {
         // Summing the input side would give 21.4k, the output side 3.8k, and all five 25.2k. None of
         // those is a number any provider reported, which is the whole reason the parts hang UNDER their
         // arm rather than beside it.
-        const section = usageSectionOf({ calls: 4, inputTokens: 12_400, outputTokens: 3_100, cacheReadInputTokens: 9_000, reasoningTokens: 700 });
-        expect(section).toEqual({
-            kind: "detail",
-            detail: {
-                // The LABELLED writing is what this section renders — its whole subject is the number,
-                // so it is read rather than scanned. The compact writing rides along on the same arm,
-                // which is what stops the rail and a run row disagreeing about a value.
-                input: { compact: `${GLYPHS.arrowUp}12.4k`, labelled: "12.4k in", breakdown: [{ label: "cache read", value: "9.0k" }] },
-                output: { compact: `${GLYPHS.arrowDown}3.1k`, labelled: "3.1k out", breakdown: [{ label: "reasoning", value: "700" }] },
-            },
+        const quantities = { calls: 4, inputTokens: 12_400, outputTokens: 3_100, cacheReadInputTokens: 9_000, reasoningTokens: 700 };
+        expect(usageSectionOf(quantities)).toEqual({ kind: "figure", quantities });
+        // The section hands its quantities to the shared figure component unchanged, so what the rail
+        // actually paints is what the notation writes for them: two arms, each carrying its own parts.
+        expect(tokenFigureDetail(quantities)).toEqual({
+            // The LONG writing is what this section renders — its whole subject is the number, so it is
+            // read rather than scanned. The compact writing rides along on the same arm, which is what
+            // stops the rail and a run row disagreeing about a value.
+            input: { compact: `${GLYPHS.arrowUp}12.4k`, labelled: "12.4k in", breakdown: [{ label: "cache read", value: "9.0k" }] },
+            output: { compact: `${GLYPHS.arrowDown}3.1k`, labelled: "3.1k out", breakdown: [{ label: "reasoning", value: "700" }] },
         });
     });
 
-    test("a figure with nothing nested under either arm rides one rail row, in the same labelled form", () => {
-        // Stacking exists to carry the NESTING. With no cache or reasoning count to nest there is
-        // nothing for a second row to express, and a rail row is the scarcest thing this section spends.
-        expect(usageSectionOf({ calls: 4, inputTokens: 12_400, outputTokens: 3_100 })).toEqual({ kind: "line", text: `12.4k in ${GLYPHS.middot} 3.1k out` });
-        // ...and ONE reported part is enough to stack again — the part has to sit under its own arm.
-        expect(usageSectionOf({ calls: 4, inputTokens: 12_400, outputTokens: 3_100, cacheReadInputTokens: 9_000 }).kind).toBe("detail");
+    test("a figure with nothing nested under either arm is the same section case as one that nests", () => {
+        // The two arms share a row whether or not anything hangs under them, so the row count no longer
+        // depends on the data and there is nothing left for a second case to select. This used to be
+        // two kinds (`line` / `detail`), which is exactly the branch the shared component removed.
+        const flat = { calls: 4, inputTokens: 12_400, outputTokens: 3_100 };
+        const nested = { ...flat, cacheReadInputTokens: 9_000 };
+        expect(usageSectionOf(flat)).toEqual({ kind: "figure", quantities: flat });
+        expect(usageSectionOf(nested)).toEqual({ kind: "figure", quantities: nested });
     });
 
     test("no rows at all is a muted absence; rows whose providers reported nothing say so instead", () => {
@@ -982,14 +985,16 @@ describe("Sidebar USAGE section", () => {
     });
 
     test("a quantity the providers never reported contributes no arm rather than a zero", () => {
-        // A half figure is a normal reading here, and the labelled form omits the missing arm exactly
-        // as the compact one does — no ` · 0 out`, which would assert a measurement nobody made.
-        expect(usageSectionOf({ calls: 2, inputTokens: 900 })).toEqual({ kind: "line", text: "900 in" });
-        expect(usageSectionOf({ calls: 2, outputTokens: 1_500 })).toEqual({ kind: "line", text: "1.5k out" });
-        // ...and with a part to nest, the surviving arm still stacks alone rather than gaining a peer.
-        expect(usageSectionOf({ calls: 2, inputTokens: 900, cacheReadInputTokens: 400 })).toEqual({
-            kind: "detail",
-            detail: { input: { compact: `${GLYPHS.arrowUp}900`, labelled: "900 in", breakdown: [{ label: "cache read", value: "400" }] }, output: null },
+        // A half figure is a normal reading here. The arm the provider never reported is `null` — never
+        // a zeroed one, which would assert a measurement nobody made — and the component renders the
+        // absent WORD in the column it would have occupied, so the reader finds the absence where the
+        // figure would have been rather than having to notice a missing edge.
+        expect(tokenFigureDetail({ inputTokens: 900 }).output).toBeNull();
+        expect(tokenFigureDetail({ outputTokens: 1_500 }).input).toBeNull();
+        // ...and the surviving arm still carries its own parts rather than losing them with its peer.
+        expect(tokenFigureDetail({ inputTokens: 900, cacheReadInputTokens: 400 })).toEqual({
+            input: { compact: `${GLYPHS.arrowUp}900`, labelled: "900 in", breakdown: [{ label: "cache read", value: "400" }] },
+            output: null,
         });
     });
 
@@ -1032,13 +1037,20 @@ describe("Sidebar USAGE section", () => {
         const inputRow = lines.findIndex((l) => l.includes("12.4k in"));
         const cacheWriteRow = lines.findIndex((l) => l.includes("cache write"));
         const cacheReadRow = lines.findIndex((l) => l.includes("cache read"));
-        const outputRow = lines.findIndex((l) => l.includes("3.1k out"));
         expect(inputRow).toBeGreaterThanOrEqual(0);
-        // Both cache quantities sit BELOW the input arm and ABOVE the output arm — the nesting is the
-        // only thing that says they are parts of input rather than a third and fourth headline.
+        // The two arms are PEERS and share a row, input at the leading edge and output pushed flush
+        // against the trailing one — each at an edge it can be found at without scanning.
+        expect(lines[inputRow]).toContain("3.1k out");
+        // Trailing rail chrome (the border and the scroll thumb) stripped, so the assertion is about
+        // where the FIGURE lands rather than about what the rail paints around it.
+        expect(lines[inputRow]!.replace(/[^\p{L}\p{N}]+$/u, "").endsWith("3.1k out")).toBe(true);
+        // Both cache quantities sit BELOW that row, indented — the nesting is the only thing that says
+        // they are parts of input rather than a third and fourth headline...
         expect(cacheWriteRow).toBe(inputRow + 1);
         expect(cacheReadRow).toBe(inputRow + 2);
-        expect(outputRow).toBe(inputRow + 3);
+        // Indented relative to the arm they hang under — the indent is what carries "part of", so a
+        // part starting in the arm's own column would read as a third headline.
+        expect(lines[cacheWriteRow]!.indexOf("cache write")).toBeGreaterThan(lines[inputRow]!.indexOf("12.4k in"));
         // ...and never beside the arm, which is the layout that invites adding a cached prefix to the
         // total it is already inside.
         expect(lines[inputRow]).not.toContain("cache");

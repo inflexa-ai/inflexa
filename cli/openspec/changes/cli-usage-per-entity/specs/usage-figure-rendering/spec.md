@@ -11,6 +11,8 @@ Two forms, not one. A figure that is the SUBJECT of the surface it sits on is re
 
 Which form a surface uses is a property of THAT SURFACE and SHALL be stated where the surface is specified, not decided at the call site. Both forms SHALL be built from the same quantities by the same module, so a value can never differ between them — only its presentation.
 
+**Where the figure is a property line or a header rather than a list row, the labelled form applies.** A detail dialog's `usage` line sits among `started` / `completed` / `duration` lines in one `label value` vocabulary and is read at a full panel width; a chat turn's header runs the width of the stream and carries three or four facts. Both are read, not scanned, so both spell the quantities out. The compact form is for what is genuinely a decoration on a row in a list: the rail's DATA PROFILE and RUNS lines, the run block's step rows, picker rows, and the usage dialog's grouping rows — surfaces where several figures are compared down a column, or where a 37-cell rail is the whole budget.
+
 The arrows SHALL come from the shared glyph set, never inlined at a call site, and SHALL be read from the reader's seat — what was sent up, what came back down.
 
 #### Scenario: The two forms carry the same quantities
@@ -24,10 +26,63 @@ The arrows SHALL come from the shared glyph set, never inlined at a call site, a
 - **WHEN** the compact form renders as a row decoration in the sidebar at its design width
 - **THEN** it occupies one line and is not truncated
 
+#### Scenario: A property line spells its quantities out
+
+- **WHEN** a figure renders as a `label value` line among a record's other properties in a detail dialog
+- **THEN** it uses the labelled form, matching the lines above it rather than the rail's decorations
+
 #### Scenario: No surface composes its own figure
 
 - **WHEN** any surface renders recorded quantities
 - **THEN** it does so through one of the two shared forms, with no locally assembled variant
+
+### Requirement: One component renders every figure, in the form its surface names
+
+Every figure the interface paints SHALL come from ONE shared component that takes the quantities and the form to write them in. No surface SHALL lay out its own arms, indent its own breakdowns, or choose its own tones for them.
+
+The written forms already come from one module, which is what stops two surfaces disagreeing about a VALUE. This requirement is the matching rule for PRESENTATION, which is where the more dangerous disagreement lives: a surface free to lay out its own arms is free to level the cache quantities up beside input, and that layout is a standing invitation to add a cached prefix to the total it is already inside. A shared writer with per-surface layout leaves exactly the mistake this notation exists to prevent available at every call site.
+
+The form SHALL be a parameter, so that moving a surface between forms is a one-word change at that surface and cannot drift into a hand-composed variant.
+
+The component SHALL resolve an explicit foreground for every span it paints, including absences. An unresolved foreground renders as opaque white, which scores 12–18:1 against the dark themes and 1.00–1.13:1 against the light ones — legible where it is wrong and invisible where it matters, so a review on the dark default cannot see it.
+
+#### Scenario: A surface changes form without changing layout code
+
+- **WHEN** a surface moves from the compact form to the labelled one
+- **THEN** only the form it names changes, and its layout, tones, and nesting are unchanged
+
+#### Scenario: Every figure is legible on a light theme
+
+- **GIVEN** a theme whose background is pure white
+- **WHEN** a figure renders, including one whose quantities were never reported
+- **THEN** every painted span resolves a foreground from the palette rather than defaulting to white
+
+### Requirement: The two arms of a labelled figure sit at opposite edges of one row
+
+Where the labelled form renders as a block, input SHALL sit at the leading edge and output at the trailing edge of the SAME row, and each arm's nested quantities SHALL be indented beneath their own arm.
+
+The arms are peers the reader is comparing, so each belongs at an edge it can be found at without scanning. Stacking them instead spends a second row on a relationship that is not there — costly on the rail, whose rows are its scarcest resource and which shares them with five other sections — and putting each arm at the head of one half leaves the trailing figure floating mid-panel, adjacent to nothing.
+
+The layout SHALL NOT vary with the data: a figure with nothing nested under either arm occupies the same one row as one with breakdowns under both. A block that changed shape as its quantities changed would make the surface jump between renders and would give the reader a second thing to interpret.
+
+An arm whose quantity was never reported SHALL keep its position and render the absent word there. Dropping the column entirely would leave a half figure looking like a whole one to a reader scanning the trailing edge.
+
+#### Scenario: Output is found at the trailing edge
+
+- **WHEN** a labelled figure renders in a panel or in the rail
+- **THEN** its output arm ends at the trailing edge rather than mid-width
+
+#### Scenario: The nested quantities stay under their own arm
+
+- **GIVEN** a figure carrying cache quantities under input and a reasoning quantity under output
+- **WHEN** it renders
+- **THEN** each nested quantity is indented under the arm it is part of, on a row below the arms
+
+#### Scenario: The shape does not depend on the data
+
+- **GIVEN** one figure with nested quantities and one without
+- **WHEN** both render
+- **THEN** both place their two arms on a single row at the same two edges
 
 ### Requirement: An unreported quantity is omitted, never rendered as zero
 

@@ -1,6 +1,21 @@
 import { GLYPHS } from "./design_system.ts";
 
 /**
+ * Rendered in place of any quantity the provider never reported. Deliberately a WORD, not a dash and
+ * never a `0`: the ledger's central discipline is that an absent figure is an unknown rather than a
+ * measurement, and a surface that renders it as zero erases exactly the distinction the nullable
+ * columns exist to preserve. One spelling in the text report, in every table, and on every TUI
+ * surface, so a reader never has to learn two vocabularies for the same fact.
+ *
+ * It lives beside the two written forms rather than inside either producer because it is part of the
+ * NOTATION — the answer to "what does an absent quantity render as" — and the notation has two
+ * consumers (`inflexa usage` and the TUI) that must not be able to spell it differently. What is
+ * shared is the vocabulary, not the composition: a surface paints label and figure in different theme
+ * roles, which a pre-joined line cannot express.
+ */
+export const NOT_REPORTED = "not reported";
+
+/**
  * The five quantities a token figure can be built from — every one optional, because absence here
  * means "no provider ever reported this" and is a fact the ledger deliberately preserves all the way
  * down from `SUM()` returning NULL for an all-absent group. A formatter that flattened absence to `0`

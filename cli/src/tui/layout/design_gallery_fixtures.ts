@@ -701,3 +701,19 @@ export const mockRunUsage: ReadonlyMap<string, LlmUsageTotals> = new Map([
     ["mock-run-9a3f4c21", { calls: 47, inputTokens: 809_200, outputTokens: 40_400 }],
     ["mock-run-71bd0e55", { calls: 12, inputTokens: 96_100 }],
 ]);
+
+/**
+ * MOCK: what each step of {@link mockRunSteps} consumed, keyed by step id — read per opened run and
+ * handed to the detail dialog as data, the same contract {@link mockRunUsage} has for the run itself.
+ *
+ * `pathway-enrichment` is deliberately ABSENT and `synthesis` deliberately reports nothing: a step
+ * that never ran and a step whose provider measured nothing both carry no figure, and the exhibit has
+ * to show that a run's step list is not a column of figures with holes punched in it. The three
+ * present figures do NOT add up to the run's 809.2k above, which is also deliberate — a run's own
+ * calls (planning, synthesis dispatch) are not attributed to any step.
+ */
+export const mockRunStepUsage: ReadonlyMap<string, LlmUsageTotals> = new Map([
+    ["qc-normalize", { calls: 8, inputTokens: 121_400, outputTokens: 6_200 }],
+    ["fit-de-model", { calls: 21, inputTokens: 402_900, outputTokens: 18_700 }],
+    ["synthesis", { calls: 3 }],
+]);

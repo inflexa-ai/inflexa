@@ -76,6 +76,7 @@ import {
     mockRunSteps,
     mockDataProfile,
     mockRunUsage,
+    mockRunStepUsage,
     mockUsageSnapshot,
     mockUsageSnapshotInputOnly,
     mockUsageSnapshotNoFigures,
@@ -174,12 +175,13 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     />
                 </State>
                 <State n="5" label="long-running run / task">
-                    {/* A step's token figure takes an indented line of its own rather than trailing the
-                        label — measured against the rail mount (State 18), where a trailing figure
-                        soft-wraps mid-token. Steps whose calls reported nothing carry no line at all, so
-                        the queued row below is a single line: absence is silence, never a zero. */}
+                    {/* The WIDE mount: a step's token figure rides its own row, as one more of that
+                        step's facts. The rail mount (State 18) puts it on an indented line instead —
+                        measured there, where a trailing figure soft-wraps mid-token. Steps whose calls
+                        reported nothing carry no figure at all (the queued row): absence is silence,
+                        never a zero. */}
                     <text fg={theme().fgMuted}>
-                        steps carry their token figure on an indented line; a step with nothing reported carries none (the queued row):
+                        steps carry their token figure inline where there is room; a step with nothing reported carries none (the queued row):
                     </text>
                     <RunBlock name={mockRun.name} tag={mockRun.tag} done={mockRun.done} total={mockRun.total} steps={runSteps} />
                 </State>
@@ -516,13 +518,15 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         beside the figure because it is the only thing separating a run whose provider
                         reported nothing from a run that made no calls at all. */}
                     <text fg={theme().fgMuted}>
-                        RunDetailDialog — one picked run's metadata (now including its usage property line) + full step list (done / running / failed / queued):
+                        RunDetailDialog — one picked run's metadata (its usage property line in the LONG form) + full step list (done / running / failed /
+                        queued), each step carrying its own compact figure:
                     </text>
                     <DialogShowcase>
                         <RunDetailDialog
                             run={mockCortexRuns[0]!}
                             loadSteps={() => okAsync<StepExecutionRow[], DbError>(mockRunSteps)}
                             usage={mockRunUsage.get(mockCortexRuns[0]!.runId)}
+                            stepUsage={mockRunStepUsage}
                             onClose={noop}
                         />
                     </DialogShowcase>

@@ -92,12 +92,15 @@ describe("MessageBlock turn-usage figures", () => {
             await setup.renderOnce();
             const frame = setup.captureCharFrame();
             expect(frame).toContain("2.4s");
-            expect(frame).toContain(`${GLYPHS.arrowUp}12.4k`);
-            expect(frame).toContain(`${GLYPHS.arrowDown}3.1k`);
+            // The LONG form here, not the rail's arrows: this header runs the full stream width and is
+            // where a reader first meets the notation, so it spells the two quantities out.
+            expect(frame).toContain("12.4k in");
+            expect(frame).toContain("3.1k out");
+            expect(frame).not.toContain(GLYPHS.arrowUp);
             // Frames carry no color, so the figures' legibility is asserted on the resolved span: the
             // meta line is muted, and an unresolved foreground would paint white — invisible on this
             // pure-#ffffff light theme.
-            const fg = spanFg(setup, `${GLYPHS.arrowUp}12.4k`);
+            const fg = spanFg(setup, "12.4k in");
             expect(fg && parseColor(themes[LIGHT].colors.fgMuted).equals(fg)).toBe(true);
         } finally {
             setup.renderer.destroy();
@@ -117,8 +120,8 @@ describe("MessageBlock turn-usage figures", () => {
                 .find((line) => line.includes("Inflexa"));
             expect(header).toBeDefined();
             expect(header).toContain("2.4s");
-            expect(header).not.toContain(GLYPHS.arrowUp);
-            expect(header).not.toContain(GLYPHS.arrowDown);
+            expect(header).not.toContain(" in");
+            expect(header).not.toContain(" out");
             expect(header).not.toContain("0k");
         } finally {
             setup.renderer.destroy();
