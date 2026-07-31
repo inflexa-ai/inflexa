@@ -88,6 +88,18 @@ describe("normalizeDetail", () => {
         expect(detail!.length).toBeLessThanOrEqual(DETAIL_MAX_LENGTH);
         expect(detail).not.toContain("sk-ant-");
     });
+
+    // The cap counts code points, so it can never cut between the halves of a surrogate pair. A
+    // UTF-16 slice at a fixed index can, and the lone surrogate it leaves paints as a replacement
+    // character — the cap would corrupt the tail it was only supposed to shorten.
+    it("caps without splitting a surrogate pair", () => {
+        // Each emoji is one code point and TWO UTF-16 units, so a unit-indexed cut lands mid-pair.
+        const detail = normalizeDetail("🧬".repeat(200))!;
+
+        expect(Array.from(detail)).toHaveLength(DETAIL_MAX_LENGTH);
+        expect(detail).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+        expect(detail).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    });
 });
 
 describe("computeDetail", () => {
@@ -145,5 +157,39 @@ describe("computeDetail", () => {
 
         expect(computeDetail(nonString, { path: "a.csv" }, log)).toBeUndefined();
         expect(computeDetail(empty, { path: "a.csv" }, log)).toBeUndefined();
+    });
+
+    // `safeParse` RETURNS an error for a rejected value but THROWS for a schema it cannot run
+    // synchronously. An embedder contributes its own tools, so such a schema is reachable — and
+    // an unguarded parse would carry that throw out of the loop and kill the turn, which is the
+    // one thing a description is never allowed to do.
+    it("survives a schema whose validation throws, not just a hook that throws", () => {
+        const { logger, debugs } = recordingLogger();
+        const asyncRefined = defineTool({
+            id: "async_refined",
+            description: "A tool whose schema carries an async refinement.",
+            inputSchema: z.object({ path: z.string() }).refine(async ({ path }) => path.length > 0, "unreachable"),
+            describeCall: ({ path }) => path,
+            execute: async () => ok({}),
+        });
+
+        expect(computeDetail(asyncRefined, { path: "a.csv" }, logger)).toBeUndefined();
+        expect(debugs[0]!.fields).toMatchObject({ tool: "async_refined" });
+    });
+
+    it("survives a schema whose own refinement throws", () => {
+        const { logger, debugs } = recordingLogger();
+        const throwingRefinement = defineTool({
+            id: "throwing_refinement",
+            description: "A tool whose schema throws while validating.",
+            inputSchema: z.object({ path: z.string() }).superRefine(() => {
+                throw new Error("refinement is broken");
+            }),
+            describeCall: ({ path }) => path,
+            execute: async () => ok({}),
+        });
+
+        expect(computeDetail(throwingRefinement, { path: "a.csv" }, logger)).toBeUndefined();
+        expect(debugs[0]!.fields).toMatchObject({ tool: "throwing_refinement", error: "refinement is broken" });
     });
 });

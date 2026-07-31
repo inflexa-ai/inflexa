@@ -122,8 +122,15 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
         // The script is what a reader recognises, and it survives a long
         // invocation whose flags would otherwise push it past the length cap.
         // When nothing in the argv looks like a script, the joined argv is the
-        // best account of the call there is. `env` never rides along — it
-        // carries secrets by design.
+        // best account of the call there is.
+        //
+        // `env` never rides along. It is the channel this tool documents for
+        // secrets, so it is the one field guaranteed to hold them. An argv can
+        // hold one too (`--password …` is a real habit), and the emit-site
+        // redaction only matches the structured, prefixed formats — so the join
+        // is a deliberate trade, not a claim of safety. It is bounded: the detail
+        // is display-only, reaches the session's own user, and is never persisted
+        // or sent to the model.
         describeCall: ({ command }) => scriptToken(command) ?? command.join(" "),
         execute: async ({ command, cwd, env, timeoutSeconds }, ctx) => {
             const execId = `${workflowId}:${stepId}:${nextFunctionId()}`;

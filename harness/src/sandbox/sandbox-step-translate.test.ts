@@ -37,9 +37,12 @@ describe("activityForTool", () => {
     const resolveDetail = createDetailResolver([
         createWriteFileTool({ mutator: {} as never }),
         createEditFileTool({ mutator: {} as never, workspaceFilesystem: {} as never, workingDir: "/a/runs/r1/s1" }),
+        // Deliberately NOT a real tool id. The fallback needs a hookless tool to exercise, and
+        // borrowing a shipped name would assert that tool is hookless — a claim that goes stale the
+        // moment it gains one, while the test keeps passing on the fabricated stand-in.
         defineTool({
-            id: "list_files",
-            description: "Lists files. Declares no hook.",
+            id: "hookless_probe",
+            description: "Declares no hook, so the fallback is what it exercises.",
             inputSchema: z.object({ dir: z.string() }),
             execute: async () => ok({}),
         }),
@@ -62,7 +65,7 @@ describe("activityForTool", () => {
     });
 
     it("names the tool when it declares no hook", () => {
-        expect(activityForTool("list_files", { dir: "output" }, resolveDetail)).toBe("list_files");
+        expect(activityForTool("hookless_probe", { dir: "output" }, resolveDetail)).toBe("hookless_probe");
     });
 
     it("names the tool when no resolver is supplied at all", () => {
