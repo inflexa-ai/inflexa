@@ -162,8 +162,15 @@ export type { ThreadHistory, StoredMessage, MessagePage, RetractOutcome } from "
 // machinery, so an appended run outcome is visible in the transcript instead of silently absent.
 export { syntheticUserMessage, syntheticRecordMessage, isSyntheticUserMessage, isSyntheticRecordMessage } from "./memory/ai-sdk-message-storage.js";
 export { contentToCortexMessages } from "./memory/content-to-cortex.js";
+export type { ContentToCortexOptions } from "./memory/content-to-cortex.js";
 export { createCardResolver } from "./memory/reconstruct-cards.js";
 export type { ToolCardResolver, StoredToolCallForCard } from "./memory/reconstruct-cards.js";
+// The call-detail resolver, the reload counterpart of the `describeCall` hook a
+// tool declares. Built over a tool list the HOST supplies — its own composed
+// roster, `HarnessRuntime.conversationAgent.tools` — because tools contributed
+// through the host-tools seam are invisible to any map the harness holds.
+export { createDetailResolver } from "./tools/detail-resolver.js";
+export type { ToolDetailResolver } from "./tools/detail-resolver.js";
 
 // Chat wire contracts — the Cortex-native chat-stream vocabulary a consumer
 // rendering the stream types against. Two names are deliberately NOT re-exported

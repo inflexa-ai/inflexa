@@ -14,6 +14,8 @@ import type { AgentChat, ChatRequest, PromptCachePolicy } from "../providers/typ
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
 import { isToolError, type Tool, type ToolContext } from "../tools/define-tool.js";
 import { addChatUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
+import { computeDetail, type ToolCallDetail } from "./tool-detail.js";
+import { toolOutcomeForOutputType, type ToolOutcome } from "./tool-outcome.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
 
 export interface AgentFinish {
@@ -176,6 +178,19 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         return { messages, finish: { reason: "denied", cappedOut: false, truncationRecoveries } };
     };
     /**
+     * The call details for one dispatch round, positionally aligned with `calls`.
+     *
+     * Computed once per round and carried onto both the `tool-started` and the
+     * `tool-finished` event, so the pair a host renders as one chip cannot show
+     * two different descriptions of the same call.
+     */
+    const roundDetails = (calls: readonly ToolCallPart[]): (ToolCallDetail | undefined)[] =>
+        calls.map((tu) => {
+            const tool = toolsById.get(tu.toolName);
+            return tool === undefined ? undefined : computeDetail(tool, tu.input, log);
+        });
+
+    /**
      * Fold one dispatch round into the run's counters and the event sink, returning the
      * tools whose results the model will read as errors.
      *
@@ -184,17 +199,24 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
      * it is not a thrown failure, so nothing reports it and the loop simply feeds it
      * back — and a run that ends badly is usually a run whose tool calls were failing.
      */
-    const settleRound = async (calls: readonly ToolCallPart[], results: readonly ToolResultPart[]): Promise<string[]> => {
+    const settleRound = async (
+        calls: readonly ToolCallPart[],
+        results: readonly ToolResultPart[],
+        details: readonly (ToolCallDetail | undefined)[],
+    ): Promise<string[]> => {
         const errored: string[] = [];
         for (let idx = 0; idx < calls.length; idx++) {
             const tu = calls[idx]!;
-            const isError = isErrorOutput(results[idx]!);
+            const outcome = outcomeOf(results[idx]!);
             toolCallCount++;
-            if (isError) {
+            // A denial counts here with the errors: the model reads it as a result
+            // it did not get to act on, which is what these counters describe. The
+            // event keeps the two apart for the user-facing surface.
+            if (outcome !== "ok") {
                 toolErrorCount++;
                 errored.push(tu.toolName);
             }
-            await emit({ type: "tool-finished", source, toolUseId: tu.toolCallId, name: tu.toolName, isError });
+            await emit({ type: "tool-finished", source, toolUseId: tu.toolCallId, name: tu.toolName, outcome, ...detailField(details[idx]) });
         }
         return errored;
     };
@@ -248,11 +270,12 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             }
             const trailing = toolCalls[toolCalls.length - 1]!;
             const earlier = toolCalls.slice(0, -1);
-            for (const tu of earlier) {
-                await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input });
+            const earlierDetails = roundDetails(earlier);
+            for (const [idx, tu] of earlier.entries()) {
+                await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(earlierDetails[idx]) });
             }
             const results = await dispatchTools(earlier, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool);
-            const errored = await settleRound(earlier, results);
+            const errored = await settleRound(earlier, results, earlierDetails);
             results.push(errorResult(trailing, TRUNCATED_TOOL_USE_ERROR));
             // The trailing call was never dispatched, but it reaches the model as an error
             // result like any other — so it counts, or `toolErrors` reports a cleaner run
@@ -277,11 +300,12 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
 
         await emit({ type: "iteration", source, index: i, final: false });
         log.debug("iteration", { iteration: i, tools: toolCalls.map((t) => t.toolName) });
-        for (const tu of toolCalls) {
-            await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input });
+        const details = roundDetails(toolCalls);
+        for (const [idx, tu] of toolCalls.entries()) {
+            await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(details[idx]) });
         }
         const results = await dispatchTools(toolCalls, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool);
-        const errored = await settleRound(toolCalls, results);
+        const errored = await settleRound(toolCalls, results, details);
         if (errored.length > 0) log.debug("tool results returned errors", { iteration: i, tools: errored });
         messages.push({ role: "tool", content: results });
         if (hasDenial(results)) return stopOnDenial(i);
@@ -472,8 +496,8 @@ function isAskRejected(err: unknown): err is AskRejectedError {
 
 /**
  * Map a rejected approval to a model-visible `execution-denied` tool result. The
- * prose is the model's only account of the denial; `isErrorOutput` already
- * treats `execution-denied` as an error result.
+ * prose is the model's only account of the denial; `outcomeOf` reports it as
+ * `denied`, distinct from a fault.
  */
 function deniedResult(toolCall: ToolCallPart, feedback: string | undefined): ToolResultPart {
     const reason =
@@ -488,8 +512,17 @@ function deniedResult(toolCall: ToolCallPart, feedback: string | undefined): Too
     };
 }
 
-function isErrorOutput(result: ToolResultPart): boolean {
-    return result.output.type === "error-text" || result.output.type === "error-json" || result.output.type === "execution-denied";
+function outcomeOf(result: ToolResultPart): ToolOutcome {
+    return toolOutcomeForOutputType(result.output.type);
+}
+
+/**
+ * The optional `detail` field, present only when there is one. Spread rather
+ * than assigned so an undescribed call emits an event with no `detail` key at
+ * all, which is what the contract promises: absent, never empty.
+ */
+function detailField(detail: ToolCallDetail | undefined): { detail?: ToolCallDetail } {
+    return detail === undefined ? {} : { detail };
 }
 
 function hasDenial(results: readonly ToolResultPart[]): boolean {

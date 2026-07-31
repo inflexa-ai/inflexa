@@ -23,6 +23,7 @@
 import type { StepPhase } from "../contracts/chat-parts.js";
 import type { Logger } from "../lib/logger.js";
 import { activityForTool, stepPartId } from "../sandbox/sandbox-step-translate.js";
+import type { ToolDetailResolver } from "../tools/detail-resolver.js";
 
 /**
  * Writes one part to the run-event stream. Injected rather than imported so this
@@ -56,8 +57,19 @@ export interface ProfileActivityEmitter {
     sandboxInit(): Promise<void>;
     /** Reported once the sandbox is ready, covering the gap before the agent's first tool call. */
     agentStarting(): Promise<void>;
-    /** Reported per tool call the profiler agent makes, phrased by the shared translator. */
-    forTool(name: string, input: unknown): Promise<void>;
+    /**
+     * Reported per tool call the profiler agent makes, phrased by the shared
+     * translator.
+     *
+     * `resolveDetail` is built over the profiler agent's own tool list, so the
+     * phrase comes from the called tool's `describeCall` hook. It is passed per
+     * call rather than held by the emitter because the emitter exists before the
+     * agent does — `sandboxInit` is reported before the sandbox the agent's tools
+     * are bound to. The call site supplies a RESOLVER, never a phrase: the
+     * phrases are this capability's observable contract, and a call site that
+     * composed its own is a call site that can drift from it.
+     */
+    forTool(name: string, input: unknown, resolveDetail?: ToolDetailResolver): Promise<void>;
     /** Reported for the vector-store pass that indexes per-file descriptions. */
     indexing(): Promise<void>;
     /** The success terminal. Emitted only after the terminal ledger write has landed. */
@@ -109,7 +121,7 @@ export function createProfileActivityEmitter(write: ActivityWrite, frame: Profil
     return {
         sandboxInit: () => emit("sandbox-init", "Starting sandbox"),
         agentStarting: () => emit("executing", "Running data-profiler"),
-        forTool: (name, input) => emit("executing", activityForTool(name, input)),
+        forTool: (name, input, resolveDetail) => emit("executing", activityForTool(name, input, resolveDetail)),
         indexing: () => emit("indexing", "Indexing input descriptions for search"),
         complete: () => emit("complete", "Profile complete"),
         failed: (reason) => emit("failed", reason),

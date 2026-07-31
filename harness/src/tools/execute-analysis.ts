@@ -203,6 +203,9 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
             "that explicit request is consent and needs no synthetic-plan approval. If computation is merely your suggestion, ask first. " +
             "You never choose the sandbox specialist: ad hoc routing does that automatically. Returns runId with status=in_progress; inspect results on a later turn.",
         inputSchema,
+        // The mode is what a user most needs to see here — an approved plan
+        // running is a different event from an ad hoc request being routed.
+        describeCall: (input) => (input.mode === "plan" ? `plan ${input.planId ?? ""}` : `ad hoc: ${input.request ?? ""}`),
         execute: async (input, ctx) => {
             if (ctx.session.scope.kind !== "analysis") throw new Error("execute_analysis requires an analysis-scoped session");
             if (!ctx.session.auth) throw new Error("execute_analysis: session is missing its auth capability");

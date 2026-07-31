@@ -40,6 +40,9 @@ export function createWriteFileTool(deps: WriteFileDeps) {
             "variant (no I/O), and one escaping the analysis tree returns " +
             "`out_of_scope`.",
         inputSchema: WriteFileInputSchema,
+        // The path only. `content` is a whole file and must never ride a display
+        // channel, which the emit-site length cap enforces regardless.
+        describeCall: ({ path }) => path,
         execute: async ({ path, content }, ctx) => ok(await deps.mutator.writeFile({ path, content, toolName: "write_file", emit: ctx.emit })),
     });
 }

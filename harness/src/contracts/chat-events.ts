@@ -28,6 +28,30 @@ export interface TextDeltaEvent {
     source: EventSource;
 }
 
+/**
+ * How a tool call ended.
+ *
+ * Three states, not a boolean: a user who rejects an approval made a decision,
+ * and reporting that decision as a fault misdescribes it. The loop already
+ * separates the two in its control flow — a denial ends the turn, an error is
+ * one the model reads and retries around — so the observation channel carries
+ * the same distinction. One field rather than two booleans, because two would
+ * admit the impossible "not an error, but denied".
+ */
+export type ToolOutcome = "ok" | "error" | "denied";
+
+/**
+ * One line naming what a tool call is doing, produced by the tool's own
+ * `describeCall` hook and normalized at the emit site.
+ *
+ * Opaque display text. A consumer renders it and derives nothing from it — no
+ * splitting, no keying on separators. The contract is harness-owned so it can
+ * widen when a renderer needs structure; parsing it would recreate the schema
+ * coupling the hook exists to remove. Absent when the tool declares no hook, or
+ * when the detail could not be produced.
+ */
+export type ToolCallDetail = string;
+
 /** A tool call has been dispatched. */
 export interface ToolStartedEvent {
     type: "tool-started";
@@ -35,6 +59,8 @@ export interface ToolStartedEvent {
     toolUseId: string;
     /** The tool name. */
     name: string;
+    /** See {@link ToolCallDetail}. Absent — never empty — when none was produced. */
+    detail?: ToolCallDetail;
     source: EventSource;
 }
 
@@ -43,8 +69,10 @@ export interface ToolFinishedEvent {
     type: "tool-finished";
     toolUseId: string;
     name: string;
-    /** True when the tool produced an `is_error` result. */
-    isError: boolean;
+    /** How the call ended. See {@link ToolOutcome}. */
+    outcome: ToolOutcome;
+    /** The same detail the matching `tool-started` carried. */
+    detail?: ToolCallDetail;
     source: EventSource;
 }
 

@@ -155,6 +155,21 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
             "`outline` from the first call and re-request the specific `sections` you need rather than raising maxChars. " +
             "available: false is an expected outcome, not an error — do not retry it.",
         inputSchema,
+        // One tool, three jobs. The action alone would still render three
+        // different searches identically, so each action names its own subject:
+        // the query, how many articles, or which article.
+        describeCall: (input) => {
+            switch (input.action) {
+                case "search":
+                    return `search ${input.query ?? ""}`;
+                case "details": {
+                    const count = input.pmids?.length ?? 0;
+                    return `details for ${count} ${count === 1 ? "article" : "articles"}`;
+                }
+                case "fulltext":
+                    return `fulltext ${input.pmcId ?? ""}`;
+            }
+        },
         execute: async (input): Promise<Result<PubMedOutput, ToolError>> => {
             switch (input.action) {
                 case "search":

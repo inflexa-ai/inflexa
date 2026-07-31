@@ -175,6 +175,14 @@ export function createUpdateWorkingMemoryTool(workingMemory: WorkingMemoryStore,
             "user's last message, run contents (tables, gene lists, file paths), or anything you can retrieve " +
             "again with inspect_run, read_file, or search.",
         inputSchema,
+        // Four writes in one turn are four identical chips without this. The
+        // entry id rides along on revise/retire because it is the only thing
+        // separating two retirements from the same section.
+        describeCall: (input) => {
+            const operation = input.section === "goal" ? "set" : (input.operation ?? "add");
+            const target = input.id === undefined ? "" : ` ${input.id}`;
+            return `${operation} ${input.section}${target}`;
+        },
         execute: async (input, ctx): Promise<Result<UpdateOutput, ToolError>> => {
             const analysisId = scopeResource(ctx.session.scope).resourceId;
             switch (input.section) {

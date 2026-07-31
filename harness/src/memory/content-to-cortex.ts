@@ -14,7 +14,13 @@
  *
  * Display cards are emitted live over the chat SSE stream but never persisted
  * (storage holds only the AI SDK model-message transcript). `resolveCard`
- * rebuilds them from the persisted tool-call part so they reappear on reload.
+ * rebuilds them from the persisted tool-call part so they reappear on reload,
+ * and `resolveDetail` rebuilds each call's one-line detail the same way.
+ *
+ * A `tool-result` block is not rendered, but it is not ignored either: it is the
+ * only record of how its call ended. The blocks are indexed by `toolCallId`
+ * before conversion so each tool-call part can report its own outcome — without
+ * that pass every reloaded call reported success, including the failed ones.
  *
  * A row that yields no renderable parts (e.g. a `tool`-role message carrying
  * only tool-result continuation parts) is omitted entirely, so the rendered
@@ -23,38 +29,88 @@
 
 import type { ModelMessage } from "ai";
 import type { CortexMessage, CortexPart } from "@inflexa-ai/harness/contracts/message.js";
+import type { ToolOutcome } from "@inflexa-ai/harness/contracts/chat-events.js";
 
+import { toolOutcomeForOutputType } from "../loop/tool-outcome.js";
+import type { ToolDetailResolver } from "../tools/detail-resolver.js";
 import { isInterruptedMessage, isSyntheticRecordMessage, isSyntheticUserMessage } from "./ai-sdk-message-storage.js";
 import type { ToolCardResolver } from "./reconstruct-cards.js";
 import type { StoredMessage } from "./thread-history.js";
 
-function genericToolCall(block: Extract<Exclude<Extract<ModelMessage, { role: "assistant" }>["content"], string>[number], { type: "tool-call" }>): CortexPart {
+/**
+ * The resolvers a caller may supply, as one object.
+ *
+ * An options bag rather than a growing positional list: both are optional, both
+ * are function-typed, and a second positional parameter of the same shape is a
+ * call site that silently does the wrong thing when the two are swapped.
+ */
+export interface ContentToCortexOptions {
+    /** Rebuilds a display card (`data-plan`, `data-presentation`) from a persisted tool call. */
+    readonly resolveCard?: ToolCardResolver;
+    /** Rebuilds a call's one-line detail from its tool name and persisted input. */
+    readonly resolveDetail?: ToolDetailResolver;
+}
+
+type ToolCallBlock = Extract<Exclude<Extract<ModelMessage, { role: "assistant" }>["content"], string>[number], { type: "tool-call" }>;
+
+/**
+ * How each stored call ended, keyed by tool-call id.
+ *
+ * A whole page is indexed before conversion because the pairing crosses rows: a
+ * call rides an `assistant` row and its result rides the `tool` row after it.
+ */
+function indexOutcomes(messages: readonly StoredMessage[]): Map<string, ToolOutcome> {
+    const outcomes = new Map<string, ToolOutcome>();
+    for (const { message } of messages) {
+        const content = message.content;
+        if (typeof content === "string") continue;
+        for (const block of content) {
+            if (block.type !== "tool-result") continue;
+            outcomes.set(block.toolCallId, toolOutcomeForOutputType(block.output.type));
+        }
+    }
+    return outcomes;
+}
+
+function genericToolCall(block: ToolCallBlock, outcomes: Map<string, ToolOutcome>, resolveDetail?: ToolDetailResolver): CortexPart {
+    // No paired result is the shape of a transcript whose `tool` row was never
+    // appended (an aborted turn). Nothing failed, so `ok` is the honest report.
+    const outcome = outcomes.get(block.toolCallId) ?? "ok";
+    const detail = resolveDetail?.(block.toolName, block.input);
     return {
         type: "tool-call",
         toolCallId: block.toolCallId,
         toolName: block.toolName,
         status: "finished",
+        outcome,
+        ...(detail === undefined ? {} : { detail }),
     };
 }
 
-async function blockToPart(block: Exclude<ModelMessage["content"], string>[number], resolveCard?: ToolCardResolver): Promise<CortexPart | null> {
+async function blockToPart(
+    block: Exclude<ModelMessage["content"], string>[number],
+    outcomes: Map<string, ToolOutcome>,
+    options: ContentToCortexOptions,
+): Promise<CortexPart | null> {
     if (block.type === "text") return { type: "text", text: block.text };
     if (block.type === "tool-call") {
-        const card = resolveCard ? await resolveCard({ type: "tool_use", id: block.toolCallId, name: block.toolName, input: block.input } as never) : null;
-        return card ?? genericToolCall(block);
+        const card = options.resolveCard
+            ? await options.resolveCard({ type: "tool_use", id: block.toolCallId, name: block.toolName, input: block.input } as never)
+            : null;
+        return card ?? genericToolCall(block, outcomes, options.resolveDetail);
     }
     // reasoning, tool_result, file, and any other block — not rendered.
     return null;
 }
 
-async function rowToParts(message: StoredMessage["message"], resolveCard?: ToolCardResolver): Promise<CortexPart[]> {
+async function rowToParts(message: StoredMessage["message"], outcomes: Map<string, ToolOutcome>, options: ContentToCortexOptions): Promise<CortexPart[]> {
     const content = message.content;
     if (typeof content === "string") {
         return content.length > 0 ? [{ type: "text", text: content }] : [];
     }
     const parts: CortexPart[] = [];
     for (const block of content) {
-        const part = await blockToPart(block, resolveCard);
+        const part = await blockToPart(block, outcomes, options);
         if (part) parts.push(part);
     }
     return parts;
@@ -64,7 +120,9 @@ async function rowToParts(message: StoredMessage["message"], resolveCard?: ToolC
  * Map stored messages (oldest-first) to `CortexMessage[]`. Rows that produce
  * no renderable parts are dropped, and consecutive assistant rows are coalesced
  * into one message. The first row's `seq` becomes the stable message id.
- * `resolveCard` (optional) reconstructs display cards from `tool_use` blocks.
+ * `options.resolveCard` reconstructs display cards from `tool_use` blocks and
+ * `options.resolveDetail` reconstructs each call's one-line detail; both are
+ * optional and each tool-call part reports its outcome either way.
  * A row carrying the interruption marker sets `interrupted: true` on the message
  * it lands in, including when coalesced into an assistant run.
  *
@@ -83,7 +141,8 @@ async function rowToParts(message: StoredMessage["message"], resolveCard?: ToolC
  * turn's lone user message followed by the next turn's), and merging them would
  * fabricate one bubble from two messages the user sent separately.
  */
-export async function contentToCortexMessages(messages: readonly StoredMessage[], resolveCard?: ToolCardResolver): Promise<CortexMessage[]> {
+export async function contentToCortexMessages(messages: readonly StoredMessage[], options: ContentToCortexOptions = {}): Promise<CortexMessage[]> {
+    const outcomes = indexOutcomes(messages);
     const out: CortexMessage[] = [];
     for (const message of messages) {
         // The loop's truncation nudge carries the `user` role only for the wire
@@ -101,7 +160,7 @@ export async function contentToCortexMessages(messages: readonly StoredMessage[]
         // nothing to indicate why.
         const isRecord = isSyntheticRecordMessage(message.message);
         if (isSyntheticUserMessage(message.message) && !isRecord) continue;
-        const parts = await rowToParts(message.message, resolveCard);
+        const parts = await rowToParts(message.message, outcomes, options);
         // The marker is read before the zero-parts drop so the flag can never be lost to it:
         // a marked row carries an interruption fact regardless of whether it renders any parts.
         // When such a row contributes no bubble of its own, the interruption belongs to the
