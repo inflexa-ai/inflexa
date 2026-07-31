@@ -175,6 +175,30 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         logFinish("warn", "denied", false);
         return { messages, finish: { reason: "denied", cappedOut: false, truncationRecoveries } };
     };
+    /**
+     * Fold one dispatch round into the run's counters and the event sink, returning the
+     * tools whose results the model will read as errors.
+     *
+     * Shared by both dispatch paths so a truncated round and a normal one cannot drift
+     * in what they count. An error tool result is otherwise invisible to every sink —
+     * it is not a thrown failure, so nothing reports it and the loop simply feeds it
+     * back — and a run that ends badly is usually a run whose tool calls were failing.
+     */
+    const settleRound = async (calls: readonly ToolCallPart[], results: readonly ToolResultPart[]): Promise<string[]> => {
+        const errored: string[] = [];
+        for (let idx = 0; idx < calls.length; idx++) {
+            const tu = calls[idx]!;
+            const isError = isErrorOutput(results[idx]!);
+            toolCallCount++;
+            if (isError) {
+                toolErrorCount++;
+                errored.push(tu.toolName);
+            }
+            await emit({ type: "tool-finished", source, toolUseId: tu.toolCallId, name: tu.toolName, isError });
+        }
+        return errored;
+    };
+
     const stopOnResolved = async (i: number): Promise<RunAgentResult> => {
         await emit({ type: "iteration", source, index: i, final: true });
         recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
@@ -228,14 +252,16 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
                 await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input });
             }
             const results = await dispatchTools(earlier, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool);
-            for (let idx = 0; idx < earlier.length; idx++) {
-                const tu = earlier[idx]!;
-                const isError = isErrorOutput(results[idx]!);
-                toolCallCount++;
-                if (isError) toolErrorCount++;
-                await emit({ type: "tool-finished", source, toolUseId: tu.toolCallId, name: tu.toolName, isError });
-            }
+            const errored = await settleRound(earlier, results);
             results.push(errorResult(trailing, TRUNCATED_TOOL_USE_ERROR));
+            // The trailing call was never dispatched, but it reaches the model as an error
+            // result like any other — so it counts, or `toolErrors` reports a cleaner run
+            // than the model actually read. It gets no `tool-finished` event: no
+            // `tool-started` was emitted for it either, and the pair must stay balanced.
+            toolCallCount++;
+            toolErrorCount++;
+            errored.push(trailing.toolName);
+            log.debug("tool results returned errors", { iteration: i, tools: errored });
             messages.push({ role: "tool", content: results });
             if (hasDenial(results)) return stopOnDenial(i);
             if (opts.resolved?.()) return stopOnResolved(i);
@@ -255,22 +281,8 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input });
         }
         const results = await dispatchTools(toolCalls, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool);
-        const erroredTools: string[] = [];
-        for (let idx = 0; idx < toolCalls.length; idx++) {
-            const tu = toolCalls[idx]!;
-            const isError = isErrorOutput(results[idx]!);
-            toolCallCount++;
-            if (isError) {
-                toolErrorCount++;
-                erroredTools.push(tu.toolName);
-            }
-            await emit({ type: "tool-finished", source, toolUseId: tu.toolCallId, name: tu.toolName, isError });
-        }
-        // A tool result the model sees as an error is otherwise invisible to every sink:
-        // it is not a thrown failure, so nothing else reports it, and the loop simply
-        // feeds it back and continues. A run that ends badly is usually a run whose tool
-        // calls were failing, and this is where that shows.
-        if (erroredTools.length > 0) log.debug("tool results returned errors", { iteration: i, tools: erroredTools });
+        const errored = await settleRound(toolCalls, results);
+        if (errored.length > 0) log.debug("tool results returned errors", { iteration: i, tools: errored });
         messages.push({ role: "tool", content: results });
         if (hasDenial(results)) return stopOnDenial(i);
         if (opts.resolved?.()) return stopOnResolved(i);

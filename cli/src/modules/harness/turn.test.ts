@@ -98,6 +98,26 @@ describe("buildChatSession", () => {
 });
 
 describe("runChatTurn", () => {
+    test("hands runAgent a logger, so the loop's account of the turn is not discarded", async () => {
+        // `RunAgentOptions.logger` is optional and falls back to `createNoopLogger()`.
+        // Omitting it is neither a type error nor a runtime error — the loop just stops
+        // reporting its iteration count, stop reason, and tool-error tally, and
+        // `runToTerminal` stops reporting that it salvaged a run. Every sub-agent loop a
+        // turn drives goes dark with it, because hosts filter that traffic off the chat
+        // surface by `callPath` depth and the record is what survives instead.
+        let seen: Parameters<ChatTurnSeams["run"]>[3] | undefined;
+        const captureRun: ChatTurnSeams["run"] = (agent, initial, session, opts) => {
+            seen = opts;
+            return runOk(agent, initial, session, opts);
+        };
+
+        const { history } = recordingHistory();
+        await runWith({ prepare: prepareOk, run: captureRun, history, signal: new AbortController().signal });
+
+        expect(seen?.logger).toBeDefined();
+        expect(seen?.logger?.named).toBeInstanceOf(Function);
+    });
+
     test("ok path persists [userMessage, ...loopOutput] and returns finalText", async () => {
         const { history, appended } = recordingHistory();
         const outcome = await runWith({ prepare: prepareOk, run: runOk, history, signal: new AbortController().signal });

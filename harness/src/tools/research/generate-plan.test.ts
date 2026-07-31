@@ -584,7 +584,36 @@ describe("generatePlan loop-driving tool", () => {
             expect(record.fields.loop).toMatchObject({ finishReason: "stop", salvaged: true, firstFinishReason: "stop", toolCalls: [] });
             // The planner's last words — the single artifact that explains a run which stopped
             // talking instead of calling a terminal tool, and which nothing else preserves.
-            expect(record.fields.plannerFinalProse).toContain("think about this out loud");
+            expect(record.fields.modelAuthored).toMatchObject({ plannerFinalProse: expect.stringContaining("think about this out loud") });
+        });
+
+        it("nests model prose under one key and omits it where something else explains the outcome", async () => {
+            const analysisId = "an-log-prose";
+            await seedAnalysis(pool, analysisId, { dpStatus: "completed", result: RICH_PROFILE, seed: RICH_PROFILE.inputFileIds });
+            // A real planner narrates alongside its tool call, and that narration quotes the
+            // dataset it was handed. On a submitted plan nothing needs it: the terminal tool
+            // already recorded what was decided, so the prose would be model output describing
+            // the user's data sitting in a record that has no use for it.
+            const { tool, logger } = loggedToolFor(
+                scriptedProvider([
+                    makeMessage(
+                        [
+                            textBlock("These are atopic dermatitis skin biopsies; S7 is a QC outlier."),
+                            toolUseBlock("t1", "submit_plan", { plan: validCandidate() }),
+                        ],
+                        "tool_use",
+                    ),
+                ]),
+            );
+
+            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            expect(result.event).toBe("plan_complete");
+
+            const record = outcomeRecord(logger);
+            expect(record.fields).not.toHaveProperty("modelAuthored");
+            expect(JSON.stringify(record.fields)).not.toContain("atopic dermatitis");
+            // The structural account still lands in full — the omission is scoped to prose.
+            expect(record.fields.loop).toMatchObject({ finishReason: "stop", toolCalls: ["submit_plan"] });
         });
 
         it("shows a budget spent on rejected submits as exactly that, not as a silent no-outcome", async () => {
@@ -652,7 +681,12 @@ describe("generatePlan loop-driving tool", () => {
             const blocker = logger.records.filter((r) => r.msg.endsWith("planner reported a blocker"));
             expect(blocker).toHaveLength(1);
             expect(blocker[0]!.level).toBe("warn");
-            expect(blocker[0]!.fields).toMatchObject({ reason: "measurement complete", submitAttempts: 0 });
+            expect(blocker[0]!.fields.submitAttempts).toBe(0);
+            // The reason is the planner's own prose, so it rides under the key an embedder
+            // can act on wholesale. A loose `reason` would also collide with the loop's
+            // structural `reason` (its finish reason) in any sink that filters by name.
+            expect(blocker[0]!.fields).not.toHaveProperty("reason");
+            expect(blocker[0]!.fields.modelAuthored).toMatchObject({ blockerReason: "measurement complete" });
         });
     });
 });

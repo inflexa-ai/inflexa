@@ -94,6 +94,34 @@ function bounded(value: string, max: number): string {
 }
 
 /**
+ * Record key under which free-form MODEL-authored text rides — never a structural
+ * field, only prose a language model wrote.
+ *
+ * The segregation exists because these two things need different handling and are
+ * otherwise indistinguishable in a flat record. A planner's own words routinely
+ * quote the analysis: "atopic dermatitis skin biopsies; sample S7 is a QC outlier"
+ * is a real example. That is the user's data. It belongs in a local diagnostic
+ * file, where the user already holds it — and an embedder shipping records off the
+ * machine needs one rule to keep it there, not a list of field names that goes
+ * stale the moment a new field is added.
+ *
+ * The harness cannot enforce that rule: it does not own the sink. It owns the
+ * declaration, so a host has something to act on. The cli drops this key at its
+ * OTLP export boundary (`cli/src/lib/otel.ts`) while keeping it in the log file.
+ *
+ * Redaction at the logger root was the alternative and is wrong here: it applies
+ * to every stream, so it would blank the field in the local file too — deleting
+ * the one artifact that explains a planner which stopped on prose.
+ */
+const MODEL_AUTHORED_KEY = "modelAuthored";
+
+/** Nest model-authored prose under {@link MODEL_AUTHORED_KEY}, or contribute nothing when there is none. */
+function modelAuthored(fields: Record<string, string | undefined>): LogFields {
+    const present = Object.entries(fields).filter((entry): entry is [string, string] => entry[1] !== undefined && entry[1].length > 0);
+    return present.length === 0 ? {} : { [MODEL_AUTHORED_KEY]: Object.fromEntries(present) };
+}
+
+/**
  * One `submit_plan` rejection, in the shape a log query wants.
  *
  * `codes` separates the two failure families that call for different fixes: a
@@ -578,8 +606,8 @@ function buildInnerTools(
             // user through the conversation agent, which may paraphrase it into something
             // that no longer identifies the missing fact.
             logger.info("planner requested clarification", {
-                question: bounded(input.question, MAX_LOGGED_PROSE_CHARS),
                 submitAttempts: trace.submitAttempts,
+                ...modelAuthored({ clarificationQuestion: bounded(input.question, MAX_LOGGED_PROSE_CHARS) }),
             });
             return ok({ recorded: true as const });
         },
@@ -600,8 +628,8 @@ function buildInnerTools(
             // could not make valid — a validation problem wearing a blocker's clothes. The
             // attempt count is what tells those apart, and only this record carries both.
             logger.warn("planner reported a blocker", {
-                reason: bounded(outcome.reason, MAX_LOGGED_PROSE_CHARS),
                 submitAttempts: trace.submitAttempts,
+                ...modelAuthored({ blockerReason: bounded(outcome.reason, MAX_LOGGED_PROSE_CHARS) }),
             });
         },
         blockedWhen:
@@ -680,7 +708,7 @@ function readTranscript(messages: readonly LoopMessage[]): { toolCalls: string[]
  * answered in prose (`stop`), and a reply cut off at the output-token limit
  * (`length`) — which is why three identical-looking retries taught nobody anything.
  */
-function loopFields(run: RunToTerminalResult): LogFields {
+function loopFields(run: RunToTerminalResult, kind: OutcomeKind): LogFields {
     const transcript = readTranscript(run.messages);
     return {
         loop: {
@@ -692,9 +720,20 @@ function loopFields(run: RunToTerminalResult): LogFields {
             toolCalls: transcript.toolCalls,
             ...(transcript.truncatedToolCalls ? { toolCallsTruncated: true } : {}),
         },
-        ...(transcript.finalProse ? { plannerFinalProse: transcript.finalProse } : {}),
+        ...(PROSE_EXPLAINS_OUTCOME.has(kind) ? modelAuthored({ plannerFinalProse: transcript.finalProse }) : {}),
     };
 }
+
+/**
+ * The endings whose only account is what the planner said last.
+ *
+ * Everywhere else something better already explains the outcome: a terminal tool
+ * recorded its own argument, or a thrown cause carries the fault. Logging the
+ * prose there would put model output describing the user's data into a record
+ * that had no use for it — including on every successful plan, where the closing
+ * text is the planner narrating work that demonstrably went fine.
+ */
+const PROSE_EXPLAINS_OUTCOME: ReadonlySet<OutcomeKind> = new Set<OutcomeKind>(["no_outcome", "loop_error", "timeout"]);
 
 // ── Outcome shaping ─────────────────────────────────────────────────
 
@@ -1068,21 +1107,19 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 runError = err;
             }
 
-            return finish(
-                shapeOutcome({
-                    holder,
-                    runError,
-                    timedOut: signal.aborted && !ctx.signal.aborted,
-                    outerAborted: ctx.signal.aborted,
-                }),
-                {
-                    // A throw leaves no result to read the transcript off, so the cause takes its
-                    // place — `shapeOutcome` folds it into one prose sentence for the model, and
-                    // this is the only place its type and stack survive.
-                    ...(run ? loopFields(run) : {}),
-                    ...(runError ? logger.errorFields(runError) : {}),
-                },
-            );
+            const shaped = shapeOutcome({
+                holder,
+                runError,
+                timedOut: signal.aborted && !ctx.signal.aborted,
+                outerAborted: ctx.signal.aborted,
+            });
+            return finish(shaped, {
+                // A throw leaves no result to read the transcript off, so the cause takes its
+                // place — `shapeOutcome` folds it into one prose sentence for the model, and
+                // this is the only place its type and stack survive.
+                ...(run ? loopFields(run, shaped.kind) : {}),
+                ...(runError ? logger.errorFields(runError) : {}),
+            });
         },
     });
 }

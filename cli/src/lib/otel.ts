@@ -76,9 +76,30 @@ export function initOtel(consented: boolean): boolean {
 }
 
 /**
+ * Record key carrying free-form model-authored prose, dropped before export.
+ *
+ * The harness nests every such field under this one key (see `MODEL_AUTHORED_KEY`
+ * in `harness/src/tools/research/generate-plan.ts`) precisely so a host has a
+ * single rule to apply instead of a field-name list that goes stale. A planner's
+ * closing words quote the analysis it was given — the user's own data — which is
+ * fine in a log file on the user's machine and is not ours to send anywhere else.
+ *
+ * The literal is duplicated rather than imported: this module loads from
+ * `src/index.ts` at startup, and importing a value from `@inflexa-ai/harness`
+ * would pull that whole package (DBOS included) into the entry module graph for
+ * one string. Tests on both sides pin the same literal.
+ */
+const MODEL_AUTHORED_KEY = "modelAuthored";
+
+/**
  * Pino destination stream that forwards each record to the OTel Logs API.
  * Runs in-process (no worker threads, no module patching). Records are
  * already redacted by the root logger before they reach this stream.
+ *
+ * Root redaction is not where model-authored prose is handled: it applies to
+ * every stream, so it would blank the field in the local log file too — deleting
+ * the diagnostic the user needs. It is dropped HERE, at the boundary that leaves
+ * the machine.
  */
 export function createOtelLogStream(): DestinationStream {
     const otelLogger = logs.getLogger("inflexa");
@@ -94,6 +115,7 @@ export function createOtelLogStream(): DestinationStream {
                 const attributes: Record<string, AttributeValue> = {};
                 for (const [key, value] of Object.entries(record)) {
                     if (key === "level" || key === "time" || key === "msg" || value == null) continue;
+                    if (key === MODEL_AUTHORED_KEY) continue;
                     attributes[key] = typeof value === "object" ? JSON.stringify(value) : (value as AttributeValue);
                 }
 
