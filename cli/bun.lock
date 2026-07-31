@@ -7,7 +7,7 @@
       "dependencies": {
         "@clack/core": "1.4.3",
         "@clack/prompts": "^1.7.0",
-        "@inflexa-ai/harness": "0.14.1",
+        "@inflexa-ai/harness": "0.14.2",
         "@inflexa-ai/tsprov": "0.5.1",
         "@opentelemetry/api": "^1.9.1",
         "@opentelemetry/api-logs": "^0.219.0",
@@ -43,7 +43,7 @@
     "eslint-plugin-neverthrow@1.1.4": "patches/eslint-plugin-neverthrow@1.1.4.patch",
   },
   "packages": {
-    "@ai-sdk/anthropic": ["@ai-sdk/anthropic@4.0.15", "", { "dependencies": { "@ai-sdk/provider": "4.0.3", "@ai-sdk/provider-utils": "5.0.10" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-6iVlzqZjqqoHTmgO1WU9id/33pYykIRasWJFAMf1+d+nhju6d7566VRFsOGZ2W2GzgNtzKs8DGsYN7X5/wOGuw=="],
+    "@ai-sdk/anthropic": ["@ai-sdk/anthropic@4.0.25", "", { "dependencies": { "@ai-sdk/provider": "4.0.4", "@ai-sdk/provider-utils": "5.0.16" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-cU61cAdOfgiuJngCPq61FI9pD7KB+gTQm1KQRIwvsf09gGJmliTR8UQdw9x9UWOOqvEYaeuE6NrtXUUCLOjsbQ=="],
 
     "@ai-sdk/gateway": ["@ai-sdk/gateway@4.0.20", "", { "dependencies": { "@ai-sdk/provider": "4.0.3", "@ai-sdk/provider-utils": "5.0.10", "@vercel/oidc": "3.2.0" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-m3PdYs0yqSxswsrEhVj64wDLgFs35Zxl8liLNuWGzE7bwBLF6Mhu0E5rPpDNJbIjyQpA4aMKOOWBfjERw2zvPw=="],
 
@@ -153,7 +153,7 @@
 
     "@humanwhocodes/retry": ["@humanwhocodes/retry@0.4.3", "", {}, "sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ=="],
 
-    "@inflexa-ai/harness": ["@inflexa-ai/harness@0.14.1", "", { "dependencies": { "@ai-sdk/anthropic": "^4.0.15", "@ai-sdk/openai-compatible": "^3.0.10", "@ai-sdk/provider": "^4.0.3", "@ai-sdk/provider-utils": "5.0.10", "@anthropic-ai/sdk": "^0.107.0", "@dbos-inc/dbos-sdk": "^4.23.6", "@kubernetes/client-node": "^1.4.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/core": "^2.9.0", "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0", "@opentelemetry/resources": "^2.9.0", "@opentelemetry/sdk-metrics": "^2.9.0", "@opentelemetry/sdk-trace-base": "^2.9.0", "@opentelemetry/sdk-trace-node": "^2.9.0", "@opentelemetry/semantic-conventions": "^1.43.0", "ai": "^7.0.28", "cheerio": "^1.2.0", "dockerode": "^4.0.12", "fast-xml-parser": "^5.10.0", "hono": "^4.12.30", "js-tiktoken": "^1.0.21", "mime": "^4.1.0", "nanoid": "^5.1.16", "neverthrow": "^8.2.0", "nunjucks": "^3.2.4", "openai": "^4.104.0", "pdf-parse": "^2.4.5", "pg": "^8.22.0", "puppeteer-core": "^23.11.1", "zod": "^4.4.3" } }, "sha512-w74TkeZ2TCJoW1lYJP5hqAXxuNzsfi1waE73bwT2MY+au5q0OvLtjNtMw5dp/2ucnBlUirMmmSYm6wKNys67Sg=="],
+    "@inflexa-ai/harness": ["@inflexa-ai/harness@0.14.2", "", { "dependencies": { "@ai-sdk/anthropic": "^4.0.20", "@ai-sdk/openai-compatible": "^3.0.10", "@ai-sdk/provider": "^4.0.3", "@ai-sdk/provider-utils": "5.0.10", "@anthropic-ai/sdk": "^0.107.0", "@dbos-inc/dbos-sdk": "^4.23.6", "@kubernetes/client-node": "^1.4.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/core": "^2.9.0", "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0", "@opentelemetry/resources": "^2.9.0", "@opentelemetry/sdk-metrics": "^2.9.0", "@opentelemetry/sdk-trace-base": "^2.9.0", "@opentelemetry/sdk-trace-node": "^2.9.0", "@opentelemetry/semantic-conventions": "^1.43.0", "ai": "^7.0.28", "cheerio": "^1.2.0", "dockerode": "^4.0.12", "fast-xml-parser": "^5.10.0", "hono": "^4.12.30", "js-tiktoken": "^1.0.21", "mime": "^4.1.0", "nanoid": "^5.1.16", "neverthrow": "^8.2.0", "nunjucks": "^3.2.4", "openai": "^4.104.0", "pdf-parse": "^2.4.5", "pg": "^8.22.0", "puppeteer-core": "^23.11.1", "zod": "^4.4.3" } }, "sha512-/sXXpr6Uyak0p46mu/5IARKzbI42EWu14dKxLvJJ1fS1eWXT0vl0c0wsAU3SbaqVzaEr6oTGpmDx/zwj0rLxOA=="],
 
     "@inflexa-ai/tsprov": ["@inflexa-ai/tsprov@0.5.1", "", { "dependencies": { "luxon": "^3.7.2" } }, "sha512-F2Q+trPPT0YdAs5aQ8LY6OJ718yaVWYABTg5bN1qNqdIJvjjH/NCThbOA2j5IJvevErhpHJXPEqcixeOHiHzGQ=="],
 
@@ -1006,6 +1006,10 @@
     "yocto-queue": ["yocto-queue@0.1.0", "", {}, "sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q=="],
 
     "zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
+
+    "@ai-sdk/anthropic/@ai-sdk/provider": ["@ai-sdk/provider@4.0.4", "", { "dependencies": { "json-schema": "^0.4.0" } }, "sha512-tbHKNLirllUNF3ZlkCsXnwab2ZV1Sl4b1H/Cp9ruCce15IBmskE8Gwkk0yo9xDWY+jho2of7lVXtwSsyrq7cwQ=="],
+
+    "@ai-sdk/anthropic/@ai-sdk/provider-utils": ["@ai-sdk/provider-utils@5.0.16", "", { "dependencies": { "@ai-sdk/provider": "4.0.4", "@standard-schema/spec": "^1.1.0", "@workflow/serde": "4.1.0", "eventsource-parser": "^3.0.8", "undici": "^7.28.0" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-LWDrmYWkZoAJwMbToUglpR6AmgvtnNtCCGeU9MKlXiSV3Yiu4u73/pVA18sQAAe3kZtCRBY9P31lAfnPekWWyg=="],
 
     "@babel/core/semver": ["semver@6.3.1", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA=="],
 
