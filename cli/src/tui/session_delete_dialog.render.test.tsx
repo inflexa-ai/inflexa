@@ -6,22 +6,21 @@ import type { DbError, Pool, Thread } from "@inflexa-ai/harness";
 import { useKeymapRoot, __resetKeybindCache } from "./keymap.ts";
 import { DialogOverlay, dialogClear, dialogPush } from "./components/dialog/dialog_host.tsx";
 import { WorkspaceContext, type Workspace } from "./contexts/workspace.ts";
-import { deleteSessionFlow, type SessionSeams } from "./commands.tsx";
+import { purgeSessionFlow, type SessionSeams } from "./commands.tsx";
 import { __setBootStateForTest, __resetBootForTest } from "./hooks/boot.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { Analysis } from "../types/analysis.ts";
 import type { Notice } from "./theme.ts";
 
-// The removal confirmation is the one surface in the session flows whose CORRECTNESS IS ITS WORDING.
-// `archiveThread` writes a tombstone: the row and every message survive, and the thread only stops
-// listing. The dialog is nonetheless the app's strongest irreversibility signal — danger chrome plus
-// typing the name back — so what it says has to match what the store does, or the ritual teaches users
-// to discount it everywhere it IS telling the truth. Notice-text assertions cannot cover that: the
-// title, the retention line, and the danger chrome only exist as painted cells.
+// The hard-delete confirmation is the counterpart to the removal one, and the pair is only safe if a
+// user can tell them apart from the panel alone: `purgeThread` drops the row AND every message, with
+// no restore behind it, while removal keeps all of it. Both dialogs carry the same danger chrome and
+// the same type-the-name gate, so the WORDS are the entire difference — and words only exist as
+// painted cells, which no notice-text or props assertion reaches.
 //
-// Rendered rather than asserted on props for a second reason: the retention line is longer than the
-// `md` tier's panel is wide, so it is only correct if the panel grows to fit it. A clipped sentence
-// would read as a promise the flow does not keep.
+// Rendered for a second reason too: the irreversibility line is longer than the `md` tier's panel is
+// wide, so it is correct only if the panel grows to fit it. A sentence clipped before "cannot be
+// undone" would understate the one action in the app that cannot be taken back.
 
 afterEach(() => {
     __resetKeybindCache();
@@ -64,18 +63,18 @@ function seams(notices: Notice[]): SessionSeams {
 }
 
 /**
- * Mount the dialog host under a keymap root and drive the real `deleteSessionFlow` through it, so the
- * dialog is the one production pushes — not a hand-built stand-in that could drift from it.
+ * Mount the dialog host under a keymap root and drive the real `purgeSessionFlow` through it, so the
+ * dialog under assertion is the one production pushes — not a hand-built stand-in that could drift.
  */
-async function openRemoveDialog() {
+async function openDeleteDialog() {
     const notices: Notice[] = [];
     const ws = {
         analysis: ANALYSIS,
         sessionId: "thread-1",
         workingDir: "/work",
         project: null,
-        // The flow's `openDialog` is the workspace capability App wires to `dialogPush`; the test
-        // supplies that same wiring, so the dialog under assertion is the one production mounts.
+        // `openDialog` is the workspace capability App wires to `dialogPush`; the test supplies the
+        // same wiring so the mounted dialog is production's.
         openDialog: dialogPush,
         closeDialog: () => {},
         openSession: () => {},
@@ -97,7 +96,7 @@ async function openRemoveDialog() {
     );
 
     __setBootStateForTest({ phase: "ready", model: "claude-test", connection: { provider: "anthropic", mode: "cliproxy" } });
-    await deleteSessionFlow(ws, seams(notices));
+    await purgeSessionFlow(ws, seams(notices));
     await Promise.resolve();
     await setup.renderOnce();
     return setup;
@@ -110,7 +109,7 @@ async function openRemoveDialog() {
  * from failing other files.
  */
 async function onFrame(assert: (frame: string) => void): Promise<void> {
-    const setup = await openRemoveDialog();
+    const setup = await openDeleteDialog();
     try {
         assert(setup.captureCharFrame());
     } finally {
@@ -118,27 +117,28 @@ async function onFrame(assert: (frame: string) => void): Promise<void> {
     }
 }
 
-describe("the session-removal confirmation says what the store actually does", () => {
-    test("it asks to REMOVE, never to delete", async () => {
+describe("the session-delete confirmation says what the store actually does", () => {
+    test("it asks to DELETE, never to remove", async () => {
         await onFrame((frame) => {
-            expect(frame).toContain("Remove session?");
-            // The word the copy must not carry: nothing here erases anything.
-            expect(frame).not.toContain("Delete session");
+            expect(frame).toContain("Delete session?");
+            // The softer word belongs to the action that keeps the transcript; borrowing it here would
+            // make the two dialogs read as the same thing.
+            expect(frame).not.toContain("Remove session");
         });
     });
 
-    test("it states that the transcript survives, in full — the panel grows rather than clipping it", async () => {
+    test("it states that the messages are erased and that this cannot be undone", async () => {
         await onFrame((frame) => {
-            // The line wraps inside the `md` panel, so assert its halves rather than the whole sentence:
-            // a frame is a grid of cells and the wrap point falls mid-sentence.
-            expect(frame).toContain("It stops appearing in this analysis");
-            expect(frame).toContain("nothing is erased");
+            // The line wraps inside the `md` panel, so assert its halves rather than the whole
+            // sentence: a frame is a grid of cells and the wrap point falls mid-sentence.
+            expect(frame).toContain("Every message in it is erased");
+            expect(frame).toContain("cannot be undone");
+            // The claim that would be false: restore is exactly what does not reach a purged thread.
+            expect(frame).toContain("Restore session cannot bring it back");
         });
     });
 
-    test("it still gates on typing the conversation's own name", async () => {
-        // The retention wording softens the claim; it must not soften the confirmation. A removal the
-        // user cannot undo from the UI still earns the type-the-name gate.
+    test("it gates on typing the conversation's own name", async () => {
         await onFrame((frame) => {
             expect(frame).toContain('Type "Cohort survival questions" to confirm');
         });
