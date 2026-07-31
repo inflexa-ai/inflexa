@@ -128,9 +128,15 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
         // secrets, so it is the one field guaranteed to hold them. An argv can
         // hold one too (`--password …` is a real habit), and the emit-site
         // redaction only matches the structured, prefixed formats — so the join
-        // is a deliberate trade, not a claim of safety. It is bounded: the detail
-        // is display-only, reaches the session's own user, and is never persisted
-        // or sent to the model.
+        // is a deliberate trade, not a claim of safety.
+        //
+        // Know what the trade costs. This tool is sandbox-gated, so the only
+        // surface that reads its detail is a workflow's live-activity line — and
+        // that line goes to the run-event stream through `DBOS.writeStream`. The
+        // detail is therefore DURABLE, and every history read replays it. It
+        // stays inside the session's own analysis and never reaches the model,
+        // but display-only does not mean transient. A secret typed into an argv
+        // outlives the turn that ran it.
         describeCall: ({ command }) => scriptToken(command) ?? command.join(" "),
         execute: async ({ command, cwd, env, timeoutSeconds }, ctx) => {
             const execId = `${workflowId}:${stepId}:${nextFunctionId()}`;

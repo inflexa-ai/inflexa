@@ -180,7 +180,19 @@ export type { ToolDetailResolver } from "./tools/detail-resolver.js";
 // (the barrel's `PlanStep` is the scheduler's `{ id, depends_on }`; a plan card's
 // step type is `NonNullable<PlanPart["steps"]>[number]`). Both stay reachable via
 // the `@inflexa-ai/harness/contracts/*` deep subpaths.
-export type { CortexChatEvent, TextDeltaEvent, ToolStartedEvent, ToolFinishedEvent, FinishEvent, ChatErrorEvent } from "./contracts/chat-events.js";
+// `ToolOutcome` and `ToolCallDetail` ride here beside the two events that carry
+// them: a consumer switching on how a call ended needs to name the union, not
+// spell it `ToolFinishedEvent["outcome"]` at every site.
+export type {
+    CortexChatEvent,
+    TextDeltaEvent,
+    ToolStartedEvent,
+    ToolFinishedEvent,
+    ToolOutcome,
+    ToolCallDetail,
+    FinishEvent,
+    ChatErrorEvent,
+} from "./contracts/chat-events.js";
 export type {
     CortexChatPart,
     PresentationPart,
