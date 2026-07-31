@@ -92,10 +92,9 @@ const ANALYSIS_KEYED_DELETES: readonly { readonly op: string; readonly sql: stri
 
 /**
  * What one invocation reclaimed. It is a report of this call, not a claim that the
- * analysis is now empty. What a re-run does reclaim is what a failed stage left
+ * analysis is now empty: a re-run still reclaims whatever a failed stage left
  * behind, and rows written under a workflow the purge already deleted, which trip
- * their foreign key. What it cannot reclaim is a run that started while the purge
- * ran: nothing is left to name its workflow (see the module note on quiescing).
+ * their foreign key.
  */
 export interface AnalysisPurgeOutcome {
     readonly threads: number;
@@ -122,8 +121,7 @@ export interface AnalysisPurge {
      * Remove the analysis's entire persisted Postgres footprint. Absence is a
      * normal outcome: an unknown or already-purged analysis succeeds with zeroes.
      * Every failure rides the error channel — the operation never reports a purge
-     * it did not achieve. The caller quiesces the analysis first; the purge is not
-     * serialized against a run starting under it.
+     * it did not achieve. The caller quiesces the analysis first (module note).
      */
     purgeAnalysis(analysisId: string): ResultAsync<AnalysisPurgeOutcome, DbError>;
 }

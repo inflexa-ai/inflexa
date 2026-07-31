@@ -697,6 +697,23 @@ describe("session flows", () => {
         expect(t.notices).toEqual([]);
     });
 
+    test("remove and delete both SPEAK when the harness is down, rather than swallowing the keystroke", async () => {
+        // Same bypass the pre-`ready` refusals above cover: the palette gates both commands on a booted
+        // harness, and the leader chord dispatches by id without consulting `enabled`. A silent return
+        // there reads to the user as a dead key on a command the palette lists.
+        for (const flow of [deleteSessionFlow, purgeSessionFlow]) {
+            const t = makeSeams({ runtime: () => null, getThread: () => okAsync(threadRow()) });
+            const w = sessionScope(ANALYSIS, "thread-1");
+
+            await flow(w.ws, t.seams);
+
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]!.text).toContain("harness is not running");
+            // Nothing was read and nothing was confirmed: the refusal is the whole of what happened.
+            expect(w.dialogs()).toBe(0);
+        }
+    });
+
     test("delete opens the confirmation on a live row, naming the conversation to type back", async () => {
         const t = makeSeams({ getThread: () => okAsync(threadRow()) });
         const w = sessionScope(ANALYSIS, "thread-1");
@@ -1119,6 +1136,10 @@ describe("analysis delete ladder", () => {
         // tree at the live location and truthfully reports the analysis had no files on disk, so a user
         // who never saw this notice would never learn the artifacts were moved, or where.
         expect(l.notices.at(-1)?.text).toContain(ARCHIVE_PATH);
+        // The stage, not just the class. A toast is this flow's only channel and carries no `cause`, so
+        // a notice naming `query_failed` alone would leave the user nothing to distinguish a refused id
+        // from a ledger delete that dropped its connection — and nothing to act on but a re-run.
+        expect(l.notices.at(-1)?.text).toContain(`${pgErr.type} at ${pgErr.op}`);
         expect(w.quits()).toBe(0);
     });
 

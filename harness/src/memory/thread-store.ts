@@ -257,6 +257,13 @@ export function createThreadStore(pool: Pool): ThreadStore {
         // a total drawn from a different predicate than the page's would report a
         // size the caller can never page to. Writing the row scope once — one of
         // two fixed fragments, never caller text — makes them unable to disagree.
+        //
+        // The widened scope is the one that cannot use the table's index, which is
+        // partial on `deleted_at IS NULL`: dropping the predicate drops the index
+        // with it, so an archived-inclusive listing scans. Deliberate — the live
+        // listing is the hot path and keeps its index, while widening is a rare,
+        // user-initiated recovery. A deployment that made it routine would want a
+        // plain `analysis_id` index beside the partial one, not this listing changed.
         const scope = input.includeArchived ? "analysis_id = $1" : "analysis_id = $1 AND deleted_at IS NULL";
 
         return tryQuery("thread-store.listThreads.count", () =>
