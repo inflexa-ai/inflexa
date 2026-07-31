@@ -26,8 +26,10 @@ import { type Histogram, metrics } from "@opentelemetry/api";
 import { ResultAsync, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
+import type { TokenUsageRollup } from "../contracts/usage.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
+import { hasReportedUsage } from "../loop/metrics.js";
 import { countTokens } from "./count-tokens.js";
 import {
     HARNESS_PROVIDER_NAMESPACE,
@@ -54,6 +56,15 @@ export interface StoredMessage {
     readonly seq: number;
     readonly envelope: StoredMessageEnvelope;
     readonly message: ModelMessage;
+    /**
+     * What providers reported for the whole TURN this row completed — present
+     * only on the last assistant row of a turn appended with a rollup, absent
+     * everywhere else. Not a per-row figure, and unrelated to the `tokens` count
+     * `loadRecent` windows by: that is an offline estimate stamped on every row,
+     * this is a provider's own report (see the `reported_usage` column comment in
+     * the state-init DDL).
+     */
+    readonly usage?: TokenUsageRollup;
 }
 
 /**
@@ -86,8 +97,18 @@ export interface ThreadHistory {
     /**
      * Append one conversation turn — every message written in a single
      * transaction with a `seq` monotonically increasing per thread.
+     *
+     * `turnUsage` is the turn's reported rollup, as `AgentFinish.turnUsage`
+     * carries it out of the loop and the `finish` event carries it to a live
+     * surface. It is stored on the LAST assistant message of the turn — the row a
+     * reader associates with the reply — so a reloaded transcript renders the
+     * figure the live turn showed. Optional at every layer: omitting it, and
+     * supplying one that reports no quantity at all, both leave the row without
+     * one, because a turn that reported nothing must not read back as a turn that
+     * cost zero. A turn writing no assistant message stores none and still
+     * succeeds — there is no row on which the figure would mean anything.
      */
-    appendTurn(threadId: string, messages: readonly ModelMessage[]): ResultAsync<void, DbError>;
+    appendTurn(threadId: string, messages: readonly ModelMessage[], turnUsage?: TokenUsageRollup): ResultAsync<void, DbError>;
     /**
      * Return a recent-turns window that fits `tokenBudget`, oldest-first,
      * snapped to a valid AI SDK model-message sequence. The window START advances
@@ -265,8 +286,19 @@ export const EVICTION_BLOCK_TURNS = 4;
  * provisioned by the project's state-init DDL.
  */
 export function createThreadHistory(pool: Pool): ThreadHistory {
-    function appendTurn(threadId: string, messages: readonly ModelMessage[]): ResultAsync<void, DbError> {
+    function appendTurn(threadId: string, messages: readonly ModelMessage[], turnUsage?: TokenUsageRollup): ResultAsync<void, DbError> {
         if (messages.length === 0) return okVoid();
+        // A rollup that reports no quantity is stored as absent, not as a rollup of
+        // absences, so "no figure" has exactly one representation in storage.
+        // `hasReportedUsage` is the loop's own predicate for the same question,
+        // reused rather than restated so the write and the loop cannot drift.
+        const rollup = hasReportedUsage(turnUsage) ? JSON.stringify(turnUsage) : null;
+        // The rollup describes the turn, and the assistant reply is the row a reader
+        // associates with the answer. The LAST assistant row, not any of them: a
+        // serial-tool turn writes one assistant row per step and only the last ends
+        // the turn. -1 (a turn that persisted no reply — an abort before any output)
+        // matches no index below, so nothing is written and the append still succeeds.
+        const rollupRow = messages.reduce((last, m, i) => (m.role === "assistant" ? i : last), -1);
         return withTransaction(pool, "thread-history.appendTurn", (client) =>
             // Serialize concurrent appends on this thread — without the lock, two
             // transactions can both read the same MAX(seq) and collide on the
@@ -291,13 +323,15 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                             chain.andThen(() =>
                                 tryMutation("thread-history.appendTurn.insert", () =>
                                     client.query(
-                                        // `::json`, never `::jsonb` — see the column comment in the state-init DDL.
-                                        `INSERT INTO messages (thread_id, seq, message_envelope, tokens)
-                     VALUES ($1, $2, $3::json, $4)
+                                        // `message_envelope::json`, never `::jsonb`, and `reported_usage::jsonb`,
+                                        // never `::json` — see the column comments in the state-init DDL.
+                                        `INSERT INTO messages (thread_id, seq, message_envelope, tokens, reported_usage)
+                     VALUES ($1, $2, $3::json, $4, $5::jsonb)
                      ON CONFLICT (thread_id, seq) DO UPDATE
                        SET message_envelope = EXCLUDED.message_envelope,
-                           tokens = EXCLUDED.tokens`,
-                                        [threadId, startSeq + i, serializeEnvelope(message), countTokens(message.content)],
+                           tokens = EXCLUDED.tokens,
+                           reported_usage = EXCLUDED.reported_usage`,
+                                        [threadId, startSeq + i, serializeEnvelope(message), countTokens(message.content), i === rollupRow ? rollup : null],
                                     ),
                                 ).map(() => undefined),
                             ),
@@ -362,6 +396,12 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                 // ORDER BY name to the output column), sorting the bigint as text:
                 // "10" before "2". Scrambled order splits a tool-call/tool-result pair
                 // across an intervening turn. The qualified name forces the bigint column.
+                //
+                // `reported_usage` is deliberately NOT selected. Windowing budgets on
+                // `tokens` — an offline estimate every row carries — and a turn that
+                // reported nothing has no rollup at all, so budgeting on the rollup
+                // would silently stop evicting on exactly those threads. The two are
+                // different measurements sharing a unit; see the column comments.
                 `SELECT seq::text AS seq, message_envelope, tokens
          FROM messages WHERE thread_id = $1 ORDER BY messages.seq ASC`,
                 [threadId],
@@ -432,12 +472,17 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
             const { rows } = await pool.query<{
                 seq: string;
                 message_envelope: unknown;
+                // pg parses a `jsonb` column into a JS value. The cast on the way out is
+                // sound because this column has exactly one writer — `appendTurn` above,
+                // from a `TokenUsageRollup` — and null is preserved as null by the
+                // `?? undefined` below rather than read as a rollup.
+                reported_usage: TokenUsageRollup | null;
             }>(
                 // ORDER BY must qualify `messages.seq` — a bare `seq` would bind to the
                 // `seq::text AS seq` output alias (Postgres resolves an unqualified
                 // ORDER BY name to the output column), sorting the bigint as text:
                 // "10" before "2". The qualified name forces the bigint column.
-                `SELECT seq::text AS seq, message_envelope
+                `SELECT seq::text AS seq, message_envelope, reported_usage
          FROM messages WHERE thread_id = $1
          ORDER BY messages.seq ASC`,
                 [threadId],
@@ -445,7 +490,9 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
 
             const stored: StoredMessage[] = rows.map((r) => {
                 const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
-                return { seq: Number(r.seq), envelope, message: envelope.message };
+                // Spread rather than `usage: r.reported_usage ?? undefined`, so a row with
+                // no rollup carries no `usage` KEY at all — absent, not present-and-undefined.
+                return { seq: Number(r.seq), envelope, message: envelope.message, ...(r.reported_usage === null ? {} : { usage: r.reported_usage }) };
             });
 
             const turns = groupTurns(stored, (row) => isGenuineUserStart(row.message));

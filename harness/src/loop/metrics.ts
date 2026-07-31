@@ -31,7 +31,7 @@
 
 import { type Counter, type Histogram, metrics } from "@opentelemetry/api";
 
-import { TOKEN_USAGE_FIELDS, type TokenUsageField } from "../contracts/usage.js";
+import { TOKEN_USAGE_FIELDS, type TokenUsageField, type TokenUsageRollup } from "../contracts/usage.js";
 import type { ChatUsage } from "../providers/types.js";
 
 interface Instruments {
@@ -119,8 +119,13 @@ export function addChatUsage(total: AgentRunUsage, usage: ChatUsage | undefined)
  * Whether anything was ever folded in. An accumulator no call reported into
  * stays empty, and the surfaces that carry a rollup must then carry none at
  * all rather than an all-zero figure.
+ *
+ * It also accepts the wire-shaped `TokenUsageRollup`, so a surface that RECEIVES
+ * a rollup (thread history storing a turn's) decides "reported nothing" with the
+ * same predicate the loop used to decide whether to emit one. Restating the rule
+ * at either end is how the two would come to disagree.
  */
-export function hasReportedUsage(usage: AgentRunUsage | ChatUsage | undefined): boolean {
+export function hasReportedUsage(usage: AgentRunUsage | ChatUsage | TokenUsageRollup | undefined): boolean {
     if (usage === undefined) return false;
     return Object.values(usage).some((value) => value !== undefined);
 }

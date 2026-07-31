@@ -9,6 +9,7 @@
 
 import type { ToolCallDetail, ToolOutcome } from "./chat-events.js";
 import type { CortexChatPart } from "./chat-parts.js";
+import type { TokenUsageRollup } from "./usage.js";
 
 /** A plain assistant/user text run. */
 export interface TextPart {
@@ -51,4 +52,16 @@ export interface CortexMessage {
      * existing consumer is unaffected.
      */
     interrupted?: boolean;
+    /**
+     * What providers reported for the TURN this message completed — the same
+     * figure `FinishEvent.turnUsage` carries to a live surface, so a reloaded
+     * transcript renders what the live turn rendered. Carried only on the
+     * assistant message that ended a turn.
+     *
+     * Absent means no figure was reported: a turn whose calls reported nothing, a
+     * message stored before rollups were persisted, or any message that did not
+     * end a turn. Never an all-zero rollup — "spent nothing" and "was told
+     * nothing" stay distinguishable.
+     */
+    usage?: TokenUsageRollup;
 }
