@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { createConfiguredAiSdkProvider } from "@inflexa-ai/harness";
+import { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "@inflexa-ai/harness";
 import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps } from "@inflexa-ai/harness";
 
 import { makeSession } from "./__fixtures__/session.js";
@@ -46,10 +46,10 @@ function openaiJson(text: string, model: string): Response {
  * provider bound at construction (the request itself carries no model field),
  * and replies with a response echoing that body's `model`.
  */
-function capturingFetch(respond: (text: string, model: string) => Response): { fetch: FetchLike; bodies: Array<{ model?: string }> } {
-    const bodies: Array<{ model?: string }> = [];
+function capturingFetch(respond: (text: string, model: string) => Response): { fetch: FetchLike; bodies: Array<{ model?: string; max_tokens?: number }> } {
+    const bodies: Array<{ model?: string; max_tokens?: number }> = [];
     const fetch: FetchLike = async (_input, init) => {
-        const body = init?.body ? (JSON.parse(String(init.body)) as { model?: string }) : {};
+        const body = init?.body ? (JSON.parse(String(init.body)) as { model?: string; max_tokens?: number }) : {};
         bodies.push(body);
         return respond("Hello, world", body.model ?? "");
     };
@@ -127,5 +127,67 @@ describe("provider configuration front door", () => {
         // Same shared connection config; each provider instance's request carries the
         // model it was constructed with — no per-request model.
         expect(cap.bodies.map((body) => body.model)).toEqual(["model-a", "model-b"]);
+    });
+});
+
+describe("output-token ceiling", () => {
+    /** Run one chat over a capturing fetch and report the `max_tokens` that reached the wire. */
+    async function wireMaxTokens(
+        respond: (text: string, model: string) => Response,
+        build: (fetch: FetchLike) => AiSdkProviderConfig,
+    ): Promise<number | undefined> {
+        const cap = capturingFetch(respond);
+        const provider = createConfiguredAiSdkProvider({ config: build(cap.fetch), resolveBilling: async () => ({}) });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        return cap.bodies[0]?.max_tokens;
+    }
+
+    const anthropicModel =
+        (model: string, maxOutputTokens?: number) =>
+        (fetch: FetchLike): AiSdkProviderConfig => ({
+            kind: "anthropic",
+            baseURL: "http://models.local/anthropic",
+            apiKey: "test-key",
+            model,
+            fetch,
+            ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+        });
+
+    it("sends the default ceiling for a model the SDK's capability table does not know", async () => {
+        // The regression: an unrecognized id takes the SDK's 4096 fallback when
+        // nothing names a ceiling, truncating plan-sized tool calls mid-payload.
+        expect(await wireMaxTokens(anthropicJson, anthropicModel("claude-opus-99-future"))).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
+    });
+
+    it("lets the SDK clamp the default down to a known model's real limit", async () => {
+        // What makes a high default safe: it never reaches a model the SDK knows
+        // to have a smaller ceiling.
+        expect(await wireMaxTokens(anthropicJson, anthropicModel("claude-opus-4-1"))).toBe(32_000);
+    });
+
+    it("recognizes claude-opus-5, clamping an over-large ceiling to its real limit", async () => {
+        // Guards the dependency floor: before @ai-sdk/anthropic 4.0.20 this id was
+        // unknown, so it took the 4096 fallback and skipped the clamp — 200000 would
+        // ride out verbatim instead of landing on the model's real 128k.
+        expect(await wireMaxTokens(anthropicJson, anthropicModel("claude-opus-5", 200_000))).toBe(128_000);
+    });
+
+    it("honours a per-config override on the openai-compatible arm", async () => {
+        // The escape hatch for servers that validate prompt + max_tokens against a
+        // small context window.
+        expect(
+            await wireMaxTokens(openaiJson, (fetch) => ({
+                kind: "openai-compatible",
+                name: "self-hosted",
+                baseURL: "http://models.local/v1",
+                apiKey: "test-key",
+                model: "local-tool-model",
+                fetch,
+                maxOutputTokens: 8_192,
+            })),
+        ).toBe(8_192);
     });
 });

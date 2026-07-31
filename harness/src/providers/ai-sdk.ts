@@ -24,11 +24,46 @@ export const RETRY_INITIAL_DELAY_MS = 2_000;
 export const RETRY_BACKOFF_FACTOR = 2;
 export const RETRY_MAX_DELAY_MS = 30_000;
 
+/**
+ * Output-token ceiling requested when a config names none — a floor against a
+ * provider default, not a target. `@ai-sdk/anthropic` resolves an unset value
+ * from a capability table that lags Anthropic's releases and falls back to 4096
+ * for ids it does not know, so the newest models silently truncate mid
+ * tool-call. The SDK clamps this down per known model (opus-4-x to 32k,
+ * claude-3-haiku to 4096), so it cannot over-request one it recognizes.
+ *
+ * Lower it per-config for servers that validate `prompt + max_tokens <= context`
+ * (vLLM and similar) against a small-context model.
+ */
+export const DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
+
+/**
+ * Point the AI SDK's warning logger at the harness `Logger`.
+ *
+ * The SDK writes warnings itself — `process.emitWarning`, else `console.warn` —
+ * and offers only this process-global hook to redirect them. Left alone it
+ * bypasses the Logger seam entirely and lands on the stdout a TUI host owns;
+ * `maxOutputTokens` makes that routine, since the SDK warns on every request
+ * whose ceiling it clamps. Installed once: the handler is global, and every
+ * provider over a boot shares one sink.
+ */
+function routeSdkWarningsTo(logger: Logger): void {
+    const g = globalThis as { AI_SDK_LOG_WARNINGS?: unknown };
+    if (g.AI_SDK_LOG_WARNINGS !== undefined) return;
+    g.AI_SDK_LOG_WARNINGS = (options: { warnings: readonly unknown[]; provider?: string; model?: string }) => {
+        for (const warning of options.warnings) {
+            logger.warn("ai sdk warning", { provider: options.provider, model: options.model, warning });
+        }
+    };
+}
+
 export interface AiSdkProviderDeps {
     readonly model: LanguageModel;
     readonly resolveBilling: ResolveBilling;
     readonly capabilities?: Partial<ProviderCapabilities>;
     readonly logger?: Logger;
+    /** Output-token ceiling per request. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. */
+    readonly maxOutputTokens?: number;
 }
 
 /**
@@ -49,6 +84,8 @@ export type AiSdkProviderConfig =
           readonly model: string;
           readonly fetch?: FetchLike;
           readonly capabilities?: Partial<ProviderCapabilities>;
+          /** Output-token ceiling per request. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. */
+          readonly maxOutputTokens?: number;
       }
     | {
           readonly kind: "openai-compatible";
@@ -58,6 +95,8 @@ export type AiSdkProviderConfig =
           readonly model: string;
           readonly fetch?: FetchLike;
           readonly capabilities?: Partial<ProviderCapabilities>;
+          /** Output-token ceiling per request. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. */
+          readonly maxOutputTokens?: number;
       };
 
 export interface ConfiguredAiSdkProviderDeps {
@@ -297,6 +336,8 @@ function sanitizeMessages(messages: readonly ModelMessage[]): ModelMessage[] {
 export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const capabilities: ProviderCapabilities = { toolCalling: deps.capabilities?.toolCalling ?? true };
     const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
+    const maxOutputTokens = deps.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    routeSdkWarningsTo(logger);
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
@@ -312,6 +353,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         messages: sanitizeMessages(req.messages),
                         tools: req.tools,
                         toolChoice: req.toolChoice ?? "auto",
+                        maxOutputTokens,
                         stopWhen: [],
                         // The harness envelope owns retries; leaving the SDK default in
                         // place would multiply attempts (10 outer × 3 inner).
@@ -349,6 +391,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     messages: sanitizeMessages(req.messages),
                     tools: req.tools,
                     toolChoice: req.toolChoice ?? "auto",
+                    maxOutputTokens,
                     stopWhen: [],
                     maxRetries: 0,
                     headers,
@@ -431,6 +474,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             resolveBilling: deps.resolveBilling,
             capabilities: config.capabilities,
             logger: deps.logger,
+            ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
         });
     }
 
@@ -445,5 +489,6 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         resolveBilling: deps.resolveBilling,
         capabilities: config.capabilities,
         logger: deps.logger,
+        ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
     });
 }
