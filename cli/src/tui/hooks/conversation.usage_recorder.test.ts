@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AgentChat, AgentDefinition, AgentSession, LlmUsageRecord, ModelMessage, Pool, UsageRecorder } from "@inflexa-ai/harness";
 
 import { resetHotState, send, type SendSeams } from "./conversation.ts";
+import { __resetNoticesForTest } from "./notice.ts";
 import { runChatTurn, type ChatTurnSeams } from "../../modules/harness/turn.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 
@@ -47,7 +48,14 @@ const userMessage: ModelMessage = { role: "user", content: "hi" };
 const prepareOk: ChatTurnSeams["prepare"] = () => Promise.resolve({ kind: "ok", messages: [userMessage], userMessage });
 
 beforeEach(() => resetHotState());
-afterEach(() => resetHotState());
+afterEach(() => {
+    resetHotState();
+    // The rejecting `pool` above makes every turn here fail its append, and `send` answers that with a
+    // 4-second warn toast. `notice.ts` is a module singleton whose timer outlives this file, so under a
+    // non-isolated `bun test` (what CI runs) the toast is still showing when the next file's first test
+    // reads the channel — and a queued notice waits behind a live timer rather than taking the slot.
+    __resetNoticesForTest();
+});
 
 describe("the TUI chat turn's runAgent options carry the runtime's usage recorder", () => {
     test("the options the production path composes name the booted runtime's own realization", async () => {
