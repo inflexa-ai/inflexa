@@ -151,6 +151,15 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(conversation.skillsDir).toBe(skillsDir);
             expect(conversation.createPreviewPublisher).toBeInstanceOf(Function);
             expect(conversation.runLauncher.launch).toBeInstanceOf(Function);
+            // The Logger seam reaches every conversation tool that takes one — `generate_plan`
+            // above all, which drives a whole sub-agent loop and writes no ledger row, so its
+            // records are the only account of an invocation. `ConversationAgentDeps.logger` is
+            // OPTIONAL and falls back to `createNoopLogger()`, so omitting this field is not a
+            // type error and not a runtime error: it silently discards every diagnostic. That
+            // is how a planner failing for nine minutes produced an empty log, and this
+            // assertion is what makes the omission fail loudly instead.
+            expect(conversation.logger).toBeDefined();
+            expect(conversation.logger?.named).toBeInstanceOf(Function);
             // The embedder hands the harness its skills root and its own no-op
             // telemetry (the CLI owns OTel); the boot handle owns skills validation,
             // state init, the connection budget, assemble, and launch itself.
