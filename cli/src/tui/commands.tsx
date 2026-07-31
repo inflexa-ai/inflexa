@@ -58,7 +58,15 @@ import { canonicalPath } from "../modules/anchor/marker.ts";
 import { loadAuth, describeAuthError } from "../modules/auth/auth.ts";
 import { decodeIdTokenClaims } from "../modules/auth/whoami.ts";
 import { createProject, deleteAnalysis, deleteProject, updateAnalysisProject } from "../db/primary_mutation.ts";
-import { listProjects, listAnalysisInputs, countAnalysesByProject } from "../db/primary_query.ts";
+import {
+    listProjects,
+    listAnalysisInputs,
+    countAnalysesByProject,
+    listAnalysisUsageByRun,
+    listUsageTotalsByAnalysis,
+    type LlmUsageTotals,
+} from "../db/primary_query.ts";
+import { formatTokenFigure } from "../lib/usage_format.ts";
 import type { Analysis, AnalysisInput } from "../types/analysis.ts";
 import type { Project } from "../types/project.ts";
 
@@ -613,13 +621,36 @@ function NewAnalysisInputsDialog(props: { name: Str256 }): JSX.Element {
     );
 }
 
+/**
+ * The analysis switcher — and the ONE place the interface reports a whole-analysis total.
+ *
+ * Every other surface reports the entity it names or the open working context; this is where analyses
+ * are compared, which is the only question an analysis-wide total answers. Its figures come from ONE
+ * batched ledger read over the listed ids (never a query per drawn row) against the CLI's own local
+ * SQLite, so the picker still opens with the harness runtime cold.
+ *
+ * A failed usage read degrades to no figures at all: a picker that cannot switch analyses because a
+ * bookkeeping read failed is a far worse outcome than a picker with no figures.
+ */
 function SwitchAnalysisDialog(): JSX.Element {
     const ws = useWorkspace();
     const analyses = listRecentAnalyses().match(
         (as) => as,
         () => [],
     );
-    const items = analyses.map((a) => ({ value: a, title: a.name, description: a.slug }));
+    const usageByAnalysis = listUsageTotalsByAnalysis(analyses.map((a) => a.id)).unwrapOr(new Map<string, LlmUsageTotals>());
+    const items = analyses.map((a) => {
+        const totals = usageByAnalysis.get(a.id);
+        return {
+            value: a,
+            title: a.name,
+            // An analysis with nothing recorded carries NO hint rather than a zeroed one: absent means
+            // not-reported everywhere the ledger is read, and `formatTokenFigure` returns the empty
+            // string for exactly that state.
+            hint: totals ? formatTokenFigure(totals) || undefined : undefined,
+            description: a.slug,
+        };
+    });
     return (
         <SelectDialog
             title="Switch analysis"
@@ -1866,6 +1897,14 @@ async function openRunsPicker(ctx: Workspace): Promise<void> {
             ),
         ),
     );
+    // Every drawn run's figures in ONE local-ledger read, keyed by run id — not a query per row, and
+    // not a second read inside the detail dialog either (the picked row's totals ride in as data).
+    // The read is CLI-local SQLite while everything above this line was Postgres, so a failure here is
+    // independent and degrades on its own: the map is empty, rows and detail simply carry no figure.
+    const usageByRun = listAnalysisUsageByRun(analysis.id).match(
+        (groups) => new Map(groups.map((g) => [g.runId, g.totals])),
+        () => new Map<string, LlmUsageTotals>(),
+    );
     const atCap = rows.length === RUNS_PICKER_LIMIT;
     ctx.openDialog(() => (
         <SelectDialog
@@ -1875,6 +1914,10 @@ async function openRunsPicker(ctx: Workspace): Promise<void> {
                 // Title first, id tail always appended: two runs of the SAME plan share a title, so
                 // the tail is what tells them apart.
                 const label = (run.planId ? titleByPlanId.get(run.planId) : undefined) ?? shortRunName(run);
+                // A run with no ledger rows contributes NO segment rather than a zeroed one — the same
+                // absent-means-not-reported rule the ledger keeps all the way down from its NULL sums.
+                const totals = usageByRun.get(run.runId);
+                const figure = totals ? formatTokenFigure(totals) : "";
                 return {
                     value: run,
                     // Title alone on its own (wrapping) line — plan titles run long (up to 80 chars).
@@ -1884,7 +1927,10 @@ async function openRunsPicker(ctx: Workspace): Promise<void> {
                     // The id tail lives here (not the title) so two runs of one plan differ on this line.
                     // Durable-record rule — the picker lists referenced records, so absolute times; the
                     // detail line below expands the focused row to full seconds-bearing started/finished.
-                    meta: `${idTail(run.runId)} ${GLYPHS.middot} ${run.status} ${GLYPHS.middot} ${absTimeShort(run.startedAt)}`,
+                    // The figure joins this line rather than claiming an inline `hint`: a row carrying
+                    // `meta` ignores `hint` by contract, and the figure belongs with the run's other
+                    // per-row facts anyway.
+                    meta: `${idTail(run.runId)} ${GLYPHS.middot} ${run.status} ${GLYPHS.middot} ${absTimeShort(run.startedAt)}${figure ? ` ${GLYPHS.middot} ${figure}` : ""}`,
                     description: `started ${absTime(run.startedAt)}${run.completedAt ? ` ${GLYPHS.middot} finished ${absTime(run.completedAt)}` : ""}`,
                 };
             })}
@@ -1892,7 +1938,12 @@ async function openRunsPicker(ctx: Workspace): Promise<void> {
             onCancel={() => ctx.closeDialog()}
             onSelect={(run: CortexRunRow) => {
                 ctx.openDialog(() => (
-                    <RunDetailDialog run={run} loadSteps={(runId) => queryStepsByRun(runtime.pool, runId)} onClose={() => ctx.closeDialog()} />
+                    <RunDetailDialog
+                        run={run}
+                        loadSteps={(runId) => queryStepsByRun(runtime.pool, runId)}
+                        usage={usageByRun.get(run.runId)}
+                        onClose={() => ctx.closeDialog()}
+                    />
                 ));
             }}
         />

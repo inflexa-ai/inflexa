@@ -5,6 +5,9 @@ import type { ResultAsync } from "neverthrow";
 import type { CortexRunRow, DbError, StepExecutionRow } from "@inflexa-ai/harness";
 
 import { GLYPHS } from "../../../lib/design_system.ts";
+import { formatTokenFigure } from "../../../lib/usage_format.ts";
+import { NOT_REPORTED } from "../../../modules/usage/usage.ts";
+import type { LlmUsageTotals } from "../../../db/primary_query.ts";
 import { theme } from "../../theme.ts";
 import { KEYS, chordLabel } from "../../keymap.ts";
 import { useDialogBindings, useDialogCancel, useDialogEntry } from "./dialog_host.tsx";
@@ -26,6 +29,15 @@ export type RunDetailDialogProps = {
      * pattern the old runs dialog and the sidebar store share).
      */
     loadSteps: (runId: string) => ResultAsync<StepExecutionRow[], DbError>;
+    /**
+     * What this run consumed, from the CLI's local ledger — handed in as DATA (the picker already
+     * batches one read across every row it drew) rather than queried here, which is what keeps
+     * {@link runDetailLines} pure and this dialog gallery-showcaseable offline.
+     *
+     * Absent when the run has no ledger rows or the usage read failed; the line is then omitted
+     * entirely rather than printed as a zero.
+     */
+    usage?: LlmUsageTotals;
     /** Wired to every non-commit close (esc, click-outside, ctrl+c) and the q/enter close keys. */
     onClose: () => void;
 };
@@ -36,8 +48,14 @@ export type RunDetailDialogProps = {
  * (completed − started); a still-running run shows its elapsed-at-open age instead — the same
  * vocabulary `profileDetailLines` pins for the profile dialog. The error renders verbatim on
  * failure, one line per source line.
+ *
+ * `usage` is one more property of the run, printed in that same vocabulary and in the one shared
+ * token notation — never a second dialect of it. It is a PARAMETER rather than a lookup so this stays
+ * pure: the caller batches the ledger read across every row it drew. Passing nothing omits the line,
+ * which covers both "this run has no recorded calls" and "the usage read failed" — neither is a
+ * figure, and a zero would assert one.
  */
-export function runDetailLines(run: CortexRunRow): string[] {
+export function runDetailLines(run: CortexRunRow, usage?: LlmUsageTotals): string[] {
     const lines: string[] = [`status: ${run.status}`];
     if (run.startedAt) lines.push(`started ${absTime(run.startedAt)}`);
     if (run.completedAt) lines.push(`completed ${absTime(run.completedAt)}`);
@@ -47,6 +65,12 @@ export function runDetailLines(run: CortexRunRow): string[] {
         lines.push(`duration ${Date.formatDuration(completedMs - startedMs)}`);
     } else if (!Number.isNaN(startedMs)) {
         lines.push(`elapsed ${Date.relativeAge(startedMs)}`);
+    }
+    if (usage) {
+        // The call count rides beside the figure because it is the only thing that tells a run whose
+        // provider reported nothing from a run that made no calls at all — the two-armed figure reads
+        // identically ("not reported") in both.
+        lines.push(`usage ${formatTokenFigure(usage) || NOT_REPORTED} ${GLYPHS.middot} ${usage.calls} ${usage.calls === 1 ? "call" : "calls"}`);
     }
     if (run.error) {
         lines.push("");
@@ -98,7 +122,7 @@ export function RunDetailDialog(props: RunDetailDialogProps): JSX.Element {
         >
             <ScrollPane focusOnMount={false} onRef={(r: ScrollBoxRenderable) => dialog?.setInitialFocus(r)} flexGrow={1} width="100%" paddingTop={1}>
                 {/* Metadata is static (the row is a point-in-time capture), so plain rendered-once lines. */}
-                <For each={runDetailLines(props.run)}>{(line) => <text fg={theme().fgMuted}>{line || " "}</text>}</For>
+                <For each={runDetailLines(props.run, props.usage)}>{(line) => <text fg={theme().fgMuted}>{line || " "}</text>}</For>
                 <box paddingTop={1}>
                     <Switch>
                         <Match when={steps().kind === "loading"}>

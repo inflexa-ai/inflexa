@@ -15,9 +15,9 @@ import * as conversation from "./hooks/conversation.ts";
 import { activeAsk, queuedCount, settleAsk, type PendingAsk } from "./hooks/asks.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
-import { activeRunProgress, idTail, profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
+import { profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
 import { usePromptRecall } from "./hooks/prompt_recall.ts";
-import { openThread, watchOpenThread } from "./hooks/thread.ts";
+import { watchOpenThread } from "./hooks/thread.ts";
 import {
     activeSubjectCount,
     focusedSubject,
@@ -32,7 +32,7 @@ import { watchRunCompletions } from "./hooks/run_completion.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
-import { UsageDialog, readAnalysisUsage, usageStepLines } from "./components/dialog/usage_dialog.tsx";
+import { UsageDialog, readSessionUsage } from "./components/dialog/usage_dialog.tsx";
 import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
 import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, interruptHintLabel, leaderSeq, KEYS, type LayerConfig } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
@@ -46,7 +46,7 @@ import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
 import { watchProfileParity, driveForceReprofile } from "./hooks/profile_parity.ts";
-import { listAnalysisInputs, listRunUsageByStep } from "../db/primary_query.ts";
+import { listAnalysisInputs } from "../db/primary_query.ts";
 import type { Analysis } from "../types/analysis.ts";
 
 type AppProps = {
@@ -535,40 +535,25 @@ export function App(props: AppProps) {
         ));
     }
 
-    // Open the USAGE breakdown: what this analysis has consumed, and where it went. Reads the CLI's
-    // OWN local ledger, so it opens with the durable engine, its Postgres, and the model proxy all
-    // cold — the same property the rail section that launches it has, and the reason there is no boot
-    // gate here (unlike `openRuns`, whose picker needs the live pool).
+    // Open the USAGE breakdown: what the OPEN SESSION has consumed, by model and by agent. Reads the
+    // CLI's OWN local ledger, so it opens with the durable engine, its Postgres, and the model proxy
+    // all cold — the same property the rail section that launches it has, and the reason there is no
+    // boot gate here (unlike `openRuns`, whose picker needs the live pool).
     //
-    // Names for runs live in the harness's Postgres and are handed over only if the app ALREADY holds
-    // them: the live progress store's plan titles, and the open thread's own title. Nothing is
-    // fetched — a name is decoration beside the id, never a reason to wait or to fail.
+    // Scoped to the session, matching the section it opens from, so the dialog explains the number the
+    // reader just clicked rather than a wider one. Every other grain the dialog used to stack up —
+    // sessions, runs, steps — now rides the entity that owns it (the rail's run rows, the run detail,
+    // the run block's steps), and two sources for one figure is how they come to disagree.
     function openUsage(): void {
         const analysis = workspace.analysis;
         if (!analysis) return;
-        const names = new Map<string, string>();
-        for (const [runId, progress] of activeRunProgress()) names.set(runId, progress.name);
-        const thread = openThread();
-        if (thread.kind === "loaded" && thread.thread.title) names.set(thread.thread.threadId, thread.thread.title);
         dialogPush(() => (
             <UsageDialog
                 analysisName={analysis.name}
-                loadUsage={() => readAnalysisUsage(analysis.id)}
-                names={names}
-                // The step view STACKS over the breakdown rather than replacing it (the runs picker →
-                // run detail shape), so dismissing it lands back on the grains the user was comparing.
-                onOpenRun={(runId: string) =>
-                    dialogPush(() => (
-                        <ResultsDialog
-                            title={`Steps ${GLYPHS.emDash} ${names.get(runId) ?? idTail(runId)}`}
-                            lines={listRunUsageByStep(analysis.id, runId).match(usageStepLines, () => [])}
-                            // Both the failed read and a run with no rows land here; neither is a
-                            // figure, and a step table of zeros would assert one.
-                            emptyText="no steps recorded"
-                            onClose={() => dialogClose()}
-                        />
-                    ))
-                }
+                // `sessionId` is null before a thread is bound; the dialog reports that as its own
+                // state rather than silently widening to the analysis, which would answer a question
+                // the reader did not ask under a label that says otherwise.
+                loadUsage={() => readSessionUsage(analysis.id, workspace.sessionId)}
                 onClose={() => dialogClose()}
             />
         ));

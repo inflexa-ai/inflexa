@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { CortexRunRow } from "@inflexa-ai/harness";
 
 import { runDetailLines } from "./run_detail_dialog.tsx";
+import { GLYPHS } from "../../../lib/design_system.ts";
 import { absTime } from "../../hooks/sidebar_live.ts";
 
 // `runDetailLines` is the dialog's pure metadata composer (row → string[]), mirroring
@@ -56,5 +57,36 @@ describe("runDetailLines", () => {
         const lines = runDetailLines(run({ startedAt: "not-a-date", completedAt: null }));
         expect(lines.some((l) => l.startsWith("duration "))).toBe(false);
         expect(lines.some((l) => l.startsWith("elapsed "))).toBe(false);
+    });
+
+    test("the run's figures ride as one more property line, in the shared notation", () => {
+        const lines = runDetailLines(run(), { calls: 47, inputTokens: 809_200, outputTokens: 40_400 });
+
+        expect(lines).toContain(`usage ↑809.2k ↓40.4k ${GLYPHS.middot} 47 calls`);
+        // The five quantities are never combined: 849.6k is input+output.
+        expect(lines.join("\n")).not.toContain("849.6k");
+    });
+
+    test("a run whose provider reported nothing keeps its call count beside the absent word", () => {
+        const lines = runDetailLines(run(), { calls: 1 });
+
+        expect(lines).toContain(`usage not reported ${GLYPHS.middot} 1 call`);
+        // Never a zero: "the provider measured nothing" is not "nothing was spent".
+        expect(lines.some((l) => l.includes("↑0"))).toBe(false);
+    });
+
+    test("a half figure keeps the arm it has rather than inventing the one it lacks", () => {
+        const lines = runDetailLines(run(), { calls: 2, outputTokens: 40 });
+
+        expect(lines).toContain(`usage ↓40 ${GLYPHS.middot} 2 calls`);
+    });
+
+    test("no usage handed in omits the line entirely — the run's other properties are unchanged", () => {
+        const without = runDetailLines(run());
+        const with_ = runDetailLines(run(), { calls: 1, inputTokens: 10 });
+
+        expect(without.some((l) => l.startsWith("usage "))).toBe(false);
+        // The figure is ADDITIVE: every line the run already had survives, in order.
+        expect(with_.filter((l) => !l.startsWith("usage "))).toEqual(without);
     });
 });

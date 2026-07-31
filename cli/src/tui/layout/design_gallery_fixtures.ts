@@ -10,10 +10,11 @@
 
 import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
 
+import { formatTokenFigure } from "../../lib/usage_format.ts";
 import type { AskCardPart, TextPart, ThinkingPart, ToolCallPart, FileEditPart, PlanCardPart, PlanCardStepView, RunCardPart } from "../../types/session.ts";
 import type { ActiveProfileProgress, ActiveRunProgress } from "../hooks/sidebar_live.ts";
-import type { UsageSnapshot } from "../components/dialog/usage_dialog.tsx";
-import type { LlmUsageByStep } from "../../db/primary_query.ts";
+import type { SessionUsageSnapshot } from "../components/dialog/usage_dialog.tsx";
+import type { LlmUsageTotals } from "../../db/primary_query.ts";
 
 /** A run step's lifecycle state (mirrors `RunStepView.state`). */
 export type StepState = "done" | "running" | "failed" | "queued";
@@ -26,6 +27,16 @@ export type RunStep = {
     state: StepState;
     /** ISO start time of a running step — drives the elapsed-age readout beside the label. */
     startedAt?: string | null;
+    /**
+     * The step's token figure, ALREADY WRITTEN (mirrors `RunStepView.usageFigure`, which is a
+     * pre-rendered string by contract).
+     *
+     * Every value here is produced by the REAL {@link formatTokenFigure} over sample quantities rather
+     * than typed out as a literal, so a fixture can never spell a figure the shared notation would not
+     * write. Steps that carry none are the honest majority case — a step whose calls reported no
+     * quantity gets no line at all, never a zeroed one.
+     */
+    usageFigure?: string;
 };
 
 /** A run's lifecycle state. */
@@ -296,7 +307,12 @@ export const mockAskCards: AskCardPart[] = [
     },
 ];
 
-/** MOCK sample: a live run with a mix of step states. */
+/**
+ * MOCK sample: a live run with a mix of step states.
+ *
+ * The first three steps carry a figure and the queued one does not — a step that has not run has
+ * nothing to report, and the absence is the state the gallery must show beside the reported ones.
+ */
 export const mockRun: Run = {
     id: "mock-run",
     name: "drug-repurposing",
@@ -305,9 +321,16 @@ export const mockRun: Run = {
     done: 13,
     total: 20,
     steps: [
-        { id: "mock-step-12", label: "rank consensus", state: "done" },
-        { id: "mock-step-13", label: "build report", state: "running", startedAt: Date.ago(4 * 60_000) },
-        { id: "mock-step-14", label: "score targets", state: "failed" },
+        { id: "mock-step-12", label: "rank consensus", state: "done", usageFigure: formatTokenFigure({ inputTokens: 42_600, outputTokens: 1_100 }) },
+        {
+            id: "mock-step-13",
+            label: "build report",
+            state: "running",
+            startedAt: Date.ago(4 * 60_000),
+            usageFigure: formatTokenFigure({ inputTokens: 9_400, outputTokens: 320 }),
+        },
+        // A failed step still spent what it spent — the figure is not an outcome, so it stays.
+        { id: "mock-step-14", label: "score targets", state: "failed", usageFigure: formatTokenFigure({ inputTokens: 3_100, outputTokens: 45 }) },
         { id: "mock-step-15", label: "queued", state: "queued" },
     ],
 };
@@ -321,6 +344,12 @@ export const mockRun: Run = {
  * would exhibit the unwindowed state and silently stop covering the window at all. The frontier sits far
  * enough in that steps are hidden on BOTH sides, which is what lets the exhibit show scrolling either
  * way — and the single step hidden below also exercises the marker's singular wording.
+ *
+ * The steps INSIDE the default window carry a deliberate mix of figures, because the rail is the mount
+ * the figure line was designed against: a figure takes a row of its own there, so the window's row
+ * count is what a reviewer has to be able to see. `cluster` is the one done step with none — a step
+ * whose calls reported no quantity renders no line rather than a zero, and that state has to sit
+ * beside the reported ones to be judged.
  */
 export const mockLongRun: Run = {
     id: "mock-long-run",
@@ -334,10 +363,16 @@ export const mockLongRun: Run = {
         { id: "mock-lstep-2", label: "harmonize schemas", state: "done" },
         { id: "mock-lstep-3", label: "qc filter", state: "done" },
         { id: "mock-lstep-4", label: "normalize", state: "done" },
-        { id: "mock-lstep-5", label: "batch correct", state: "done" },
+        { id: "mock-lstep-5", label: "batch correct", state: "done", usageFigure: formatTokenFigure({ inputTokens: 128_400, outputTokens: 6_200 }) },
         { id: "mock-lstep-6", label: "cluster", state: "done" },
-        { id: "mock-lstep-7", label: "annotate types", state: "done" },
-        { id: "mock-lstep-8", label: "differential test", state: "running", startedAt: Date.ago(6 * 60_000) },
+        { id: "mock-lstep-7", label: "annotate types", state: "done", usageFigure: formatTokenFigure({ inputTokens: 61_900, outputTokens: 2_800 }) },
+        {
+            id: "mock-lstep-8",
+            label: "differential test",
+            state: "running",
+            startedAt: Date.ago(6 * 60_000),
+            usageFigure: formatTokenFigure({ inputTokens: 24_500, outputTokens: 910 }),
+        },
         { id: "mock-lstep-9", label: "pathway enrich", state: "queued" },
         { id: "mock-lstep-10", label: "score targets", state: "queued" },
         { id: "mock-lstep-11", label: "rank consensus", state: "queued" },
@@ -559,45 +594,110 @@ export function galleryProfile(over: Partial<ActiveProfileProgress> = {}): Activ
 }
 
 /**
- * MOCK: one analysis's ledger snapshot, as the usage dialog reads it.
+ * MOCK: one conversation's ledger snapshot, as the usage dialog reads it — the RICH state, carrying
+ * all five quantities so the headline shows both arms with the cache counts nested under input and the
+ * reasoning count under output.
  *
- * Deliberately carries every state the dialog has to render at once: a session, two runs (one of them
- * a run whose provider reported NO figures, so the absent vocabulary is on screen beside real ones), a
- * populated unattributed bucket, and a served-model group with no id. The ids are uuid-SHAPED rather
- * than `mock-*` sentinels because the rows are labelled by their six-character tail — a sentinel id
- * would render a tail that teaches the reader nothing about what the real surface looks like.
+ * The three readings RECONCILE, and that is a correctness property of the fixture rather than
+ * decoration: the headline and both groupings come from three SQL aggregates over the SAME rows, so a
+ * snapshot whose groups do not sum to its total is a reading the ledger could never return. Per
+ * quantity — calls 36+9+2=47, in 795.8k+11.1k=806.9k, out 39.5k+2.9k=42.4k, cache write 12.8k+4.2k=17k,
+ * cache read 742k+6.4k=748.4k, reasoning 9.1k — and the model cut partitions the same 47 calls.
+ *
+ * The magnitudes are the shape a real conversation-with-a-run has (see the note above
+ * `getSessionUsageTotalsIncludingRuns`): the chat's own turns are a rounding error beside the run it
+ * launched, which is exactly why this reading names itself "runs included" on screen.
+ *
+ * Two absences ride along so the absent vocabulary is on screen beside real figures: a served-model
+ * group with no id (an endpoint that reported no model, labelled as an absence, never as a model
+ * actually named that) and a sub-agent whose provider reported no quantity at all (rendered as the
+ * absent word, never as a zero — its call count is what says the work happened).
  */
-export const mockUsageSnapshot: UsageSnapshot = {
+export const mockUsageSnapshot: SessionUsageSnapshot = {
     totals: {
-        calls: 12,
-        inputTokens: 42_600,
-        outputTokens: 3_140,
-        cacheCreationInputTokens: 1_000,
-        cacheReadInputTokens: 38_000,
-        reasoningTokens: 900,
+        calls: 47,
+        inputTokens: 806_900,
+        outputTokens: 42_400,
+        cacheCreationInputTokens: 17_000,
+        cacheReadInputTokens: 748_400,
+        reasoningTokens: 9_100,
     },
-    sessions: [{ threadId: "aaaaaaaa-bbbb-cccc-dddd-eeee11112222", totals: { calls: 5, inputTokens: 11_600, outputTokens: 1_200 } }],
-    runs: [
-        { runId: "99999999-8888-7777-6666-5555ffeeddcc", totals: { calls: 5, inputTokens: 30_200, outputTokens: 1_900, reasoningTokens: 900 } },
-        { runId: "77777777-6666-5555-4444-3333aabbccdd", totals: { calls: 1 } },
-    ],
-    unattributed: { calls: 1, inputTokens: 800, outputTokens: 40 },
     byModel: [
-        { servedModelId: "claude-opus-4", totals: { calls: 11, inputTokens: 42_200, outputTokens: 3_100 } },
-        { servedModelId: null, totals: { calls: 1, inputTokens: 400, outputTokens: 40 } },
+        {
+            servedModelId: "claude-opus-4",
+            totals: {
+                calls: 45,
+                inputTokens: 806_900,
+                outputTokens: 42_400,
+                cacheCreationInputTokens: 17_000,
+                cacheReadInputTokens: 748_400,
+                reasoningTokens: 9_100,
+            },
+        },
+        { servedModelId: null, totals: { calls: 2 } },
     ],
     byAgent: [
-        { agentId: "conversation", totals: { calls: 6, inputTokens: 12_400, outputTokens: 1_240 } },
-        { agentId: "bioinformatician", totals: { calls: 6, inputTokens: 30_200, outputTokens: 1_900 } },
+        {
+            agentId: "bioinformatician",
+            totals: {
+                calls: 36,
+                inputTokens: 795_800,
+                outputTokens: 39_500,
+                cacheCreationInputTokens: 12_800,
+                cacheReadInputTokens: 742_000,
+                reasoningTokens: 9_100,
+            },
+        },
+        {
+            agentId: "conversation",
+            totals: { calls: 9, inputTokens: 11_100, outputTokens: 2_900, cacheCreationInputTokens: 4_200, cacheReadInputTokens: 6_400 },
+        },
+        { agentId: "literature-reviewer", totals: { calls: 2 } },
     ],
 };
 
-/** MOCK: the run label the app holds in memory for the first fixture run — decoration BESIDE its id tail, never instead of it. */
-export const mockUsageNames: ReadonlyMap<string, string> = new Map([["99999999-8888-7777-6666-5555ffeeddcc", "Differential expression"]]);
+/**
+ * MOCK: a conversation whose provider reported prompt tokens and never completion tokens — the HALF
+ * figure, which is a normal reading and not a broken one.
+ *
+ * It exists because the notation's whole reason for using arrows rather than a positional
+ * `806.9k/42.4k` is that this state has to render as an absence rather than as a typo. A reviewer can
+ * only judge that by seeing the one-armed headline with the output column beside it saying so.
+ */
+export const mockUsageSnapshotInputOnly: SessionUsageSnapshot = {
+    totals: { calls: 6, inputTokens: 128_400 },
+    byModel: [{ servedModelId: "gemini-2.5-pro", totals: { calls: 6, inputTokens: 128_400 } }],
+    byAgent: [{ agentId: "conversation", totals: { calls: 6, inputTokens: 128_400 } }],
+};
 
-/** MOCK: the step grain of that same run, as the drill-down view reports it. */
-export const mockUsageSteps: LlmUsageByStep[] = [
-    { stepId: "qc-normalize", totals: { calls: 3, inputTokens: 24_000, outputTokens: 1_500 } },
-    { stepId: "differential-expression", totals: { calls: 1, inputTokens: 6_200, outputTokens: 400 } },
-    { stepId: null, totals: { calls: 1, inputTokens: 400 } },
-];
+/**
+ * MOCK: a conversation whose calls ran but whose provider reported NO quantity at all.
+ *
+ * Distinct from {@link mockUsageSnapshotEmpty}, and the distinction is the point: work happened here.
+ * The call count is the only thing that can say so, which is why it sits beside figures that are words
+ * rather than numbers — a zeroed figure would assert the work was free.
+ */
+export const mockUsageSnapshotNoFigures: SessionUsageSnapshot = {
+    totals: { calls: 3 },
+    byModel: [{ servedModelId: null, totals: { calls: 3 } }],
+    byAgent: [{ agentId: "conversation", totals: { calls: 3 } }],
+};
+
+/**
+ * MOCK: a conversation with nothing recorded — the state every chat opens in, and the exact value
+ * `readSessionUsage` synthesizes for a chat whose Postgres thread identity is not bound yet.
+ */
+export const mockUsageSnapshotEmpty: SessionUsageSnapshot = { totals: { calls: 0 }, byModel: [], byAgent: [] };
+
+/**
+ * MOCK: what each run in {@link mockCortexRuns} consumed, keyed by run id — the shape the runs picker
+ * batches in ONE local-ledger read and then hands to the detail dialog as data.
+ *
+ * Three states across three runs, deliberately: the running run reports both arms, the completed one
+ * reports input only (the half figure on a compact row), and the failed one is ABSENT from the map
+ * entirely — a run with no ledger rows contributes no figure segment at all rather than a zeroed one.
+ */
+export const mockRunUsage: ReadonlyMap<string, LlmUsageTotals> = new Map([
+    ["mock-run-9a3f4c21", { calls: 47, inputTokens: 809_200, outputTokens: 40_400 }],
+    ["mock-run-71bd0e55", { calls: 12, inputTokens: 96_100 }],
+]);

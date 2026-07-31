@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
-import { ok, okAsync, errAsync, ResultAsync } from "neverthrow";
+import { err, ok, okAsync, errAsync, ResultAsync } from "neverthrow";
 import { createRoot } from "solid-js";
 
 import { Bus } from "../../lib/bus.ts";
+import { GLYPHS } from "../../lib/design_system.ts";
 import { createStore } from "solid-js/store";
 
 // Side-effect import: installs `Date.relativeAge` (the loaded-profile timestamp lines call it) via the
 // same central loader the app boots with.
 import "../../extensions/index.ts";
 import type { CortexRunRow, DataProfileStatus, DbError, StepExecutionRow } from "@inflexa-ai/harness";
+import type { LlmUsageTotals } from "../../db/primary_query.ts";
 import type { ResolvedHarnessConfig } from "../../modules/harness/config.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Workspace } from "../contexts/workspace.ts";
@@ -148,9 +150,10 @@ function wsFor(id: string | null): Workspace {
 }
 
 /** Build a `loaded` profile snapshot for the {@link profileDetailLines} composer tests. */
-function loaded(over: Partial<DataProfileStatus> = {}): ProfileSnapshot {
+function loaded(over: Partial<DataProfileStatus> = {}, usage?: LlmUsageTotals): ProfileSnapshot {
     return {
         kind: "loaded",
+        usage,
         profile: {
             status: "completed",
             error: null,
@@ -1037,6 +1040,24 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
         // Singular when exactly one seed input.
         expect(lines[lines.length - 1]).toBe("1 seed input");
     });
+
+    test("the profile's own figures ride the timing lines, in the one shared notation", () => {
+        const lines = profileDetailLines(loaded({}, { calls: 4, inputTokens: 55_500, outputTokens: 3_200 }));
+        // Its calls carry no thread, so they belong to no session and appear in no session figure —
+        // this dialog and the rail's DATA PROFILE section are the only places they are visible at all.
+        expect(lines).toContain(`usage ${GLYPHS.arrowUp}55.5k ${GLYPHS.arrowDown}3.2k`);
+        // Placed among the properties, not after the summary/files prose — the same `label value`
+        // vocabulary as `started` / `duration`.
+        expect(lines.indexOf(`usage ${GLYPHS.arrowUp}55.5k ${GLYPHS.arrowDown}3.2k`)).toBeLessThan(lines.indexOf("line one"));
+    });
+
+    test("a profile with nothing reported carries no usage line rather than a zeroed one", () => {
+        // Three ways to have no figure, all of which must omit the line: the read failed (no usage on
+        // the snapshot at all), the profile made no calls, and calls whose providers reported nothing.
+        for (const snap of [loaded(), loaded({}, { calls: 0 }), loaded({}, { calls: 3 })]) {
+            expect(profileDetailLines(snap).some((l) => l.startsWith("usage "))).toBe(false);
+        }
+    });
 });
 
 // The poll's own overlap guard. `refreshSidebarData` claims the generation token at entry, so a newer
@@ -1165,7 +1186,7 @@ describe("the in-flight guard is bounded", () => {
             expect(entries).toBe(2); // past the bound: the guard is taken and a fresh refresh runs
             // And nothing partial or empty was published in the abandoned refresh's place — the
             // snapshot is still the one the arming refresh wrote.
-            expect(runsSnapshot()).toEqual({ kind: "loaded", runs: [] });
+            expect(runsSnapshot()).toEqual({ kind: "loaded", runs: [], usageByRun: new Map() });
 
             setSystemTime();
             await new Promise<void>((r) => setTimeout(r, 0));
@@ -1280,5 +1301,159 @@ describe("watchSidebarData — run-observation trigger", () => {
         await new Promise<void>((r) => setTimeout(r, 0));
         expect(arms).toBe(armedBefore); // still armed, not re-armed and not torn down
         dispose();
+    });
+});
+
+// The three token-ledger reads the refresh performs alongside its Postgres ones. Every one of them is
+// DECORATIVE — the entity it belongs to renders with or without it — so each case pins two things: the
+// figure reaches the surface that names the entity, and losing the read costs only the figure.
+describe("refreshSidebarData — per-entity token figures", () => {
+    /** Seams whose ledger reads answer from the given fixtures; anything omitted reads as nothing recorded. */
+    function ledgerSeams(base: RefreshSeams, over: Partial<RefreshSeams>): RefreshSeams {
+        return { ...base, loadProfileUsage: () => ok({ calls: 0 }), loadRunUsage: () => ok({ calls: 0 }), loadStepUsage: () => ok([]), ...over };
+    }
+
+    test("the profile's totals ride its snapshot, keyed to the analysis being refreshed", async () => {
+        let asked: string[] = [];
+        await refreshSidebarData(
+            "A",
+            ledgerSeams(seams(profileStatus(), []), {
+                loadProfileUsage: (analysisId) => {
+                    asked.push(analysisId);
+                    return ok({ calls: 4, inputTokens: 55_500, outputTokens: 3_200 });
+                },
+            }),
+        );
+        const snap = profileSnapshot();
+        expect(snap.kind).toBe("loaded");
+        expect(snap.kind === "loaded" && snap.usage).toEqual({ calls: 4, inputTokens: 55_500, outputTokens: 3_200 });
+        expect(asked).toEqual(["A"]);
+
+        // An analysis that has never profiled has no row to hang a figure on, so no read is issued.
+        asked = [];
+        await refreshSidebarData(
+            "A",
+            ledgerSeams(seams(null, []), {
+                loadProfileUsage: (analysisId) => {
+                    asked.push(analysisId);
+                    return ok({ calls: 4 });
+                },
+            }),
+        );
+        expect(asked).toEqual([]);
+    });
+
+    test("a failed profile usage read leaves the profile loaded, without its figure", async () => {
+        await refreshSidebarData("A", ledgerSeams(seams(profileStatus(), []), { loadProfileUsage: () => err(dbErr) }));
+        const snap = profileSnapshot();
+        // The section keeps everything it had — a missing decoration must never take the entity with it.
+        expect(snap.kind).toBe("loaded");
+        expect(snap.kind === "loaded" && snap.usage).toBeUndefined();
+        expect(snap.kind === "loaded" && snap.profile.status).toBe("completed");
+    });
+
+    test("each listed run's totals are keyed by its OWN run id, and one failure costs only that row's figure", async () => {
+        const runs = [runRow({ runId: "run-a", status: "completed" }), runRow({ runId: "run-b", status: "completed" })];
+        await refreshSidebarData(
+            "A",
+            ledgerSeams(seams(null, runs), {
+                loadRunUsage: (_analysisId, runId) => (runId === "run-a" ? ok({ calls: 3, inputTokens: 809_200 }) : err(dbErr)),
+            }),
+        );
+        const snap = runsSnapshot();
+        expect(snap.kind).toBe("loaded");
+        const byRun = snap.kind === "loaded" ? snap.usageByRun : undefined;
+        expect(byRun?.get("run-a")).toEqual({ calls: 3, inputTokens: 809_200 });
+        // Absent, not zeroed: the row still renders, it just carries no figure.
+        expect(byRun?.has("run-b")).toBe(false);
+        // ...and BOTH runs are still listed, which is the property the figure must never cost.
+        expect(snap.kind === "loaded" && snap.runs.map((r) => r.runId)).toEqual(["run-a", "run-b"]);
+    });
+
+    test("a running step's view carries its own figure, and a step with nothing reported carries none", async () => {
+        await refreshSidebarData(
+            "A",
+            ledgerSeams(
+                seams(null, [runRow({ runId: "run-a", status: "running" })], () => fakeRuntime, [stepRow("qc", "running"), stepRow("align", "pending")]),
+                {
+                    loadStepUsage: () =>
+                        ok([
+                            { stepId: "qc", totals: { calls: 5, inputTokens: 42_600, outputTokens: 1_100 } },
+                            // The run's own calls — the plan and synthesis frames it owns directly. An
+                            // ABSENCE of a step, not a step named this, so it decorates no row.
+                            { stepId: null, totals: { calls: 2, inputTokens: 9_000 } },
+                        ]),
+                },
+            ),
+        );
+        const steps = activeRunProgress().get("run-a")?.steps ?? [];
+        expect(steps.map((s) => s.label)).toEqual(["qc", "align"]);
+        expect(steps[0]?.usageFigure).toBe(`${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`);
+        // A step whose calls reported nothing carries NO figure rather than a zeroed one, and the
+        // run-level group is nowhere among the step rows.
+        expect(steps[1]?.usageFigure).toBeUndefined();
+        expect(steps.some((s) => s.usageFigure?.includes("9.0k"))).toBe(false);
+    });
+
+    test("two active runs never see each other's step figures", async () => {
+        const runs = [runRow({ runId: "run-a", status: "running" }), runRow({ runId: "run-b", status: "running" })];
+        await refreshSidebarData("A", {
+            ...ledgerSeams(seams(null, runs), {}),
+            loadSteps: () => okAsync([stepRow("s", "running")]),
+            loadStepUsage: (_analysisId, runId) =>
+                ok([{ stepId: "s", totals: runId === "run-a" ? { calls: 1, inputTokens: 800_000 } : { calls: 1, inputTokens: 1_200 } }]),
+        });
+        expect(activeRunProgress().get("run-a")?.steps[0]?.usageFigure).toBe(`${GLYPHS.arrowUp}800.0k`);
+        expect(activeRunProgress().get("run-b")?.steps[0]?.usageFigure).toBe(`${GLYPHS.arrowUp}1.2k`);
+    });
+
+    test("a failed step usage read leaves every step rendered, without figures", async () => {
+        await refreshSidebarData(
+            "A",
+            ledgerSeams(
+                seams(null, [runRow({ runId: "run-a", status: "running" })], () => fakeRuntime, [stepRow("qc", "running")]),
+                {
+                    loadStepUsage: () => err(dbErr),
+                },
+            ),
+        );
+        const steps = activeRunProgress().get("run-a")?.steps ?? [];
+        expect(steps.map((s) => s.label)).toEqual(["qc"]);
+        expect(steps[0]?.usageFigure).toBeUndefined();
+    });
+
+    test("an idle rail issues NO step usage read — the same zero-query property the step read holds", async () => {
+        let stepUsageReads = 0;
+        const counting = (base: RefreshSeams): RefreshSeams =>
+            ledgerSeams(base, {
+                loadStepUsage: () => {
+                    stepUsageReads += 1;
+                    return ok([]);
+                },
+            });
+
+        // All-terminal runs...
+        await refreshSidebarData("A", counting(seams(null, [runRow({ status: "completed" })])));
+        expect(stepUsageReads).toBe(0);
+        // ...and no runs at all. The read rides the active-run fan-out, so it inherits its arming.
+        await refreshSidebarData("A", counting(seams(null, [])));
+        expect(stepUsageReads).toBe(0);
+
+        // ...but an active run pays for exactly one.
+        await refreshSidebarData("A", counting(seams(null, [runRow({ status: "running" })], () => fakeRuntime, [stepRow("s", "running")])));
+        expect(stepUsageReads).toBe(1);
+    });
+
+    test("a fixture that stubs none of the ledger reads still publishes every entity", async () => {
+        // The three ledger seams are OPTIONAL precisely so a case about run progress is not made to
+        // stub reads it has no claim about — and omitting them must land exactly where a failed read
+        // does: entities present, figures absent.
+        await refreshSidebarData(
+            "A",
+            seams(profileStatus(), [runRow({ runId: "run-a", status: "running" })], () => fakeRuntime, [stepRow("qc", "running")]),
+        );
+        expect(profileSnapshot().kind).toBe("loaded");
+        expect(runsSnapshot().kind).toBe("loaded");
+        expect(activeRunProgress().get("run-a")?.steps[0]?.usageFigure).toBeUndefined();
     });
 });

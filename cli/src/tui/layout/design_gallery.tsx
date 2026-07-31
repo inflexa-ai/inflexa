@@ -5,6 +5,7 @@ import { err, ok, okAsync } from "neverthrow";
 import type { DbError, StepExecutionRow } from "@inflexa-ai/harness";
 
 import { GLYPHS, size, space } from "../../lib/design_system.ts";
+import { formatTokenFigure } from "../../lib/usage_format.ts";
 import { theme } from "../theme.ts";
 import { KEYS, chordLabel, keybindLabel, interruptHintLabel } from "../keymap.ts";
 import { useDialogBindings, useDialogCancel, useDialogEntry, DialogShowcase } from "../components/dialog/dialog_host.tsx";
@@ -39,13 +40,14 @@ import { FixedList } from "../components/fixed_list.tsx";
 import { SelectDialog } from "../components/dialog/select_dialog.tsx";
 import { FilePicker } from "../components/dialog/file_picker.tsx";
 import { RunDetailDialog } from "../components/dialog/run_detail_dialog.tsx";
-import { UsageDialog, usageStepLines, type UsageSnapshot } from "../components/dialog/usage_dialog.tsx";
+import { UsageDialog, type SessionUsageSnapshot } from "../components/dialog/usage_dialog.tsx";
 // Aliased: `DbError` in this file already means the HARNESS's storage error (the run-detail exhibit's
 // step fetch). The usage dialog reads the CLI's own SQLite ledger, whose error union is a different
 // type with the same name, and only the alias keeps the two exhibits from silently swapping them.
 import type { DbError as LocalDbError } from "../../db/errors.ts";
 import {
     absTime,
+    absTimeShort,
     idTail,
     profileDetailLines,
     shortRunName,
@@ -73,9 +75,11 @@ import {
     mockCortexRuns,
     mockRunSteps,
     mockDataProfile,
+    mockRunUsage,
     mockUsageSnapshot,
-    mockUsageNames,
-    mockUsageSteps,
+    mockUsageSnapshotInputOnly,
+    mockUsageSnapshotNoFigures,
+    mockUsageSnapshotEmpty,
 } from "./design_gallery_fixtures.ts";
 
 // Nothing streams in the gallery — MessageBlock's streaming accessors are constant stubs.
@@ -126,8 +130,10 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
         enabled: !(renderer.currentFocusedRenderable instanceof TextareaRenderable),
         bindings: [{ chord: KEYS.q, run: () => props.onClose() }],
     }));
-    const runSteps = mockRun.steps.map((s) => ({ label: s.label, state: s.state, startedAt: s.startedAt }));
-    const longRunSteps = mockLongRun.steps.map((s) => ({ label: s.label, state: s.state }));
+    // `usageFigure` rides through as the pre-rendered string the block's contract asks for — the
+    // fixtures wrote it with the shared formatter, so no figure is ever spelled at this call site.
+    const runSteps = mockRun.steps.map((s) => ({ label: s.label, state: s.state, startedAt: s.startedAt, usageFigure: s.usageFigure }));
+    const longRunSteps = mockLongRun.steps.map((s) => ({ label: s.label, state: s.state, usageFigure: s.usageFigure }));
     // The live interrupt + abort chords, so the footer-hint exhibits below name the real keys (esc in
     // NORMAL, the one-press ctrl+c in INSERT) rather than hardcoded ones.
     const interruptKey = keybindLabel("app.interrupt");
@@ -168,6 +174,13 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     />
                 </State>
                 <State n="5" label="long-running run / task">
+                    {/* A step's token figure takes an indented line of its own rather than trailing the
+                        label — measured against the rail mount (State 18), where a trailing figure
+                        soft-wraps mid-token. Steps whose calls reported nothing carry no line at all, so
+                        the queued row below is a single line: absence is silence, never a zero. */}
+                    <text fg={theme().fgMuted}>
+                        steps carry their token figure on an indented line; a step with nothing reported carries none (the queued row):
+                    </text>
                     <RunBlock name={mockRun.name} tag={mockRun.tag} done={mockRun.done} total={mockRun.total} steps={runSteps} />
                 </State>
                 <State n="6" label="diff / file edit">
@@ -339,12 +352,25 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             <FixedList items={[]} emptyText="No matching commands" />
                         </box>
                     </DialogShowcase>
-                    <text fg={theme().fgMuted}>SelectDialog — the picker dialog composing panel + filter + FixedList:</text>
+                    {/* The Switch analysis picker is the ONE surface that reports a whole-analysis total,
+                        because comparing analyses is the only question such a total answers. The figure
+                        claims the row's inline `hint` (right-aligned, muted, same line as the title) —
+                        these rows carry no `meta`, which would take the right edge for itself. An
+                        analysis with nothing recorded carries NO hint rather than a zeroed one, which is
+                        why the second row is bare. */}
+                    <text fg={theme().fgMuted}>
+                        SelectDialog — the picker dialog composing panel + filter + FixedList (Switch analysis: figure as an inline hint):
+                    </text>
                     <DialogShowcase>
                         <SelectDialog
                             title="Switch analysis"
                             items={[
-                                { value: "1", title: "rna-seq-2026", description: "differential expression" },
+                                {
+                                    value: "1",
+                                    title: "rna-seq-2026",
+                                    hint: formatTokenFigure({ inputTokens: 2_140_000, outputTokens: 96_300 }),
+                                    description: "differential expression",
+                                },
                                 { value: "2", title: "scrna-atlas" },
                             ]}
                             emptyText="No analyses"
@@ -444,7 +470,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <text fg={theme().fgMuted}>empty fallback:</text>
                     <PlanCardBlock planId="mock-empty" title="Empty plan" steps={mockPlanGraphExhibits.empty} />
                 </State>
-                <State n="17" label="sidebar details — data profile & runs (inert exhibits)">
+                <State n="17" label="sidebar details — data profile, runs & usage (inert exhibits)">
                     {/* Profile details reuse ResultsDialog verbatim; the lines are composed by the REAL
                         `profileDetailLines` over a loaded mock snapshot, so the exhibit cannot drift from
                         production output. */}
@@ -457,35 +483,104 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             onClose={noop}
                         />
                     </DialogShowcase>
-                    <text fg={theme().fgMuted}>runs picker — the searchable SelectDialog all three RUNS entry points open:</text>
+                    {/* Row shape mirrors the live picker exactly (see `commands.tsx`): the plan title
+                        alone on the wrapping first line, then a left-aligned `meta` line carrying the id
+                        tail, status, compact start — and the run's token figure. The figure joins `meta`
+                        rather than claiming the inline `hint`, which a row carrying `meta` ignores by
+                        contract. The failed run has no ledger rows, so its meta line simply ends after
+                        the date: no rows means no segment, never a zeroed one. */}
+                    <text fg={theme().fgMuted}>
+                        runs picker — the searchable SelectDialog all three RUNS entry points open (figure appended to each row&apos;s meta):
+                    </text>
                     <DialogShowcase>
                         <SelectDialog
                             title={`Runs ${GLYPHS.emDash} rna-seq-2026`}
                             placeholder={`Search runs${GLYPHS.ellipsis}`}
-                            items={mockCortexRuns.map((run) => ({
-                                value: run,
-                                title: `${shortRunName(run)} ${idTail(run.runId)}`,
-                                description: `${run.status} ${GLYPHS.middot} ${absTime(run.startedAt)}`,
-                            }))}
+                            items={mockCortexRuns.map((run) => {
+                                const totals = mockRunUsage.get(run.runId);
+                                const figure = totals ? formatTokenFigure(totals) : "";
+                                return {
+                                    value: run,
+                                    title: shortRunName(run),
+                                    meta: `${idTail(run.runId)} ${GLYPHS.middot} ${run.status} ${GLYPHS.middot} ${absTimeShort(run.startedAt)}${figure ? ` ${GLYPHS.middot} ${figure}` : ""}`,
+                                    description: `started ${absTime(run.startedAt)}${run.completedAt ? ` ${GLYPHS.middot} finished ${absTime(run.completedAt)}` : ""}`,
+                                };
+                            })}
                             emptyText="no runs"
                             onCancel={noop}
                         />
                     </DialogShowcase>
-                    <text fg={theme().fgMuted}>RunDetailDialog — one picked run's metadata + full step list (done / running / failed / queued):</text>
+                    {/* `usage` arrives as DATA — the picker above batched ONE ledger read across every row
+                        it drew and hands the picked run's totals down, which is what keeps `runDetailLines`
+                        pure and this dialog showcaseable with no ledger in sight. The call count rides
+                        beside the figure because it is the only thing separating a run whose provider
+                        reported nothing from a run that made no calls at all. */}
+                    <text fg={theme().fgMuted}>
+                        RunDetailDialog — one picked run's metadata (now including its usage property line) + full step list (done / running / failed / queued):
+                    </text>
                     <DialogShowcase>
-                        <RunDetailDialog run={mockCortexRuns[0]!} loadSteps={() => okAsync<StepExecutionRow[], DbError>(mockRunSteps)} onClose={noop} />
+                        <RunDetailDialog
+                            run={mockCortexRuns[0]!}
+                            loadSteps={() => okAsync<StepExecutionRow[], DbError>(mockRunSteps)}
+                            usage={mockRunUsage.get(mockCortexRuns[0]!.runId)}
+                            onClose={noop}
+                        />
                     </DialogShowcase>
-                    {/* The USAGE section's dialog. Driven by the REAL composition over a mock snapshot, so
-                        the exhibit cannot drift from what the live rail opens: two figures per row and
-                        never their sum, the absent word where a provider reported nothing, and each row
-                        led by its id tail with a known name only ever beside it. */}
-                    <text fg={theme().fgMuted}>UsageDialog — the analysis headline over its session / run / model / agent grains:</text>
+                    {/* The USAGE section's dialog, narrowed to the two cuts with no entity of their own —
+                        the model that answered and the agent that spent it. Every other grain now reports
+                        on the thing itself (the rail's session figure, a run row, a step in the run
+                        block), so there is no drill-down here and no row to select.
+
+                        Driven by the REAL composition over mock snapshots, so the exhibits cannot drift
+                        from what the live rail opens. The five states below are every state the dialog can
+                        reach, and the three FIGURE states among them — both arms with their breakdowns
+                        nested beneath, one arm alone, no arms at all — are states no other surface in this
+                        gallery renders at full detail, so this is where they get reviewed.
+
+                        The headline is the LABELLED form (`806.9k in`) and the grouping rows the COMPACT
+                        one (`↑806.9k ↓42.4k`) — the same quantities from the same arm, written for a
+                        subject and for a decoration. Its arms sit at the panel's opposite EDGES: the
+                        leading arm grows, the trailing one takes its natural width, so the trailing figure
+                        is found without scanning instead of floating in the middle of the panel. A
+                        quantity nested under an arm aligns to THAT arm, which is why the trailing arm's
+                        contents stay left-aligned. */}
+                    <text fg={theme().fgMuted}>
+                        UsageDialog — the conversation's labelled headline at the panel's two edges; cache counts nest UNDER input and reasoning under output
+                        (parts of an arm, never peers of it, and never summed), over the compact-form model / agent cuts:
+                    </text>
+                    <DialogShowcase>
+                        <UsageDialog analysisName="rna-seq-2026" loadUsage={() => ok<SessionUsageSnapshot, LocalDbError>(mockUsageSnapshot)} onClose={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>
+                        UsageDialog — a HALF figure: the provider reported prompt tokens and never completion tokens, so the trailing arm says so instead of
+                        showing a zero (the labelled form omits an absent arm exactly as the compact one does):
+                    </text>
                     <DialogShowcase>
                         <UsageDialog
                             analysisName="rna-seq-2026"
-                            loadUsage={() => ok<UsageSnapshot, LocalDbError>(mockUsageSnapshot)}
-                            names={mockUsageNames}
-                            onOpenRun={noop}
+                            loadUsage={() => ok<SessionUsageSnapshot, LocalDbError>(mockUsageSnapshotInputOnly)}
+                            onClose={noop}
+                        />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>
+                        UsageDialog — calls ran whose provider reported NO quantity at all: both arms are the absent word, and the call count beside them is
+                        what says the work happened:
+                    </text>
+                    <DialogShowcase>
+                        <UsageDialog
+                            analysisName="rna-seq-2026"
+                            loadUsage={() => ok<SessionUsageSnapshot, LocalDbError>(mockUsageSnapshotNoFigures)}
+                            onClose={noop}
+                        />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>
+                        UsageDialog — nothing recorded at all (what every chat opens in, before its thread identity is bound) — a different fact from the state
+                        above, and worded differently:
+                    </text>
+                    <DialogShowcase>
+                        <UsageDialog
+                            analysisName="rna-seq-2026"
+                            loadUsage={() => ok<SessionUsageSnapshot, LocalDbError>(mockUsageSnapshotEmpty)}
                             onClose={noop}
                         />
                     </DialogShowcase>
@@ -493,19 +588,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <DialogShowcase>
                         <UsageDialog
                             analysisName="rna-seq-2026"
-                            loadUsage={() => err<UsageSnapshot, LocalDbError>({ type: "query_failed", op: "gallery", cause: null })}
-                            onOpenRun={noop}
-                            onClose={noop}
-                        />
-                    </DialogShowcase>
-                    {/* The drill-down reuses ResultsDialog verbatim, exactly as the data-profile details do;
-                        the lines come from the real `usageStepLines`. */}
-                    <text fg={theme().fgMuted}>ResultsDialog — one run&apos;s step grain, stacked over the usage dialog when a run row is chosen:</text>
-                    <DialogShowcase>
-                        <ResultsDialog
-                            title={`Steps ${GLYPHS.emDash} ${idTail("99999999-8888-7777-6666-5555ffeeddcc")}`}
-                            lines={usageStepLines(mockUsageSteps)}
-                            emptyText="no steps recorded"
+                            loadUsage={() => err<SessionUsageSnapshot, LocalDbError>({ type: "query_failed", op: "gallery", cause: null })}
                             onClose={noop}
                         />
                     </DialogShowcase>
@@ -520,7 +603,8 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         Driven from the long-run fixture. */}
                     <text fg={theme().fgMuted}>
                         under the newest run row in the sidebar while it is non-terminal; long runs window their steps behind counted elision markers — click
-                        one to slide the window a step (rail step cap, heading off):
+                        one to slide the window a step (rail step cap, heading off). This is the mount the per-step figure line was measured against: it costs a
+                        row, and `maxSteps` caps STEPS, never rows:
                     </text>
                     <RunBlock
                         name={mockLongRun.name}
