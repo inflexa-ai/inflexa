@@ -272,6 +272,7 @@ describe("session flows", () => {
             archiveThread: () => okAsync<void, DbError>(undefined),
             unarchiveThread: () => okAsync<void, DbError>(undefined),
             purgeThread: () => okAsync<void, DbError>(undefined),
+            chatBusy: () => false,
             resolveThreadId: async () => "thread-resolved",
             workingDirFor: () => "/work",
             refreshThread: (threadId) => {
@@ -652,6 +653,50 @@ describe("session flows", () => {
         expect(t.notices[0]?.text).toContain("nothing was deleted");
     });
 
+    test("delete refuses while a turn is streaming into the conversation, before reading or confirming", async () => {
+        // The purge is unrecoverable and `appendTurn` has no foreign key to the thread row: a turn
+        // committing after it lands messages under a `thread_id` that resolves to no analysis, which no
+        // later reclamation can reach. The harness states this precondition and cannot enforce it, so
+        // the refusal has to be here — and ahead of the read, so the user never types a name for an
+        // action that was never going to run.
+        let reads = 0;
+        let purges = 0;
+        const t = makeSeams({
+            chatBusy: () => true,
+            getThread: () => {
+                reads += 1;
+                return okAsync(threadRow());
+            },
+            purgeThread: () => {
+                purges += 1;
+                return okAsync<void, DbError>(undefined);
+            },
+        });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await purgeSessionFlow(w.ws, t.seams);
+
+        expect(reads).toBe(0);
+        expect(purges).toBe(0);
+        expect(w.dialogs()).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("warn");
+        expect(t.notices[0]?.text).toContain("chat turn is running");
+    });
+
+    test("remove does NOT refuse while a turn is streaming — an archive is recoverable", async () => {
+        // Deliberately asymmetric with delete. A turn landing after an archive leaves its messages on a
+        // tombstoned row, and Restore brings the thread back with them intact — so blocking the action
+        // would cost the user a working command to protect against nothing.
+        const t = makeSeams({ chatBusy: () => true, getThread: () => okAsync(threadRow()) });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await deleteSessionFlow(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(1);
+        expect(t.notices).toEqual([]);
+    });
+
     test("delete opens the confirmation on a live row, naming the conversation to type back", async () => {
         const t = makeSeams({ getThread: () => okAsync(threadRow()) });
         const w = sessionScope(ANALYSIS, "thread-1");
@@ -735,7 +780,7 @@ describe("session flows", () => {
         expect(t.notices[0]?.text).toContain("Analysis changed");
     });
 
-    test("a failed archived listing warns and still opens the picker — a degrade, never a crash", async () => {
+    test("a failed archived listing warns and opens NO picker, so no empty state claims nothing was archived", async () => {
         __setBootStateForTest(READY);
         const t = makeSeams({ listThreadsWithArchived: () => errAsync(dbErr) });
         const w = sessionScope(ANALYSIS, "thread-1");
@@ -744,9 +789,56 @@ describe("session flows", () => {
 
         expect(t.notices).toHaveLength(1);
         expect(t.notices[0]?.kind).toBe("warn");
-        // The picker still opens on an empty list, as the switch picker does: the user keeps a working
-        // surface and its empty state is what tells them nothing could be listed.
+        // Degrading to an empty picker would render "No archived conversations" — a positive statement
+        // about the user's data that a failed read cannot support, and indistinguishable from the truth.
+        expect(w.dialogs()).toBe(0);
+    });
+
+    test("restore walks past the first page, so archived rows sorting behind live ones are still found", async () => {
+        // The widened listing orders by activity and the archive leaves `updated_at` alone, so every
+        // archived row sorts behind every live one used since. A picker reading one page would show
+        // none of them here and state outright that there are none.
+        __setBootStateForTest(READY);
+        const pages: ThreadPage[] = [
+            { threads: [threadRow({ threadId: "live-1" })], total: 2, page: 0, perPage: 1, hasMore: true },
+            { threads: [threadRow({ threadId: "archived-1", deletedAt: ARCHIVED_AT })], total: 2, page: 1, perPage: 1, hasMore: false },
+        ];
+        const asked: number[] = [];
+        const t = makeSeams({
+            listThreadsWithArchived: (_pool, _analysisId, page) => {
+                asked.push(page);
+                return okAsync(pages[page]!);
+            },
+        });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await openRestoreSession(w.ws, t.seams);
+
+        expect(asked).toEqual([0, 1]);
         expect(w.dialogs()).toBe(1);
+        expect(t.notices).toEqual([]);
+    });
+
+    test("restore stops walking and says the listing is partial rather than presenting it as complete", async () => {
+        // A store that never stops reporting more must not spin the picker forever, and the bounded walk
+        // it gets instead must not then pass its partial set off as the whole set.
+        __setBootStateForTest(READY);
+        let asked = 0;
+        const t = makeSeams({
+            listThreadsWithArchived: () => {
+                asked += 1;
+                return okAsync({ threads: [threadRow({ deletedAt: ARCHIVED_AT })], total: 9999, page: 0, perPage: 1, hasMore: true });
+            },
+        });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await openRestoreSession(w.ws, t.seams);
+
+        expect(asked).toBeLessThan(100); // bounded, not spinning
+        expect(w.dialogs()).toBe(1); // what WAS found is still offered
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("warn");
+        expect(t.notices[0]?.text).toContain("not listed");
     });
 
     test("a restore lifts the chosen conversation's tombstone and names it in the notice", async () => {
@@ -1023,7 +1115,21 @@ describe("analysis delete ladder", () => {
         expect(l.steps).toEqual(["flush", "export", "dispose:archive", "purge"]);
         expect(l.notices.at(-1)?.kind).toBe("error");
         expect(l.notices.at(-1)?.text).toContain("nothing was lost");
+        // The archive already happened, and this is the last moment its path is known: a retry finds no
+        // tree at the live location and truthfully reports the analysis had no files on disk, so a user
+        // who never saw this notice would never learn the artifacts were moved, or where.
+        expect(l.notices.at(-1)?.text).toContain(ARCHIVE_PATH);
         expect(w.quits()).toBe(0);
+    });
+
+    test("a purge failure after a permanent deletion names no path, because nothing was kept", async () => {
+        const l = ladder({ purgeError: pgErr, disposal: { kind: "deleted", path: "/work/.inflexa/analyses/alpha" } });
+        const w = scope();
+
+        await deleteAnalysisWith(w.ws, ANALYSIS, "delete", l.seams);
+
+        expect(l.notices.at(-1)?.text).toContain("nothing was lost");
+        expect(l.notices.at(-1)?.text).not.toContain("files are already at");
     });
 
     test("a failed disposal aborts before the purge is even attempted", async () => {

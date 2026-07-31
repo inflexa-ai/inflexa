@@ -126,6 +126,14 @@ async function workspaceBusyReason(analysisId: string): Promise<string | null> {
 }
 
 /**
+ * How the restore picker walks the widened thread listing. The size is the thread store's own
+ * per-request ceiling, so it is the fewest round trips the store will serve; the page cap bounds the
+ * walk against a store that never stops reporting more, at a reach far past any real analysis.
+ */
+const ARCHIVED_PAGE_SIZE = 200;
+const ARCHIVED_PAGE_LIMIT = 25;
+
+/**
  * Injectable edges for the session flows (switch / rename / delete) and the in-place analysis open,
  * so each is unit-testable offline — no Postgres, no booted runtime, no toast overlay. Mirrors
  * `ThreadSeams` in `hooks/thread.ts`: production callers omit the argument and get the real booted
@@ -141,11 +149,15 @@ export type SessionSeams = {
     /** Retitle a thread; `null` when the row is gone. Real: `createThreadStore(pool).updateTitle`. */
     readonly updateTitle: (pool: Pool, threadId: string, title: string) => ResultAsync<Thread | null, DbError>;
     /**
-     * An analysis's threads WIDENED to include the archived ones — the store widens the set rather than
-     * switching to an archived-only one, so a caller wanting the tombstoned rows alone narrows on
-     * `deletedAt` itself. Real: `createThreadStore(pool).listThreads` with `includeArchived`.
+     * One page of an analysis's threads WIDENED to include the archived ones — the store widens the set
+     * rather than switching to an archived-only one, so a caller wanting the tombstoned rows alone
+     * narrows on `deletedAt` itself. Real: `createThreadStore(pool).listThreads` with `includeArchived`.
+     *
+     * The page index is a parameter because the caller must be able to walk the whole set: the widened
+     * listing orders by activity, and archiving leaves `updated_at` where the last turn put it, so the
+     * tombstoned rows sort BEHIND every live one and a single page can hold none of them.
      */
-    readonly listThreadsWithArchived: (pool: Pool, analysisId: string) => ResultAsync<ThreadPage, DbError>;
+    readonly listThreadsWithArchived: (pool: Pool, analysisId: string, page: number) => ResultAsync<ThreadPage, DbError>;
     /**
      * Archive a thread: stamp its tombstone so it stops listing, keeping the row and every message.
      * Real: `createThreadStore(pool).archiveThread`.
@@ -158,6 +170,12 @@ export type SessionSeams = {
      * The one thread verb the archive cannot undo. Real: `createThreadStore(pool).purgeThread`.
      */
     readonly purgeThread: (pool: Pool, threadId: string) => ResultAsync<void, DbError>;
+    /**
+     * Whether a chat turn is streaming into the open conversation right now. The harness's thread store
+     * cannot observe a host's in-flight turns, so refusing an unrecoverable thread write while one is
+     * running is the host's obligation. Real: `chatStatus() === "busy"`.
+     */
+    readonly chatBusy: () => boolean;
     /** Pick the thread to open for an analysis — most recent, else a fresh mint. Real: {@link resolveThreadId}. */
     readonly resolveThreadId: (analysisId: string) => Promise<string | null>;
     /** An analysis's live working directory. Real: {@link workingDirFor}. */
@@ -173,10 +191,12 @@ const realSessionSeams: SessionSeams = {
     listThreads: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId }),
     getThread: (pool, threadId) => createThreadStore(pool).getThread(threadId),
     updateTitle: (pool, threadId, title) => createThreadStore(pool).updateTitle(threadId, title),
-    listThreadsWithArchived: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId, includeArchived: true }),
+    listThreadsWithArchived: (pool, analysisId, page) =>
+        createThreadStore(pool).listThreads({ analysisId, includeArchived: true, page, perPage: ARCHIVED_PAGE_SIZE }),
     archiveThread: (pool, threadId) => createThreadStore(pool).archiveThread(threadId),
     unarchiveThread: (pool, threadId) => createThreadStore(pool).unarchiveThread(threadId),
     purgeThread: (pool, threadId) => createThreadStore(pool).purgeThread(threadId),
+    chatBusy: () => chatStatus() === "busy",
     resolveThreadId,
     workingDirFor,
     refreshThread: (threadId) => void refreshOpenThread(threadId),
@@ -1007,9 +1027,14 @@ export async function deleteAnalysisWith(
 
     const purged = await seams.purgeAnalysis(runtime.pool, a.id);
     if (purged.isErr()) {
+        // The disposal already ran, so this is the LAST moment the archive path is known: a retry finds
+        // no tree at the live location and reports `absent`, whose notice truthfully says the analysis
+        // had no files on disk — leaving a user who never saw this message with no idea the artifacts
+        // were moved, or where. Naming it here costs a clause and closes that gap.
+        const kept = outcome.kind === "archived" ? ` Its files are already at ${outcome.path}.` : "";
         seams.notify({
             kind: "error",
-            text: `Could not reclaim this analysis's stored conversations and run history (${purged.error.type}) — the analysis was NOT deleted, so nothing was lost. Try the delete again.`,
+            text: `Could not reclaim this analysis's stored conversations and run history (${purged.error.type}) — the analysis was NOT deleted, so nothing was lost.${kept} Try the delete again.`,
         });
         return;
     }
@@ -1427,6 +1452,25 @@ export async function purgeSessionFlow(ctx: Workspace, seams: SessionSeams = rea
     // Reachable only through the palette, whose `enabled` already requires all three — this restates
     // the gate for the narrowing rather than handling a state the user can actually reach.
     if (!runtime || !analysis || threadId === null) return;
+    // A turn streaming into this very thread is the one state that makes the purge destructive beyond
+    // what the user asked for. `appendTurn` writes its messages with no foreign key and tolerates a
+    // missing thread row, so a turn committing after the purge lands rows under a `thread_id` that
+    // resolves to no analysis — reachable by nothing, since the only route from an analysis to its
+    // messages is a join through the thread row this deleted. The harness states the precondition and
+    // cannot enforce it, because it cannot see a host's in-flight turns; this is where it is met.
+    //
+    // The narrower check rather than the analysis-wide busy gate: a running data profile or workflow
+    // writes nothing into `messages`, so refusing a conversation delete for one would block the user
+    // over state that cannot be harmed. `chatStatus` is already thread-scoped here, because this flow
+    // only ever purges the OPEN thread. Checked once, before the dialog opens — the modal blocks the
+    // composer, so no turn can start between the check and the confirmation.
+    //
+    // Removal deliberately has no such gate: a turn landing after an archive leaves its messages on a
+    // tombstoned row that Restore brings back intact, which is a recoverable outcome, not a loss.
+    if (seams.chatBusy()) {
+        seams.notify({ kind: "warn", text: "Cannot delete this conversation while a chat turn is running — wait for it to finish, or stop it first." });
+        return;
+    }
     const pool = runtime.pool;
     // Absence and unreadability are different facts about the user's data, so they get different words
     // — the same split the removal flow makes, and for the same reason.
@@ -1498,10 +1542,41 @@ export async function confirmSessionPurge(
  */
 type ArchivedThread = Thread & { readonly deletedAt: Date };
 
+/** What one walk of the widened listing found, and whether it reached the end of the set. */
+type ArchivedListing = { readonly kind: "read"; readonly threads: ArchivedThread[]; readonly truncated: boolean } | { readonly kind: "unreadable" };
+
+/**
+ * Every archived conversation in the analysis, walked page by page.
+ *
+ * Walking rather than reading one page is what makes the result trustworthy. The listing is widened,
+ * not switched — a deliberate store decision, since a caller can narrow a widened set but cannot widen
+ * an archived-only one — so the live threads come back beside the tombstoned ones, ordered by activity.
+ * Archiving leaves `updated_at` where the last turn put it, so every archived row sorts BEHIND every
+ * live one that has been used since: on an analysis with more conversations than a page holds, the
+ * first page can contain no archived rows at all, and the picker would then state outright that there
+ * are none. Being told nothing was removed is worse than a slow picker, and this is a rare, deliberate
+ * action, so it pays the round trips.
+ *
+ * A failed page abandons the whole walk. A partial set here is indistinguishable from a complete one at
+ * the call site, and the empty state it feeds makes a positive claim about the user's data.
+ */
+async function collectArchivedThreads(pool: Pool, analysisId: string, seams: SessionSeams): Promise<ArchivedListing> {
+    const threads: ArchivedThread[] = [];
+    for (let page = 0; page < ARCHIVED_PAGE_LIMIT; page += 1) {
+        const read = await seams.listThreadsWithArchived(pool, analysisId, page);
+        if (read.isErr()) return { kind: "unreadable" };
+        // The predicate narrows the row type as it filters, which is what lets the picker read
+        // `deletedAt` as a date rather than assert on a column nullable for every live row.
+        threads.push(...read.value.threads.filter((t): t is ArchivedThread => t.deletedAt !== null));
+        if (!read.value.hasMore) return { kind: "read", threads, truncated: false };
+    }
+    return { kind: "read", threads, truncated: true };
+}
+
 /**
  * Open the restore picker over the analysis's archived conversations. Fetched BEFORE the dialog opens
  * for the same reason the switch picker's listing is — the thread store is an async Postgres read that
- * a dialog body cannot pull from itself — and a read failure degrades to an empty picker.
+ * a dialog body cannot pull from itself.
  *
  * A separate command rather than a toggle inside the switch picker: that picker composes a list whose
  * items are fixed for the dialog's lifetime, so a keystroke inside it could not re-render the rows,
@@ -1527,22 +1602,23 @@ export async function openRestoreSession(ctx: Workspace, seams: SessionSeams = r
         return;
     }
     const pool = runtime.pool;
-    const archived = (await seams.listThreadsWithArchived(pool, analysis.id)).match(
-        // The listing widens the set rather than switching it, so the live threads come back beside the
-        // tombstoned ones — and only the tombstoned ones have anything to restore. The predicate narrows
-        // the row type too, which is what lets the picker read `deletedAt` as a date below.
-        (page) => page.threads.filter((t): t is ArchivedThread => t.deletedAt !== null),
-        (): ArchivedThread[] => {
-            seams.notify({ kind: "warn", text: "Could not list this analysis's archived conversations." });
-            return [];
-        },
-    );
+    const listed = await collectArchivedThreads(pool, analysis.id, seams);
+    if (listed.kind === "unreadable") {
+        seams.notify({ kind: "warn", text: "Could not list this analysis's archived conversations." });
+        return;
+    }
+    const archived = listed.threads;
     // The listing is a Postgres round trip and NOTHING is modal across it, exactly as in
     // {@link openSwitchSession}: the analysis-switch keys are still live, so a picker opened anyway
     // would offer the previous analysis's archived conversations under the current analysis's heading.
     if (ctx.analysis?.id !== analysis.id) {
         seams.notify({ kind: "info", text: "Analysis changed — reopen restore for this one." });
         return;
+    }
+    // After the changed-analysis refusal, not before it: the toast channel shows one notice at a time,
+    // so a caveat about a listing that is no longer being offered would only displace the refusal.
+    if (listed.truncated) {
+        seams.notify({ kind: "warn", text: "This analysis has more conversations than the picker can walk — some archived ones are not listed." });
     }
     ctx.openDialog(() => (
         <SelectDialog
