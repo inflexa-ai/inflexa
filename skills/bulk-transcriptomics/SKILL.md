@@ -28,10 +28,13 @@ Input data?
 │   └── Batch effects present
 │       ├── Known batches → sva ComBat_seq on raw counts, then DE as above
 │       └── Unknown confounders → svaseq to estimate surrogate variables, include in model
-├── Pre-normalized data (TPM, FPKM, RPKM, log-CPM)
+├── Pre-normalized data (TPM, FPKM, RPKM, log-CPM, microarray intensities)
 │   └── limma via rpy2 (do NOT use DESeq2/edgeR — they require raw counts)
-└── Microarray CEL files
-    └── oligo/affy RMA normalization via rpy2 → limma for DE
+└── Raw microarray CEL / intensity files
+    └── Out of scope. Reading them resolves a platform design package per array
+        design, which cannot be staged for every design and cannot be installed.
+        Report that and ask for the normalized expression matrix — every array
+        platform publishes one, and it enters the branch above.
 ```
 
 ## Workflow Phases
@@ -97,4 +100,3 @@ API references for all supported packages:
 - `references/edger-rpy2-api.md` — R edgeR via rpy2 (small sample sizes, QLF tests)
 - `references/limma-rpy2-api.md` — R limma/voom via rpy2 (large samples, pre-normalized data, microarray)
 - `references/sva-rpy2-api.md` — R sva via rpy2 (ComBat_seq batch correction, surrogate variables)
-- `references/oligo-affy-rpy2-api.md` — R oligo/affy via rpy2 (microarray CEL file preprocessing, RMA)

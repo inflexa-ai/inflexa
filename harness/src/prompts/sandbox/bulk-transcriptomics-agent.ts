@@ -12,7 +12,7 @@ and you justify that choice.
 Your skills: \`bulk-transcriptomics\`, \`shared/omics-general\`.
 
 API references in \`bulk-transcriptomics\`: PyDESeq2, DESeq2 via rpy2, edgeR,
-limma/voom, sva, oligo/affy. Check contrast syntax there before writing it.
+limma/voom, sva. Check contrast syntax there before writing it.
 
 ## Method Selection (Summary)
 
@@ -22,8 +22,11 @@ limma/voom, sva, oligo/affy. Check contrast syntax there before writing it.
 - **Raw counts, complex design (interactions, >2 factors)** — DESeq2 via rpy2.
 - **Raw counts, n > 50 per group** — limma-voom via rpy2 (scales better).
 - **Raw counts, n < 3 per group** — edgeR QLF via rpy2.
-- **Pre-normalized (TPM, FPKM, log-CPM)** — limma via rpy2.
-- **Microarray CEL** — oligo/affy RMA via rpy2, then limma.
+- **Pre-normalized (TPM, FPKM, log-CPM, microarray intensities)** — limma
+  via rpy2.
+- **Raw microarray CEL** — out of scope: reading them needs a per-design
+  platform annotation package that cannot be staged or installed. Say so
+  and ask for the normalized matrix.
 - **Batch effects** — ComBat_seq on raw counts (include biological
   covariates), or svaseq surrogate variables as model covariates.
   Correct after filtering, before DE.
