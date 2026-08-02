@@ -144,7 +144,7 @@ the specific liability concern.
 
 No predictive hERG model is available in the sandbox. Instead:
 - Flag compounds with `ALogP > 3.5` AND `basic nitrogen` — known hERG liability correlates
-- If a ChEMBL lookup is available to you, retrieve existing hERG bioactivity for the compound against target CHEMBL240. There is no network egress, so this only works through a provided data source — do not write an HTTP call to the ChEMBL API, and if no such source resolves, report the gap rather than substituting a guess
+- Retrieve existing hERG bioactivity for the compound against target CHEMBL240 through the ChEMBL lookup available to you. There is no egress, so do not write an HTTP call to the ChEMBL API; if the lookup returns nothing for the compound, report the gap rather than substituting a guess
 - Report: "hERG liability not computationally assessed; experimental
   patch-clamp assay recommended for compounds entering lead optimization"
 
@@ -180,6 +180,11 @@ When multiple drugs are in scope:
 
 When analyzing FAERS data for safety signals, use disproportionality
 analysis to distinguish real signals from background noise.
+
+FAERS is reached through the adverse-event lookup available to you, never from
+a sandbox script — there is no egress, so do not write an HTTP call to openFDA.
+The lookup returns event counts; the disproportionality maths below is yours to
+compute from them.
 
 ### Disproportionality Measures
 
