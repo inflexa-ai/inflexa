@@ -225,9 +225,14 @@ r:
         - ConsensusClusterPlus
         - diffcyt
 
-        # Microarray
-        - oligo
-        - affy
+        # No raw-microarray track. oligo/affy were here and are deliberately gone:
+        # read.celfiles()/ReadAffy() resolve a platform design package (pd.* / *cdf)
+        # per array design at the FIRST call, before any data is read. Staging one
+        # per design is unbounded, and with no egress none can be installed, so both
+        # packages loaded cleanly while every pipeline built on them failed at step
+        # one. Normalized microarray matrices are still fully supported — that is a
+        # limma path and limma stays. Raw intensity processing is upstream work that
+        # belongs where the arrays were run.
 
         # Methylation
         - minfi
