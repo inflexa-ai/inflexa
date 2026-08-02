@@ -173,7 +173,19 @@ r:
         - ensembldb
         - EnsDb.Hsapiens.v86
         - EnsDb.Mmusculus.v79
-        - biomaRt
+        # biomaRt is deliberately NOT listed. It is a pure network client — every
+        # entry point (useMart, useEnsembl, listEnsembl, getBM) opens an HTTP
+        # connection to Ensembl, so with no egress there is no offline surface at
+        # all, unlike msigdbr which at least kept one metadata call. Naming it here
+        # would put it in packages.txt, and packages.txt is the only thing that
+        # tells an agent a capability exists.
+        #
+        # It stays INSTALLED regardless: DMRcate, Gviz, immunedeconv and txdbmaker
+        # all depend on it, so the resolver pulls it in. Dropping the entry does not
+        # remove the package, it stops advertising it — which is the correct state
+        # for something that is a dependency rather than a capability. Offline gene
+        # annotation is org.*.eg.db above, babelgene, and the catalogued ID-mapping
+        # tables.
 
         # Differential expression
         - DESeq2
