@@ -524,6 +524,18 @@ python:
             - mofapy2
             - snfpy
 
+            # Multi-context cell-cell communication. Tensor-cell2cell is the
+            # decomposition half of liana's CCC workflow: liana scores each
+            # context, `li.multi.to_tensor_c2c()` stacks them, and cell2cell
+            # factorizes the result into communication programs across contexts.
+            # It imports cell2cell internally, so liana alone leaves that path
+            # broken. Pure Python (py3-none-any) and every dependency bound is a
+            # lower bound, so unlike liana[extras] this needs no arch split and
+            # pins nothing back. Adds tensorly (the decomposition backend),
+            # statannotations, xlrd and kneed; everything else it wants is
+            # already staged and satisfies its floors.
+            - cell2cell
+
             # Pharmacokinetics
             - pharmpy-core # Population PK modeling utilities
 

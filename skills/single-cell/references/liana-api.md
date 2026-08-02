@@ -148,9 +148,13 @@ li.mt.rank_aggregate(
 ### Tensor Decomposition (Multi-Context)
 
 LIANA only *builds* the tensor. The factorization and its plots live in
-`cell2cell`, a separate package — confirm it imports before planning this
-step, and fall back to per-sample `rank_aggregate` comparisons if it does
-not. There is no `li.multi.decompose_tensor()` and no `li.pl.tensor_factor()`.
+`cell2cell`, a separate package — installed, and imported internally by
+`li.multi.to_tensor_c2c()`. There is no `li.multi.decompose_tensor()` and no
+`li.pl.tensor_factor()`.
+
+Use this when you have several contexts (samples, timepoints, conditions) and
+the question is which communication programs vary across them. For two
+conditions, per-sample `rank_aggregate` comparisons are simpler and answer it.
 
 ```python
 # Step 1 (liana): build the tensor from per-sample LIANA results
@@ -162,11 +166,17 @@ tensor = li.multi.to_tensor_c2c(
     how="outer",  # Handle missing values
 )
 
-# Step 2 (cell2cell): decompose it
+# Step 2 (cell2cell): choose the rank, then decompose
 import cell2cell as c2c
 
+# Elbow on reconstruction error. Do NOT hardcode a rank — it is the one
+# parameter that decides how many communication programs you report.
+tensor.elbow_rank_selection(upper_rank=15, runs=10, random_state=42)
+# Sets tensor.rank. Returns None when no knee is found (flat error curve,
+# i.e. no low-rank structure) — report that rather than picking a number.
+
 tensor.compute_tensor_factorization(
-    rank=5,             # Number of factors to extract
+    rank=tensor.rank,
     random_state=42,
 )
 
