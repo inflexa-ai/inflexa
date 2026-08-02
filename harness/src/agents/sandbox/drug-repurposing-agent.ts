@@ -20,7 +20,11 @@ export const meta: AgentMeta = {
         "preclinical target intelligence (KO + expression)",
     ],
     suitableFor: ["drug-repurposing", "drug-repositioning", "indication-expansion", "target-drug-mapping", "therapeutic-candidates", "perturbation-signatures"],
-    skills: ["drug-repurposing", "cheminformatics", "shared/omics-general"],
+    // `genomic-variants` carries the Mendelian randomization reference. The
+    // genetics-based repurposing strategy turns on whether a target's disease
+    // association is causal, and MR is the test — without this the pack points at
+    // a reference the agent cannot read.
+    skills: ["drug-repurposing", "cheminformatics", "genomic-variants", "shared/omics-general"],
     tools: [
         ...BASE_SANDBOX_TOOLS,
         "targetSafety",

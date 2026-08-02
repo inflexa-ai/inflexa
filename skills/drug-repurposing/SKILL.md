@@ -88,6 +88,13 @@ Choose the repurposing strategy based on available data:
         checking tractability.
      d. Find existing drugs for those targets in ChEMBL/DrugBank.
    - Prioritize targets with both genetic evidence AND existing drugs.
+   - **Association is not causation, and the distinction decides whether the
+     target is worth pursuing.** Where exposure and outcome GWAS summary
+     statistics are supplied, Mendelian randomization tests whether the
+     genetically-proxied exposure causes the disease — see the
+     `genomic-variants` pack. Note what MR estimates: a lifelong effect of
+     genetic proxy, not the effect of a drug given at one point in time, so a
+     causal result supports the target without predicting the effect size.
 
 5. **Clinical evidence mining** (validation layer)
    - For any candidate, check real-world evidence:
