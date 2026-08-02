@@ -141,6 +141,15 @@ After candidate identification, rank by:
 | No IP/exclusivity barriers | Medium | DrugBank status |
 | Preclinical evidence only | Lower | ChEMBL bioactivity |
 
+**A source that did not answer is not a source that found nothing.** These
+lookups fan out over several corpora and report which of them answered; some
+need credentials the deployment may not hold, so what is reachable varies. Read
+that report before scoring. A corpus that could not be reached must be recorded
+as *not consulted* — never folded into the criterion as absent evidence, which
+silently demotes every candidate that corpus would have supported. Name the
+criteria you could not evaluate alongside the ranking, and do not present a
+composite score as complete when one of its inputs never ran.
+
 ## Reporting Standards
 
 Every repurposing analysis must report:
@@ -154,6 +163,8 @@ Every repurposing analysis must report:
    scores, multiple testing correction for multi-target analysis.
 5. **Candidate table** — drug name, existing indication, proposed
    indication, evidence score, evidence sources, development stage.
+   State which sources were consulted and which could not be reached;
+   a score assembled from fewer inputs is a different claim.
 6. **Validation evidence** — clinical trials, literature, safety data.
 7. **Limitations** — computational predictions require experimental
    validation; repurposing candidates are hypotheses, not validated

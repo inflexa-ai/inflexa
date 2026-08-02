@@ -116,11 +116,12 @@ When evaluating drug metabolism risk from omics data:
 
 ### Pharmacogenomic Variant Impact
 
-Look up known gene-drug interactions in PharmGKB, if a PharmGKB source is
-available to you — there is no network egress, so its web API is not a
-route. Where no such source resolves, fall back to the CYP table above and
-say the pharmacogenomic annotation was not consulted. Flag these
-metabolizer phenotypes:
+Look up known gene-drug interactions in PharmGKB through the gene-drug
+interaction lookup available to you — there is no egress, so its web API is
+not a route from a script. That lookup spans several corpora and reports which
+of them answered; a corpus that could not be reached is not one with nothing
+to say. If the annotation does not resolve, fall back to the CYP table above
+and say it was not consulted. Flag these metabolizer phenotypes:
 - **Poor metabolizer (PM)**: reduced enzyme activity → drug accumulation → toxicity risk
 - **Ultrarapid metabolizer (UM)**: increased activity → subtherapeutic levels or excess active metabolite (codeine → morphine toxicity in CYP2D6 UM)
 
@@ -170,7 +171,7 @@ When clinical lab data is available alongside omics data:
 ## Drug-Drug Interaction Assessment
 
 When multiple drugs are in scope:
-1. Identify CYP metabolism pathways for each drug (PharmGKB if available to you, otherwise the CYP table above)
+1. Identify CYP metabolism pathways for each drug (PharmGKB via the interaction lookup, or the CYP table above where it returns nothing)
 2. Flag overlapping CYP substrates — co-administration risk
 3. Check for known inhibitor-substrate pairs
 4. Search FAERS for the drug combination to assess real-world signal
