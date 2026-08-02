@@ -99,7 +99,7 @@ After enrichment, collapse redundant terms to improve interpretability:
 ## Additional Available Packages
 
 - **singscore** (R via rpy2): Rank-based single-sample gene set scoring. Alternative to ssGSEA, stable for small gene sets.
-- **msigdbr** (R via rpy2): Retrieve MSigDB gene sets with species conversion. Queries an online database, so it fails without network access — resolve an MSigDB gene set file from the reference data available to you instead, and read it with the reader its reported format calls for.
+- **babelgene** (R via rpy2): Ortholog mapping. MSigDB is catalogued as human and mouse gene sets, so this is how a collection reaches any other species.
 - **upsetplot** (Python) / **ComplexUpset** (R via rpy2): UpSet plots for visualizing overlap between enriched term sets across comparisons.
 
 ## References

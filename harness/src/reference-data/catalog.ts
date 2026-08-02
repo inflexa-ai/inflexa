@@ -631,6 +631,131 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 ],
             },
             {
+                // The three canonical-pathway subcollections MSigDB still redistributes
+                // that nothing else in this catalog covers. Reactome and WikiPathways are
+                // deliberately NOT here — they have their own datasets, from upstream
+                // directly and on upstream's release cadence rather than MSigDB's snapshot.
+                id: "msigdb-canonical-pathways-human",
+                version: "2026.1",
+                title: "MSigDB human canonical pathways (KEGG MEDICUS, BioCarta, PID)",
+                description:
+                    "Three curated pathway subcollections from MSigDB C2:CP for Homo sapiens (symbols GMT) — 1,146 sets over roughly 300 KB. The pathway resources that Reactome and WikiPathways do not duplicate: KEGG's redistributable MEDICUS subset, plus the BioCarta and NCI-PID snapshots. Reach for these when a question names a pathway that the other two resources do not carry.",
+                organism: "human",
+                sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
+                license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
+                recommendation: { group: "pathways", recommended: true },
+                artifacts: [
+                    {
+                        path: "c2.cp.kegg_medicus.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c2.cp.kegg_medicus.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "658 sets, one per line, tab-separated: set name (KEGG_MEDICUS_*), source URL, then member gene symbols (HGNC). This is the MEDICUS subset, the only KEGG content MSigDB may redistribute — it is NOT the legacy KEGG_* collection, so set names and membership do not match older KEGG results and the two are not comparable across releases.",
+                    },
+                    {
+                        path: "c2.cp.biocarta.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c2.cp.biocarta.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "292 sets, one per line, tab-separated: set name (BIOCARTA_*), source URL, then member gene symbols (HGNC). Small, signalling-focused sets. BioCarta is no longer maintained upstream, so this is a historical snapshot — good for classical signalling cascades, unreliable for anything characterised in the last decade.",
+                    },
+                    {
+                        path: "c2.cp.pid.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c2.cp.pid.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "196 sets, one per line, tab-separated: set name (PID_*), source URL, then member gene symbols (HGNC). The NCI Pathway Interaction Database, retired upstream and preserved here. Curated signalling pathways with tight membership — the sets are small, so enrichment on them is sensitive to a handful of genes.",
+                    },
+                ],
+            },
+            {
+                id: "msigdb-perturbations-human",
+                version: "2026.1",
+                title: "MSigDB human chemical and genetic perturbation gene sets",
+                description:
+                    "The MSigDB C2:CGP collection for Homo sapiens (symbols GMT): 3,555 expression signatures from published chemical and genetic perturbation experiments, roughly 2.9 MB. The collection to test a signature against 'what happens when this drug or gene is perturbed' — the natural gene-set complement to connectivity-style drug repurposing.",
+                organism: "human",
+                sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
+                license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
+                recommendation: { group: "pathways", recommended: false },
+                artifacts: [
+                    {
+                        path: "c2.cgp.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c2.cgp.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "3,555 sets, one per line, tab-separated: set name, source URL, then member gene symbols (HGNC). Names are keyed to the publication's first author (WANG_*, LEE_*, MIKKELSEN_*) and carry a _UP/_DN direction — the two halves of a signature are a pair and must never be merged. These are observed responses in one study's model system, so a hit means the profile resembles that experiment, not that the same mechanism is engaged; report the perturbation and the system it was measured in.",
+                    },
+                ],
+            },
+            {
+                id: "msigdb-regulatory-targets-human",
+                version: "2026.1",
+                title: "MSigDB human regulatory target gene sets (TF and miRNA)",
+                description:
+                    "MSigDB C3 regulatory target sets for Homo sapiens (symbols GMT): 506 transcription-factor target sets from GTRD and 2,377 miRNA target sets from miRDB, roughly 4.1 MB combined. Both are computationally predicted, which is what distinguishes them from the curated signed regulons catalogued separately — reach for these for breadth of coverage, not for confident single-edge claims.",
+                organism: "human",
+                sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
+                license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
+                recommendation: { group: "pathways", recommended: false },
+                artifacts: [
+                    {
+                        path: "c3.tft.gtrd.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c3.tft.gtrd.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "506 sets, one per line, tab-separated: the set name is the regulating TF's own gene symbol, then the source URL, then its predicted target symbols (HGNC). Targets are inferred from GTRD ChIP-seq binding near the TSS, so membership means 'bound', not 'regulated', and the sets carry NO direction — a set cannot say whether the TF activates or represses. Use a signed regulon resource when direction matters.",
+                    },
+                    {
+                        path: "c3.mir.mirdb.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c3.mir.mirdb.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "2,377 sets, one per line, tab-separated: set name is the miRNA identifier, then the source URL, then predicted target gene symbols (HGNC). Sequence-based predictions from miRDB, unvalidated — false-positive rates are high per edge. Because miRNAs repress their targets, enrichment of a miRNA's target set among UP-regulated genes is evidence that the miRNA is LESS active, which is the opposite of the naive reading.",
+                    },
+                ],
+            },
+            {
+                id: "msigdb-cancer-modules-human",
+                version: "2026.1",
+                title: "MSigDB human computational cancer modules",
+                description:
+                    "The MSigDB C4 collection for Homo sapiens (symbols GMT): 1,006 gene sets derived computationally from cancer expression compendia rather than curated, roughly 670 KB. Mixed provenance — co-expression modules, cancer gene neighbourhoods, and single-cell meta-programs — useful for recognising a recurrent tumour expression programme that no curated pathway names.",
+                organism: "human",
+                sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
+                license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
+                recommendation: { group: "pathways", recommended: false },
+                artifacts: [
+                    {
+                        path: "c4.all.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c4.all.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "1,006 sets, one per line, tab-separated: set name, source URL, then member gene symbols (HGNC). The name prefix identifies the derivation and they are not interchangeable: MODULE_* are cancer modules, GNF2_/MORF_/GCM_* are co-expression neighbourhoods of a named seed gene, GAVISH_* are single-cell meta-programs. All are data-derived, so a set carries no mechanism and many are unnamed by biology — report the module identifier and its derivation, never a mechanistic gloss.",
+                    },
+                ],
+            },
+            {
+                id: "msigdb-celltype-human",
+                version: "2026.1",
+                title: "MSigDB human cell type signature gene sets",
+                description:
+                    "The MSigDB C8 collection for Homo sapiens (symbols GMT): 866 cell-identity marker sets curated from single-cell studies of human tissue, roughly 1.1 MB. The gene-set route to cell-type identity — for scoring clusters or deconvolved bulk profiles against published cell populations where no matched annotated reference is available.",
+                organism: "human",
+                sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
+                license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
+                recommendation: { group: "pathways", recommended: false },
+                artifacts: [
+                    {
+                        path: "c8.all.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c8.all.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "866 sets, one per line, tab-separated: set name, source URL, then member gene symbols (HGNC). Names key to the source study and its tissue (DESCARTES_*, TRAVAGLINI_*, HE_*), so the same cell type appears several times with different membership and the studies do not agree — treat agreement across studies as the signal, and always report which study a call came from. Signatures are tissue-context specific: a marker set from fetal tissue or a different organ can score high for the wrong reason.",
+                    },
+                ],
+            },
+            {
                 id: "collectri-human",
                 version: "2.0",
                 title: "CollecTRI human regulatory network",

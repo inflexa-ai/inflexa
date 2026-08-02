@@ -53,8 +53,19 @@ r:
         - ggrepel
         - pROC
         - vegan
-        - babelgene
-        - msigdbr
+        - babelgene # Ortholog mapping, human <-> mouse <-> rat and beyond. Also
+          # the way to carry a human-only gene set collection onto another species,
+          # since MSigDB is catalogued as human and mouse GMTs only.
+          #
+          # msigdbr is NOT the companion to add back here, for the same reason
+          # immunarch is not (see the note in the python list). Since v10 it ships
+          # no gene sets at all: msigdbr() and msigdbr_collections() download a
+          # ~43 MB archive from Zenodo on first call, so both die resolving the host
+          # with no egress, and the only survivor — msigdbr_species() — just
+          # restates babelgene's species list. It loads cleanly, so the load check
+          # would pass it and packages.txt would advertise gene-set retrieval that
+          # cannot happen. MSigDB reaches the sandbox as GMTs from the reference
+          # catalog instead.
         - tibble
         - dplyr
         - tidyr
