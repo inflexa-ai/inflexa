@@ -396,6 +396,13 @@ python:
             - "pydeseq2>=0.5.3"
             - "gseapy>=1.1.11"
             - leidenalg
+            - igraph # The PyPI distribution is `igraph`; `python-igraph` is the
+              # pre-0.10 name and now only an alias, so do not add that instead.
+              # Same case as pysam below: leidenalg pulls it in, but the
+              # network-regulatory pack documents its API directly and a
+              # transitive is absent from every packages.txt fragment. Distinct
+              # from the R `igraph` in the CRAN list — both are used, from their
+              # own language.
             - louvain
             - umap-learn
             - scikit-misc
@@ -445,6 +452,15 @@ python:
             - pyranges
             - pybedtools
             - pyBigWig
+            - pysam # Named explicitly although pybedtools already pulls it in.
+              # The genomic-variants pack documents its API directly (BAM/CRAM
+              # pileup, VCF record access), so it is a capability in its own right
+              # rather than an implementation detail of pybedtools — and as a
+              # transitive it appeared in NO packages.txt fragment, making it
+              # invisible to list_available_packages while being documented as
+              # available. Naming it also puts it under the load check, so a
+              # resolver change in pybedtools surfaces at build rather than as a
+              # failed analysis.
 
             # Immune / flow / mass-spec
             - scirpy # Also the TCR/BCR repertoire track. immunarch is NOT the
