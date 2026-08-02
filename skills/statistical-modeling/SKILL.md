@@ -142,9 +142,9 @@ know which phase it operates in:
    patient outcomes. Requires interventional trial data (rare in
    computational-only work).
 
-Most Cortex analyses operate at phase 1 (discovery) or phase 3
-(clinical validation if outcome data is available). Be explicit about
-which phase the current analysis addresses.
+Most analyses here operate at phase 1 (discovery) or phase 3 (clinical
+validation if outcome data is available). Be explicit about which phase
+the current analysis addresses.
 
 ### Predictive vs Prognostic Biomarkers — CRITICAL DISTINCTION
 

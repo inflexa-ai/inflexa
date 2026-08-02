@@ -48,9 +48,9 @@ When grading lab values:
 
 ## Safety Target Panel Quick Lookup
 
-Cortex ships a curated secondary-pharmacology off-target safety panel
-(~30 well-established liability targets, organ-tagged). Use this as a
-fast first-pass screen before reaching for live tools.
+A curated secondary-pharmacology off-target safety panel (~30 well-established
+liability targets, organ-tagged) is available to you. Use it as a fast
+first-pass screen before reaching for live tools.
 
 **From the agent:**
 
