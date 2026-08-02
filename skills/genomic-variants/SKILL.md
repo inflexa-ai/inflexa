@@ -67,7 +67,35 @@ Genotype data (VCF or PLINK format)
 - Check genomic inflation factor (lambda_GC); values >1.05 suggest residual
   confounding.
 
-### 3. Variant annotation
+### 3. Mendelian randomization (post-GWAS causal inference)
+
+**Reference:** `references/mendelian-randomization.md`.
+
+When the question moves from "is this locus associated" to "does this exposure
+*cause* this outcome", genetic instruments answer it. `TwoSampleMR` when starting
+from two sets of raw summary statistics — its `harmonise_data()` aligns effect
+alleles and handles palindromic SNPs, which is where most MR errors originate.
+`MendelianRandomization` when the estimates are already harmonised and only the
+estimators are wanted.
+
+Two environment constraints shape what is possible:
+
+- **Summary statistics must be supplied as files.** The OpenGWAS retrieval most
+  MR workflows begin with (`extract_instruments`, `extract_outcome_data`) needs
+  network. Ask for the exposure and outcome GWAS rather than attempting it.
+- **Instruments must arrive already clumped.** LD clumping needs either the API
+  or a PLINK-format LD reference panel, and neither is available — the staged
+  1000 Genomes entry is a phasing panel, a different product. Correlated
+  instruments bias the estimate and understate its standard error with nothing
+  failing, so confirm independence rather than assuming it.
+
+Report the full estimator set (IVW, weighted median, MR-Egger, modes), the
+heterogeneity and pleiotropy tests, the Steiger direction test, and the mean
+F-statistic. Agreement across estimators is the evidence; a lone IVW estimate is
+not an MR analysis, and a null result without an F-statistic cannot be
+distinguished from lack of power.
+
+### 4. Variant annotation
 
 Annotation here is a **join you perform**, not a tool you invoke: VEP and SnpEff
 are not installed, and their caches and plugin data cannot be fetched anyway.
@@ -101,7 +129,7 @@ on position and alleles.
   filtering step is not an error that surfaces; it is one that quietly produces
   a meaningless result, so check what an entry is *for* before using it.
 
-### 4. Reading evidence behind a call
+### 5. Reading evidence behind a call
 
 - pysam reads BAM/CRAM: depth, pileup and read attributes at sites you already
   have. This is for inspecting the support for an existing call — it is not a
@@ -156,3 +184,4 @@ on position and alleles.
 - `references/pysam-api.md` — BAM/CRAM reading and pileup operations
 - `references/pyranges-api.md` — Genomic interval arithmetic
 - `references/plink2-cli.md` — PLINK2 commands for GWAS QC and association testing
+- `references/mendelian-randomization.md` — TwoSampleMR local workflow (harmonisation, estimators, heterogeneity/pleiotropy/Steiger diagnostics), MendelianRandomization estimators, what the missing OpenGWAS API and LD clumping mean
