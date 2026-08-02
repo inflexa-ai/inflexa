@@ -21,7 +21,7 @@ QC strategy?
 │   ├── pct_counts_mt: median + 3 MADs (upper only; >20% suspicious)
 │   └── snRNA-seq: also check pct_counts_ribo (should be low)
 ├── Doublet detection
-│   ├── Single sample → scrublet (via sc.pp.scrublet or sc.external.pp.scrublet)
+│   ├── Single sample → scrublet (sc.pp.scrublet)
 │   └── Multiple samples / higher accuracy → SOLO (scvi-tools, deep generative)
 └── Ambient RNA (optional, pre-loaded)
     └── If raw + filtered matrices available → SoupX (R via rpy2)
