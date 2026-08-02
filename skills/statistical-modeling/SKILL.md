@@ -121,6 +121,7 @@ Escalate complexity only when simpler models underperform:
 | `references/shap-api.md` | SHAP API: TreeExplainer, summary plots, dependence |
 | `references/statsmodels-api.md` | statsmodels API: MixedLM, OLS, GLM |
 | `references/pingouin-api.md` | pingouin API: ttest, anova, correlation, effect sizes |
+| `references/biomarker-cutpoints-roc.md` | survminer/maxstat cutpoints with corrected p-values, OptimalCutpoints criteria, pROC DeLong CIs and paired tests, timeROC time-dependent AUC |
 
 ## Biomarker Discovery & Qualification
 
@@ -179,42 +180,25 @@ A marker that is only prognostic has no value for treatment selection.
 
 ### Cutpoint Optimization
 
+**Reference:** `references/biomarker-cutpoints-roc.md` — read it for
+`surv_cutpoint`, the `maxstat` corrected p-value, `OptimalCutpoints` criteria,
+DeLong CIs and `timeROC`.
+
 When a continuous biomarker must be dichotomized (high/low) for clinical use:
 
-```python
-# MaxStat approach (survminer-like in Python)
-from lifelines import CoxPHFitter
-from lifelines.statistics import logrank_test
-import numpy as np
+- **Survival outcome** → `survminer::surv_cutpoint` (R via rpy2), maximally
+  selected rank statistics. Do not reimplement the scan: the maximum of a
+  log-rank statistic over many candidate cutpoints is not chi-squared
+  distributed, so the nominal p-value of the best split is meaningless. The
+  multiplicity-corrected p-value comes from `maxstat`, and it is the number to
+  report.
+- **Binary outcome** → `OptimalCutpoints` (R via rpy2). Pick the criterion the
+  clinical question implies — Youden weights false positives and false negatives
+  equally, which is usually not what a screening setting wants.
 
-def find_optimal_cutpoint(df, marker_col, time_col, event_col,
-                          min_group_frac=0.2):
-    """Find optimal cutpoint via maximally selected rank statistics."""
-    values = df[marker_col].dropna().sort_values().unique()
-    lo = np.quantile(values, min_group_frac)
-    hi = np.quantile(values, 1 - min_group_frac)
-    candidates = values[(values >= lo) & (values <= hi)]
-
-    best_stat, best_cut = -np.inf, None
-    for cut in candidates:
-        mask = df[marker_col] >= cut
-        if mask.sum() < 5 or (~mask).sum() < 5:
-            continue
-        result = logrank_test(
-            df.loc[mask, time_col], df.loc[~mask, time_col],
-            df.loc[mask, event_col], df.loc[~mask, event_col],
-        )
-        if result.test_statistic > best_stat:
-            best_stat = result.test_statistic
-            best_cut = cut
-    return best_cut, best_stat
-```
-
-Always report:
-- The optimal cutpoint and its log-rank statistic
-- Kaplan-Meier curves for high/low groups
-- Bootstrap confidence interval for the cutpoint (resample 1000x)
-- Sensitivity analysis: how does performance change +/- 10% from cutpoint?
+Always report the cutpoint, the corrected p-value, the group sizes either side,
+and Kaplan-Meier curves for high/low. A split that leaves 5% in one arm is an
+artefact whatever its p-value.
 
 **Anti-pattern:** Optimizing on the same data you report performance on.
 Use nested CV or a held-out test set.
@@ -256,36 +240,28 @@ for train_idx, test_idx in cv_outer.split(X, y):
 print(f"AUC: {np.mean(aucs):.3f} (95% CI: {np.percentile(aucs, 2.5):.3f}-{np.percentile(aucs, 97.5):.3f})")
 ```
 
-### ROC Analysis Best Practices
+### ROC Analysis
 
-Use `sklearn.metrics` for ROC analysis in Python:
+**Reference:** `references/biomarker-cutpoints-roc.md`.
 
-```python
-from sklearn.metrics import (
-    roc_curve, roc_auc_score, precision_recall_curve,
-    average_precision_score,
-)
-import matplotlib.pyplot as plt
+Pick on the outcome type — a single AUC is undefined once outcomes are censored:
 
-# ROC curve with AUC and CI
-fpr, tpr, thresholds = roc_curve(y_true, y_score)
-auc = roc_auc_score(y_true, y_score)
-
-# Bootstrap AUC CI
-from sklearn.utils import resample
-boot_aucs = []
-for _ in range(1000):
-    idx = resample(range(len(y_true)), random_state=None)
-    if len(set(y_true[idx])) < 2:
-        continue
-    boot_aucs.append(roc_auc_score(y_true[idx], y_score[idx]))
-ci_lo, ci_hi = np.percentile(boot_aucs, [2.5, 97.5])
-
-# Youden's J for optimal threshold
-j_scores = tpr - fpr
-best_idx = np.argmax(j_scores)
-optimal_threshold = thresholds[best_idx]
 ```
+Outcome?
+├── Binary, no censoring
+│   ├── Curve and AUC → sklearn.metrics (roc_curve, roc_auc_score)
+│   ├── Confidence interval → pROC::ci.auc (DeLong, closed form)
+│   └── Comparing two markers on the SAME subjects → pROC::roc.test (paired)
+└── Time-to-event, censored
+    └── timeROC at clinically meaningful horizons, iid=TRUE for CIs
+```
+
+- **Do not bootstrap an AUC CI.** DeLong is analytic — faster, and not subject to
+  resampling noise.
+- **Overlapping CIs are not a test.** Two markers measured on the same subjects
+  are correlated; `roc.test` accounts for it, CI overlap does not.
+- **Do not collapse censored survival into a binary label** to reuse a fixed-time
+  AUC. It discards timing and misclassifies everyone censored early.
 
 Always report BOTH AUC-ROC and AUPRC. For imbalanced datasets, AUPRC
 is more informative than AUC-ROC.

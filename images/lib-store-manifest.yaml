@@ -107,6 +107,13 @@ r:
           # (runtime/exporter) must be listed or load-time fails.
 
         # Translational medicine / biomarker analysis
+        - maxstat # Named explicitly although survminer already pulls it in.
+          # surv_cutpoint returns the cutpoint and its statistic but NO p-value:
+          # the maximum of a log-rank statistic over many candidate splits is not
+          # chi-squared, so the corrected p-value from maxstat.test is the only
+          # reportable one. That makes it a capability in its own right rather
+          # than an implementation detail, and as a transitive it appeared in no
+          # packages.txt fragment (same case as pysam and igraph).
         - survminer # Publication-ready survival plots, cutpoint optimization
         - OptimalCutpoints # Cutpoint optimization methods
         - timeROC # Time-dependent ROC for survival biomarkers
