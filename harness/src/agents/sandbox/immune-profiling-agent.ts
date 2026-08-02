@@ -27,7 +27,10 @@ export const meta: AgentMeta = {
         "tcr-bcr-data",
         "immune-cell-composition",
     ],
-    skills: ["immune-profiling", "shared/omics-general"],
+    // `single-cell` carries the scirpy reference, which is the route from 10x
+    // VDJ / AIRR files to called clonotypes — the input every repertoire metric
+    // in `immune-profiling` assumes it already has.
+    skills: ["immune-profiling", "single-cell", "shared/omics-general"],
     tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "lookupAnnotation", "searchInteractions", "searchGeoDatasets", "opentargets"],
 };
 

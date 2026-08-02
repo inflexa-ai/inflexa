@@ -77,11 +77,12 @@ Choose the method based on input data and analytical goal:
      annotation.
 
 5. **TCR/BCR repertoire analysis**
-   - When TCR or BCR data is available (10x VDJ, AIRR-seq):
-     - Clonality: Shannon entropy, Gini index, clonal proportion.
-     - Diversity: species richness, Simpson's index, Chao1.
-     - Clonal expansion: fraction of top-N clonotypes.
-     - Repertoire overlap: Jaccard/Morisita-Horn between samples.
+   - Repertoire work goes through **scirpy** — it reads 10x VDJ and AIRR
+     files, pairs chains, and calls clonotypes by CDR3 distance. Clonotype
+     counts do not exist until it has run, so start there, not at the metrics.
+   - It covers clonal expansion, alpha diversity (normalized Shannon, D50)
+     and pairwise repertoire overlap. Simpson, Gini and Morisita-Horn it does
+     not — compute those from the clonotype counts it produces.
    - For scRNA-seq with VDJ: link clonotype to cell phenotype
      (exhaustion, activation, memory markers).
 
