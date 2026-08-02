@@ -19,7 +19,7 @@ Technology?
 │   ├── Resolution: ~55 um spots, each covering ~1-10 cells
 │   ├── Data: spot x gene count matrix + tissue image + spot coordinates
 │   ├── Coordinate type: grid (hexagonal array)
-│   └── Load: sc.read_visium() or sd.read_10x_visium()
+│   └── Load: sq.read.visium() or sd.read_10x_visium()
 │
 ├── MERFISH / seqFISH / Xenium (single-molecule FISH)
 │   ├── Resolution: subcellular, single-molecule
