@@ -325,104 +325,68 @@ def plot_checkpoint_heatmap(expression_df, group_labels,
 
 ## TCR/BCR Repertoire Diversity Metrics
 
+Clonotypes come from **scirpy**, which reads the VDJ/AIRR files, pairs chains
+and calls clonotypes. `ir.tl.alpha_diversity` (normalized Shannon, D50),
+`ir.tl.clonal_expansion` and `ir.tl.repertoire_overlap` (Jaccard) cover most of
+what a repertoire report needs — do not reimplement those. Everything below
+starts from the counts scirpy produces:
+
 ```python
-def compute_repertoire_diversity(clonotype_counts):
+# after ir.tl.define_clonotypes()
+counts = mdata.obs["clone_id"].value_counts()
+```
+
+### Metrics scirpy does not carry
+
+```python
+def clonality_metrics(clonotype_counts):
     """
-    Compute repertoire diversity metrics from clonotype frequencies.
+    Simpson, Gini and top-N clonal fractions from cells per clonotype.
 
     Parameters
     ----------
     clonotype_counts : array-like
         Number of cells per clonotype (e.g., [50, 30, 10, 5, 5]).
-
-    Returns
-    -------
-    dict
-        Diversity metrics.
     """
     counts = np.asarray(clonotype_counts, dtype=float)
-    counts = counts[counts > 0]
+    counts = np.sort(counts[counts > 0])[::-1]
     total = counts.sum()
     freqs = counts / total
-    n_clonotypes = len(counts)
+    n = len(counts)
 
-    shannon = -np.sum(freqs * np.log2(freqs))
-    max_entropy = np.log2(n_clonotypes) if n_clonotypes > 1 else 1
-    evenness = shannon / max_entropy if max_entropy > 0 else 0
-
-    simpson = np.sum(freqs ** 2)
-    inv_simpson = 1 / simpson if simpson > 0 else 0
-
-    sorted_counts = np.sort(counts)[::-1]
-    cumulative = np.cumsum(sorted_counts) / total
-    gini = (n_clonotypes + 1) / n_clonotypes - 2 * np.sum(
-        (np.arange(1, n_clonotypes + 1) * sorted_counts),
-    ) / (n_clonotypes * total)
-
-    top1_fraction = sorted_counts[0] / total
-    top10_fraction = sorted_counts[:10].sum() / total if n_clonotypes >= 10 else 1.0
+    simpson = float(np.sum(freqs ** 2))
+    gini = (n + 1) / n - 2 * float(
+        np.sum(np.arange(1, n + 1) * counts),
+    ) / (n * total)
 
     return {
-        "n_clonotypes": n_clonotypes,
+        "n_clonotypes": n,
         "total_cells": int(total),
-        "shannon_entropy": float(shannon),
-        "normalized_entropy": float(evenness),
-        "simpson_index": float(simpson),
-        "inverse_simpson": float(inv_simpson),
-        "gini_index": float(max(0, gini)),
-        "top1_clonal_fraction": float(top1_fraction),
-        "top10_clonal_fraction": float(top10_fraction),
+        "simpson_index": simpson,
+        "inverse_simpson": 1 / simpson if simpson > 0 else 0.0,
+        "gini_index": max(0.0, gini),
+        "top1_clonal_fraction": float(counts[0] / total),
+        "top10_clonal_fraction": float(counts[:10].sum() / total),
     }
 ```
 
-### Repertoire Overlap
+### Morisita-Horn Overlap
+
+Abundance-weighted, so unlike Jaccard it is not dominated by rare shared
+clonotypes. Not among scirpy's overlap metrics:
 
 ```python
-def repertoire_overlap(clonotypes_a, clonotypes_b, metric="jaccard"):
-    """
-    Compute repertoire overlap between two samples.
-
-    Parameters
-    ----------
-    clonotypes_a, clonotypes_b : set or dict
-        Sets of clonotype IDs, or dicts {clonotype: count}.
-    metric : str
-        "jaccard" or "morisita_horn".
-
-    Returns
-    -------
-    float
-        Overlap score (0 = no overlap, 1 = identical).
-    """
-    if isinstance(clonotypes_a, dict):
-        set_a = set(clonotypes_a.keys())
-        set_b = set(clonotypes_b.keys())
-    else:
-        set_a = set(clonotypes_a)
-        set_b = set(clonotypes_b)
-
-    if metric == "jaccard":
-        intersection = len(set_a & set_b)
-        union = len(set_a | set_b)
-        return intersection / union if union > 0 else 0.0
-
-    elif metric == "morisita_horn":
-        if not isinstance(clonotypes_a, dict):
-            raise ValueError("morisita_horn requires count dicts")
-        shared = set_a & set_b
-        if not shared:
-            return 0.0
-        total_a = sum(clonotypes_a.values())
-        total_b = sum(clonotypes_b.values())
-        sum_ab = sum(
-            clonotypes_a.get(c, 0) * clonotypes_b.get(c, 0) for c in shared
-        )
-        sum_a2 = sum(v ** 2 for v in clonotypes_a.values())
-        sum_b2 = sum(v ** 2 for v in clonotypes_b.values())
-        denom = (sum_a2 / total_a ** 2 + sum_b2 / total_b ** 2) * total_a * total_b
-        return 2 * sum_ab / denom if denom > 0 else 0.0
-
-    raise ValueError(f"Unknown metric: {metric}")
+def morisita_horn(counts_a, counts_b):
+    """Repertoire overlap from two {clonotype: count} mappings."""
+    shared = set(counts_a) & set(counts_b)
+    if not shared:
+        return 0.0
+    total_a, total_b = sum(counts_a.values()), sum(counts_b.values())
+    sum_ab = sum(counts_a[c] * counts_b[c] for c in shared)
+    sum_a2 = sum(v ** 2 for v in counts_a.values())
+    sum_b2 = sum(v ** 2 for v in counts_b.values())
+    denom = (sum_a2 / total_a ** 2 + sum_b2 / total_b ** 2) * total_a * total_b
+    return 2 * sum_ab / denom if denom > 0 else 0.0
 ```
 
 ## Gotchas
