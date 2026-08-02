@@ -229,20 +229,6 @@ cat(length(pathways), "sets;",
 ''')
 ```
 
-### msigdbr R package (requires network — WILL FAIL here)
-
-```python
-# msigdbr queries an online database. Without egress this errors out; there is
-# no offline mode. Use a resolved GMT instead.
-msigdbr = importr("msigdbr")
-
-ro.r('''
-msigdb_df <- msigdbr(species = "Homo sapiens", category = "H")
-pathways <- split(msigdb_df$gene_symbol, msigdb_df$gs_name)
-''')
-pathways = ro.r("pathways")
-```
-
 ### KEGG
 
 KEGG gene sets cannot be redistributed under their license, so they are not
