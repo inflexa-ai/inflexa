@@ -161,8 +161,8 @@ def detect_signals_from_faers(drug_events, total_drug_reports,
     total_drug_reports : int
         Total reports for this drug (the search's totalReports).
     total_all_reports : int
-        Total reports in FAERS database (approximate: ~20M for
-        recent years; use the FAERS dashboard for current counts).
+        Total reports in FAERS database. No lookup returns this, so it
+        is an approximation (~20M cumulative) — report it as one.
     background_event_counts : dict
         {reaction_name: count_in_all_reports} for background rates.
         If unavailable, use total_all_reports as denominator for

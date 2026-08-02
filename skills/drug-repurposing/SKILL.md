@@ -97,6 +97,9 @@ Choose the repurposing strategy based on available data:
         specific to the proposed patient population?
      c. Search the published literature — is there evidence for the
         drug-disease combination?
+   - All three are lookups available to you, not sources a script can
+     reach: there is no egress, so do not write HTTP calls to openFDA,
+     the trial registries, or a literature API.
    - Report existing clinical evidence alongside computational
      predictions.
 
