@@ -124,6 +124,7 @@ When you need gene ID conversion, annotation, or organism databases:
 ## R ↔ Python Format Conversion
 
 - **zellkonverter** (R via rpy2): Convert between AnnData (.h5ad) and SingleCellExperiment (.rds). Use `readH5AD()` / `writeH5AD()` in R when an R package requires SCE input.
+- **SeuratDisk** (R via rpy2): The Seurat-native route for the same crossing — `Convert()` between `.h5ad` and `.h5seurat`, then `LoadH5Seurat()`. Reach for it when the R side needs a Seurat object specifically (Azimuth, ProjecTILs, scGate) rather than an SCE.
 
 ## Visualization Utilities
 
