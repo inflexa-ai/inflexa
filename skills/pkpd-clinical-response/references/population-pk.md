@@ -1,7 +1,30 @@
-# Population PK Covariate Analysis Reference
+# Two-Stage PK Covariate Analysis Reference
 
-Mixed-effects modeling for identifying patient covariates that
-explain inter-individual variability in pharmacokinetics.
+Regressing **already-derived** per-subject PK parameters on patient covariates.
+Stage one is NCA (see `nca-analysis.md`), which gives each subject a CL/F, Vd/F
+and t1/2; stage two, here, explains the spread in those numbers.
+
+**This is not population PK, and the distinction is not cosmetic.** There is no
+structural model here, so nothing in this file estimates absorption,
+distribution or elimination, extrapolates to another regimen, or partitions
+variability into IIV and residual error. For that, see
+`population-pk-nlme.md` (nlmixr2), which fits structure, IIV and error
+simultaneously from concentration-time data.
+
+Two-stage is valid, and simpler, when **sampling is rich enough that each
+subject's parameters are well estimated on their own**. It degrades as sampling
+gets sparser, because stage two treats imprecise stage-one estimates as if they
+were observed values — biasing covariate effects toward the null. With sparse
+sampling, use NLME instead; there is no threshold at which two-stage becomes
+merely approximate rather than wrong.
+
+**Use a mixed model here only when subjects contribute more than one parameter
+estimate** — repeated occasions, cycles, or crossover periods — where the random
+effect captures inter-occasion variability. With a single CL per subject, a
+per-subject random intercept has one observation per group, absorbs the residual
+exactly, and is unidentifiable. That case is ordinary least squares
+(`smf.ols`), not `smf.mixedlm`, and the examples below should be read with
+`groups=` dropped.
 
 ## Core Imports
 
@@ -13,12 +36,19 @@ import pandas as pd
 import matplotlib.pyplot as plt
 ```
 
-## statsmodels MixedLM for Population PK
+## statsmodels for Two-Stage Covariate Analysis
 
 ### Basic Covariate Model
 
+`CL` here is one derived clearance per subject-occasion, from NCA — not a
+concentration.
+
 ```python
-# Log-transformed clearance with demographic covariates
+# One estimate per subject: no random effect to fit.
+result = smf.ols("np.log(CL) ~ age + weight + sex + eGFR", data=pk_data).fit()
+
+# Repeated occasions per subject: the random intercept is inter-occasion
+# variability, and only then is mixedlm the right model.
 model = smf.mixedlm(
     "np.log(CL) ~ age + weight + sex + eGFR",
     data=pk_data,
