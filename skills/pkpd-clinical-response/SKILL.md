@@ -41,15 +41,44 @@ assessment). For IO trials, always check if iRECIST was used.
 Always report: Cmax, Tmax, AUC(0-last), AUC(0-inf), t1/2, CL/F, Vd/F.
 Plot: concentration-time profile (linear and semi-log scale).
 
-### Population PK Covariates
+### Population PK and Covariates
 
-**Reference:** `references/population-pk.md` — read it for statsmodels MixedLM syntax, random effects specification, `forward_selection()`, `backward_elimination()`, standard PK covariates table, allometric scaling, and diagnostic plots.
+Two different methods share this name. Pick on the sampling design, then read
+the matching reference:
 
-When patient demographic/clinical data is available alongside PK data:
+```
+Concentration-time data + patient covariates
+├── Rich sampling (each subject's own PK parameters are well estimated)
+│   ├── Question is "which covariates explain the spread in CL/Vd?"
+│   │   └── Two-stage: derive per-subject parameters by NCA, then regress
+│   │       them on covariates → references/population-pk.md
+│   └── Question is about the PK model itself — structure, IIV, or what a
+│       different regimen would give
+│       └── NLME with nlmixr2 → references/population-pk-nlme.md
+└── Sparse sampling (few points per subject)
+    └── NLME only. Two-stage cannot estimate per-subject parameters to
+        regress, and treating imprecise ones as observed biases covariate
+        effects toward the null → references/population-pk-nlme.md
+```
+
+- **A linear mixed model on concentrations is not population PK.** It carries no
+  absorption/distribution/elimination structure, so it yields no CL or Vd,
+  cannot extrapolate to another regimen, and its random effect is not IIV on a
+  PK parameter. `nlmixr2` is the tool that fits structure, IIV and residual
+  error together; models are written in R, so write a native R script rather
+  than driving it through rpy2.
 - Test covariates: age, weight, sex, renal function (eGFR), hepatic
-  function (Child-Pugh), genotype (CYP polymorphisms)
-- Use mixed-effects models (statsmodels MixedLM or lme4 via rpy2)
-- Forward addition / backward elimination for covariate selection
+  function (Child-Pugh), genotype (CYP polymorphisms). Size effects are
+  allometric by default.
+- Forward addition (p < 0.05) then backward elimination (p < 0.001) — the
+  asymmetry is deliberate, since selecting on the same data inflates
+  significance.
+- A covariate that lowers the objective function without reducing between-subject
+  variability on its parameter has explained nothing. Report both, with the
+  shrinkage.
+- **Simulation** — `mrgsolve` for regimens the trial did not run, driven by the
+  fitted parameters; `PKPDsim` for the same over a library of named structural
+  models; `pksensi` for global sensitivity over a parameter space.
 
 ## Exposure-Response Analysis
 
@@ -159,7 +188,8 @@ gotchas. Read the reference file itself before writing code in that area.
 |-----------|------|----------|
 | NCA Analysis | `references/nca-analysis.md` | AUC (linear/log-linear/extrapolated), terminal half-life, full NCA parameter derivation, concentration-time plots, quality checks |
 | Dose & Exposure-Response | `references/dose-exposure-response.md` | 4PL/3PL dose-response fitting, exposure-response logistic regression, safety E-R (time-to-AE by quartile), therapeutic window identification |
-| Population PK | `references/population-pk.md` | statsmodels MixedLM for pop PK, random effects specification, forward/backward covariate selection, standard covariates table, allometric scaling, diagnostic plots |
+| Population PK (NLME) | `references/population-pk-nlme.md` | nlmixr2 model syntax, SAEM/FOCEi, the addCwres/OBJF trap, covariate models and likelihood-ratio selection, IIV and shrinkage, goodness-of-fit columns, mrgsolve simulation |
+| Two-Stage PK Covariates | `references/population-pk.md` | Regressing NCA-derived per-subject parameters on covariates, when a random effect is identifiable, forward/backward selection, standard covariates table, allometric scaling, diagnostic plots |
 | Clinical Response Criteria | `references/clinical-response-criteria.md` | RECIST 1.1 full tables (target/non-target/overall), iRECIST pseudoprogression rules, response endpoint derivation (ORR, DCR, DOR, TTR, PFS) |
 | PD Biomarker Tracking | `references/pd-biomarker-tracking.md` | PD change from baseline, PD response classification, PK-PD hysteresis (plot + diagnosis), PD-exposure correlation, waterfall plots |
 | Lifelines for PK/PD | `references/lifelines-pkpd.md` | KM for DOR/PFS/TTR, safety exposure-response, Cox PH for multivariate analysis, at-risk tables, competing risks guidance |
@@ -168,6 +198,10 @@ gotchas. Read the reference file itself before writing code in that area.
 
 - Fit compartmental PK models without sufficient timepoints (need >=
   2x the number of parameters)
+- Call a linear mixed model on concentrations "population PK" — it has no
+  compartmental structure and produces no PK parameters
+- Compare nlmixr2 fits before `addCwres()` — after SAEM the objective function
+  is NA, so the comparison is between two missing values and concludes nothing
 - Report PK parameters without specifying the dose, route, and whether
   steady-state was reached
 - Use NCA terminal half-life if the terminal phase has fewer than 3
