@@ -142,3 +142,4 @@ When you need gene ID conversion, annotation, or organism databases:
 - **corrplot**: Correlation matrix visualization
 - **patchwork** / **cowplot**: Multi-panel figure layouts (combine ggplot panels)
 - **plotly** (R): Interactive plots from R
+- **ComplexUpset**: UpSet plots for set intersections (enrichment overlap, shared genes). A ggplot2 extension, so it themes and composes with patchwork like any other panel
