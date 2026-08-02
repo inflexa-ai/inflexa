@@ -58,8 +58,12 @@ Batch effects present? (check PCA colored by batch)
 │   └── Harmony (fast, operates in PCA space, corrects embeddings only)
 ├── Complex batch effect (different donors, protocols, tissues)
 │   └── scVI (deep generative model, corrects latent space, preserves counts)
-└── Alignment only (no shared latent space needed)
-    └── scanorama (fast alignment, good for simple batch structures)
+├── Alignment only (no shared latent space needed)
+│   └── scanorama (fast alignment, good for simple batch structures)
+└── Cell types already known, and over-correction is the risk
+    └── STACAS (R via rpy2) — anchor-based, and can be told which labels
+        must NOT be merged, so integration stops collapsing genuinely
+        distinct populations into one
 ```
 
 ### Clustering
@@ -77,13 +81,57 @@ Resolution selection:
 
 ```
 Annotation approach?
-├── Automated (fast, reproducible)
+├── A matching annotated reference resolves from the inventory — PREFER THIS
+│   └── Reference-based label transfer (see below)
+├── Automated, model-based (fast, reproducible)
 │   └── CellTypist with tissue-appropriate model
 │       ├── majority_voting=True for clean labels
 │       └── Cross-check with known markers
 └── Marker-based (manual, flexible)
     └── sc.tl.rank_genes_groups per cluster → match to known markers
 ```
+
+#### Reference-Based Label Transfer
+
+The appropriate method when a reference annotated in the same tissue exists: it
+carries a whole annotation schema rather than one model's label set, and gives
+per-cell prediction scores you can threshold on.
+
+| Route | Use when |
+|-|-|
+| **Azimuth** (R via rpy2) | An `azimuth-*` reference resolves from the inventory. Its reference object and Annoy index must sit in the same directory — resolve both, and pass the directory rather than assuming a layout. |
+| **Seurat `FindTransferAnchors` + `TransferData`** (R via rpy2) | Any annotated reference, including one you were given. No external database — this is the general route when the reference is not an Azimuth one. `MapQuery` additionally projects the query onto the reference embedding. |
+| **symphonypy** (Python) | The same, staying in scanpy: build the reference embedding, `map_embedding` the query onto it, then `transfer_labels_kNN`. |
+
+- **Always carry the prediction score**, not just the label. Transfer assigns a
+  nearest reference label to *every* query cell, including populations the
+  reference does not contain — a confident-looking label on a cell type that was
+  never in the reference is the characteristic failure. Threshold on the score,
+  and report the fraction below threshold as unassigned rather than silently
+  keeping them.
+- The reference must match the tissue and, ideally, the disease context. A PBMC
+  reference will label tumour-infiltrating cells with its closest blood
+  equivalent and give no signal that it did so.
+- Reference-based and marker-based should agree. Where they do not, that
+  disagreement is a finding about the data, not a tie to break by picking one.
+
+#### Tumour-Immune Subtyping
+
+`scGate` (hierarchical marker-based gating) and `ProjecTILs` (projection onto a
+T-cell state atlas) are the tumour-immune-specific routes and pair with malignant
+cell calling below. Both are installed, and **both need data that is not staged**:
+
+- `scGate::get_scGateDB()` downloads its curated model database and fails here;
+  the package bundles none. The gating algorithm itself works on any model you
+  write — a small data frame of levels, signatures and positive/negative use —
+  so it is usable for a hand-specified hierarchy, not for the published models.
+- `ProjecTILs::load.reference.map()` downloads the reference atlas and fails
+  here. It needs a reference map supplied as a file, or one built locally from
+  annotated data.
+
+Report the gap rather than substituting; `UCell` (which works offline, no
+reference needed) is the honest fallback for scoring cell-state signatures per
+cell when neither of those has its data.
 
 ### Malignant Cell Calling (tumour samples)
 
