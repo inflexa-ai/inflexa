@@ -560,6 +560,17 @@ node:
 # solve fails on a missing package), so they are amd64-only — the same
 # treatment R gets upstream. The builder installs common + the target arch.
 system_tools:
+    # TERTIARY ANALYSIS ONLY. Every tool here reads, subsets or converts data that
+    # was already processed; none produces it. No aligner, quantifier, variant
+    # caller or peak caller belongs in this list — STAR, salmon, kallisto,
+    # featureCounts, bowtie2, bwa, GATK, DeepVariant, Mutect2, MACS2, SEACR, HOMER,
+    # TOBIAS, deeptools, VEP and SnpEff are all deliberately absent, not missing.
+    # Read processing happens wherever the instrument output was handled; the
+    # product starts at the matrix, the called variants, and the peak set.
+    #
+    # Adding one of those would not just cost image size — it would change what the
+    # agents claim they can do, and the prompts state this boundary explicitly
+    # (harness/src/prompts/sandbox-standards.ts, "Scope"). Change both or neither.
     common:
         # samtools and bcftools are PINNED because cellsnp-lite below caps htslib,
         # and it caps it differently per arch: no cellsnp-lite build accepts htslib
