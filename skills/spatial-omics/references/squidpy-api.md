@@ -192,7 +192,7 @@ import squidpy as sq
 import scanpy as sc
 
 # Load Visium data
-adata = sc.read_visium("path/to/spaceranger_output/")
+adata = sq.read.visium("path/to/spaceranger_output/")
 adata.var_names_make_unique()
 
 # Standard preprocessing
@@ -224,7 +224,7 @@ sq.pl.spatial_scatter(adata, color=adata.uns['moranI'].head(4).index.tolist())
 ## Gotchas
 
 - Always call `sq.gr.spatial_neighbors()` before any spatial statistic function. Without a spatial graph, all `sq.gr.*` functions will fail.
-- `sc.read_visium()` is deprecated in current scanpy; it still works but warns and names `sq.read.visium()` as the replacement. Prefer `sq.read.visium()` for new code — squidpy is installed.
+- `sc.read_visium()` is the deprecated scanpy alias for `sq.read.visium()` — recognise it in existing code, do not write it.
 - `sq.gr.moran()` is **deprecated**. Use `sq.gr.spatial_autocorr(mode="moran")` instead.
 - `coord_type="grid"` is for Visium (hexagonal grid). Use `"generic"` for all other technologies (MERFISH, Xenium, Slide-seq).
 - `sq.gr.ligrec()` is **unavailable**: the `omnipath` package is not installed and cannot be installed (no network egress), and its interaction resources are web-fetched. Report the blocker instead of attempting the call. See the ligrec section above.

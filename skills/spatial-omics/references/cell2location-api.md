@@ -7,6 +7,7 @@ Bayesian model for spatial deconvolution: maps cell types from scRNA-seq referen
 ```python
 import cell2location
 import scanpy as sc
+import squidpy as sq
 import numpy as np
 import pandas as pd
 ```
@@ -120,7 +121,7 @@ Decomposes spatial spots into cell type abundances using the reference signature
 ### Prepare Spatial Data
 
 ```python
-adata_vis = sc.read_visium("path/to/spaceranger_output/")
+adata_vis = sq.read.visium("path/to/spaceranger_output/")
 # or
 adata_vis = sc.read_h5ad("spatial_data.h5ad")
 
@@ -139,7 +140,7 @@ print(f"Shared genes: {len(intersect)}")
 
 ```python
 # batch_key must name a column that exists in adata_vis.obs. Visium output read
-# via sc.read_visium() has NO "sample" column — passing one raises KeyError.
+# via sq.read.visium() has NO "sample" column — passing one raises KeyError.
 # Use None for a single slide, or add the column yourself when combining slides.
 cell2location.models.Cell2location.setup_anndata(
     adata=adata_vis,
@@ -240,6 +241,7 @@ adata_vis.write("spatial_with_cell2location.h5ad")
 ```python
 import cell2location
 import scanpy as sc
+import squidpy as sq
 import numpy as np
 from cell2location.utils.filtering import filter_genes
 
@@ -265,7 +267,7 @@ adata_ref = reg_model.export_posterior(
 inf_aver = adata_ref.varm["means_per_cluster_mu_fg"]
 
 # === Stage 2: Spatial mapping ===
-adata_vis = sc.read_visium("spatial_output/")
+adata_vis = sq.read.visium("spatial_output/")
 adata_vis.var["mt"] = adata_vis.var_names.str.startswith("MT-")
 adata_vis = adata_vis[:, ~adata_vis.var["mt"]].copy()
 
@@ -293,7 +295,7 @@ mod.save("cell2location_model/", overwrite=True)
 ## Gotchas
 
 - The scRNA-seq reference is **user-supplied**. None is bundled and none can be downloaded. Without one, cell2location cannot run — report the blocker.
-- `batch_key` must name a column that actually exists in `.obs`. `"sample"` is a placeholder, not a real default: `sc.read_visium()` output has no such column and passing it raises `KeyError`. Verify against `adata.obs.columns` first, or pass `None`.
+- `batch_key` must name a column that actually exists in `.obs`. `"sample"` is a placeholder, not a real default: `sq.read.visium()` output has no such column and passing it raises `KeyError`. Verify against `adata.obs.columns` first, or pass `None`.
 - `plot_history(n)` skips the **first** `n` epochs — it is a start offset, not "the last n%" and not a tail window. Scale it to `max_epochs` (e.g. ~20 for a 250-epoch regression fit, ~1000 for a 30k-epoch mapping fit).
 - cell2location expects **raw counts** (not normalized). Do not pass log-transformed or scaled data.
 - Always remove mitochondrial genes from spatial data before mapping. They are highly expressed but uninformative for cell type deconvolution.
