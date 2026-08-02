@@ -6,7 +6,7 @@ Runtime knowledge packs the harness loads into its sandbox agents on demand — 
 
 ## What's here
 
-23 packs (one `SKILL.md` per directory), grouped by domain:
+One `SKILL.md` per directory, grouped by domain:
 
 - **Transcriptomics / single-cell** — `bulk-transcriptomics`, `single-cell`, `multimodal-single-cell`, `spatial-omics`
 - **Genomics / epigenomics** — `genomic-variants`, `dna-methylation`, `chromatin-regulation`
