@@ -16,7 +16,9 @@ Choose the method based on your data type and analytical goal:
 1. **Co-expression network from bulk RNA-seq or microarray**
    - Use **PyWGCNA** for weighted correlation network construction, module detection, and hub gene identification.
    - Requires variance-stabilized or log-transformed expression (NOT raw counts).
-   - Soft-thresholding power: use `pickSoftThreshold()` to select; target scale-free topology fit > 0.8.
+   - Soft-thresholding power is chosen inside `findModules()`; call
+     `WGCNA.pickSoftThreshold()` directly only to inspect the fit table. The
+     scale-free fit cut is `RsquaredCut`, default 0.9.
 
 2. **Co-expression from single-cell data**
    - Aggregate to **pseudobulk** first (per cluster or per sample), then apply PyWGCNA.
