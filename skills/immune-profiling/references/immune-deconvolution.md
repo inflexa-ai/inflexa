@@ -345,10 +345,8 @@ def store_deconvolution_in_adata(adata, deconv_df, method_name):
   data uses Ensembl IDs, map them first — offline. Resolve an
   ID-mapping dataset (NCBI gene info, UniProt ID mapping) from the
   reference data available to you and join on it, or use
-  `org.Hs.eg.db` via rpy2, which ships its mappings locally. Do not
-  reach for `biomaRt`: it is installed, but every query goes to
-  Ensembl over the network and there is no egress, so it fails. There
-  is no `pymart` package.
+  `org.Hs.eg.db` via rpy2, which ships its mappings locally. Not
+  `biomaRt` (network-only), and there is no `pymart` package.
 - **Species**: All reference signatures are human. For mouse data,
   convert gene symbols to human orthologs first (babelgene).
 - **Batch effects**: Deconvolution is sensitive to batch effects.
