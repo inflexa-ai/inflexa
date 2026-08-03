@@ -272,9 +272,9 @@ describe("runChatTurn", () => {
         // `runAgent` and persists nothing, exactly as the thread-gone bail does.
         const { history, appended } = recordingHistory();
         let ran = false;
-        const run: ChatTurnSeams["run"] = (agent, initial, s, opts) => {
+        const run: ChatTurnSeams["run"] = (agent, initial) => {
             ran = true;
-            return runOk(agent, initial, s, opts);
+            return runOk(agent, initial);
         };
         const prepareReport: ChatTurnSeams["prepare"] = () => Promise.resolve({ kind: "ok", threadType: "report", messages: [userMessage], userMessage });
         const outcome = await runWith({
