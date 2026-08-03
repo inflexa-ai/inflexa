@@ -446,10 +446,11 @@ describe("createAnalysisPurge", () => {
             });
         }
 
-        // The key is read out of the live schema rather than assumed: without it the
-        // rows below are three unconstrained inserts and a purge could not raise a
-        // referential error however it deleted them, leaving the whole test green for
-        // a reason that has nothing to do with what it is here to hold.
+        // The key is read out of the live schema rather than assumed, because the
+        // cascade hanging off it is the whole hazard. Without the key the rows below
+        // are three unconstrained inserts, no thread delete can reach past the row it
+        // names, and the ordering this test holds stops mattering — leaving it green
+        // for a reason that has nothing to do with what it is here to hold.
         const { rows: selfKeys } = await rig.pool.query<{ n: number }>(
             `SELECT COUNT(*)::int AS n FROM pg_constraint
              WHERE contype = 'f'
@@ -472,8 +473,10 @@ describe("createAnalysisPurge", () => {
         expect(await countsByAnalysis(analysisId)).toEqual({ ...NOTHING_LEFT, cortex_analysis_threads: 3 });
         expect(await countMessages(threadIds)).toBe(transcripts.length);
 
-        // A referential refusal arrives on the error channel as a `DbError`, so the
-        // unwrap is the assertion that no key was violated.
+        // The message tally is what holds the order. Reverse the two deletes and the
+        // cascade takes every thread row first, so the messages delete joins through
+        // an empty table and reclaims nothing — this reads 0 rather than one per
+        // transcript, while every other assertion here still passes.
         const outcome = (await purge.purgeAnalysis(analysisId))._unsafeUnwrap();
         expect(outcome).toEqual({ threads: 3, messages: transcripts.length, workflows: 0, vectorIndexDropped: false });
 

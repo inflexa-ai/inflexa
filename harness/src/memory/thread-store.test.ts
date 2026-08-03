@@ -903,4 +903,24 @@ describe("purgeThread across a subtree", () => {
         expect(await threadRowCount("unrelated")).toBe(1);
         expect(await messageCount("unrelated")).toBe(2);
     });
+
+    it("leaves every generation whole when the subtree delete fails partway", async () => {
+        await seedGenerations();
+        await appendTurnsToEveryThread();
+
+        // The messages statement sweeps the whole subtree before the rows statement
+        // runs, so a failure on the second one is the widest partway state the shared
+        // transaction has to undo: three generations of transcript already deleted.
+        // A rollback that recovered only the named thread would leave the descendants
+        // stripped of their messages while their rows still stood.
+        await pool.query(`CREATE FUNCTION boom() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'simulated delete failure'; END; $$ LANGUAGE plpgsql`);
+        await pool.query("CREATE TRIGGER boom_trg BEFORE DELETE ON cortex_analysis_threads FOR EACH ROW EXECUTE FUNCTION boom()");
+
+        expect((await store.purgeThread("root"))._unsafeUnwrapErr()).toMatchObject({ op: "thread-store.purgeThread.thread" });
+
+        for (const threadId of GENERATIONS) {
+            expect(await threadRowCount(threadId)).toBe(1);
+            expect(await messageCount(threadId)).toBe(2);
+        }
+    });
 });
