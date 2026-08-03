@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { createCrossrefClient } from "./clients/crossref.js";
 import { createCitationResolver } from "./resolve.js";
 import type { CitationRecord, CitationSource, CitationSourceClient, CitationSourceOutcome, CitationSourceRequest } from "./types.js";
 
@@ -24,6 +25,15 @@ function clientSet(
             return await handler(source, request, signal);
         },
     }));
+}
+
+/** The real Crossref client over a fetch that would fail the test if it were ever reached. */
+function realCrossref(): CitationSourceClient {
+    return createCrossrefClient({
+        fetch: async () => {
+            throw new Error("Crossref must not be called without an established registration agency");
+        },
+    });
 }
 
 async function matchingHandler(source: CitationSource, request: CitationSourceRequest): Promise<CitationSourceOutcome> {
@@ -218,6 +228,24 @@ describe("CitationResolver cache policy", () => {
         await resolver.resolveOne(input);
         await resolver.resolveOne(input);
         expect(counts.crossref).toBe(2);
+    });
+
+    it("never derives not_found from a DOI whose registration agency was never established", async () => {
+        // The registry is the only source that can name the agency Crossref's exact
+        // lookup is gated on. With it off, neither authority that could establish the
+        // DOI has spoken, so absence of evidence must not read as evidence of absence.
+        const resolver = createCitationResolver(
+            { sources: { doi_registry: { enabled: false } } },
+            { clients: [...clientSet(async (source, request) => noData(source, request)).filter((client) => client.source !== "crossref"), realCrossref()] },
+        );
+
+        const result = await resolver.resolveOne({ citation: "10.1000/example" });
+
+        expect(result.sourceOutcomes.find((outcome) => outcome.source === "crossref")).toMatchObject({
+            status: "unavailable",
+            detail: expect.stringContaining("registration agency undetermined"),
+        });
+        expect(result).toMatchObject({ verdict: "inconclusive", coverage: "partial" });
     });
 
     it("never derives not_found from an unavailable DOI handle lookup", async () => {

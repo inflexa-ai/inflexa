@@ -122,6 +122,7 @@ export type {
     CitationSourceRequest,
     CitationSourceOperation,
     CitationSourcePlanItem,
+    RegistrationAgencyEvidence,
 } from "./citations/types.js";
 
 // Seam: tool approval (`ctx.ask`). `createAskGateway` realizes the `Ask` seam

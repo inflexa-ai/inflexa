@@ -152,14 +152,19 @@ export function normalizeCitation(unparsed: CitationInput): NormalizedCitation {
     if (kind === "arxiv" && arxiv === undefined) throw new Error("citation kind is arxiv but no valid arXiv id was found");
 
     const unsupportedWorkKind = kind === "free_text" ? classifyUnsupportedWork(citation) : undefined;
+    // A pinned `free_text` kind asserts the citation carries no usable identifier — `auto`
+    // would have classified it otherwise. Publishing one anyway splits the pipeline against
+    // itself: the plan gives the citation bibliographic-only treatment while candidate
+    // scoring short-circuits to a perfect match on an identifier nothing verified.
+    const identified = kind !== "free_text";
     return {
         citation,
         query: normalizeComparable(citation),
         kind,
         identifiers: {
-            ...(doi === undefined ? {} : { doi }),
-            ...(pmid === undefined ? {} : { pmid }),
-            ...(arxiv === undefined ? {} : { arxiv }),
+            ...(doi === undefined || !identified ? {} : { doi }),
+            ...(pmid === undefined || !identified ? {} : { pmid }),
+            ...(arxiv === undefined || !identified ? {} : { arxiv }),
         },
         supplied: normalizedSupplied(input),
         ...(unsupportedWorkKind === undefined ? {} : { unsupportedWorkKind }),

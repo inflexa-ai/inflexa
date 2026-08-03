@@ -4,6 +4,14 @@
 
 The harness SHALL expose a host-agnostic `CitationResolver` with `resolveOne` and `resolveMany` operations. Each input SHALL carry the original `citation` string, SHALL accept an optional kind hint from `doi`, `pmid`, `arxiv`, `free_text`, or `auto`, and SHALL accept optional caller-supplied title, authors, year, venue, volume, and first-page fields. The resolver SHALL preserve the original input in its result and SHALL compare only metadata fields supplied by the caller.
 
+A kind hint SHALL govern the whole pipeline. A caller who pins `free_text` SHALL receive bibliographic treatment throughout: no identifier is extracted for lookup, planning, or candidate scoring, even where the citation text contains one.
+
+#### Scenario: A pinned free-text kind is honored end to end
+
+- **WHEN** the caller pins `free_text` on a citation whose text contains a DOI
+- **THEN** no identifier is carried into the source plan or the candidate score
+- **AND** the citation is matched on bibliographic evidence alone
+
 #### Scenario: Identifier-only input preserves its evidence
 
 - **WHEN** the caller resolves a DOI string without supplying metadata
@@ -35,6 +43,14 @@ The resolver SHALL compute a deterministic source plan from normalized input and
 ### Requirement: DOI identity is registration-agency-neutral
 
 For an exact DOI, the resolver SHALL check DOI handle existence and obtain the responsible registration agency without assuming Crossref ownership. It SHALL request machine-readable metadata through DOI content negotiation, but SHALL represent handle existence separately from metadata availability. It SHALL query Crossref as the exact registration source only when the DOI is Crossref-owned.
+
+A source gated on the registration agency SHALL distinguish an established agency from an unestablished one. Where the registry named another agency, the gated source SHALL report `not_applicable`; where the registry was unreachable, disabled, or silent on the agency, it SHALL report `unavailable` and SHALL NOT claim non-ownership it never established.
+
+#### Scenario: The registration agency was never established
+
+- **WHEN** the DOI registry cannot name the registration agency for an exact DOI
+- **THEN** the Crossref outcome is `unavailable` and says the agency was undetermined
+- **AND** the citation cannot reach `not_found`, because no authority that could establish the DOI has answered
 
 #### Scenario: Non-Crossref DOI resolves
 

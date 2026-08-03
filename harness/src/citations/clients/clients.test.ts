@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { normalizeCitation } from "../normalize.js";
-import type { CitationInput, CitationSourceClient, CitationSourceOperation, CitationSourceRequest } from "../types.js";
+import type { CitationInput, CitationSourceClient, CitationSourceOperation, CitationSourceRequest, RegistrationAgencyEvidence } from "../types.js";
 import { createArxivCitationClient } from "./arxiv.js";
 import { createCrossrefClient } from "./crossref.js";
 import { createDoiRegistryClient } from "./doi-registry.js";
@@ -16,11 +16,17 @@ function text(body: string, status = 200): Response {
     return new Response(body, { status, headers: { "content-type": "application/xml" } });
 }
 
-function request(input: CitationInput, source: CitationSourceRequest["plan"]["source"], operation: CitationSourceOperation): CitationSourceRequest {
+function request(
+    input: CitationInput,
+    source: CitationSourceRequest["plan"]["source"],
+    operation: CitationSourceOperation,
+    registrationAgency: RegistrationAgencyEvidence = { status: "undetermined", detail: "test" },
+): CitationSourceRequest {
     return {
         input,
         normalized: normalizeCitation(input),
         plan: { source, operation, applicable: true, candidateGeneration: false, reason: "test" },
+        registrationAgency,
     };
 }
 
@@ -151,8 +157,32 @@ describe("Crossref citation client", () => {
         let called = false;
         const client = createCrossrefClient({ fetch: async () => ((called = true), json({})) });
         const base = request({ citation: "10.1000/example" }, "crossref", "crossref_doi_if_owned");
-        const result = await client.resolve({ ...base, registrationAgency: "DataCite" });
+        const result = await client.resolve({ ...base, registrationAgency: { status: "determined", agency: "DataCite" } });
         expect(result.status).toBe("not_applicable");
+        expect(result.detail).toBe("DOI is not registered by Crossref");
+        expect(called).toBe(false);
+    });
+
+    it("reports an undetermined registration agency as unavailable, never as another agency's DOI", async () => {
+        let called = false;
+        const client = createCrossrefClient({ fetch: async () => ((called = true), json({})) });
+        const base = request({ citation: "10.1000/example" }, "crossref", "crossref_doi_if_owned");
+
+        const result = await client.resolve({ ...base, registrationAgency: { status: "undetermined", detail: "HTTP 503" } });
+
+        expect(result.status).toBe("unavailable");
+        expect(result.detail).toBe("registration agency undetermined: HTTP 503");
+        expect(called).toBe(false);
+    });
+
+    it("attributes a skip to the handle when the registry established the DOI does not resolve", async () => {
+        let called = false;
+        const client = createCrossrefClient({ fetch: async () => ((called = true), json({})) });
+        const base = request({ citation: "10.1000/example" }, "crossref", "crossref_doi_if_owned");
+
+        const result = await client.resolve({ ...base, registrationAgency: { status: "absent" } });
+
+        expect(result).toMatchObject({ status: "not_applicable", detail: "the DOI handle does not resolve" });
         expect(called).toBe(false);
     });
 
@@ -167,7 +197,7 @@ describe("Crossref citation client", () => {
         });
         const base = request({ citation: "10.1000/example" }, "crossref", "crossref_doi_if_owned");
 
-        const result = await client.resolve({ ...base, registrationAgency: "Crossref" });
+        const result = await client.resolve({ ...base, registrationAgency: { status: "determined", agency: "Crossref" } });
 
         expect(result.status).toBe("ok");
         expect(seen?.searchParams.get("mailto")).toBe("contact@example.org");
