@@ -1,26 +1,27 @@
 /**
- * Converter: stored AI SDK model messages → wire `CortexMessage[]`.
+ * The MIGRATION renderer: stored AI SDK model messages → `CortexMessage[]`.
  *
- * The display read (`ThreadHistory.loadPage`) returns rows whose `content`
- * is the AI SDK `ModelMessage` that `appendTurn` persisted. This maps each
- * row to a `CortexMessage` for the chat wire:
+ * This is how a conversation written before display projections were persisted
+ * is rendered ONCE, at startup, so it can be frozen into a display envelope
+ * (`conversation-display-backfill.ts`). It is not a runtime read path — the
+ * runtime reads the stored projection (`conversation-display-replay.ts`) and
+ * never consults a tool name, a card builder, or the filesystem.
+ *
+ * Everything it does is inference from a transcript that was never meant to
+ * carry display, which is why it belongs to the migration and nothing else:
  *
  *   - text part         → text part
  *   - tool-call part    → a reconstructed display card (`data-plan`,
  *                         `data-presentation`) when `resolveCard` recognises
- *                         the tool, else a generic tool-call part
+ *                         the tool, else a generic tool-call part whose detail
+ *                         `resolveDetail` recomputes from the persisted input
  *   - everything else   → dropped (reasoning, tool-result, etc.) — the UI
  *                         does not render them
- *
- * Display cards are emitted live over the chat SSE stream but never persisted
- * (storage holds only the AI SDK model-message transcript). `resolveCard`
- * rebuilds them from the persisted tool-call part so they reappear on reload,
- * and `resolveDetail` rebuilds each call's one-line detail the same way.
  *
  * A `tool-result` block is not rendered, but it is not ignored either: it is the
  * only record of how its call ended. The blocks are indexed by `toolCallId`
  * before conversion so each tool-call part can report its own outcome — without
- * that pass every reloaded call reported success, including the failed ones.
+ * that pass every migrated call would report success, including the failed ones.
  *
  * A row that yields no renderable parts (e.g. a `tool`-role message carrying
  * only tool-result continuation parts) is omitted entirely, so the rendered
@@ -74,14 +75,16 @@ function indexOutcomes(messages: readonly StoredMessage[]): Map<string, ToolOutc
 
 function genericToolCall(block: ToolCallBlock, outcomes: Map<string, ToolOutcome>, resolveDetail?: ToolDetailResolver): CortexPart {
     // No paired result is the shape of a transcript whose `tool` row was never
-    // appended (an aborted turn). Nothing failed, so `ok` is the honest report.
-    const outcome = outcomes.get(block.toolCallId) ?? "ok";
+    // appended — an aborted turn. That is not a success: the call was dispatched and
+    // never completed, which is exactly `incomplete`. Reporting `ok` would claim a
+    // result the tool never returned, and it is the one outcome the transcript
+    // genuinely cannot supply, so it is named rather than guessed at.
+    const outcome = outcomes.get(block.toolCallId) ?? "incomplete";
     const detail = resolveDetail?.(block.toolName, block.input);
     return {
         type: "tool-call",
         toolCallId: block.toolCallId,
         toolName: block.toolName,
-        status: "finished",
         outcome,
         ...(detail === undefined ? {} : { detail }),
     };

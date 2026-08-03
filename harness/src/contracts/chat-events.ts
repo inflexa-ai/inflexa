@@ -43,6 +43,23 @@ export interface TextDeltaEvent {
 export type ToolOutcome = "ok" | "error" | "denied";
 
 /**
+ * How a RECORDED call ended — the three live outcomes plus `incomplete`.
+ *
+ * `incomplete` is the state a live event cannot carry and a record cannot avoid:
+ * the harness observed a dispatch and no completion, because the turn was cut off
+ * mid-call. A `tool-finished` is never incomplete, which is why this widens
+ * {@link ToolOutcome} rather than replacing it.
+ *
+ * It is a fourth value of ONE field rather than a second field beside the outcome,
+ * for the same reason the outcome is three-way instead of `isError` plus `denied`:
+ * a call has exactly one terminal state, and splitting that across two fields both
+ * admits impossible pairs and leaves every consumer to invent the meaning of the
+ * combination. A consumer switches on this one field, and a consumer that forgets
+ * a case fails to compile rather than silently reporting a success.
+ */
+export type ToolCallOutcome = ToolOutcome | "incomplete";
+
+/**
  * One line naming what a tool call is doing, produced by the tool's own
  * `describeCall` hook and normalized at the emit site.
  *

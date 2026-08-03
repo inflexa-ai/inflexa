@@ -61,7 +61,7 @@ describe("contentToCortexMessages", () => {
             },
             { role: "assistant", content: [{ type: "text", text: "Here are the results." }] },
         ];
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [] }))._unsafeUnwrap();
 
         const page = (await history.loadPage(THREAD, 0, 100))._unsafeUnwrap();
         const cortex = await contentToCortexMessages(page.messages);
@@ -77,7 +77,7 @@ describe("contentToCortexMessages", () => {
         // post-tool-result text from the second are merged in order.
         expect(cortex[1]!.parts).toEqual([
             { type: "text", text: "Sure, running it." },
-            { type: "tool-call", toolCallId: "call-1", toolName: "run_pca", status: "finished", outcome: "ok" },
+            { type: "tool-call", toolCallId: "call-1", toolName: "run_pca", outcome: "ok" },
             { type: "text", text: "Here are the results." },
         ]);
 
@@ -110,7 +110,7 @@ describe("contentToCortexMessages", () => {
             });
         }
         turn.push({ role: "assistant", content: [{ type: "text", text: "Here is the report." }] });
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [] }))._unsafeUnwrap();
 
         const page = (await history.loadPage(THREAD, 0, 100))._unsafeUnwrap();
         const cortex = await contentToCortexMessages(page.messages);
@@ -120,11 +120,11 @@ describe("contentToCortexMessages", () => {
 
         // All five tool calls plus the trailing text live in the one assistant message.
         expect(cortex[1]!.parts).toEqual([
-            { type: "tool-call", toolCallId: "call-0", toolName: "read_file", status: "finished", outcome: "ok" },
-            { type: "tool-call", toolCallId: "call-1", toolName: "read_file", status: "finished", outcome: "ok" },
-            { type: "tool-call", toolCallId: "call-2", toolName: "read_file", status: "finished", outcome: "ok" },
-            { type: "tool-call", toolCallId: "call-3", toolName: "read_file", status: "finished", outcome: "ok" },
-            { type: "tool-call", toolCallId: "call-4", toolName: "read_file", status: "finished", outcome: "ok" },
+            { type: "tool-call", toolCallId: "call-0", toolName: "read_file", outcome: "ok" },
+            { type: "tool-call", toolCallId: "call-1", toolName: "read_file", outcome: "ok" },
+            { type: "tool-call", toolCallId: "call-2", toolName: "read_file", outcome: "ok" },
+            { type: "tool-call", toolCallId: "call-3", toolName: "read_file", outcome: "ok" },
+            { type: "tool-call", toolCallId: "call-4", toolName: "read_file", outcome: "ok" },
             { type: "text", text: "Here is the report." },
         ]);
     });
@@ -331,7 +331,7 @@ describe("contentToCortexMessages", () => {
             { role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: "run_pca", output: { type: "text", value: "ok" } }] },
             { role: "assistant", content: [{ type: "text", text: "Here are the results." }] },
         ];
-        (await history.appendTurn(THREAD, turn, usage))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [], turnUsage: usage }))._unsafeUnwrap();
 
         const page = (await history.loadPage(THREAD, 0, 100))._unsafeUnwrap();
         const cortex: CortexMessage[] = await contentToCortexMessages(page.messages);
@@ -364,7 +364,7 @@ describe("contentToCortexMessages", () => {
             // show_plan → reconstructed card (not a generic tool-call chip)
             { type: "data-plan", id: "pres-x", planId: "pln-abc12345" },
             // unrecognised tool → generic chip fallback; no paired result, so `ok`
-            { type: "tool-call", toolCallId: "call-10", toolName: "run_pca", status: "finished", outcome: "ok" },
+            { type: "tool-call", toolCallId: "call-10", toolName: "run_pca", outcome: "incomplete" },
         ]);
     });
 
@@ -624,8 +624,7 @@ describe("contentToCortexMessages", () => {
                     type: "tool-call",
                     toolCallId: "toolu_y",
                     toolName: "legacy_workspace_read_file",
-                    status: "finished",
-                    outcome: "ok",
+                    outcome: "incomplete",
                 },
             ]);
         } finally {
@@ -649,8 +648,7 @@ describe("contentToCortexMessages", () => {
                 type: "tool-call",
                 toolCallId: "toolu_z",
                 toolName: "iterate_report",
-                status: "finished",
-                outcome: "ok",
+                outcome: "incomplete",
             },
         ]);
     });
@@ -682,7 +680,7 @@ describe("contentToCortexMessages", () => {
 
         // The live tool rejected this path and emitted nothing; the reload path must not resurrect an
         // unvalidated path, so the card is dropped and a generic tool chip stands in.
-        expect(cortex[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "call-su", toolName: "show_user", status: "finished", outcome: "ok" }]);
+        expect(cortex[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "call-su", toolName: "show_user", outcome: "incomplete" }]);
     });
 
     it("reconstructs a data-file-reference card from a show_file tool-call", async () => {
@@ -717,7 +715,7 @@ describe("contentToCortexMessages", () => {
             { resolveCard: createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews") },
         );
 
-        expect(cortex[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "call-sf", toolName: "show_file", status: "finished", outcome: "ok" }]);
+        expect(cortex[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "call-sf", toolName: "show_file", outcome: "incomplete" }]);
     });
 });
 
@@ -729,7 +727,7 @@ describe("ThreadHistory.loadPage", () => {
             messages.push({ role: "user", content: [{ type: "text", text: `m${i}` }] });
             messages.push({ role: "assistant", content: [{ type: "text", text: `r${i}` }] });
         }
-        (await history.appendTurn(THREAD, messages))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, { modelMessages: messages, displayMessages: [] }))._unsafeUnwrap();
 
         const first = (await history.loadPage(THREAD, 0, 5))._unsafeUnwrap();
         expect(first.total).toBe(6); // six turns, not twelve rows
@@ -761,7 +759,7 @@ describe("ThreadHistory.loadPage", () => {
             });
         }
         turn.push({ role: "assistant", content: [{ type: "text", text: "summary" }] });
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [] }))._unsafeUnwrap();
 
         // Even with perPage 1, the single turn loads whole: 1 user + 5 tool-call +
         // 5 tool-result + 1 summary = 12 rows.
@@ -778,7 +776,7 @@ describe("ThreadHistory.loadPage", () => {
         for (let i = 0; i < 24; i++) {
             messages.push({ role: "user", content: [{ type: "text", text: `m${i}` }] });
         }
-        (await history.appendTurn(THREAD, messages))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, { modelMessages: messages, displayMessages: [] }))._unsafeUnwrap();
 
         // One page covering all 24 — a lexicographic sort on the bigint `seq`
         // would yield 0,1,10,11,...,2,20,...,3,... and place seq 9 last.
@@ -832,7 +830,7 @@ describe("contentToCortexMessages — reloaded outcome", () => {
         expect(cortex[0]!.parts[0]).toMatchObject({ type: "tool-call", toolCallId: "call-r", outcome: "ok" });
     });
 
-    it("reports ok for a call whose tool row was never appended", async () => {
+    it("reports incomplete for a call whose tool row was never appended", async () => {
         const cortex = await contentToCortexMessages([
             stored(0, {
                 role: "assistant",
@@ -840,7 +838,10 @@ describe("contentToCortexMessages — reloaded outcome", () => {
             }),
         ]);
 
-        expect(cortex[0]!.parts[0]).toMatchObject({ type: "tool-call", toolCallId: "call-orphan", outcome: "ok" });
+        // The transcript records a dispatch and no completion. That is not a success —
+        // `ok` would claim a result the tool never returned — and it is the one thing a
+        // model transcript can say precisely, so it says it.
+        expect(cortex[0]!.parts[0]).toMatchObject({ type: "tool-call", toolCallId: "call-orphan", outcome: "incomplete" });
     });
 
     it("pairs each call with its own result across a multi-call turn", async () => {
@@ -903,7 +904,7 @@ describe("contentToCortexMessages — reloaded detail", () => {
             { role: "user", content: [{ type: "text", text: "read it" }] },
             { role: "assistant", content: [{ type: "tool-call", toolCallId: "call-s", toolName: "read_file", input: { path: "output/summary.md" } }] },
         ];
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [] }))._unsafeUnwrap();
 
         const { rows } = await pool.query<{ message_envelope: unknown }>("SELECT message_envelope FROM messages WHERE thread_id = $1", [THREAD]);
 

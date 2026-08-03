@@ -30,10 +30,13 @@ afterEach(async () => {
 
 /** Persist one two-message turn, giving a thread messages a verb must keep or take. */
 function appendTwoMessageTurn(threadId: string): ResultAsync<void, DbError> {
-    return createThreadHistory(pool).appendTurn(threadId, [
-        { role: "user", content: [{ type: "text", text: "hi" }] },
-        { role: "assistant", content: [{ type: "text", text: "hello" }] },
-    ]);
+    return createThreadHistory(pool).appendTurn(threadId, {
+        modelMessages: [
+            { role: "user", content: [{ type: "text", text: "hi" }] },
+            { role: "assistant", content: [{ type: "text", text: "hello" }] },
+        ],
+        displayMessages: [],
+    });
 }
 
 async function messageCount(threadId: string): Promise<number> {
@@ -335,10 +338,13 @@ describe("listThreads", () => {
         expect(before.threads.map((t) => t.threadId)).toEqual(["a2", "a1"]);
 
         (
-            await history.appendTurn("a1", [
-                { role: "user", content: [{ type: "text", text: "hi" }] },
-                { role: "assistant", content: [{ type: "text", text: "hello" }] },
-            ])
+            await history.appendTurn("a1", {
+                modelMessages: [
+                    { role: "user", content: [{ type: "text", text: "hi" }] },
+                    { role: "assistant", content: [{ type: "text", text: "hello" }] },
+                ],
+                displayMessages: [],
+            })
         )._unsafeUnwrap();
 
         const after = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
