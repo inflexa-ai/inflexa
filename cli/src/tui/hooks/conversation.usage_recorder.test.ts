@@ -51,8 +51,8 @@ beforeEach(() => resetHotState());
 afterEach(() => {
     resetHotState();
     // The rejecting `pool` above makes every turn here fail its append, and `send` answers that with a
-    // 4-second warn toast. `notice.ts` is a module singleton whose timer outlives this file, so under a
-    // non-isolated `bun test` (what CI runs) the toast is still showing when the next file's first test
+    // 4-second warn toast. `notice.ts` is a module singleton whose timer outlives this file, and every
+    // test file shares one process, so the toast would still be showing when the next file's first test
     // reads the channel — and a queued notice waits behind a live timer rather than taking the slot.
     __resetNoticesForTest();
 });

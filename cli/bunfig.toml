@@ -5,12 +5,21 @@
 # overflows ("Maximum call stack size exceeded"). Because a global plugin participates in
 # every Bun.build in the process, it intermittently crashed `bun scripts/build.ts`. We
 # don't load external runtime plugins, so the support shim buys us nothing here; the JSX
-# transform (./preload) is all the dev runtime needs. It stays in [test] below because
-# render tests rely on it and never bundle. See opentui-issue-runtime-plugin-recursion.md.
+# transform (./preload) is all the dev runtime needs. See opentui-issue-runtime-plugin-recursion.md.
 preload = ["@opentui/solid/preload"]
 
 # `bun test` uses [test].preload INSTEAD OF the top-level preload (it does not merge them), so the
-# opentui preloads are repeated here to keep render tests working — plus the env sandbox that points
-# XDG_* at a temp dir before any src/lib/env.ts import (see src/test_support/preload.ts).
+# opentui JSX transform is repeated here — plus the env sandbox that points XDG_* at a temp dir
+# before any src/lib/env.ts import (see src/test_support/preload.ts).
+#
+# "@opentui/solid/runtime-plugin-support" is omitted here too. Its catch-all `onResolve` never
+# closes the directory handles it opens while resolving, so a single-process `bun test` leaks its
+# way to fd number ~21,400 — past the 10240 macOS OPEN_MAX point where Bun.spawn silently hands a
+# child /dev/null instead of a socketpair, and the parent then reads zero bytes from a child that
+# ran fine. That is the whole of the "macOS pipe-capture bug": 7 spawn-dependent tests failing
+# because of an fd NUMBER, not a corrupted module graph. Dropping the entry caps the run at fd
+# 2307. --isolate only ever masked it, by tearing down each file's realm and releasing the fds.
+# Render tests do NOT need it: all 38 *.render.test.tsx files pass without it, same 412 tests and
+# same 1994 assertions as with it. Adding it back reintroduces the spawn failures.
 [test]
-preload = ["@opentui/solid/preload", "@opentui/solid/runtime-plugin-support", "./src/test_support/preload.ts"]
+preload = ["@opentui/solid/preload", "./src/test_support/preload.ts"]

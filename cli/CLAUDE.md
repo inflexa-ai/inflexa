@@ -24,10 +24,12 @@ bun run typecheck    # tsc --noEmit
 bun run lint         # Run ESLint
 bun run format       # Format all of src/
 bun run docs:gen     # Generate the CLI reference package (dist-docs/, untracked)
-bun run test         # bun test --isolate — see below
+bun run test         # bun test — the whole suite in one process, exactly what CI runs
 ```
 
-**Local test runs go through `bun run test` (or `bun test --isolate`), never plain `bun test`.** A Bun runtime bug on macOS corrupts child-process pipe capture once certain module graphs have loaded earlier in the run: the children spawn and write their output fine, but the parent reads zero bytes from the pipe, so dozens of spawn-dependent tests (the provenance bridge, `spawnInflexa` process bounds, the embedding launch drain) fail with empty captured output. `--isolate` runs each test file with a fresh global object, which avoids the corruption entirely. CI on Linux is unaffected.
+The suite is plain `bun test`: one process, every test file sharing it, ~60s and under 1 GiB. Arguments pass straight through — `bun run test src/lib/lock.test.ts`, `-t <name>`, `--watch`.
+
+**`[test].preload` in `bunfig.toml` must never regain `"@opentui/solid/runtime-plugin-support"`.** Its catch-all `onResolve` leaks the directory handles it opens, and a shared-process run climbs to fd number ~21,400 — past the 10240 macOS `OPEN_MAX` at which `Bun.spawn` silently hands the child `/dev/null` instead of a socketpair. The child then runs fine and exits 0 while the parent reads zero bytes, so spawn-dependent tests fail with empty captured output and nothing in their own code explains why (`spawnInflexa — process bounds` in `src/modules/harness/inflexa_tool.test.ts`; the `launchWithBinary` readiness drain in `src/modules/embedding/local-provider.test.ts`). Without that entry the run peaks at fd 2307 — 4.4× of headroom — and nothing needs it, render tests included.
 
 ## Dependencies
 
