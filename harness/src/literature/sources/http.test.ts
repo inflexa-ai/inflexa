@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { z } from "zod";
 
-import { createRateLimitSchedule } from "../../citations/rate-limit.js";
+import { createRateLimitSchedule } from "../../lib/rate-limit.js";
 import { requestJson } from "./http.js";
 
 const BodySchema = z.object({ ok: z.boolean() });

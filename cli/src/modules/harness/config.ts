@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/harness";
 import { type Result } from "neverthrow";
 import { modelsConfigSchema, readConfig, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
-import { env, readEnvCredentialVar } from "../../lib/env.ts";
+import { env } from "../../lib/env.ts";
 import { DEFAULT_SANDBOX_IMAGE } from "../libs/images.ts";
 
 /**
@@ -167,9 +167,7 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
             epaCcte: cfg?.bioKeys?.epaCcte ?? "",
             ncbi: cfg?.bioKeys?.ncbi,
             github: cfg?.bioKeys?.github,
-            // The harness no longer reads this variable itself (no ambient reads below the
-            // composition root), so the host resolves it here and keeps `SEMANTIC_SCHOLAR_API_KEY` working.
-            semanticScholar: cfg?.bioKeys?.semanticScholar ?? readEnvCredentialVar("SEMANTIC_SCHOLAR_API_KEY"),
+            semanticScholar: cfg?.bioKeys?.semanticScholar,
         },
         sandboxImage: cfg?.sandboxImage ?? DEFAULT_SANDBOX_IMAGE,
         resourcePolicy,

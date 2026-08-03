@@ -1,5 +1,10 @@
 import { CitationInputSchema, type CitationInput, type NormalizedCitation, type NormalizedCitationMetadata, type UnsupportedWorkKind } from "./types.js";
 
+// Each registry defines its own identifier syntax, and each is matched here rather than parsed:
+// a citation string is prose, so the identifier has to be found inside it, not read off a field.
+// The DOI suffix is deliberately permissive — the registry allows nearly any character in it, so
+// there is no delimiter to stop at, and `trimDoiPunctuation` walks back the sentence punctuation
+// and brackets a greedy match swallows. PMID and arXiv anchor instead, having fixed shapes.
 const DOI_PATTERN = /(?:https?:\/\/(?:dx\.)?doi\.org\/|doi\s*:\s*)?(10\.\d{4,9}\/[^\s<>"']+)/i;
 const PMID_PATTERN = /^(?:pmid\s*:\s*)?(\d{1,9})$/i;
 const ARXIV_PATTERN = /^(?:https?:\/\/arxiv\.org\/(?:abs|pdf)\/|arxiv\s*:\s*)?((?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z-]+)?\/\d{7})(?:v\d+)?)(?:\.pdf)?$/i;
