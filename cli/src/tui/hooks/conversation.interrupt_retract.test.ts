@@ -676,6 +676,36 @@ describe("the interrupted marker survives a transcript reload", () => {
         const part = messages[1]?.parts.find((p) => p.type === "text");
         expect(part?.type === "text" ? part.text : undefined).toBe("partial answer");
     });
+
+    test("a call cut off mid-flight replays as running, never as a success or a failure", async () => {
+        // The harness records what it observed — a dispatch and no completion — and stores the call
+        // `started` with no outcome rather than inventing one. Reporting `ok` here would claim a result
+        // the tool never returned; `error` would claim a failure it never had. `running` is what
+        // happened, and the message's interruption badge is what says it will never finish.
+        const loadSeams: LoadSeams = {
+            runtime: () => stubRuntime,
+            loadPage: () => okAsync(emptyPage(1)),
+            toCortex: () =>
+                [
+                    {
+                        id: "a1",
+                        role: "assistant",
+                        interrupted: true,
+                        parts: [
+                            { type: "tool-call", toolCallId: "t1", toolName: "read_file", status: "started", detail: "scripts/run.py" },
+                            { type: "tool-call", toolCallId: "t2", toolName: "grep", status: "finished", outcome: "denied" },
+                        ],
+                    },
+                ] as unknown as CortexMsg[],
+        };
+        await loadMessages(SID, AID, loadSeams);
+
+        const calls = messages[0]?.parts.filter((p) => p.type === "tool-call") ?? [];
+        expect(calls.map((p) => (p.type === "tool-call" ? p.status : null))).toEqual(["running", "denied"]);
+        // The detail recorded live rides the stored projection — nothing re-derives it on reload.
+        expect(calls[0]?.type === "tool-call" ? calls[0].detail : undefined).toBe("scripts/run.py");
+        expect(messages[0]?.interrupted).toBe(true);
+    });
 });
 
 // The retract is a first-class store writer (it claims the generation token), so it must supersede a
