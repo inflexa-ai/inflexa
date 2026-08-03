@@ -1,6 +1,11 @@
 export interface RateLimitConfig {
     readonly maxConcurrency: number;
     readonly requestsPerSecond: number;
+    /**
+     * Retry policy for the source's HTTP layer. Retries re-enter the limiter as
+     * fresh attempts, so they are paced like any other request; the limiter
+     * itself does not read these two fields.
+     */
     readonly maxRetries: number;
     readonly maxRetryDelayMs: number;
 }
@@ -128,27 +133,17 @@ export class BoundedRateLimiter {
     }
 }
 
-function retryAfterMilliseconds(response: Response, now: () => number): number | undefined {
-    const value = response.headers.get("retry-after")?.trim();
-    if (!value) return undefined;
-    const seconds = Number(value);
-    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
-    const date = Date.parse(value);
-    return Number.isFinite(date) ? Math.max(0, date - now()) : undefined;
-}
-
-export function createRateLimitedFetch(fetcher: typeof globalThis.fetch, config: RateLimitConfig, runtime: RateLimitRuntime = {}): typeof globalThis.fetch {
+/**
+ * Admission gate for a source's HTTP layer (`SourceHttpOptions.schedule`).
+ *
+ * It gates the network call alone: the caller arms its request timeout inside
+ * the admitted operation, so a request held behind pacing or a concurrency
+ * ceiling cannot be reported as a timeout before it ever reaches the network.
+ */
+export function createRateLimitSchedule(
+    config: RateLimitConfig,
+    runtime: RateLimitRuntime = {},
+): <T>(operation: () => Promise<T>, signal?: AbortSignal) => Promise<T> {
     const limiter = new BoundedRateLimiter(config, runtime);
-    const now = runtime.now ?? Date.now;
-    const sleep = runtime.sleep ?? sleepWithSignal;
-    return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        const signal = init?.signal ?? undefined;
-        for (let attempt = 0; ; attempt += 1) {
-            const response = await limiter.run(() => fetcher(input, init), signal);
-            if ((response.status !== 429 && response.status !== 503) || attempt >= config.maxRetries) return response;
-            const exponential = Math.min(config.maxRetryDelayMs, 250 * 2 ** attempt);
-            const requested = retryAfterMilliseconds(response, now);
-            await sleep(Math.min(config.maxRetryDelayMs, requested ?? exponential), signal);
-        }
-    };
+    return (operation, signal) => limiter.run(operation, signal);
 }

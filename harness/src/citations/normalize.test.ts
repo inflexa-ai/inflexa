@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { citationCacheKey, extractArxivId, extractDoi, extractPmid, normalizeAuthor, normalizeCitation } from "./normalize.js";
+import { authorNamesMatch, citationLookupKey, extractArxivId, extractDoi, extractPmid, normalizeAuthor, normalizeCitation } from "./normalize.js";
 import { planCitationSources } from "./plan.js";
 import { CitationInputSchema } from "./types.js";
 
@@ -57,8 +57,37 @@ describe("citation input and normalization", () => {
         expect(normalizeCitation({ citation: "A normal paper no source found" }).unsupportedWorkKind).toBeUndefined();
     });
 
-    it("derives a stable cache key from normalized evidence", () => {
-        expect(citationCacheKey({ citation: "DOI: 10.1000/ABC" })).toBe(citationCacheKey({ citation: "https://doi.org/10.1000/abc" }));
+    it("keys an exact identifier by the lookup it provokes, not by supplied metadata", () => {
+        expect(citationLookupKey({ citation: "DOI: 10.1000/ABC" })).toBe(citationLookupKey({ citation: "https://doi.org/10.1000/abc" }));
+        expect(citationLookupKey({ citation: "10.1000/abc", title: "One title" })).toBe(citationLookupKey({ citation: "10.1000/abc", title: "Another" }));
+    });
+
+    it("keys a free-text citation by the metadata that dispatches its search", () => {
+        expect(citationLookupKey({ citation: "A study", title: "One title" })).not.toBe(citationLookupKey({ citation: "A study", title: "Another" }));
+    });
+});
+
+describe("author name matching", () => {
+    it("accepts the same name however the citation style orders and abbreviates it", () => {
+        expect(authorNamesMatch("Smith, Jane A.", "Jane A. Smith")).toBe(true);
+        expect(authorNamesMatch("Smith J", "Jane Smith")).toBe(true);
+        expect(authorNamesMatch("Smith JA", "Jane A Smith")).toBe(true);
+        expect(authorNamesMatch("García, María III", "María García")).toBe(true);
+        expect(authorNamesMatch("van der Berg, J", "Johan van der Berg")).toBe(true);
+    });
+
+    it("accepts a surname alone only where the other side adds nothing to contradict", () => {
+        expect(authorNamesMatch("Smith", "Jane Smith")).toBe(true);
+        expect(authorNamesMatch("Jane Smith", "Smith")).toBe(true);
+    });
+
+    it("rejects a different person behind a shared surname", () => {
+        expect(authorNamesMatch("John Smith", "Jane Smith")).toBe(false);
+        expect(authorNamesMatch("Smith J", "Adam Smith")).toBe(false);
+        expect(authorNamesMatch("Smith, J.", "Smith, A.")).toBe(false);
+        expect(authorNamesMatch("John Smith", "John Smithson")).toBe(false);
+        expect(authorNamesMatch("Jane Wu", "Jane Li")).toBe(false);
+        expect(authorNamesMatch("Jane Doe", "John Smith")).toBe(false);
     });
 });
 

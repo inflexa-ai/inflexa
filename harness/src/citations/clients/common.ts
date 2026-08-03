@@ -29,6 +29,15 @@ export function sourceOutcome(
     };
 }
 
+/**
+ * Percent-encode a DOI for use as a URL path segment. A DOI suffix may legally
+ * contain `#`, `?`, and `%`, each of which silently re-parses the URL when
+ * interpolated raw; only the prefix/suffix `/` is structural and stays literal.
+ */
+export function encodeDoiPath(doi: string): string {
+    return doi.split("/").map(encodeURIComponent).join("/");
+}
+
 export function parseYear(value: unknown): number | undefined {
     if (typeof value === "number" && Number.isInteger(value)) return value;
     if (typeof value !== "string") return undefined;

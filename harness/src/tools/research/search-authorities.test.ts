@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { searchArxivTool } from "./search-arxiv.js";
-import { searchSemanticScholarTool } from "./search-semantic-scholar.js";
+import { createSearchSemanticScholarTool } from "./search-semantic-scholar.js";
 
 const realFetch = globalThis.fetch;
 
@@ -57,7 +57,7 @@ describe("shared authority discovery adapters", () => {
             });
         }) as unknown as typeof fetch;
 
-        const result = (await searchSemanticScholarTool.execute({ query: "shared client", limit: 4 }, makeToolContext().ctx))._unsafeUnwrap();
+        const result = (await createSearchSemanticScholarTool().execute({ query: "shared client", limit: 4 }, makeToolContext().ctx))._unsafeUnwrap();
 
         expect(result).toEqual({
             success: true,

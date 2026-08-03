@@ -19,6 +19,7 @@ export interface BioToolKeys {
     readonly epaCcte: string;
     readonly ncbi?: string;
     readonly github?: string;
+    readonly semanticScholar?: string;
 }
 
 /**

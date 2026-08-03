@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { BoundedRateLimiter, createRateLimitedFetch } from "./rate-limit.js";
+import { BoundedRateLimiter, createRateLimitSchedule } from "./rate-limit.js";
 
 describe("BoundedRateLimiter", () => {
     it("never exceeds the configured concurrency ceiling", async () => {
@@ -51,17 +51,13 @@ describe("BoundedRateLimiter", () => {
     });
 });
 
-describe("createRateLimitedFetch", () => {
-    it("honors Retry-After within the configured delay bound", async () => {
-        let calls = 0;
+describe("createRateLimitSchedule", () => {
+    it("paces an arbitrary operation, so a caller can arm its timeout after admission", async () => {
         let now = 0;
         const waits: number[] = [];
-        const fetcher = createRateLimitedFetch(
-            async () => {
-                calls += 1;
-                return calls === 1 ? new Response("later", { status: 429, headers: { "retry-after": "2" } }) : new Response("ok");
-            },
-            { maxConcurrency: 1, requestsPerSecond: 1_000, maxRetries: 2, maxRetryDelayMs: 1_000 },
+        let admitted = 0;
+        const schedule = createRateLimitSchedule(
+            { maxConcurrency: 1, requestsPerSecond: 10, maxRetries: 0, maxRetryDelayMs: 0 },
             {
                 now: () => now,
                 sleep: async (milliseconds) => {
@@ -70,23 +66,18 @@ describe("createRateLimitedFetch", () => {
                 },
             },
         );
-        const response = await fetcher("https://example.test");
-        expect(response.status).toBe(200);
-        expect(calls).toBe(2);
-        expect(waits).toContain(1_000);
-    });
 
-    it("stops retrying after the configured retry count", async () => {
-        let calls = 0;
-        const fetcher = createRateLimitedFetch(
-            async () => {
-                calls += 1;
-                return new Response("unavailable", { status: 503 });
-            },
-            { maxConcurrency: 1, requestsPerSecond: 1_000, maxRetries: 2, maxRetryDelayMs: 10 },
-            { now: () => 0, sleep: async () => {} },
+        const results = await Promise.all(
+            Array.from({ length: 3 }, (_, index) =>
+                schedule(async () => {
+                    admitted += 1;
+                    return index;
+                }),
+            ),
         );
-        expect((await fetcher("https://example.test")).status).toBe(503);
-        expect(calls).toBe(3);
+
+        expect(results).toEqual([0, 1, 2]);
+        expect(admitted).toBe(3);
+        expect(waits).toEqual([100, 100]);
     });
 });

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { CitationRecord, CitationSourceClient, CitationSourceOutcome, CitationSourceRequest } from "../types.js";
-import { firstNonEmpty, parseYear, sourceOutcome } from "./common.js";
+import { encodeDoiPath, firstNonEmpty, parseYear, sourceOutcome } from "./common.js";
 import { requestJson, type SourceHttpOptions } from "../../literature/sources/http.js";
 
 const CrossrefItemSchema = z
@@ -65,7 +65,7 @@ export function createCrossrefClient(options: CrossrefClientOptions = {}): Citat
             const exact = request.plan.operation === "crossref_doi_if_owned";
             const url = exact
                 ? (() => {
-                      const target = new URL(`https://api.crossref.org/works/${encodeURIComponent(doi!)}`);
+                      const target = new URL(`https://api.crossref.org/works/${encodeDoiPath(doi!)}`);
                       if (options.mailto) target.searchParams.set("mailto", options.mailto);
                       return target.toString();
                   })()

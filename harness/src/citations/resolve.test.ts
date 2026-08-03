@@ -116,6 +116,50 @@ describe("CitationResolver batch orchestration", () => {
         expect(counts.crossref).toBe(1);
     });
 
+    it("contains a source that answers a batch with the wrong number of outcomes", async () => {
+        const pubmed: CitationSourceClient = {
+            source: "pubmed",
+            resolve: async (request) => noData("pubmed", request),
+            resolveMany: async (requests) => [noData("pubmed", requests[0]!)],
+        };
+        const others = clientSet(matchingHandler).filter((client) => client.source !== "pubmed");
+        const resolver = createCitationResolver({}, { clients: [...others, pubmed] });
+
+        const results = await resolver.resolveMany([{ citation: "10.1000/one" }, { citation: "10.1000/two" }]);
+
+        expect(results.map((result) => result.sourceOutcomes.find((outcome) => outcome.source === "pubmed")?.status)).toEqual(["unavailable", "unavailable"]);
+        expect(results.map((result) => result.sourceOutcomes.find((outcome) => outcome.source === "doi_registry")?.status)).toEqual(["ok", "ok"]);
+    });
+
+    it("contains a source that throws without failing the entries it never touched", async () => {
+        const clients = clientSet(async (source, request) => {
+            if (source === "crossref" && request.normalized.identifiers.doi === "10.1000/two") throw new Error("socket hang up");
+            return matchingHandler(source, request);
+        });
+        const resolver = createCitationResolver({}, { clients });
+
+        const results = await resolver.resolveMany([{ citation: "10.1000/one" }, { citation: "10.1000/two" }]);
+
+        expect(results.map((result) => result.sourceOutcomes.find((outcome) => outcome.source === "crossref")?.status)).toEqual(["no_data", "unavailable"]);
+        expect(results[0]?.verdict).toBe("verified");
+        expect(results[1]?.verdict).toBe("verified");
+        expect(results[1]?.coverage).toBe("partial");
+    });
+
+    it("shares one identifier lookup while comparing each caller's own metadata", async () => {
+        const counts: Partial<Record<CitationSource, number>> = {};
+        const resolver = createCitationResolver({}, { clients: clientSet(matchingHandler, counts) });
+
+        const results = await resolver.resolveMany([
+            { citation: "10.1000/example", title: "Example study" },
+            { citation: "10.1000/example", title: "A quite different title" },
+        ]);
+
+        expect(counts.doi_registry).toBe(1);
+        expect(results.map((result) => result.verdict)).toEqual(["verified", "metadata_mismatch"]);
+        expect(results.map((result) => result.comparisons[0]?.supplied)).toEqual(["Example study", "A quite different title"]);
+    });
+
     it("enforces the configured batch maximum", async () => {
         const resolver = createCitationResolver({ maxBatchSize: 1 }, { clients: clientSet(matchingHandler) });
         await expect(resolver.resolveMany([{ citation: "PMID: 1" }, { citation: "PMID: 2" }])).rejects.toThrow("exceeds configured maximum");

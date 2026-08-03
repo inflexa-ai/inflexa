@@ -1,4 +1,4 @@
-import { normalizeAuthor, normalizeComparable } from "./normalize.js";
+import { authorNamesMatch, normalizeAuthor, normalizeComparable } from "./normalize.js";
 import type {
     CitationCandidateCluster,
     CitationConflict,
@@ -9,7 +9,7 @@ import type {
     CitationSource,
 } from "./types.js";
 
-export const CITATION_COMPARISON_RULE_VERSION = "citation-compare-v1";
+export const CITATION_COMPARISON_RULE_VERSION = "citation-compare-v2";
 
 type Comparable = string | number | string[];
 
@@ -26,11 +26,7 @@ function normalizedValue(field: CitationField, value: Comparable): string {
 }
 
 function authorMatch(supplied: readonly string[], source: readonly string[]): boolean {
-    const sourceAuthors = source.map(normalizeAuthor);
-    return supplied.map(normalizeAuthor).every((author) => {
-        const surname = author.split(" ").at(-1);
-        return sourceAuthors.some((candidate) => candidate === author || (surname !== undefined && candidate.split(" ").at(-1) === surname));
-    });
+    return supplied.every((author) => source.some((candidate) => authorNamesMatch(author, candidate)));
 }
 
 function fieldMatches(field: CitationField, supplied: Comparable, source: Comparable): boolean {

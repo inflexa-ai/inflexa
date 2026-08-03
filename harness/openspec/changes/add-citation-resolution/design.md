@@ -139,10 +139,20 @@ verified records. Every conflicting source field remains in the result.
 ### 7. Comparisons and verdicts form a deterministic state machine
 
 Field comparators are pure functions with versioned rules: case/punctuation and
-Unicode normalization for titles/venues, ordered or set-aware author comparison,
-exact year with an explicit online-first exception, and normalized volume/page
-comparison. Each supplied field receives `match`, `mismatch`, or `not_compared`
-plus the compared source values.
+Unicode normalization for titles/venues, set-aware author comparison, exact year
+with an explicit online-first exception, and normalized volume/page comparison.
+Each supplied field receives `match`, `mismatch`, or `not_compared` plus the
+compared source values.
+
+Author comparison cannot lean on surname position. Citation styles disagree
+about it (`Smith, Jane A.`, `Jane A. Smith`, `Smith JA` all reach us) and the
+comma that would settle it is gone by the time text is comparable, so the rule
+works on the parts themselves: two names must share a part, must not each carry
+a spelled-out part the other lacks, and — where both give a given name or
+initial — those must agree. Surname-only agreement is a fallback for the one
+case where nothing can contradict it, namely a side that supplies no given name.
+Matching on surname alone would let `John Smith` verify against `Jane Smith`,
+which for a bibliographic verification service is the failure that matters most.
 
 The aggregate verdict is then derived without source-specific shortcuts:
 
@@ -161,16 +171,34 @@ requested metadata comparison remains inconclusive.
 
 The batch operation normalizes and deduplicates inputs before scheduling work.
 Identical identifiers or normalized raw citations share an in-flight promise and
-one cached result. Each source has a configurable token-bucket limiter and small
-concurrency ceiling; batch endpoints are used only where their response can be
-mapped back unambiguously. HTTP 429/503 retries are bounded, jittered, cancellation
-aware, and honor `Retry-After` within a configured maximum delay.
+one cached round of source outcomes. Each source has a configurable token-bucket
+limiter and small concurrency ceiling; batch endpoints are used only where their
+response can be mapped back unambiguously. HTTP 429/503 retries are bounded,
+jittered, cancellation aware, and honor `Retry-After` within a configured maximum
+delay.
 
-The cache is an in-memory LRU keyed by normalized input, source-plan version,
-and comparison-rule version. Positive and negative entries have separate short
-TTLs; `unavailable` is not cached beyond in-flight coalescing. A persistent cache
-was rejected because it would require invalidation, privacy, and storage policy
-beyond this change.
+Pacing is an admission gate around the network call, not a wrapper around
+`fetch`. The distinction is load-bearing: a limiter that queues *inside* the
+fetch it replaces leaves the caller's timeout already running while the request
+waits its turn, so on a source configured for one request per second a large
+bibliography reports its own queue as upstream timeouts. The HTTP layer takes a
+`schedule` seam, arms the timeout inside it, and re-enters it for each retry — so
+one loop owns both the retry policy and the pacing that retry is subject to.
+
+A source failure is that source's, not the batch's. A client that throws or
+answers a batch with a result count its requests do not account for is reported
+`unavailable` for those requests; the surrounding citations keep every other
+source's evidence. Only caller cancellation still fails the operation.
+
+What is cached is the round of source outcomes, keyed by the *lookup* an input
+provokes and the source-plan version — for an exact identifier, the identifier
+alone, since every operation an identifier plan selects is driven by it. Two
+citations to one DOI that supply different metadata therefore share one round of
+requests, and each is compared and judged against its own supplied values. The
+comparison-rule version leaves the key with the comparisons, which are no longer
+cached. Positive and negative entries have separate short TTLs; `unavailable` is
+not cached beyond in-flight coalescing. A persistent cache was rejected because
+it would require invalidation, privacy, and storage policy beyond this change.
 
 ### 9. Configuration is injected at the composition root
 
@@ -179,6 +207,13 @@ limits, cache bounds, and optional Crossref contact identity. Source clients
 receive an injected `fetch` for tests. The runtime does not read environment
 variables or hardcode maintainer identity. When a contact is supplied, Crossref
 requests identify it for polite access; otherwise they use public access.
+
+The Semantic Scholar key reaches both the resolver and the discovery tool the
+same way — through `BioToolKeys`, resolved at the embedder's composition root.
+The discovery tool previously read `SEMANTIC_SCHOLAR_API_KEY` inside its
+`execute`, which is the ambient read this boundary exists to prevent; the host
+resolves the variable now, so the harness is configured rather than
+environment-sensing.
 
 The conversation tool, literature reviewer, sandbox tool resolver, and
 manuscript workflow all close over the same service instance. This ensures one
