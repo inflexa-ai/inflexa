@@ -1,6 +1,7 @@
 ## 1. Schema
 
-- [x] 1.1 Add `thread_type TEXT NOT NULL DEFAULT 'conversation'`, `parent_thread_id TEXT REFERENCES cortex_analysis_threads(thread_id) ON DELETE CASCADE`, and `parent_seq BIGINT` to the `addMigrations` array in `src/state/init.ts`, as three `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements.
+- [x] 1.1 Add `thread_type TEXT NOT NULL DEFAULT 'conversation'`, `parent_thread_id TEXT REFERENCES cortex_analysis_threads(thread_id) ON DELETE CASCADE`, and `parent_seq BIGINT` as three `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. Put them in the `DDL` text beside the table and ahead of the new index, not in the `addMigrations` array: the whole `DDL` text runs before that array, so an index there over a column added later fails with 42703 on every database that already holds the table.
+- [x] 1.5 Add `src/state/thread-parent-columns.test.ts`, which drops the three columns and the index before calling `initCortexState`. A fresh schema builds them from the `CREATE TABLE`, so only a drop reaches the `ALTER` path.
 - [x] 1.2 Add the same three columns to the `CREATE TABLE cortex_analysis_threads` statement in `src/state/init.ts`, so a fresh database provisions them directly. Keep every DDL comment free of a semicolon — the schema is split on `;`.
 - [x] 1.3 Add `CREATE INDEX IF NOT EXISTS idx_cortex_analysis_threads_parent ON cortex_analysis_threads(parent_thread_id) WHERE deleted_at IS NULL`, beside the existing partial index on `analysis_id`.
 - [x] 1.4 Comment the self-reference at the table: state that the cascade is a backstop, and that `purgeThread` deletes the subtree's messages explicitly because `messages` has no foreign key to reach.
