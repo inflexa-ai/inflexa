@@ -272,9 +272,13 @@ describe("runChatTurn", () => {
         // `runAgent` and persists nothing, exactly as the thread-gone bail does.
         const { history, appended } = recordingHistory();
         let ran = false;
-        const run: ChatTurnSeams["run"] = (agent, initial) => {
+        // `runOk` is typed `ChatTurnSeams["run"]` (= `typeof runAgent`), so its four
+        // parameters are all required at the call site even though its body reads only
+        // the first two. Forward all four — dropping `s`/`opts` is a `tsc` error, not a
+        // cleanup (an automated-review bot flagged them as superfluous; they are not).
+        const run: ChatTurnSeams["run"] = (agent, initial, s, opts) => {
             ran = true;
-            return runOk(agent, initial);
+            return runOk(agent, initial, s, opts);
         };
         const prepareReport: ChatTurnSeams["prepare"] = () => Promise.resolve({ kind: "ok", threadType: "report", messages: [userMessage], userMessage });
         const outcome = await runWith({
