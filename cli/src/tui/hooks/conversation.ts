@@ -935,10 +935,16 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
                 parts.push({ id: randomUUIDv7(), sessionId, messageId: m.id, type: "text", text: part.text, createdAt: 0 });
                 break;
             case "tool-call":
-                // History-replayed calls arrive `finished`, carrying the outcome the converter recovered
-                // by pairing each stored call with its `tool-result` block. An absent outcome means the
-                // call had no paired result — a transcript whose `tool` row was never appended — which
-                // the converter reports as `ok`, so mirror that rather than inventing a failure.
+                // A replayed call normally arrives `finished` with the outcome the harness recorded as
+                // the call ended. It arrives `started` when the turn was cut off mid-call: the harness
+                // observed a dispatch and no completion, and deliberately does not invent an outcome
+                // for it — reporting `ok` would claim a result the tool never returned, and `error` a
+                // failure it never had.
+                //
+                // `running` is that call's honest state, and it does not read as live here because the
+                // message it sits in carries the interruption badge: the pair says "in flight when the
+                // turn was cut off". This is why the badge and this marker must not be separated — the
+                // marker alone would look like a call still in progress.
                 parts.push({
                     id: part.toolCallId || randomUUIDv7(),
                     sessionId,
@@ -946,7 +952,7 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
                     type: "tool-call",
                     name: part.toolName,
                     ...(part.detail !== undefined ? { detail: part.detail } : {}),
-                    status: part.outcome ?? "ok",
+                    status: part.status === "started" ? "running" : (part.outcome ?? "ok"),
                     createdAt: 0,
                 });
                 break;
