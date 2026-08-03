@@ -18,7 +18,7 @@ import type { Pool } from "pg";
 import { unwrapOrThrow } from "../lib/result.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { createThreadHistory } from "../memory/thread-history.js";
-import { createThreadStore } from "../memory/thread-store.js";
+import { createThreadStore, type ThreadType } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import { loadAnalysisStatus, queryNonTerminalRunsByAnalysis } from "../state/index.js";
 import { assembleMessages, type AssembledMessages } from "./message-assembly.js";
@@ -38,7 +38,7 @@ export interface PrepareChatTurnParams {
     readonly userInput: string;
 }
 
-export type PrepareChatTurnResult = ({ readonly kind: "ok" } & AssembledMessages) | { readonly kind: "not_found" };
+export type PrepareChatTurnResult = ({ readonly kind: "ok"; readonly threadType: ThreadType } & AssembledMessages) | { readonly kind: "not_found" };
 
 /**
  * Prepare one chat turn: resolve thread ownership, seed the title, load
@@ -56,6 +56,12 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
     if (existing && existing.analysisId !== analysisId) {
         return { kind: "not_found" };
     }
+
+    // The type a caller resolves the turn's agent from. An existing row carries
+    // its own; an absent one is created below with no type, which the store
+    // writes as `conversation` — so even a best-effort create that fails
+    // non-fatally leaves this the type the turn proceeds under.
+    const threadType: ThreadType = existing ? existing.threadType : "conversation";
 
     // Seed the thread title from the first user message. Best-effort.
     try {
@@ -92,5 +98,5 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
         workingMemory: createWorkingMemory(pool),
     });
 
-    return { kind: "ok", messages, userMessage };
+    return { kind: "ok", threadType, messages, userMessage };
 }
