@@ -167,4 +167,51 @@ describe("prepareChatTurn", () => {
         expect(joined).toContain("Run status is temporarily unavailable.");
         expect(joined).not.toContain("No runs are currently running or suspended.");
     });
+
+    it("carries the stored conversation type on an existing thread", async () => {
+        const store = createThreadStore(pool);
+        (
+            await store.createThread({
+                threadId: "t-conv",
+                analysisId: ANALYSIS_A,
+                title: "A conversation",
+            })
+        )._unsafeUnwrap();
+
+        const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-conv", userInput: "hello" });
+
+        expect(result.kind).toBe("ok");
+        if (result.kind !== "ok") throw new Error("unreachable");
+        expect(result.threadType).toBe("conversation");
+    });
+
+    it("carries the conversation type on a first-turn thread it creates", async () => {
+        const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-first", userInput: "hello" });
+
+        expect(result.kind).toBe("ok");
+        if (result.kind !== "ok") throw new Error("unreachable");
+        expect(result.threadType).toBe("conversation");
+
+        // The created row matches the surfaced type.
+        const created = (await createThreadStore(pool).getThread("t-first"))._unsafeUnwrap();
+        expect(created!.threadType).toBe("conversation");
+    });
+
+    it("carries the stored report type on a report thread", async () => {
+        // No production path creates a report thread yet — write one directly.
+        (
+            await createThreadStore(pool).createThread({
+                threadId: "t-report",
+                analysisId: ANALYSIS_A,
+                title: "A report",
+                type: "report",
+            })
+        )._unsafeUnwrap();
+
+        const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-report", userInput: "hello" });
+
+        expect(result.kind).toBe("ok");
+        if (result.kind !== "ok") throw new Error("unreachable");
+        expect(result.threadType).toBe("report");
+    });
 });
