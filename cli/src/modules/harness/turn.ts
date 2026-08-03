@@ -1,6 +1,7 @@
 import { ResultAsync, okAsync } from "neverthrow";
 import {
     createThreadHistory,
+    createConversationDisplayRecorder,
     finalText,
     makeLocalAuth,
     passthroughStep,
@@ -102,13 +103,13 @@ export type RunChatTurnArgs = {
     readonly pool: Pool;
     /** The assembled conversation agent (`runtime.conversationAgent`) whose loop this turn runs. */
     readonly conversationAgent: AgentDefinition;
-    /** Streaming provider wrapper — forwards each text delta so answers render as they arrive. */
-    readonly chat: AgentChat;
+    /** Builds the streaming provider over the recorder's emit sink. */
+    readonly chat: (emit: EmitFn) => AgentChat;
     /** The pg thread store — `appendTurn` persists the turn atomically. */
     readonly history: ThreadHistory;
     /** Carries `threadId` in scope, so a plan launched here stamps `cortex_runs.thread_id`. */
     readonly session: AgentSession;
-    /** The surface's event sink — loop/tool/data events flow here during `runAgent`. */
+    /** The surface's live event sink; the display recorder forwards every event here. */
     readonly emit: EmitFn;
     /**
      * The booted runtime's ONE {@link UsageRecorder} (`runtime.usageRecorder`), forwarded into this
@@ -133,7 +134,7 @@ export type RunChatTurnArgs = {
      * its deny-by-default realization, which is how the REPL stays a write-only sink
      * with no mid-turn input path.
      */
-    readonly ask?: (request: AskRequest) => Promise<AskApproval>;
+    readonly ask?: (request: AskRequest, emit: EmitFn) => Promise<AskApproval>;
     /** The resolved analysis this turn is scoped to (ownership check + context load). */
     readonly analysisId: string;
     /** The conversation thread this turn appends to. */
@@ -232,12 +233,18 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
 
         const initial = prepared.messages;
         const userMessage = prepared.userMessage;
+        const display = createConversationDisplayRecorder({
+            userText: userInput,
+            topLevelCallPath: session.provenance.callPath,
+            sink: emit,
+        });
+        const recordedEmit = display.emit;
 
         const run = await ResultAsync.fromPromise(
             seams.run(conversationAgent, initial, session, {
-                provider: chat,
+                provider: chat(recordedEmit),
                 signal,
-                emit,
+                emit: recordedEmit,
                 runStep: passthroughStep,
                 // UNCONDITIONAL, unlike `ask`'s spread: an absent recorder is not a policy the
                 // harness resolves for us, it is the no-op that drops every call this loop makes.
@@ -247,7 +254,7 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
                 // surface filters sub-agent traffic off by `callPath` depth, so a planner or
                 // literature-reviewer loop is emitted and then dropped. This is where it survives.
                 logger: harnessLogger("harness"),
-                ...(ask ? { ask } : {}),
+                ...(ask ? { ask: (request) => ask(request, recordedEmit) } : {}),
             }),
             (e): unknown => e,
         ).match(
@@ -298,7 +305,22 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         // is false. The harness writes it onto the turn's own assistant row and hands it back on read.
         // Passed on EVERY branch for the same reason it rides on all three phases: an aborted or failed
         // turn spent real tokens, and only a run that never resolved has nothing to record.
-        const appendError = (await history.appendTurn(threadId, run.toPersist, run.phase.turnUsage)).match(
+        //
+        // The display projection rides along for the same reason and on the same three branches: it is
+        // what the transcript replays, so a turn whose projection is dropped reloads as though it had
+        // shown nothing. `finish` is therefore called before the append, not inside the `ok` branch —
+        // an aborted turn displayed real work, and its projection is what the retract window renders.
+        const displayMessages = display.finish({
+            ...(run.phase.kind === "ok" ? { fallbackText: run.phase.fallbackText } : {}),
+            ...(run.phase.kind === "aborted" ? { interrupted: true } : {}),
+        });
+        const appendError = (
+            await history.appendTurn(threadId, {
+                modelMessages: run.toPersist,
+                displayMessages,
+                ...(run.phase.turnUsage ? { turnUsage: run.phase.turnUsage } : {}),
+            })
+        ).match(
             (): DbError | undefined => undefined,
             (e): DbError | undefined => e,
         );

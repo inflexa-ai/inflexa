@@ -3,24 +3,20 @@ import { ResultAsync } from "neverthrow";
 import { createSignal } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import {
-    contentToCortexMessages,
-    createCardResolver,
-    createDetailResolver,
     createStreamingChat,
     createThreadHistory,
+    storedMessagesToCortex,
     type DbError,
     type EmitFn,
     type Pool,
     type RetractOutcome,
     type ThreadHistory,
-    type Tool,
 } from "@inflexa-ai/harness";
 
 import { describeCause, findAuthCause } from "../../lib/cause.ts";
 import { getLogger } from "../../lib/log.ts";
 import { resolveModelConnection } from "../../modules/harness/config.ts";
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
-import { workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { eventDepth, isSubAgentEvent, readAskPart, readPlanCard, readRunCard, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "../../modules/harness/artifact_open.ts";
 import {
@@ -913,7 +909,7 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
 }
 
 /** One reconstructed transcript message from the pg thread read path. Exported for the load seams. */
-export type CortexMsg = Awaited<ReturnType<typeof contentToCortexMessages>>[number];
+export type CortexMsg = ReturnType<typeof storedMessagesToCortex>[number];
 
 /**
  * Map a reconstructed {@link CortexMsg} to a {@link UIMessage}: text → text part; a replayed
@@ -1014,38 +1010,20 @@ export type LoadSeams = {
     /** One turn-paginated page of the thread. Real: `createThreadHistory(pool).loadPage`. */
     readonly loadPage: (pool: Pool, threadId: string, page: number, perPage: number) => ReturnType<ThreadHistory["loadPage"]>;
     /**
-     * Reconstruct display messages from a page (builds the card and detail resolvers internally).
-     * Real: below.
+     * Adapt the harness's stored display projections to the local conversation types.
      *
-     * `tools` is the agent's composed tool list. It is passed in rather than reached for here because
-     * the detail resolver must cover embedder-contributed tools (`run_inflexa` and friends), which
-     * exist only on the assembled agent — and because a seam that reaches for the runtime itself would
-     * stop being substitutable by the test fakes below it.
+     * Synchronous, and takes nothing but the rows: the harness records what a turn displayed when it
+     * displays it, so replay reads that projection and consults nothing else. There is no pool to
+     * query, no workspace root to resolve, no tool roster to rebuild a detail from, and nothing that
+     * can fail — which is why this seam no longer carries the card/detail resolvers or a `Promise`.
      */
-    readonly toCortex: (
-        pool: Pool,
-        analysisId: string,
-        messages: Parameters<typeof contentToCortexMessages>[0],
-        tools: readonly Tool[],
-    ) => Promise<CortexMsg[]>;
+    readonly toCortex: (messages: Parameters<typeof storedMessagesToCortex>[0]) => CortexMsg[];
 };
 
 const realLoadSeams: LoadSeams = {
     runtime: harnessRuntime,
     loadPage: (pool, threadId, page, perPage) => createThreadHistory(pool).loadPage(threadId, page, perPage),
-    // The card resolver reaches the pool + workspace tree to rebuild plan/run cards from the persisted
-    // tool_use rows; `unwrapOrThrow` inside it THROWS on a storage fault, so `contentToCortexMessages`
-    // is bridged to a Result in `loadMessages` (neverthrow-first: a harness throw becomes our error state).
-    // An unresolvable workspace root (moved/deleted anchor) degrades preview cards to chips rather than
-    // failing the whole history load (the local-state desync rule). The detail resolver is pure and
-    // storage-free, so it survives that degradation and rides both branches.
-    toCortex: (pool, analysisId, messages, tools) => {
-        const resolveDetail = createDetailResolver(tools);
-        return workspaceRootForAnalysisId(analysisId).match(
-            (root) => contentToCortexMessages(messages, { resolveCard: createCardResolver(pool, analysisId, root), resolveDetail }),
-            () => contentToCortexMessages(messages, { resolveDetail }),
-        );
-    },
+    toCortex: storedMessagesToCortex,
 };
 
 // Monotonic token ordering EVERY asynchronous write to the message store. Two producers write it —
@@ -1126,24 +1104,24 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
     }
     const rows = rowPages.flat();
 
-    // The composed roster — harness tools plus the host tools wired at the runtime's composition root —
-    // so a reloaded `run_inflexa` call rebuilds its detail instead of dropping to a bare name.
-    const mapped = await ResultAsync.fromPromise(seams.toCortex(runtime.pool, analysisId, rows, runtime.conversationAgent.tools), (e): unknown => e);
+    // Re-checked with no await in between, deliberately: this is the invariant the generation token
+    // exists for — a superseded load must never reach the store — and stating it at the write itself
+    // keeps it true if an await is ever reintroduced above.
     if (myLoad !== loadGeneration) return;
-    mapped.match(
-        // Trailing cap is in MESSAGES (see the unit note in {@link loadMessages}'s doc and on
-        // MESSAGE_CAP): two full turn pages can carry more than MESSAGE_CAP messages, so keep only the
-        // newest MESSAGE_CAP so the mounted window matches the live-append cap. Record the session this
-        // load mounted so `send` knows the history is already on screen and skips its post-turn reload.
-        (cortex) => {
-            setMessages(cortex.map((m) => cortexToUiMessage(m, sessionId, analysisId)).slice(-MESSAGE_CAP));
-            loadedSessionId = sessionId;
-        },
-        (cause) => {
-            setErrorMsg(`Failed to load the conversation: ${describeCause(cause)}`);
-            setChatStatus("error");
-        },
+    // Trailing cap is in MESSAGES (see the unit note in {@link loadMessages}'s doc and on
+    // MESSAGE_CAP): two full turn pages can carry more than MESSAGE_CAP messages, so keep only the
+    // newest MESSAGE_CAP so the mounted window matches the live-append cap. Record the session this
+    // load mounted so `send` knows the history is already on screen and skips its post-turn reload.
+    //
+    // No error branch: the read cannot fail. It maps stored projections and touches neither the
+    // database nor the filesystem, so the only failure this function still reports is a page read's.
+    setMessages(
+        seams
+            .toCortex(rows)
+            .map((m) => cortexToUiMessage(m, sessionId, analysisId))
+            .slice(-MESSAGE_CAP),
     );
+    loadedSessionId = sessionId;
 }
 
 // The in-flight chat request. Module-private: only `send`/`abort`/`resetHotState` touch it, so the
@@ -1346,7 +1324,6 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
     // Per-turn streaming wrapper: forward each provider text delta into the adapter as a `text-delta`
     // event, so answers accumulate in `streamText` as they arrive. Only this top-level
     // loop runs on the wrapper — sub-agent loops were wired to the plain provider at assembly.
-    const chat = createStreamingChat(runtime.conversation.provider, (text) => void emitForTurn({ type: "text-delta", text }));
     const session = buildChatSession("tui-chat", opts.analysisId, opts.sessionId);
 
     // The engine is contractually non-rejecting — every failure returns a `TurnOutcome`. But `turnSettled`
@@ -1359,7 +1336,7 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
         .runChatTurn({
             pool: runtime.pool,
             conversationAgent: runtime.conversationAgent,
-            chat,
+            chat: (emit) => createStreamingChat(runtime.conversation.provider, (text) => void emit({ type: "text-delta", text })),
             history: createThreadHistory(runtime.pool),
             session,
             emit: emitForTurn,
@@ -1372,7 +1349,7 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
             // carrying the turn's analysis/thread, its abort signal, and its guarded emit sink, so the
             // gateway's `data-ask` emissions and its poll ride the same signal and sink as every other
             // turn event (a swap/reset that supersedes the turn drops them at `emitForTurn`).
-            ask: (req) => runtime.askGateway.ask(req, { analysisId: opts.analysisId, threadId: opts.sessionId, signal: myTurn.signal, emit: emitForTurn }),
+            ask: (req, emit) => runtime.askGateway.ask(req, { analysisId: opts.analysisId, threadId: opts.sessionId, signal: myTurn.signal, emit }),
             analysisId: opts.analysisId,
             // The pg thread binds 1:1 to the session, so a plan launched here stamps its run.
             threadId: opts.sessionId,

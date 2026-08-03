@@ -662,7 +662,7 @@ describe("the interrupted marker survives a transcript reload", () => {
         const loadSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadPage: () => okAsync(emptyPage(2)),
-            toCortex: async () => interruptedTranscript(),
+            toCortex: () => interruptedTranscript(),
         };
         await loadMessages(SID, AID, loadSeams);
 
@@ -697,7 +697,7 @@ describe("a transcript load resolving mid-retract", () => {
         const loadSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadPage: () => ResultAsync.fromSafePromise(loadGate.then(() => emptyPage(1))),
-            toCortex: async () => staleCortex(),
+            toCortex: () => staleCortex(),
         };
         const load = loadMessages(SID, AID, loadSeams); // parks at its page read
 

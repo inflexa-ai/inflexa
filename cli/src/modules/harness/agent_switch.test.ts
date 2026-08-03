@@ -318,7 +318,7 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
             {
                 pool: {} as unknown as Pool,
                 conversationAgent: { id: "conv" } as unknown as AgentDefinition,
-                chat: {} as unknown as AgentChat,
+                chat: () => ({}) as AgentChat,
                 history,
                 session: buildChatSession("tui-chat", "an-1", "t-1"),
                 emit: (() => {}) as EmitFn,

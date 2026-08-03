@@ -696,7 +696,7 @@ describe("send() binds the ask seam to the turn scope", () => {
         const askFn = seams.last()?.ask;
         expect(askFn).toBeInstanceOf(Function);
         // Asserted a Function on the line above, so the bound closure is present.
-        const approval = await askFn!({ title: "Run refs", command: "inflexa refs list" });
+        const approval = await askFn!({ title: "Run refs", command: "inflexa refs list" }, () => {});
         expect(approval).toEqual({ kind: "once" });
 
         expect(calls).toHaveLength(1);
@@ -916,7 +916,7 @@ describe("loadMessages windows the newest turns past one page", () => {
             },
             // Faithful reconstruction: each stored row (a fixture Row, cast through the seam's harness
             // message type) becomes one CortexMsg carrying its text, so the trailing message cap is exercised.
-            toCortex: async (_pool, _analysisId, rows) =>
+            toCortex: (rows) =>
                 (rows as unknown as Row[]).map((r) => ({ id: `id-${r.seq}`, role: r.role, parts: [{ type: "text", text: r.text }] })) as unknown as CortexMsg[],
             fetched: () => fetched,
         };
@@ -984,12 +984,12 @@ describe("loadMessages staleness guard", () => {
         const oldSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadPage: () => ResultAsync.fromSafePromise(oldGate.then(() => emptyPage(1))),
-            toCortex: async () => cortexText("old", "old-msg"),
+            toCortex: () => cortexText("old", "old-msg"),
         };
         const newSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadPage: () => okAsync(emptyPage(1)),
-            toCortex: async () => cortexText("new", "new-msg"),
+            toCortex: () => cortexText("new", "new-msg"),
         };
 
         const oldLoad = loadMessages(SID, AID, oldSeams); // blocks on oldGate at its page read
@@ -1026,7 +1026,7 @@ describe("a turn supersedes a transcript load in flight", () => {
             seams: {
                 runtime: () => stubRuntime,
                 loadPage: () => ResultAsync.fromSafePromise(gate.then(() => emptyPage(1))),
-                toCortex: async () => cortexText("stale", "stale-transcript"),
+                toCortex: () => cortexText("stale", "stale-transcript"),
             },
             release: () => release(),
         };
@@ -1178,7 +1178,7 @@ describe("MESSAGE_CAP is coupled to loadPage's perPage clamp", () => {
                 seen = perPage;
                 return okAsync({ messages: [], total: 0, page: 0, perPage, hasMore: false } as MessagePage);
             },
-            toCortex: async () => [],
+            toCortex: () => [],
             perPage: () => seen,
         };
         let seen = 0;
@@ -1359,7 +1359,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         const initialLoad: LoadSeams = {
             runtime: () => stubRuntime,
             loadPage: () => ResultAsync.fromSafePromise(initialGate.then(() => emptyPage(1))),
-            toCortex: async () => [{ id: "old", role: "assistant", parts: [{ type: "text", text: "never-mounted" }] }] as unknown as CortexMsg[],
+            toCortex: () => [{ id: "old", role: "assistant", parts: [{ type: "text", text: "never-mounted" }] }] as unknown as CortexMsg[],
         };
 
         // The post-turn reload seams: the pg thread now holds the prior history AND the just-finished
@@ -1367,7 +1367,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         const reloadSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadPage: () => okAsync(emptyPage(3)),
-            toCortex: async () =>
+            toCortex: () =>
                 [
                     { id: "h1", role: "assistant", parts: [{ type: "text", text: "prior history" }] },
                     { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },
@@ -1407,7 +1407,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         const completedLoad: LoadSeams = {
             runtime: () => stubRuntime,
             loadPage: () => okAsync(emptyPage(1)),
-            toCortex: async () => [{ id: "h1", role: "assistant", parts: [{ type: "text", text: "history" }] }] as unknown as CortexMsg[],
+            toCortex: () => [{ id: "h1", role: "assistant", parts: [{ type: "text", text: "history" }] }] as unknown as CortexMsg[],
         };
         await loadMessages(SID, AID, completedLoad);
         expect(messages.length).toBe(1);
@@ -1572,7 +1572,7 @@ describe("promptHistory", () => {
                     perPage,
                     hasMore: false,
                 }),
-            toCortex: async (_pool, _analysisId, rows) =>
+            toCortex: (rows) =>
                 (rows as unknown as Turn[]).map((t, i) => ({
                     id: `id-${i}`,
                     role: t.role,
@@ -1638,7 +1638,7 @@ describe("hasPromptHistory", () => {
                     perPage,
                     hasMore: false,
                 }),
-            toCortex: async (_pool, _analysisId, rows) =>
+            toCortex: (rows) =>
                 (rows as unknown as Turn[]).map((t, i) => ({
                     id: `id-${i}`,
                     role: t.role,

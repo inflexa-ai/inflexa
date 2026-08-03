@@ -16,7 +16,7 @@
 import { randomUUIDv7 } from "bun";
 import { intro, log, outro, spinner, text, isCancel } from "@clack/prompts";
 import { type ResultAsync } from "neverthrow";
-import { createStreamingChat, createThreadHistory, createThreadStore, type AgentChat, type AgentSession, type DbError, type Thread } from "@inflexa-ai/harness";
+import { createStreamingChat, createThreadHistory, createThreadStore, type AgentSession, type DbError, type Thread } from "@inflexa-ai/harness";
 
 import { describeCause } from "../../lib/cause.ts";
 import { fail } from "../../lib/cli.ts";
@@ -165,19 +165,6 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
     // paths for their OSC 8 `file://` links.
     const printer = createChatPrinter(sink, { analysisId });
 
-    // Live token streaming. `runAgent`'s `provider` option is `AgentChat` (one
-    // collapsed response per call — `RunAgentOptions`, harness loop/run-agent.ts),
-    // and the raw `ChatProvider` satisfies it NON-streaming: its `chat` never
-    // emits deltas, so answers would only render whole at turn end.
-    // `createStreamingChat` builds an `AgentChat` over the provider's `chatStream`
-    // primitive instead, forwarding each text delta into the printer's own
-    // text-delta channel (through `emit`, so the printer's per-turn streamed flag
-    // and copy-on-receive rules apply unchanged). Only THIS top-level loop runs
-    // on the wrapper — sub-agent loops (planner, literature reviewer) were wired
-    // to the plain provider at assembly, so their tokens never reach the sink.
-    // Abort semantics are untouched: the wrapper re-throws an AbortError verbatim.
-    const chat = createStreamingChat(runtime.conversation.provider, (text) => void printer.emit({ type: "text-delta", text }));
-
     // The REPL runs as the `"cli-chat"` agent. `buildChatSession` puts `threadId`
     // in scope (so a chat-launched plan stamps `cortex_runs.thread_id`) and gives
     // a length-1 callPath (so this agent's events pass the printer's sub-agent
@@ -194,7 +181,7 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
         }
         const userInput = answer.trim();
         if (userInput.length === 0) continue;
-        const outcome = await runTurn(runtime, chat, history, printer, sink, session, analysisId, threadId, userInput);
+        const outcome = await runTurn(runtime, history, printer, sink, session, analysisId, threadId, userInput);
         // A second SIGINT during the turn requested a stop. The turn has fully
         // unwound (its `appendTurn` ran against a still-live pool), so drain and
         // exit here — once, deterministically (130 = terminated by SIGINT).
@@ -244,7 +231,6 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
  */
 async function runTurn(
     runtime: HarnessRuntime,
-    chat: AgentChat,
     history: ReturnType<typeof createThreadHistory>,
     printer: ReturnType<typeof createChatPrinter>,
     sink: ChatSink,
@@ -276,7 +262,7 @@ async function runTurn(
         const outcome = await runChatTurn({
             pool: runtime.pool,
             conversationAgent: runtime.conversationAgent,
-            chat,
+            chat: (emit) => createStreamingChat(runtime.conversation.provider, (text) => void emit({ type: "text-delta", text })),
             history,
             session,
             emit: printer.emit,
