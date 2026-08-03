@@ -38,6 +38,9 @@ function threadRow(): Thread {
         threadId: "thread-1",
         analysisId: ANALYSIS.id,
         title: "Cohort survival questions",
+        threadType: "conversation",
+        parentThreadId: null,
+        parentSeq: null,
         createdAt: new Date("2026-07-08T00:00:00.000Z"),
         updatedAt: new Date("2026-07-08T01:00:00.000Z"),
         // The flow only ever confirms against a LIVE conversation, so the row it reads carries no
