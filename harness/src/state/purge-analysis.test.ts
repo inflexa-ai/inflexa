@@ -37,6 +37,7 @@ import { setupDbosForTests, type DbosTestRig } from "../__tests__/setup/dbos.js"
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { createDbosWorkflowPurger } from "../execution/dbos-workflow-purger.js";
 import type { WorkflowPurger } from "../execution/workflow-purger.js";
+import { createThreadStore } from "../memory/thread-store.js";
 import { searchIndexName } from "../workspace/search-config.js";
 import { createVectorStore } from "./vector-store.js";
 import { createAnalysisPurge, type AnalysisPurge } from "./purge-analysis.js";
@@ -388,6 +389,96 @@ describe("createAnalysisPurge", () => {
 
         expect(await ledger.countStatusRows([profileWorkflowId])).toBe(0);
         expect(await ledger.countCascadeRows([profileWorkflowId])).toEqual(ledger.cascadeRows(0));
+    });
+
+    it("leaves no thread row and no message for an analysis whose threads form a hierarchy", async () => {
+        // A thread may name another as its parent, and the column that records it
+        // references the same table with ON DELETE CASCADE — so removing any thread
+        // row silently takes its whole subtree, including rows the statement's own
+        // predicate never named. That is what fixes the order here: the messages go
+        // first, joined through the thread rows, because a thread delete running
+        // ahead of them would let the cascade drop a descendant whose transcript is
+        // still on disk. `messages` carries no foreign key and the join through
+        // `cortex_analysis_threads` is the only route to it, so those rows would
+        // belong to no analysis and no later purge of any scope could reach them.
+        // The tree is three deep because a cascade reaches a grandchild too, and a
+        // single generation would pass whatever the order.
+        const analysisId = `purge-hierarchy-${run}`;
+        // Built through the store rather than with the literal SQL the fixture above
+        // uses, because the parent and its anchor are exactly what the store
+        // validates: a hierarchy it accepted is a shape a purge really meets on disk,
+        // where a hand-written one could be a shape nothing can produce.
+        const threads = createThreadStore(rig.pool);
+        const root = `hierarchy-root-${run}`;
+        const child = `hierarchy-child-${run}`;
+        const grandchild = `hierarchy-grandchild-${run}`;
+        const threadIds = [root, child, grandchild];
+
+        (await threads.createThread({ threadId: root, analysisId, title: "The conversation" }))._unsafeUnwrap();
+        (
+            await threads.createThread({ threadId: child, analysisId, title: "A report session", type: "report", parentThreadId: root, parentSeq: 2 })
+        )._unsafeUnwrap();
+        (
+            await threads.createThread({
+                threadId: grandchild,
+                analysisId,
+                title: "Spawned from the report",
+                type: "report",
+                parentThreadId: child,
+                parentSeq: 1,
+            })
+        )._unsafeUnwrap();
+
+        // Every level holds a transcript, the deepest one included: `messages` carries
+        // no key back to the thread rows, so a reclamation that lost track of the
+        // grandchild would leave its rows with nothing naming them.
+        const transcripts: readonly (readonly [string, number])[] = [
+            [root, 1],
+            [root, 2],
+            [child, 1],
+            [grandchild, 1],
+        ];
+        for (const [threadId, seq] of transcripts) {
+            await rig.pool.query({
+                text: `INSERT INTO messages (thread_id, seq, message_envelope, tokens)
+                       VALUES ($1, $2, '{"kind":"ai-sdk-model-message"}'::jsonb, 3)`,
+                values: [threadId, seq],
+            });
+        }
+
+        // The key is read out of the live schema rather than assumed: without it the
+        // rows below are three unconstrained inserts and a purge could not raise a
+        // referential error however it deleted them, leaving the whole test green for
+        // a reason that has nothing to do with what it is here to hold.
+        const { rows: selfKeys } = await rig.pool.query<{ n: number }>(
+            `SELECT COUNT(*)::int AS n FROM pg_constraint
+             WHERE contype = 'f'
+               AND conrelid = 'cortex_analysis_threads'::regclass
+               AND confrelid = 'cortex_analysis_threads'::regclass`,
+        );
+        expect(selfKeys[0]?.n).toBe(1);
+
+        // Read back before the purge, so the tree cannot quietly be three unrelated
+        // rows and let the assertions below pass without any key having been tested.
+        const { rows: links } = await rig.pool.query<{ thread_id: string; parent_thread_id: string | null }>({
+            text: `SELECT thread_id, parent_thread_id FROM cortex_analysis_threads WHERE analysis_id = $1 ORDER BY thread_id`,
+            values: [analysisId],
+        });
+        expect(links).toEqual([
+            { thread_id: child, parent_thread_id: root },
+            { thread_id: grandchild, parent_thread_id: child },
+            { thread_id: root, parent_thread_id: null },
+        ]);
+        expect(await countsByAnalysis(analysisId)).toEqual({ ...NOTHING_LEFT, cortex_analysis_threads: 3 });
+        expect(await countMessages(threadIds)).toBe(transcripts.length);
+
+        // A referential refusal arrives on the error channel as a `DbError`, so the
+        // unwrap is the assertion that no key was violated.
+        const outcome = (await purge.purgeAnalysis(analysisId))._unsafeUnwrap();
+        expect(outcome).toEqual({ threads: 3, messages: transcripts.length, workflows: 0, vectorIndexDropped: false });
+
+        expect(await countsByAnalysis(analysisId)).toEqual(NOTHING_LEFT);
+        expect(await countMessages(threadIds)).toBe(0);
     });
 
     it("removes the analysis's plans on a schema that has no cascade to fall back on", async () => {

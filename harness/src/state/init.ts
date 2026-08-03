@@ -279,11 +279,24 @@ CREATE TABLE IF NOT EXISTS cortex_analysis_threads (
   title       TEXT,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  deleted_at  TIMESTAMPTZ
+  deleted_at  TIMESTAMPTZ,
+  thread_type TEXT NOT NULL DEFAULT 'conversation',
+  -- The cascade on this self-reference is a BACKSTOP, never the deletion path.
+  -- messages carries no foreign key to this table, so a cascade firing on its
+  -- own drops a descendant's metadata row while leaving that descendant's
+  -- messages rows behind with nothing naming them, beyond the reach of any
+  -- later thread-scoped or analysis-scoped reclamation. purgeThread therefore
+  -- walks the subtree and deletes its messages rows explicitly, to the same
+  -- depth the cascade reaches.
+  parent_thread_id TEXT REFERENCES cortex_analysis_threads(thread_id) ON DELETE CASCADE,
+  parent_seq  BIGINT
 );
 
 CREATE INDEX IF NOT EXISTS idx_cortex_analysis_threads_analysis
   ON cortex_analysis_threads(analysis_id) WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_cortex_analysis_threads_parent
+  ON cortex_analysis_threads(parent_thread_id) WHERE deleted_at IS NULL;
 
 -- Working memory — the harness WorkingMemory module's table, one row per
 -- analysis. The data column holds a JSONB object with four sections (goal,
@@ -512,6 +525,11 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                     ALTER TABLE cortex_ask_grants RENAME COLUMN command TO grant_key;
                   END IF;
                 END $$`,
+                // Additive with no backfill: an existing thread row reads back as a
+                // root conversation thread with no anchor, which is exactly what it is.
+                "ALTER TABLE cortex_analysis_threads ADD COLUMN IF NOT EXISTS thread_type TEXT NOT NULL DEFAULT 'conversation'",
+                "ALTER TABLE cortex_analysis_threads ADD COLUMN IF NOT EXISTS parent_thread_id TEXT REFERENCES cortex_analysis_threads(thread_id) ON DELETE CASCADE",
+                "ALTER TABLE cortex_analysis_threads ADD COLUMN IF NOT EXISTS parent_seq BIGINT",
             ];
             for (const sql of addMigrations) {
                 await client.query(sql);

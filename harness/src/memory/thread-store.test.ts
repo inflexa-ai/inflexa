@@ -4,11 +4,22 @@ import type { Pool } from "pg";
 
 import type { DbError } from "../lib/db-result.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
-import { createThreadStore, type ThreadStore } from "./thread-store.js";
+import { createThreadStore, type ThreadStore, type ThreadType } from "./thread-store.js";
 import { createThreadHistory } from "./thread-history.js";
 
 const ANALYSIS_A = "analysis-a";
 const ANALYSIS_B = "analysis-b";
+
+/**
+ * A local mirror of the store's closed type set, which the store keeps private.
+ * The conditional below is what keeps the mirror honest: a member added to
+ * `ThreadType` and not listed here resolves the alias to `never`, and the
+ * declaration under it stops compiling — so "every type round-trips" cannot
+ * quietly come to mean "every type this file happens to remember".
+ */
+const THREAD_TYPES = ["conversation", "report"] as const satisfies readonly ThreadType[];
+type _AllThreadTypesCovered = ThreadType extends (typeof THREAD_TYPES)[number] ? true : never;
+const _allThreadTypesCovered: _AllThreadTypesCovered = true;
 
 let pool: Pool;
 let drop: () => Promise<void>;
@@ -50,6 +61,23 @@ async function threadRowCount(threadId: string): Promise<number> {
 }
 
 /**
+ * The type and parent edge straight off the row, or `null` for an absent one.
+ * Read raw because the store's own projection sits between a caller and these
+ * three columns: a value the insert never wrote and a value `toThread` invented
+ * are indistinguishable through `getThread`. `parent_seq` stays text here for
+ * the reason the store projects it that way — it is a bigint, and the driver's
+ * number parsing is not what this assertion is about.
+ */
+async function readRow(threadId: string): Promise<{ threadType: string; parentThreadId: string | null; parentSeq: string | null } | null> {
+    const { rows } = await pool.query<{ thread_type: string; parent_thread_id: string | null; parent_seq: string | null }>(
+        "SELECT thread_type, parent_thread_id, parent_seq::text AS parent_seq FROM cortex_analysis_threads WHERE thread_id = $1",
+        [threadId],
+    );
+    const row = rows[0];
+    return row ? { threadType: row.thread_type, parentThreadId: row.parent_thread_id, parentSeq: row.parent_seq } : null;
+}
+
+/**
  * The tombstone as text, or `null` for a live/absent row. Text, not a `Date`:
  * the driver parses `timestamptz` at millisecond resolution, where two stamps
  * taken this close together compare equal and a re-stamp would go unnoticed.
@@ -78,6 +106,22 @@ async function readStamps(threadId: string): Promise<{ createdAt: string; update
     );
     const row = rows[0]!;
     return { createdAt: row.created_at, updatedAt: row.updated_at, updatedAtDate: row.updated_at_date, deletedAt: row.deleted_at };
+}
+
+// --- subtree fixture --------------------------------------------------------
+// Three generations plus an unrelated thread, shared by the archive and purge
+// suites because both verbs walk the same recursive definition. The third
+// generation is the load-bearing part: a one-level sweep is indistinguishable
+// from a subtree walk in a tree that stops at a child, and the unrelated thread
+// is what says the walk stops.
+
+const GENERATIONS = ["root", "child", "grandchild"] as const;
+
+async function seedGenerations(): Promise<void> {
+    (await store.createThread({ threadId: "root", analysisId: ANALYSIS_A, title: "Root" }))._unsafeUnwrap();
+    (await store.createThread({ threadId: "child", analysisId: ANALYSIS_A, title: "Child", parentThreadId: "root", parentSeq: 2 }))._unsafeUnwrap();
+    (await store.createThread({ threadId: "grandchild", analysisId: ANALYSIS_A, title: "Grandchild", parentThreadId: "child", parentSeq: 4 }))._unsafeUnwrap();
+    (await store.createThread({ threadId: "unrelated", analysisId: ANALYSIS_A, title: "Unrelated" }))._unsafeUnwrap();
 }
 
 describe("createThread + getThread", () => {
@@ -453,5 +497,410 @@ describe("listThreads includeArchived", () => {
         const restored = page.threads.find((t) => t.threadId === "restore-me");
         expect(restored).toBeDefined();
         expect(restored!.deletedAt).toBeNull();
+    });
+});
+
+describe("createThread type and parent edge", () => {
+    it("defaults an unqualified create to a conversation standing on its own", async () => {
+        const created = (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Plain" }))._unsafeUnwrap();
+
+        expect(created.threadType).toBe("conversation");
+        expect(created.parentThreadId).toBeNull();
+        expect(created.parentSeq).toBeNull();
+
+        const read = (await store.getThread("t1"))._unsafeUnwrap();
+        expect(read!.threadType).toBe("conversation");
+        expect(read!.parentThreadId).toBeNull();
+        expect(read!.parentSeq).toBeNull();
+    });
+
+    it("round-trips a type, a parent and its anchor", async () => {
+        (await store.createThread({ threadId: "root", analysisId: ANALYSIS_A, title: "Root" }))._unsafeUnwrap();
+
+        const created = (
+            await store.createThread({
+                threadId: "spawned",
+                analysisId: ANALYSIS_A,
+                title: "Spawned report",
+                type: "report",
+                parentThreadId: "root",
+                parentSeq: 12,
+            })
+        )._unsafeUnwrap();
+
+        expect(created.threadType).toBe("report");
+        expect(created.parentThreadId).toBe("root");
+        expect(created.parentSeq).toBe(12);
+
+        const read = (await store.getThread("spawned"))._unsafeUnwrap();
+        expect(read!.threadType).toBe("report");
+        expect(read!.parentThreadId).toBe("root");
+        // The column is a bigint the driver hands back as text, and the store is
+        // the single place it becomes a number — a caller comparing the anchor
+        // against a `messages.seq` needs it to have made that crossing.
+        expect(read!.parentSeq).toBe(12);
+        expect(typeof read!.parentSeq).toBe("number");
+    });
+
+    it("round-trips every member of the closed type set", async () => {
+        for (const threadType of THREAD_TYPES) {
+            (await store.createThread({ threadId: `t-${threadType}`, analysisId: ANALYSIS_A, type: threadType }))._unsafeUnwrap();
+
+            expect((await store.getThread(`t-${threadType}`))._unsafeUnwrap()!.threadType).toBe(threadType);
+            expect((await readRow(`t-${threadType}`))!.threadType).toBe(threadType);
+        }
+    });
+});
+
+describe("createThread integrity rules", () => {
+    it("refuses a parent belonging to another analysis", async () => {
+        (await store.createThread({ threadId: "b-root", analysisId: ANALYSIS_B, title: "Other analysis" }))._unsafeUnwrap();
+
+        const failed = (await store.createThread({ threadId: "child", analysisId: ANALYSIS_A, parentThreadId: "b-root", parentSeq: 1 }))._unsafeUnwrapErr();
+
+        expect(failed).toEqual({
+            type: "parent_analysis_mismatch",
+            op: "thread-store.createThread",
+            threadId: "child",
+            analysisId: ANALYSIS_A,
+            parentThreadId: "b-root",
+            parentAnalysisId: ANALYSIS_B,
+        });
+        // Refused before the insert, not rolled back after it — a subtree walk
+        // that could cross analyses is the thing the rule exists to prevent.
+        expect(await threadRowCount("child")).toBe(0);
+    });
+
+    it("refuses a parent supplied without its anchor", async () => {
+        (await store.createThread({ threadId: "root", analysisId: ANALYSIS_A, title: "Root" }))._unsafeUnwrap();
+
+        const failed = (await store.createThread({ threadId: "child", analysisId: ANALYSIS_A, parentThreadId: "root" }))._unsafeUnwrapErr();
+
+        expect(failed).toEqual({
+            type: "parent_anchor_unpaired",
+            op: "thread-store.createThread",
+            threadId: "child",
+            parentThreadId: "root",
+            parentSeq: null,
+        });
+        expect(await threadRowCount("child")).toBe(0);
+    });
+
+    it("refuses an anchor supplied without its parent", async () => {
+        const failed = (await store.createThread({ threadId: "child", analysisId: ANALYSIS_A, parentSeq: 7 }))._unsafeUnwrapErr();
+
+        expect(failed).toEqual({
+            type: "parent_anchor_unpaired",
+            op: "thread-store.createThread",
+            threadId: "child",
+            parentThreadId: null,
+            parentSeq: 7,
+        });
+        expect(await threadRowCount("child")).toBe(0);
+    });
+
+    it("refuses a type outside the closed set", async () => {
+        // The check under test is for a value that reached the store from
+        // outside this package's type graph — across a package boundary, out of
+        // a JSON body — where the compile-time union never applied. Widening to
+        // `string` first is what reproduces that from inside the graph, and it
+        // is sound for the same reason the store's own widening is: the value
+        // is exactly what an untyped caller could hand in.
+        const outOfSet: string = "chronicle";
+
+        const failed = (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, type: outOfSet as ThreadType }))._unsafeUnwrapErr();
+
+        expect(failed).toEqual({
+            type: "unknown_thread_type",
+            op: "thread-store.createThread",
+            threadId: "t1",
+            threadType: "chronicle",
+        });
+        expect(await threadRowCount("t1")).toBe(0);
+    });
+
+    it("surfaces a parent that names no row as a constraint violation", async () => {
+        const failed = (await store.createThread({ threadId: "child", analysisId: ANALYSIS_A, parentThreadId: "ghost", parentSeq: 1 }))._unsafeUnwrapErr();
+
+        // Absence is the foreign key's verdict, not a rule the store pre-empts
+        // with a read — so the refusal arrives from the insert, naming the edge
+        // that refused it rather than the primary key.
+        expect(failed).toMatchObject({
+            type: "constraint_violation",
+            op: "thread-store.createThread.insert",
+            constraint: expect.stringContaining("parent_thread_id"),
+        });
+        expect(await threadRowCount("child")).toBe(0);
+    });
+
+    it("accepts an archived parent in the same analysis", async () => {
+        (await store.createThread({ threadId: "root", analysisId: ANALYSIS_A, title: "Root" }))._unsafeUnwrap();
+        (await store.archiveThread("root"))._unsafeUnwrap();
+
+        const created = (await store.createThread({ threadId: "spawned", analysisId: ANALYSIS_A, parentThreadId: "root", parentSeq: 3 }))._unsafeUnwrap();
+
+        // An archived parent is a real row holding a real transcript, so the
+        // anchor still describes a place — the scope lookup must not filter on
+        // the tombstone.
+        expect(created.parentThreadId).toBe("root");
+        expect(await readRow("spawned")).toEqual({ threadType: "conversation", parentThreadId: "root", parentSeq: "3" });
+    });
+
+    it("writes a create naming neither a parent nor an anchor untouched", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Plain" }))._unsafeUnwrap();
+
+        // Every rule this suite covers is gated on a value being supplied, so a
+        // create naming neither half of the edge reaches none of them and lands
+        // the row a thread with no lineage carries.
+        expect(await readRow("t1")).toEqual({ threadType: "conversation", parentThreadId: null, parentSeq: null });
+        expect(await threadRowCount("t1")).toBe(1);
+    });
+});
+
+describe("createThread idempotency over the parent edge", () => {
+    it("returns the existing row when a repeat create names a parent that does not exist", async () => {
+        const first = (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Original" }))._unsafeUnwrap();
+
+        // `ON CONFLICT DO NOTHING` short-circuits before any constraint is
+        // evaluated and reads none of what was supplied, so the foreign key
+        // never sees the parent that would have refused a first create.
+        // Idempotency outranks every rule the insert would otherwise face.
+        const second = (
+            await store.createThread({
+                threadId: "t1",
+                analysisId: ANALYSIS_A,
+                title: "Ignored",
+                type: "report",
+                parentThreadId: "ghost",
+                parentSeq: 7,
+            })
+        )._unsafeUnwrap();
+
+        expect(second).toEqual(first);
+        expect(await readRow("t1")).toEqual({ threadType: "conversation", parentThreadId: null, parentSeq: null });
+        expect(await threadRowCount("t1")).toBe(1);
+        expect(await threadRowCount("ghost")).toBe(0);
+    });
+});
+
+describe("listThreads type and parent filters", () => {
+    /**
+     * Both types at both depths under one analysis. The grandchild is what makes
+     * the parent filter's exactness observable — a filter that walked the
+     * subtree would return it too.
+     */
+    async function seedMixedTypes(): Promise<void> {
+        (await store.createThread({ threadId: "root", analysisId: ANALYSIS_A, title: "Root" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "root-report", analysisId: ANALYSIS_A, title: "Standalone report", type: "report" }))._unsafeUnwrap();
+        (
+            await store.createThread({
+                threadId: "child-report",
+                analysisId: ANALYSIS_A,
+                title: "Spawned report",
+                type: "report",
+                parentThreadId: "root",
+                parentSeq: 2,
+            })
+        )._unsafeUnwrap();
+        (
+            await store.createThread({
+                threadId: "child-convo",
+                analysisId: ANALYSIS_A,
+                title: "Spawned conversation",
+                parentThreadId: "root",
+                parentSeq: 4,
+            })
+        )._unsafeUnwrap();
+        (
+            await store.createThread({
+                threadId: "grandchild",
+                analysisId: ANALYSIS_A,
+                title: "Grandchild",
+                parentThreadId: "child-convo",
+                parentSeq: 6,
+            })
+        )._unsafeUnwrap();
+    }
+
+    it("returns every type when nothing narrows it", async () => {
+        await seedMixedTypes();
+
+        const page = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
+
+        // A session picker asks for no type and expects to reach a report
+        // session directly: omitting the filter narrows nothing.
+        expect(page.total).toBe(5);
+        expect(page.threads.map((t) => t.threadId).sort()).toEqual(["child-convo", "child-report", "grandchild", "root", "root-report"]);
+    });
+
+    it("narrows to one type, counting only that type", async () => {
+        await seedMixedTypes();
+
+        const page = (await store.listThreads({ analysisId: ANALYSIS_A, type: "report" }))._unsafeUnwrap();
+
+        expect(page.total).toBe(2);
+        expect(page.threads.map((t) => t.threadId).sort()).toEqual(["child-report", "root-report"]);
+        expect(page.threads.every((t) => t.threadType === "report")).toBe(true);
+
+        // A page past the first is what proves the count and the page were drawn
+        // from one scope: a filter pushes LIMIT/OFFSET onto later placeholders,
+        // and a page bound to the wrong ones runs dry or reports a size nothing
+        // can page to.
+        const second = (await store.listThreads({ analysisId: ANALYSIS_A, type: "report", page: 1, perPage: 1 }))._unsafeUnwrap();
+        expect(second.total).toBe(2);
+        expect(second.threads).toHaveLength(1);
+        expect(second.threads[0]!.threadType).toBe("report");
+        expect(second.hasMore).toBe(false);
+    });
+
+    it("narrows to one thread's direct children", async () => {
+        await seedMixedTypes();
+
+        const page = (await store.listThreads({ analysisId: ANALYSIS_A, parentThreadId: "root" }))._unsafeUnwrap();
+
+        expect(page.total).toBe(2);
+        expect(page.threads.map((t) => t.threadId).sort()).toEqual(["child-convo", "child-report"]);
+    });
+
+    it("narrows to one row when both filters apply", async () => {
+        await seedMixedTypes();
+
+        const page = (await store.listThreads({ analysisId: ANALYSIS_A, type: "report", parentThreadId: "root" }))._unsafeUnwrap();
+
+        expect(page.total).toBe(1);
+        expect(page.threads.map((t) => t.threadId)).toEqual(["child-report"]);
+    });
+});
+
+describe("archiveThread across a subtree", () => {
+    it("hides every generation while leaving an unrelated thread live", async () => {
+        await seedGenerations();
+
+        (await store.archiveThread("root"))._unsafeUnwrap();
+
+        for (const threadId of GENERATIONS) {
+            expect((await store.getThread(threadId))._unsafeUnwrap()).toBeNull();
+            expect(await readTombstone(threadId)).not.toBeNull();
+            // Recoverable, so every row stays exactly where it was.
+            expect(await threadRowCount(threadId)).toBe(1);
+        }
+        const page = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
+        expect(page.threads.map((t) => t.threadId)).toEqual(["unrelated"]);
+        expect(await readTombstone("unrelated")).toBeNull();
+    });
+
+    it("preserves the stamp on a descendant archived before its ancestor", async () => {
+        await seedGenerations();
+        (await store.archiveThread("child"))._unsafeUnwrap();
+        const childStamp = await readTombstone("child");
+        const grandchildStamp = await readTombstone("grandchild");
+        expect(childStamp).not.toBeNull();
+
+        (await store.archiveThread("root"))._unsafeUnwrap();
+
+        // Re-stamping would push forward the one fact a tombstone carries — the
+        // moment the thread left view. The sweep still has to descend past the
+        // already-archived child to reach anything live beneath it, which is why
+        // the guard sits on the write and not on the walk.
+        expect(await readTombstone("child")).toBe(childStamp);
+        expect(await readTombstone("grandchild")).toBe(grandchildStamp);
+        expect(await readTombstone("root")).not.toBeNull();
+    });
+
+    it("moves no activity clock, on the way out or back", async () => {
+        await seedGenerations();
+        const before = new Map<string, string>();
+        for (const threadId of GENERATIONS) {
+            before.set(threadId, (await readStamps(threadId)).updatedAt);
+        }
+
+        (await store.archiveThread("root"))._unsafeUnwrap();
+
+        // `updated_at` orders the listing by conversation activity, and neither
+        // leaving view nor returning to it is activity — a restored thread lands
+        // back where its last turn left it.
+        for (const threadId of GENERATIONS) {
+            expect((await readStamps(threadId)).updatedAt).toBe(before.get(threadId));
+        }
+
+        (await store.unarchiveThread("root"))._unsafeUnwrap();
+
+        for (const threadId of GENERATIONS) {
+            expect((await readStamps(threadId)).updatedAt).toBe(before.get(threadId));
+        }
+    });
+});
+
+describe("unarchiveThread across a subtree", () => {
+    it("restores the named ancestor alone, leaving its descendants hidden", async () => {
+        await seedGenerations();
+        (await store.archiveThread("root"))._unsafeUnwrap();
+
+        (await store.unarchiveThread("root"))._unsafeUnwrap();
+
+        expect((await store.getThread("root"))._unsafeUnwrap()).not.toBeNull();
+        // The asymmetry against the archive is the point: a cascade here would
+        // restore a child the user had archived deliberately beforehand, and no
+        // column records which of the two set a tombstone.
+        expect((await store.getThread("child"))._unsafeUnwrap()).toBeNull();
+        expect((await store.getThread("grandchild"))._unsafeUnwrap()).toBeNull();
+    });
+
+    it("restores a descendant named on its own", async () => {
+        await seedGenerations();
+        (await store.archiveThread("root"))._unsafeUnwrap();
+
+        (await store.unarchiveThread("child"))._unsafeUnwrap();
+
+        const restored = (await store.getThread("child"))._unsafeUnwrap();
+        expect(restored).not.toBeNull();
+        expect(restored!.title).toBe("Child");
+        expect(await readTombstone("root")).not.toBeNull();
+        expect(await readTombstone("grandchild")).not.toBeNull();
+    });
+});
+
+describe("purgeThread across a subtree", () => {
+    /** A turn on every seeded thread, so a stranded transcript has something to strand. */
+    async function appendTurnsToEveryThread(): Promise<void> {
+        for (const threadId of [...GENERATIONS, "unrelated"]) {
+            (await appendTwoMessageTurn(threadId))._unsafeUnwrap();
+        }
+    }
+
+    it("takes the rows and messages of every generation, leaving an unrelated thread whole", async () => {
+        await seedGenerations();
+        await appendTurnsToEveryThread();
+
+        (await store.purgeThread("root"))._unsafeUnwrap();
+
+        for (const threadId of GENERATIONS) {
+            expect(await threadRowCount(threadId)).toBe(0);
+            // No foreign key ties `messages` to a thread, so a cascade alone
+            // would leave a descendant's transcript behind with nothing naming
+            // it — the explicit delete has to reach the same depth.
+            expect(await messageCount(threadId)).toBe(0);
+        }
+        expect(await threadRowCount("unrelated")).toBe(1);
+        expect(await messageCount("unrelated")).toBe(2);
+    });
+
+    it("takes only the named descendant's own subtree", async () => {
+        await seedGenerations();
+        await appendTurnsToEveryThread();
+
+        (await store.purgeThread("child"))._unsafeUnwrap();
+
+        expect(await threadRowCount("child")).toBe(0);
+        expect(await messageCount("child")).toBe(0);
+        expect(await threadRowCount("grandchild")).toBe(0);
+        expect(await messageCount("grandchild")).toBe(0);
+        // The walk descends and never climbs: the ancestor keeps its row, its
+        // transcript and its parent edge, and so does the thread beside it.
+        expect(await threadRowCount("root")).toBe(1);
+        expect(await messageCount("root")).toBe(2);
+        expect((await store.getThread("root"))._unsafeUnwrap()!.title).toBe("Root");
+        expect(await threadRowCount("unrelated")).toBe(1);
+        expect(await messageCount("unrelated")).toBe(2);
     });
 });
