@@ -47,31 +47,29 @@ carry the thread id in scope (chat-launched runs stamp `cortex_runs.thread_id`) 
 
 ## ADDED Requirements
 
-### Requirement: A reloaded thread rebuilds tool details and outcomes
+### Requirement: A reloaded thread shows each call's detail and outcome
 
-The reload path SHALL supply the harness detail resolver, constructed over the booted runtime's
-composed conversation tool list, to the stored-message converter. A reloaded tool call SHALL therefore
-show the same detail its live chip showed, including for tools the embedder contributes through the
-host-tools seam.
+A reloaded tool call SHALL show the same detail its live chip showed, including for tools the embedder
+contributes through the host-tools seam, and SHALL report its own outcome — a call that failed live
+renders as failed, a refused call renders as denied. Reporting every reloaded call as a success is a lie
+about work the user already saw fail.
 
-The reload path SHALL also carry the converter's recovered outcome onto the reconstructed part, so a
-call that failed live renders as failed and a refused call renders as denied. Reporting every reloaded
-call as a success is a lie about work the user already saw fail.
-
-The tool list SHALL be read from the runtime handle the reload already resolves, and passed through the
-existing seam rather than reached for inside it, so the seam stays substitutable in tests.
+This requirement states the outcome, not the mechanism. It is satisfied by replaying what the turn
+recorded when it displayed it (see the conversation-display capability); it MUST NOT be satisfied by
+re-deriving either value at read time from a tool's current schema or from workspace state, which would
+make a past turn's transcript a function of today's code.
 
 #### Scenario: A reloaded call shows the detail its live chip showed
 
-- **GIVEN** a persisted turn whose tool declares a call description
+- **GIVEN** a persisted turn whose tool declared a call description
 - **WHEN** the thread is reloaded
-- **THEN** the reconstructed tool part carries the same detail the live turn rendered
+- **THEN** the tool part carries the same detail the live turn rendered
 
 #### Scenario: A host-contributed tool keeps its detail across reload
 
 - **GIVEN** a persisted call to a tool wired through the host-tools seam
 - **WHEN** the thread is reloaded
-- **THEN** its detail is rebuilt rather than dropped
+- **THEN** its detail is present rather than dropped
 
 #### Scenario: A reloaded failed call renders as failed
 
