@@ -43,7 +43,7 @@ rtime(raw_data)[1:10]              # first 10 retention times (seconds)
 
 **File requirements**: Input files MUST be centroided mzML. CentWave expects centroid data — profile-mode files will produce garbage peaks or errors. File paths must be absolute.
 
-**Conversion from vendor raw formats is not possible here.** `msconvert` (ProteoWizard) is not installed, there is no egress to obtain it, and vendor format readers are Windows-only libraries regardless. So: **if you were handed `.raw` / `.d` / `.wiff` files, that is a hard blocker** — report it and state that mzML conversion must happen upstream with `msconvert --filter "peakPicking vendor msLevel=1-"` before the data reaches you. Do not attempt a conversion.
+**Vendor formats are a hard blocker.** `.raw` / `.d` / `.wiff` cannot be read or converted here — the readers are Windows-only libraries, so this is not a staging gap that could be closed. Report it and ask for centroided mzML, converted upstream with `msconvert --filter "peakPicking vendor msLevel=1-"`; that filter is what produces the centroided data CentWave requires, so a conversion without it fails the check above.
 
 Given mzML, **check centroiding yourself rather than assuming it** — profile data does not error, it silently produces junk features:
 
