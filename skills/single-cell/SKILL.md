@@ -366,13 +366,6 @@ See CyTOF Output Conventions above.
 ## Anti-Patterns
 
 - **Per-cell DE between conditions**: Treating each cell as an independent sample inflates p-values due to pseudoreplication. Always use pseudobulk aggregation (sum counts per sample per cell type, then DESeq2/edgeR/limma).
-- **Skipping integration when batches exist**: If PCA shows batch-driven clustering, downstream analysis will find batch effects, not biology. Always check and integrate.
-- **Louvain instead of Leiden**: Louvain can produce disconnected clusters. Leiden guarantees connected communities and is strictly better.
-- **Arbitrary QC thresholds**: Hard cutoffs like "filter cells with <200 genes" ignore dataset-specific distributions. Use MAD-based adaptive thresholds.
-- **Running scVelo without spliced/unspliced layers**: scVelo requires `adata.layers["spliced"]` and `adata.layers["unspliced"]` from velocyto or STARsolo. Without them, velocity estimates are meaningless.
-- **HVG flavor mismatch**: Using `flavor='seurat_v3'` on log-normalized data or `flavor='seurat'` on raw counts produces incorrect variable gene selection.
-- **Normalizing before scVI**: scVI expects raw counts. Pre-normalizing corrupts its probabilistic model.
-- **Clustering at a single resolution**: Different resolutions reveal different granularity. Always try multiple and validate biologically.
 - **Ignoring ambient RNA in droplet data**: High ambient RNA inflates expression of highly expressed genes across all cells, creating false marker genes.
 
 ## Additional Available Packages
