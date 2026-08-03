@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { errAsync, ok, okAsync, ResultAsync } from "neverthrow";
 import type { DbError, MessagePage } from "@inflexa-ai/harness";
 
 import {
@@ -38,7 +38,7 @@ const TOP = { agentId: "tui-chat", callPath: ["tui-chat"] };
 const stubRuntime = {
     pool: {},
     conversation: { provider: { capabilities: { toolCalling: true } } },
-    conversationAgent: {},
+    agents: { forThread: () => ok({}) },
 } as unknown as HarnessRuntime;
 
 /**

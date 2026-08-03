@@ -17,7 +17,6 @@ import {
     registerWatchdog,
     sweepEphemeralWorkflows,
     UnavailablePreviewPublisher,
-    type AgentDefinition,
     type AgentSession,
     type AiSdkProviderConfig,
     type AskGateway,
@@ -34,6 +33,7 @@ import {
     type RegisterReaperDeps,
     type RunAuthorizer,
     type RunLauncher,
+    type ThreadAgentResolver,
     type UsageRecorder,
     type WatchdogDeps,
 } from "@inflexa-ai/harness";
@@ -144,13 +144,17 @@ export type HarnessRuntime = {
     /** Ready-to-use deps for the analysis-run trigger flow. */
     readonly runTriggerDeps: RunTriggerDeps;
     /**
-     * The assembled conversation `AgentDefinition` — the `chat` command drives it
-     * with {@link HarnessRuntime.conversation}'s provider via `runAgent`. Built by
-     * `assembleCoreRuntime` over the same registered workflow callables the
-     * trigger deps expose, so its `execute_analysis` tool launches the identical
-     * `executeAnalysis` parent.
+     * Type-keyed resolution over the agents `assembleCoreRuntime` built — the only
+     * way the chat path reaches an assembled agent by thread type. `forThread`
+     * refuses an unregistered type on the `Result` channel rather than throwing, so
+     * a `ThreadType` the product added but has not yet wired an agent for is a
+     * handled outcome, not a crash. The handle carries it because the turn engine
+     * resolves per turn from the thread's type (known only once `prepareChatTurn`
+     * has read the thread), and the resolved agents are built over the same
+     * registered workflow callables the trigger deps expose, so a conversation
+     * agent's `execute_analysis` tool launches the identical `executeAnalysis` parent.
      */
-    readonly conversationAgent: AgentDefinition;
+    readonly agents: ThreadAgentResolver;
     /**
      * The ONE {@link UsageRecorder} realization this runtime booted with — the same instance
      * `assembleCoreRuntime` stamps onto every workflow deps bag.
@@ -1069,7 +1073,7 @@ async function bootHarnessRuntimeOnce(
             askGateway,
             triggerDeps: { pool, runAuthorizer, workflow: core.workflows.dataProfile },
             runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer, budget: cfg.resourcePolicy.budget },
-            conversationAgent: core.conversationAgent,
+            agents: core.agents,
             usageRecorder,
             // The connection's identity the boot resolved — surfaced by the status UI, immutable across
             // live role-model swaps (the connection is shared by all roles, so a swap changes only a

@@ -8,7 +8,6 @@ import {
     prepareChatTurn,
     runAgent,
     type AgentChat,
-    type AgentDefinition,
     type AgentFinish,
     type AgentSession,
     type AskApproval,
@@ -18,7 +17,9 @@ import {
     type ModelMessage,
     type Pool,
     type RetractOutcome,
+    type ThreadAgentResolver,
     type ThreadHistory,
+    type ThreadType,
     type UsageRecorder,
 } from "@inflexa-ai/harness";
 
@@ -60,8 +61,8 @@ export type TurnUsage = Readonly<NonNullable<AgentFinish["turnUsage"]>>;
  * because `appendTurn` runs unconditionally on all of them (the partial turn
  * must survive an abort/throw), so its persistence fault is surfaced ORTHOGONALLY
  * to the turn's own fate rather than collapsing two independent failures into
- * one. `prepare_failed`/`thread_gone` bail BEFORE `runAgent`, so they never
- * append and never carry an append error.
+ * one. `prepare_failed`/`thread_gone`/`agent_unresolved` bail BEFORE `runAgent`,
+ * so they never append and never carry an append error.
  *
  * Those same three kinds also carry an optional {@link TurnUsage}. It rides here rather
  * than being read back out of the usage ledger because the ledger structurally cannot
@@ -81,16 +82,23 @@ export type TurnUsage = Readonly<NonNullable<AgentFinish["turnUsage"]>>;
  * - `prepare_failed` — `prepareChatTurn` threw (e.g. Postgres unreachable).
  * - `thread_gone` — the thread belongs to another analysis (an absent id is re-created
  *   by `prepareChatTurn`, so deletion never surfaces here).
+ * - `agent_unresolved` — preparation SUCCEEDED, but the thread's type has no agent
+ *   registered in this build, so the resolver refused on its `Result` channel.
+ *   Distinct from `prepare_failed`: preparation did not fault, it produced a valid
+ *   type this build cannot serve. Like `prepare_failed`/`thread_gone` it never
+ *   reaches `runAgent`, so nothing is persisted — the unconditional `appendTurn`
+ *   covers only the `runAgent`-reaching paths.
  */
 export type TurnOutcome =
     | { readonly kind: "ok"; readonly fallbackText: string; readonly turnUsage?: TurnUsage; readonly appendError?: DbError }
     | { readonly kind: "aborted"; readonly turnUsage?: TurnUsage; readonly appendError?: DbError }
     | { readonly kind: "failed"; readonly cause: unknown; readonly turnUsage?: TurnUsage; readonly appendError?: DbError }
     | { readonly kind: "prepare_failed"; readonly cause: unknown }
-    | { readonly kind: "thread_gone" };
+    | { readonly kind: "thread_gone" }
+    | { readonly kind: "agent_unresolved"; readonly threadType: ThreadType };
 
 /**
- * The primitives one chat turn needs. `pool` + `conversationAgent` are lifted
+ * The primitives one chat turn needs. `pool` + `agents` are lifted
  * off the booted {@link HarnessRuntime} handle by the caller (the engine stays
  * decoupled from the whole runtime type); `chat` is the STREAMING `AgentChat`
  * wrapper (not the raw provider — a non-streaming provider never emits deltas);
@@ -101,8 +109,13 @@ export type TurnOutcome =
 export type RunChatTurnArgs = {
     /** App pool over the harness ledger — `prepareChatTurn` reads/creates the thread through it. */
     readonly pool: Pool;
-    /** The assembled conversation agent (`runtime.conversationAgent`) whose loop this turn runs. */
-    readonly conversationAgent: AgentDefinition;
+    /**
+     * The thread→agent resolver (`runtime.agents`). The engine resolves the agent
+     * per turn from the thread's type, which is known only from the prepare result —
+     * so a caller cannot pre-select the agent and hand it in. An unregistered type
+     * surfaces as an `agent_unresolved` outcome.
+     */
+    readonly agents: ThreadAgentResolver;
     /** Builds the streaming provider over the recorder's emit sink. */
     readonly chat: (emit: EmitFn) => AgentChat;
     /** The pg thread store — `appendTurn` persists the turn atomically. */
@@ -207,7 +220,7 @@ type RunPhase =
  * console here — presentation is entirely the transport's concern.
  */
 export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = realTurnSeams): Promise<TurnOutcome> {
-    const { pool, conversationAgent, chat, history, session, emit, signal, analysisId, threadId, userInput, ask, usageRecorder } = args;
+    const { pool, agents, chat, history, session, emit, signal, analysisId, threadId, userInput, ask, usageRecorder } = args;
 
     // Bracket the whole turn as in-flight agent work: an agent switch requested
     // mid-turn defers to the turn boundary, and the `finally` settling this token lands a pending switch
@@ -231,6 +244,20 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         // "gone" because callers deliberately do not distinguish foreign from vanished threads.
         if (prepared.kind === "not_found") return { kind: "thread_gone" };
 
+        // The thread's type is known only now, from the prepared result, so the agent
+        // is resolved per turn rather than pre-selected by the caller. A `ThreadType`
+        // this build registered no agent for refuses on the resolver's `Result` channel:
+        // surface it as `agent_unresolved` — like `prepare_failed`/`thread_gone` it never
+        // reaches `runAgent`, so nothing is persisted. Log the refusal the way the
+        // prepare-failure branch above does, so the file log keeps the detail the surface
+        // reduces to a one-liner.
+        const resolvedAgent = agents.forThread(prepared.threadType);
+        if (resolvedAgent.isErr()) {
+            getLogger("harness").error({ threadType: prepared.threadType }, "chat turn agent unresolved");
+            return { kind: "agent_unresolved", threadType: prepared.threadType };
+        }
+        const agent = resolvedAgent.value;
+
         const initial = prepared.messages;
         const userMessage = prepared.userMessage;
         const display = createConversationDisplayRecorder({
@@ -241,7 +268,7 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         const recordedEmit = display.emit;
 
         const run = await ResultAsync.fromPromise(
-            seams.run(conversationAgent, initial, session, {
+            seams.run(agent, initial, session, {
                 provider: chat(recordedEmit),
                 signal,
                 emit: recordedEmit,

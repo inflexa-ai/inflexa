@@ -739,9 +739,9 @@ function stampTurnCost(assistantId: string, startedAt: number, turnUsage: TurnUs
 
 /**
  * Remove the just-minted empty assistant bubble on a pre-run failure and clear the streaming signals
- * that pointed at it. `prepare_failed`/`thread_gone` bail BEFORE `runAgent`, so this assistant message
- * only ever held its empty streaming text part (no deltas, no tools by construction) — leaving it
- * mounted would render a blank assistant turn beneath the error banner.
+ * that pointed at it. `prepare_failed`/`thread_gone`/`agent_unresolved` bail BEFORE `runAgent`, so this
+ * assistant message only ever held its empty streaming text part (no deltas, no tools by construction) —
+ * leaving it mounted would render a blank assistant turn beneath the error banner.
  */
 function dropEmptyAssistant(assistantId: string): void {
     setStreamPartId(null);
@@ -831,9 +831,10 @@ export function turnFailureMessage(cause: unknown): string {
  * flush the streamed text (or the engine's `fallbackText` on a delta-less turn), close any open tool
  * chip, stamp what the turn cost (its duration and, when the run reported one, its token rollup),
  * surface an append fault non-fatally, and set the coarse status.
- * `failed`/`prepare_failed`/`thread_gone` also raise the error banner with an actionable line;
- * `aborted` returns to idle with no error (the user cancelled), having flushed what streamed.
- * `prepare_failed`/`thread_gone` bail before the loop, so they pop the empty assistant bubble instead.
+ * `failed`/`prepare_failed`/`thread_gone`/`agent_unresolved` also raise the error banner with an
+ * actionable line; `aborted` returns to idle with no error (the user cancelled), having flushed what
+ * streamed. `prepare_failed`/`thread_gone`/`agent_unresolved` bail before the loop, so they pop the
+ * empty assistant bubble instead.
  */
 function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number): void {
     // The turn is settling: drop any still-pending asks so the docked prompt can never outlive its
@@ -900,6 +901,20 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
             // shows the same reason the banner does rather than an empty view.
             setLastTurnFailure({ type: "thread_gone", message: "This conversation thread is no longer available." });
             setErrorMsg(`This conversation thread is no longer available. — ${detailsHint()}`);
+            setChatStatus("error");
+            return;
+        case "agent_unresolved":
+            dropEmptyAssistant(assistantId);
+            // No raw cause rides on `agent_unresolved`; keep a structured stand-in shaped like the
+            // resolver's own `UnregisteredThreadType` so the details dialog shows the refused type rather
+            // than an empty view. A retry cannot change which agents this build registered, so the banner
+            // names the type and stops rather than suggesting one.
+            setLastTurnFailure({
+                type: "unregistered_thread_type",
+                threadType: outcome.threadType,
+                message: `No agent is registered for "${outcome.threadType}" threads in this build.`,
+            });
+            setErrorMsg(`No agent is registered for "${outcome.threadType}" threads in this build. — ${detailsHint()}`);
             setChatStatus("error");
             return;
         default: {
@@ -1362,7 +1377,7 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
     const outcome: TurnOutcome = await seams
         .runChatTurn({
             pool: runtime.pool,
-            conversationAgent: runtime.conversationAgent,
+            agents: runtime.agents,
             chat: (emit) => createStreamingChat(runtime.conversation.provider, (text) => void emit({ type: "text-delta", text })),
             history: createThreadHistory(runtime.pool),
             session,
@@ -1474,9 +1489,9 @@ function closeTurnState(): void {
 /**
  * Whether the aborted turn actually LANDED an orphan turn on the thread — the precondition for running
  * the durable retract. `ok`/`aborted`/`failed` reach `runAgent` and append unconditionally, so their
- * orphan is on the tail iff the append did not fault; `prepare_failed`/`thread_gone` bail BEFORE
- * `appendTurn`, so no orphan exists. Removing the tail when none of this turn's rows are there would
- * delete an EARLIER turn's real history — hence the gate.
+ * orphan is on the tail iff the append did not fault; `prepare_failed`/`thread_gone`/`agent_unresolved`
+ * bail BEFORE `appendTurn`, so no orphan exists. Removing the tail when none of this turn's rows are
+ * there would delete an EARLIER turn's real history — hence the gate.
  */
 function turnAppendLanded(outcome: TurnOutcome): boolean {
     switch (outcome.kind) {
@@ -1486,6 +1501,7 @@ function turnAppendLanded(outcome: TurnOutcome): boolean {
             return outcome.appendError === undefined;
         case "prepare_failed":
         case "thread_gone":
+        case "agent_unresolved":
             return false;
         default: {
             const _exhaustive: never = outcome;

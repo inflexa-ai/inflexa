@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { ok } from "neverthrow";
 import { testRender } from "@opentui/solid";
 import type { JSX } from "solid-js";
 
@@ -11,7 +12,7 @@ import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 const stubRuntime = {
     pool: {},
     conversation: { provider: { capabilities: { toolCalling: true } } },
-    conversationAgent: {},
+    agents: { forThread: () => ok({}) },
     // The fake turn driver below never reaches the remaining runtime fields.
 } as unknown as HarnessRuntime;
 
