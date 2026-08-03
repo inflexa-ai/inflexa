@@ -50,7 +50,12 @@ analysis, the welcome screen, `--status` views) boots anything.
 
 A submitted message SHALL run one turn of the shared turn engine (`prepareChatTurn → runAgent` with
 the streaming provider wrapper `→ appendTurn`) under a turn-scoped abort signal wired to the existing
-abort chord (dialog-dismiss → abort-turn → quit ordering preserved). On completion the engine SHALL
+abort chord (dialog-dismiss → abort-turn → quit ordering preserved). The engine SHALL run the agent
+the harness resolves for the thread's type — `agents.forThread(threadType)` over the type the
+prepare ok result reports — the TUI passes the runtime handle's resolver, never a pre-selected
+agent. A type the harness refuses (`unregistered_thread_type`) SHALL end the turn as its own
+terminal outcome before `runAgent`, with nothing persisted; the TUI SHALL render it through the
+failed-turn notice path, naming the thread type. On completion the engine SHALL
 persist `[userMessage, …loopOutput]`; on an aborted run — which RESOLVES with `finish.reason:
 "aborted"` and the partial transcript under the harness abort contract — it SHALL persist
 `[userMessage, …partialLoopOutput]`, an empty partial degenerating to `[userMessage]` alone; on a
@@ -110,6 +115,11 @@ survives a turn whose return value never happened.
 - **GIVEN** a provider that reports no usage
 - **WHEN** the turn completes
 - **THEN** the outcome's rollup is absent rather than a zeroed one
+
+#### Scenario: An unregistered thread type surfaces as a rendered refusal
+
+- **WHEN** a turn runs on a thread whose type has no registered agent in this build
+- **THEN** the engine returns the unresolved-agent outcome, nothing is appended to the thread, and the TUI renders the failed-turn notice naming the thread type
 
 ### Requirement: Interrupt is a discoverable, quiet affordance
 
