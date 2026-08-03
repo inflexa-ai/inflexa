@@ -23,6 +23,7 @@ import type { RunSession } from "../auth/types.js";
 import type { EmitFn } from "../loop/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import { synthesizeRun, type SynthesizeRunDeps } from "./synthesize-run.js";
+import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 
 const ANALYSIS_ID = "analysis-001";
 const RUN_ID = "run-001";
@@ -148,6 +149,7 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
             resolveWorkspaceRoot: (id) => join(base, id),
             synthesisModel: "claude-test",
             bioKeys: BIO_KEYS,
+            citationResolver: unusedCitationResolver,
         },
         get embedderCalls() {
             return embedderCalls;

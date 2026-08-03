@@ -33,6 +33,7 @@ import {
 } from "./run-synthesis.js";
 import type { ToolContext } from "../tools/define-tool.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
+import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 
 const RUN_ID = "run-001";
 
@@ -457,6 +458,7 @@ describe("generateRunSynthesis — happy path", () => {
             session: makeRunSession(),
             model: "claude-test",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            citationResolver: unusedCitationResolver,
             summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "## results" }],
             planNarrative: "Compare stimulated vs resting T-cells.",
             runId: RUN_ID,
@@ -493,6 +495,7 @@ describe("generateRunSynthesis — happy path", () => {
             session: makeRunSession(),
             model: "claude-test",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            citationResolver: unusedCitationResolver,
             summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "noop" }],
             planNarrative: "n/a",
             runId: RUN_ID,
@@ -516,6 +519,7 @@ describe("generateRunSynthesis — happy path", () => {
                 session: makeRunSession(),
                 model: "claude-test",
                 bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                citationResolver: unusedCitationResolver,
                 summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "x" }],
                 planNarrative: "n/a",
                 runId: RUN_ID,
@@ -556,6 +560,7 @@ describe("generateRunSynthesis — happy path", () => {
             session: makeRunSession(),
             model: "claude-test",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            citationResolver: unusedCitationResolver,
             summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "x" }],
             planNarrative: "n/a",
             runId: RUN_ID,
@@ -576,6 +581,7 @@ describe("generateRunSynthesis — happy path", () => {
                 session: makeRunSession(),
                 model: "claude-test",
                 bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                citationResolver: unusedCitationResolver,
                 summaries: [],
                 planNarrative: "n/a",
                 runId: RUN_ID,

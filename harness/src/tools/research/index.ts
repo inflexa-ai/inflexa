@@ -15,3 +15,4 @@ export * from "./context7-docs.js";
 export * from "./search-semantic-scholar.js";
 export * from "./search-arxiv.js";
 export * from "./search-github-repos.js";
+export * from "./resolve-citation.js";

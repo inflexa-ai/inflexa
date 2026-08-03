@@ -24,6 +24,8 @@ export type SandboxToolName =
     | "inspectRun"
     // Literature (search / details / fulltext behind one action).
     | "pubmed"
+    // Bibliographic verification (tool id is the same snake-case value).
+    | "resolve_citation"
     // Identifier resolution.
     | "searchGene"
     // Functional annotation (GO / KEGG / Reactome) and STRING networks + enrichment.
