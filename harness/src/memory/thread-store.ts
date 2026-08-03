@@ -564,12 +564,14 @@ export function createThreadStore(pool: Pool): ThreadStore {
         // predicate is fixed text and every value rides as a bound parameter, so
         // no caller string ever reaches the SQL.
         //
-        // The widened scope is the one that cannot use the table's index, which is
-        // partial on `deleted_at IS NULL`: dropping the predicate drops the index
-        // with it, so an archived-inclusive listing scans. Deliberate — the live
-        // listing is the hot path and keeps its index, while widening is a rare,
-        // user-initiated recovery. A deployment that made it routine would want a
-        // plain `analysis_id` index beside the partial one, not this listing changed.
+        // The widened scope is the one that cannot use the `analysis_id` index,
+        // which is partial on `deleted_at IS NULL`: dropping the predicate drops
+        // the index with it, so an archived-inclusive listing scans. Deliberate —
+        // the live listing is the hot path and keeps its index, while widening is a
+        // rare, user-initiated recovery. A deployment that made it routine would
+        // want a plain `analysis_id` index beside the partial one, not this listing
+        // changed. A listing narrowed by parent is indexed either way: the
+        // `parent_thread_id` index carries no predicate, for the subtree walk's sake.
         const scopeValues: unknown[] = [input.analysisId];
         const predicates = ["analysis_id = $1"];
         if (!input.includeArchived) predicates.push("deleted_at IS NULL");
