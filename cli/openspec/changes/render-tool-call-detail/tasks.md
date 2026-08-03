@@ -23,9 +23,9 @@
 ## 4. Reload path
 
 - [x] 4.1 Extend the `toCortex` seam in `LoadSeams` to take the conversation tool list, and pass `runtime.conversationAgent.tools` from `loadMessages` — the runtime is already resolved there.
-- [x] 4.2 Build the harness detail resolver in `realLoadSeams.toCortex` and pass it to `contentToCortexMessages` alongside the existing card resolver, using the harness's new options-object signature.
+- [x] 4.2 Read the detail from the reloaded part rather than re-deriving it — the projection the turn recorded carries it (see the conversation-display change).
 - [x] 4.3 In the `CortexPart` → `Part` mapping, carry the converter's recovered outcome onto the part and delete the always-`ok` behaviour. Remove the `LIMITATION` comment that documented it.
-- [x] 4.4 Carry the reconstructed `detail` onto the part.
+- [x] 4.4 Carry the `detail` onto the part.
 - [x] 4.5 Confirm the existing test fakes for `LoadSeams` still compile and pass with the widened seam.
 
 ## 5. REPL printer
