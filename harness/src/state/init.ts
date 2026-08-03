@@ -312,8 +312,23 @@ ALTER TABLE cortex_analysis_threads
 CREATE INDEX IF NOT EXISTS idx_cortex_analysis_threads_analysis
   ON cortex_analysis_threads(analysis_id) WHERE deleted_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_cortex_analysis_threads_parent
-  ON cortex_analysis_threads(parent_thread_id) WHERE deleted_at IS NULL;
+-- Not partial, unlike the analysis index above. Two of the three readers of
+-- parent_thread_id carry no deleted_at predicate and cannot: the recursive
+-- subtree walk in thread-store.ts must reach archived descendants, and the
+-- referential trigger behind ON DELETE CASCADE is the database's own query.
+-- Postgres uses a partial index only where it can prove the predicate holds, so
+-- a partial index here leaves both to a sequential scan of the whole table.
+-- Over 150k rows that measured 28 ms per walk and 20 ms per cascade, against
+-- 0.06 ms and 0.10 ms with this one. The third reader, a listing filtered by
+-- parent, keeps an index scan either way.
+--
+-- The old partial index goes by name: CREATE INDEX IF NOT EXISTS keeps whatever
+-- definition already holds the name, so a database that built the partial one
+-- would never see this.
+DROP INDEX IF EXISTS idx_cortex_analysis_threads_parent;
+
+CREATE INDEX IF NOT EXISTS idx_cortex_analysis_threads_parent_fk
+  ON cortex_analysis_threads(parent_thread_id);
 
 -- Working memory — the harness WorkingMemory module's table, one row per
 -- analysis. The data column holds a JSONB object with four sections (goal,

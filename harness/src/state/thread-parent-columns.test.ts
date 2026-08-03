@@ -32,13 +32,15 @@ async function threadColumns(): Promise<Record<string, { data_type: string; colu
     return byName;
 }
 
-async function indexNames(): Promise<string[]> {
-    const { rows } = await pool.query<{ indexname: string }>(
-        `SELECT indexname FROM pg_indexes
+async function threadIndexes(): Promise<Record<string, string>> {
+    const { rows } = await pool.query<{ indexname: string; indexdef: string }>(
+        `SELECT indexname, indexdef FROM pg_indexes
           WHERE schemaname = current_schema() AND tablename = 'cortex_analysis_threads'
           ORDER BY indexname`,
     );
-    return rows.map((row) => row.indexname);
+    const byName: Record<string, string> = {};
+    for (const row of rows) byName[row.indexname] = row.indexdef;
+    return byName;
 }
 
 beforeEach(async () => {
@@ -52,7 +54,7 @@ afterEach(async () => {
 describe("cortex_analysis_threads parent and type columns", () => {
     it("adds them to a database that predates them, over rows it leaves standing", async () => {
         await pool.query("INSERT INTO cortex_analysis_threads (thread_id, analysis_id, title) VALUES ('legacy', 'a1', 'Kept')");
-        await pool.query("DROP INDEX idx_cortex_analysis_threads_parent");
+        await pool.query("DROP INDEX idx_cortex_analysis_threads_parent_fk");
         await pool.query("ALTER TABLE cortex_analysis_threads DROP COLUMN parent_seq, DROP COLUMN parent_thread_id, DROP COLUMN thread_type");
         expect(Object.keys(await threadColumns())).not.toContain("thread_type");
 
@@ -62,7 +64,7 @@ describe("cortex_analysis_threads parent and type columns", () => {
         expect(columns.thread_type).toEqual({ data_type: "text", column_default: "'conversation'::text" });
         expect(columns.parent_thread_id?.data_type).toBe("text");
         expect(columns.parent_seq?.data_type).toBe("bigint");
-        expect(await indexNames()).toContain("idx_cortex_analysis_threads_parent");
+        expect(await threadIndexes()).toHaveProperty("idx_cortex_analysis_threads_parent_fk");
 
         // The row predates all three, so it has to read as what it is: a root
         // conversation with no anchor. A backfill inventing an edge here would
@@ -73,14 +75,37 @@ describe("cortex_analysis_threads parent and type columns", () => {
         expect(rows[0]).toEqual({ title: "Kept", thread_type: "conversation", parent_thread_id: null, parent_seq: null });
     });
 
+    // The subtree walk joins on parent_thread_id with no deleted_at predicate,
+    // and neither can the referential trigger behind ON DELETE CASCADE. Postgres
+    // uses a partial index only where it can prove the predicate holds, so a
+    // predicate on this index takes both paths to a sequential scan.
+    it("indexes the parent column over every row, live or archived", async () => {
+        const definition = (await threadIndexes()).idx_cortex_analysis_threads_parent_fk;
+        expect(definition).toContain("(parent_thread_id)");
+        expect(definition).not.toContain("WHERE");
+    });
+
+    // CREATE INDEX IF NOT EXISTS keeps whatever definition already holds the
+    // name, so a database that built the partial form needs the drop to reach it.
+    it("replaces a partial index on the parent column that an earlier build left", async () => {
+        await pool.query("DROP INDEX idx_cortex_analysis_threads_parent_fk");
+        await pool.query("CREATE INDEX idx_cortex_analysis_threads_parent ON cortex_analysis_threads(parent_thread_id) WHERE deleted_at IS NULL");
+
+        await initCortexState(pool);
+
+        const indexes = await threadIndexes();
+        expect(indexes).not.toHaveProperty("idx_cortex_analysis_threads_parent");
+        expect(indexes.idx_cortex_analysis_threads_parent_fk).not.toContain("WHERE");
+    });
+
     it("changes nothing on a second run", async () => {
         await initCortexState(pool);
         const columns = await threadColumns();
-        const indexes = await indexNames();
+        const indexes = await threadIndexes();
 
         await initCortexState(pool);
 
         expect(await threadColumns()).toEqual(columns);
-        expect(await indexNames()).toEqual(indexes);
+        expect(await threadIndexes()).toEqual(indexes);
     });
 });
