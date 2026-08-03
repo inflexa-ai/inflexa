@@ -1020,6 +1020,28 @@ describe("session flows", () => {
         expect(items).toHaveLength(1);
     });
 
+    test("with threads present the creation row comes LAST, after the threads in their given order", () => {
+        // The default selection must stay the most-recent thread, so the create action — the escape hatch
+        // out of the list — sits at the end. Last-placement is also the position stable across filter
+        // states: a query matching no thread re-appends dropped pinned rows at the end, so a pinned row
+        // placed first would jump to the back the moment the user starts filtering.
+        const first = threadRow({ threadId: "thread-newest", title: "Newest" });
+        const second = threadRow({ threadId: "thread-older", title: "Older" });
+
+        const items = switchSessionItems([first, second]);
+
+        expect(items).toHaveLength(3);
+        // The thread rows keep their given order, ahead of the creation row.
+        expect(items[0]?.value).toBe(first);
+        expect(items[1]?.value).toBe(second);
+        // The pinned creation row is last.
+        const last = items[items.length - 1];
+        expect(last?.pinned).toBe(true);
+        expect(last?.title).toBe("Start a new session");
+        // Only that row is pinned — the threads rank normally, so the newest stays the default selection.
+        expect(items.filter((i) => i.pinned)).toHaveLength(1);
+    });
+
     test("selecting the creation row closes the dialog and swaps onto a fresh mint", () => {
         __setBootStateForTest(READY);
         const t = makeSeams();
