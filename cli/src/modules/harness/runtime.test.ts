@@ -4,7 +4,14 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
 import { ok, okAsync, err } from "neverthrow";
-import { createSandboxClient, type CoreRuntimeDeps, type CreateSandboxClientConfig, type EmbeddingProvider, type LlmUsageRecord } from "@inflexa-ai/harness";
+import {
+    createCitationResolver,
+    createSandboxClient,
+    type CoreRuntimeDeps,
+    type CreateSandboxClientConfig,
+    type EmbeddingProvider,
+    type LlmUsageRecord,
+} from "@inflexa-ai/harness";
 
 import { ContainerRuntimeError, runtimes } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
@@ -193,6 +200,10 @@ function recordingSeams(calls: string[]): BootSeams {
                         executeTargetAssessment: async () => ({ assessmentId: "", status: "completed", bytes: 0 }),
                         dataProfile: async () => {},
                     },
+                    // `CoreRuntime` requires the resolver `assembleCoreRuntime` builds; the
+                    // real (pure, network-lazy) constructor stands in here, matching how this
+                    // seam uses the real `createSandboxClient` above.
+                    citationResolver: createCitationResolver(),
                 },
                 shutdown: async () => {},
             };

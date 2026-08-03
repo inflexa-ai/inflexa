@@ -16,7 +16,6 @@ import {
     type SandboxAgentBuildContext,
     type SandboxAgentDeps,
     type SandboxClient,
-    type SandboxStepDeps,
     type SandboxStepInput,
     type WorkspaceFilesystem,
 } from "@inflexa-ai/harness";
@@ -188,8 +187,14 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
  * its own row), so a registered step's outputs land in the analysis's signed
  * tsprov document. It is the SAME stable object the switch re-points on a live
  * model change, so the registered workflow observes the swap without re-registration.
+ *
+ * The return type is the assembly cohort's slot, which OMITS `usageRecorder` and
+ * `citationResolver`: `assembleCoreRuntime` builds one of each and stamps it onto
+ * every workflow bag it registers (see `runtime.ts` boot), so an embedder that
+ * supplied either here would only have it overwritten — the bag type forbids them
+ * to keep those single-sourced at the one assembly point.
  */
-export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDeps {
+export function buildSandboxStepDeps(comp: RunEngineComposition): CoreWorkflowDeps["sandboxStep"] {
     return {
         pool: comp.pool,
         logger: comp.logger,
@@ -224,7 +229,7 @@ export function buildExecuteAnalysisDeps(
     comp: RunEngineComposition,
     sandboxStepCallable: ExecuteAnalysisDeps["sandboxStepCallable"],
     runAuthorizer: RunAuthorizer,
-): ExecuteAnalysisDeps {
+): ReturnType<CoreWorkflowDeps["buildExecuteAnalysis"]> {
     return {
         pool: comp.pool,
         provider: comp.sandbox.provider,
