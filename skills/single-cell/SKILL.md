@@ -117,21 +117,33 @@ per-cell prediction scores you can threshold on.
 
 #### Tumour-Immune Subtyping
 
-`scGate` (hierarchical marker-based gating) and `ProjecTILs` (projection onto a
-T-cell state atlas) are the tumour-immune-specific routes and pair with malignant
-cell calling below. Both are installed, and **both need data that is not staged**:
+`scGate` gates cells by walking a marker hierarchy rather than clustering them:
+it labels one population and marks everything else impure. Reach for it when no
+annotated reference exists to transfer from, or to isolate a population cleanly
+before sub-clustering it.
 
-- `scGate::get_scGateDB()` downloads its curated model database and fails here;
-  the package bundles none. The gating algorithm itself works on any model you
-  write — a small data frame of levels, signatures and positive/negative use —
-  so it is usable for a hand-specified hierarchy, not for the published models.
-- `ProjecTILs::load.reference.map()` downloads the reference atlas and fails
-  here. It needs a reference map supplied as a file, or one built locally from
-  annotated data.
+**Its own model downloader (`get_scGateDB()`) needs network and fails here, and
+the package bundles no models** — so resolve a gating model set from the
+reference inventory instead. Curated sets are catalogued for broad human cell
+types, the tumour microenvironment, and CD8 TIL states.
 
-Report the gap rather than substituting; `UCell` (which works offline, no
-reference needed) is the honest fallback for scoring cell-state signatures per
-cell when neither of those has its data.
+- Load a model with `load_scGate_model()`, passing the **signature table's path
+  explicitly**. Model files carry an empty signature column by design and fill it
+  from that table by name; the loader's default resolves a bare filename against
+  the working directory, not against the model's folder, so an explicit path is
+  what makes it work.
+- A hand-written model also works — a small data frame of levels, signatures and
+  positive/negative use — when the population you want is not in a curated set.
+- Gating yields pure/impure per cell, not a label per cell. Cells failing the
+  gate are *not* assigned to anything, which is the honest outcome; do not
+  reinterpret impure as a negative call for a specific cell type.
+
+`ProjecTILs` (projection onto a T-cell state atlas) is the other tumour-immune
+route, and its reference atlas is **not staged** —
+`ProjecTILs::load.reference.map()` downloads and fails here. It needs a
+reference map supplied as a file, or one built locally from annotated data.
+Report that gap rather than substituting; `UCell` works offline with no
+reference and is the fallback for scoring cell-state signatures per cell.
 
 ### Malignant Cell Calling (tumour samples)
 
