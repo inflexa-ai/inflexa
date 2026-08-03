@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# Host driver for the two-container package store prototype.
+#
+#   inflexa-store build                      build the provisioner image
+#   inflexa-store add <farm> <spec>...       provision packages into <farm> (NETWORK ON)
+#   inflexa-store use <farm>                 point `current` at <farm>
+#   inflexa-store run <cmd>...               run a command in the sandbox (NO NETWORK)
+#   inflexa-store shell                      interactive sandbox shell
+#   inflexa-store test                       acceptance checks
+#   inflexa-store du                         store/farm disk accounting
+#   inflexa-store clean                      remove the whole store
+#
+# The store lives at $LIB_STORE (default ~/.local/share/inflexa/libs), which is
+# exactly the `libStorePath` the harness already binds read-only at /mnt/libs.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Deliberately NOT ~/.local/share/inflexa/libs — the CLI already owns that as its
+# per-image packages.txt inventory cache (cli/src/lib/env.ts `libsDir`, whose own
+# comment says it is "NOT a library store"). Sharing the directory would mix a
+# real store into a cache the CLI prunes by image ID.
+LIB_STORE="${LIB_STORE:-$HOME/.local/share/inflexa/libstore}"
+PROVISIONER_IMAGE="${PROVISIONER_IMAGE:-inflexa-provisioner:local}"
+SANDBOX_IMAGE="${SANDBOX_IMAGE:-ghcr.io/inflexa-ai/sandbox-base:latest}"
+
+# Whichever engine actually has a daemon up. The harness talks to either through
+# dockerode over a socket, so the prototype should not care which one this is.
+CTR="${CTR:-}"
+if [[ -z "$CTR" ]]; then
+    if docker info >/dev/null 2>&1; then CTR=docker
+    elif podman info >/dev/null 2>&1; then CTR=podman
+    else echo "error: neither docker nor podman has a running daemon" >&2; exit 1
+    fi
+fi
+
+die() { echo "error: $*" >&2; exit 1; }
+
+cmd_build() {
+    echo "==> building provisioner image ($CTR)"
+    # Build context is the repo root: the Dockerfile reaches images/ for both the
+    # shared build toolchain and the packages.txt producer.
+    "$CTR" build \
+        -f "$REPO_ROOT/scripts/store-prototype/provisioner.Dockerfile" \
+        -t "$PROVISIONER_IMAGE" \
+        "$REPO_ROOT"
+}
+
+# The provisioner: network ON, compilers present, store mounted READ-WRITE at the
+# same path the sandbox will see it read-only. Nothing else is mounted — there is
+# no user data in here to exfiltrate over the network it is allowed to reach.
+cmd_add() {
+    local farm="${1:-}"; shift || true
+    [[ -n "$farm" ]] || die "usage: inflexa-store add <farm> <spec>..."
+    mkdir -p "$LIB_STORE"
+    echo "==> provisioning '$farm' (network ON, store rw): $*"
+    "$CTR" run --rm \
+        -v "$LIB_STORE:/mnt/libs:rw" \
+        "$PROVISIONER_IMAGE" \
+        --farm "$farm" \
+        ${WARM:+--warm "$WARM"} \
+        ${WARM_SCRIPT:+--warm-script "$WARM_SCRIPT"} \
+        "$@"
+    # `current` is flipped by the provisioner itself, before warm-up, because the
+    # warm has to run against the same path the sandbox imports from. Re-pointing
+    # it here would make two writers for one pointer.
+    echo "==> current -> farms/$farm"
+}
+
+cmd_use() {
+    local farm="${1:-}"
+    [[ -d "$LIB_STORE/farms/$farm" ]] || die "no such farm: $farm"
+    ln -sfn "farms/$farm" "$LIB_STORE/current"
+    echo "==> current -> farms/$farm"
+}
+
+# The sandbox: unchanged posture. No network at all, every capability dropped,
+# uid 1000, and the store read-only. It only ever reads what the provisioner wrote.
+#
+# `script` is the bash program to run; anything before it is passed through to the
+# engine (`-it` for the interactive shell).
+sandbox_run() {
+    local script="$1"; shift
+    local numba=()
+    # Must match what the provisioner exported while warming, or every cached
+    # numba entry misses and the warm-up bought nothing.
+    [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]] && numba=(-e NUMBA_CPU_NAME=generic)
+
+    "$CTR" run --rm "$@" \
+        --network none \
+        --user 1000:1000 \
+        --cap-drop ALL \
+        --security-opt no-new-privileges \
+        -v "$LIB_STORE:/mnt/libs:ro" \
+        --entrypoint /bin/bash \
+        "${numba[@]}" \
+        -e MPLCONFIGDIR=/tmp/mpl \
+        -w /workspace \
+        "$SANDBOX_IMAGE" -c "$PROLOGUE
+$script"
+}
+
+# Both warmed caches have to be copied out of the read-only store before use, for
+# the same underlying reason: each library picks its cache directory by testing
+# whether it can WRITE there, and silently rebuilds from scratch when it cannot.
+# matplotlib rebuilds the font list on every import; numba recompiles every jitted
+# function. Seeding costs a few hundred KB of copy and turns both into cache hits.
+PROLOGUE='cp -r /mnt/libs/current/matplotlib_config /tmp/mpl 2>/dev/null || mkdir -p /tmp/mpl
+cp -r /mnt/libs/current/numba-cache /tmp/numba-cache 2>/dev/null || mkdir -p /tmp/numba-cache
+export NUMBA_CACHE_DIR=/tmp/numba-cache
+export PATH="$PATH:/mnt/libs/current/python/bin"'
+
+cmd_run() {
+    sandbox_run "$*"
+}
+
+cmd_shell() {
+    sandbox_run "exec bash" -it
+}
+
+cmd_test() {
+    [[ -e "$LIB_STORE/current" ]] || die "no farm selected; run: inflexa-store add <farm> <spec>..."
+    # Staged into the store so it arrives over the same read-only mount the
+    # packages do — the sandbox gets no second bind for it.
+    cp "$REPO_ROOT/scripts/store-prototype/acceptance.py" "$LIB_STORE/acceptance.py"
+    sandbox_run "exec python3 /mnt/libs/acceptance.py"
+}
+
+cmd_du() {
+    echo "==> store (deduplicated package content)"
+    du -sh "$LIB_STORE/store" 2>/dev/null || echo "  (empty)"
+    echo "    $(ls -1 "$LIB_STORE/store" 2>/dev/null | wc -l | tr -d ' ') distributions"
+    echo "==> farms (symlinks only)"
+    for f in "$LIB_STORE"/farms/*/; do
+        [[ -d "$f" ]] || continue
+        printf '  %-20s %s  %s links\n' "$(basename "$f")" \
+            "$(du -sh "$f" | cut -f1)" \
+            "$(find "$f" -type l | wc -l | tr -d ' ')"
+    done
+    echo "==> total on disk"
+    du -sh "$LIB_STORE"
+}
+
+cmd_clean() {
+    read -rp "remove $LIB_STORE entirely? [y/N] " ans
+    [[ "$ans" == "y" ]] || exit 0
+    chmod -R u+w "$LIB_STORE" 2>/dev/null || true
+    rm -rf "$LIB_STORE"
+    echo "==> removed"
+}
+
+case "${1:-}" in
+    build) shift; cmd_build "$@" ;;
+    add)   shift; cmd_add "$@" ;;
+    use)   shift; cmd_use "$@" ;;
+    run)   shift; cmd_run "$@" ;;
+    shell) shift; cmd_shell "$@" ;;
+    test)  shift; cmd_test "$@" ;;
+    du)    shift; cmd_du "$@" ;;
+    clean) shift; cmd_clean "$@" ;;
+    *) sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac
