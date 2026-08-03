@@ -125,6 +125,43 @@ scores = cross_val_score(
 print(f"Mean: {scores.mean():.4f} +/- {scores.std():.4f}")
 ```
 
+## Nested Cross-Validation
+
+Outer folds estimate performance; inner folds tune. Everything learned from the
+data — scaling, feature selection, hyperparameters — belongs inside the inner
+loop, or the estimate is optimistic.
+
+```python
+import numpy as np
+from sklearn.feature_selection import SelectKBest, f_classif
+from sklearn.linear_model import LogisticRegressionCV
+from sklearn.model_selection import RepeatedStratifiedKFold
+from sklearn.metrics import roc_auc_score
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+
+# Selection and scaling are pipeline steps, so they refit per fold on that
+# fold's training data only. Selecting features once over all of X before this
+# loop is the most common leak in biomarker panels — it reliably adds several
+# AUC points that do not survive external validation.
+inner = make_pipeline(
+    StandardScaler(),
+    SelectKBest(f_classif, k=20),
+    LogisticRegressionCV(penalty="elasticnet", solver="saga", l1_ratios=[0.5],
+                         cv=5, scoring="roc_auc", max_iter=5000, random_state=42),
+)
+
+outer = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=42)
+aucs = [
+    roc_auc_score(y[test], inner.fit(X[train], y[train]).predict_proba(X[test])[:, 1])
+    for train, test in outer.split(X, y)
+]
+print(f"AUC {np.mean(aucs):.3f} (95% CI {np.percentile(aucs, 2.5):.3f}-{np.percentile(aucs, 97.5):.3f})")
+```
+
+The spread across outer folds is a performance interval, not a confidence
+interval on a fitted model — repeats reduce its variance but do not make it one.
+
 ## Classification Metrics
 
 ```python

@@ -108,19 +108,6 @@ Escalate complexity only when simpler models underperform:
 - **mgcv** (R via rpy2): Generalized Additive Models (GAMs). Use for non-linear covariate effects (`gam(y ~ s(x1) + x2)`).
 - **nlme** (R via rpy2): Nonlinear mixed-effects models. Use when relationships are inherently nonlinear (dose-response curves, growth models).
 
-## References
-
-| File | Purpose |
-|-|-|
-| `references/lifelines-api.md` | lifelines API: KaplanMeier, CoxPH, log-rank test |
-| `references/scikit-learn-api.md` | scikit-learn API: classifiers, regressors, pipelines, CV |
-| `references/scikit-survival-api.md` | scikit-survival API: RSF, GBS, concordance index |
-| `references/xgboost-api.md` | XGBoost API: XGBClassifier, XGBRegressor, tuning |
-| `references/shap-api.md` | SHAP API: TreeExplainer, summary plots, dependence |
-| `references/statsmodels-api.md` | statsmodels API: MixedLM, OLS, GLM |
-| `references/pingouin-api.md` | pingouin API: ttest, anova, correlation, effect sizes |
-| `references/biomarker-cutpoints-roc.md` | survminer/maxstat cutpoints with corrected p-values, OptimalCutpoints criteria, pROC DeLong CIs and paired tests, timeROC time-dependent AUC |
-
 ## Biomarker Discovery & Qualification
 
 ### BEST Framework (FDA Biomarkers, EndpointS, and other Tools)
@@ -157,24 +144,10 @@ the current analysis addresses.
   model. Only if the interaction is significant can the marker be called
   predictive.
 
-```python
-# Prognostic test (marker → outcome)
-from lifelines import CoxPHFitter
-cph = CoxPHFitter()
-cph.fit(df[["time", "event", "marker"]], "time", "event")
-
-# Predictive test (marker x treatment → outcome)
-df["marker_x_treatment"] = df["marker"] * df["treatment"]
-cph_pred = CoxPHFitter()
-cph_pred.fit(
-    df[["time", "event", "marker", "treatment", "marker_x_treatment"]],
-    "time", "event",
-)
-interaction_pval = cph_pred.summary.loc["marker_x_treatment", "p"]
-```
-
 Do NOT call a marker "predictive" unless the interaction test is significant.
-A marker that is only prognostic has no value for treatment selection.
+A marker that is only prognostic has no value for treatment selection, and a
+single-arm study cannot produce the interaction at all. See
+`references/lifelines-api.md` for the Cox interaction model.
 
 ### Cutpoint Optimization
 
@@ -217,26 +190,10 @@ When building a biomarker panel (signature of multiple markers):
    model coefficients. Report the locked signature for external
    validation.
 
-```python
-from sklearn.linear_model import LogisticRegressionCV
-from sklearn.model_selection import RepeatedStratifiedKFold
-from sklearn.metrics import roc_auc_score
-import numpy as np
-
-# Panel construction with nested CV
-cv_outer = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=42)
-aucs = []
-for train_idx, test_idx in cv_outer.split(X, y):
-    model = LogisticRegressionCV(
-        penalty="elasticnet", solver="saga", l1_ratios=[0.5],
-        cv=5, scoring="roc_auc", max_iter=5000, random_state=42,
-    )
-    model.fit(X[train_idx], y[train_idx])
-    prob = model.predict_proba(X[test_idx])[:, 1]
-    aucs.append(roc_auc_score(y[test_idx], prob))
-
-print(f"AUC: {np.mean(aucs):.3f} (95% CI: {np.percentile(aucs, 2.5):.3f}-{np.percentile(aucs, 97.5):.3f})")
-```
+Feature selection belongs **inside** the cross-validation loop, not before it —
+selecting over all samples first is the most common leak in panel development
+and reliably adds several AUC points that do not survive external validation.
+See `references/scikit-learn-api.md` for the nested-CV construction.
 
 ### ROC Analysis
 
@@ -263,3 +220,16 @@ Outcome?
 
 Always report BOTH AUC-ROC and AUPRC. For imbalanced datasets, AUPRC
 is more informative than AUC-ROC.
+
+## References
+
+| File | Purpose |
+|-|-|
+| `references/lifelines-api.md` | lifelines API: KaplanMeier, CoxPH, log-rank test, prognostic-vs-predictive interaction model |
+| `references/scikit-learn-api.md` | scikit-learn API: classifiers, regressors, pipelines, cross-validation, nested CV for panel development |
+| `references/scikit-survival-api.md` | scikit-survival API: RSF, GBS, concordance index |
+| `references/xgboost-api.md` | XGBoost API: XGBClassifier, XGBRegressor, tuning |
+| `references/shap-api.md` | SHAP API: TreeExplainer, summary plots, dependence |
+| `references/statsmodels-api.md` | statsmodels API: MixedLM, OLS, GLM |
+| `references/pingouin-api.md` | pingouin API: ttest, anova, correlation, effect sizes |
+| `references/biomarker-cutpoints-roc.md` | survminer/maxstat cutpoints with corrected p-values, OptimalCutpoints criteria, pROC DeLong CIs and paired tests, timeROC time-dependent AUC |
