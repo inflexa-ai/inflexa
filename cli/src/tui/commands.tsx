@@ -1,4 +1,5 @@
 import { createSignal, Show, type JSX } from "solid-js";
+import { randomUUIDv7 } from "bun";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ResultAsync } from "neverthrow";
@@ -695,6 +696,82 @@ async function readOpenThread(pool: Pool, threadId: string, seams: SessionSeams)
 }
 
 /**
+ * Start a fresh conversation in the open analysis: mint a thread id and swap the chat onto it in place.
+ * The row that id names is not written until the first turn creates it (typed `conversation` by the
+ * harness default, its title seeded from the message), so nothing is persisted here — which is why
+ * re-running from an already-empty chat is a harmless no-op needing no guard, and why rapid repeats that
+ * mint several identities cost nothing.
+ *
+ * Synchronous by construction. Unlike {@link openSwitchSession} there is no Postgres round trip before
+ * the swap, so the open scope cannot change mid-body and the stale-analysis re-check that guards the
+ * picker's async gap has nothing to guard here.
+ *
+ * The pre-`ready` refusal speaks rather than no-ops, exactly as {@link openSwitchSession}'s does: the
+ * palette hides this command until `ready`, but a dispatch by id skips that predicate, so this path is
+ * reachable while the runtime is still booting. Binding a mint pre-`ready` would also suppress the
+ * ready-edge resolution that opens the most-recent thread — a surprising loss for a command dispatched
+ * early by accident — so it refuses instead.
+ */
+export function newSessionFlow(ctx: Workspace, seams: SessionSeams = realSessionSeams): void {
+    const analysis = ctx.analysis;
+    if (!analysis) return;
+    const phase = bootState().phase;
+    if (phase !== "ready") {
+        // `failed` is terminal, so "still booting" would promise a wait that never ends and contradict
+        // the status bar the user is looking at. Every other non-ready phase IS a wait.
+        seams.notify(
+            phase === "failed"
+                ? { kind: "warn", text: "The harness did not start — conversations are unavailable." }
+                : { kind: "info", text: `Harness is still booting${GLYPHS.ellipsis}` },
+        );
+        return;
+    }
+    ctx.openSession(randomUUIDv7(), ctx.workingDir, analysis);
+}
+
+/**
+ * The Switch-session picker's creation row carries this sentinel as its `value`, distinct by identity
+ * from every {@link Thread} the store returns, so the select handler branches "start fresh" from "reopen
+ * this thread" without a marker field on either.
+ */
+const NEW_SESSION = Symbol("new-session");
+
+/** A Switch-session pick: an existing thread to reopen, or the pinned creation row. */
+type SwitchSessionChoice = Thread | typeof NEW_SESSION;
+
+/**
+ * The Switch-session picker's rows: the analysis's live threads (most-recently-active first), followed
+ * by a pinned "Start a new session" row. The creation row comes LAST so the default selection stays the
+ * most-recent thread — this picker is for switching, and the create action is the escape hatch out of
+ * the list, not its headline. Being pinned, the row survives any filter query and an empty thread set,
+ * so the picker is never empty and the create action is always one keystroke away; last-placement also
+ * keeps it put, since a query matching no thread re-appends dropped pinned rows at the end.
+ */
+export function switchSessionItems(threads: Thread[]): SelectItem<SwitchSessionChoice>[] {
+    return [
+        // Durable-record rule: a listed conversation is a referenced record, so its last-activity stamp
+        // is an absolute local time rather than a compact age.
+        ...threads.map((t) => ({ value: t, title: threadLabel(t), description: t.updatedAt.toLocaleString() })),
+        { value: NEW_SESSION, title: "Start a new session", pinned: true },
+    ];
+}
+
+/**
+ * Dispatch a Switch-session pick. The pinned sentinel runs the shared new-session mint-and-swap — the
+ * one {@link newSessionFlow} the palette command also runs, never a second copy of the mint — while any
+ * other row reopens that thread under the analysis captured when the picker opened. The dialog closes
+ * first either way.
+ */
+export function selectSwitchSession(ctx: Workspace, choice: SwitchSessionChoice, analysis: Analysis, seams: SessionSeams): void {
+    ctx.closeDialog();
+    if (choice === NEW_SESSION) {
+        newSessionFlow(ctx, seams);
+        return;
+    }
+    ctx.openSession(choice.threadId, ctx.workingDir, analysis);
+}
+
+/**
  * Open the session picker over the analysis's live threads (most-recently-active first). Fetched
  * BEFORE the dialog opens — the thread store is an async Postgres read, so the dialog cannot pull it
  * from its own body — mirroring `openRunsPicker`. A read failure degrades to an empty picker rather
@@ -739,17 +816,13 @@ export async function openSwitchSession(ctx: Workspace, seams: SessionSeams = re
         <SelectDialog
             title="Switch session"
             placeholder={`Search sessions${GLYPHS.ellipsis}`}
-            // Durable-record rule: a listed conversation is a referenced record, so its last-activity
-            // stamp is an absolute local time rather than a compact age.
-            items={threads.map((t) => ({ value: t, title: threadLabel(t), description: t.updatedAt.toLocaleString() }))}
-            // The open chat's own thread has no row until its first turn, so a fresh chat lists nothing
-            // — the empty state has to say what makes a conversation appear here.
+            items={switchSessionItems(threads)}
+            // The pinned "Start a new session" row keeps this list non-empty in every real case, so this
+            // text is the contract for an items-empty render rather than a line a user reaches: a fresh
+            // chat with no other threads still sees that row, not this.
             emptyText="No other conversations — send a message to start one, or switch analysis first"
             onCancel={() => ctx.closeDialog()}
-            onSelect={(t: Thread) => {
-                ctx.closeDialog();
-                ctx.openSession(t.threadId, ctx.workingDir, analysis);
-            }}
+            onSelect={(choice: SwitchSessionChoice) => selectSwitchSession(ctx, choice, analysis, seams)}
         />
     ));
 }
@@ -2211,6 +2284,17 @@ export const commands: Command[] = [
         category: "Session",
         enabled: (ctx) => ctx.analysis !== null && bootState().phase === "ready",
         run: (ctx) => openSwitchSession(ctx),
+    },
+    {
+        id: "session.new",
+        title: "New session",
+        description: "Start a new conversation in this analysis",
+        category: "Session",
+        // Gated like its siblings, but for its own reason: the mint needs nothing from Postgres, yet a
+        // pre-`ready` chat cannot send the turn that gives the fresh id a row, and binding a mint early
+        // would suppress the ready-edge resolution that opens the most-recent thread.
+        enabled: (ctx) => ctx.analysis !== null && bootState().phase === "ready",
+        run: (ctx) => newSessionFlow(ctx),
     },
     {
         id: "session.rename",
