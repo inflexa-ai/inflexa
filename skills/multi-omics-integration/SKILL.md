@@ -125,5 +125,5 @@ Choose the method based on your analytical question and data characteristics:
 |-|-|
 | `references/muon-mofa-api.md` | muon/MOFA+ API: factor analysis, variance decomposition |
 | `references/mixomics-rpy2-api.md` | mixOmics via rpy2 API: DIABLO block.splsda, tuning |
-| `references/omnipath-api.md` | OmniPath API: prior knowledge queries, interaction types |
+| `references/prior-knowledge-networks.md` | Resolving and reading regulon, pathway-weight and interaction files: formats, `.rda` reading, column vocabulary, decoupler activity inference |
 | `references/snfpy-api.md` | snfpy API: similarity network fusion, affinity matrices, spectral clustering |
