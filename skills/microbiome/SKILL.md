@@ -157,16 +157,17 @@ Should I rarefy?
 - Figures: stacked bar plots (relative abundance), PCoA/NMDS ordination plots, alpha diversity box plots, differential abundance forest plots, rarefaction curves.
 - Use biom-format package for BIOM file I/O in Python, phyloseq for R-based operations.
 
+## Entry Points
+
+Amplicon (16S/ITS) starts from demultiplexed FASTQ and runs end to end here via
+dada2 — the one place in this repo where read-level processing is in scope,
+because dada2 does it. Shotgun metagenomics starts from a **profiled abundance
+table**: taxonomic and functional profiling is upstream, so if you were handed
+raw shotgun FASTQ, say so and stop.
+
 ## Additional Available Packages
 
-- **vegan** (R): Ecological community analysis — `adonis2()` for PERMANOVA (formula interface with covariates), `diversity()` for alpha diversity, `vegdist()` for distance matrices, `metaMDS()` for NMDS ordination, `betadisper()` for dispersion testing.
-- **mia / miaViz** (R): TreeSummarizedExperiment-based microbiome analysis framework. Alternative to phyloseq using Bioconductor infrastructure. Use when working with TreeSE objects.
-
-### CLI Tools
-
-`samtools`, `bcftools`, `bedtools`, `tabix` — sufficient for everything downstream of a feature table.
-
-**Entry points.** Amplicon (16S/ITS) starts from demultiplexed FASTQ and runs end to end here via dada2. Shotgun metagenomics starts from a **profiled abundance table**: taxonomic and functional profiling of shotgun reads is upstream of this pack, so if you were handed raw shotgun FASTQ, say so and stop rather than planning a profiling step.
+- **vegan** (R): `adonis2()` is the reason to reach for it — PERMANOVA with a formula interface, so a community difference can be tested while adjusting for covariates rather than as a single-factor comparison. Also `betadisper()`, whose dispersion test says whether a significant PERMANOVA reflects a location shift or unequal spread.
 
 ## References
 

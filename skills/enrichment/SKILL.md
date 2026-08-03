@@ -100,7 +100,6 @@ After enrichment, collapse redundant terms to improve interpretability:
 
 - **singscore** (R via rpy2): Rank-based single-sample gene set scoring. Alternative to ssGSEA, stable for small gene sets.
 - **babelgene** (R via rpy2): Ortholog mapping. MSigDB is catalogued as human and mouse gene sets, so this is how a collection reaches any other species.
-- **upsetplot** (Python) / **ComplexUpset** (R via rpy2): UpSet plots for visualizing overlap between enriched term sets across comparisons.
 
 ## References
 

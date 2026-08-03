@@ -243,14 +243,6 @@ When profiling a compound against a panel of targets (kinase panel, GPCR panel, 
 
 For regression tasks, report R2 and RMSE on the test set. For classification, report ROC-AUC and optionally PR-AUC (especially for imbalanced datasets). Always use scaffold split for final evaluation -- random splits overestimate performance on molecular data.
 
-## Additional Available Packages
-
-- **umap-learn** (Python): Dimensionality reduction for chemical space visualization on binary fingerprints.
-- **scikit-learn** (Python): Ensemble models, cross-validation, and feature selection for QSAR modeling on fingerprint or descriptor matrices.
-- **scipy.stats** (Python): Statistical tests for property comparisons (Mann-Whitney U, KS test) and activity distribution analysis.
-- **seaborn** (Python): Statistical visualization for property distributions, heatmaps, and pairwise comparisons.
-- **matplotlib** (Python): Base plotting library for all custom figures.
-
 ## References
 
 | File | Purpose |

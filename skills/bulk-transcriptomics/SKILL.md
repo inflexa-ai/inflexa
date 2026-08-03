@@ -80,16 +80,7 @@ Input data?
 
 ## Additional Available Packages
 
-### R (via rpy2)
-
-- **xCell2** (AlmogAngel/xCell2): Cell type deconvolution from bulk expression data. Estimates 64+ cell type scores from bulk RNA-seq. Use when sample-level cell type composition is needed without single-cell data.
-
-### Entry point
-
-These workflows begin from a **count matrix**. Read alignment and
-quantification are upstream of this pack: if you were given FASTQ rather than
-counts, say so and stop — do not plan a from-FASTQ pipeline, and do not
-substitute a different starting point to avoid the gap.
+- **xCell2** (R via rpy2): Cell-type deconvolution from bulk expression — 64+ cell-type scores. Reach for it when sample-level composition is wanted and no single-cell data exists to deconvolve against.
 
 ## References
 

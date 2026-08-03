@@ -377,24 +377,15 @@ See CyTOF Output Conventions above.
 
 ## Additional Available Packages
 
-### Python (scRNA-seq / snRNA-seq)
-
-- **cellrank** (>=2): Cell fate probability and driver gene identification. Builds on scVelo velocity or pseudotime. Use `cr.kernels.VelocityKernel` or `cr.kernels.PseudotimeKernel`, then `cr.estimators.GPCCA` for macrostates.
-- **pyscenic**: Gene regulatory network inference. Identifies TF regulons (TF + target genes). Use `GRNBoost2` for co-expression, `cisTarget` for motif enrichment. Computationally heavy. `cisTarget` additionally needs motif ranking databases and a motif-to-TF annotation resolved from the reference data available to you — an opt-in download that may not be staged, so check before planning the pruning step.
-- **pytometry**: FCS file reading into AnnData for lightweight exploration. For production CyTOF analysis, use the CATALYST + FlowSOM + diffcyt R stack instead.
-
-### R (scRNA-seq, via rpy2)
-
-- **SingleCellExperiment, scater, scran, batchelor**: R single-cell ecosystem. scran provides pooling normalization, batchelor provides MNN integration. Use only when specific R-only functionality is required; prefer scanpy/scvi-tools Python equivalents.
-
-### R (CyTOF — native R scripts)
-
-- **CATALYST**: End-to-end CyTOF orchestration. Preprocessing (`normCytof`, `compCytof`, `assignPrelim`), data preparation (`prepData`), clustering wrapper (`cluster` — wraps FlowSOM + ConsensusClusterPlus), rich visualization (`plotExprHeatmap`, `plotDR`, `plotAbundances`, `pbMDS`, `plotNRS`), and differential analysis wrapper.
-- **FlowSOM**: Self-organizing map clustering for cytometry. Fast, stable, scales to millions of cells. Used via `CATALYST::cluster()` — rarely called directly.
-- **diffcyt**: Differential discovery framework. DA testing via `testDA_edgeR()` (default) or `testDA_GLMM()` (random effects). DS testing via `testDS_limma()` (default) or `testDS_LMM()` (random effects). Uses established statistical frameworks (limma, edgeR) adapted to cytometry data.
-- **flowCore**: FCS file I/O and cytometry data infrastructure. `read.flowSet()` with `transformation = FALSE, truncate_max_range = FALSE` for CyTOF.
-- **CytoNorm**: Batch normalization for multi-batch CyTOF. Requires technical replicates across batches. Model-based quantile normalization per FlowSOM cluster.
-- **cyCombine**: Batch correction without technical replicates. Reference-free linear scaling across technologies (CyTOF, flow, CITE-seq).
+- **pyscenic**: TF regulon inference. Its `cisTarget` pruning step needs motif
+  ranking databases and a motif-to-TF annotation resolved from the reference
+  inventory — opt-in downloads that may not be staged, so confirm they resolve
+  before planning that step rather than after GRNBoost2 has run.
+- **pytometry**: FCS reading into AnnData, for lightweight exploration only.
+  Production CyTOF goes through the CATALYST stack above.
+- **scran** / **batchelor** (R via rpy2): pooling normalization and MNN
+  integration. Reach for these only when the R-only behaviour is the point —
+  the scanpy and scvi-tools equivalents are the default here.
 
 ## References
 

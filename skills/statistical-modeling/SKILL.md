@@ -104,9 +104,7 @@ Escalate complexity only when simpler models underperform:
 ## Additional Available Packages
 
 - **glmnet** (R via rpy2): LASSO, Ridge, and ElasticNet penalized regression. Use for high-dimensional feature selection (p >> n). `cv.glmnet()` for cross-validated lambda selection.
-- **pROC** (R via rpy2): ROC curve analysis with DeLong confidence intervals for AUC. Use for binary classifier evaluation.
 - **scikit-posthocs** (Python): Post-hoc pairwise tests (Dunn, Conover, Nemenyi, Games-Howell). Use after significant ANOVA/Kruskal-Wallis.
-- **formulaic** (Python): Patsy-compatible formula interface. Use with statsmodels for R-style formulas (`y ~ C(group) * covariate`).
 - **mgcv** (R via rpy2): Generalized Additive Models (GAMs). Use for non-linear covariate effects (`gam(y ~ s(x1) + x2)`).
 - **nlme** (R via rpy2): Nonlinear mixed-effects models. Use when relationships are inherently nonlinear (dose-response curves, growth models).
 
