@@ -40,6 +40,7 @@
 import type { Pool } from "pg";
 
 import type { Logger } from "../lib/logger.js";
+import { unwrapOrThrow } from "../lib/result.js";
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { validateAgentSkills } from "../agents/sandbox/validate-skills.js";
 import { initCortexState } from "../state/init.js";
@@ -102,10 +103,16 @@ export async function bootHarness(deps: BootHarnessDeps): Promise<BootedHarness>
 
     const runtime = assembleCoreRuntime(core);
 
+    // Assembly registers `conversation` unconditionally, so this resolution can
+    // never refuse; `unwrapOrThrow` turns the impossible error branch into a
+    // boot-propagating throw rather than threading a Result through the boot
+    // sequence, whose steps already fail by propagation.
+    const conversationAgent = unwrapOrThrow(runtime.agents.forThread("conversation"));
+
     await backfillConversationDisplayEnvelopes({
         pool,
         resolveWorkspaceRoot: core.conversation.resolveWorkspaceRoot,
-        tools: runtime.conversationAgent.tools,
+        tools: conversationAgent.tools,
     });
 
     await deps.beforeLaunch?.();
