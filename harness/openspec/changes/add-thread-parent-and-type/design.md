@@ -98,7 +98,11 @@ Note what does **not** protect this. A parent-only delete under `ON DELETE CASCA
 
 ## Migration Plan
 
-Three `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements plus one `CREATE INDEX IF NOT EXISTS`, added to the established additive block in `src/state/init.ts`. A probe confirmed the self-referencing form is accepted and that a re-run is a no-op (`column "parent_thread_id" of relation "t" already exists, skipping`).
+Three `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements plus one `CREATE INDEX IF NOT EXISTS` in `src/state/init.ts`. A probe confirmed the self-referencing form is accepted and that a re-run is a no-op (`column "parent_thread_id" of relation "t" already exists, skipping`).
+
+The three statements sit in the `DDL` text beside the table, **not** in the additive block further down, and the placement is load-bearing. `init.ts` runs the whole `DDL` text before that block, and `CREATE TABLE IF NOT EXISTS` adds no column to a table that already exists — so on every database except a brand new one, these columns arrive from an `ALTER`. The new partial index reads one of them. Declared in the `DDL` text over a column added in the later block, it fails with `42703` on exactly the databases a migration exists to serve, while every fresh-schema test stays green (`withSchema` builds the table from the `CREATE TABLE`, columns included). `cortex_target_assessments` already carries this shape for the same reason (`init.ts:158-169`).
+
+`src/state/thread-parent-columns.test.ts` pins it by dropping the three columns and the index before it calls `initCortexState`, which is the only way to reach the `ALTER` path from a test.
 
 No backfill runs. `thread_type` defaults to `'conversation'`, which is what every existing row is, and `parent_thread_id` and `parent_seq` are null on a row with no parent.
 

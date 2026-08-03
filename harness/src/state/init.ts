@@ -292,6 +292,23 @@ CREATE TABLE IF NOT EXISTS cortex_analysis_threads (
   parent_seq  BIGINT
 );
 
+-- These three sit here, and not in the additive block further down, because the
+-- index below reads one of them. CREATE TABLE IF NOT EXISTS adds no column to a
+-- table that already exists, so on every database but a brand new one the column
+-- arrives from an ALTER -- and the whole additive block runs after this text. An
+-- index declared here over a column added there fails with 42703 on exactly the
+-- databases a migration exists to serve. Additive with no backfill either way: an
+-- existing row reads back as a root conversation thread with no anchor, which is
+-- what it is.
+ALTER TABLE cortex_analysis_threads
+  ADD COLUMN IF NOT EXISTS thread_type TEXT NOT NULL DEFAULT 'conversation';
+
+ALTER TABLE cortex_analysis_threads
+  ADD COLUMN IF NOT EXISTS parent_thread_id TEXT REFERENCES cortex_analysis_threads(thread_id) ON DELETE CASCADE;
+
+ALTER TABLE cortex_analysis_threads
+  ADD COLUMN IF NOT EXISTS parent_seq BIGINT;
+
 CREATE INDEX IF NOT EXISTS idx_cortex_analysis_threads_analysis
   ON cortex_analysis_threads(analysis_id) WHERE deleted_at IS NULL;
 
@@ -525,11 +542,6 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                     ALTER TABLE cortex_ask_grants RENAME COLUMN command TO grant_key;
                   END IF;
                 END $$`,
-                // Additive with no backfill: an existing thread row reads back as a
-                // root conversation thread with no anchor, which is exactly what it is.
-                "ALTER TABLE cortex_analysis_threads ADD COLUMN IF NOT EXISTS thread_type TEXT NOT NULL DEFAULT 'conversation'",
-                "ALTER TABLE cortex_analysis_threads ADD COLUMN IF NOT EXISTS parent_thread_id TEXT REFERENCES cortex_analysis_threads(thread_id) ON DELETE CASCADE",
-                "ALTER TABLE cortex_analysis_threads ADD COLUMN IF NOT EXISTS parent_seq BIGINT",
             ];
             for (const sql of addMigrations) {
                 await client.query(sql);
