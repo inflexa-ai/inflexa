@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { normalizeAuthor, normalizeComparable } from "./normalize.js";
+import { authorNamesMatch, normalizeAuthor, normalizeComparable } from "./normalize.js";
 import type { CitationCandidateCluster, CitationIdentifiers, CitationInput, CitationRecord, NormalizedCitation } from "./types.js";
 
 export interface CitationMatchConfig {
@@ -36,20 +36,16 @@ export function tokenSimilarity(left: string, right: string): number {
     return Math.max(dice, containment * 0.96);
 }
 
-function normalizedAuthors(authors: readonly string[] | undefined): Set<string> {
-    return new Set((authors ?? []).map(normalizeAuthor).filter(Boolean));
+function normalizedAuthors(authors: readonly string[] | undefined): string[] {
+    return [...new Set((authors ?? []).map(normalizeAuthor).filter(Boolean))];
 }
 
 function authorSimilarity(left: readonly string[] | undefined, right: readonly string[] | undefined): number {
     const a = normalizedAuthors(left);
     const b = normalizedAuthors(right);
-    if (a.size === 0 || b.size === 0) return 0;
-    let intersection = 0;
-    for (const author of a) {
-        const surname = author.split(" ").at(-1);
-        if ([...b].some((candidate) => candidate === author || (surname !== undefined && candidate.split(" ").at(-1) === surname))) intersection += 1;
-    }
-    return intersection / Math.min(a.size, b.size);
+    if (a.length === 0 || b.length === 0) return 0;
+    const intersection = a.filter((author) => b.some((candidate) => authorNamesMatch(author, candidate))).length;
+    return intersection / Math.min(a.length, b.length);
 }
 
 function identifierEntries(identifiers: CitationIdentifiers): string[] {

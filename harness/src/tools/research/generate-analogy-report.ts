@@ -30,7 +30,7 @@ import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { defineTool, type Tool } from "../define-tool.js";
 
 // Cross-domain search tools the analogical-reasoner uses.
-import { searchSemanticScholarTool } from "./search-semantic-scholar.js";
+import { createSearchSemanticScholarTool } from "./search-semantic-scholar.js";
 import { searchArxivTool } from "./search-arxiv.js";
 import { createSearchGithubReposTool } from "./search-github-repos.js";
 
@@ -192,7 +192,7 @@ export interface GenerateAnalogyReportDeps {
 export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps): Tool {
     const ncbi = createNcbiTools(deps.bioKeys);
     const reasonerTools: readonly Tool[] = [
-        searchSemanticScholarTool,
+        createSearchSemanticScholarTool({ ...(deps.bioKeys.semanticScholar === undefined ? {} : { apiKey: deps.bioKeys.semanticScholar }) }),
         searchArxivTool,
         createSearchGithubReposTool({ githubToken: deps.bioKeys.github }),
         ncbi.pubmed,

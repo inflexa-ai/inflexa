@@ -2,9 +2,18 @@ import { z } from "zod";
 
 export interface SourceHttpOptions {
     readonly fetch?: typeof globalThis.fetch;
+    /**
+     * Admission gate wrapped around each network attempt — a rate limiter, a
+     * concurrency semaphore, or both. The request timeout is armed *inside* it,
+     * so time an attempt spends queueing is never charged against the timeout.
+     */
+    readonly schedule?: <T>(operation: () => Promise<T>, signal?: AbortSignal) => Promise<T>;
     readonly timeoutMs?: number;
     readonly maxRetries?: number;
     readonly retryDelayMs?: number;
+    /** Ceiling on any single retry wait, including one a server asks for via `Retry-After`. */
+    readonly maxRetryDelayMs?: number;
+    readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
 }
 
 export type SourceHttpResult<T> =
@@ -33,19 +42,36 @@ async function delay(ms: number, signal: AbortSignal | undefined): Promise<void>
     });
 }
 
+function retryAfterMilliseconds(response: Response): number | undefined {
+    const value = response.headers.get("retry-after")?.trim();
+    if (!value) return undefined;
+    const seconds = Number(value);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+    const date = Date.parse(value);
+    return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
 async function request(url: string, options: SourceHttpOptions, signal: AbortSignal | undefined, init: RequestInit): Promise<SourceHttpResult<Response>> {
     if (signal?.aborted) throw cancellationReason(signal);
     const timeoutMs = options.timeoutMs ?? 15_000;
     const maxRetries = options.maxRetries ?? 0;
     const retryDelayMs = options.retryDelayMs ?? 1_000;
+    const maxRetryDelayMs = options.maxRetryDelayMs ?? Number.POSITIVE_INFINITY;
+    const schedule = options.schedule ?? (<T>(operation: () => Promise<T>): Promise<T> => operation());
+    const sleep = options.sleep ?? delay;
+    const fetcher = options.fetch ?? globalThis.fetch;
+    const backoff = (attempt: number): number => Math.min(maxRetryDelayMs, retryDelayMs * 2 ** attempt);
 
-    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-        const timeout = AbortSignal.timeout(timeoutMs);
-        const combined = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+    for (let attempt = 0; ; attempt += 1) {
+        let timeout: AbortSignal | undefined;
         try {
-            const response = await (options.fetch ?? globalThis.fetch)(url, { ...init, signal: combined });
+            const response = await schedule(async () => {
+                timeout = AbortSignal.timeout(timeoutMs);
+                const combined = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+                return await fetcher(url, { ...init, signal: combined });
+            }, signal);
             if (RETRYABLE_STATUSES.has(response.status) && attempt < maxRetries) {
-                await delay(retryDelayMs * 2 ** attempt, signal);
+                await sleep(Math.min(maxRetryDelayMs, retryAfterMilliseconds(response) ?? backoff(attempt)), signal);
                 continue;
             }
             if (response.status === 404 || response.status === 400 || response.status === 406) {
@@ -55,16 +81,14 @@ async function request(url: string, options: SourceHttpOptions, signal: AbortSig
             return { status: "ok", value: response };
         } catch (error) {
             if (signal?.aborted) throw cancellationReason(signal);
-            if (timeout.aborted) return { status: "unavailable", detail: `request timed out after ${timeoutMs}ms` };
+            if (timeout?.aborted) return { status: "unavailable", detail: `request timed out after ${timeoutMs}ms` };
             if (attempt < maxRetries) {
-                await delay(retryDelayMs * 2 ** attempt, signal);
+                await sleep(backoff(attempt), signal);
                 continue;
             }
             return { status: "unavailable", detail: error instanceof Error ? error.message : String(error) };
         }
     }
-
-    return { status: "unavailable", detail: `request failed after ${maxRetries + 1} attempts` };
 }
 
 export async function requestJson<S extends z.ZodType>(

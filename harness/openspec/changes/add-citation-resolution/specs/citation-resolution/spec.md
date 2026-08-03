@@ -50,7 +50,13 @@ For an exact DOI, the resolver SHALL check DOI handle existence and obtain the r
 
 ### Requirement: Every source returns a uniform outcome
 
-Each configured source SHALL return one outcome with source name, attempted operation, request count, zero or more source-labelled records, optional detail, and status `ok`, `no_data`, `unavailable`, or `not_applicable`. HTTP failure, rate-limit exhaustion, timeout, and malformed upstream payload SHALL become `unavailable` for that source while preserving outcomes from other sources. Invalid public input, invalid resolver configuration, and caller cancellation SHALL remain operation failures rather than source outcomes.
+Each configured source SHALL return one outcome with source name, attempted operation, request count, zero or more source-labelled records, optional detail, and status `ok`, `no_data`, `unavailable`, or `not_applicable`. HTTP failure, rate-limit exhaustion, timeout, and malformed upstream payload SHALL become `unavailable` for that source while preserving outcomes from other sources. A source client that throws, or that answers a batch with a result count its requests do not account for, SHALL likewise become `unavailable` for the requests routed to it. Invalid public input, invalid resolver configuration, and caller cancellation SHALL remain operation failures rather than source outcomes.
+
+#### Scenario: A misbehaving source client does not fail the batch
+
+- **WHEN** one source throws, or returns fewer outcomes than it was given requests
+- **THEN** every request routed to that source records it as `unavailable`
+- **AND** the other sources' outcomes for those same citations are retained
 
 #### Scenario: One source fails while another resolves
 
@@ -83,6 +89,14 @@ The resolver SHALL normalize strong identifiers and cluster records describing t
 ### Requirement: Field comparison is deterministic and bounded to supplied fields
 
 The resolver SHALL apply versioned deterministic comparison rules for title, authors, year, venue, volume, and first page. Each supplied field SHALL receive `match`, `mismatch`, or `not_compared` with the compared source values and rule version. Material normalization SHALL be limited to documented Unicode, case/punctuation, author-token, year, volume, and page rules.
+
+Author comparison SHALL be independent of the surname position a citation style chooses, and a shared surname alone SHALL NOT establish a match. Where both the supplied author and the source author give a given name or initial, the two SHALL agree; surname-only agreement SHALL be accepted only where one side supplies no given name at all.
+
+#### Scenario: Same surname, different person
+
+- **WHEN** an identifier resolves but a supplied author's given name disagrees with the source author's
+- **THEN** the author comparison is `mismatch` and the verdict is `metadata_mismatch`
+- **AND** an abbreviated or reordered form of the same name — `Smith J`, `Smith, Jane A.` — still matches
 
 #### Scenario: Material supplied metadata differs
 
@@ -125,6 +139,22 @@ The resolver SHALL return exactly one verdict from `verified`, `metadata_mismatc
 ### Requirement: Batch resolution is bounded and deduplicated
 
 `resolveMany` SHALL preserve input order in its returned results while deduplicating identical normalized identifiers and raw citations. It SHALL coalesce in-flight duplicates, use applicable batch endpoints only when results map unambiguously to inputs, enforce per-source concurrency and request-rate limits, bound retries and retry delay, honor `Retry-After` within that bound, and maintain a bounded in-memory cache. It SHALL NOT persist citation data.
+
+A per-request timeout SHALL measure the network attempt alone. Time an attempt spends waiting for a concurrency slot or for its paced turn SHALL NOT count against it, and a retry SHALL be paced as a fresh attempt with its own timeout.
+
+Coalescing and caching SHALL be keyed on the lookups an input provokes rather than on the input as a whole, so citations that ask the authorities the same question share one round of source outcomes. Field comparisons and the verdict they drive SHALL be computed per caller from that caller's own supplied metadata.
+
+#### Scenario: A queued request is not reported as timed out
+
+- **WHEN** a batch is large enough that a source's concurrency and rate limits hold requests longer than the configured timeout
+- **THEN** each held request is timed from the moment it reaches the network
+- **AND** no verdict degrades to `inconclusive` on account of queueing
+
+#### Scenario: One lookup serves callers who supplied different metadata
+
+- **WHEN** two entries carry the same exact identifier but different supplied titles
+- **THEN** the authorities are asked once
+- **AND** each result reports comparisons and a verdict derived from its own caller's supplied values
 
 #### Scenario: Duplicate bibliography entries share work
 

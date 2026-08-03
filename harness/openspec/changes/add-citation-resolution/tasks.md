@@ -48,9 +48,20 @@
 - [x] 6.1 Add opt-in live integration cases for a Crossref DOI, non-Crossref DOI, PMID, arXiv id, and raw bibliographic match under the existing integration suite.
 - [x] 6.2 Add live or canonical fixtures for no-match, supplied-metadata mismatch, and partial-source failure while preserving auto-skip behavior without preconditions.
 
-## 7. Verification
+## 7. Review Follow-Up
 
-- [x] 7.1 Format all changed harness source and test files with the subsystem formatter.
-- [x] 7.2 Run focused citation resolver, tool-roster, sandbox-registry, and adapter tests and resolve failures.
-- [ ] 7.3 Run `tsc -p tsconfig.json`, `bun run lint`, and `bun run test:full` from `harness` and resolve regressions.
-- [x] 7.4 Run `openspec validate add-citation-resolution --strict` and confirm every task-backed requirement remains represented.
+- [x] 7.1 Separate the rate-limit admission gate from the fetch so the HTTP layer arms its timeout after admission, and fold `Retry-After` retry into that one loop.
+- [x] 7.2 Make author comparison surname-position independent and require given-name agreement where both sides supply one; bump the comparison rule version.
+- [x] 7.3 Encode a DOI consistently across every registry, RA, metadata, and Crossref URL.
+- [x] 7.4 Contain a throwing or inconsistent source client as `unavailable` for its own requests instead of failing the batch.
+- [x] 7.5 Key coalescing and caching on the lookup an input provokes, and aggregate comparisons per caller.
+- [x] 7.6 Export the full `CitationSourceClient` contract from the package entry point.
+- [x] 7.7 Inject the Semantic Scholar key through `BioToolKeys` instead of reading it from the environment inside the tool.
+- [x] 7.8 Add composed timeout/rate-limit, author-matching, source-containment, and shared-lookup tests.
+
+## 8. Verification
+
+- [x] 8.1 Format all changed harness source and test files with the subsystem formatter.
+- [x] 8.2 Run focused citation resolver, tool-roster, sandbox-registry, and adapter tests and resolve failures.
+- [x] 8.3 Run `tsc -p tsconfig.json`, `bun run lint`, and `bun run test:full` from `harness` and resolve regressions.
+- [x] 8.4 Run `openspec validate add-citation-resolution --strict` and confirm every task-backed requirement remains represented.

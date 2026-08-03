@@ -91,6 +91,9 @@ export {
     CitationFieldComparisonSchema,
     CitationConflictSchema,
     CitationCandidateClusterSchema,
+    CitationClusterRelationSchema,
+    CitationSourceOperationSchema,
+    CitationSourcePlanItemSchema,
 } from "./citations/types.js";
 export type {
     CitationKind,
@@ -114,7 +117,11 @@ export type {
     CitationFieldComparison,
     CitationConflict,
     CitationCandidateCluster,
+    // The full contract an embedder needs to supply its own `CitationSourceClient`.
     CitationSourceClient,
+    CitationSourceRequest,
+    CitationSourceOperation,
+    CitationSourcePlanItem,
 } from "./citations/types.js";
 
 // Seam: tool approval (`ctx.ask`). `createAskGateway` realizes the `Ask` seam

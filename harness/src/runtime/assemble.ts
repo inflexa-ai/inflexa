@@ -164,6 +164,9 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const citationResolver = createCitationResolver({
         ...(deps.citationResolverConfig ?? {}),
         ...(deps.citationResolverConfig?.ncbiApiKey !== undefined || conversation.bioKeys.ncbi === undefined ? {} : { ncbiApiKey: conversation.bioKeys.ncbi }),
+        ...(deps.citationResolverConfig?.semanticScholarApiKey !== undefined || conversation.bioKeys.semanticScholar === undefined
+            ? {}
+            : { semanticScholarApiKey: conversation.bioKeys.semanticScholar }),
     });
 
     const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder });

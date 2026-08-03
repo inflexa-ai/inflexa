@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { CitationRecord, CitationSourceClient, CitationSourceOutcome, CitationSourceRequest } from "../types.js";
-import { firstNonEmpty, parseYear, sourceOutcome } from "./common.js";
+import { encodeDoiPath, firstNonEmpty, parseYear, sourceOutcome } from "./common.js";
 import { requestJson, type SourceHttpOptions } from "../../literature/sources/http.js";
 
 const HandleResponseSchema = z.object({ responseCode: z.number() }).passthrough();
@@ -57,7 +57,7 @@ export function createDoiRegistryClient(options: SourceHttpOptions = {}): Citati
             }
 
             let requestCount = 1;
-            const handle = await requestJson(`https://doi.org/api/handles/${encodeURIComponent(doi)}`, HandleResponseSchema, options, signal);
+            const handle = await requestJson(`https://doi.org/api/handles/${encodeDoiPath(doi)}`, HandleResponseSchema, options, signal);
             if (handle.status !== "ok") {
                 return handle.status === "no_data"
                     ? {
@@ -74,11 +74,11 @@ export function createDoiRegistryClient(options: SourceHttpOptions = {}): Citati
             }
 
             requestCount += 1;
-            const agencyResult = await requestJson(`https://doi.org/doiRA/${encodeURIComponent(doi)}`, RegistrationAgencySchema, options, signal);
+            const agencyResult = await requestJson(`https://doi.org/doiRA/${encodeDoiPath(doi)}`, RegistrationAgencySchema, options, signal);
             const registrationAgency = agencyResult.status === "ok" ? agencyResult.value[0]?.RA : undefined;
 
             requestCount += 1;
-            const metadataResult = await requestJson(`https://doi.org/${doi}`, CslMetadataSchema, options, signal, {
+            const metadataResult = await requestJson(`https://doi.org/${encodeDoiPath(doi)}`, CslMetadataSchema, options, signal, {
                 headers: { Accept: "application/vnd.citationstyles.csl+json" },
             });
             const metadata = metadataResult.status === "ok" ? metadataResult.value : undefined;

@@ -157,4 +157,17 @@ describe("metadata comparison, verdict, and coverage", () => {
         ]);
         expect(result.verdict).toBe("verified");
     });
+
+    it("does not verify a citation whose author is a different person of the same surname", () => {
+        const record12345678 = (authors: string[]): CitationSourceOutcome =>
+            outcome("pubmed", "ok", [record("pubmed", "12345678", { identifiers: { pmid: "12345678" }, title: "Example study", authors, year: 2021 })]);
+        const cite = (authors: string[]): CitationInput => ({ citation: "PMID: 12345678", title: "Example study", authors, year: 2021 });
+
+        expect(aggregate(cite(["John Smith"]), [record12345678(["Jane Smith"])])).toMatchObject({
+            verdict: "metadata_mismatch",
+            coverage: "complete",
+        });
+        expect(aggregate(cite(["Smith J"]), [record12345678(["Jane Smith"])]).verdict).toBe("verified");
+        expect(aggregate(cite(["Smith, Jane A."]), [record12345678(["Jane A Smith"])]).verdict).toBe("verified");
+    });
 });
