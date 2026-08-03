@@ -186,8 +186,12 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 #
 # Only DEP is filtered out of the main batch. It was deprecated and dropped from
 # Bioc 3.23 — the release BiocManager pairs with R 4.6, i.e. the one the batch
-# installs from — so it has to come from 3.22, the last release that carries it,
-# installed separately below.
+# installs from — so it comes from the last release that carried it, Bioc 3.22.
+# It is installed below, pinned to the RELEASE_3_22 branch commit on
+# git.bioconductor.org (that commit is DEP 1.32.0). The git server keeps release
+# branches indefinitely, whereas the frozen release archive is moved under
+# /archive once a newer Bioconductor release ships; refresh the commit with
+# `git ls-remote https://git.bioconductor.org/packages/DEP RELEASE_3_22`.
 #
 # ANCOMBC and MSstats/MSstatsTMT install straight from the batch on this R/Bioc
 # pair and need no workaround: ANCOMBC 2.14 no longer depends on CVXR (whose
@@ -220,10 +224,11 @@ print(','.join([\"'\" + p + \"'\" for p in m.get('r',{}).get('bioconductor',[]) 
          BiocManager::install(c($BIOC_PKGS), lib='${INFLEXA_LIB_ROOT}/r/bioconductor', ask=FALSE, update=FALSE, force=TRUE, Ncpus=${R_NCPUS:-parallel::detectCores()})" 2>&1 \
          | tee /tmp/bioc-install.log \
          | grep --line-buffered -vE "$NOISE"; } || true; \
-       echo "--- Installing DEP from the frozen Bioc 3.22 source repo (deprecated and removed from Bioc 3.23 — the release the batch above installs from — so it comes from 3.22, the last release that carries it) ---"; \
-       retry_install "DEP (Bioc 3.22 frozen)" /tmp/bioc-dep.log R -e "\
+       echo "--- Installing DEP, pinned to git.bioconductor.org RELEASE_3_22 (deprecated and removed from the 3.23 batch above) ---"; \
+       retry_install "DEP (RELEASE_3_22 git pin)" /tmp/bioc-dep.log R -e "\
          .libPaths(c('${INFLEXA_LIB_ROOT}/r/bioconductor', '${INFLEXA_LIB_ROOT}/r/cran', .libPaths())); \
-         install.packages('DEP', lib='${INFLEXA_LIB_ROOT}/r/bioconductor', repos=c('https://bioconductor.org/packages/3.22/bioc', BiocManager::repositories()), dependencies=TRUE)"; \
+         options(repos=BiocManager::repositories()); \
+         remotes::install_git('https://git.bioconductor.org/packages/DEP', ref='251eef42dac5d6e648742ab8b79b8322d6218533', lib='${INFLEXA_LIB_ROOT}/r/bioconductor', dependencies=TRUE, upgrade='never')"; \
     fi \
     && echo "--- Capturing any bspm-apt-installed deps into the store bioconductor subtree ---" \
     && cp -an /usr/lib/R/site-library/. ${INFLEXA_LIB_ROOT}/r/bioconductor/ 2>/dev/null || true

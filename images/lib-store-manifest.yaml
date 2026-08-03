@@ -84,7 +84,6 @@ r:
         - DBI # AnnotationDbi, RSQLite
         - RSQLite # AnnotationDbi, ensembldb
         - XML # biomaRt, many BioC
-        - CVXR # ANCOMBC
         - DescTools # ANCOMBC
         - energy # ANCOMBC
         - emdbook # apeglm Imports it — needed at RUNTIME, so it has to be staged
