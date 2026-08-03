@@ -271,7 +271,7 @@ finally:
 - **stats() returns a list**: Even for a single bin, the return value is a list (e.g., `[0.5]`). Access with `[0]`. Returns `[None]` if the region has no data.
 - **Chromosome names must match exactly**: BigWig chromosome names are case-sensitive. `chr1` and `Chr1` are different. Check `bw.chroms()` for the exact names used.
 - **Writing order matters**: When writing, entries must be added in chromosome order matching the header, and within each chromosome they must be non-overlapping and sorted by start position.
-- **No network access**: pyBigWig accepts HTTP/HTTPS URLs, but there is no egress here, so opening one fails outright rather than running slowly. Downloading the file first is not an option either. Open reference tracks from a resolved path instead.
+- **URLs do not work**: open reference tracks from a resolved path (see the top of this file).
 - **Genome build must match**: a conservation or mappability track computed on a different build opens without complaint and returns values for the wrong coordinates. Compare `bw.chroms()` against your intervals — differing chromosome sets or lengths mean the wrong build.
 - **No context manager**: pyBigWig does not support Python `with` statements natively. Always use try/finally or explicit `close()`.
 - **addHeader is required before addEntries**: Calling addEntries before addHeader will fail silently or produce a corrupt file.

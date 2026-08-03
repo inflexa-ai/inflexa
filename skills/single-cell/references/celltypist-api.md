@@ -224,9 +224,7 @@ adata = predictions.to_adata()
 - **Over-clustering resolution**: For majority voting, use a high-resolution
   clustering (e.g., `resolution=2.0-5.0`) so that each micro-cluster is mostly
   one cell type. Too coarse a clustering defeats the purpose.
-- **No network access**: Never call `models.download_models()` — it reaches the
-  CellTypist model server and fails outright. `models.models_description()` reads
-  the same download cache and is equally unusable here.
+- **Never call `models.download_models()`** or `models.models_description()` (see the top of this file).
 - **Load models by absolute path**: `model="Immune_All_Low.pkl"` is a *name*
   lookup against `models.models_path`, not a file read. It fails whenever the
   model is not inside that cache directory. Pass the absolute path you resolved

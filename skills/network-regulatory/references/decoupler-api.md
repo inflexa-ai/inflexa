@@ -393,7 +393,7 @@ plt.close(fig)
 
 - **Gene orientation**: Input DataFrame must have genes as COLUMNS and samples as ROWS. This is transposed from typical bioinformatics convention. If you load a genes-as-rows matrix, transpose it first: `mat = mat.T`.
 - **Gene symbol matching**: Gene symbols in the expression data must match the network's `target` column. Use HGNC symbols for human. Always check overlap: `len(set(mat.columns) & set(net["target"]))`. Low overlap (<20% of network targets) indicates a symbol mismatch problem.
-- **No network access**: Never call `dc.op.collectri()`, `dc.op.progeny()`, or any other `dc.op.*()` loader. They query the OmniPath web API, and egress is blocked — the call fails outright. Load from a resolved file instead, with the reader its format calls for.
+- **Never call `dc.op.*()`**: those are the web loaders (see the top of this file).
 - **Network absent from the environment**: If no regulon or pathway-weight file resolves, say so and stop that branch of the analysis. Do not substitute a different network, and do not fabricate one from a marker list — a plausible-looking activity score computed against invented priors is worse than a missing result.
 - **tmin parameter**: Sources (TFs or pathways) with fewer than `tmin` targets present in your data are silently dropped. If a TF is missing from results, check how many of its targets are in your gene list. Lower `tmin` (e.g., `tmin=3`) to recover sparse TFs, but results become less reliable.
 - **AnnData obsm key naming**: In decoupler >=2.x, obsm keys follow the pattern `score_{method}` and `padj_{method}` (e.g., `score_ulm`, `padj_ulm`). Older versions used `{method}_estimate` and `{method}_pvals`. This project uses decoupler >=2.1.2 -- always use the `score_` / `padj_` prefix.
