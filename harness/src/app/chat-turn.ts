@@ -18,7 +18,7 @@ import type { Pool } from "pg";
 import { unwrapOrThrow } from "../lib/result.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { createThreadHistory } from "../memory/thread-history.js";
-import { createThreadStore } from "../memory/thread-store.js";
+import { createThreadStore, type ThreadType } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import { loadAnalysisStatus, queryNonTerminalRunsByAnalysis } from "../state/index.js";
 import { assembleMessages, type AssembledMessages } from "./message-assembly.js";
@@ -38,7 +38,7 @@ export interface PrepareChatTurnParams {
     readonly userInput: string;
 }
 
-export type PrepareChatTurnResult = ({ readonly kind: "ok" } & AssembledMessages) | { readonly kind: "not_found" };
+export type PrepareChatTurnResult = ({ readonly kind: "ok"; readonly threadType: ThreadType } & AssembledMessages) | { readonly kind: "not_found" };
 
 /**
  * Prepare one chat turn: resolve thread ownership, seed the title, load
@@ -57,16 +57,26 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
         return { kind: "not_found" };
     }
 
+    // The type a caller resolves the turn's agent from. An existing row carries
+    // its own. An absent one defaults to `conversation` — the store's own
+    // default — so a best-effort create that fails non-fatally still leaves a
+    // usable type; a successful create overrides it from the returned row.
+    let threadType: ThreadType = existing ? existing.threadType : "conversation";
+
     // Seed the thread title from the first user message. Best-effort.
     try {
         if (!existing) {
-            unwrapOrThrow(
+            // `createThread` is idempotent (ON CONFLICT reads the row back), so
+            // the returned row is authoritative for the type: a create that
+            // races another writer reflects the stored type, not an assumed one.
+            const created = unwrapOrThrow(
                 await store.createThread({
                     threadId,
                     analysisId,
                     title: deriveThreadTitle(userInput),
                 }),
             );
+            threadType = created.threadType;
         } else if (!existing.title || existing.title.length === 0) {
             unwrapOrThrow(await store.updateTitle(threadId, deriveThreadTitle(userInput)));
         }
@@ -92,5 +102,5 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
         workingMemory: createWorkingMemory(pool),
     });
 
-    return { kind: "ok", messages, userMessage };
+    return { kind: "ok", threadType, messages, userMessage };
 }

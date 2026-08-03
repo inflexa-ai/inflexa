@@ -261,7 +261,7 @@ async function runTurn(
     try {
         const outcome = await runChatTurn({
             pool: runtime.pool,
-            conversationAgent: runtime.conversationAgent,
+            agents: runtime.agents,
             chat: (emit) => createStreamingChat(runtime.conversation.provider, (text) => void emit({ type: "text-delta", text })),
             history,
             session,
@@ -297,6 +297,12 @@ async function runTurn(
                 break;
             case "thread_gone":
                 sink.errLine("This conversation thread is no longer available.");
+                printer.finishTurn();
+                break;
+            case "agent_unresolved":
+                // Preparation succeeded but this build has no agent for the thread's type; a retry cannot
+                // change that, so name the type and stop rather than suggesting one.
+                sink.errLine(`No agent is registered for "${outcome.threadType}" threads in this build.`);
                 printer.finishTurn();
                 break;
             default: {

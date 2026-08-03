@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createRoot } from "solid-js";
-import { okAsync } from "neverthrow";
+import { ok, okAsync } from "neverthrow";
 
 import { __resetNoticesForTest, __pendingNoticeCountForTest, currentNotice, notify } from "./notice.ts";
 import { __resetThreadWriteLocksForTest, runTurnWrite, withThreadWriteLock } from "./thread_write.ts";
@@ -21,7 +21,7 @@ const SID = "thread-1";
 const stubRuntime = {
     pool: {},
     conversation: { provider: { capabilities: { toolCalling: true } } },
-    conversationAgent: {},
+    agents: { forThread: () => ok({}) },
 } as unknown as HarnessRuntime;
 
 function runRow(over: Partial<CortexRunRow> & { runId: string }): CortexRunRow {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { ok } from "neverthrow";
 import { For } from "solid-js";
 import { testRender } from "@opentui/solid";
 
@@ -17,7 +18,11 @@ const AID = "a1";
 
 // A stub runtime whose pool/provider are never dereferenced (the fake engine never touches them);
 // `createStreamingChat` reads only `provider.capabilities` at construction.
-const stubRuntime = { pool: {}, conversation: { provider: { capabilities: { toolCalling: true } } }, conversationAgent: {} } as unknown as HarnessRuntime;
+const stubRuntime = {
+    pool: {},
+    conversation: { provider: { capabilities: { toolCalling: true } } },
+    agents: { forThread: () => ok({}) },
+} as unknown as HarnessRuntime;
 
 afterEach(() => resetHotState());
 

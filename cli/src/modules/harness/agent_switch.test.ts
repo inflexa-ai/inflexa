@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { okAsync } from "neverthrow";
+import { ok, okAsync } from "neverthrow";
 import type { AgentChat, AgentDefinition, ChatProvider, EmitFn, ModelMessage, Pool, RunProvenanceEvent, ThreadHistory } from "@inflexa-ai/harness";
 
 import { Bus } from "../../lib/bus.ts";
@@ -307,7 +307,12 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
             };
         };
         const prepareOk: ChatTurnSeams["prepare"] = () =>
-            Promise.resolve({ kind: "ok", messages: [{ role: "user", content: "?" }], userMessage: { role: "user", content: "?" } });
+            Promise.resolve({
+                kind: "ok",
+                threadType: "conversation",
+                messages: [{ role: "user", content: "?" }],
+                userMessage: { role: "user", content: "?" },
+            });
         const history: ThreadHistory = {
             appendTurn: () => okAsync(undefined),
             loadRecent: () => okAsync([]),
@@ -317,7 +322,7 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         const outcome = await runChatTurn(
             {
                 pool: {} as unknown as Pool,
-                conversationAgent: { id: "conv" } as unknown as AgentDefinition,
+                agents: { forThread: () => ok({ id: "conv" } as unknown as AgentDefinition) },
                 chat: () => ({}) as AgentChat,
                 history,
                 session: buildChatSession("tui-chat", "an-1", "t-1"),

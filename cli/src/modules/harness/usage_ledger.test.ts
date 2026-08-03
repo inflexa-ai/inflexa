@@ -239,7 +239,7 @@ describe("a chat turn's calls land in the local ledger", () => {
             {
                 // `prepare` is the only thing that would dereference it, and it is stood in for below.
                 pool: {} as unknown as Pool,
-                conversationAgent: agent("tui-chat", []),
+                agents: { forThread: () => ok(agent("tui-chat", [])) },
                 chat: () => chat,
                 history,
                 session,
@@ -250,7 +250,7 @@ describe("a chat turn's calls land in the local ledger", () => {
                 threadId: "thr-chat-turn",
                 userInput: "go",
             },
-            { prepare: () => Promise.resolve({ kind: "ok", messages: [userMessage], userMessage }), run: runAgent },
+            { prepare: () => Promise.resolve({ kind: "ok", threadType: "conversation", messages: [userMessage], userMessage }), run: runAgent },
         );
 
         expect(outcome.kind).toBe("ok");

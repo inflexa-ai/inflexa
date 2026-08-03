@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { okAsync, errAsync, type ResultAsync } from "neverthrow";
+import { ok, err, okAsync, errAsync, type ResultAsync } from "neverthrow";
 import type {
     AgentChat,
     AgentDefinition,
@@ -13,7 +13,7 @@ import type {
     UsageRecorder,
 } from "@inflexa-ai/harness";
 
-import { buildChatSession, healTailOrphan, runChatTurn, type ChatTurnSeams, type TurnOutcome } from "./turn.ts";
+import { buildChatSession, healTailOrphan, runChatTurn, type ChatTurnSeams, type RunChatTurnArgs, type TurnOutcome } from "./turn.ts";
 
 // The engine is exercised entirely offline: the `prepare`/`run` harness edges are
 // injected as fakes (no Postgres, no model, no credits — the BootSeams pattern),
@@ -37,7 +37,7 @@ const chat = (_emit: EmitFn): AgentChat => ({}) as AgentChat;
 const pool = {} as unknown as Pool;
 
 /** A `prepare` seam that assembles one turn successfully. */
-const prepareOk: ChatTurnSeams["prepare"] = () => Promise.resolve({ kind: "ok", messages: [userMessage], userMessage });
+const prepareOk: ChatTurnSeams["prepare"] = () => Promise.resolve({ kind: "ok", threadType: "conversation", messages: [userMessage], userMessage });
 /** A `prepare` seam that reports the thread absent/foreign (→ `thread_gone`). */
 const prepareNotFound: ChatTurnSeams["prepare"] = () => Promise.resolve({ kind: "not_found" });
 /** A `run` seam that finishes cleanly, appending one assistant message to the loop. */
@@ -127,11 +127,14 @@ function runWith(opts: {
     history: ThreadHistory;
     signal: AbortSignal;
     usageRecorder?: UsageRecorder;
+    agents?: RunChatTurnArgs["agents"];
 }): Promise<TurnOutcome> {
     return runChatTurn(
         {
             pool,
-            conversationAgent,
+            // The resolver a turn resolves its agent through. The default registers the fixed
+            // conversation agent for every type; the refusal case overrides it to refuse.
+            agents: opts.agents ?? { forThread: () => ok(conversationAgent) },
             chat,
             history: opts.history,
             session,
@@ -259,6 +262,34 @@ describe("runChatTurn", () => {
         const { history, appended } = recordingHistory();
         const outcome = await runWith({ prepare: prepareNotFound, run: runOk, history, signal: new AbortController().signal });
         expect(outcome.kind).toBe("thread_gone");
+        expect(appended).toEqual([]);
+    });
+
+    test("an unregistered thread type is agent_unresolved — runAgent is never reached and nothing is appended", async () => {
+        // Preparation SUCCEEDS and yields a valid `report` thread, but this build registered no agent
+        // for that type, so the resolver refuses on its `Result` channel. Distinct from `prepare_failed`:
+        // nothing faulted — the type is simply one this build cannot serve — so the turn bails BEFORE
+        // `runAgent` and persists nothing, exactly as the thread-gone bail does.
+        const { history, appended } = recordingHistory();
+        let ran = false;
+        // `runOk` is typed `ChatTurnSeams["run"]` (= `typeof runAgent`), so its four
+        // parameters are all required at the call site even though its body reads only
+        // the first two. Forward all four — dropping `s`/`opts` is a `tsc` error, not a
+        // cleanup (an automated-review bot flagged them as superfluous; they are not).
+        const run: ChatTurnSeams["run"] = (agent, initial, s, opts) => {
+            ran = true;
+            return runOk(agent, initial, s, opts);
+        };
+        const prepareReport: ChatTurnSeams["prepare"] = () => Promise.resolve({ kind: "ok", threadType: "report", messages: [userMessage], userMessage });
+        const outcome = await runWith({
+            prepare: prepareReport,
+            run,
+            history,
+            signal: new AbortController().signal,
+            agents: { forThread: () => err({ type: "unregistered_thread_type", threadType: "report" }) },
+        });
+        expect(outcome).toEqual({ kind: "agent_unresolved", threadType: "report" });
+        expect(ran).toBe(false);
         expect(appended).toEqual([]);
     });
 

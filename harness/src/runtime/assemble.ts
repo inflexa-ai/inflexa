@@ -15,11 +15,15 @@
  * before launch — a blue/green drain treats them as a single cohort.
  */
 
+import { err, ok, type Result } from "neverthrow";
+
 import { createConversationAgent, type ConversationAgentDeps } from "../agents/conversation-agent.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import type { AgentDefinition } from "../loop/types.js";
+import type { DomainError } from "../lib/result.js";
+import type { ThreadType } from "../memory/thread-store.js";
 import { registerExecuteAnalysis, type ExecuteAnalysisDeps, type ExecuteAnalysisInput, type ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
 import { registerSandboxStep, type SandboxStepDeps, type SandboxStepInput, type SandboxStepResult } from "../workflows/sandbox-step.js";
 import {
@@ -90,8 +94,66 @@ export interface CoreRuntimeDeps {
     readonly citationResolverConfig?: CitationResolverConfig;
 }
 
+/**
+ * The refusal a thread type carries no agent yet. `report` is a valid
+ * `ThreadType` with no registered agent until its builder plugs in at assembly,
+ * so resolution has to have a typed way to say "not that one" without throwing.
+ * The channel is permanent, not interim: `ThreadType` grows over the product's
+ * life, and a bare-`AgentDefinition` return would force every future member to
+ * register an agent in the same commit that adds the member.
+ */
+export interface UnregisteredThreadType {
+    readonly type: "unregistered_thread_type";
+    readonly threadType: ThreadType;
+}
+
+// `UnregisteredThreadType` is a `DomainError` (string `type`) — the compile-time
+// check keeps its refusal inside the cross-subsystem error vocabulary.
+type _AssertDomainError = UnregisteredThreadType extends DomainError ? true : never;
+const _assertDomainError: _AssertDomainError = true;
+
+/**
+ * How a thread's type selects the agent that runs its turns. Resolution is a
+ * synchronous record lookup, so the channel is plain `Result`, never
+ * `ResultAsync`: a registered type resolves to its assembled singleton, an
+ * unregistered one refuses on the error channel.
+ */
+export interface ThreadAgentResolver {
+    forThread(type: ThreadType): Result<AgentDefinition, UnregisteredThreadType>;
+}
+
+/**
+ * Wrap a type→agent registry as the resolution surface. Held apart from
+ * `assembleCoreRuntime` so the resolution contract — a registered type resolves
+ * to the very object the registry holds, an unregistered one refuses — is
+ * exercisable without the DBOS registration `assembleCoreRuntime` performs.
+ *
+ * The registry holds assembled singletons, so `forThread` returns the same
+ * `AgentDefinition` object on every call for a given type: construction-time
+ * captures (an embedder's delegating provider handles, closure-wired tools)
+ * stay valid across every turn.
+ */
+export function createThreadAgentResolver(registry: Partial<Record<ThreadType, AgentDefinition>>): ThreadAgentResolver {
+    return {
+        forThread: (type) => {
+            const agent = registry[type];
+            if (agent === undefined) {
+                const refusal: UnregisteredThreadType = { type: "unregistered_thread_type", threadType: type };
+                return err(refusal);
+            }
+            return ok(agent);
+        },
+    };
+}
+
 export interface CoreRuntime {
-    readonly conversationAgent: AgentDefinition;
+    /**
+     * Thread→agent resolution — the only way to reach an assembled agent by
+     * thread type. Holds the singletons this call built; `conversation` resolves
+     * to the assembled conversation agent, every not-yet-registered type refuses
+     * on the `Result` channel.
+     */
+    readonly agents: ThreadAgentResolver;
     readonly workflows: RegisteredWorkflows;
     readonly citationResolver: CitationResolver;
 }
@@ -120,8 +182,18 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         citationResolver,
     });
 
+    // The single registration point for every typed agent. One entry today; a
+    // future thread type's agent plugs in here at assembly with no embedder
+    // change. `conversation` is required at the type level because boot resolves
+    // it unconditionally (`boot.ts` backfill) — a dropped registration must fail
+    // tsc here, not surface only as a boot-time throw. The `Partial` over the
+    // rest keeps the compiler honest that `report` has no agent yet.
+    const agents: Record<"conversation", AgentDefinition> & Partial<Record<ThreadType, AgentDefinition>> = {
+        conversation: conversationAgent,
+    };
+
     return {
-        conversationAgent,
+        agents: createThreadAgentResolver(agents),
         workflows: {
             executeAnalysis,
             sandboxStep,
