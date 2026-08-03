@@ -122,10 +122,8 @@ Analysis goal?
 
 - **Treating protein data like RNA**: Protein counts have a different noise model (ambient antibody background, non-specific binding). Use TOTALVI or DSB normalization, not standard scRNA-seq normalization.
 - **Ignoring ambient protein signal in CITE-seq**: Isotype controls reveal background levels. Without correction, low-expression proteins are dominated by ambient signal.
-- **Not running per-modality QC before integration**: Each modality has distinct quality metrics. Cells passing RNA QC may fail ATAC QC (low TSS enrichment). Filter per-modality first.
-- **Using AnnData instead of MuData**: Cramming multiple modalities into a single AnnData (e.g., concatenating RNA and protein features) loses modality structure and breaks downstream tools. Always use MuData.
+- **Skipping per-modality QC and preprocessing before joint analysis**: Each modality has its own quality metrics and its own feature selection — cells passing RNA QC may fail ATAC QC, and a joint embedding built on unprocessed modalities inherits every one of those problems without surfacing them.
 - **Applying scRNA-seq normalization to ATAC**: ATAC data is binary/sparse. Use TF-IDF + LSI (via `mu.atac.pp.tfidf` + `mu.atac.tl.lsi`), not normalize_total + log1p.
-- **Joint embedding without per-modality preprocessing**: Each modality needs its own feature selection and dimensionality reduction before joint integration.
 - **Ignoring modality weights in WNN**: WNN computes per-cell modality weights. Cells where one modality is low-quality will down-weight it automatically, but only if per-modality QC was run.
 
 ## References

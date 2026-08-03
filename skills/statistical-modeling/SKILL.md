@@ -92,12 +92,7 @@ Escalate complexity only when simpler models underperform:
 
 ## Anti-Patterns
 
-- **No cross-validation**: Reporting train-set performance leads to overfitting claims. ALWAYS cross-validate.
-- **Data leakage**: Preprocessing (scaling, feature selection, imputation) MUST happen inside the cross-validation loop, not before the split. Use `sklearn.Pipeline` to enforce this.
-- **Wrong survival censoring encoding**: Verify that 1 = event occurred, 0 = censored. Swapping these inverts all results silently.
-- **Using accuracy for imbalanced classes**: A 95/5 class split gives 95% accuracy by predicting the majority class. Use AUC-ROC or AUPRC instead.
-- **Not reporting confidence intervals**: A single point estimate of AUC is insufficient. Always report CI from cross-validation or bootstrapping.
-- **Feature selection on full dataset then evaluating on same data**: This is a form of data leakage. Feature selection must be part of the cross-validation loop.
+- **Data leakage**: Preprocessing (scaling, feature selection, imputation) MUST happen inside the cross-validation loop, not before the split. Use `sklearn.Pipeline` to enforce this. Selecting features over all samples first is the most common form and the hardest to spot, because nothing errors — the estimate is simply optimistic by several AUC points.
 - **Ignoring multicollinearity in linear models**: Highly correlated features inflate coefficient variance. Use VIF checks or regularization (Ridge/ElasticNet).
 - **Overly complex models on small datasets**: With N < 100 samples, prefer simple models (logistic regression, Cox PH). Tree ensembles overfit on small N.
 

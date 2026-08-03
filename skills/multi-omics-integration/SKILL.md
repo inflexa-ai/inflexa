@@ -87,7 +87,7 @@ Choose the method based on your analytical question and data characteristics:
 1. **Per-modality QC and normalization BEFORE integration**: Each modality must be individually quality-controlled and normalized. Integration does not fix upstream data problems.
 2. **Match samples across modalities**: Ensure sample identifiers are consistent. Document which samples are missing in which modalities.
 3. **Handle missing modalities explicitly**: MOFA+ handles missing data natively. For other methods, either impute or restrict to complete cases.
-4. **Standardize scales**: If concatenating features (early fusion), standardize each modality to zero mean, unit variance to prevent scale-dominated results.
+4. **Standardize scales**: If concatenating features (early fusion), standardize each modality to zero mean, unit variance — TPM spans 0-1M and methylation beta values 0-1, so without it the larger-scale modality is the entire result.
 5. **Feature pre-selection**: For high-dimensional modalities (e.g., methylation 450k/EPIC), pre-filter to top variable features (top 5000-10000) before integration.
 
 ## MuData as Standard Container
@@ -110,11 +110,6 @@ Choose the method based on your analytical question and data characteristics:
 
 ## Anti-Patterns
 
-- **Integrating without per-modality QC**: Garbage in, garbage out. Each modality must be independently quality-controlled before integration. Batch effects in one modality contaminate all integrated results.
-- **Sample mismatch across modalities**: Mismatched sample IDs silently produce wrong results. Verify sample correspondence before integration.
-- **Different normalization scales without standardization**: Concatenating TPM (range 0-1M) with methylation beta values (range 0-1) without scaling means the larger-scale modality dominates entirely.
-- **Early fusion on high-dimensional data without feature selection**: Concatenating 20k genes + 400k CpGs is computationally intractable and noise-dominated. Pre-filter per modality.
-- **Ignoring missing modalities**: Dropping samples with any missing modality can severely reduce sample size. Use MOFA+ (handles missing data) or explicit imputation strategies.
 - **Too many MOFA+ factors**: Start with 10-15 factors. Most biological signal is in the first 5-8. Excess factors capture noise.
 - **Not validating integration quality**: Check that integrated clusters/factors are not driven by batch, modality, or technical artifacts. Plot factors colored by batch variables.
 - **Applying supervised methods without sufficient samples**: DIABLO with small N and many features overfits easily. Require N > 3x the number of selected features per component.
