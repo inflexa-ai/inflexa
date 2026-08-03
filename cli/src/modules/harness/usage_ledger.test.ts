@@ -240,7 +240,7 @@ describe("a chat turn's calls land in the local ledger", () => {
                 // `prepare` is the only thing that would dereference it, and it is stood in for below.
                 pool: {} as unknown as Pool,
                 conversationAgent: agent("tui-chat", []),
-                chat,
+                chat: () => chat,
                 history,
                 session,
                 emit: () => {},

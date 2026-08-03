@@ -1,5 +1,5 @@
 import { createEffect } from "solid-js";
-import { createThreadHistory, syntheticRecordMessage, type CortexRunRow, type Pool, type RunStatus } from "@inflexa-ai/harness";
+import { conversationRecordTurn, createThreadHistory, type CortexRunRow, type Pool, type RunStatus } from "@inflexa-ai/harness";
 
 import { getLogger } from "../../lib/log.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
@@ -182,7 +182,7 @@ const realRunCompletionSeams: RunCompletionSeams = {
         // only the record is RENDERED — the plain synthetic is loop machinery the display
         // reconstruction drops, so using it here would store the outcome and show nothing.
         createThreadHistory(pool)
-            .appendTurn(threadId, [syntheticRecordMessage(text)])
+            .appendTurn(threadId, conversationRecordTurn(text))
             .match(
                 () => ({ ok: true }),
                 (e) => ({ ok: false, error: e.type }),

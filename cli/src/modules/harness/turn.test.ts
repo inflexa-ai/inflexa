@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { okAsync, errAsync, type ResultAsync } from "neverthrow";
-import type { AgentChat, AgentDefinition, DbError, EmitFn, LlmUsageRecord, ModelMessage, Pool, ThreadHistory, UsageRecorder } from "@inflexa-ai/harness";
+import type {
+    AgentChat,
+    AgentDefinition,
+    ConversationTurn,
+    DbError,
+    EmitFn,
+    LlmUsageRecord,
+    ModelMessage,
+    Pool,
+    ThreadHistory,
+    UsageRecorder,
+} from "@inflexa-ai/harness";
 
 import { buildChatSession, healTailOrphan, runChatTurn, type ChatTurnSeams, type TurnOutcome } from "./turn.ts";
 
@@ -22,7 +33,7 @@ const DB_ERROR: DbError = { type: "query_failed", op: "thread-store.appendTurn",
 // The injected `run` seam never reads the provider, and the `prepare` seam never
 // reads the pool — bare stubs stand in for the unreachable dependencies rather
 // than constructing a real streaming provider / pg pool for a headless test.
-const chat = {} as unknown as AgentChat;
+const chat = (_emit: EmitFn): AgentChat => ({}) as AgentChat;
 const pool = {} as unknown as Pool;
 
 /** A `prepare` seam that assembles one turn successfully. */
@@ -36,8 +47,10 @@ const runOk: ChatTurnSeams["run"] = (_agent, initial) =>
  * A `run` seam that RESOLVES an interrupted turn: the streaming wrapper surfaces the abort as a
  * resolved "aborted" finish carrying the partial loop output (here one partial assistant message).
  */
-const runResolvesAbortedWithPartial: ChatTurnSeams["run"] = (_agent, initial) =>
-    Promise.resolve({ messages: [...initial, partialAssistant], finish: { reason: "aborted", cappedOut: false, truncationRecoveries: 0 } });
+const runResolvesAbortedWithPartial: ChatTurnSeams["run"] = async (_agent, initial, _session, options) => {
+    await options.emit({ type: "text-delta", text: "the ans" });
+    return { messages: [...initial, partialAssistant], finish: { reason: "aborted", cappedOut: false, truncationRecoveries: 0 } };
+};
 /** A `run` seam that resolves an "aborted" finish whose loop output is empty (nothing streamed before the abort). */
 const runResolvesAbortedEmpty: ChatTurnSeams["run"] = (_agent, initial) =>
     Promise.resolve({ messages: [...initial], finish: { reason: "aborted", cappedOut: false, truncationRecoveries: 0 } });
@@ -82,12 +95,12 @@ const runAborts: ChatTurnSeams["run"] = () => {
 /** A `ThreadHistory` whose `appendTurn` records its payload; the read methods are unused here. */
 function recordingHistory(append: () => ResultAsync<void, DbError> = () => okAsync(undefined)): {
     history: ThreadHistory;
-    appended: { threadId: string; messages: readonly ModelMessage[]; turnUsage: Parameters<ThreadHistory["appendTurn"]>[2] }[];
+    appended: { threadId: string; turn: ConversationTurn }[];
 } {
-    const appended: { threadId: string; messages: readonly ModelMessage[]; turnUsage: Parameters<ThreadHistory["appendTurn"]>[2] }[] = [];
+    const appended: { threadId: string; turn: ConversationTurn }[] = [];
     const history: ThreadHistory = {
-        appendTurn: (threadId, messages, turnUsage) => {
-            appended.push({ threadId, messages, turnUsage });
+        appendTurn: (threadId, turn) => {
+            appended.push({ threadId, turn });
             return append();
         },
         loadRecent: () => okAsync([]),
@@ -173,7 +186,12 @@ describe("runChatTurn", () => {
         }
         // The loop output (only the assistant reply, sliced past `initial`) is
         // appended after the standalone user message.
-        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage, assistantMessage], turnUsage: undefined }]);
+        expect(appended[0]?.threadId).toBe(THREAD_ID);
+        expect(appended[0]?.turn.modelMessages).toEqual([userMessage, assistantMessage]);
+        expect(appended[0]?.turn.displayMessages.map((message) => message.role)).toEqual(["user", "assistant"]);
+        // A turn that reported nothing carries no `turnUsage` KEY, not one holding `undefined` — the
+        // engine spreads it conditionally so absence has one representation all the way to storage.
+        expect(appended[0]?.turn && "turnUsage" in appended[0].turn).toBe(false);
     });
 
     test("a resolved aborted finish persists [userMessage, ...partial] and returns aborted", async () => {
@@ -182,7 +200,8 @@ describe("runChatTurn", () => {
         const { history, appended } = recordingHistory();
         const outcome = await runWith({ prepare: prepareOk, run: runResolvesAbortedWithPartial, history, signal: new AbortController().signal });
         expect(outcome.kind).toBe("aborted");
-        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage, partialAssistant], turnUsage: undefined }]);
+        expect(appended[0]?.turn.modelMessages).toEqual([userMessage, partialAssistant]);
+        expect(appended[0]?.turn.displayMessages[1]?.metadata).toEqual({ interrupted: true });
     });
 
     test("a resolved aborted finish with an empty partial persists [userMessage] alone", async () => {
@@ -190,7 +209,7 @@ describe("runChatTurn", () => {
         const outcome = await runWith({ prepare: prepareOk, run: runResolvesAbortedEmpty, history, signal: new AbortController().signal });
         expect(outcome.kind).toBe("aborted");
         // No loop output beyond `initial`, so the slice is empty and only the user turn is persisted.
-        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage], turnUsage: undefined }]);
+        expect(appended[0]?.turn.modelMessages).toEqual([userMessage]);
     });
 
     test("an AbortError under an aborted signal persists [userMessage] only and returns aborted", async () => {
@@ -201,7 +220,7 @@ describe("runChatTurn", () => {
         controller.abort();
         const outcome = await runWith({ prepare: prepareOk, run: runAborts, history, signal: controller.signal });
         expect(outcome.kind).toBe("aborted");
-        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage], turnUsage: undefined }]);
+        expect(appended[0]?.turn.modelMessages).toEqual([userMessage]);
     });
 
     test("a provider failure racing an abort is failed (cause preserved), never masked as aborted", async () => {
@@ -215,7 +234,7 @@ describe("runChatTurn", () => {
         const outcome = await runWith({ prepare: prepareOk, run: () => Promise.reject(cause), history, signal: controller.signal });
         expect(outcome.kind).toBe("failed");
         if (outcome.kind === "failed") expect(outcome.cause).toBe(cause);
-        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage], turnUsage: undefined }]);
+        expect(appended[0]?.turn.modelMessages).toEqual([userMessage]);
     });
 
     test("a non-abort throw with a non-aborted signal is a failed outcome carrying the cause", async () => {
@@ -224,7 +243,7 @@ describe("runChatTurn", () => {
         const outcome = await runWith({ prepare: prepareOk, run: () => Promise.reject(cause), history, signal: new AbortController().signal });
         expect(outcome.kind).toBe("failed");
         if (outcome.kind === "failed") expect(outcome.cause).toBe(cause);
-        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage], turnUsage: undefined }]);
+        expect(appended[0]?.turn.modelMessages).toEqual([userMessage]);
     });
 
     test("prepare failure short-circuits before runAgent — nothing is appended", async () => {
@@ -315,7 +334,7 @@ describe("runChatTurn carries the turn's usage rollup", () => {
         const { history, appended } = recordingHistory();
         await runWith({ prepare: prepareOk, run: runOkWithUsage, history, signal: new AbortController().signal });
         expect(appended).toHaveLength(1);
-        expect(appended[0]?.turnUsage).toEqual(TURN_USAGE);
+        expect(appended[0]?.turn.turnUsage).toEqual(TURN_USAGE);
     });
 
     test("an interrupted turn persists what it spent, and a turn that reported nothing persists nothing", async () => {
@@ -323,13 +342,13 @@ describe("runChatTurn carries the turn's usage rollup", () => {
         // the same unreported/nothing-spent conflation the whole ledger is built to avoid...
         const aborted = recordingHistory();
         await runWith({ prepare: prepareOk, run: runResolvesAbortedWithUsage, history: aborted.history, signal: new AbortController().signal });
-        expect(aborted.appended[0]?.turnUsage).toEqual(PARTIAL_USAGE);
+        expect(aborted.appended[0]?.turn.turnUsage).toEqual(PARTIAL_USAGE);
 
         // ...while a turn whose calls reported nothing writes `undefined`, never a zeroed stand-in the
         // reload would then render as a measurement.
         const silent = recordingHistory();
         await runWith({ prepare: prepareOk, run: runOk, history: silent.history, signal: new AbortController().signal });
-        expect(silent.appended[0]?.turnUsage).toBeUndefined();
+        expect(silent.appended[0]?.turn.turnUsage).toBeUndefined();
     });
 
     test("the carried rollup is a snapshot — the harness mutating its accumulator afterwards cannot change it", async () => {
