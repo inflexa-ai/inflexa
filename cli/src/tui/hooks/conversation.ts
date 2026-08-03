@@ -10,6 +10,7 @@ import {
     type EmitFn,
     type Pool,
     type RetractOutcome,
+    type ToolCallOutcome,
     type ThreadHistory,
 } from "@inflexa-ai/harness";
 
@@ -912,6 +913,36 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
 export type CortexMsg = ReturnType<typeof storedMessagesToCortex>[number];
 
 /**
+ * The local lifecycle status a replayed call renders as.
+ *
+ * The harness records a call's whole terminal state in one field, so this is a total mapping with
+ * nothing left to infer — which is the point: two hosts reading the same projection cannot disagree
+ * about what a call did, and the `never` branch makes a state added later a build failure here
+ * rather than a silent mis-render.
+ *
+ * `incomplete` — the turn was cut off mid-call — maps to `running`, which is what actually happened.
+ * It does not read as live because the message carries the interruption badge; the marker and that
+ * badge together say "in flight when the turn was cut off", so a renderer must not show one without
+ * the other. An absent outcome means a call still in flight, which a REPLAYED part never is; it is
+ * handled for the live surface's sake and lands on the same honest `running`.
+ */
+function replayedToolStatus(outcome: ToolCallOutcome | undefined): ToolCallPart["status"] {
+    switch (outcome) {
+        case "ok":
+        case "error":
+        case "denied":
+            return outcome;
+        case "incomplete":
+        case undefined:
+            return "running";
+        default: {
+            const unhandled: never = outcome;
+            throw new Error(`unhandled tool call outcome: ${String(unhandled)}`);
+        }
+    }
+}
+
+/**
  * Map a reconstructed {@link CortexMsg} to a {@link UIMessage}: text → text part; a replayed
  * tool-call → a finished tool part; recognized cards (`data-plan`/`data-run-card`) → card parts via
  * the SAME readers the live adapter uses; anything else the harness resolver kept → a visible tagged
@@ -935,16 +966,6 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
                 parts.push({ id: randomUUIDv7(), sessionId, messageId: m.id, type: "text", text: part.text, createdAt: 0 });
                 break;
             case "tool-call":
-                // A replayed call normally arrives `finished` with the outcome the harness recorded as
-                // the call ended. It arrives `started` when the turn was cut off mid-call: the harness
-                // observed a dispatch and no completion, and deliberately does not invent an outcome
-                // for it — reporting `ok` would claim a result the tool never returned, and `error` a
-                // failure it never had.
-                //
-                // `running` is that call's honest state, and it does not read as live here because the
-                // message it sits in carries the interruption badge: the pair says "in flight when the
-                // turn was cut off". This is why the badge and this marker must not be separated — the
-                // marker alone would look like a call still in progress.
                 parts.push({
                     id: part.toolCallId || randomUUIDv7(),
                     sessionId,
@@ -952,7 +973,7 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
                     type: "tool-call",
                     name: part.toolName,
                     ...(part.detail !== undefined ? { detail: part.detail } : {}),
-                    status: part.status === "started" ? "running" : (part.outcome ?? "ok"),
+                    status: replayedToolStatus(part.outcome),
                     createdAt: 0,
                 });
                 break;

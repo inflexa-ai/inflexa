@@ -33,9 +33,11 @@ The projection is taken once, immediately before `appendTurn`, with `fallbackTex
 
 Not inside the `ok` branch, for the same reason the usage rollup rides all three: an aborted turn displayed real work, and its projection is what the retract window renders. A failed turn likewise displayed whatever it produced before it threw.
 
-### D3 — An interrupted call replays as `running`
+### D3 — An `incomplete` call replays as `running`
 
-A call in flight when a turn was cut off replays with `status: "started"` and no outcome — the harness records what it observed and does not invent an outcome. The local part type has four statuses and none of them means this.
+A call in flight when a turn was cut off replays with `outcome: "incomplete"` — the harness records its whole terminal state in one field and does not invent a result. The local part type has four statuses and none of them means this.
+
+The mapping is exhaustive over the harness union, with a `never` arm rather than a default: nothing is inferred from an absent value, and a state added upstream breaks the build here instead of rendering as something plausible.
 
 It maps to `running`. That does not read as live here because the message carries the interruption badge: the pair says "in flight when the turn was cut off". **The two must not be separated** — the marker alone would look like a call still in progress.
 

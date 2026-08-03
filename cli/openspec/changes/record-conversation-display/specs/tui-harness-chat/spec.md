@@ -44,17 +44,25 @@ A record appended without one is stored and read by the model but never displaye
 - **WHEN** the thread is reloaded
 - **THEN** the record renders as an event message
 
-### Requirement: A call with no recorded outcome renders as running
+### Requirement: An incomplete call renders as running
 
-A reloaded tool call that carries no outcome SHALL render as running, and MUST NOT be reported as a success or as a failure.
+A reloaded tool call whose recorded outcome is `incomplete` SHALL render as running, and MUST NOT be reported as a success or as a failure.
 
-It has no outcome because the harness observed a dispatch and no completion — the turn was cut off mid-call — and deliberately records that rather than inventing one. Reporting `ok` would claim a result the tool never returned; reporting an error would claim a failure it never had. It reads correctly because the message it sits in carries the interruption badge: the marker and the badge together are what say "in flight when the turn was cut off", so a renderer MUST NOT show one without the other.
+`incomplete` is what the harness observed: a dispatch and no completion, because the turn was cut off mid-call. Reporting `ok` would claim a result the tool never returned; reporting an error would claim a failure it never had. It reads correctly because the message it sits in carries the interruption badge: the marker and the badge together are what say "in flight when the turn was cut off", so a renderer MUST NOT show one without the other.
+
+The mapping from a recorded outcome to a rendered status SHALL be total and exhaustive over the harness's outcome union, with no default arm and no fallback for an unrecognized value. The harness carries a call's whole terminal state in one field precisely so a host need infer nothing; an exhaustive mapping is what converts a state added later into a build failure here rather than a silent mis-render, and it is what keeps two hosts reading the same projection from disagreeing about what a call did.
 
 #### Scenario: An interrupted call renders as running beside the interruption badge
 
 - **GIVEN** a persisted turn interrupted while a tool call was in flight
 - **WHEN** the thread is reloaded
-- **THEN** the call renders as running and its message carries the interruption badge
+- **THEN** the call's recorded outcome is `incomplete`, it renders as running, and its message carries the interruption badge
+
+#### Scenario: A newly added outcome does not compile silently
+
+- **GIVEN** the harness widens its recorded-outcome union
+- **WHEN** the host is rebuilt
+- **THEN** the status mapping fails to compile until the new state is handled
 
 ## MODIFIED Requirements
 
