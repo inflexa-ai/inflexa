@@ -18,11 +18,14 @@ import {
     deleteSessionFlow,
     exportProvenanceToFile,
     modelStatusLines,
+    newSessionFlow,
     openAnalysis,
     openRenameSession,
     openRestoreSession,
     openSwitchSession,
     purgeSessionFlow,
+    selectSwitchSession,
+    switchSessionItems,
     type AnalysisDeleteSeams,
     type CommandId,
     type ProvExportSeams,
@@ -146,10 +149,23 @@ describe("session command gating", () => {
     test("ready with a bound thread offers every session command", () => {
         __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
         expect(enabledOf("session.switch", BOUND)).toBe(true);
+        expect(enabledOf("session.new", BOUND)).toBe(true);
         expect(enabledOf("session.rename", BOUND)).toBe(true);
         expect(enabledOf("session.delete", BOUND)).toBe(true);
         expect(enabledOf("session.restore", BOUND)).toBe(true);
         expect(enabledOf("session.purge", BOUND)).toBe(true);
+    });
+
+    // New session needs no bound thread (it mints its own), but it does need an analysis to mint under and
+    // a ready runtime — a fresh id bound pre-`ready` would suppress the boot-edge open of the real thread.
+    test("New session is offered exactly when an analysis is open and the runtime is ready", () => {
+        __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
+        expect(enabledOf("session.new", scope(ANALYSIS, null))).toBe(true);
+        // No analysis: nothing to mint a conversation under.
+        expect(enabledOf("session.new", scope(null, "thread-bound-1"))).toBe(false);
+        // Not ready: the mint needs no Postgres, but the chat it opens onto cannot send a turn yet.
+        __setBootStateForTest({ phase: "booting" });
+        expect(enabledOf("session.new", BOUND)).toBe(false);
     });
 
     test("no analysis in scope: the analysis-scoped session commands stay unavailable", () => {
@@ -908,6 +924,129 @@ describe("session flows", () => {
         await stale;
 
         expect(w.opened).toEqual([{ threadId: "thread-bravo", analysisId: OTHER.id }]);
+    });
+
+    // The new-session flow's whole output is the mint it hands `openSession`, so its id, working dir, and
+    // analysis all have to be observable — `sessionScope` above records only the id + analysis, so these
+    // cases use a recorder that keeps every argument. Its `closes` counter proves the picker's creation
+    // row dismisses the dialog before swapping.
+    function recordingScope(
+        analysis: Analysis | null,
+        sessionId: string | null,
+    ): { ws: Workspace; opened: { threadId: string | null; workingDir: string; analysisId: string }[]; closes: () => number } {
+        const opened: { threadId: string | null; workingDir: string; analysisId: string }[] = [];
+        let closes = 0;
+        const ws = {
+            analysis,
+            sessionId,
+            workingDir: "/work",
+            project: null,
+            openDialog: () => {},
+            closeDialog: () => {
+                closes += 1;
+            },
+            openSession: (threadId: string | null, workingDir: string, next: Analysis) => {
+                opened.push({ threadId, workingDir, analysisId: next.id });
+            },
+            quit: async () => {},
+        } as unknown as Workspace;
+        return { ws, opened, closes: () => closes };
+    }
+
+    test("New session mints a fresh id and swaps to it in the same analysis and working dir", () => {
+        __setBootStateForTest(READY);
+        const t = makeSeams();
+        const w = recordingScope(ANALYSIS, "thread-current");
+
+        newSessionFlow(w.ws, t.seams);
+
+        expect(w.opened).toHaveLength(1);
+        expect(w.opened[0]?.analysisId).toBe(ANALYSIS.id);
+        expect(w.opened[0]?.workingDir).toBe("/work");
+        // A genuinely fresh identity, never the one already open, and never null (that is the unbound state).
+        expect(w.opened[0]?.threadId).toBeTruthy();
+        expect(w.opened[0]?.threadId).not.toBe("thread-current");
+        // Success is silent: the swap is the whole of what the user sees.
+        expect(t.notices).toEqual([]);
+    });
+
+    test("two New session invocations mint two different ids", () => {
+        __setBootStateForTest(READY);
+        const t = makeSeams();
+        const w = recordingScope(ANALYSIS, null);
+
+        newSessionFlow(w.ws, t.seams);
+        newSessionFlow(w.ws, t.seams);
+
+        expect(w.opened).toHaveLength(2);
+        expect(w.opened[0]?.threadId).not.toBe(w.opened[1]?.threadId);
+    });
+
+    test("New session dispatched by id before ready speaks the refusal and swaps nothing", () => {
+        // The palette hides the command pre-`ready`, but a by-id dispatch skips `enabled`, so the body
+        // carries the same phase refusal the switch picker does — warn on the terminal `failed`, an
+        // in-progress notice on every other non-ready phase.
+        __setBootStateForTest({ phase: "failed", message: "postgres unreachable" });
+        const failed = makeSeams();
+        const wf = recordingScope(ANALYSIS, "thread-1");
+
+        newSessionFlow(wf.ws, failed.seams);
+
+        expect(wf.opened).toEqual([]);
+        expect(failed.notices).toHaveLength(1);
+        expect(failed.notices[0]?.kind).toBe("warn");
+        expect(failed.notices[0]?.text).toContain("did not start");
+        expect(failed.notices[0]?.text).not.toContain("booting");
+
+        __setBootStateForTest({ phase: "booting" });
+        const booting = makeSeams();
+        const wb = recordingScope(ANALYSIS, "thread-1");
+
+        newSessionFlow(wb.ws, booting.seams);
+
+        expect(wb.opened).toEqual([]);
+        expect(booting.notices).toHaveLength(1);
+        expect(booting.notices[0]?.kind).toBe("info");
+        expect(booting.notices[0]?.text).toContain("booting");
+    });
+
+    test("the switch picker offers a pinned creation row, present even with zero threads", () => {
+        const items = switchSessionItems([]);
+        const creationRow = items.find((i) => i.pinned);
+        expect(creationRow).toBeDefined();
+        expect(creationRow?.title).toBe("Start a new session");
+        // With no threads it is the ONLY row, so the picker is never empty and the create action is always
+        // reachable.
+        expect(items).toHaveLength(1);
+    });
+
+    test("selecting the creation row closes the dialog and swaps onto a fresh mint", () => {
+        __setBootStateForTest(READY);
+        const t = makeSeams();
+        const w = recordingScope(ANALYSIS, "thread-current");
+        // The sentinel is whatever value the pinned row carries — the test names it the way a pick does.
+        // `switchSessionItems` always includes that one pinned row, so this find never misses.
+        const sentinel = switchSessionItems([]).find((i) => i.pinned)!.value;
+
+        selectSwitchSession(w.ws, sentinel, ANALYSIS, t.seams);
+
+        expect(w.closes()).toBe(1);
+        expect(w.opened).toHaveLength(1);
+        expect(w.opened[0]?.analysisId).toBe(ANALYSIS.id);
+        expect(w.opened[0]?.threadId).toBeTruthy();
+        expect(w.opened[0]?.threadId).not.toBe("thread-current");
+    });
+
+    test("selecting a thread row closes the dialog and swaps onto that thread", () => {
+        __setBootStateForTest(READY);
+        const t = makeSeams();
+        const w = recordingScope(ANALYSIS, "thread-current");
+        const row = threadRow({ threadId: "thread-picked" });
+
+        selectSwitchSession(w.ws, row, ANALYSIS, t.seams);
+
+        expect(w.closes()).toBe(1);
+        expect(w.opened).toEqual([{ threadId: "thread-picked", workingDir: "/work", analysisId: ANALYSIS.id }]);
     });
 });
 
