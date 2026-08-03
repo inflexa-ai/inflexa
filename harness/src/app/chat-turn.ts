@@ -58,21 +58,25 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
     }
 
     // The type a caller resolves the turn's agent from. An existing row carries
-    // its own; an absent one is created below with no type, which the store
-    // writes as `conversation` — so even a best-effort create that fails
-    // non-fatally leaves this the type the turn proceeds under.
-    const threadType: ThreadType = existing ? existing.threadType : "conversation";
+    // its own. An absent one defaults to `conversation` — the store's own
+    // default — so a best-effort create that fails non-fatally still leaves a
+    // usable type; a successful create overrides it from the returned row.
+    let threadType: ThreadType = existing ? existing.threadType : "conversation";
 
     // Seed the thread title from the first user message. Best-effort.
     try {
         if (!existing) {
-            unwrapOrThrow(
+            // `createThread` is idempotent (ON CONFLICT reads the row back), so
+            // the returned row is authoritative for the type: a create that
+            // races another writer reflects the stored type, not an assumed one.
+            const created = unwrapOrThrow(
                 await store.createThread({
                     threadId,
                     analysisId,
                     title: deriveThreadTitle(userInput),
                 }),
             );
+            threadType = created.threadType;
         } else if (!existing.title || existing.title.length === 0) {
             unwrapOrThrow(await store.updateTitle(threadId, deriveThreadTitle(userInput)));
         }

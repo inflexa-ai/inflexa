@@ -171,8 +171,11 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
 
     // The single registration point for every typed agent. One entry today; a
     // future thread type's agent plugs in here at assembly with no embedder
-    // change, and `Partial` keeps the compiler honest that `report` has none yet.
-    const agents: Partial<Record<ThreadType, AgentDefinition>> = {
+    // change. `conversation` is required at the type level because boot resolves
+    // it unconditionally (`boot.ts` backfill) — a dropped registration must fail
+    // tsc here, not surface only as a boot-time throw. The `Partial` over the
+    // rest keeps the compiler honest that `report` has no agent yet.
+    const agents: Record<"conversation", AgentDefinition> & Partial<Record<ThreadType, AgentDefinition>> = {
         conversation: conversationAgent,
     };
 
