@@ -219,6 +219,12 @@ Goal?
 │   └── scVelo (requires spliced + unspliced layers from velocyto/STARsolo)
 │       └── Check: adata.layers["spliced"], adata.layers["unspliced"] must exist
 └── Fate mapping → CellRank (integrates velocity + transcriptome for fate probabilities)
+    └── Build a kernel, then fit an estimator on it: cr.kernels.VelocityKernel
+        when velocity layers exist, cr.kernels.PseudotimeKernel when they do
+        not, then cr.estimators.GPCCA for macrostates and fate probabilities.
+        Kernels combine by weighted sum (velocity + connectivity is the usual
+        pairing). The 1.x `cr.tl.*` entry points were removed in CellRank 2 —
+        code written against them fails on import, not at run time.
 ```
 
 ### Cell-Cell Communication
