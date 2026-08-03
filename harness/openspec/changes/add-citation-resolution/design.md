@@ -77,6 +77,13 @@ mismatch conclusion. Source-returned or model-recalled values never become
 caller evidence. Identifier-only inputs may verify identity without pretending
 that unspecified metadata was compared.
 
+A pinned kind binds the whole pipeline, not just classification. `auto` would
+have called a citation containing a DOI a DOI citation, so a caller who pins
+`free_text` is overriding exactly that — and normalization extracts no
+identifier for it. Extracting one anyway split the pipeline against itself: the
+plan gave the citation bibliographic-only treatment while candidate scoring
+short-circuited to a perfect score on an identifier no source had verified.
+
 ### 3. A source plan is computed before any request
 
 A pure planner maps normalized input to source operations. Each source is marked
@@ -108,6 +115,16 @@ incomplete comparisons. Crossref is queried as the registration source only
 when the RA result identifies Crossref; it is not used to declare non-Crossref
 DOIs absent. Treating Crossref as the DOI registry was rejected because it
 creates false negatives for other registration agencies.
+
+The gate carries three states, not a nullable agency name. "DataCite owns this"
+and "nobody could tell us" both leave the agency un-equal to Crossref, but only
+the first is a finding, and collapsing them lets Crossref report ownership it
+never established. Worse, it makes the skip look deliberate: an outcome of
+`not_applicable` is excluded from coverage, so a DOI that neither the registry
+nor Crossref ever checked could satisfy complete coverage and be declared
+`not_found`. An undetermined agency is therefore `unavailable` — the honest
+shape for a source that could not contribute — which keeps coverage partial and
+the verdict inconclusive.
 
 ### 5. Source adapters return one common evidence shape
 

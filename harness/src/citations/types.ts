@@ -184,11 +184,24 @@ export const CitationSourcePlanItemSchema = z.object({
 });
 export type CitationSourcePlanItem = z.infer<typeof CitationSourcePlanItemSchema>;
 
+/**
+ * What the DOI registry established about who registered a DOI, for a source
+ * whose applicability turns on it.
+ *
+ * `undetermined` is not `absent`. A registry that timed out, was disabled, or
+ * never answered has established nothing, and a source that declines to run on
+ * that basis must report the gap rather than an ownership finding it never made
+ * — the difference between "another agency owns this" and "we could not tell"
+ * is exactly what a reader of `sourceOutcomes` needs.
+ */
+export type RegistrationAgencyEvidence =
+    { readonly status: "determined"; readonly agency: string } | { readonly status: "absent" } | { readonly status: "undetermined"; readonly detail: string };
+
 export interface CitationSourceRequest {
     readonly input: CitationInput;
     readonly normalized: NormalizedCitation;
     readonly plan: CitationSourcePlanItem;
-    readonly registrationAgency?: string;
+    readonly registrationAgency: RegistrationAgencyEvidence;
 }
 
 export interface CitationSourceClient {

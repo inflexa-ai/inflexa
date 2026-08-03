@@ -57,8 +57,20 @@ export function createCrossrefClient(options: CrossrefClientOptions = {}): Citat
         source: "crossref",
         async resolve(request: CitationSourceRequest, signal?: AbortSignal): Promise<CitationSourceOutcome> {
             if (!request.plan.applicable) return sourceOutcome("crossref", request.plan.operation, "not_applicable", 0, [], request.plan.reason);
-            if (request.plan.operation === "crossref_doi_if_owned" && request.registrationAgency?.toLocaleLowerCase("en-US") !== "crossref") {
-                return sourceOutcome("crossref", request.plan.operation, "not_applicable", 0, [], "DOI is not registered by Crossref");
+            const registration = request.registrationAgency;
+            if (request.plan.operation === "crossref_doi_if_owned") {
+                // Skipping because ownership lies elsewhere is a finding; skipping because
+                // nobody could tell us is a gap, and reporting the gap as `not_applicable`
+                // would let an unchecked DOI reach `not_found` on complete coverage.
+                if (registration.status === "undetermined") {
+                    return sourceOutcome("crossref", request.plan.operation, "unavailable", 0, [], `registration agency undetermined: ${registration.detail}`);
+                }
+                if (registration.status === "absent") {
+                    return sourceOutcome("crossref", request.plan.operation, "not_applicable", 0, [], "the DOI handle does not resolve");
+                }
+                if (registration.agency.toLocaleLowerCase("en-US") !== "crossref") {
+                    return sourceOutcome("crossref", request.plan.operation, "not_applicable", 0, [], "DOI is not registered by Crossref");
+                }
             }
 
             const doi = request.normalized.identifiers.doi;

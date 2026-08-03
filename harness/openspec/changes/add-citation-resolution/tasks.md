@@ -58,6 +58,8 @@
 - [x] 7.6 Export the full `CitationSourceClient` contract from the package entry point.
 - [x] 7.7 Inject the Semantic Scholar key through `BioToolKeys` instead of reading it from the environment inside the tool.
 - [x] 7.8 Add composed timeout/rate-limit, author-matching, source-containment, and shared-lookup tests.
+- [x] 7.9 Separate an undetermined registration agency from an established other-agency one, so a gated source reports the gap rather than non-ownership it never established.
+- [x] 7.10 Honor a pinned `free_text` kind through planning and candidate scoring by extracting no identifier for it.
 
 ## 8. Verification
 

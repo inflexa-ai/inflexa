@@ -21,6 +21,7 @@ import {
     type CitationSourceClient,
     type CitationSourceOutcome,
     type CitationSourceRequest,
+    type RegistrationAgencyEvidence,
 } from "./types.js";
 
 const SOURCE_PLAN_VERSION = "citation-plan-v1";
@@ -132,6 +133,21 @@ function withCallerSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise
 }
 
 /**
+ * Read the DOI registry's outcome as evidence about the registration agency.
+ *
+ * The registry runs first in `SOURCE_ORDER`, so every later source sees its
+ * result. Only a named agency is a finding; every other shape — the registry
+ * disabled, unreachable, or silent on the agency — leaves ownership unknown.
+ */
+function registrationAgencyEvidence(outcome: CitationSourceOutcome | undefined): RegistrationAgencyEvidence {
+    if (outcome === undefined) return { status: "undetermined", detail: "the DOI registry was not consulted" };
+    const evidence = outcome.identifierEvidence;
+    if (evidence?.registrationAgency !== undefined) return { status: "determined", agency: evidence.registrationAgency };
+    if (evidence?.exists === false) return { status: "absent" };
+    return { status: "undetermined", detail: outcome.detail ?? `the DOI registry returned ${outcome.status}` };
+}
+
+/**
  * Run one source over the requests routed to it, keeping its failures its own.
  *
  * A source that throws, or that answers a batch with the wrong number of
@@ -195,14 +211,11 @@ export function createCitationResolver(config: CitationResolverConfig = {}, deps
                     );
                     continue;
                 }
-                const doiOutcome = outcomes[index]!.get("doi_registry");
                 requests.push({
                     input: entry.input,
                     normalized: entry.normalized,
                     plan,
-                    ...(doiOutcome?.identifierEvidence?.registrationAgency === undefined
-                        ? {}
-                        : { registrationAgency: doiOutcome.identifierEvidence.registrationAgency }),
+                    registrationAgency: registrationAgencyEvidence(outcomes[index]!.get("doi_registry")),
                 });
                 requestIndices.push(index);
             }

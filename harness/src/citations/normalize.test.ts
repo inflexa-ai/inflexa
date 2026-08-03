@@ -46,6 +46,13 @@ describe("citation input and normalization", () => {
         expect(normalizeAuthor("García, María III")).toBe("garcía maría");
     });
 
+    it("publishes no identifier for a citation the caller pinned as free text", () => {
+        const pinned = normalizeCitation({ citation: "Smith et al. See doi:10.1000/abc for details.", kind: "free_text" });
+
+        expect(pinned.identifiers).toEqual({});
+        expect(normalizeCitation({ citation: "Smith et al. See doi:10.1000/abc for details." }).identifiers).toEqual({ doi: "10.1000/abc" });
+    });
+
     it("rejects malformed hinted identifiers", () => {
         expect(() => normalizeCitation({ citation: "not a doi", kind: "doi" })).toThrow("no valid DOI");
         expect(() => normalizeCitation({ citation: "PMID: abc", kind: "pmid" })).toThrow("no valid PMID");
