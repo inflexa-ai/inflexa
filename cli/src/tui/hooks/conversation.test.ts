@@ -1329,10 +1329,17 @@ describe("reload maps a reconstructed tool call's outcome and detail", () => {
         expect(reloadToolPart({ outcome: "ok" })?.status).toBe("ok");
     });
 
-    // The converter reports `ok` for a call whose `tool` row was never appended, so an absent outcome
-    // must not be read as a failure — the transcript is incomplete, not unsuccessful.
-    test("a call with no recovered outcome reloads as ok", () => {
-        expect(reloadToolPart({})?.status).toBe("ok");
+    // A call the turn never saw finish carries `incomplete` — the one field says so, rather than a
+    // reader deducing it from an absent value. It renders as `running`, which is what happened; the
+    // message's interruption badge is what says it will never finish.
+    test("a call cut off mid-flight reloads as running, not as a success or a failure", () => {
+        expect(reloadToolPart({ outcome: "incomplete" })?.status).toBe("running");
+    });
+
+    // A replayed part always carries an outcome, so this is the live in-flight shape rather than a
+    // transcript one. It lands on the same honest `running` rather than defaulting to a result.
+    test("a part with no outcome at all is treated as in flight, never as ok", () => {
+        expect(reloadToolPart({})?.status).toBe("running");
     });
 
     test("a rebuilt detail rides the reconstructed part", () => {

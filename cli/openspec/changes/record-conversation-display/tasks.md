@@ -10,7 +10,7 @@
 - [x] 2.1 Collapse the `toCortex` seam to a synchronous read of stored projections; drop the pool, analysis id, tool roster, card resolver and detail resolver.
 - [x] 2.2 Remove the `ResultAsync` bridge and the unreachable error branch in `loadMessages`, keeping the generation check immediately before the store write.
 - [x] 2.3 Retype `CortexMsg` off the replay function and drop the removed harness imports.
-- [x] 2.4 Render a call with no recorded outcome as running.
+- [x] 2.4 Map the harness's recorded outcome to a rendered status exhaustively, with a `never` arm; `incomplete` renders as running.
 
 ## 3. Records
 
@@ -18,7 +18,7 @@
 
 ## 4. Verify
 
-- [x] 4.1 Test that an interrupted call replays as running with its recorded detail, beside a denied call that reports its own outcome.
+- [x] 4.1 Test that an `incomplete` call replays as running with its recorded detail, beside a denied call that reports its own outcome.
 - [x] 4.2 Update the turn-engine fakes to the turn value, keeping the assertion that a turn reporting nothing carries no rollup key.
 - [x] 4.3 Make the reload seam fakes synchronous; confirm the load-interleaving tests still gate on the page read.
 - [x] 4.4 Run `bun run format:file` on the changed files, then `bun run typecheck`, `bun run lint`, and `bun run test`.

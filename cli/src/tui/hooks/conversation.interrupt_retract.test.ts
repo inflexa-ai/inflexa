@@ -678,10 +678,10 @@ describe("the interrupted marker survives a transcript reload", () => {
     });
 
     test("a call cut off mid-flight replays as running, never as a success or a failure", async () => {
-        // The harness records what it observed — a dispatch and no completion — and stores the call
-        // `started` with no outcome rather than inventing one. Reporting `ok` here would claim a result
-        // the tool never returned; `error` would claim a failure it never had. `running` is what
-        // happened, and the message's interruption badge is what says it will never finish.
+        // The harness records what it observed — a dispatch and no completion — in the ONE field that
+        // carries a call's terminal state. `incomplete` is not a success and not a failure, and the
+        // mapping to `running` is total, so no reader has to infer anything from an absent value. The
+        // message's interruption badge is what says it will never finish.
         const loadSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadPage: () => okAsync(emptyPage(1)),
@@ -692,8 +692,8 @@ describe("the interrupted marker survives a transcript reload", () => {
                         role: "assistant",
                         interrupted: true,
                         parts: [
-                            { type: "tool-call", toolCallId: "t1", toolName: "read_file", status: "started", detail: "scripts/run.py" },
-                            { type: "tool-call", toolCallId: "t2", toolName: "grep", status: "finished", outcome: "denied" },
+                            { type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "incomplete", detail: "scripts/run.py" },
+                            { type: "tool-call", toolCallId: "t2", toolName: "grep", outcome: "denied" },
                         ],
                     },
                 ] as unknown as CortexMsg[],
