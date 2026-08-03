@@ -25,8 +25,13 @@ process.env.XDG_CONFIG_HOME = join(sandbox, "config");
 // `bun test` from the repo root, which skips cli/bunfig.toml) and the reset must refuse.
 process.env.INFLEXA_TEST_SANDBOX = sandbox;
 
-// bun test runs the whole suite in a single process, so one exit hook reaps the sandbox (the temp
-// DB plus its -wal/-shm sidecars) after the last test file.
+// A best-effort reap of the sandbox (the temp DB plus its -wal/-shm sidecars) that does NOT actually
+// clean up: bun:test tears its process down without running exit listeners, so this handler never
+// fires and the sandbox outlives the run — only the OS tmpdir sweep ever reclaims it. The cost is
+// bounded, because a preload is evaluated once per process: a run leaks exactly one `inflexa-test-*`
+// directory, whether it covers a single file or the whole suite (measured both ways). It stays
+// registered because bun:test offers no teardown hook to move it to, the registration costs nothing,
+// and it starts reaping for real the day Bun runs exit listeners here.
 process.on("exit", () => {
     try {
         rmSync(sandbox, { recursive: true, force: true });
