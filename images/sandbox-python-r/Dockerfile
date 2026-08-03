@@ -184,16 +184,21 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # 4MB per-step cap). Full unfiltered output goes to /tmp/*.log via tee for the
 # failure tail-dump.
 #
-# ANCOMBC is filtered out of the main batch — its Bioc 3.22 release (2.12.0)
-# calls CVXR::solve, removed in CVXR 1.8. MSstats/MSstatsTMT are filtered out
-# because MSstats pins CXX_STD=CXX11 but RcppArmadillo ≥14.2 requires C++14.
-# DEP is filtered out because it isn't yet ported to Bioc devel (3.23 / R 4.6.0);
-# we install it from the bioc-release r-universe mirror instead. Each is installed
-# separately below with targeted workarounds.
+# Only DEP is filtered out of the main batch. It was deprecated and dropped from
+# Bioc 3.23 — the release BiocManager pairs with R 4.6, i.e. the one the batch
+# installs from — so it has to come from 3.22, the last release that carries it,
+# installed separately below.
+#
+# ANCOMBC and MSstats/MSstatsTMT install straight from the batch on this R/Bioc
+# pair and need no workaround: ANCOMBC 2.14 no longer depends on CVXR (whose
+# removed ::solve broke the 3.22-era build), and MSstats' src/Makevars pins
+# CXX_STD=CXX11 — a standard R 4.6 dropped, so it silently compiles at the C++20
+# default, which is what RcppArmadillo requires anyway; no ~/.R/Makevars override
+# is needed. MSstatsTMT ships no compiled code at all.
 RUN BIOC_PKGS=$(python3 -c "\
 import yaml; \
 m = yaml.safe_load(open('/tmp/manifest.yaml')); \
-print(','.join([\"'\" + p + \"'\" for p in m.get('r',{}).get('bioconductor',[]) if p not in ('ANCOMBC','MSstats','MSstatsTMT','DEP')]))" 2>/dev/null || true) \
+print(','.join([\"'\" + p + \"'\" for p in m.get('r',{}).get('bioconductor',[]) if p not in ('DEP',)]))" 2>/dev/null || true) \
     && NOISE='/boost/|/Eigen/|/RcppEigen/|/RcppNumerical/|(required from|required by substitution|In instantiation of|skipping [0-9]+ instantiation)|^[^:]*:[0-9]+:[0-9]+: (warning|note):|^[[:space:]]+[0-9]+[[:space:]]+\||^[[:space:]]+\|[[:space:]]|OpenTelemetry error:' \
     && DOWNLOAD_FAIL='cannot open URL|download .* failed|HTTP status was|Failed to connect|Connection (timed out|refused)|Could not resolve host' \
     && retry_install() { \
@@ -208,27 +213,17 @@ print(','.join([\"'\" + p + \"'\" for p in m.get('r',{}).get('bioconductor',[]) 
          echo "--- $desc still hitting transient download failures after $max attempts; the load check will catch missing pkgs ---"; \
        } \
     && if [ -n "$BIOC_PKGS" ]; then \
-       echo "--- Installing Bioconductor packages (ANCOMBC, MSstats, MSstatsTMT, DEP excluded) ---"; \
+       echo "--- Installing Bioconductor packages (DEP excluded) ---"; \
        { R -e "\
          .libPaths(c('${INFLEXA_LIB_ROOT}/r/bioconductor', '${INFLEXA_LIB_ROOT}/r/cran', .libPaths())); \
          if (!requireNamespace('BiocManager', quietly=TRUE)) install.packages('BiocManager', lib='${INFLEXA_LIB_ROOT}/r/cran', repos='https://cloud.r-project.org/'); \
          BiocManager::install(c($BIOC_PKGS), lib='${INFLEXA_LIB_ROOT}/r/bioconductor', ask=FALSE, update=FALSE, force=TRUE, Ncpus=${R_NCPUS:-parallel::detectCores()})" 2>&1 \
          | tee /tmp/bioc-install.log \
          | grep --line-buffered -vE "$NOISE"; } || true; \
-       echo "--- Installing ANCOMBC from r-universe (Bioc 3.22's 2.12.0 uses CVXR::solve which was removed in CVXR 1.8; r-universe serves patched 2.12.1) ---"; \
-       retry_install "ANCOMBC (r-universe)" /tmp/bioc-ancombc.log R -e "\
-         .libPaths(c('${INFLEXA_LIB_ROOT}/r/bioconductor', '${INFLEXA_LIB_ROOT}/r/cran', .libPaths())); \
-         install.packages('ANCOMBC', lib='${INFLEXA_LIB_ROOT}/r/bioconductor', repos=c('https://bioc-release.r-universe.dev', BiocManager::repositories()))"; \
-       echo "--- Installing DEP from frozen Bioc 3.22 source repo (DEP was dropped from Bioc 3.23; bioc-release.r-universe.dev rolled forward and no longer carries it) ---"; \
+       echo "--- Installing DEP from the frozen Bioc 3.22 source repo (deprecated and removed from Bioc 3.23 — the release the batch above installs from — so it comes from 3.22, the last release that carries it) ---"; \
        retry_install "DEP (Bioc 3.22 frozen)" /tmp/bioc-dep.log R -e "\
          .libPaths(c('${INFLEXA_LIB_ROOT}/r/bioconductor', '${INFLEXA_LIB_ROOT}/r/cran', .libPaths())); \
          install.packages('DEP', lib='${INFLEXA_LIB_ROOT}/r/bioconductor', repos=c('https://bioconductor.org/packages/3.22/bioc', BiocManager::repositories()), dependencies=TRUE)"; \
-       echo "--- Installing MSstats/MSstatsTMT (C++14 override for RcppArmadillo ≥14.2) ---"; \
-       mkdir -p ~/.R && echo 'CXX11STD = -std=gnu++14' > ~/.R/Makevars; \
-       retry_install "MSstats/MSstatsTMT" /tmp/bioc-msstats.log R -e "\
-         .libPaths(c('${INFLEXA_LIB_ROOT}/r/bioconductor', '${INFLEXA_LIB_ROOT}/r/cran', .libPaths())); \
-         BiocManager::install(c('MSstats','MSstatsTMT'), lib='${INFLEXA_LIB_ROOT}/r/bioconductor', ask=FALSE, update=FALSE, force=TRUE, Ncpus=${R_NCPUS:-parallel::detectCores()})"; \
-       rm -f ~/.R/Makevars; \
     fi \
     && echo "--- Capturing any bspm-apt-installed deps into the store bioconductor subtree ---" \
     && cp -an /usr/lib/R/site-library/. ${INFLEXA_LIB_ROOT}/r/bioconductor/ 2>/dev/null || true
