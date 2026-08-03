@@ -13,6 +13,7 @@ import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
+import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice
@@ -39,6 +40,7 @@ function buildAgent(hostTools?: readonly Tool[]) {
         templatesDir: "/templates",
         skillsDir: "/skills",
         chrome: {},
+        citationResolver: unusedCitationResolver,
         ...(hostTools ? { hostTools } : {}),
     });
 }
@@ -100,6 +102,7 @@ describe("createConversationAgent", () => {
             "target_safety",
             "lookup_annotation",
             "pubmed",
+            "resolve_citation",
             "comptox",
             "generate_plan",
             "literature_reviewer",
@@ -119,6 +122,11 @@ describe("createConversationAgent", () => {
         ]) {
             expect(ids.has(expected)).toBe(true);
         }
+    });
+
+    test("places citation verification beside literature discovery", () => {
+        const ids = buildAgent().tools.map((tool) => tool.id);
+        expect(ids.indexOf("resolve_citation")).toBe(ids.indexOf("pubmed") + 1);
     });
 
     test("tool ids are unique and definitions() emits valid AI SDK schemas", () => {

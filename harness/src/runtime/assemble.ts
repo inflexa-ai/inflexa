@@ -33,6 +33,8 @@ import {
     type ExecuteTargetAssessmentResult,
 } from "../workflows/execute-target-assessment.js";
 import { registerDataProfileWorkflow, type DataProfileDeps, type DataProfileWorkflowInput } from "../tasks/data-profile.js";
+import { createCitationResolver, type CitationResolverConfig } from "../citations/resolve.js";
+import type { CitationResolver } from "../citations/types.js";
 
 /** Registered child sandbox-step callable the parent's child dispatch closes over. */
 export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -51,8 +53,8 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
  * conversation side.
  */
 export interface CoreWorkflowDeps {
-    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder">;
-    readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<ExecuteAnalysisDeps, "usageRecorder">;
+    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver">;
+    readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "citationResolver">;
     readonly executeTargetAssessment: Omit<ExecuteTargetAssessmentDeps, "usageRecorder">;
     readonly dataProfile: Omit<DataProfileDeps, "usageRecorder">;
 }
@@ -71,7 +73,7 @@ export interface RegisteredWorkflows {
  * cannot wire a stale callable, a policy that diverges from the one the
  * workflows see, or a recorder that only half the agent tree reports to.
  */
-export type ConversationAssemblyDeps = Omit<ConversationAgentDeps, "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder">;
+export type ConversationAssemblyDeps = Omit<ConversationAgentDeps, "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder" | "citationResolver">;
 
 export interface CoreRuntimeDeps {
     readonly conversation: ConversationAssemblyDeps;
@@ -88,6 +90,8 @@ export interface CoreRuntimeDeps {
      * `createNoopUsageRecorder()`.
      */
     readonly usageRecorder?: UsageRecorder;
+    /** Harness-owned citation capability configuration; no ambient lookup occurs. */
+    readonly citationResolverConfig?: CitationResolverConfig;
 }
 
 /**
@@ -151,14 +155,19 @@ export interface CoreRuntime {
      */
     readonly agents: ThreadAgentResolver;
     readonly workflows: RegisteredWorkflows;
+    readonly citationResolver: CitationResolver;
 }
 
 export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const { conversation, workflows: wf, resourcePolicy } = deps;
     const usageRecorder = deps.usageRecorder ?? createNoopUsageRecorder();
+    const citationResolver = createCitationResolver({
+        ...(deps.citationResolverConfig ?? {}),
+        ...(deps.citationResolverConfig?.ncbiApiKey !== undefined || conversation.bioKeys.ncbi === undefined ? {} : { ncbiApiKey: conversation.bioKeys.ncbi }),
+    });
 
-    const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, usageRecorder });
-    const executeAnalysis = registerExecuteAnalysis({ ...wf.buildExecuteAnalysis(sandboxStep), usageRecorder });
+    const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder });
+    const executeAnalysis = registerExecuteAnalysis({ ...wf.buildExecuteAnalysis(sandboxStep), citationResolver, usageRecorder });
     const executeTargetAssessment = registerExecuteTargetAssessment({ ...wf.executeTargetAssessment, usageRecorder });
     const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder });
 
@@ -167,6 +176,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         executeAnalysisWorkflow: executeAnalysis,
         resourcePolicy,
         usageRecorder,
+        citationResolver,
     });
 
     // The single registration point for every typed agent. One entry today; a
@@ -187,5 +197,6 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             executeTargetAssessment,
             dataProfile,
         },
+        citationResolver,
     };
 }

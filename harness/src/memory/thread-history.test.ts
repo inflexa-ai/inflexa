@@ -710,12 +710,9 @@ describe("retractLastTurn", () => {
         // final state is one of exactly two: the whole turn present (retract ran
         // first on the empty thread) or the whole turn gone (retract ran after the
         // append and took it off). A partial turn would mean the lock failed.
-        const [appendRes, retractRes] = await Promise.all([
-            history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [] }),
-            history.retractLastTurn(THREAD),
-        ]);
-        appendRes._unsafeUnwrap();
-        retractRes._unsafeUnwrap();
+        const append = async () => (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [] }))._unsafeUnwrap();
+        const retract = async () => (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        await Promise.all([append(), retract()]);
 
         const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
         expect(loaded.length === 0 || loaded.length === turn.length).toBe(true);

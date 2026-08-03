@@ -57,6 +57,7 @@ import { defineTool, type Tool, type ToolError } from "../tools/define-tool.js";
 import { createReportBlockerToolFor } from "../tools/sandbox/report-blocker.js";
 import { createLiteratureReviewerTool } from "../tools/research/literature-reviewer.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
+import type { CitationResolver } from "../citations/types.js";
 
 // ── Agent identity / budgets ────────────────────────────────────────
 
@@ -426,6 +427,8 @@ export interface GenerateRunSynthesisInput {
     readonly model: string;
     /** API keys for the bio/chem tools the embedded literature reviewer uses. */
     readonly bioKeys: BioToolKeys;
+    /** Shared resolver used by the embedded literature reviewer. */
+    readonly citationResolver: CitationResolver;
     /** LLM usage-accounting seam for the synthesizer + reviewer loops; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
     /** Step summaries from the completed run. Non-empty. */
@@ -459,6 +462,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         provider: input.provider,
         model: input.model,
         bioKeys: input.bioKeys,
+        citationResolver: input.citationResolver,
         usageRecorder: input.usageRecorder,
     });
 

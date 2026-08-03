@@ -170,18 +170,23 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
                     return `fulltext ${input.pmcId ?? ""}`;
             }
         },
-        execute: async (input): Promise<Result<PubMedOutput, ToolError>> => {
+        execute: async (input, context): Promise<Result<PubMedOutput, ToolError>> => {
             switch (input.action) {
                 case "search":
                     return ok(
-                        await searchPubmed(deps.ncbiApiKey, input.query!, {
-                            maxResults: input.maxResults ?? DEFAULTS.searchResults,
-                            ...(input.sort ? { sort: input.sort } : {}),
-                            ...(input.dateRange ? { dateRange: input.dateRange } : {}),
-                        }),
+                        await searchPubmed(
+                            deps.ncbiApiKey,
+                            input.query!,
+                            {
+                                maxResults: input.maxResults ?? DEFAULTS.searchResults,
+                                ...(input.sort ? { sort: input.sort } : {}),
+                                ...(input.dateRange ? { dateRange: input.dateRange } : {}),
+                            },
+                            context.signal,
+                        ),
                     );
                 case "details": {
-                    const { articles, notFound } = await getArticleDetails(deps.ncbiApiKey, input.pmids!);
+                    const { articles, notFound } = await getArticleDetails(deps.ncbiApiKey, input.pmids!, context.signal);
                     return ok({
                         articles: boundArticleDetails(articles, {
                             maxAuthors: input.maxAuthors ?? DEFAULTS.maxAuthors,
@@ -191,10 +196,15 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
                     });
                 }
                 case "fulltext": {
-                    const parsed = await getArticleFullText(deps.ncbiApiKey, input.pmcId!, {
-                        ...(input.sections ? { sections: input.sections } : {}),
-                        maxChars: input.maxChars ?? DEFAULTS.maxChars,
-                    });
+                    const parsed = await getArticleFullText(
+                        deps.ncbiApiKey,
+                        input.pmcId!,
+                        {
+                            ...(input.sections ? { sections: input.sections } : {}),
+                            maxChars: input.maxChars ?? DEFAULTS.maxChars,
+                        },
+                        context.signal,
+                    );
                     // "Not open-access" is an expected outcome — a data variant, not an error.
                     if (!parsed) return ok({ pmcId: input.pmcId!, available: false as const });
                     return ok({ pmcId: input.pmcId!, available: true as const, ...parsed });

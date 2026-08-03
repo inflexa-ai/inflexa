@@ -33,6 +33,8 @@ import { searchGeneTool } from "../bio/search-gene.js";
 import { searchInteractionsTool } from "../bio/search-interactions.js";
 import type { Logger } from "../../lib/logger.js";
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
+import type { CitationResolver } from "../../citations/types.js";
+import { createResolveCitationTool } from "./resolve-citation.js";
 
 /** Sub-agent identity — appended to `callPath`, set as `agentId`. */
 const AGENT_ID = "literature-reviewer";
@@ -51,6 +53,8 @@ export interface LiteratureReviewerDeps {
     readonly bioKeys: BioToolKeys;
     /** LLM usage-accounting seam for the child loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** Shared bibliographic verification service; all agent surfaces share its pacing/cache. */
+    readonly citationResolver: CitationResolver;
 }
 
 /** Build the `literature_reviewer` delegation tool bound to its provider. */
@@ -62,6 +66,7 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
         lookupAnnotationTool,
         searchInteractionsTool,
         ncbi.pubmed,
+        createResolveCitationTool(deps.citationResolver),
         chemDb.drugGeneInteractions,
         genePreclinicalProfileTool,
     ];

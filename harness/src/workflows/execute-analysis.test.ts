@@ -38,6 +38,7 @@ import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunObservation, RunProv
 import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
+import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 
 // ── Fake DBOS surface ────────────────────────────────────────────────
 
@@ -273,6 +274,7 @@ function makeDeps(opts: {
     };
 
     const deps: ExecuteAnalysisDeps = {
+        citationResolver: unusedCitationResolver,
         pool: opts.pool.query ? ({ query: opts.pool.query } as unknown as Pool) : ({} as Pool),
         provider: {} as unknown as ChatProvider,
         embedding: {} as unknown as EmbeddingProvider,

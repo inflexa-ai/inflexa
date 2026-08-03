@@ -494,7 +494,9 @@ describe("usage reporting", () => {
             resolveBilling: async () => ({}),
         });
 
-        await provider.chat({ ...request, providerOptions: { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } } }, makeSession());
+        (
+            await provider.chat({ ...request, providerOptions: { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } } }, makeSession())
+        )._unsafeUnwrap();
 
         expect(calls[0]!.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } });
     });

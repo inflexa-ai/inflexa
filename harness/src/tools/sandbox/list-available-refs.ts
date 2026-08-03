@@ -391,10 +391,8 @@ async function scanStore(root: string | undefined, relative: string, recursive =
     const entries: ReferenceInventoryEntry[] = [];
     let scanned = 0;
     let pathBytes = 0;
-    let truncated = false;
-
     const { values: children, cut } = await cappedEntries(target, Math.min(MAX_ENTRIES + 2, MAX_SCANNED_ENTRIES));
-    truncated = cut;
+    let truncated = cut;
 
     for (const child of children) {
         const childRelative = relative === "." ? child.name : `${relative}/${child.name}`;

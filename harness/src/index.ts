@@ -68,6 +68,55 @@ export type { WorkflowPurger } from "./execution/workflow-purger.js";
 export { defineTool, isToolError } from "./tools/define-tool.js";
 export type { Tool, ToolDefinition, ToolContext, ToolError } from "./tools/define-tool.js";
 
+// Host-agnostic citation verification service and its public contracts.
+export { createCitationResolver } from "./citations/resolve.js";
+export type { CitationResolverConfig, CitationResolverDependencies, CitationResolverSourceConfig } from "./citations/resolve.js";
+export {
+    CitationKindSchema,
+    CitationInputSchema,
+    CitationSourceSchema,
+    CitationSourceStatusSchema,
+    CitationResolutionResultSchema,
+    CitationVerdictSchema,
+    CitationCoverageSchema,
+    ComparisonStatusSchema,
+    CitationFieldSchema,
+    UnsupportedWorkKindSchema,
+    CitationIdentifiersSchema,
+    NormalizedCitationMetadataSchema,
+    NormalizedCitationSchema,
+    CitationRecordSchema,
+    IdentifierEvidenceSchema,
+    CitationSourceOutcomeSchema,
+    CitationFieldComparisonSchema,
+    CitationConflictSchema,
+    CitationCandidateClusterSchema,
+} from "./citations/types.js";
+export type {
+    CitationKind,
+    CitationInput,
+    CitationSource,
+    CitationSourceStatus,
+    CitationResolver,
+    CitationResolveOptions,
+    CitationResolutionResult,
+    CitationVerdict,
+    CitationCoverage,
+    ComparisonStatus,
+    CitationField,
+    UnsupportedWorkKind,
+    CitationIdentifiers,
+    NormalizedCitationMetadata,
+    NormalizedCitation,
+    CitationSourceOutcome,
+    CitationRecord,
+    IdentifierEvidence,
+    CitationFieldComparison,
+    CitationConflict,
+    CitationCandidateCluster,
+    CitationSourceClient,
+} from "./citations/types.js";
+
 // Seam: tool approval (`ctx.ask`). `createAskGateway` realizes the `Ask` seam
 // over the injected `Pool` and carries the outward `answer`/`pending` API plus
 // the boot-time `sweepExpired`; `UnavailableAsk` is the shipped deny-by-default

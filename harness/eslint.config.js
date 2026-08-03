@@ -58,10 +58,7 @@ function isConsumedByUnwrapOrThrow(node) {
             parent.type === "MemberExpression" &&
             parent.object === current &&
             parent.property.type === "Identifier" &&
-            (parent.property.name === "orElse" ||
-                parent.property.name === "map" ||
-                parent.property.name === "mapErr" ||
-                parent.property.name === "andThen") &&
+            (parent.property.name === "orElse" || parent.property.name === "map" || parent.property.name === "mapErr" || parent.property.name === "andThen") &&
             parent.parent &&
             parent.parent.type === "CallExpression" &&
             parent.parent.callee === parent
@@ -71,7 +68,12 @@ function isConsumedByUnwrapOrThrow(node) {
             continue;
         }
         // Step only through wrappers that forward the same Result value.
-        if (parent.type !== "AwaitExpression" && parent.type !== "TSAsExpression" && parent.type !== "TSNonNullExpression" && parent.type !== "ChainExpression") {
+        if (
+            parent.type !== "AwaitExpression" &&
+            parent.type !== "TSAsExpression" &&
+            parent.type !== "TSNonNullExpression" &&
+            parent.type !== "ChainExpression"
+        ) {
             return false;
         }
         current = parent;
@@ -138,8 +140,6 @@ export default defineConfig([
                     varsIgnorePattern: "^_",
                 },
             ],
-            "@typescript-eslint/no-floating-promises": "error",
-            "@typescript-eslint/no-misused-promises": "error",
             "no-restricted-syntax": [
                 "error",
                 {
@@ -166,6 +166,11 @@ export default defineConfig([
         },
         rules: {
             "neverthrow/must-use-result": "error",
+            // These rules require the typed parser program configured above;
+            // keeping them in this TS-only block avoids applying them to
+            // untyped JavaScript utilities such as scripts/smoke.mjs.
+            "@typescript-eslint/no-floating-promises": "error",
+            "@typescript-eslint/no-misused-promises": "error",
             // A switch over a union must handle every member OR carry a `default`. Lenient mode
             // (`considerDefaultExhaustiveForUnions: true`) treats a `default` as covering the rest, so
             // intentional default-driven switches (platform, error codes, subset handlers) pass while a

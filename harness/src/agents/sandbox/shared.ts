@@ -75,6 +75,8 @@ import type { AgentMeta, SandboxToolName } from "./types.js";
 import { SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "./types.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import type { Logger } from "../../lib/logger.js";
+import type { CitationResolver } from "../../citations/types.js";
+import { createResolveCitationTool } from "../../tools/research/resolve-citation.js";
 
 /**
  * Tools every sandbox agent receives — sandbox-environment introspection,
@@ -125,6 +127,8 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
     readonly step: SandboxStepCoords;
     /** API keys for the external bio/chem data sources. */
     readonly bioKeys: BioToolKeys;
+    /** Shared resolver. Required only when `meta.tools` declares `resolve_citation`. */
+    readonly citationResolver?: CitationResolver;
     /**
      * Per-run blocker cell (see the harness-sandbox-agents spec). When present, the agent gets a
      * `report_blocker` tool that records `{ kind: "blocker", reason }` into it;
@@ -155,13 +159,17 @@ export interface SandboxAgentPromptOptions {
 function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxToolName[]): Tool[] {
     const ncbi = createNcbiTools(deps.bioKeys);
     const chemDb = createChemDbTools(deps.bioKeys, { ...(deps.logger ? { logger: deps.logger } : {}) });
-    const registry: Record<SandboxToolName, Tool> = {
+    if (tools.includes("resolve_citation") && deps.citationResolver === undefined) {
+        throw new Error('createSandboxAgent: SandboxToolName "resolve_citation" requires a CitationResolver dependency.');
+    }
+    const registry: Record<SandboxToolName, Tool | undefined> = {
         listAvailablePackages: createListAvailablePackagesTool({ ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}) }),
         listAvailableRefs: createListAvailableRefsTool({ ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}) }),
         resolveLibraryId: resolveLibraryIdTool,
         queryDocs: queryDocsTool,
         inspectRun: createInspectRunTool(deps.pool),
         pubmed: ncbi.pubmed,
+        resolve_citation: deps.citationResolver === undefined ? undefined : createResolveCitationTool(deps.citationResolver),
         searchGene: searchGeneTool,
         lookupAnnotation: lookupAnnotationTool,
         searchInteractions: searchInteractionsTool,

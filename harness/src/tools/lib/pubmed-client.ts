@@ -5,39 +5,32 @@
  * pubmed-index Phase-1 collector.
  */
 
-import { z } from "zod";
-
-import { apiFetch, apiFetchValidated, describeApiError } from "./api-utils.js";
 import {
-    NCBI_BASE,
-    NCBI_IDCONV,
-    ncbiUrl,
-    parseEsummary,
-    parseEfetch,
-    parseIdConvResponse,
-    parsePmcFullText,
+    createPubmedSource,
     type ArticleDetail,
     type ArticleSection,
-    type PubMedSummary,
     type FullTextResult,
-} from "./ncbi-utils.js";
+    type PubmedSearchOptions,
+    type PubMedSummary,
+} from "../../literature/sources/pubmed.js";
+import type { SourceHttpResult } from "../../literature/sources/http.js";
 
 export type { PubMedSummary, ArticleDetail, ArticleSection, FullTextResult };
 
-// NCBI E-utilities JSON payloads, validated at the fetch boundary. Every field
-// is optional because the API omits absent values.
-const EsearchResponseSchema = z.object({
-    esearchresult: z.object({ idlist: z.array(z.string()).optional(), count: z.string().optional() }).optional(),
-});
+export type SearchOptions = PubmedSearchOptions;
 
-const IdConvResponseSchema = z.object({
-    records: z.array(z.object({ pmid: z.string().optional(), pmcid: z.string().optional() })).optional(),
-});
+function pubmedSource(ncbiApiKey: string | undefined) {
+    return createPubmedSource({
+        ...(ncbiApiKey === undefined ? {} : { apiKey: ncbiApiKey }),
+        maxRetries: 3,
+        retryDelayMs: 1_000,
+        timeoutMs: 90_000,
+    });
+}
 
-export interface SearchOptions {
-    maxResults?: number;
-    sort?: "relevance" | "date";
-    dateRange?: { from: string; to: string };
+function unwrap<T>(result: SourceHttpResult<T>): T {
+    if (result.status !== "ok") throw new Error(result.detail);
+    return result.value;
 }
 
 /** PubMed search via esearch + esummary. */
@@ -45,41 +38,9 @@ export async function searchPubmed(
     ncbiApiKey: string | undefined,
     query: string,
     options: SearchOptions = {},
+    signal?: AbortSignal,
 ): Promise<{ totalFound: number; results: PubMedSummary[] }> {
-    const maxResults = options.maxResults ?? 10;
-    const sort = options.sort ?? "relevance";
-
-    const esearchParams: Record<string, string | number | undefined> = {
-        db: "pubmed",
-        term: query,
-        retmax: maxResults,
-        retmode: "json",
-        sort: sort === "date" ? "pub+date" : "relevance",
-    };
-    if (options.dateRange) {
-        esearchParams.mindate = options.dateRange.from;
-        esearchParams.maxdate = options.dateRange.to;
-        esearchParams.datetype = "pdat";
-    }
-
-    const searchUrl = ncbiUrl(ncbiApiKey, `${NCBI_BASE}/esearch.fcgi`, esearchParams);
-    const searchResult = await apiFetchValidated(searchUrl, EsearchResponseSchema);
-
-    if (searchResult.isErr()) throw new Error(describeApiError(searchResult.error));
-
-    const idList = searchResult.value.esearchresult?.idlist ?? [];
-    const totalFound = parseInt(searchResult.value.esearchresult?.count ?? "0", 10);
-    if (idList.length === 0) return { totalFound, results: [] };
-
-    const summaryUrl = ncbiUrl(ncbiApiKey, `${NCBI_BASE}/esummary.fcgi`, {
-        db: "pubmed",
-        id: idList.join(","),
-        retmode: "xml",
-    });
-    const summaryResult = await apiFetch<string>(summaryUrl, { parseAs: "text" });
-    if (summaryResult.isErr()) throw new Error(describeApiError(summaryResult.error));
-
-    return { totalFound, results: parseEsummary(summaryResult.value) };
+    return unwrap(await pubmedSource(ncbiApiKey).search(query, options, signal));
 }
 
 export interface DetailOptions {
@@ -101,34 +62,12 @@ export interface BoundedArticleDetail extends ArticleDetail {
 }
 
 /** Fetch full PubMed article details (efetch + ID Converter for PMC). */
-export async function getArticleDetails(ncbiApiKey: string | undefined, pmids: string[]): Promise<{ articles: ArticleDetail[]; notFound: string[] }> {
-    const idString = pmids.join(",");
-    const efetchAsync = apiFetch<string>(
-        ncbiUrl(ncbiApiKey, `${NCBI_BASE}/efetch.fcgi`, {
-            db: "pubmed",
-            id: idString,
-            rettype: "xml",
-            retmode: "xml",
-        }),
-        { parseAs: "text" },
-    );
-    const idConvAsync = apiFetchValidated(ncbiUrl(ncbiApiKey, NCBI_IDCONV, { ids: idString, format: "json" }), IdConvResponseSchema);
-    // Both requests run concurrently; each Result is awaited and handled below.
-    const efetchResult = await efetchAsync;
-    const idConvResult = await idConvAsync;
-
-    if (efetchResult.isErr()) throw new Error(describeApiError(efetchResult.error));
-
-    const articles: ArticleDetail[] = parseEfetch(efetchResult.value);
-    if (idConvResult.isOk()) {
-        const pmcMap = parseIdConvResponse(idConvResult.value);
-        for (const article of articles) {
-            article.pmcId = pmcMap.get(article.pmid) ?? null;
-        }
-    }
-    const foundPmids = new Set(articles.map((a) => a.pmid));
-    const notFound = pmids.filter((id) => !foundPmids.has(id));
-    return { articles, notFound };
+export async function getArticleDetails(
+    ncbiApiKey: string | undefined,
+    pmids: string[],
+    signal?: AbortSignal,
+): Promise<{ articles: ArticleDetail[]; notFound: string[] }> {
+    return unwrap(await pubmedSource(ncbiApiKey).articleDetails(pmids, signal));
 }
 
 /** Trim the two unbounded list fields on each article, recording their true sizes. */
@@ -176,17 +115,13 @@ export interface BoundedFullText {
  * Methods is worse than none) and admitted in document order until the budget
  * would be exceeded.
  */
-export async function getArticleFullText(ncbiApiKey: string | undefined, pmcId: string, options: FullTextOptions = {}): Promise<BoundedFullText | null> {
-    const numericId = pmcId.replace(/^PMC/i, "");
-    const url = ncbiUrl(ncbiApiKey, `${NCBI_BASE}/efetch.fcgi`, {
-        db: "pmc",
-        id: numericId,
-        rettype: "xml",
-        retmode: "xml",
-    });
-    const result = await apiFetch<string>(url, { parseAs: "text" });
-    if (result.isErr()) throw new Error(describeApiError(result.error));
-    const parsed: FullTextResult | null = parsePmcFullText(result.value);
+export async function getArticleFullText(
+    ncbiApiKey: string | undefined,
+    pmcId: string,
+    options: FullTextOptions = {},
+    signal?: AbortSignal,
+): Promise<BoundedFullText | null> {
+    const parsed = unwrap(await pubmedSource(ncbiApiKey).fetchFullText(pmcId, signal));
     if (!parsed) return null;
     return boundFullText(parsed, options);
 }
