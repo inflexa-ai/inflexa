@@ -1,5 +1,8 @@
 /**
- * Read-path reconstruction of display cards from a persisted turn.
+ * @deprecated Compatibility-only reconstruction for pre-display-envelope
+ * turns. New runtime reads use stored AI SDK UI messages. Retain this module
+ * through the pre-v1 direct-upgrade window, then remove its runtime fallback
+ * in a dedicated compatibility change.
  *
  * `show_plan` / `show_user` / `show_file` / `execute_analysis` / `iterate_report` emit
  * `data-plan` / `data-presentation` / `data-file-reference` / `data-run-card` /
@@ -20,6 +23,7 @@ import { adHocPlanId, adHocRunId } from "../tools/analysis-invocation.js";
 import { validatePath } from "../tools/lib/path-validation.js";
 import { buildFileReferenceCardData, buildPlanCardData, buildPresentationCardData, buildPreviewCardData, buildRunCardData } from "./card-builders.js";
 
+/** @deprecated Used only by the legacy display backfill/fallback. */
 export interface StoredToolCallForCard {
     readonly type: "tool_use";
     readonly id: string;
@@ -27,8 +31,10 @@ export interface StoredToolCallForCard {
     readonly input: unknown;
 }
 
+/** @deprecated Used only by the legacy display backfill/fallback. */
 export type ToolCardResolver = (block: StoredToolCallForCard) => Promise<CortexPart | null>;
 
+/** @deprecated Use persisted conversation display envelopes for runtime reads. */
 export function createCardResolver(pool: Pool, analysisId: string, workspaceRoot: string): ToolCardResolver {
     return async (block) => {
         if (block.type !== "tool_use") return null;

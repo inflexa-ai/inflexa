@@ -146,18 +146,16 @@ export type { ProviderError } from "./providers/errors.js";
 export { createStreamingChat } from "./providers/streaming-chat.js";
 
 // Conversation turn + thread memory — the transport-free halves of one chat
-// turn a same-process host drives itself. `prepareChatTurn` assembles the
-// message array (thread-ownership resolution, title seed, analysis-context
-// injection); the caller runs `runAgent` with its own `emit`; `appendTurn`
-// (`createThreadHistory`) persists the turn. `createThreadStore` owns thread
-// metadata (create/list/title). `contentToCortexMessages` + `createCardResolver`
-// reconstruct display cards from a persisted thread on reload.
+// turn a same-process host drives itself. `prepareChatTurn` assembles the model
+// message array; `createConversationDisplayRecorder` records the independently
+// replayable UI projection while forwarding live events; `appendTurn` persists
+// both atomically. `createThreadStore` owns thread metadata (create/list/title).
 export { prepareChatTurn } from "./app/chat-turn.js";
 export type { PrepareChatTurnDeps, PrepareChatTurnParams, PrepareChatTurnResult } from "./app/chat-turn.js";
 export { createThreadStore } from "./memory/thread-store.js";
 export type { ThreadStore, Thread, CreateThreadInput, ListThreadsInput, ThreadPage } from "./memory/thread-store.js";
-export { createThreadHistory } from "./memory/thread-history.js";
-export type { ThreadHistory, StoredMessage, MessagePage, RetractOutcome } from "./memory/thread-history.js";
+export { createThreadHistory, conversationRecordTurn } from "./memory/thread-history.js";
+export type { ThreadHistory, StoredMessage, MessagePage, RetractOutcome, ConversationTurn } from "./memory/thread-history.js";
 // The synthetic-message primitives. A host appends a record of out-of-band work (an analysis run's
 // outcome) into a thread through `appendTurn`, and needs a message the model reads but that is not
 // user input — which is exactly what the marker denotes. The constructor is exported rather than
@@ -165,19 +163,21 @@ export type { ThreadHistory, StoredMessage, MessagePage, RetractOutcome } from "
 // (`isGenuineUserStart` and its SQL twin) would then fail to recognise; `isSyntheticUserMessage`
 // lets a host renderer tell such a message apart from a genuine user turn on the way back out.
 // `syntheticRecordMessage` is the one a HOST reaches for: equally non-turn-opening, but rendered —
-// the display reconstruction emits it as a `system` message rather than dropping it as loop
-// machinery, so an appended run outcome is visible in the transcript instead of silently absent.
+// it displays as a `system` message rather than being dropped as loop machinery, so an appended run
+// outcome is visible in the transcript instead of silently absent. `conversationRecordTurn` wraps it
+// as a complete append (model message plus its display projection), which is what a host should
+// reach for: a record appended without one would be stored but never replayed.
 export { syntheticUserMessage, syntheticRecordMessage, isSyntheticUserMessage, isSyntheticRecordMessage } from "./memory/ai-sdk-message-storage.js";
-export { contentToCortexMessages } from "./memory/content-to-cortex.js";
-export type { ContentToCortexOptions } from "./memory/content-to-cortex.js";
-export { createCardResolver } from "./memory/reconstruct-cards.js";
-export type { ToolCardResolver, StoredToolCallForCard } from "./memory/reconstruct-cards.js";
-// The call-detail resolver, the reload counterpart of the `describeCall` hook a
-// tool declares. Built over a tool list the HOST supplies — its own composed
-// roster, `HarnessRuntime.conversationAgent.tools` — because tools contributed
-// through the host-tools seam are invisible to any map the harness holds.
-export { createDetailResolver } from "./tools/detail-resolver.js";
-export type { ToolDetailResolver } from "./tools/detail-resolver.js";
+export { createConversationDisplayRecorder } from "./memory/conversation-display-recorder.js";
+export type { ConversationDisplayRecorder, ConversationDisplayRecorderOptions } from "./memory/conversation-display-recorder.js";
+export { envelopeDisplayMessages, parseStoredDisplayEnvelope } from "./memory/conversation-display-storage.js";
+export type { ConversationDisplayMetadata, ConversationUIData, ConversationUIMessage, StoredDisplayEnvelope } from "./memory/conversation-display-storage.js";
+// The transcript read. Every append persists what it displayed, so replay concatenates stored
+// projections and consults nothing else — no tool names, no card builders, no workspace or database
+// lookups. The migration renderer that DOES consult those (`content-to-cortex.js`,
+// `reconstruct-cards.js`, `tools/detail-resolver.js`) is deliberately absent from this barrel: it
+// runs once per legacy row at startup and has no runtime caller.
+export { storedMessagesToCortex } from "./memory/conversation-display-replay.js";
 
 // Chat wire contracts — the Cortex-native chat-stream vocabulary a consumer
 // rendering the stream types against. Two names are deliberately NOT re-exported
@@ -189,13 +189,18 @@ export type { ToolDetailResolver } from "./tools/detail-resolver.js";
 // the `@inflexa-ai/harness/contracts/*` deep subpaths.
 // `ToolOutcome` and `ToolCallDetail` ride here beside the two events that carry
 // them: a consumer switching on how a call ended needs to name the union, not
-// spell it `ToolFinishedEvent["outcome"]` at every site.
+// spell it `ToolFinishedEvent["outcome"]` at every site. `ToolCallOutcome` is the
+// one a host reading a REPLAYED call switches on — the live three plus
+// `incomplete` — and it is exported for exactly that: without the name, a host
+// cannot write the exhaustive switch that makes a state added later a build
+// failure rather than a silent mis-render.
 export type {
     CortexChatEvent,
     TextDeltaEvent,
     ToolStartedEvent,
     ToolFinishedEvent,
     ToolOutcome,
+    ToolCallOutcome,
     ToolCallDetail,
     FinishEvent,
     ChatErrorEvent,

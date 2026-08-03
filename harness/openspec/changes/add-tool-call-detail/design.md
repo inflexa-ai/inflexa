@@ -65,15 +65,17 @@ The loop wraps every hook call in `try`/`catch`. A hook that throws, returns a n
 
 A description is a diagnostic. It must never be able to fail a call.
 
-### D5 — The resolver is built over a supplied tool list
+### D5 — The resolver is built over a supplied tool list, and is not a read path
 
 `createDetailResolver(tools: readonly Tool[]) => (toolName: string, input: unknown) => string | undefined`.
 
-The live path holds the resolved `Tool` at dispatch and needs nothing. The reload path (`contentToCortexMessages`) does not, and a name map internal to the harness could never see an embedder's tools — `run_inflexa` is defined in `cli/` and enters through the `hostTools` seam. The caller therefore supplies the list, the same way it already supplies `createCardResolver`.
+The live path holds the resolved `Tool` at dispatch and needs nothing. The callers that do need the resolver hold only a name and an input: the sandbox and data-profile activity surfaces (D8), and the startup migration of turns stored before display was recorded. A name map internal to the harness could never see an embedder's tools — `run_inflexa` is defined in `cli/` and enters through the `hostTools` seam — so the caller supplies the list.
 
 This also removes the duplicate-id hazard. Two tools share the id `write_file` (`workspace/write-file.ts`, `report/version-fs.ts`). A resolver built from one agent's list cannot hold both, because `createRegistry` already rejects a duplicate id within one list.
 
-`contentToCortexMessages` takes the two resolvers as one options object rather than a growing positional list.
+**The resolver is deliberately not a transcript read path.** A detail describes what a call was doing when it ran, which makes it display data: it is recorded at the moment it is emitted and replayed from that record (`conversation-display-storage`). Re-deriving it at read time would make a past turn's transcript a function of the tool's CURRENT schema and hook, so renaming a field would quietly change what a conversation appears to have done. That is the same class of defect as rebuilding a card from a tool name, and the reason the resolver stays off the embedder-facing barrel.
+
+`contentToCortexMessages` — now the migration renderer — takes the two resolvers as one options object rather than a growing positional list.
 
 ### D6 — The tool-finished outcome is three-way
 
@@ -85,11 +87,13 @@ Alternative rejected: add a separate `denied: boolean` beside `isError`. It make
 
 Consequence accepted: this is breaking for any consumer reading `isError` on that event. The only in-repo consumers are `cli/src/tui/hooks/conversation.ts` and `cli/src/modules/harness/chat_printer.ts`.
 
-### D7 — Reload recovers the outcome by pairing, not by new storage
+### D7 — Migration recovers a legacy call's outcome by pairing
 
-The failure is already persisted. `errorResult` writes `output: { type: "error-text", value }` onto the `ToolResultPart`, and that part is stored. `content-to-cortex.ts` then drops every `tool-result` block, so `genericToolCall` never sees it and every reloaded call reports success.
+A live turn records its outcome directly: the recorder sees `tool-finished` and stores the three-way value. Pairing is needed only for a turn stored BEFORE display was recorded, where the model transcript is the only account left.
 
-The converter indexes the `tool-result` blocks of a turn by `toolCallId` and reads `output.type` when it builds each tool-call part. Storage is unchanged, and no migration is needed.
+For those, the failure is already persisted. `errorResult` writes `output: { type: "error-text", value }` onto the `ToolResultPart`, and that part is stored; the renderer previously dropped every `tool-result` block, so every migrated call would have reported success. The migration renderer indexes a turn's `tool-result` blocks by `toolCallId` and reads `output.type` when it builds each tool-call part, so a legacy failure is frozen as a failure and a legacy denial as a denial.
+
+This is inference, and it is confined to the one place inference is unavoidable. It runs once per legacy row and never again.
 
 ### D8 — activityForTool resolves through the same hook, and keeps the tool name
 
@@ -141,7 +145,7 @@ This change is **harness-only**. `cli/` is deliberately untouched and does not t
 - **The `outcome` migration.** `cli/src/tui/hooks/conversation.ts:502` and `cli/src/modules/harness/chat_printer.ts:307` read `isError` on `tool-finished`. That field no longer exists (D6); both sites read `outcome` instead, and a `denied` call must render as the user's decision rather than as a fault.
 - **The continuation-row layout.** D1 rests on it: the detail stays on the name line when it fits and drops to an indented row when it does not, so nothing truncates. The 120-character cap is a safety valve against a runaway hook, not a display truncation.
 - **The design gallery state** for the new row.
-- **The reload resolver wiring.** The cli holds the composed roster at `HarnessRuntime.conversationAgent.tools` and passes `createDetailResolver(tools)` into `contentToCortexMessages` as `{ resolveDetail }`. `contentToCortexMessages` now takes ONE options object (`{ resolveCard?, resolveDetail? }`) instead of a positional `resolveCard` — every cli call site changes shape.
+- **The transcript read.** The cli does NOT wire a detail resolver: the detail and the outcome ride the turn's stored display projection, so a reloaded transcript carries both with no host plumbing. What the cli does change is the read itself — `storedMessagesToCortex` over the stored projections, in place of `contentToCortexMessages` and `createCardResolver`. See the persist-versioned-conversation-display change.
 - **The open question above**, which only the rendering side can settle.
 
 Two consequences of the harness work that the cli change inherits:

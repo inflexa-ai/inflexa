@@ -26,15 +26,15 @@
 ## 5. The shared resolver
 
 - [x] 5.1 Add `createDetailResolver(tools: readonly Tool[]) => (toolName: string, input: unknown) => string | undefined` in `src/tools/`, reusing `computeDetail` so live and reload paths cannot drift.
-- [x] 5.2 Export it from `src/index.ts` beside `createCardResolver`.
+- [x] 5.2 Keep it off the embedder-facing barrel: its callers are the live activity surfaces and the startup migration, both internal.
 - [x] 5.3 Test: a described tool resolves, a hookless tool yields `undefined`, an unknown tool name yields `undefined`, and a malformed persisted input yields `undefined`.
 
-## 6. Reload conversion
+## 6. Startup migration of legacy turns
 
-- [x] 6.1 Change `contentToCortexMessages` in `src/memory/content-to-cortex.ts` to take its resolvers as one options object (`{ resolveCard?, resolveDetail? }`) instead of a growing positional list.
+- [x] 6.1 Change `contentToCortexMessages` — the migration renderer — to take its resolvers as one options object (`{ resolveCard?, resolveDetail? }`) instead of a growing positional list.
 - [x] 6.2 Index each row's `tool-result` blocks by `toolCallId` and derive the outcome from `output.type` in `genericToolCall`, using the same classification as task 3.2. A call with no paired result reports `ok`.
 - [x] 6.3 Apply `resolveDetail` when building a generic tool-call part.
-- [x] 6.4 Test: a reloaded failed call reports the error, a reloaded denied call reports the denial, a call with no paired result reports `ok`, a supplied resolver rebuilds the detail, and conversion without a resolver is otherwise unchanged.
+- [x] 6.4 Test: a migrated failed call reports the error, a migrated denied call reports the denial, a call with no paired result reports `ok`, a supplied resolver rebuilds the detail, and conversion without a resolver is otherwise unchanged.
 
 ## 7. Fold in the existing name-keyed formatter
 

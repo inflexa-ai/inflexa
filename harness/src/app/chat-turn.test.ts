@@ -56,10 +56,13 @@ describe("prepareChatTurn", () => {
 
         // Seed one prior turn so it must appear in the assembled window.
         (
-            await history.appendTurn("t-new", [
-                { role: "user", content: "earlier question about PCA" },
-                { role: "assistant", content: "earlier answer" },
-            ])
+            await history.appendTurn("t-new", {
+                modelMessages: [
+                    { role: "user", content: "earlier question about PCA" },
+                    { role: "assistant", content: "earlier answer" },
+                ],
+                displayMessages: [],
+            })
         )._unsafeUnwrap();
 
         const result = await prepareChatTurn(

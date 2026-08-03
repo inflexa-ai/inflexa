@@ -104,37 +104,31 @@ The contract is harness-owned so it can widen when a renderer needs structure. A
 - **WHEN** a host renders the tool call
 - **THEN** it displays the string as received and derives no fields from it
 
-### Requirement: A shared resolver rebuilds the detail from a persisted call
+### Requirement: A shared resolver derives the detail from a tool name and an input
 
-The harness SHALL expose a resolver constructed over a supplied `readonly Tool[]`, mapping a tool name plus a persisted input to a detail. The live loop and the reload converter SHALL both resolve through it, so a reloaded thread shows the same detail the live turn showed.
+The harness SHALL provide a resolver constructed over a supplied `readonly Tool[]`, mapping a tool name plus an input to a detail, so every surface that must describe a call from its name and input resolves through one implementation and cannot drift from the live path.
 
 The tool list SHALL be supplied by the caller rather than held inside the harness. An embedder contributes tools through the host-tools seam, and a name map internal to the harness could never see them. Supplying one agent's list also makes a duplicate tool id unrepresentable, because a tool list rejects a duplicate id at registry construction.
 
-The detail SHALL NOT be persisted. Storage stays the pure model transcript.
+The resolver SHALL NOT be a transcript read path, and SHALL NOT be part of the embedder-facing surface. A detail is display data: it is recorded when it is produced and replayed from that record (see the conversation-display-storage capability). Deriving it again at read time would make a transcript depend on the tool's current schema and hook, so a schema change would rewrite what a past turn appears to have done. The resolver's callers are the live activity surfaces and the one-time startup migration of turns stored before display was recorded.
 
-#### Scenario: A reloaded call shows the detail its live chip showed
+#### Scenario: A live activity surface resolves a described call
 
-- **GIVEN** a persisted turn holding a tool call whose tool declares a hook
-- **WHEN** the converter rebuilds the thread with a resolver over that agent's tools
-- **THEN** the resulting tool-call part carries the same detail the live event carried
+- **GIVEN** a call to a tool that declares a hook
+- **WHEN** an activity surface describes it through a resolver over that agent's tools
+- **THEN** it reports the same detail the live event carried
 
-#### Scenario: An embedder-contributed tool resolves on reload
+#### Scenario: An embedder-contributed tool resolves
 
-- **GIVEN** a persisted call to a tool supplied through the host-tools seam
-- **WHEN** the converter runs with a resolver built over the composed agent tool list
-- **THEN** the call's detail is rebuilt, not dropped
-
-#### Scenario: Storage holds no detail
-
-- **GIVEN** a completed turn whose tools all declare hooks
-- **WHEN** the persisted rows are read
-- **THEN** they hold the model transcript only, with no detail field
+- **GIVEN** a call to a tool supplied through the host-tools seam
+- **WHEN** the resolver is built over the composed agent tool list
+- **THEN** the call's detail resolves rather than being dropped
 
 #### Scenario: An unknown tool name resolves to no detail
 
-- **GIVEN** a persisted call naming a tool absent from the supplied list
+- **GIVEN** a call naming a tool absent from the supplied list
 - **WHEN** the resolver runs
-- **THEN** it yields no detail and the call renders as a generic tool-call part
+- **THEN** it yields no detail and the call is described by its name alone
 
 ### Requirement: One resolver serves every call-description surface
 

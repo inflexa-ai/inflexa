@@ -259,6 +259,9 @@ CREATE TABLE IF NOT EXISTS messages (
   role          TEXT,
   content_jsonb JSONB,
   message_envelope JSON,
+  -- Versioned AI SDK UIMessage projection for the whole turn. Present only
+  -- on the genuine-user-start row. Model-history reads never select it.
+  display_envelope JSONB,
   tokens        INTEGER NOT NULL,
   reported_usage JSONB,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -488,6 +491,7 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                     ALTER TABLE messages ALTER COLUMN message_envelope TYPE JSON USING message_envelope::text::json;
                   END IF;
                 END $$`,
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS display_envelope JSONB",
                 // Grant key an 'always' records the standing grant under. Nullable
                 // and unbackfilled: every new row writes it (command when absent), and
                 // orphaned legacy pending rows are swept to 'expired' before any answer

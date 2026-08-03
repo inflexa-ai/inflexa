@@ -21,6 +21,8 @@
  * rounds the budget walk to turn boundaries.
  */
 
+import { randomUUID } from "node:crypto";
+
 import type { ModelMessage } from "ai";
 import { type Histogram, metrics } from "@opentelemetry/api";
 import { ResultAsync, ok, okAsync } from "neverthrow";
@@ -37,8 +39,10 @@ import {
     envelopeMessage,
     isSyntheticUserMessage,
     parseStoredMessageEnvelope,
+    syntheticRecordMessage,
     type StoredMessageEnvelope,
 } from "./ai-sdk-message-storage.js";
+import { envelopeDisplayMessages, parseStoredDisplayEnvelope, type ConversationUIMessage, type StoredDisplayEnvelope } from "./conversation-display-storage.js";
 
 /** A resolved `ok(undefined)` ResultAsync — the empty/seed transaction step. */
 function okVoid<E = DbError>(): ResultAsync<void, E> {
@@ -57,6 +61,12 @@ export interface StoredMessage {
     readonly envelope: StoredMessageEnvelope;
     readonly message: ModelMessage;
     /**
+     * The display projection of the append this row OPENED — present on the first
+     * row of each `appendTurn` and absent on every other row. A conversation turn
+     * and a host-appended record are both appends, so both carry one.
+     */
+    readonly displayEnvelope?: StoredDisplayEnvelope;
+    /**
      * What providers reported for the whole TURN this row completed — present
      * only on the last assistant row of a turn appended with a rollup, absent
      * everywhere else. Not a per-row figure, and unrelated to the `tokens` count
@@ -65,6 +75,48 @@ export interface StoredMessage {
      * the state-init DDL).
      */
     readonly usage?: TokenUsageRollup;
+}
+
+/**
+ * One atomic append: the exact provider-facing history, the display projection of
+ * what the user was shown, and what the turn reported spending.
+ *
+ * The two message projections are independent by design. `modelMessages` is what
+ * the provider sees and the only input to token accounting; `displayMessages` is
+ * what the transcript replays. Neither is derived from the other, and a failed
+ * write commits neither.
+ */
+export interface ConversationTurn {
+    /** Exact provider-facing history; token accounting and model reads use only this projection. */
+    readonly modelMessages: readonly ModelMessage[];
+    /** Complete ordered AI SDK UI messages recorded from the live display event stream. */
+    readonly displayMessages: readonly ConversationUIMessage[];
+    /**
+     * The turn's reported rollup, as `AgentFinish.turnUsage` carries it out of the
+     * loop. Stored on the LAST assistant message of the turn — the row a reader
+     * associates with the reply. Omitting it, and supplying one that reports no
+     * quantity at all, both leave the row without one: a turn that reported nothing
+     * must not read back as a turn that cost zero.
+     */
+    readonly turnUsage?: TokenUsageRollup;
+}
+
+/**
+ * The append a host uses to record out-of-band work in a thread — an analysis
+ * run's outcome, typically.
+ *
+ * Both projections are built here because a record has no live turn behind it:
+ * no recorder observed it, so nothing else would produce its display projection,
+ * and a record appended without one would be stored, read by the model, and
+ * never shown. The harness owns the record-to-`system` mapping for the same
+ * reason it owns the marker — a host that hand-assembled either could produce a
+ * message the turn-boundary predicates fail to recognise.
+ */
+export function conversationRecordTurn(text: string): ConversationTurn {
+    return {
+        modelMessages: [syntheticRecordMessage(text)],
+        displayMessages: [{ id: randomUUID(), role: "system", parts: [{ type: "text", text, state: "done" }] }],
+    };
 }
 
 /**
@@ -95,20 +147,13 @@ export type RetractOutcome = { kind: "retracted"; messages: number } | { kind: "
  */
 export interface ThreadHistory {
     /**
-     * Append one conversation turn — every message written in a single
+     * Append one {@link ConversationTurn} — every message written in a single
      * transaction with a `seq` monotonically increasing per thread.
      *
-     * `turnUsage` is the turn's reported rollup, as `AgentFinish.turnUsage`
-     * carries it out of the loop and the `finish` event carries it to a live
-     * surface. It is stored on the LAST assistant message of the turn — the row a
-     * reader associates with the reply — so a reloaded transcript renders the
-     * figure the live turn showed. Optional at every layer: omitting it, and
-     * supplying one that reports no quantity at all, both leave the row without
-     * one, because a turn that reported nothing must not read back as a turn that
-     * cost zero. A turn writing no assistant message stores none and still
-     * succeeds — there is no row on which the figure would mean anything.
+     * A turn writing no assistant message stores no rollup and still succeeds:
+     * there is no row on which the figure would mean anything.
      */
-    appendTurn(threadId: string, messages: readonly ModelMessage[], turnUsage?: TokenUsageRollup): ResultAsync<void, DbError>;
+    appendTurn(threadId: string, turn: ConversationTurn): ResultAsync<void, DbError>;
     /**
      * Return a recent-turns window that fits `tokenBudget`, oldest-first,
      * snapped to a valid AI SDK model-message sequence. The window START advances
@@ -286,8 +331,15 @@ export const EVICTION_BLOCK_TURNS = 4;
  * provisioned by the project's state-init DDL.
  */
 export function createThreadHistory(pool: Pool): ThreadHistory {
-    function appendTurn(threadId: string, messages: readonly ModelMessage[], turnUsage?: TokenUsageRollup): ResultAsync<void, DbError> {
+    function appendTurn(threadId: string, turn: ConversationTurn): ResultAsync<void, DbError> {
+        const { modelMessages: messages, displayMessages, turnUsage } = turn;
         if (messages.length === 0) return okVoid();
+        // The display projection rides the append's FIRST row, so one SELECT of a
+        // thread's rows yields every envelope in order with no join and no grouping.
+        // Whichever row that is — a genuine user message opening a turn, or the lone
+        // record row of an out-of-band append — is the row a tail retraction removes
+        // the envelope with, because it is the row the projection describes.
+        const displayEnvelope = displayMessages.length > 0 ? JSON.stringify(envelopeDisplayMessages(displayMessages)) : null;
         // A rollup that reports no quantity is stored as absent, not as a rollup of
         // absences, so "no figure" has exactly one representation in storage.
         // `hasReportedUsage` is the loop's own predicate for the same question,
@@ -323,15 +375,24 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                             chain.andThen(() =>
                                 tryMutation("thread-history.appendTurn.insert", () =>
                                     client.query(
-                                        // `message_envelope::json`, never `::jsonb`, and `reported_usage::jsonb`,
-                                        // never `::json` — see the column comments in the state-init DDL.
-                                        `INSERT INTO messages (thread_id, seq, message_envelope, tokens, reported_usage)
-                     VALUES ($1, $2, $3::json, $4, $5::jsonb)
+                                        // `message_envelope::json`, never `::jsonb`; `display_envelope` and
+                                        // `reported_usage::jsonb`, never `::json` — see the column comments
+                                        // in the state-init DDL.
+                                        `INSERT INTO messages (thread_id, seq, message_envelope, display_envelope, tokens, reported_usage)
+                     VALUES ($1, $2, $3::json, $4::jsonb, $5, $6::jsonb)
                      ON CONFLICT (thread_id, seq) DO UPDATE
                        SET message_envelope = EXCLUDED.message_envelope,
+                           display_envelope = EXCLUDED.display_envelope,
                            tokens = EXCLUDED.tokens,
                            reported_usage = EXCLUDED.reported_usage`,
-                                        [threadId, startSeq + i, serializeEnvelope(message), countTokens(message.content), i === rollupRow ? rollup : null],
+                                        [
+                                            threadId,
+                                            startSeq + i,
+                                            serializeEnvelope(message),
+                                            i === 0 ? displayEnvelope : null,
+                                            countTokens(message.content),
+                                            i === rollupRow ? rollup : null,
+                                        ],
                                     ),
                                 ).map(() => undefined),
                             ),
@@ -472,28 +533,39 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
             const { rows } = await pool.query<{
                 seq: string;
                 message_envelope: unknown;
+                display_envelope: unknown;
                 // pg parses a `jsonb` column into a JS value. The cast on the way out is
                 // sound because this column has exactly one writer — `appendTurn` above,
                 // from a `TokenUsageRollup` — and null is preserved as null by the
-                // `?? undefined` below rather than read as a rollup.
+                // spread below rather than read as a rollup.
                 reported_usage: TokenUsageRollup | null;
             }>(
                 // ORDER BY must qualify `messages.seq` — a bare `seq` would bind to the
                 // `seq::text AS seq` output alias (Postgres resolves an unqualified
                 // ORDER BY name to the output column), sorting the bigint as text:
                 // "10" before "2". The qualified name forces the bigint column.
-                `SELECT seq::text AS seq, message_envelope, reported_usage
+                `SELECT seq::text AS seq, message_envelope, display_envelope, reported_usage
          FROM messages WHERE thread_id = $1
          ORDER BY messages.seq ASC`,
                 [threadId],
             );
 
-            const stored: StoredMessage[] = rows.map((r) => {
-                const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
-                // Spread rather than `usage: r.reported_usage ?? undefined`, so a row with
-                // no rollup carries no `usage` KEY at all — absent, not present-and-undefined.
-                return { seq: Number(r.seq), envelope, message: envelope.message, ...(r.reported_usage === null ? {} : { usage: r.reported_usage }) };
-            });
+            // Spread rather than `usage: r.reported_usage ?? undefined`, so a row with
+            // no rollup carries no `usage` KEY at all — absent, not present-and-undefined.
+            const stored: StoredMessage[] = await Promise.all(
+                rows.map(async (r) => {
+                    const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
+                    const displayEnvelope =
+                        r.display_envelope == null ? undefined : await parseStoredDisplayEnvelope(r.display_envelope, `${threadId}/${r.seq}/display`);
+                    return {
+                        seq: Number(r.seq),
+                        envelope,
+                        message: envelope.message,
+                        ...(displayEnvelope ? { displayEnvelope } : {}),
+                        ...(r.reported_usage === null ? {} : { usage: r.reported_usage }),
+                    };
+                }),
+            );
 
             const turns = groupTurns(stored, (row) => isGenuineUserStart(row.message));
             const total = turns.length;

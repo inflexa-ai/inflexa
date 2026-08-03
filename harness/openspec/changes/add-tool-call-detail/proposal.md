@@ -20,21 +20,19 @@ Two adjacent faults make the existing status untrustworthy, and both live in the
 - The emit site — not each tool — normalizes the detail: one line, control characters removed, secrets redacted, and a length cap.
 - `tool-started` and `tool-finished` carry `detail?: string`. A tool with no hook emits no detail and renders exactly as today.
 - `tool-finished` reports a three-way outcome (`ok`, `error`, `denied`) instead of a boolean, so a rejected approval stops reading as a fault. **BREAKING** for any consumer reading `isError` on that event.
-- A registry-backed resolver maps `toolName + input → detail`. The live loop and the reload converter share it, so storage stays the pure model transcript and a detail survives reload. The resolver is built over a supplied `readonly Tool[]`, so embedder-contributed tools resolve too.
-- The converter pairs each `tool-call` block with its `tool-result` block by `toolCallId` and carries the recovered outcome onto the display part. A reloaded failure renders as a failure.
+- A registry-backed resolver maps `toolName + input → detail`, built over a supplied `readonly Tool[]` so embedder-contributed tools resolve too. It serves the live activity surfaces and the startup migration of turns stored before display was recorded — not a transcript read. A detail is display data, and is replayed from the record made when it was produced (`conversation-display-storage`); deriving it again at read time would let a schema change rewrite what a past turn appears to have done.
 - `activityForTool` resolves through the same hook, so the sandbox and data-profile activity lines stop carrying a second, unchecked copy of this logic.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `tool-call-detail`: a tool describes its own call in one line. Covers the hook contract, best-effort computation, emit-site normalization, the shared name-plus-input resolver, and reload parity.
+- `tool-call-detail`: a tool describes its own call in one line. Covers the hook contract, best-effort computation, emit-site normalization, and the shared name-plus-input resolver.
 
 ### Modified Capabilities
 
 - `harness-tools`: `defineTool`'s packaged fields gain the optional `describeCall` hook.
 - `harness-agent-loop`: the `tool-finished` observation reports a three-way outcome, extending to the event the denial-versus-error distinction the loop already makes for control flow.
-- `harness-thread-history`: the converter recovers each tool call's outcome from its paired `tool-result` block, instead of reporting every reloaded call as a success.
 
 ## Impact
 
@@ -43,10 +41,10 @@ Harness source:
 - `src/tools/define-tool.ts` — the hook on `ToolDefinition` and `Tool`.
 - `src/loop/types.ts`, `src/loop/run-agent.ts` — computation, normalization, and stamping at the two emit sites.
 - `src/contracts/chat-events.ts`, `src/contracts/schemas/chat-events.ts`, `src/contracts/message.ts` — `detail` and the outcome on the wire vocabulary.
-- `src/memory/content-to-cortex.ts` — tool-result pairing and the detail resolver seam.
+- `src/memory/content-to-cortex.ts` — tool-result pairing and the detail resolver seam, both reached only by the startup migration.
 - `src/sandbox/sandbox-step-translate.ts` — `activityForTool` resolves through the hook.
 - First hook coverage on the conversation roster: `update_working_memory`, `workspace_search`, `read_file`, `inspect_run`, `pubmed`, `search_gene`, `execute_analysis`.
 
-Consumers: the `tool-finished` outcome change is breaking. The CLI reads these events in process (`cli/src/tui/hooks/conversation.ts`) and holds the composed tool list at `HarnessRuntime.conversationAgent.tools`, so it can build the reload resolver without new plumbing from the harness. Host rendering, the detail row layout, and the design gallery state are a separate change in `cli/`.
+Consumers: the `tool-finished` outcome change is breaking. The CLI reads these events in process (`cli/src/tui/hooks/conversation.ts`). It does NOT need to build a resolver: the detail and the outcome are recorded into the turn's display projection as they are emitted, so a reloaded transcript carries both without the host wiring anything. Host rendering, the detail row layout, and the design gallery state are a separate change in `cli/`.
 
 Out of scope: result-side summaries (`describeResult`) and the third `warning` status tier for ok-channel outcomes. Both are tracked in issue #281, which depends on this change.

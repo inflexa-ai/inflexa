@@ -7,7 +7,7 @@
  * narrows the union member without any `as` cast.
  */
 
-import type { ToolCallDetail, ToolOutcome } from "./chat-events.js";
+import type { ToolCallDetail, ToolCallOutcome } from "./chat-events.js";
 import type { CortexChatPart } from "./chat-parts.js";
 import type { TokenUsageRollup } from "./usage.js";
 
@@ -20,20 +20,25 @@ export interface TextPart {
 /**
  * A tool call observed during the turn (or replayed from history).
  *
- * Live frames collapse a `tool-started`+`tool-finished` pair into a single
- * part keyed by `toolCallId`. History-replayed calls always arrive with
- * `status: "finished"`.
+ * Live frames collapse a `tool-started`+`tool-finished` pair into a single part
+ * keyed by `toolCallId`.
+ *
+ * `outcome` carries the call's whole terminal state in one field, and its absence
+ * means exactly one thing: the call is still in flight. A REPLAYED call therefore
+ * always has one — a turn cut off mid-call replays as `incomplete`, not as an
+ * absent outcome a reader would have to interpret. That is what lets a consumer
+ * switch on this single field and be told by the compiler when it misses a case,
+ * rather than each host inventing what "no outcome" means and disagreeing.
  */
 export interface ToolCallPart {
     type: "tool-call";
     toolCallId: string;
     toolName: string;
-    status: "started" | "finished";
     /**
-     * How the call ended. Absent while `status` is `"started"` — the outcome is
-     * not known yet. See {@link ToolOutcome}.
+     * How the call ended. Absent ONLY while the call is in flight on a live
+     * surface; every replayed call carries one. See {@link ToolCallOutcome}.
      */
-    outcome?: ToolOutcome;
+    outcome?: ToolCallOutcome;
     /** See {@link ToolCallDetail}. Absent when no detail was produced. */
     detail?: ToolCallDetail;
 }

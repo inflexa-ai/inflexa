@@ -2,12 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ModelMessage, ToolResultPart } from "ai";
 import { metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
+import type { ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import type { TokenUsageRollup } from "../contracts/usage.js";
+import type { DbError } from "../lib/db-result.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { envelopeMessage, isInterruptedMessage, markInterruptedMessage, syntheticRecordMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { countTokens } from "./count-tokens.js";
+import type { ConversationUIMessage } from "./conversation-display-storage.js";
 import { __resetThreadHistoryMetricsForTest, createThreadHistory, EVICTION_BLOCK_TURNS, type ThreadHistory } from "./thread-history.js";
 import { createThreadStore } from "./thread-store.js";
 
@@ -91,6 +94,16 @@ let pool: Pool;
 let drop: () => Promise<void>;
 let history: ThreadHistory;
 
+/**
+ * Append a model-only turn. Most suites here exercise the model projection —
+ * sequencing, windowing, eviction, retraction — where an empty display
+ * projection is the honest input: nothing was displayed because no turn ran.
+ * The display projection has its own suite below.
+ */
+function append(threadId: string, modelMessages: readonly ModelMessage[], turnUsage?: TokenUsageRollup): ResultAsync<void, DbError> {
+    return history.appendTurn(threadId, { modelMessages, displayMessages: [], ...(turnUsage ? { turnUsage } : {}) });
+}
+
 beforeEach(async () => {
     ({ pool, drop } = await withSchema("thread-history"));
     history = createThreadHistory(pool);
@@ -118,8 +131,8 @@ describe("appendTurn / loadRecent round-trip", () => {
     it("returns appended messages oldest-first with monotonic seq", async () => {
         const turn1 = [userText("question one"), assistantText("answer one")];
         const turn2 = [userText("question two"), assistantText("answer two")];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
 
         const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
         expect(loaded).toEqual([...turn1, ...turn2]);
@@ -134,7 +147,7 @@ describe("appendTurn / loadRecent round-trip", () => {
 
     it("preserves a thinking block signature byte-identical", async () => {
         const signature = "Ev4BCkYIBx+gC/sig/abc==DEF09+xyz";
-        (await history.appendTurn(THREAD, [userText("reason about this"), assistantThinking("step-by-step reasoning", signature)]))._unsafeUnwrap();
+        (await append(THREAD, [userText("reason about this"), assistantThinking("step-by-step reasoning", signature)]))._unsafeUnwrap();
 
         const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
         const reasoning = loaded.flatMap((m) => (typeof m.content === "string" ? [] : m.content)).find((b) => b.type === "reasoning");
@@ -188,7 +201,7 @@ describe("envelope marshalling fidelity", () => {
             },
             assistantText("The matrix has 18,204 genes across 12 samples."),
         ];
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await append(THREAD, turn))._unsafeUnwrap();
 
         assertMarshalsVerbatim(turn, (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap());
     });
@@ -219,7 +232,7 @@ describe("envelope marshalling fidelity", () => {
                 content: [{ type: "reasoning", text: "weighing options", providerOptions: { anthropic: { signature: "SIG-abc==", zebra: "z", alpha: "a" } } }],
             },
         ];
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await append(THREAD, turn))._unsafeUnwrap();
 
         assertMarshalsVerbatim(turn, (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap());
     });
@@ -229,10 +242,10 @@ describe("envelope marshalling fidelity", () => {
         // unchanged after more turns land behind it.
         const turn1 = [userText("first question"), assistantToolUse("toolu_3", "search_gene", { symbol: "EGFR", species: "human", limit: 5 })];
         const turn2 = [userToolResult("toolu_3", JSON.stringify({ hits: 3 })), assistantText("EGFR is well characterized.")];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
         const afterFirst = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
 
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
         const afterSecond = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
 
         assertMarshalsVerbatim(turn1, afterFirst);
@@ -248,7 +261,7 @@ describe("envelope marshalling fidelity", () => {
         // strips NUL where it builds a tool result, so on the harness's own path
         // the stored row and the message it sent live are already identical.
         const NUL = String.fromCharCode(0);
-        (await history.appendTurn(THREAD, [userText("read the binary header"), userToolResult("toolu_4", `MAGIC${NUL}rest`)]))._unsafeUnwrap();
+        (await append(THREAD, [userText("read the binary header"), userToolResult("toolu_4", `MAGIC${NUL}rest`)]))._unsafeUnwrap();
 
         assertMarshalsVerbatim(
             [userText("read the binary header"), userToolResult("toolu_4", "MAGICrest")],
@@ -273,7 +286,7 @@ describe("appendTurn thread activity", () => {
         const newerUpdatedAt = before.threads.find((t) => t.threadId === "newer")!.updatedAt;
         const olderBefore = before.threads.find((t) => t.threadId === "older")!.updatedAt;
 
-        (await history.appendTurn("older", [userText("question one"), assistantText("answer one")]))._unsafeUnwrap();
+        (await append("older", [userText("question one"), assistantText("answer one")]))._unsafeUnwrap();
 
         const after = (await store.listThreads({ analysisId: ANALYSIS }))._unsafeUnwrap();
         expect(after.threads.map((t) => t.threadId)).toEqual(["older", "newer"]);
@@ -296,7 +309,7 @@ describe("appendTurn thread activity", () => {
         await pool.query("CREATE TRIGGER boom_trg BEFORE UPDATE ON cortex_analysis_threads FOR EACH ROW EXECUTE FUNCTION boom()");
 
         const turn = [userText("question one"), assistantText("answer one")];
-        const appended = await history.appendTurn(THREAD, turn);
+        const appended = await append(THREAD, turn);
         expect(appended.isOk()).toBe(true);
 
         // The turn committed with the failed touch rolled back out of it, not
@@ -324,7 +337,7 @@ describe("appendTurn thread activity", () => {
         const before = await readTombstone();
 
         const turn = [userText("question one"), assistantText("answer one")];
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await append(THREAD, turn))._unsafeUnwrap();
 
         // A deleted thread keeps its messages, so the turn still lands — but the
         // tombstone is not a live row and the touch must neither revive it nor
@@ -337,7 +350,7 @@ describe("appendTurn thread activity", () => {
 
     it("persists the turn for a thread that has no metadata row", async () => {
         const turn = [userText("question one"), assistantText("answer one")];
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await append(THREAD, turn))._unsafeUnwrap();
 
         expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn);
 
@@ -356,7 +369,7 @@ describe("loadRecent token windowing", () => {
             .split("")
             .map(labeledTurn);
         for (const turn of turns) {
-            (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+            (await append(THREAD, turn))._unsafeUnwrap();
         }
 
         // Budget fits only K of the 3K equal-cost turns, so the thread is well
@@ -381,8 +394,8 @@ describe("loadRecent token windowing", () => {
             userToolResult("toolu_1", JSON.stringify({ hits: 12, genes: ["TP53"] })),
             assistantText("a thorough synthesis of every result returned above"),
         ];
-        (await history.appendTurn(THREAD, small))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, oversized))._unsafeUnwrap();
+        (await append(THREAD, small))._unsafeUnwrap();
+        (await append(THREAD, oversized))._unsafeUnwrap();
 
         // Budget far below the most recent turn's own cost.
         const loaded = (await history.loadRecent(THREAD, 1))._unsafeUnwrap();
@@ -416,7 +429,7 @@ describe("loadRecent prefix stability", () => {
         // Seed right up to the budget: whole thread returned, window opens on the
         // very first turn.
         for (let i = 0; i < fitTurns; i++) {
-            (await history.appendTurn(THREAD, turns[i]!))._unsafeUnwrap();
+            (await append(THREAD, turns[i]!))._unsafeUnwrap();
         }
         const seeded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
         expect(seeded).toEqual(turns.slice(0, fitTurns).flat());
@@ -426,7 +439,7 @@ describe("loadRecent prefix stability", () => {
         const appendsToObserve = 2 * K + 1;
         const firstMessages: string[] = [];
         for (let i = fitTurns; i < fitTurns + appendsToObserve; i++) {
-            (await history.appendTurn(THREAD, turns[i]!))._unsafeUnwrap();
+            (await append(THREAD, turns[i]!))._unsafeUnwrap();
             const loaded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
             assertValidSequence(loaded);
             expect(windowCost(loaded)).toBeLessThanOrEqual(budget);
@@ -464,8 +477,8 @@ describe("loadRecent boundary snapping", () => {
             assistantText("answer grounded in the tool result"),
         ];
         const turn2 = [userText("a simple follow-up question"), assistantText("a simple follow-up answer")];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
 
         // A naive newest-first cut at this budget would include turn2 plus the
         // tail of turn1 — landing the window start on turn1's tool_result-only
@@ -485,8 +498,8 @@ describe("loadRecent boundary snapping", () => {
             userToolResult("toolu_x", JSON.stringify({ pathway: "apoptosis" })),
             assistantText("final answer using the pathway result"),
         ];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
 
         // Budget lands between the tool_use and its tool_result if walked
         // message-by-message. The turn-atomic window keeps the pair together.
@@ -526,7 +539,7 @@ describe("loadRecent numeric seq ordering", () => {
         ];
         const inOrder = [...plainTurns, toolTurn];
         for (const turn of inOrder) {
-            (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+            (await append(THREAD, turn))._unsafeUnwrap();
         }
 
         // Budget far above the whole thread — every turn is included, so the only
@@ -550,7 +563,7 @@ describe("loadRecent numeric seq ordering", () => {
 
 describe("loadRecent overflow metric", () => {
     it("reports no eviction for a thread under budget", async () => {
-        (await history.appendTurn(THREAD, [userText("a small question"), assistantText("a small answer")]))._unsafeUnwrap();
+        (await append(THREAD, [userText("a small question"), assistantText("a small answer")]))._unsafeUnwrap();
         (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
 
         const collected = await collectMetrics();
@@ -569,9 +582,9 @@ describe("loadRecent overflow metric", () => {
         const turn1 = [userText("question one here"), assistantText("answer one here")];
         const turn2 = [userText("question two here"), assistantText("answer two here")];
         const turn3 = [userText("question three here"), assistantText("answer three here")];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn3))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, turn3))._unsafeUnwrap();
 
         // Only the most recent turn fits — turns 1 and 2 are evicted.
         (await history.loadRecent(THREAD, turnCost(turn3)))._unsafeUnwrap();
@@ -591,15 +604,15 @@ describe("retractLastTurn", () => {
     it("removes the last appended turn and restores the exact pre-append window", async () => {
         const turn1 = [userText("question one"), assistantText("answer one")];
         const turn2 = [userText("question two"), assistantText("answer two")];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
 
         // Snapshot the window, append one more (single-message) turn, then retract
         // it: the byte-stable prefix guarantee only holds if the retracted tail
         // restores the exact prior row set.
         const before = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
 
-        (await history.appendTurn(THREAD, [userText("question three")]))._unsafeUnwrap();
+        (await append(THREAD, [userText("question three")]))._unsafeUnwrap();
 
         const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(outcome).toEqual({ kind: "retracted", messages: 1 });
@@ -616,8 +629,8 @@ describe("retractLastTurn", () => {
             userToolResult("toolu_x", JSON.stringify({ pathway: "apoptosis" })),
             assistantText("final answer using the pathway result"),
         ];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
 
         // The turn's tool-result row is `tool`-role, not `user`, so the turn opens
         // on its single user message: all four rows sit at or past that boundary
@@ -639,7 +652,7 @@ describe("retractLastTurn", () => {
         // Rows that never open a turn are anomalous data: retract refuses them
         // rather than emptying the thread. Appending an assistant-only "turn"
         // stages exactly that shape without a direct SQL insert.
-        (await history.appendTurn(THREAD, [assistantText("orphan one"), assistantText("orphan two")]))._unsafeUnwrap();
+        (await append(THREAD, [assistantText("orphan one"), assistantText("orphan two")]))._unsafeUnwrap();
 
         const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(outcome).toEqual({ kind: "no-user-turn" });
@@ -651,8 +664,8 @@ describe("retractLastTurn", () => {
     it("walks turns back to empty across repeated retracts", async () => {
         const turn1 = [userText("question one"), assistantText("answer one")];
         const turn2 = [userText("question two"), assistantText("answer two")];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
 
         // First retract takes the newest turn off; the prior turn is now the tail.
         const first = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
@@ -676,7 +689,7 @@ describe("retractLastTurn", () => {
             userToolResult("toolu_only", JSON.stringify({ hits: 1 })),
             assistantText("the only answer"),
         ];
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await append(THREAD, turn))._unsafeUnwrap();
 
         // The sole turn is the tail, so one retract removes every row and empties
         // the thread — the outcome's count is the whole turn's row count.
@@ -697,7 +710,10 @@ describe("retractLastTurn", () => {
         // final state is one of exactly two: the whole turn present (retract ran
         // first on the empty thread) or the whole turn gone (retract ran after the
         // append and took it off). A partial turn would mean the lock failed.
-        const [appendRes, retractRes] = await Promise.all([history.appendTurn(THREAD, turn), history.retractLastTurn(THREAD)]);
+        const [appendRes, retractRes] = await Promise.all([
+            history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [] }),
+            history.retractLastTurn(THREAD),
+        ]);
         appendRes._unsafeUnwrap();
         retractRes._unsafeUnwrap();
 
@@ -721,8 +737,8 @@ describe("retractLastTurn", () => {
             syntheticUserMessage("Your previous reply was cut off at the output-token limit; continue concisely."),
             assistantText("the continued and finished reply"),
         ];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
 
         const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(outcome).toEqual({ kind: "retracted", messages: 4 });
@@ -740,7 +756,7 @@ describe("retractLastTurn", () => {
             syntheticUserMessage("Your previous reply was cut off at the output-token limit; continue concisely."),
             assistantText("the continued and finished reply"),
         ];
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await append(THREAD, turn))._unsafeUnwrap();
 
         const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
         expect(page.total).toBe(1);
@@ -761,7 +777,7 @@ describe("retractLastTurn", () => {
             userToolResult("toolu_c", JSON.stringify({ hits: 5 })),
             assistantText("concurrent answer"),
         ];
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await append(THREAD, turn))._unsafeUnwrap();
 
         const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
         expect(loaded).toEqual(turn);
@@ -775,7 +791,7 @@ describe("interruption marker round-trip", () => {
     it("survives appendTurn and reads back as interrupted on the assistant row only", async () => {
         const marked = markInterruptedMessage(assistantText("a partial reply cut off"));
         const turn = [userText("a question"), marked];
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await append(THREAD, turn))._unsafeUnwrap();
 
         const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
         expect(loaded).toHaveLength(2);
@@ -794,8 +810,8 @@ describe("interruption marker round-trip", () => {
             assistantText("answer grounded in the tool result"),
         ];
         const turn2 = [userText("a simple follow-up question"), markInterruptedMessage(assistantText("a simple follow-up answer"))];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
 
         // The marker rides a non-boundary assistant role and does not change any
         // message's content, so the window snaps past turn1's tool_result-only user
@@ -812,8 +828,8 @@ describe("interruption marker round-trip", () => {
     it("retracts a marked-tail turn identically to an unmarked one", async () => {
         const turn1 = [userText("question one"), assistantText("answer one")];
         const turn2 = [userText("question two"), markInterruptedMessage(assistantText("an interrupted answer two"))];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
 
         // The marker rides the assistant row — a non-boundary role — so the turn
         // opens on its single user message and comes off whole, exactly as an
@@ -841,8 +857,8 @@ describe("host-appended synthetic records", () => {
 
     it("does not open a turn for paging or the token window", async () => {
         const turn = [userText("kick off the analysis"), assistantText("launched — I'll report back")];
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, [runNotice()]))._unsafeUnwrap();
+        (await append(THREAD, turn))._unsafeUnwrap();
+        (await append(THREAD, [runNotice()]))._unsafeUnwrap();
 
         // One turn, not two: the record rides the exchange it followed.
         const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
@@ -853,9 +869,9 @@ describe("host-appended synthetic records", () => {
     it("is present in the window the next turn is assembled from", async () => {
         // This is what lets the agent answer "are you done?" without a tool call.
         const turn = [userText("kick off the analysis"), assistantText("launched — I'll report back")];
-        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        (await append(THREAD, turn))._unsafeUnwrap();
         const notice = runNotice();
-        (await history.appendTurn(THREAD, [notice]))._unsafeUnwrap();
+        (await append(THREAD, [notice]))._unsafeUnwrap();
 
         const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
         expect(loaded).toEqual([...turn, notice]);
@@ -865,9 +881,9 @@ describe("host-appended synthetic records", () => {
     it("is removed with the turn it belongs to when that turn is retracted", async () => {
         const turn1 = [userText("first question"), assistantText("first answer")];
         const turn2 = [userText("kick off the analysis"), assistantText("launched")];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, [runNotice()]))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, [runNotice()]))._unsafeUnwrap();
 
         // Accepted consequence of opening no turn: the record folds into turn2 and comes off with
         // it. The alternative — letting it open a turn — would hand retraction a mid-turn cut point.
@@ -880,13 +896,77 @@ describe("host-appended synthetic records", () => {
         const turn1 = [userText("kick off the analysis"), assistantText("launched")];
         const notice = runNotice();
         const turn2 = [userText("what did it find?"), assistantText("here is the summary")];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, [notice]))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, [notice]))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
 
         const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(outcome).toEqual({ kind: "retracted", messages: 2 });
         expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual([...turn1, notice]);
+    });
+});
+
+describe("dual model/display turn persistence", () => {
+    it("round-trips display on the turn head while loadRecent stays model-only", async () => {
+        const modelMessages = [userText("show results"), assistantText("Here they are.")];
+        const displayMessages: ConversationUIMessage[] = [
+            { id: "u-display", role: "user", parts: [{ type: "text", text: "show results" }] },
+            {
+                id: "a-display",
+                role: "assistant",
+                parts: [
+                    { type: "text", text: "Here they are." },
+                    {
+                        type: "data-file-reference",
+                        id: "files-1",
+                        data: { id: "files-1", files: [{ path: "runs/run-1/output/results.csv", runId: "run-1" }] },
+                    },
+                ],
+            },
+        ];
+
+        (await history.appendTurn(THREAD, { modelMessages, displayMessages }))._unsafeUnwrap();
+
+        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(modelMessages);
+        const page = (await history.loadPage(THREAD, 0, 10))._unsafeUnwrap();
+        expect(page.messages[0]!.displayEnvelope?.messages).toEqual(displayMessages);
+        expect(page.messages[1]!.displayEnvelope).toBeUndefined();
+
+        const { rows } = await pool.query<{ tokens: number; display_envelope: unknown }>(
+            "SELECT tokens, display_envelope FROM messages WHERE thread_id = $1 ORDER BY seq",
+            [THREAD],
+        );
+        expect(rows[0]!.tokens).toBe(countTokens(modelMessages[0]!.content));
+        expect(rows[0]!.display_envelope).not.toBeNull();
+        expect(rows[1]!.display_envelope).toBeNull();
+    });
+
+    it("retract removes the model rows and their turn-head display envelope together", async () => {
+        const modelMessages = [userText("question"), assistantText("answer")];
+        const displayMessages: ConversationUIMessage[] = [
+            { id: "u-display", role: "user", parts: [{ type: "text", text: "question" }] },
+            { id: "a-display", role: "assistant", parts: [{ type: "text", text: "answer" }] },
+        ];
+        (await history.appendTurn(THREAD, { modelMessages, displayMessages }))._unsafeUnwrap();
+
+        expect((await history.retractLastTurn(THREAD))._unsafeUnwrap()).toEqual({ kind: "retracted", messages: 2 });
+        const { rows } = await pool.query("SELECT 1 FROM messages WHERE thread_id = $1", [THREAD]);
+        expect(rows).toHaveLength(0);
+    });
+
+    it("rolls back model rows when the display projection cannot be stored", async () => {
+        await pool.query("ALTER TABLE messages ADD CONSTRAINT reject_display_projection CHECK (display_envelope IS NULL)");
+        const result = await history.appendTurn(THREAD, {
+            modelMessages: [userText("question"), assistantText("answer")],
+            displayMessages: [
+                { id: "u-display", role: "user", parts: [{ type: "text", text: "question" }] },
+                { id: "a-display", role: "assistant", parts: [{ type: "text", text: "answer" }] },
+            ],
+        });
+
+        expect(result.isErr()).toBe(true);
+        const { rows } = await pool.query("SELECT 1 FROM messages WHERE thread_id = $1", [THREAD]);
+        expect(rows).toHaveLength(0);
     });
 });
 
@@ -917,13 +997,13 @@ describe("appendTurn turn usage rollup", () => {
             userToolResult("call-1", "done"),
             assistantText("here are the results"),
         ];
-        (await history.appendTurn(THREAD, turn, ROLLUP))._unsafeUnwrap();
+        (await append(THREAD, turn, ROLLUP))._unsafeUnwrap();
 
         expect(await storedRollups()).toEqual([null, null, null, ROLLUP]);
     });
 
     it("stores no rollup when the caller supplies none", async () => {
-        (await history.appendTurn(THREAD, [userText("question one"), assistantText("answer one")]))._unsafeUnwrap();
+        (await append(THREAD, [userText("question one"), assistantText("answer one")]))._unsafeUnwrap();
 
         expect(await storedRollups()).toEqual([null, null]);
     });
@@ -932,8 +1012,8 @@ describe("appendTurn turn usage rollup", () => {
         // Both shapes a caller can hand over for "nothing was reported". Storing
         // either as a rollup would make a turn that was TOLD nothing read back as a
         // turn that SPENT nothing — the distinction the whole capability rests on.
-        (await history.appendTurn(THREAD, [userText("question one"), assistantText("answer one")], {}))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, [userText("question two"), assistantText("answer two")], { inputTokens: undefined }))._unsafeUnwrap();
+        (await append(THREAD, [userText("question one"), assistantText("answer one")], {}))._unsafeUnwrap();
+        (await append(THREAD, [userText("question two"), assistantText("answer two")], { inputTokens: undefined }))._unsafeUnwrap();
 
         expect(await storedRollups()).toEqual([null, null, null, null]);
     });
@@ -941,7 +1021,7 @@ describe("appendTurn turn usage rollup", () => {
     it("succeeds and stores nothing for a turn that persisted no assistant message", async () => {
         // An abort before any output. There is no row on which the figure would mean
         // anything, so it is dropped rather than parked on the user's own message.
-        const appended = await history.appendTurn(THREAD, [userText("aborted before any reply")], ROLLUP);
+        const appended = await append(THREAD, [userText("aborted before any reply")], ROLLUP);
 
         expect(appended.isOk()).toBe(true);
         expect(await storedRollups()).toEqual([null]);
@@ -958,7 +1038,7 @@ describe("appendTurn turn usage rollup", () => {
         );
         await pool.query("CREATE TRIGGER boom_insert_trg BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION boom_insert()");
 
-        const appended = await history.appendTurn(THREAD, [userText("question one"), assistantText("answer one")], ROLLUP);
+        const appended = await append(THREAD, [userText("question one"), assistantText("answer one")], ROLLUP);
 
         expect(appended.isErr()).toBe(true);
         expect(await storedRollups()).toEqual([]);
@@ -968,8 +1048,8 @@ describe("appendTurn turn usage rollup", () => {
         // Free by construction — the rollup is a column on the row — and pinned here
         // so a future move to a side table cannot silently orphan a turn's cost
         // behind a transcript that no longer holds the turn.
-        (await history.appendTurn(THREAD, [userText("first question"), assistantText("first answer")], ROLLUP))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, [userText("second question"), assistantText("second answer")], ROLLUP))._unsafeUnwrap();
+        (await append(THREAD, [userText("first question"), assistantText("first answer")], ROLLUP))._unsafeUnwrap();
+        (await append(THREAD, [userText("second question"), assistantText("second answer")], ROLLUP))._unsafeUnwrap();
         expect(await storedRollups()).toEqual([null, ROLLUP, null, ROLLUP]);
 
         (await history.retractLastTurn(THREAD))._unsafeUnwrap();
@@ -996,7 +1076,7 @@ describe("appendTurn turn usage rollup", () => {
 
     it("surfaces the stored rollup on the display read", async () => {
         const turn = [userText("question one"), assistantText("answer one")];
-        (await history.appendTurn(THREAD, turn, ROLLUP))._unsafeUnwrap();
+        (await append(THREAD, turn, ROLLUP))._unsafeUnwrap();
 
         const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
         expect(page.messages.map((m) => m.usage)).toEqual([undefined, ROLLUP]);
@@ -1015,8 +1095,8 @@ describe("loadRecent ignores the stored rollup", () => {
         const huge: TokenUsageRollup = { inputTokens: 5_000_000, outputTokens: 5_000_000 };
         const labels = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
         for (const label of labels) {
-            (await history.appendTurn("with-rollups", labeledTurn(label), huge))._unsafeUnwrap();
-            (await history.appendTurn("no-rollups", labeledTurn(label)))._unsafeUnwrap();
+            (await append("with-rollups", labeledTurn(label), huge))._unsafeUnwrap();
+            (await append("no-rollups", labeledTurn(label)))._unsafeUnwrap();
         }
         const budget = turnCost(labeledTurn("a")) * 3;
 
