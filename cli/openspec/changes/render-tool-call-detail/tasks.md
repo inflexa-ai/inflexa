@@ -52,5 +52,5 @@
 
 - [x] 8.1 Run `bun run format:file` on every changed file under `src/`.
 - [x] 8.2 Run `bun run typecheck` and `bun run lint`.
-- [x] 8.3 Run `bun run test` (never plain `bun test` — the macOS pipe-capture bug needs `--isolate`).
+- [x] 8.3 Run `bun run test`.
 - [x] 8.4 Launch the TUI and open the design gallery to look at the three new exhibits on a dark theme and on `github-light`.
