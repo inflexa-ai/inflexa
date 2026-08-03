@@ -1,5 +1,5 @@
 import { aggregateCitationResolution } from "./aggregate.js";
-import { BoundedTtlCache } from "./cache.js";
+import { BoundedTtlCache } from "../lib/cache.js";
 import { createArxivCitationClient } from "./clients/arxiv.js";
 import { notApplicableOutcome, sourceOutcome } from "./clients/common.js";
 import { createCrossrefClient } from "./clients/crossref.js";
@@ -9,7 +9,7 @@ import { createSemanticScholarCitationClient } from "./clients/semantic-scholar.
 import { DEFAULT_MATCH_CONFIG, type CitationMatchConfig } from "./match.js";
 import { citationLookupKey, normalizeCitation } from "./normalize.js";
 import { planCitationSources } from "./plan.js";
-import { createRateLimitSchedule, type RateLimitConfig, type RateLimitRuntime } from "./rate-limit.js";
+import { createRateLimitSchedule, type RateLimitConfig, type RateLimitRuntime } from "../lib/rate-limit.js";
 import type { SourceHttpOptions } from "../literature/sources/http.js";
 import {
     CitationInputSchema,

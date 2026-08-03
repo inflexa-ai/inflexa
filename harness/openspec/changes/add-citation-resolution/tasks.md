@@ -51,7 +51,7 @@
 ## 7. Review Follow-Up
 
 - [x] 7.1 Separate the rate-limit admission gate from the fetch so the HTTP layer arms its timeout after admission, and fold `Retry-After` retry into that one loop.
-- [x] 7.2 Make author comparison surname-position independent and require given-name agreement where both sides supply one; bump the comparison rule version.
+- [x] 7.2 Make author comparison surname-position independent and require given-name agreement where both sides supply one.
 - [x] 7.3 Encode a DOI consistently across every registry, RA, metadata, and Crossref URL.
 - [x] 7.4 Contain a throwing or inconsistent source client as `unavailable` for its own requests instead of failing the batch.
 - [x] 7.5 Key coalescing and caching on the lookup an input provokes, and aggregate comparisons per caller.
@@ -60,6 +60,7 @@
 - [x] 7.8 Add composed timeout/rate-limit, author-matching, source-containment, and shared-lookup tests.
 - [x] 7.9 Separate an undetermined registration agency from an established other-agency one, so a gated source reports the gap rather than non-ownership it never established.
 - [x] 7.10 Honor a pinned `free_text` kind through planning and candidate scoring by extracting no identifier for it.
+- [x] 7.11 Move the generic rate limiter and bounded TTL cache out of `citations/` into `lib/`, and broaden their tests to cover recency, expiry boundaries, bounds, slot release, and cancellation.
 
 ## 8. Verification
 

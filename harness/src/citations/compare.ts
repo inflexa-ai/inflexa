@@ -9,7 +9,12 @@ import type {
     CitationSource,
 } from "./types.js";
 
-export const CITATION_COMPARISON_RULE_VERSION = "citation-compare-v2";
+/**
+ * Stamped onto every field comparison so a consumer can tell which rules
+ * produced it. Bump it when the published comparison semantics change — a
+ * revision made before these rules ever shipped is not a new version.
+ */
+export const CITATION_COMPARISON_RULE_VERSION = "citation-compare-v1";
 
 type Comparable = string | number | string[];
 
