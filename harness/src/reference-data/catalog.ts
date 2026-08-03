@@ -1051,6 +1051,430 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 ],
             },
             {
+                id: "scgate-human-generic",
+                version: "v0.17",
+                title: "scGate human generic cell-type gating models",
+                description:
+                    "Broad human cell identities — immune lineages, T/B/NK, myeloid, epithelial, stromal, endothelial and their common subsets. 29 gating models plus the signature table they all share — a few KB in total. scGate assigns cells by walking a marker hierarchy rather than by clustering, labelling one population and marking everything else impure, which makes it the route when no annotated reference exists to transfer from. Its own model downloader cannot run without egress, so these files ARE the model database. From the immutable v0.17 release.",
+                organism: "human",
+                sourceUrl: "https://github.com/carmonalab/scGate_models",
+                license: { identifier: "GPL-3.0", url: "https://github.com/carmonalab/scGate_models" },
+                recommendation: { group: "cell-typing", recommended: true },
+                artifacts: [
+                    {
+                        path: "Bcell.GerminalCenter_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Bcell.GerminalCenter_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Bcell / GerminalCenter. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Bcell.NonGerminalCenter_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Bcell.NonGerminalCenter_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Bcell / NonGerminalCenter. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Bcell_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Bcell_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Bcell. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CAF.SMC.pericyte_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/CAF.SMC.pericyte_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CAF / SMC / pericyte. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CD4T_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/CD4T_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD4T. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CD8TIL_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/CD8TIL_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD8TIL. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CD8T_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/CD8T_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD8T. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Endothelial_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Endothelial_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Endothelial. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Epithelial_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Epithelial_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Epithelial. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Erythrocyte_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Erythrocyte_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Erythrocyte. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Female_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Female_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Female. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Immune_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Immune_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Immune. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Macrophage_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Macrophage_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Macrophage. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Male_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Male_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Male. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Mast_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Mast_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Mast. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Megakaryocyte_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Megakaryocyte_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Megakaryocyte. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "MoMacDCMast_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/MoMacDCMast_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for MoMacDCMast. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "MoMacDC_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/MoMacDC_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for MoMacDC. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "MoMac_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/MoMac_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for MoMac. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Monocyte_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Monocyte_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Monocyte. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Myeloid_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Myeloid_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Myeloid. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "NK_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/NK_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for NK. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Neutrophils_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Neutrophils_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Neutrophils. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "PanBcell_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/PanBcell_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for PanBcell. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "PlasmaCell_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/PlasmaCell_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for PlasmaCell. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Stromal_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Stromal_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Stromal. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Tcell.alphabeta_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Tcell.alphabeta_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Tcell / alphabeta. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Tcell_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/Tcell_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Tcell. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "master_table.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/master_table.tsv",
+                        format: "tsv",
+                        contents:
+                            "Two columns, tab-separated: `name`, `signature`. Signatures are semicolon-separated gene symbols with a trailing `-` marking a negative marker (`KRT18-`). Every model in this dataset carries an EMPTY signature column and resolves against this file by name, so it must be staged with them and its path passed explicitly when loading — the loader resolves the default bare filename against the working directory, not against the model's folder.",
+                    },
+                    {
+                        path: "panDC_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/generic/panDC_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for panDC. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                ],
+            },
+            {
+                id: "scgate-human-tme",
+                version: "v0.17",
+                title: "scGate human tumour microenvironment gating models",
+                description:
+                    "The HiTME panel: the cell types making up a human tumour microenvironment, gated as one consistent hierarchy. 15 gating models plus the signature table they all share — a few KB in total. scGate assigns cells by walking a marker hierarchy rather than by clustering, labelling one population and marking everything else impure, which makes it the route when no annotated reference exists to transfer from. Its own model downloader cannot run without egress, so these files ARE the model database. From the immutable v0.17 release.",
+                organism: "human",
+                sourceUrl: "https://github.com/carmonalab/scGate_models",
+                license: { identifier: "GPL-3.0", url: "https://github.com/carmonalab/scGate_models" },
+                recommendation: { group: "cell-typing", recommended: true },
+                artifacts: [
+                    {
+                        path: "Bcell_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/Bcell_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Bcell. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CD4T_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/CD4T_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD4T. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CD8T_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/CD8T_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD8T. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Endothelial_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/Endothelial_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Endothelial. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Epithelial_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/Epithelial_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Epithelial. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Erythrocyte_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/Erythrocyte_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Erythrocyte. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Fibroblast_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/Fibroblast_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Fibroblast. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Mast_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/Mast_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Mast. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "MoMac_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/MoMac_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for MoMac. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "NK_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/NK_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for NK. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Neutrophils_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/Neutrophils_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Neutrophils. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "PlasmaCell_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/PlasmaCell_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for PlasmaCell. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "Platelet_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/Platelet_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for Platelet. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "gdT_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/gdT_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for gdT. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "master_table.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/master_table.tsv",
+                        format: "tsv",
+                        contents:
+                            "Two columns, tab-separated: `name`, `signature`. Signatures are semicolon-separated gene symbols with a trailing `-` marking a negative marker (`KRT18-`). Every model in this dataset carries an EMPTY signature column and resolves against this file by name, so it must be staged with them and its path passed explicitly when loading — the loader resolves the default bare filename against the working directory, not against the model's folder.",
+                    },
+                    {
+                        path: "panDC_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/HiTME/panDC_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for panDC. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                ],
+            },
+            {
+                id: "scgate-human-cd8-til",
+                version: "v0.17",
+                title: "scGate human CD8 TIL state gating models",
+                description:
+                    "CD8 tumour-infiltrating T-cell states — naive, effector-memory, tissue-resident, exhausted, precursor-exhausted, TEMRA, MAIT and innate-like. 8 gating models plus the signature table they all share — a few KB in total. scGate assigns cells by walking a marker hierarchy rather than by clustering, labelling one population and marking everything else impure, which makes it the route when no annotated reference exists to transfer from. Its own model downloader cannot run without egress, so these files ARE the model database. From the immutable v0.17 release.",
+                organism: "human",
+                sourceUrl: "https://github.com/carmonalab/scGate_models",
+                license: { identifier: "GPL-3.0", url: "https://github.com/carmonalab/scGate_models" },
+                recommendation: { group: "cell-typing", recommended: true },
+                artifacts: [
+                    {
+                        path: "CD8_EM_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/CD8_TIL/CD8_EM_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD8 EM. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CD8_MAIT_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/CD8_TIL/CD8_MAIT_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD8 MAIT. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CD8_N_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/CD8_TIL/CD8_N_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD8 N. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CD8_TEMRA_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/CD8_TIL/CD8_TEMRA_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD8 TEMRA. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CD8_TEX_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/CD8_TIL/CD8_TEX_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD8 TEX. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CD8_TPEX_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/CD8_TIL/CD8_TPEX_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD8 TPEX. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CD8_TRM_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/CD8_TIL/CD8_TRM_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD8 TRM. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "CD8_Tinn_scGate_Model.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/CD8_TIL/CD8_Tinn_scGate_Model.tsv",
+                        format: "tsv",
+                        contents:
+                            "Hierarchical gating model for CD8 Tinn. Four columns, tab-separated: `levels`, `use_as`, `name`, `signature`. Rows are gating steps applied in level order, each marking a population positive (retain) or negative (exclude). The `signature` column is empty by design and is filled from master_table.tsv.",
+                    },
+                    {
+                        path: "master_table.tsv",
+                        url: "https://raw.githubusercontent.com/carmonalab/scGate_models/v0.17/human/CD8_TIL/master_table.tsv",
+                        format: "tsv",
+                        contents:
+                            "Two columns, tab-separated: `name`, `signature`. Signatures are semicolon-separated gene symbols with a trailing `-` marking a negative marker (`KRT18-`). Every model in this dataset carries an EMPTY signature column and resolves against this file by name, so it must be staged with them and its path passed explicitly when loading — the loader resolves the default bare filename against the working directory, not against the model's folder.",
+                    },
+                ],
+            },
+            {
                 id: "azimuth-pbmc",
                 version: "1.0.0",
                 title: "Azimuth human PBMC reference",
