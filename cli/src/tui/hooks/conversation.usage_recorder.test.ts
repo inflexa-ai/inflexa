@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { ok } from "neverthrow";
 import type { AgentChat, AgentDefinition, AgentSession, LlmUsageRecord, ModelMessage, Pool, UsageRecorder } from "@inflexa-ai/harness";
 
 import { resetHotState, send, type SendSeams } from "./conversation.ts";
@@ -40,12 +41,12 @@ const runtimeRecorder: UsageRecorder = { record: (_r: LlmUsageRecord) => {} };
 const stubRuntime = {
     pool: { connect: () => Promise.reject(new Error("no postgres in this test")) } as unknown as Pool,
     conversation: { provider: { capabilities: { toolCalling: true } } },
-    conversationAgent: { id: "conv" } as unknown as AgentDefinition,
+    agents: { forThread: () => ok({ id: "conv" } as unknown as AgentDefinition) },
     usageRecorder: runtimeRecorder,
 } as unknown as HarnessRuntime;
 
 const userMessage: ModelMessage = { role: "user", content: "hi" };
-const prepareOk: ChatTurnSeams["prepare"] = () => Promise.resolve({ kind: "ok", messages: [userMessage], userMessage });
+const prepareOk: ChatTurnSeams["prepare"] = () => Promise.resolve({ kind: "ok", threadType: "conversation", messages: [userMessage], userMessage });
 
 beforeEach(() => resetHotState());
 afterEach(() => {

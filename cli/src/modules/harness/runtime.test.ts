@@ -179,7 +179,7 @@ function recordingSeams(calls: string[]): BootSeams {
             await deps.beforeLaunch?.();
             return {
                 runtime: {
-                    conversationAgent: { id: "conversation-agent", systemPrompt: "", model: "claude-test-model", tools: [], maxIterations: 50 },
+                    agents: { forThread: () => ok({ id: "conversation-agent", systemPrompt: "", model: "claude-test-model", tools: [], maxIterations: 50 }) },
                     workflows: {
                         executeAnalysis: async () => ({
                             runId: "",
@@ -285,8 +285,9 @@ describe("bootHarnessRuntime", () => {
         expect(agentProviderInner(runtime.utility.provider)).toBe(agentProviderInner(runtime.conversation.provider));
         expect(runtime.triggerDeps.workflow).toBeInstanceOf(Function);
         // The assembled conversation agent + its agent provider are on the handle (the `chat` command
-        // drives `runAgent(conversationAgent, …, conversation.provider)`).
-        expect(runtime.conversationAgent.id).toBe("conversation-agent");
+        // drives `runAgent(conversationAgent, …, conversation.provider)`). The agent is reached by thread
+        // type through the resolver — `conversation` resolves to the assembled conversation agent.
+        expect(runtime.agents.forThread("conversation")._unsafeUnwrap().id).toBe("conversation-agent");
         expect(runtime.conversation.provider).toBeDefined();
     });
 

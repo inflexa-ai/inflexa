@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { okAsync, ResultAsync } from "neverthrow";
+import { ok, okAsync, ResultAsync } from "neverthrow";
 import type { AskContext, AskRequest, EmitFn, MessagePage } from "@inflexa-ai/harness";
 
 import {
@@ -43,7 +43,7 @@ const AID = "a1";
 const stubRuntime = {
     pool: {},
     conversation: { provider: { capabilities: { toolCalling: true } } },
-    conversationAgent: {},
+    agents: { forThread: () => ok({}) },
 } as unknown as HarnessRuntime;
 
 /**
@@ -500,6 +500,22 @@ describe("send() drives the adapter + engine", () => {
         expect(chatStatus()).toBe("error");
     });
 
+    test("agent_unresolved names the refused thread type and drops the empty bubble", async () => {
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "agent_unresolved", threadType: "report" }));
+        // The banner names the refused type — a retry cannot change which agents this build registered,
+        // so it states which type stopped it rather than suggesting a fix.
+        expect(errorMsg()).toContain("report");
+        expect(chatStatus()).toBe("error");
+        // No raw cause rides on `agent_unresolved`; the details dialog reads a structured stand-in shaped
+        // like the resolver's own `UnregisteredThreadType`, so cast off `unknown` to check its fields.
+        const failure = lastTurnFailure() as { type: string; threadType: string };
+        expect(failure.type).toBe("unregistered_thread_type");
+        expect(failure.threadType).toBe("report");
+        // Bailing before the loop pops the empty assistant bubble — only the user message stands.
+        expect(messages.length).toBe(1);
+        expect(messages[0]?.role).toBe("user");
+    });
+
     test("an appendError is surfaced non-fatally (turn still ok, no error banner)", async () => {
         const seams = fakeSeams({ kind: "ok", fallbackText: "done", appendError: { type: "mutation_failed", op: "appendTurn", cause: "x" } as never });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
@@ -667,7 +683,7 @@ describe("send() binds the ask seam to the turn scope", () => {
         const runtime = {
             pool: {},
             conversation: { provider: { capabilities: { toolCalling: true } } },
-            conversationAgent: {},
+            agents: { forThread: () => ok({}) },
             askGateway: {
                 ask: async (request: AskRequest, ctx: AskContext) => {
                     calls.push({ request, ctx });
