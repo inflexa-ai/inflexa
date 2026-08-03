@@ -138,12 +138,28 @@ types, the tumour microenvironment, and CD8 TIL states.
   gate are *not* assigned to anything, which is the honest outcome; do not
   reinterpret impure as a negative call for a specific cell type.
 
-`ProjecTILs` (projection onto a T-cell state atlas) is the other tumour-immune
-route, and its reference atlas is **not staged** —
-`ProjecTILs::load.reference.map()` downloads and fails here. It needs a
-reference map supplied as a file, or one built locally from annotated data.
-Report that gap rather than substituting; `UCell` works offline with no
-reference and is the fallback for scoring cell-state signatures per cell.
+`ProjecTILs` is the other tumour-immune route: it projects the query onto a fixed
+atlas embedding instead of re-clustering it, so cells land in a curated state
+vocabulary that is comparable across datasets. Reach for it for T-cell state
+phenotyping — exhaustion and precursor-exhausted in particular, which
+unsupervised clustering names inconsistently between runs.
+
+**Its own downloader (`load.reference.map()` with no argument) fetches from
+figshare and fails here.** Resolve an atlas from the reference inventory and pass
+its path — the loader takes a local file directly. Human CD8 TIL, human CD4 TIL
+and mouse TIL atlases are catalogued as opt-in downloads.
+
+- **Match the atlas to the species and the lineage.** The atlas the package
+  downloads by default, and that every published example therefore assumes, is
+  the *mouse* one. CD4 and CD8 are separate maps; projecting a mixed or wrong
+  lineage forces cells into a state space that does not describe them.
+- Projection reports every query cell in the atlas's vocabulary, so a state the
+  atlas does not contain cannot be discovered this way. Read the per-cell
+  projection confidence and report cells that fit poorly rather than accepting
+  the nearest state.
+
+`UCell` works offline with no reference at all and is the fallback for scoring
+cell-state signatures per cell when no atlas resolves.
 
 ### Malignant Cell Calling (tumour samples)
 

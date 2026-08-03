@@ -1475,6 +1475,70 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 ],
             },
             {
+                // ProjecTILs projects a query onto a fixed reference embedding rather than
+                // re-clustering it, so the atlas defines the state vocabulary the results are
+                // reported in. Its own loader downloads from figshare and cannot run here;
+                // these ARE the reference maps, passed to `load.reference.map()` as a path.
+                id: "projectils-cd8-til-human",
+                version: "1.0.0",
+                title: "ProjecTILs human CD8 TIL reference atlas",
+                description:
+                    "Reference map of human CD8+ tumour-infiltrating T cells for ProjecTILs: 11,021 single-cell transcriptomes from 20 samples across 7 tumour types. Projecting onto it places query cells in a fixed, curated state space — naive through effector-memory, tissue-resident and exhausted — rather than in de novo clusters, so results are comparable across datasets. The route to exhaustion and precursor-exhausted phenotyping, which unsupervised clustering names inconsistently. ~258 MB, opt-in.",
+                organism: "human",
+                sourceUrl: "https://figshare.com/articles/dataset/ProjecTILs_human_reference_atlas_of_CD8_tumor-infiltrating_T_cells_CD8_TIL_version_1/23608308",
+                license: { identifier: "CC-BY-4.0", url: "https://creativecommons.org/licenses/by/4.0/" },
+                recommendation: { group: "cell-typing", recommended: false },
+                artifacts: [
+                    {
+                        path: "CD8T_human_ref_v1.rds",
+                        url: "https://ndownloader.figshare.com/files/41414556",
+                        format: "rds",
+                        contents:
+                            "Seurat reference object carrying the atlas embedding and its cell-state labels. Pass the file path to ProjecTILs' reference loader — it takes a local path directly and does not download. Human gene symbols, so mouse queries need ortholog conversion first. The projection reports every query cell in this atlas's state vocabulary, so states absent from it cannot be discovered by projection alone.",
+                    },
+                ],
+            },
+            {
+                id: "projectils-cd4-til-human",
+                version: "1.0.0",
+                title: "ProjecTILs human CD4 TIL reference atlas",
+                description:
+                    "Reference map of human CD4+ tumour-infiltrating T cells for ProjecTILs: 12,631 single-cell transcriptomes from 20 samples across 9 tumour types. The CD4 counterpart to the CD8 atlas — regulatory, helper and follicular-helper states in a fixed coordinate system. ~262 MB, opt-in.",
+                organism: "human",
+                sourceUrl: "https://figshare.com/articles/dataset/ProjecTILs_human_reference_atlas_of_CD4_tumor-infiltrating_T_cells_version_1/21981536",
+                license: { identifier: "CC-BY-4.0", url: "https://creativecommons.org/licenses/by/4.0/" },
+                recommendation: { group: "cell-typing", recommended: false },
+                artifacts: [
+                    {
+                        path: "CD4T_human_ref_v1.rds",
+                        url: "https://ndownloader.figshare.com/files/39012395",
+                        format: "rds",
+                        contents:
+                            "Seurat reference object carrying the atlas embedding and its cell-state labels. Pass the file path to ProjecTILs' reference loader. Human gene symbols. CD4 and CD8 atlases are separate maps — subset the query to the right lineage before projecting, or the projection forces cells into a state space that does not describe them.",
+                    },
+                ],
+            },
+            {
+                id: "projectils-til-mouse",
+                version: "3.0.0",
+                title: "ProjecTILs mouse TIL reference atlas",
+                description:
+                    "Reference map of murine tumour-infiltrating T cells for ProjecTILs: 16,803 single-cell transcriptomes from 25 samples (B16 melanoma, MC38 colon adenocarcinoma) across six studies. This is the atlas ProjecTILs downloads by default, so it is the one every published example assumes — but it is MOUSE, and applying it to human data is the mistake the default invites. ~496 MB, opt-in.",
+                organism: "mouse",
+                sourceUrl: "https://figshare.com/articles/dataset/ProjecTILs_murine_reference_atlas_of_tumor-infiltrating_T_cells_version_1/12478571",
+                license: { identifier: "CC-BY-4.0", url: "https://creativecommons.org/licenses/by/4.0/" },
+                recommendation: { group: "cell-typing", recommended: false },
+                artifacts: [
+                    {
+                        path: "ref_TILAtlas_mouse_v1.rds",
+                        url: "https://ndownloader.figshare.com/files/41398167",
+                        format: "rds",
+                        contents:
+                            "Seurat reference object carrying the atlas embedding and its cell-state labels, in MGI mouse gene symbols. Pass the file path to ProjecTILs' reference loader. For human queries use the human CD8 or CD4 atlas instead; converting a human query to mouse orthologs to reuse this one loses the genes that differ between species, which are disproportionately immune genes.",
+                    },
+                ],
+            },
+            {
                 id: "azimuth-pbmc",
                 version: "1.0.0",
                 title: "Azimuth human PBMC reference",
