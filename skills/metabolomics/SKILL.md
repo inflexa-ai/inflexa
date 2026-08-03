@@ -117,12 +117,8 @@ Normalized, log2-transformed feature matrix
 
 ## Additional Available Packages
 
-- **CAMERA** (R): Adduct and isotope annotation after XCMS peak detection. `xsAnnotate()`, `findIsotopes()`, `findAdducts()`. Run after xcms feature detection.
-- **MSnbase** (R): MS data classes — `readMSData()` for reading mzML. Foundation package that xcms depends on.
-- **Spectra** (R Bioconductor): Modern replacement for MSnbase data backends. Use `Spectra()` constructor, `filterMsLevel()`, `peaksData()`.
-- **spectrum-utils** (Python): MS spectrum visualization — mirror plots, annotated spectra. Use for quality inspection of spectral matches.
-- **ms-deisotope** (Python): Deisotoping and charge state deconvolution for high-resolution MS data.
-- **OpenMS** (system CLI): `FeatureFinderMetabo`, `MapAlignerPoseClustering` — nominally an alternative to XCMS for feature detection, but **not installed here** and unobtainable with no egress. Do not plan around it: XCMS is the installed pipeline and is the one to use. If you have a specific reason to want OpenMS, probe first (`command -v FeatureFinderMetabo`) and report its absence rather than emitting commands that cannot run.
+- **CAMERA** (R): Adduct and isotope annotation. Runs *after* xcms feature detection — grouping features into adducts and isotopologues is what turns a feature list into candidate compounds.
+- **OpenMS** is not installed and cannot be. XCMS is the feature-detection pipeline here.
 
 ## References
 

@@ -128,18 +128,6 @@ Phosphoproteomics workflow:
 - **Using t-tests without multiple testing correction**: Always apply BH/FDR correction. With thousands of proteins, uncorrected p-values produce massive false positives.
 - **Ignoring protein grouping**: MaxQuant groups proteins sharing peptides. Using individual protein IDs without resolving groups inflates the number of "hits" and introduces redundancy.
 
-## Additional Available Packages
-
-### Python
-
-- **spectrum-utils**: Mass spectrometry spectrum visualization — annotated spectra, mirror plots for spectral library matching. Use for QC and figure generation.
-- **ms-deisotope**: Deisotoping and charge state deconvolution. Use for preprocessing high-resolution MS1/MS2 spectra before database search.
-
-### R (via rpy2)
-
-- **MSnbase**: Legacy MS data class infrastructure. `readMSData()` for reading mzML. Foundation for xcms.
-- **Spectra** (Bioconductor): Modern MS data backend replacing MSnbase. Use `Spectra()`, `filterMsLevel()`, `peaksData()`.
-
 ## References
 
 API references for all supported packages:

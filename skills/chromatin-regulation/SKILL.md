@@ -147,27 +147,9 @@ TF from a peak's nearest gene and present it as motif evidence.
 
 ## Additional Available Packages
 
-### Python (3D genomics and interval operations)
-
-- **cooler**: Read/write/manipulate Hi-C contact matrices in .cool/.mcool
-  format. `cooler.Cooler()` for single resolution, `cooler.open()` for
-  multi-resolution.
-- **cooltools**: Hi-C analysis — compartment calling (`cooltools.eigs_cis`), TAD
-  insulation (`cooltools.insulation`), loop calling (`cooltools.dots`), saddle
-  plots, expected contact frequency.
-- **bioframe**: Genomic interval operations, pandas-native. Used by cooltools.
-
-### R (via rpy2)
-
-- **rtracklayer**: Read/write BED, BigWig, GFF. `import()` / `export()` for
-  format conversion and signal extraction.
-
-### CLI
-
-`samtools` for MAPQ filtering, indexing, `flagstat`/`idxstats` QC and
-paired-end insert-size distributions; `bedtools` for consensus peak sets
-(`intersect`, `merge`, `multiinter`), coverage (`genomecov`, `multicov`) and
-interval arithmetic.
+- **cooler** / **cooltools**: Hi-C contact matrices (`.cool`/`.mcool`) — a
+  different assay from the ones above, and the route when the input is 3D
+  contacts rather than peaks: compartments, TAD insulation, loop calling.
 
 ## References
 

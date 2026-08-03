@@ -173,10 +173,8 @@ on position and alleles.
 
 ## Additional Available Packages
 
-- **pyfaidx**: Random access to FASTA sequences by coordinate — extracting
-  regions around variants.
-- **VariantAnnotation** (R via rpy2): `readVcf()`, `info()`, `geno()`. The R-side
-  complement to cyvcf2 when the rest of the step is already in R.
+- **pyfaidx**: Random access to FASTA by coordinate — pulling sequence around a variant.
+- **VariantAnnotation** (R via rpy2): the R-side complement to cyvcf2, when the rest of the step is already in R.
 
 ## References
 
