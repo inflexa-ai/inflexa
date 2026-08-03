@@ -153,7 +153,11 @@ export { createStreamingChat } from "./providers/streaming-chat.js";
 export { prepareChatTurn } from "./app/chat-turn.js";
 export type { PrepareChatTurnDeps, PrepareChatTurnParams, PrepareChatTurnResult } from "./app/chat-turn.js";
 export { createThreadStore } from "./memory/thread-store.js";
-export type { ThreadStore, Thread, CreateThreadInput, ListThreadsInput, ThreadPage } from "./memory/thread-store.js";
+// `ThreadType` and `ThreadInputError` ride out with the shapes that carry them:
+// `Thread.threadType` and `CreateThreadInput.type` are unwritable by an embedder
+// that cannot name the union, and `createThread`'s error channel is unmatchable
+// without the variants it can return beside `DbError`.
+export type { ThreadStore, Thread, ThreadType, ThreadInputError, CreateThreadInput, ListThreadsInput, ThreadPage } from "./memory/thread-store.js";
 export { createThreadHistory, conversationRecordTurn } from "./memory/thread-history.js";
 export type { ThreadHistory, StoredMessage, MessagePage, RetractOutcome, ConversationTurn } from "./memory/thread-history.js";
 // The synthetic-message primitives. A host appends a record of out-of-band work (an analysis run's
