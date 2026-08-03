@@ -71,6 +71,7 @@ import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorize
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
+import type { CitationResolver } from "../citations/types.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import {
     RunDedupCollisionError,
@@ -318,6 +319,8 @@ export interface ExecuteAnalysisDeps {
     readonly synthesisModel: string;
     /** API keys for the bio/chem tools the embedded literature reviewer uses. */
     readonly bioKeys: BioToolKeys;
+    /** Shared resolver for the literature reviewer used during synthesis. */
+    readonly citationResolver: CitationResolver;
     /** Run-level billing-bracket seam (managed: external bracket; OSS: no-op). */
     readonly runCharge: RunCharge;
     /** Run-authorization seam — the terminal path revokes through `revoke`. */
@@ -651,6 +654,7 @@ export function synthesizeFindings(args: {
             resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
             synthesisModel: deps.synthesisModel,
             bioKeys: deps.bioKeys,
+            citationResolver: deps.citationResolver,
             usageRecorder: deps.usageRecorder,
         },
         {

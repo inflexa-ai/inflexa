@@ -36,6 +36,7 @@ import { insertStepExecution, updateStepExecution } from "../state/index.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
+import type { CitationResolver } from "../citations/types.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
@@ -237,6 +238,8 @@ export interface SandboxAgentBuildContext {
      * bound to this holder.
      */
     readonly blockerHolder: BlockerHolder;
+    /** Shared host-side citation resolver for allowlisted sandbox agents. */
+    readonly citationResolver: CitationResolver;
 }
 
 /**
@@ -260,6 +263,8 @@ export interface SandboxStepDeps {
      * post-step sub-agent loops alike; omitted falls back to the no-op recorder.
      */
     readonly usageRecorder?: UsageRecorder;
+    /** Shared resolver threaded from `assembleCoreRuntime`. */
+    readonly citationResolver: CitationResolver;
     /** Non-streaming chat — drives the agent loop + the post-step sub-agents. */
     readonly provider: AgentChat;
     /** Write-side embedder for the post-step vector index. */
@@ -470,6 +475,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         deadlineMs: () => stepDeadlineMs,
         lineageCollector,
         blockerHolder,
+        citationResolver: deps.citationResolver,
     });
 
     // Built over THIS agent's tools, not a shared table: a sandbox agent's roster

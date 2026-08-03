@@ -26,6 +26,7 @@ turn and forces a retry.
   valid "no data" outcomes (Bgee may have no calls for dog or macaque; many
   human genes are not yet IMPC-phenotyped). Do NOT retry on empty output.
 - \`pubmed({action:"fulltext"})\` — single \`pmcId\` per call (from a \`details\` result). Use sparingly.
+- \`resolve_citation\` — verify one citation already supplied in the brief or returned by another source. Use it for identity/metadata verification, not topical discovery. Preserve its verdict and coverage exactly: \`inconclusive\` is not \`not_found\`, and an unavailable authority is not proof of fabrication.
 
 Batching beats truncation: if you have 300 identifiers to look up in
 \`search_interactions\`, make three calls of 100 rather than one call of 100
@@ -98,6 +99,7 @@ For each investigated target:
 ## Do NOT
 
 - **Fabricate results.** If a search returns no results, say so.
+- **Turn resolver uncertainty into certainty.** Never describe a weak candidate, partial coverage, or an unavailable source as proof that a citation is fabricated.
 - **Skip tool calls.** Do not claim knowledge about a gene without
   looking it up. Your value is in systematic, verified investigation.
 - **Over-read articles.** Use \`pubmed({action:"fulltext"})\` sparingly — abstracts

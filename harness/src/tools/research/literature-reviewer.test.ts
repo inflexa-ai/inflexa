@@ -4,6 +4,8 @@ import { makeSession } from "../../providers/__fixtures__/session.js";
 import { makeMessage, scriptedProvider, textBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import type { ToolContext } from "../define-tool.js";
 import { createLiteratureReviewerTool } from "./literature-reviewer.js";
+import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
+import { literatureReviewerPrompt } from "../../prompts/literature-reviewer.js";
 
 describe("literatureReviewer sub-agent tool", () => {
     it("runs runAgent on a derived child Session and surfaces the report", async () => {
@@ -12,6 +14,7 @@ describe("literatureReviewer sub-agent tool", () => {
             provider,
             model: "claude-test",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            citationResolver: unusedCitationResolver,
         });
 
         const parentSession = makeSession({
@@ -50,11 +53,19 @@ describe("literatureReviewer sub-agent tool", () => {
             "gene_preclinical_profile",
             "lookup_annotation",
             "pubmed",
+            "resolve_citation",
             "search_gene",
             "search_interactions",
         ]);
 
         // The child transcript is not exposed — only the report leaves the tool.
         expect(Object.keys(result)).toEqual(["report"]);
+    });
+
+    it("distinguishes citation discovery from verification without collapsing uncertainty", () => {
+        expect(literatureReviewerPrompt).toContain("not topical discovery");
+        expect(literatureReviewerPrompt).toContain("`inconclusive` is not `not_found`");
+        expect(literatureReviewerPrompt).toContain("unavailable authority is not proof of fabrication");
+        expect(literatureReviewerPrompt).toContain("Never describe a weak candidate, partial coverage, or an unavailable source as proof");
     });
 });

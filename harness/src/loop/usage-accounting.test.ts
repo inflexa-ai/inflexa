@@ -16,6 +16,7 @@ import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage } from "../providers/types.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
 import { createLiteratureReviewerTool } from "../tools/research/literature-reviewer.js";
+import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
 import { runAgent, type AgentFinish, type RunAgentOptions } from "./run-agent.js";
 import { passthroughStep } from "./run-step.js";
@@ -471,6 +472,7 @@ describe("runAgent usage — sub-agent runs", () => {
             provider: childProvider,
             model: "claude-test",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            citationResolver: unusedCitationResolver,
             usageRecorder: recorder,
         });
         const parent = scriptedProvider([

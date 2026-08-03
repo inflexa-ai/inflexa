@@ -84,6 +84,8 @@ import type { RunLauncher } from "../execution/run-launcher.js";
 import { planReportTool, createReportSubmitTool, type SubmitReportDeps } from "../tools/iterate-report.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
+import type { CitationResolver } from "../citations/types.js";
+import { createResolveCitationTool } from "../tools/research/resolve-citation.js";
 
 /** Canonical agent id — the single source of truth. */
 export const CONVERSATION_AGENT_ID = "conversation-agent" as const;
@@ -106,6 +108,8 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
      * Omitted falls back to the no-op recorder.
      */
     readonly usageRecorder?: UsageRecorder;
+    /** Shared host-side bibliographic verification service. */
+    readonly citationResolver: CitationResolver;
     /** The LLM seam every loop-driving tool runs its sub-agent on. */
     readonly provider: ChatProvider;
     /** Postgres pool — plan persistence, run inspection, workspace index, working memory. */
@@ -193,6 +197,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         refStorePath,
         packagesFile,
         usageRecorder,
+        citationResolver,
     } = deps;
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
@@ -207,6 +212,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         searchInteractionsTool,
         // Literature (search / details / fulltext behind one action).
         ncbi.pubmed,
+        // Verification of one caller-supplied citation (distinct from discovery).
+        createResolveCitationTool(citationResolver),
         // ChEMBL (compounds / drug / mechanism / bioactivity / targets behind one action).
         chemblTool,
         // PubChem (compound / crossrefs / assays behind one action).
@@ -280,7 +287,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createShowPlanTool(pool),
         showFileTool,
         // Batch literature/biology research (sub-agent as a loop-driving tool).
-        createLiteratureReviewerTool({ provider, model, bioKeys, usageRecorder }),
+        createLiteratureReviewerTool({ provider, model, bioKeys, citationResolver, usageRecorder }),
         // Cross-domain analogy generation (sub-agent as a loop-driving tool).
         createGenerateAnalogyReportTool({ provider, model, bioKeys, usageRecorder }),
         // Workspace semantic search + raw read/grep over the read seam.
