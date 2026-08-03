@@ -289,7 +289,18 @@ describe("Sidebar SESSION section", () => {
     const dbErr: DbError = { type: "query_failed", op: "test", cause: new Error("boom") };
 
     function threadRow(over: Partial<Thread> = {}): Thread {
-        return { threadId: THREAD_ID, analysisId: "a1", title: TITLE, createdAt: CREATED_AT, updatedAt: CREATED_AT, deletedAt: null, ...over };
+        return {
+            threadId: THREAD_ID,
+            analysisId: "a1",
+            title: TITLE,
+            threadType: "conversation",
+            parentThreadId: null,
+            parentSeq: null,
+            createdAt: CREATED_AT,
+            updatedAt: CREATED_AT,
+            deletedAt: null,
+            ...over,
+        };
     }
 
     /** Thread seams whose row read resolves to `row` (or fails when `row` is the error sentinel). */
