@@ -85,6 +85,31 @@ cph.predict_partial_hazard(new_df)           # exp(X * beta) partial hazard
 cph.check_assumptions(df, p_value_threshold=0.05, show_plots=True)
 ```
 
+### Prognostic vs Predictive Test
+
+The distinction is a model term, not a different method. A prognostic marker
+predicts outcome on its own; a predictive one predicts *differential* benefit
+from a treatment, which only a marker x treatment interaction can show.
+
+```python
+# Prognostic: marker alone, no treatment term
+cph = CoxPHFitter().fit(df[["time", "event", "marker"]], "time", "event")
+
+# Predictive: the interaction is the test. `formula=` builds the term, so the
+# main effects it depends on cannot be forgotten.
+cph_pred = CoxPHFitter().fit(
+    df[["time", "event", "marker", "treatment"]],
+    duration_col="time", event_col="event",
+    formula="marker * treatment",      # expands to marker + treatment + marker:treatment
+)
+cph_pred.summary.loc["marker:treatment", "p"]
+```
+
+A significant marker main effect with a null interaction means prognostic only —
+it says who does badly, not who benefits, so it cannot select treatment. Report
+the interaction p-value whenever you use the word "predictive"; a single-arm
+study cannot produce one at all.
+
 ## Log-Rank Test
 
 ```python
