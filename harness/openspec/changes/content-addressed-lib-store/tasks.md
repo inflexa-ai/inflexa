@@ -1,6 +1,6 @@
 ## 1. Provisioner image
 
-- [ ] 1.1 Add `images/provisioner/Dockerfile`, built `FROM` the same digest-pinned base image as `sandbox-base`, carrying `images/install-build-toolchain.sh` and the pinned `uv`
+- [ ] 1.1 Add `images/sandbox-provisioner/Dockerfile`, built `FROM` the same digest-pinned base image as `sandbox-base`, carrying `images/install-build-toolchain.sh` and the pinned `uv`
 - [ ] 1.2 Assert in the build that the provisioner's base digest equals `sandbox-base`'s, so a drift fails the build rather than producing a mismatched ABI
 - [ ] 1.3 Copy `images/sandbox-python/inflexa-libs-refresh` into the provisioner so the store and the images share one `packages.txt` generator
 - [ ] 1.4 Add the provisioner to the image build workflow for both architectures

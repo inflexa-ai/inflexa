@@ -38,10 +38,11 @@ die() { echo "error: $*" >&2; exit 1; }
 
 cmd_build() {
     echo "==> building provisioner image ($CTR)"
-    # Build context is the repo root: the Dockerfile reaches images/ for both the
-    # shared build toolchain and the packages.txt producer.
+    # Build context is the repo root: the Dockerfile reaches images/ for the shared
+    # build toolchain, the packages.txt producer, the provision program, and the
+    # manifest it asserts its base digest against.
     "$CTR" build \
-        -f "$REPO_ROOT/scripts/store-prototype/provisioner.Dockerfile" \
+        -f "$REPO_ROOT/images/sandbox-provisioner/Dockerfile" \
         -t "$PROVISIONER_IMAGE" \
         "$REPO_ROOT"
 }
