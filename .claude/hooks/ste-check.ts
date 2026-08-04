@@ -1,0 +1,354 @@
+#!/usr/bin/env bun
+/**
+ * ASD-STE100 Simplified Technical English gate for this repository.
+ *
+ * Part 2 of the standard (the dictionary) is not redistributable, so nothing here
+ * embeds it. Every lexical rule is read at runtime from the `### Word traps` table
+ * in CLAUDE.md: one source of truth, and no copy of the standard in a public repo.
+ *
+ * Findings carry a confidence class because only the commit surface blocks:
+ *   hard — deterministic; no part-of-speech or context judgment is possible to get
+ *          wrong. Only these can deny a commit.
+ *   soft — heuristic (voice, tense, words whose legality depends on part of speech).
+ *          Advice only.
+ * A gate that denies on a guess teaches people to route around it, so the blocking
+ * set is deliberately the narrow one and grows only if a rule proves deterministic.
+ */
+
+type Severity = "hard" | "soft";
+
+type Finding = {
+  rule: string;
+  severity: Severity;
+  where: string;
+  quote: string;
+  hint: string;
+};
+
+type Trap = { pattern: RegExp; replacement: string; severity: Severity };
+
+/** Rule 5.1 (an instruction) and rule 6.3 (a description). */
+const MAX_WORDS_PROCEDURAL = 20;
+const MAX_WORDS_DESCRIPTIVE = 25;
+/** Rule 6.6. */
+const MAX_SENTENCES_PER_PARAGRAPH = 6;
+
+/**
+ * A word trap whose left cell carries a parenthetical qualifier — `check (verb)`,
+ * `follow (a rule)`, `since (a cause)` — is legal in the other reading, and no regex
+ * can tell the two apart. The qualifier is therefore the marker for "advise, never
+ * deny", which is why CLAUDE.md's notation is load-bearing here.
+ */
+const QUALIFIED = /\s*\(/;
+
+/**
+ * `main` is a branch name, a file name, and an entry point in this repository far
+ * more often than it is the adjective the standard rejects. Denying on it would fire
+ * on `origin/main` in every other commit message.
+ */
+const FORCED_SOFT = new Set(["main"]);
+
+function projectDir(): string {
+  const fromHarness = process.env.CLAUDE_PROJECT_DIR;
+  if (fromHarness) return fromHarness;
+  // .claude/hooks/ste-check.ts -> repository root
+  return new URL("../..", import.meta.url).pathname;
+}
+
+/** Reads the word traps out of CLAUDE.md so the table stays the only place they live. */
+async function loadTraps(): Promise<Trap[]> {
+  const path = `${projectDir()}/CLAUDE.md`;
+  const text = await Bun.file(path).text();
+  const section = text.split(/^### Word traps$/m)[1];
+  if (!section) throw new Error(`no "### Word traps" table in ${path}`);
+
+  const traps: Trap[] = [];
+  for (const line of section.split("\n")) {
+    if (!line.startsWith("|")) {
+      if (traps.length > 0) break; // the table ended
+      continue;
+    }
+    const cells = line.split("|").slice(1, -1).map((c) => c.trim());
+    if (cells.length < 2) continue;
+    if (cells[0] === "Do not use" || /^-+$/.test(cells[0])) continue;
+
+    for (const raw of cells[0].split(",")) {
+      const entry = raw.trim();
+      if (!entry) continue;
+      const word = entry.replace(/\s*\(.*$/, "").trim();
+      const severity: Severity =
+        QUALIFIED.test(entry) || FORCED_SOFT.has(word) ? "soft" : "hard";
+      traps.push({
+        pattern: new RegExp(`\\b${word.replace(/\s+/g, "\\s+")}\\b`, "gi"),
+        replacement: cells[1],
+        severity,
+      });
+    }
+  }
+  if (traps.length === 0) throw new Error(`empty word-trap table in ${path}`);
+  return traps;
+}
+
+const CONTRACTIONS =
+  /\b(\w+n['’]t|(?:it|that|there|here|what|who|let|he|she)['’]s|\w+['’](?:ll|ve|re|d|m))\b/gi;
+const LATIN = /\b(e\.g\.|i\.e\.|etc\.|viz\.|cf\.|et al\.|vs\.)/gi;
+const GENDERED = /\b(he|she|him|her|his|hers|himself|herself)\b/gi;
+/**
+ * Rule 1.14. British forms only — a word whose American spelling is identical is
+ * absent, so a match is always a real violation.
+ */
+const BRITISH =
+  /\b(colour|colours|behaviour|behaviours|favour|favours|centre|centres|metre|metres|fibre|fibres|licence|defence|catalogue|analyse|analysed|organise|organised|initialise|initialised|normalise|normalised|serialise|serialised|grey|labelled|cancelled|travelled)\b/gi;
+
+const PROGRESSIVE = /\b(is|are|was|were|be|been|being)\s+(\w+ing)\b/gi;
+const PERFECT = /\b(have|has|had)\s+(\w+(?:ed|en))\b/gi;
+/**
+ * Rule 3.6 permits the passive in a description when the agent is unknown, and no
+ * parser can decide whether an agent is knowable. Only the form that names its agent
+ * with `by` is unambiguously rejected, so only that form is reported.
+ */
+const PASSIVE = /\b(is|are|was|were|be|been)\s+\w+(?:ed|en)\s+by\b/gi;
+/** Rule 3.5. Connectives whose `-ing` form is never a technical name. */
+const ING_CONNECTIVE =
+  /\b(following|regarding|according|concerning|depending|including|using|being|having|ensuring|allowing|providing|containing|requiring)\b/gi;
+
+/**
+ * Word count under rules 8.4 thru 8.7: an identifier, a number with its unit, an
+ * abbreviation, quoted text, a parenthetical, and a hyphenated group each count as
+ * one word. Without this the limits would punish exactly the technical prose the
+ * standard exempts.
+ */
+function countWords(sentence: string): number {
+  const collapsed = sentence
+    .replace(/`[^`]*`/g, " X ")
+    .replace(/\([^)]*\)/g, " X ")
+    .replace(/"[^"]*"/g, " X ")
+    .replace(/[“][^”]*[”]/g, " X ")
+    .replace(/\b\d[\d.,]*\s*[A-Za-z%°]*\b/g, " X ")
+    .replace(/\b[A-Z]{2,}(?:-[A-Z0-9]+)*\b/g, " X ")
+    .replace(/\b[\w]+(?:-[\w]+)+\b/g, " X ");
+  return collapsed.split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w)).length;
+}
+
+/**
+ * Strips everything the standard does not govern. Quoted text (rule 8.6), code, and
+ * table cells are exempt — and the exemption is not cosmetic: CLAUDE.md's own trap
+ * table and its deliberately non-STE example would otherwise report themselves.
+ */
+function markdownProse(source: string): string[] {
+  const body = source.replace(/^---\n[\s\S]*?\n---\n/, "");
+  const blocks: string[] = [];
+  let current: string[] = [];
+  let inFence = false;
+
+  // Inline spans are stripped only after the wrapped lines are joined: a `code span`
+  // broken across two source lines has no closing backtick on either one, and a
+  // per-line strip would leave its contents exposed as prose.
+  const flush = () => {
+    if (current.length === 0) return;
+    blocks.push(
+      current
+        .join(" ")
+        .replace(/<!--[\s\S]*?-->/g, "")
+        .replace(/`[^`]*`/g, " `X` ")
+        .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+        .replace(/https?:\/\/\S+/g, "X"),
+    );
+    current = [];
+  };
+
+  for (const raw of body.split("\n")) {
+    const line = raw.trim();
+    if (/^(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      flush();
+      continue;
+    }
+    if (inFence) continue;
+    if (line === "" || line.startsWith("|") || line.startsWith(">") || line.startsWith("#")) {
+      flush();
+      continue;
+    }
+    // A list item is its own unit; a wrapped paragraph line continues the previous one.
+    if (/^([-*+]|\d+\.)\s/.test(line)) flush();
+    current.push(line);
+  }
+  flush();
+  return blocks;
+}
+
+/** Rule 8.4: a colon that introduces a vertical list ends the sentence, like a period. */
+function splitSentences(block: string): string[] {
+  return block
+    .split(/(?<=[a-zA-Z0-9`)"'”])[.!?:](?=\s|$)/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function checkText(where: string, traps: Trap[], maxWords: number, blocks: string[]): Finding[] {
+  // Every lexical rule reads the stripped prose, never the raw source. Code, quoted
+  // text, and table cells are outside STE, and scanning them would make any document
+  // that discusses the rules — CLAUDE.md above all — report itself.
+  const text = blocks.join("\n");
+  const findings: Finding[] = [];
+  const add = (rule: string, severity: Severity, quote: string, hint: string) =>
+    findings.push({ rule, severity, where, quote: quote.trim(), hint });
+
+  for (const [re, rule, severity, hint] of [
+    [CONTRACTIONS, "contraction", "hard", "Write the words in full (rule 4.2)"],
+    [LATIN, "latin-abbreviation", "hard", "Write `for example` or `that is` (GR-6)"],
+    [GENDERED, "gendered-pronoun", "hard", "Use a gender-neutral word (GR-7)"],
+    [BRITISH, "british-spelling", "hard", "Use American English spelling (rule 1.14)"],
+    [PROGRESSIVE, "progressive-tense", "soft", "Use the simple present tense (rule 3.2)"],
+    [PERFECT, "perfect-tense", "soft", "Use the simple past tense (rule 3.4)"],
+    [PASSIVE, "passive-voice", "soft", "Use the active voice (rule 3.6)"],
+    [ING_CONNECTIVE, "ing-form", "soft", "Use a clause with a verb (rule 3.5)"],
+  ] as const) {
+    for (const m of text.matchAll(re)) add(rule, severity, m[0], hint);
+  }
+
+  for (const trap of traps) {
+    for (const m of text.matchAll(trap.pattern)) {
+      add("word-trap", trap.severity, m[0], `Use \`${trap.replacement}\``);
+    }
+  }
+
+  if (text.includes(";")) add("semicolon", "hard", ";", "Write two sentences (rule 8.1)");
+
+  for (const block of blocks) {
+    const sentences = splitSentences(block);
+    if (sentences.length > MAX_SENTENCES_PER_PARAGRAPH) {
+      add(
+        "paragraph-length",
+        "soft",
+        `${sentences.length} sentences`,
+        `Use a maximum of ${MAX_SENTENCES_PER_PARAGRAPH} sentences (rule 6.6)`,
+      );
+    }
+    for (const sentence of sentences) {
+      const n = countWords(sentence);
+      if (n > maxWords) {
+        add("sentence-length", "hard", `${n} words: ${sentence.slice(0, 60)}…`, `Use a maximum of ${maxWords} words`);
+      }
+    }
+  }
+  return findings;
+}
+
+/** Pulls the quoted value of a repeated flag out of a shell command. */
+function flagValues(command: string, flag: string): string[] {
+  const re = new RegExp(`${flag}\\s+(?:"((?:[^"\\\\]|\\\\.)*)"|'([^']*)')`, "g");
+  return [...command.matchAll(re)].map((m) => (m[1] ?? m[2] ?? "").replace(/\\"/g, '"'));
+}
+
+/**
+ * Drops every quoted span, so a flag scan reads only real flags. Without this,
+ * a message such as -m "use -s to sign off" would look like a signed commit.
+ */
+function withoutQuotedText(command: string): string {
+  return command.replace(/"(?:[^"\\]|\\.)*"/g, " ").replace(/'[^']*'/g, " ");
+}
+
+/**
+ * CLAUDE.md requires a sign-off on each commit. Three details decide the match:
+ * `-s` bundles into a short-flag cluster such as `-sm`; git reads uppercase `-S` as
+ * GPG signing, which is a different thing, so the scan is case-sensitive; and
+ * `--no-signoff` cancels an earlier flag. `--amend` gets no exemption, because git
+ * does not repeat an identical trailer, thus the flag there costs nothing and keeps
+ * the sign-off through a rewrite.
+ */
+function hasSignoff(command: string, message: string): boolean {
+  const flags = withoutQuotedText(command);
+  if (/(?:^|\s)--no-signoff(?=\s|$)/.test(flags)) return false;
+  if (/(?:^|\s)--signoff(?=\s|$)/.test(flags)) return true;
+  if (/(?:^|\s)-[a-zA-Z]*s[a-zA-Z]*(?=\s|$)/.test(flags)) return true;
+  return /^Signed-off-by:\s*\S+/m.test(message);
+}
+
+function report(findings: Finding[], subject: string): string {
+  const lines = [`Repository gate — ${subject}:`];
+  for (const f of findings) {
+    lines.push(`  [${f.severity}] ${f.rule}: "${f.quote}" — ${f.hint}`);
+  }
+  return lines.join("\n");
+}
+
+async function main() {
+  const input = JSON.parse((await Bun.stdin.text()) || "{}");
+  const tool: string = input.tool_name ?? "";
+  const event: string = input.hook_event_name ?? (input.tool_response ? "PostToolUse" : "PreToolUse");
+  const traps = await loadTraps();
+
+  let findings: Finding[] = [];
+  let subject = "";
+  let blocking = false;
+
+  if (tool === "Bash") {
+    const command: string = input.tool_input?.command ?? "";
+
+    if (/\bgit\s+commit\b/.test(command)) {
+      const message = flagValues(command, "-m").join("\n\n");
+      subject = "the commit";
+      blocking = true;
+      // No -m means an editor or a file supplies the message; there is nothing to read.
+      // The sign-off is still visible in the command, so that check runs either way.
+      if (message) {
+        findings = checkText(subject, traps, MAX_WORDS_PROCEDURAL, markdownProse(message));
+      }
+      if (!hasSignoff(command, message)) {
+        findings.push({
+          rule: "sign-off",
+          severity: "hard",
+          where: subject,
+          quote: "no Signed-off-by trailer",
+          hint: "Use the `-s` option of `git commit` (CLAUDE.md, Commits)",
+        });
+      }
+    } else if (/\bgh\s+pr\s+(create|edit)\b/.test(command)) {
+      const parts = [...flagValues(command, "--title"), ...flagValues(command, "--body")];
+      if (parts.length > 0) {
+        subject = "the pull request text";
+        findings = checkText(subject, traps, MAX_WORDS_DESCRIPTIVE, markdownProse(parts.join("\n\n")));
+      }
+    }
+  } else if (tool === "Write" || tool === "Edit" || tool === "MultiEdit") {
+    const file: string = input.tool_input?.file_path ?? "";
+    if (file.endsWith(".md")) {
+      const source = await Bun.file(file).text();
+      subject = file.replace(`${projectDir()}/`, "");
+      findings = checkText(subject, traps, MAX_WORDS_DESCRIPTIVE, markdownProse(source));
+    }
+  }
+
+  if (findings.length === 0) process.exit(0);
+
+  const hard = findings.filter((f) => f.severity === "hard");
+  if (blocking && hard.length > 0) {
+    console.log(
+      JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: `${report(hard, subject)}\n\nCLAUDE.md gives these rules. Correct the commit, then commit again.`,
+        },
+      }),
+    );
+    process.exit(0);
+  }
+
+  console.log(
+    JSON.stringify({
+      hookSpecificOutput: { hookEventName: event, additionalContext: report(findings, subject) },
+      suppressOutput: true,
+    }),
+  );
+  process.exit(0);
+}
+
+main().catch((err) => {
+  // A broken checker must never stop work, but a silent one is a fake gate: say so.
+  console.log(
+    JSON.stringify({ systemMessage: `STE hook did not run: ${err instanceof Error ? err.message : err}` }),
+  );
+  process.exit(0);
+});
