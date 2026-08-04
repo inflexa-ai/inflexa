@@ -150,9 +150,16 @@ function markdownProse(source: string): string[] {
       current
         .join(" ")
         .replace(/<!--[\s\S]*?-->/g, "")
-        .replace(/`[^`]*`/g, " `X` ")
+        // Padded on the left only. A trailing pad would put a space between the
+        // placeholder and a sentence-ending period, and the splitter's lookbehind
+        // would then miss the terminator and merge two sentences into one count.
+        .replace(/`[^`]*`/g, " `X`")
         .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-        .replace(/https?:\/\/\S+/g, "X"),
+        .replace(/https?:\/\/\S+/g, "X")
+        // The standard regulates content, not formatting, so emphasis markers are
+        // noise here — and worse, a sentence wrapped as **… .** hides its own
+        // terminator behind the asterisks, so two sentences would be counted as one.
+        .replace(/\*\*|\*/g, ""),
     );
     current = [];
   };
