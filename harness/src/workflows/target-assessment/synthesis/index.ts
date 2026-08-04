@@ -18,7 +18,9 @@
 
 import { z } from "zod";
 
-import { SynthesisDiagnosticRowSchema, type DossierV4Body, type SynthesisDiagnosticRow } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import { SynthesisDiagnosticRowSchema, type DossierBody, type SynthesisDiagnosticRow } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import { OrganSystemSchema } from "../../../contracts/organ-system.js";
+import { SeveritySchema } from "../../../contracts/severity.js";
 import {
     executiveRecommendationBrief,
     liabilityBulletsBrief,
@@ -56,7 +58,8 @@ export type LiabilityBulletsOutput = z.infer<typeof LiabilityBulletsOutputSchema
 export const SafetyFlagsTrailOutputSchema = z.object({
     flags: z.array(
         z.object({
-            organ: z.string(),
+            organ: OrganSystemSchema,
+            severity: SeveritySchema,
             trail: z.string(),
             mechanism_hypothesis: z.string().nullable(),
         }),
@@ -312,7 +315,7 @@ async function runSynthesisWithProbe<TOut>(input: SynthesisDriverInput<TOut>): P
 
 interface Phase4Output {
     readonly assessmentId: string;
-    readonly dossier: DossierV4Body;
+    readonly dossier: DossierBody;
 }
 
 function envelopeFromDriverResult<TData>(driver: SynthesisDriverOk<TData>):

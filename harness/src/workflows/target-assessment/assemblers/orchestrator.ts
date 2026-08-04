@@ -9,7 +9,14 @@
  * under `evidence: [...]` arrays.
  */
 
-import type { DossierV4Body, Entity, EvidenceItem, TractabilityV4Section } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { ClaimSupport, DossierBody, Entity, EvidenceItem, TractabilitySection } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { OrganSystem } from "../../../contracts/organ-system.js";
+import {
+    classifyClinicalEvidenceTrial,
+    type ClinicalEvidenceAttributionContext,
+    type KnownClassDrug,
+    type TherapeuticProgram,
+} from "../lib/clinical-evidence-attribution.js";
 import type { Phase2Bundle } from "../steps/phase2-aggregate.js";
 import type { Phase3Bundle } from "../steps/phase3-aggregate.js";
 import type { ResolvedTarget } from "../schemas.js";
@@ -35,8 +42,10 @@ import {
     buildOrganRollup,
     assembleDrugInteractions,
     assembleLiabilitySummary,
+    claimSupportEvidence,
     meetsTpmFloor,
     isSafetyRelevant,
+    resolveTissueOrganSystem,
 } from "./safety.js";
 import {
     assemblePreclinicalLiterature,
@@ -64,6 +73,35 @@ import { buildFailureCategoryDiscriminated } from "./literature.js";
 import type { AttributionContext } from "./literature.js";
 
 const NOT_LOADED_PHASE5 = "Phase 5 synthesis not yet implemented";
+
+/**
+ * The IMPC phenotype vocabulary onto the canonical organ vocabulary. Buckets
+ * with no organ system to land in (hearing, growth, mortality, craniofacial)
+ * are absent: a phenotype is reported under the organ it affects or not at
+ * all, never under an approximate neighbour.
+ */
+const IMPC_ORGAN_SYSTEMS: Record<string, OrganSystem> = {
+    cardiovascular: "cardiac",
+    gastrointestinal: "gi",
+    endocrine: "endocrine_thyroid",
+    hematologic: "hematologic",
+    metabolic: "metabolic",
+    immune: "immune",
+    skin: "dermatologic",
+    hepatic: "hepatic",
+    musculoskeletal: "musculoskeletal",
+    skeleton: "musculoskeletal",
+    cns: "cns",
+    renal: "renal",
+    reproductive: "reproductive",
+    respiratory: "respiratory",
+    vision: "ocular",
+};
+
+function toOrganSystems(impcOrganSystems: string[]): OrganSystem[] {
+    const resolved = impcOrganSystems.map((o) => IMPC_ORGAN_SYSTEMS[o]).filter((o): o is OrganSystem => o !== undefined);
+    return [...new Set(resolved)];
+}
 
 // Order matches evidence-priority rank: genetic > known_drug > animal_model > somatic > literature.
 function makeAssociationEvidence(a: {
@@ -201,7 +239,7 @@ export function enrichTractabilityModalitiesWithApprovals<
     });
 }
 
-export function assembleTractability(resolved: ResolvedTarget, ot: OpenTargetsCoverageResult, drugs: DrugForTractability[]): TractabilityV4Section {
+export function assembleTractability(resolved: ResolvedTarget, ot: OpenTargetsCoverageResult, drugs: DrugForTractability[]): TractabilitySection {
     const familyFallback = () => {
         const fallback = inferModalityFromFamily(resolved.proteinFamily);
         return {
@@ -250,7 +288,7 @@ export function assembleTractability(resolved: ResolvedTarget, ot: OpenTargetsCo
     ];
     const preferred = t.smallMolecule ? "small_molecule" : t.antibody ? "antibody" : t.otherModalities ? "other_clinical" : null;
     const modalitiesEnriched = enrichTractabilityModalitiesWithApprovals(modalities, drugs);
-    // Collect molecule types from approved/clinical drugs for the v4 field.
+    // Collect molecule types from approved/clinical drugs for the tractability field.
     const drugMoleculeTypes = [...new Set(drugs.map((d) => d.molecule_type).filter((m): m is string => !!m))];
     return {
         coverage: "available",
@@ -276,7 +314,7 @@ export async function assembleDossier(
     phase2: Phase2Bundle,
     phase3?: Phase3Bundle,
     annotatorDeps?: ClinicalConsequenceAnnotatorDeps,
-): Promise<DossierV4Body> {
+): Promise<DossierBody> {
     const fanout = phase3?.fanout;
     const faersAgg = aggregateFaersAcrossModulators(fanout);
     const trialAesAgg = aggregateTrialAes(fanout);
@@ -316,7 +354,7 @@ export async function assembleDossier(
     const internalRefCounts = tallyInternalReferences([
         koSupportingLiterature,
         ...(organRollupRows ?? []).map((r) => r.evidence),
-        ...(offTargetRows ?? []).map((r) => r.evidence),
+        ...(offTargetRows ?? []).map((r) => claimSupportEvidence(r.support)),
     ]);
     const keyPapersRows = assembleKeyPapers(phase2, internalRefCounts);
     const evidenceTimeline = assembleEvidenceTimeline(phase2);
@@ -341,8 +379,6 @@ export async function assembleDossier(
 
     const trialOutcomesRows = aggregateTrialOutcomes(fanout, trialOutcomeFilter);
 
-    const discoveryTrialData = await assembleDiscoveryTrials(phase2, phase2.phase1.resolved.geneSymbol, attrCtx, knownClassDrugNames);
-
     const resolved = phase2.phase1.resolved;
     const ot = phase2.phase1.collectors.opentargets;
     const ctgov = phase2.phase1.collectors.ctgov;
@@ -355,6 +391,64 @@ export async function assembleDossier(
     const pathways = phase2.phase1.collectors.pathways;
     const ppi = phase2.phase1.collectors.stringPpi;
 
+    // Every trial row carries its attribution from assembly onward: the
+    // evidence role decides whether a row supports the target or is context.
+    const knownClassDrugs: KnownClassDrug[] = await Promise.all(
+        (drugInteractionRows ?? []).map(async (d) => {
+            const resolvedTargets = d.drug_id ? await getDrugPrimaryTargetUniprots(d.drug_id).catch(() => []) : [];
+            return {
+                name: d.drug_name,
+                moleculeChemblId: d.drug_id,
+                targetUniprots: resolvedTargets.length > 0 ? resolvedTargets : assessmentUniprot ? [assessmentUniprot] : [],
+            };
+        }),
+    );
+    const programsCollector = phase2.phase1.collectors.therapeuticPrograms;
+    const therapeuticPrograms: TherapeuticProgram[] =
+        programsCollector?.coverage === "available"
+            ? programsCollector.data.programs.map((program) => ({
+                  programId: program.programId,
+                  name: program.name,
+                  targetSymbol: program.targetSymbol,
+                  targetUniprot: program.targetUniprot,
+                  modality: program.modality,
+                  nctIds: program.nctIds,
+              }))
+            : [];
+    const evidenceAttribution: ClinicalEvidenceAttributionContext = {
+        assessmentSymbol: geneSymbol,
+        assessmentUniprot,
+        familyUniprots: familySiblingUniprots,
+        knownClassDrugs,
+        therapeuticPrograms,
+    };
+    const trialSourceByNct = new Map<string, Parameters<typeof classifyClinicalEvidenceTrial>[0]>();
+    if (ctgov.coverage === "available") {
+        for (const t of [...ctgov.data.active, ...ctgov.data.failed]) trialSourceByNct.set(t.nctId, t);
+    }
+    const attachTrialAttribution = <T extends { nct_id: string }>(row: T) => {
+        const source = trialSourceByNct.get(row.nct_id);
+        const classified = source
+            ? classifyClinicalEvidenceTrial(source, evidenceAttribution)
+            : {
+                  attribution: {
+                      relationship: "unknown" as const,
+                      evidence_role: "excluded" as const,
+                      basis: [{ kind: "text_match" as const, source: "ctgov" }],
+                      resolved_interventions: [],
+                      exclusion_reason: "no CT.gov record was available to attribute this trial to the assessed target",
+                  },
+                  eligible_for_toxicology_aggregation: false,
+              };
+        return {
+            ...row,
+            attribution: classified.attribution,
+            eligible_for_toxicology_aggregation: classified.eligible_for_toxicology_aggregation,
+        };
+    };
+
+    const discoveryTrialData = await assembleDiscoveryTrials(phase2, phase2.phase1.resolved.geneSymbol, attrCtx, knownClassDrugNames, attachTrialAttribution);
+
     const indicationsRaw = ot.coverage === "available" ? ot.data.associations : [];
     const filteredIndications = indicationsRaw.filter(
         (a) => !isSelfReference(resolved.canonicalId, a.diseaseId, resolved.geneSymbol, a.diseaseName) && !isClinicalMeasurement(a.diseaseName),
@@ -363,16 +457,42 @@ export async function assembleDossier(
     const benchmarks = getBenchmarks(ta);
     const datasetAttr = getDatasetAttribution();
 
-    const offTissueRows =
+    const offTissueCandidates =
         expression.coverage === "available"
-            ? expression.data.tissues
-                  .filter((t) => meetsTpmFloor(t.tissueLabel, t.value ?? 0) && isSafetyRelevant(t.tissueLabel, t.organSystem))
-                  .map((t) => ({
-                      tissue: t.tissueLabel,
-                      organ: t.organSystem ?? "unspecified",
-                      tpm: t.value ?? 0,
-                  }))
+            ? expression.data.tissues.filter((t) => meetsTpmFloor(t.tissueLabel, t.value ?? 0) && isSafetyRelevant(t.tissueLabel, t.organSystem))
             : [];
+    // A tissue whose anatomy does not resolve onto an organ system is dropped
+    // rather than filed under a neighbouring organ; the count is reported so
+    // the section does not overstate its own completeness.
+    const offTissueRows = offTissueCandidates.flatMap((t) => {
+        const organ = resolveTissueOrganSystem(t.tissueLabel, t.organSystem);
+        if (!organ) return [];
+        const support: ClaimSupport = {
+            state: "unknown",
+            reason: `${t.tissueLabel} expression is a measured value from the expression atlas, not a citable per-tissue record`,
+        };
+        return [{ tissue: t.tissueLabel, organ, tpm: t.value ?? 0, support }];
+    });
+    const offTissueDroppedCount = offTissueCandidates.length - offTissueRows.length;
+
+    // Candidates that all failed to resolve leave the section empty for a
+    // reason of our own making, not because the atlas held nothing.
+    const offTissueSection =
+        expression.coverage !== "available"
+            ? { coverage: "queried_no_data" as const }
+            : offTissueRows.length > 0
+              ? {
+                    coverage: "available" as const,
+                    data: { rows: offTissueRows },
+                    ...(offTissueDroppedCount > 0 ? { dropped_count: offTissueDroppedCount } : {}),
+                }
+              : offTissueDroppedCount > 0
+                ? {
+                      coverage: "filtered" as const,
+                      filter: "tissue anatomy did not resolve onto an organ system",
+                      dropped_count: offTissueDroppedCount,
+                  }
+                : { coverage: "queried_no_data" as const };
 
     const drugsForTractability: DrugForTractability[] = enrichedModulators.map((m) => ({
         drug_id: m.moleculeChemblId,
@@ -519,10 +639,12 @@ export async function assembleDossier(
             classifier: t.classifier,
         })) ?? [];
 
+    const attributedFailedRows = failedTrialRows.map(attachTrialAttribution);
+    const attributedFailedRelatedRows = failedRelatedRows.map(attachTrialAttribution);
+
     // Typed explicitly so literal string coverage values narrow correctly.
     // Phase-5 persist attaches the derived sub-tree after synthesis is stamped.
-    const dossierBody: DossierV4Body = {
-        schema_version: "4",
+    const dossierBody: DossierBody = {
         generated_at: new Date().toISOString(),
         entity: assembleEntity(resolved),
         liability_summary: liabilitySummary,
@@ -560,35 +682,34 @@ export async function assembleDossier(
                     : (() => {
                           const base = coverageFromRows(clinicalTrialRows, { reason: "no trials matched the assessment target with confidence ≥ medium" });
                           if (base.coverage !== "available") return base;
+                          const attributed = base.data.rows.map(attachTrialAttribution);
+                          const relatedTargetTrials = (activeTrialsPartitioned?.related ?? []).map((t) =>
+                              attachTrialAttribution({
+                                  nct_id: t.nctId,
+                                  title: t.title,
+                                  phase: t.phase,
+                                  status: t.status,
+                                  conditions: t.conditions,
+                                  start_date: t.startDate,
+                                  completion_date: t.primaryCompletionDate,
+                                  match_confidence: "off_target" as const,
+                              }),
+                          );
                           return {
                               coverage: "available" as const,
                               data: {
-                                  rows: base.data.rows,
+                                  rows: attributed.filter((r) => r.eligible_for_toxicology_aggregation),
+                                  excluded_rows: [...attributed.filter((r) => !r.eligible_for_toxicology_aggregation), ...relatedTargetTrials],
                                   selection_criteria: {
                                       derived_from: "analytics.discovery_trials" as const,
                                       min_confidence: "medium" as const,
                                       excluded_off_target_count: activeTrialsPartitioned?.related.length ?? 0,
                                   },
-                                  ...(activeTrialsPartitioned && activeTrialsPartitioned.related.length > 0
-                                      ? {
-                                            related_target_trials: activeTrialsPartitioned.related.map((t) => ({
-                                                nct_id: t.nctId,
-                                                title: t.title,
-                                                phase: t.phase,
-                                                status: t.status,
-                                                conditions: t.conditions,
-                                                start_date: t.startDate,
-                                                completion_date: t.primaryCompletionDate,
-                                                match_confidence: "off_target" as const,
-                                            })),
-                                            related_receptor: activeTrialsPartitioned.related_receptor,
-                                        }
-                                      : {}),
                               },
                           };
                       })(),
             outcomes: trialOutcomesRows
-                ? { coverage: "available", data: { rows: trialOutcomesRows } }
+                ? { coverage: "available", data: { rows: trialOutcomesRows.map(attachTrialAttribution) } }
                 : phase3
                   ? { coverage: "queried_no_data", error: { message: "no per-trial outcomes available" } }
                   : { coverage: "not_loaded", reason: "Phase-3 fan-out not run" },
@@ -597,13 +718,8 @@ export async function assembleDossier(
                     ? {
                           coverage: "available" as const,
                           data: {
-                              rows: failedTrialRows,
-                              ...(failedRelatedRows.length > 0
-                                  ? {
-                                        related_target_trials: failedRelatedRows,
-                                        related_receptor: failedTrialsPartitioned?.related_receptor,
-                                    }
-                                  : {}),
+                              rows: attributedFailedRows.filter((r) => r.eligible_for_toxicology_aggregation),
+                              excluded_rows: [...attributedFailedRows.filter((r) => !r.eligible_for_toxicology_aggregation), ...attributedFailedRelatedRows],
                           },
                       }
                     : { coverage: "queried_no_data" as const },
@@ -648,15 +764,7 @@ export async function assembleDossier(
                 ctgov.coverage === "available" && failedTrialRows.length > 0
                     ? {
                           coverage: "available" as const,
-                          data: {
-                              rows: failedTrialRows,
-                              ...(failedRelatedRows.length > 0
-                                  ? {
-                                        related_target_trials: failedRelatedRows,
-                                        related_receptor: failedTrialsPartitioned?.related_receptor,
-                                    }
-                                  : {}),
-                          },
+                          data: { rows: [...attributedFailedRows, ...attributedFailedRelatedRows] },
                       }
                     : ctgov.coverage === "available"
                       ? { coverage: "queried_no_data" as const, error: { message: "no failed trials" } }
@@ -666,13 +774,14 @@ export async function assembleDossier(
                 : phase3
                   ? { coverage: "queried_no_data", error: { message: "no class precedent data" } }
                   : { coverage: "not_loaded", reason: "Phase-3 fan-out not run" },
-            target_organ_liabilities: [],
+            // Stamped by Phase 5 after the safety-flags-trail agent runs.
+            target_organ_liabilities: { coverage: "not_loaded", reason: NOT_LOADED_PHASE5 },
             regulatory_actions:
                 regulatoryActionRows.length > 0
                     ? { coverage: "available" as const, data: { rows: regulatoryActionRows } }
                     : { coverage: "queried_no_data" as const },
         },
-        off_tissue_risk: expression.coverage === "available" ? { coverage: "available", data: { rows: offTissueRows } } : { coverage: "queried_no_data" },
+        off_tissue_risk: offTissueSection,
         off_target_panel: offTargetPanel
             ? { coverage: "available", data: offTargetPanel }
             : phase3
@@ -815,7 +924,7 @@ export async function assembleDossier(
                                   marker_symbol: impc.data.mouseMarkerSymbol,
                                   viability: impc.data.viability,
                                   sex_dimorphism: impc.data.sexDimorphic,
-                                  organ_systems_with_phenotype: impc.data.organSystems,
+                                  organ_systems_with_phenotype: toOrganSystems(impc.data.organSystems),
                                   top_mp_terms: impc.data.mpTerms.slice(0, 25).map((m) => m.term),
                                   total_phenotype_count: impc.data.phenotypeCount,
                                   pre_weaning_lethal: impc.data.viability === "lethal_pre_weaning",
@@ -899,6 +1008,7 @@ export async function assembleDossier(
                 : { coverage: "queried_no_data" as const, error: { message: "no medium/low-confidence trials" } },
             // Stamped by Phase 5 after synthesis agents run; not available at assembly time.
             synthesis_diagnostics: { coverage: "not_loaded", reason: "Phase-5 synthesis not yet run" },
+            quality_gates: { coverage: "not_loaded", reason: "Phase-5 synthesis not yet run" },
         },
         // Stamped by Phase 5 after the dossier-recommendation agent runs.
         executive_recommendation: { coverage: "not_loaded", reason: "Phase-5 synthesis not yet run" },
@@ -939,7 +1049,7 @@ type ReconcileFaersOutput = {
  *
  * When target-level FAERS has data (coverage: "available"), pass through
  * unchanged. When class_precedent has FAERS-derived reports in per_organ,
- * fold them into a class-scoped FaersSummaryV4 payload with
+ * fold them into a class-scoped FAERS summary payload with
  * coverage: "available" and inference_path tagged — rather than leaving
  * the section as queried_no_data, which creates an evidence conflict
  * that the conflict-detector flags. When neither has data, return

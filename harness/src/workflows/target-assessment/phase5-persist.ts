@@ -2,8 +2,8 @@
  * Phase 5 — stamps the four Phase-5 synthesis outputs into the Phase-4 dossier,
  * runs the deterministic refinement passes (coverage-qualifier reconcile,
  * no-liabilities disclosure rewrite, recommendation citation validation +
- * demotion, recommendation quality gates), upgrades the v4 body to v5,
- * computes derived fields, and validates against `DossierV5Schema`.
+ * demotion, recommendation quality gates), computes derived fields, and
+ * validates against `DossierSchema`.
  *
  * The DB write (`setDossier` / `markFailed`) lives in the workflow's terminal
  * handler in §6. This module returns the validated dossier instead of writing it.
@@ -21,23 +21,20 @@ import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
 
 import {
-    DossierV5Schema,
-    type DossierV4Body,
-    type DossierV5Body,
+    DossierSchema,
+    type ClaimSupport,
+    type DossierBody,
     type ExecutiveRecommendation,
     type ExecutiveRecommendationData,
     type SynthesisDiagnosticRow,
 } from "@inflexa-ai/harness/contracts/target-dossier.js";
 
-import { getDrugPrimaryTargetUniprots } from "../../tools/lib/chembl-client.js";
 import { deterministicTranslationalCommentary } from "./assemblers/index.js";
 import { validateRecommendationCitations, type RecommendationAudit } from "./lib/citation-validator.js";
-import { classifyClinicalEvidenceTrial, type KnownClassDrug, type TherapeuticProgram } from "./lib/clinical-evidence-attribution.js";
 import { computeDerivedFields } from "./lib/compute-derived.js";
 import { detectStructuralEvidenceConflicts } from "./lib/evidence-conflict-detector.js";
 import { applyRecommendationQualityGates } from "./lib/recommendation-quality-gates.js";
 import { sanitizeRecommendation } from "./lib/recommendation-sanitizer.js";
-import { resolveFamilySiblingUniprots } from "./lib/target-identity-filter.js";
 
 import type { Phase2Bundle } from "./steps/phase2-aggregate.js";
 
@@ -78,7 +75,7 @@ export interface Phase5PersistInput {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly assessmentId: string;
-    readonly phase4Dossier: DossierV4Body;
+    readonly phase4Dossier: DossierBody;
     readonly phase2: Phase2Bundle;
     readonly synthesis: {
         readonly bullets: LiabilityBulletsStepOutput;
@@ -102,11 +99,11 @@ export interface Phase5PersistResult {
 
 // ── Internal helpers ─────────────────────────────────────────────────
 
-function approximateSize(d: DossierV4Body): number {
+function approximateSize(d: DossierBody): number {
     return Buffer.byteLength(JSON.stringify(d), "utf-8");
 }
 
-function truncateOversize(d: DossierV4Body): DossierV4Body {
+function truncateOversize(d: DossierBody): DossierBody {
     const next = structuredClone(d);
     const ta = next.reference_biology.therapeutic_area_associations;
     if (ta.coverage === "available" && ta.data.rows.length > 50) {
@@ -144,6 +141,19 @@ function pickCommentarySeverity(row: {
     return "ok";
 }
 
+const CITED_PMID_RE = /\bPMID[:\s]?(\d{6,9})\b/gi;
+
+/**
+ * A synthesised claim stands on the papers it cites. One that cites none says
+ * so — a section path is a pointer into this dossier, not a record a reader
+ * can independently check.
+ */
+function supportFromCitedPmids(text: string, reasonWhenUncited: string): ClaimSupport {
+    const pmids = [...new Set([...text.matchAll(CITED_PMID_RE)].map((m) => m[1]!))];
+    if (pmids.length === 0) return { state: "unknown", reason: reasonWhenUncited };
+    return { state: "scored", evidence: pmids.map((pmid) => ({ pmid, source: "pubmed" })) };
+}
+
 interface CollectedSynthesis {
     readonly bullets: LiabilityBulletsStepOutput;
     readonly flags: SafetyFlagsTrailStepOutput;
@@ -151,15 +161,33 @@ interface CollectedSynthesis {
     readonly recommendation: DossierRecommendationStepOutput;
 }
 
-function stampSynthesis(logger: Logger, phase4Dossier: DossierV4Body, syn: CollectedSynthesis, phase2: Phase2Bundle): DossierV4Body {
+function stampSynthesis(logger: Logger, phase4Dossier: DossierBody, syn: CollectedSynthesis, phase2: Phase2Bundle): DossierBody {
     const next = structuredClone(phase4Dossier);
 
     if (syn.bullets.coverage === "available") {
-        next.liability_summary.liability_bullets = syn.bullets.data.bullets.map((b) => ({ text: b.text, rationale: b.rationale, category: b.category }));
+        next.liability_summary.liability_bullets = syn.bullets.data.bullets.map((b) => ({
+            text: b.text,
+            rationale: b.rationale,
+            category: b.category,
+            support: supportFromCitedPmids(`${b.text} ${b.rationale} ${b.evidence_pointer}`, `bullet cites ${b.evidence_pointer} rather than a paper`),
+        }));
     }
 
     if (syn.flags.coverage === "available" && syn.flags.data.flags.length > 0) {
-        next.safety_profile.target_organ_liabilities = syn.flags.data.flags;
+        next.safety_profile.target_organ_liabilities = {
+            coverage: "available",
+            data: {
+                rows: syn.flags.data.flags.map((f) => ({
+                    organ: f.organ,
+                    severity: f.severity,
+                    trail: f.trail,
+                    mechanism_hypothesis: f.mechanism_hypothesis,
+                    support: supportFromCitedPmids(f.trail, "the audit trail is assembled from dossier sections and cites no paper"),
+                })),
+            },
+        };
+    } else if (syn.flags.coverage === "queried_no_data") {
+        next.safety_profile.target_organ_liabilities = { coverage: "queried_no_data", error: syn.flags.error };
     }
 
     const deterministicAll = deterministicTranslationalCommentary(phase2);
@@ -322,210 +350,21 @@ function reconcileCoverageQualifier(dossier: Record<string, unknown>): void {
     });
 }
 
-function makeUnknownAttribution(reason: string) {
-    return {
-        relationship: "unknown" as const,
-        evidence_role: "excluded" as const,
-        basis: [{ kind: "text_match" as const, source: "legacy-v4-upgrade" }],
-        resolved_interventions: [],
-        exclusion_reason: reason,
-    };
-}
-
-type AttributionContext = {
-    byNct: Map<string, unknown>;
-    classifyOpts: {
-        assessmentSymbol: string;
-        assessmentUniprot: string;
-        familyUniprots: string[];
-        knownClassDrugs: KnownClassDrug[];
-        therapeuticPrograms: TherapeuticProgram[];
-    };
-};
-
-async function buildAttributionContext(
-    phase2: Phase2Bundle,
-    knownClassDrugsBase: Array<Omit<KnownClassDrug, "targetUniprots">>,
-    therapeuticPrograms: TherapeuticProgram[],
-): Promise<AttributionContext> {
-    const ctgov =
-        phase2.phase1.collectors.ctgov.coverage === "available"
-            ? [...phase2.phase1.collectors.ctgov.data.active, ...phase2.phase1.collectors.ctgov.data.failed]
-            : [];
-    const assessmentUniprot = phase2.phase1.resolved.ids?.uniprot ?? "";
-    const geneSymbol = phase2.phase1.resolved.geneSymbol ?? "";
-
-    const [familyUniprots, resolvedDrugs] = await Promise.all([
-        assessmentUniprot || geneSymbol ? resolveFamilySiblingUniprots(assessmentUniprot || geneSymbol) : Promise.resolve<string[]>([]),
-        Promise.all(
-            knownClassDrugsBase.map(async (drug) => {
-                const resolved = drug.moleculeChemblId ? await getDrugPrimaryTargetUniprots(drug.moleculeChemblId).catch(() => []) : [];
-                const targetUniprots = resolved.length > 0 ? resolved : assessmentUniprot ? [assessmentUniprot] : [];
-                return { ...drug, targetUniprots };
-            }),
-        ),
-    ]);
-
-    return {
-        byNct: new Map(ctgov.map((trial) => [trial.nctId, trial] as const)) as Map<string, unknown>,
-        classifyOpts: {
-            assessmentSymbol: geneSymbol,
-            assessmentUniprot,
-            familyUniprots,
-            knownClassDrugs: resolvedDrugs,
-            therapeuticPrograms,
-        },
-    };
-}
-
-function attachAttribution<T extends { nct_id: string }>(
-    row: T,
-    ctx: AttributionContext,
-): T & { attribution: unknown; eligible_for_toxicology_aggregation: boolean } {
-    const source = ctx.byNct.get(row.nct_id);
-    const classified = source
-        ? classifyClinicalEvidenceTrial(source as Parameters<typeof classifyClinicalEvidenceTrial>[0], ctx.classifyOpts)
-        : {
-              attribution: makeUnknownAttribution("No normalized CT.gov source row was available for this legacy row."),
-              eligible_for_toxicology_aggregation: false,
-          };
-    return {
-        ...row,
-        attribution: classified.attribution,
-        eligible_for_toxicology_aggregation: classified.eligible_for_toxicology_aggregation,
-    };
-}
-
-function upgradeTrialRows<T extends { nct_id: string; title: string }>(rows: T[], ctx: AttributionContext): { rows: unknown[]; excluded_rows: unknown[] } {
-    const kept: unknown[] = [];
-    const excluded: unknown[] = [];
-    for (const row of rows) {
-        const upgraded = attachAttribution(row, ctx);
-        if (upgraded.eligible_for_toxicology_aggregation) kept.push(upgraded);
-        else excluded.push(upgraded);
-    }
-    return { rows: kept, excluded_rows: excluded };
-}
-
-function normalizeRegulatoryActionRows(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-    return rows.map((row) => {
-        if (row.source_kind) return row;
-        const action_kind = row.action_kind as string | undefined;
-        const agency = row.agency as string | undefined;
-        const source_kind =
-            action_kind === "black_box"
-                ? "boxed_warning"
-                : action_kind === "REMS"
-                  ? "rems"
-                  : action_kind === "withdrawal"
-                    ? "withdrawal"
-                    : agency === "EMA"
-                      ? "referral"
-                      : "label_warning";
-        return {
-            ...row,
-            source_kind,
-            action_kind: source_kind === "label_warning" && action_kind === "safety_communication" ? "label_warning" : action_kind,
-            source_date: row.action_date,
-        };
-    });
-}
-
-async function upgradeDossierToV5(body: Record<string, unknown>, phase2: Phase2Bundle): Promise<DossierV5Body> {
-    const next = structuredClone(body) as Record<string, unknown>;
-    (next as { schema_version: string }).schema_version = "5";
-
-    const drugInteractions = next.drug_interactions as { coverage: string; data?: { rows?: Array<Record<string, unknown>> } } | undefined;
-    const knownClassDrugsBase: Array<Omit<KnownClassDrug, "targetUniprots">> =
-        drugInteractions?.coverage === "available"
-            ? (drugInteractions.data?.rows ?? []).map((row) => ({
-                  name: String(row.drug_name ?? ""),
-                  moleculeChemblId: (row.drug_id as string | null) ?? null,
-              }))
-            : [];
-    const tpCollector = phase2.phase1.collectors.therapeuticPrograms;
-    const therapeuticPrograms: TherapeuticProgram[] =
-        tpCollector?.coverage === "available"
-            ? tpCollector.data.programs.map((program) => ({
-                  programId: program.programId,
-                  name: program.name,
-                  targetSymbol: program.targetSymbol,
-                  targetUniprot: program.targetUniprot,
-                  modality: program.modality,
-                  nctIds: program.nctIds,
-              }))
-            : [];
-
-    const attributionCtx = await buildAttributionContext(phase2, knownClassDrugsBase, therapeuticPrograms);
-
-    const cd = next.clinical_development as
-        | {
-              trials?: { coverage: string; data: { rows: unknown[]; excluded_rows?: unknown[] } };
-              failed_trials?: { coverage: string; data: { rows: unknown[]; excluded_rows?: unknown[] } };
-              outcomes?: { coverage: string; data: { rows: unknown[] } };
-          }
-        | undefined;
-    if (cd?.trials?.coverage === "available") {
-        const upgraded = upgradeTrialRows(cd.trials.data.rows as Array<{ nct_id: string; title: string }>, attributionCtx);
-        cd.trials.data.rows = upgraded.rows;
-        cd.trials.data.excluded_rows = [...(cd.trials.data.excluded_rows ?? []), ...upgraded.excluded_rows];
-    }
-    if (cd?.failed_trials?.coverage === "available") {
-        const upgraded = upgradeTrialRows(cd.failed_trials.data.rows as Array<{ nct_id: string; title: string }>, attributionCtx);
-        cd.failed_trials.data.rows = upgraded.rows;
-        cd.failed_trials.data.excluded_rows = [...(cd.failed_trials.data.excluded_rows ?? []), ...upgraded.excluded_rows];
-    }
-    if (cd?.outcomes?.coverage === "available") {
-        cd.outcomes.data.rows = (cd.outcomes.data.rows as Array<{ nct_id: string }>).map((row) => attachAttribution(row, attributionCtx));
-    }
-
-    const analytics = next.analytics as
-        | {
-              discovery_trials?: {
-                  coverage: string;
-                  data: { rows: unknown[]; excluded_rows?: unknown[]; related_target_trials?: unknown; related_receptor?: unknown };
-              };
-              quality_gates?: { coverage: string; data: { rows: unknown[] } };
-          }
-        | undefined;
-    if (analytics?.discovery_trials?.coverage === "available") {
-        const upgraded = upgradeTrialRows(analytics.discovery_trials.data.rows as Array<{ nct_id: string; title: string }>, attributionCtx);
-        analytics.discovery_trials.data.rows = upgraded.rows;
-        analytics.discovery_trials.data.excluded_rows = [...(analytics.discovery_trials.data.excluded_rows ?? []), ...upgraded.excluded_rows];
-        delete analytics.discovery_trials.data.related_target_trials;
-        delete analytics.discovery_trials.data.related_receptor;
-    }
-
-    const sp = next.safety_profile as { regulatory_actions?: { coverage: string; data: { rows: Array<Record<string, unknown>> } } } | undefined;
-    const regulatory = sp?.regulatory_actions;
-    if (regulatory?.coverage === "available") {
-        regulatory.data.rows = normalizeRegulatoryActionRows(regulatory.data.rows ?? []);
-    }
-
-    (next.analytics as Record<string, unknown>).quality_gates ??= {
-        coverage: "available",
-        data: { rows: [] },
-    };
-
-    return next as unknown as DossierV5Body;
-}
-
 // ── Pure-function entry point ────────────────────────────────────────
 
 /**
- * Run Phase-5 persist as a pure function. Returns the validated v5
- * dossier (and computed bytes) on success. Throws
- * `DossierDerivedInvariantError` when `computeDerivedFields` rejects the
- * dossier; throws `DossierSchemaViolationError` when the v5 schema
- * rejects the final dossier.
+ * Run Phase-5 persist as a pure function. Returns the validated dossier (and
+ * computed bytes) on success. Throws `DossierDerivedInvariantError` when
+ * `computeDerivedFields` rejects the dossier; throws
+ * `DossierSchemaViolationError` when the schema rejects the final dossier.
  */
 export async function phase5Persist(input: Phase5PersistInput): Promise<Phase5PersistResult> {
     const logger = (input.logger ?? createNoopLogger()).named("phase5-persist").with({ assessmentId: input.assessmentId });
     // The dossier rides through this function as an untyped working blob; the
-    // `as unknown as DossierV{4,5}Body` casts below are version-shim views that
-    // let the typed helpers operate on it. None of these casts is load-bearing
-    // for soundness: `DossierV5Schema.safeParse(fullDossier)` at the end is the
-    // single validation gate, and it throws before anything is returned.
+    // `as unknown as DossierBody` casts below let the typed helpers operate on
+    // it. None of these casts is load-bearing for soundness:
+    // `DossierSchema.safeParse(fullDossier)` at the end is the single
+    // validation gate, and it throws before anything is returned.
     let dossier: Record<string, unknown> = stampSynthesis(logger, input.phase4Dossier, input.synthesis, input.phase2) as unknown as Record<string, unknown>;
 
     // Demote organ-claim flagged bullets into coverage_qualifier.unverified_bullets.
@@ -539,7 +378,6 @@ export async function phase5Persist(input: Phase5PersistInput): Promise<Phase5Pe
 
     reconcileCoverageQualifier(dossier);
     rewriteNoLiabilitiesDisclosure(dossier);
-    dossier = (await upgradeDossierToV5(dossier, input.phase2)) as unknown as Record<string, unknown>;
 
     const recommendationAudit = (dossier.analytics as { recommendation_audit?: { data?: RecommendationAudit } }).recommendation_audit?.data;
     const synthesisDiagnostics =
@@ -567,22 +405,22 @@ export async function phase5Persist(input: Phase5PersistInput): Promise<Phase5Pe
         },
     };
 
-    let bytes = approximateSize(dossier as unknown as DossierV4Body);
+    let bytes = approximateSize(dossier as unknown as DossierBody);
     if (bytes > SOFT_CAP_BYTES) {
-        dossier = truncateOversize(dossier as unknown as DossierV4Body) as unknown as Record<string, unknown>;
-        bytes = approximateSize(dossier as unknown as DossierV4Body);
+        dossier = truncateOversize(dossier as unknown as DossierBody) as unknown as Record<string, unknown>;
+        bytes = approximateSize(dossier as unknown as DossierBody);
     }
 
     let derived: ReturnType<typeof computeDerivedFields>;
     try {
-        derived = computeDerivedFields(dossier as unknown as DossierV5Body);
+        derived = computeDerivedFields(dossier as unknown as DossierBody);
     } catch (err) {
         throw new DossierDerivedInvariantError(err instanceof Error ? err.message : String(err), err);
     }
 
     const fullDossier = { ...dossier, derived } as Record<string, unknown>;
 
-    const structuralConflicts = detectStructuralEvidenceConflicts(fullDossier as unknown as DossierV5Body);
+    const structuralConflicts = detectStructuralEvidenceConflicts(fullDossier as unknown as DossierBody);
     if (structuralConflicts.length > 0) {
         const existing = (fullDossier.analytics as { evidence_conflicts?: { coverage: string; data?: { rows?: unknown[] } } }).evidence_conflicts;
         const existingRows = existing?.coverage === "available" ? (existing.data?.rows ?? []) : [];
@@ -592,9 +430,9 @@ export async function phase5Persist(input: Phase5PersistInput): Promise<Phase5Pe
         };
     }
 
-    const parsed = DossierV5Schema.safeParse(fullDossier);
+    const parsed = DossierSchema.safeParse(fullDossier);
     if (!parsed.success) {
-        throw new DossierSchemaViolationError("Dossier failed v5 schema validation", parsed.error.issues);
+        throw new DossierSchemaViolationError("Dossier failed schema validation", parsed.error.issues);
     }
 
     return {

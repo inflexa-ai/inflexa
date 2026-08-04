@@ -41,10 +41,10 @@ dossier in the rationale.
   plausibility only; they do not support tractability, safety, or
   efficacy claims.
 - Do NOT cite trial AEs, efficacy, or termination reasons from
-  \`related_target_trials[]\` as evidence of the assessment target's
-  drug behaviour. These trials are on related receptors (e.g.,
-  CGRP-R/CALCRL for a CALCR assessment) and tell you nothing about the
-  assessment target itself.
+  \`excluded_rows[]\` as evidence of the assessment target's drug
+  behaviour. Those trials are attributed elsewhere — often to a related
+  receptor (e.g., CGRP-R/CALCRL for a CALCR assessment) — and tell you
+  nothing about the assessment target itself.
 - Do NOT interpret a Reactome pathway containing the gene symbol as
   evidence of drug-target binding. Reactome pathways list participating
   genes, not drug interactions. Drug-binding evidence comes from
@@ -61,7 +61,7 @@ dossier in the rationale.
   distinct-substance counts.
 - Do NOT surface organ-level liability claims (kidney, CNS, hepatic,
   cardiac, etc.) unless they appear in
-  \`safety_profile.target_organ_liabilities\`. That section is the
+  \`safety_profile.target_organ_liabilities.data.rows\`. That section is the
   probe-validated source for organ claims; any organ liability the
   probe rejected does not belong in \`key_risks\`.
 - Do NOT recommend a between-cofactor selectivity margin against rows in

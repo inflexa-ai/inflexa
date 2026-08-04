@@ -18,7 +18,7 @@
  * single source of truth. Adjust there, never inline.
  */
 
-import type { DossierV4Body, DossierV5Body } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { DossierBody } from "@inflexa-ai/harness/contracts/target-dossier.js";
 import type { DossierRecommendationOutput, LiabilityBulletsOutput, SafetyFlagsTrailOutput, TranslationalCommentaryOutput } from "./synthesis/index.js";
 import { buildVoiceCritique, type SectionType } from "../../prompts/target-assessment/tox-voice/index.js";
 
@@ -127,7 +127,7 @@ const TISSUE_COUNT_CLAIM_RE = /(?:≥|>=)\s*(\d+(?:\.\d+)?)\s*ntpm\s+in\s+(\d+)\
  * on mismatch, or `null` when there is no such claim, no dossier, or the
  * expression section is not available (nothing to verify against).
  */
-function verifyTissueCountClaim(text: string, dossier: DossierV4Body | DossierV5Body | undefined): string | null {
+function verifyTissueCountClaim(text: string, dossier: DossierBody | undefined): string | null {
     if (!dossier) return null;
     const nte = dossier.reference_biology?.normal_tissue_expression;
     if (!nte || nte.coverage !== "available") return null;
@@ -198,7 +198,7 @@ function composeWithVoice(base: ProbeResult, text: string, section: SectionType)
 
 // ── Recommendation probe ─────────────────────────────────────────────
 
-function recommendationCoverageRelaxed(dossier: DossierV4Body | DossierV5Body): boolean {
+function recommendationCoverageRelaxed(dossier: DossierBody): boolean {
     // Relax probe rules when the dossier is genuinely thin — at least two
     // of the three "primary" evidence streams must be unavailable.
     const probes = [
@@ -209,7 +209,7 @@ function recommendationCoverageRelaxed(dossier: DossierV4Body | DossierV5Body): 
     return probes.filter(Boolean).length >= 2;
 }
 
-export function probeRecommendation(out: DossierRecommendationOutput, dossier: DossierV4Body | DossierV5Body): ProbeResult {
+export function probeRecommendation(out: DossierRecommendationOutput, dossier: DossierBody): ProbeResult {
     const t = PROBE_THRESHOLDS.recommendation;
     const len = out.rationale.length;
     const relaxed = recommendationCoverageRelaxed(dossier);
@@ -277,7 +277,7 @@ export function probeRecommendation(out: DossierRecommendationOutput, dossier: D
 
 // ── Liability bullet probe ───────────────────────────────────────────
 
-export function probeLiabilityBullets(out: LiabilityBulletsOutput, dossier?: DossierV4Body | DossierV5Body): ProbeResult {
+export function probeLiabilityBullets(out: LiabilityBulletsOutput, dossier?: DossierBody): ProbeResult {
     const t = PROBE_THRESHOLDS.liabilityBullet;
     if (out.bullets.length === 0) {
         // An empty bullets array is acceptable when `notes` discloses why.

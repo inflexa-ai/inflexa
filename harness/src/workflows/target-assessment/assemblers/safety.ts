@@ -10,7 +10,14 @@
  */
 
 import type { z } from "zod";
-import type { EvidenceItem, RegulatoryActionRow, OffTargetRowV4Schema, ExcludedOffTargetRowV4Schema } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type {
+    ClaimSupport,
+    EvidenceItem,
+    RegulatoryActionRow,
+    OffTargetRowSchema,
+    ExcludedOffTargetRowSchema,
+} from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { OrganSystem } from "../../../contracts/organ-system.js";
 import { expectedOrgansFromBody } from "../lib/compute-derived.js";
 import type { Phase2Bundle } from "../steps/phase2-aggregate.js";
 import type { Phase3Bundle } from "../steps/phase3-aggregate.js";
@@ -28,8 +35,8 @@ import { HIGH_EXPRESSION_TPM_THRESHOLD, CNS_REGION_TPM_FLOOR, MUSCULOSKELETAL_TP
 export { HIGH_EXPRESSION_TPM_THRESHOLD };
 import type { ChemblModulator } from "../../../tools/lib/chembl-client.js";
 
-type OffTargetRowV4 = z.infer<typeof OffTargetRowV4Schema>;
-type ExcludedOffTargetRowV4 = z.infer<typeof ExcludedOffTargetRowV4Schema>;
+type OffTargetRow = z.infer<typeof OffTargetRowSchema>;
+type ExcludedOffTargetRow = z.infer<typeof ExcludedOffTargetRowSchema>;
 
 // ── Safety panel lookup ─────────────────────────────────────────────
 
@@ -84,6 +91,55 @@ export const SAFETY_RELEVANT_ORGANS = new Set([
     "femur",
     "vertebra",
 ]);
+
+/**
+ * Anatomical tissue and organ labels from the expression atlases onto the
+ * canonical organ vocabulary. Longest keys first so "bone marrow" is read as
+ * haematopoietic tissue rather than as skeleton.
+ */
+const TISSUE_ORGAN_SYSTEMS: Array<[string, OrganSystem]> = [
+    ["bone marrow", "hematologic"],
+    ["lymph node", "immune"],
+    ["seminal vesicle", "reproductive"],
+    ["fallopian tube", "reproductive"],
+    ["endometrium", "reproductive"],
+    ["epididymis", "reproductive"],
+    ["placenta", "reproductive"],
+    ["prostate", "reproductive"],
+    ["intestine", "gi"],
+    ["vertebra", "musculoskeletal"],
+    ["stomach", "gi"],
+    ["thyroid", "endocrine_thyroid"],
+    ["pancreas", "pancreas"],
+    ["spleen", "immune"],
+    ["retina", "ocular"],
+    ["kidney", "renal"],
+    ["uterus", "reproductive"],
+    ["testis", "reproductive"],
+    ["gonad", "reproductive"],
+    ["ovary", "reproductive"],
+    ["heart", "cardiac"],
+    ["liver", "hepatic"],
+    ["brain", "cns"],
+    ["femur", "musculoskeletal"],
+    ["tibia", "musculoskeletal"],
+    ["lung", "respiratory"],
+    ["bone", "musculoskeletal"],
+];
+
+/**
+ * Resolve a tissue (and its atlas organ label, when present) onto the
+ * canonical organ vocabulary. Returns null when the anatomy has no organ
+ * system to belong to — the caller drops the row rather than filing it
+ * under a neighbouring organ.
+ */
+export function resolveTissueOrganSystem(tissue: string, organ?: string | null): OrganSystem | null {
+    const haystack = `${tissue} ${organ ?? ""}`.toLowerCase();
+    for (const [label, system] of TISSUE_ORGAN_SYSTEMS) {
+        if (haystack.includes(label)) return system;
+    }
+    return null;
+}
 
 export function isSafetyRelevant(tissue: string, organ?: string | null): boolean {
     const t = tissue.toLowerCase();
@@ -437,7 +493,7 @@ export type RawOffTargetRow = {
     selectivity: { fold: number; log_units: number };
     selectivity_window_below_threshold?: boolean;
     evidence?: EvidenceItem[];
-    organ_system?: string | null;
+    organ_system?: OrganSystem | null;
     target_class?: string | undefined;
     is_safety_panel_target?: boolean;
     clinical_consequence?: string | null;
@@ -447,7 +503,7 @@ export type RawOffTargetRow = {
 export type CleanOffTargetRow = Omit<RawOffTargetRow, "target_chembl_id" | "target_type" | "accession" | "off_target_id" | "organ_system" | "evidence"> & {
     off_target_id: string | null;
     off_target_name: string;
-    organ_system: string | null;
+    organ_system: OrganSystem | null;
     evidence: EvidenceItem[];
     selectivity_window_below_threshold: boolean;
     clinical_consequence: string | null;
@@ -456,20 +512,36 @@ export type CleanOffTargetRow = Omit<RawOffTargetRow, "target_chembl_id" | "targ
 };
 
 /**
- * V4 off-target row shape after relationship classification. Used by the
+ * Off-target row shape after relationship classification. Used by the
  * organ-rollup builder, evidence tally, and liability-summary signal count —
  * the typed members all rely on `relationship`, `organ_system`, `pchembl`,
- * `evidence`, and `is_safety_panel_target` only.
+ * `support`, and `is_safety_panel_target` only.
  */
 export type OffTargetPanelRows = Array<{
     off_target_id: string | null;
     off_target_name: string;
     pchembl: number;
     is_safety_panel_target: boolean;
-    organ_system: string | null;
-    evidence: EvidenceItem[];
+    organ_system: OrganSystem | null;
+    support: ClaimSupport;
     relationship: "off_target";
 }>;
+
+/**
+ * Partition evidence into what a claim can stand on: an item resolves to a
+ * record a reader can check, or it does not. A claim with nothing checkable
+ * says so rather than presenting provenance labels as citations.
+ */
+export function claimSupportFrom(evidence: EvidenceItem[], reasonWhenUnsupported: string): ClaimSupport {
+    const locatable = evidence.filter((e) => Boolean(e.pmid ?? e.doi ?? e.accession ?? e.regulatory_reference));
+    if (locatable.length === 0) return { state: "unknown", reason: reasonWhenUnsupported };
+    return { state: "scored", evidence: locatable };
+}
+
+/** The evidence behind a claim, or nothing when the claim states it has none. */
+export function claimSupportEvidence(support: ClaimSupport): EvidenceItem[] {
+    return support.state === "scored" ? support.evidence : [];
+}
 
 /**
  * Filter and deduplicate raw off-target rows before panel assembly.
@@ -539,7 +611,7 @@ export function filterAndDedupOffTargetRows(rows: RawOffTargetRow[], ctx: { asse
 // ── Off-target panel assembly ───────────────────────────────────────
 
 /**
- * V4 off-target panel row split. Each clean off-target row is classified as:
+ * Off-target panel row split. Each clean off-target row is classified as:
  *   - `on_target_self_hit`: alternate ChEMBL ID for the assessment target itself
  *   - `intended_co_target`: every modulator that hits this target intends it
  *     (e.g., GLP1R + GIPR for tirzepatide); not an off-target liability
@@ -631,6 +703,7 @@ export function aggregateOffTargetPanel(
                 modulators: [...v.modulators],
                 evidence: [...v.modulators].map<EvidenceItem>((m) => ({
                     source: "chembl:polypharm",
+                    accession: v.chemblId,
                     predicate: "binds",
                     score: v.pchembl,
                     metadata: { off_target_id: v.chemblId, modulator: m },
@@ -639,7 +712,7 @@ export function aggregateOffTargetPanel(
         })
         .filter((r): r is NonNullable<typeof r> => r !== null);
 
-    // Preserve modulator membership across dedup so the v4 relationship
+    // Preserve modulator membership across dedup so the relationship
     // classifier (intended co-target / on-target self-hit) can see which
     // molecules actually hit each off-target.
     const modulatorsByKey = new Map<string, Set<string>>();
@@ -661,7 +734,7 @@ export function aggregateOffTargetPanel(
         return b.pchembl - a.pchembl;
     });
 
-    // Helper: project a clean row onto the V4 base shape (no relationship yet).
+    // Helper: project a clean row onto the shared body shape (no relationship yet).
     const toBaseRow = (r: CleanOffTargetRow) => ({
         off_target_id: r.off_target_id,
         off_target_name: r.off_target_name,
@@ -670,12 +743,11 @@ export function aggregateOffTargetPanel(
         is_safety_panel_target: r.is_safety_panel_target,
         organ_system: r.organ_system,
         clinical_consequence: r.clinical_consequence,
-        evidence: r.evidence,
         metadata: r.metadata,
     });
 
-    const rows: OffTargetRowV4[] = [];
-    const excludedRows: ExcludedOffTargetRowV4[] = [];
+    const rows: OffTargetRow[] = [];
+    const excludedRows: ExcludedOffTargetRow[] = [];
 
     for (const r of cleanRows.slice(0, 50)) {
         const base = toBaseRow(r);
@@ -688,6 +760,7 @@ export function aggregateOffTargetPanel(
         if (assessmentGeneSymbol && isHeterodimer(r.off_target_name)) {
             excludedRows.push({
                 ...base,
+                evidence: r.evidence,
                 relationship: "obligate_cofactor",
                 reason: `${r.off_target_name} is ${assessmentGeneSymbol} heterodimerised with a different obligate cofactor; selectivity is not pharmacologically attainable.`,
                 selectivity: { selectivity_unknown: true, reason: "obligate cofactor (same protein, different RAMP/accessory)" },
@@ -700,6 +773,7 @@ export function aggregateOffTargetPanel(
         if (r.off_target_id && assessmentUniprot && isOnTargetChemblId(r.off_target_id, onTargetChemblIds)) {
             excludedRows.push({
                 ...base,
+                evidence: r.evidence,
                 relationship: "on_target_self_hit",
                 reason: `${r.off_target_id} is an alternate ChEMBL ID for the on-target`,
                 selectivity: { selectivity_unknown: true, reason: "on-target self-hit" },
@@ -714,6 +788,7 @@ export function aggregateOffTargetPanel(
         if (modulators.length > 0 && intendedHits.length === modulators.length) {
             excludedRows.push({
                 ...base,
+                evidence: r.evidence,
                 relationship: "intended_co_target",
                 reason: intendedHits[0]!.hit.reason!,
                 selectivity: { selectivity_unknown: true, reason: "intended co-target" },
@@ -737,6 +812,7 @@ export function aggregateOffTargetPanel(
             relationship: "off_target",
             selectivity,
             selectivity_window_below_threshold: below,
+            support: claimSupportFrom(r.evidence, `${r.off_target_name} was surfaced by ChEMBL polypharmacology with no citable binding record`),
         });
     }
 

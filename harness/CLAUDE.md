@@ -354,10 +354,31 @@ message and trigger a workflow. It can be archived, and it can resume later. The
 A separate top-level entity. It is NOT a kind of analysis. It gives snapshot-style
 target dossiers. `cortex_target_assessments` and the `executeTargetAssessment`
 workflow (`workflows/target-assessment/`) back it. The dossier schema is in
-`src/contracts/target-dossier.ts`, and it is the contract with a consumer. The
-coverage discipline is a hard schema invariant: each section that depends on
-enrichment carries `coverage: "available" | "queried_no_data" | "not_loaded"`. A
-host chooses how to show the progress to its clients.
+`src/contracts/target-dossier.ts`, and it is the contract with a consumer. It is a
+single unversioned shape. There is no version ladder and no migration path, thus a
+change to it is a change to what each consumer reads. A host chooses how to show
+the progress to its clients.
+
+Two hard schema invariants bind the dossier:
+
+1. **Coverage discipline.** Each section that depends on enrichment carries
+   `coverage: "available" | "queried_no_data" | "not_loaded" | "filtered"`, and it
+   takes that from the shared envelope builder rather than declaring one of its
+   own. `filtered` means that our own threshold emptied the section, and it carries
+   the filter and the count that it dropped. A partially filtered `available`
+   section carries `dropped_count`, thus it does not overstate its own
+   completeness. A per-row marker uses the narrowed `RowCoverage`, which excludes
+   `filtered`, because a filter that removes a row removes the row.
+
+2. **Evidence discipline.** A claim is either scored, and then it carries at least
+   one evidence item that resolves to a locator (a pmid, a doi, an accession, or a
+   regulatory reference), or it is explicitly `unknown` with a reason. A scored
+   claim with no evidence is unrepresentable. `unknown` is a complete outcome, not
+   a degraded one.
+
+An organ name comes from one canonical vocabulary
+(`src/contracts/organ-system.ts`). A producer resolves an external or a
+model-supplied name onto it at its own boundary.
 
 ### Memory
 

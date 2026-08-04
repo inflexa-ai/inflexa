@@ -1,27 +1,17 @@
 /**
- * Tox-voice canon. Lists are intentionally not exhaustive — they are the
- * minimum surface the deterministic voice probe enforces. Editorial
- * judgment in the agent prompts covers the long tail.
+ * Tox-voice canon. The stylistic lists are intentionally not exhaustive —
+ * they are the minimum surface the deterministic voice probe enforces, and
+ * editorial judgment in the agent prompts covers the long tail.
+ *
+ * `organSystems` is the exception: it is closed, because it is a projection
+ * of the canonical organ vocabulary rather than a list of its own. Prose and
+ * structured fields must name the same organs.
  */
 
+import { ORGAN_SYSTEMS, ORGAN_SYSTEM_LABELS } from "../../../contracts/organ-system.js";
+
 export const toxVoiceVocabulary = {
-    organSystems: [
-        "hepatobiliary",
-        "renal",
-        "cardiac",
-        "vascular",
-        "haematologic",
-        "central nervous system",
-        "peripheral nervous system",
-        "respiratory",
-        "gastrointestinal",
-        "reproductive",
-        "endocrine",
-        "musculoskeletal",
-        "dermatologic",
-        "ocular",
-        "immunologic",
-    ] as const,
+    organSystems: ORGAN_SYSTEMS.map((organ) => ORGAN_SYSTEM_LABELS[organ]),
 
     liabilityFraming: [
         "on-target liability",
@@ -77,7 +67,6 @@ export const toxVoiceVocabulary = {
     ] as const,
 } as const;
 
-export type OrganSystem = (typeof toxVoiceVocabulary.organSystems)[number];
 export type LiabilityFraming = (typeof toxVoiceVocabulary.liabilityFraming)[number];
 export type HedgePhrase = (typeof toxVoiceVocabulary.hedgePhrases)[number];
 export type BannedTerm = (typeof toxVoiceVocabulary.banned)[number];

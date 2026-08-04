@@ -144,7 +144,7 @@ describe("harness/state/target-assessments", () => {
         it("setDossier is a no-op on deleted rows", async () => {
             const id = await insertRow();
             (await softDeleteAssessment(pool, id, orgId))._unsafeUnwrap();
-            (await setDossier(pool, id, { schema_version: "3" }))._unsafeUnwrap();
+            (await setDossier(pool, id, { generated_at: "2026-01-01T00:00:00.000Z" }))._unsafeUnwrap();
             const row = await readRow(id);
             expect(row!.status).toBe("deleted");
             expect(row!.dossier).toBeNull();

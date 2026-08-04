@@ -1,11 +1,7 @@
 import { z } from "zod";
 
-export const ORGAN_SYSTEMS = ["cardiac", "hepatic", "renal", "cns", "hematologic", "gi", "respiratory", "metabolic", "immune"] as const;
-
-export const SEVERITIES = ["high", "medium", "low"] as const;
-
-export type OrganSystem = (typeof ORGAN_SYSTEMS)[number];
-export type Severity = (typeof SEVERITIES)[number];
+import { OrganSystemSchema } from "../contracts/organ-system.js";
+import { SeveritySchema } from "../contracts/severity.js";
 
 export const CHEMBL_RE = /^CHEMBL\d+$/;
 // UniProt 6-char accession: letter (any A-Z, covering A-N, O, P, Q, R-Z sub-families),
@@ -29,9 +25,9 @@ export const SafetyTargetSchema = z.object({
     uniprot: UniprotSchema,
     ensembl_gene_id: EnsemblGeneSchema.optional(),
     name: z.string().min(1).max(120),
-    organ_system: z.enum(ORGAN_SYSTEMS),
+    organ_system: OrganSystemSchema,
     clinical_consequence: z.string().min(1).max(200),
-    severity: z.enum(SEVERITIES),
+    severity: SeveritySchema,
     references: z.array(ReferenceSchema).min(1),
 });
 

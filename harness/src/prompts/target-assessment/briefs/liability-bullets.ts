@@ -48,7 +48,7 @@ Each bullet's \`category\` MUST be exactly one of:
 - \`high_safety_organ_expression\` — expression-driven on-target
   liability at a safety-relevant tissue (sourced from
   \`off_tissue_risk.data.rows\` and the
-  \`safety_profile.target_organ_liabilities\` probe).
+  \`safety_profile.target_organ_liabilities.data.rows\` probe).
 - \`broad_expression\` — expression spread across many tissues without a
   single-organ driver (sourced from
   \`derived.liability_summary.expression_breadth\`).

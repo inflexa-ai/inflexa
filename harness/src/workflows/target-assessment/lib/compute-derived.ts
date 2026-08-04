@@ -1,8 +1,19 @@
-import type { DerivedV4 } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { Derived } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import { ORGAN_SYSTEMS, type OrganSystem } from "../../../contracts/organ-system.js";
 import { classifyOrgan, classifyTrialAe } from "./meddra-organ-map.js";
 import { HIGH_EXPRESSION_TPM_THRESHOLD } from "./expression-constants.js";
 
 const FAERS_TOP_SIGNAL_THRESHOLD = 1000;
+
+const ORGAN_SYSTEM_SET = new Set<string>(ORGAN_SYSTEMS);
+
+/**
+ * The body arrives here unvalidated, so an organ token is checked against the
+ * vocabulary before it is carried into the derived sub-tree.
+ */
+function isOrganSystem(value: unknown): value is OrganSystem {
+    return typeof value === "string" && ORGAN_SYSTEM_SET.has(value);
+}
 
 // Loose structural view over a raw dossier body. At this stage the body is a
 // partial, possibly-malformed JSON tree — schema validation happens later at
@@ -31,8 +42,8 @@ interface DossierBodyView {
             seriousness?: { coverage?: string; by_seriousness?: { death?: number } };
         }>;
         trial_aes?: Section<{ serious?: Array<{ term?: string | null; organ?: string | null }> }>;
-        off_target_panel?: Section<{ rows?: Array<{ organ_system?: string; is_safety_panel_target?: unknown }> }>;
-        organ_rollup?: Section<{ rows?: Array<{ organ: string; risk_level: string }> }>;
+        off_target_panel?: Section<{ rows?: Array<{ organ_system?: OrganSystem; is_safety_panel_target?: unknown }> }>;
+        organ_rollup?: Section<{ rows?: Array<{ organ: OrganSystem; risk_level: string }> }>;
         class_precedent?: Section<{ per_organ?: Array<{ is_class_liability?: unknown }>; drugs_in_class?: unknown[] }>;
         [section: string]: { coverage?: string } | undefined;
     };
@@ -61,9 +72,9 @@ interface DossierBodyView {
  * organ_rollup rows — ensuring the set of "expected" organs is identical at
  * assembly time and at derived-validation time.
  */
-export function expectedOrgansFromBody(bodyInput: unknown): string[] {
+export function expectedOrgansFromBody(bodyInput: unknown): OrganSystem[] {
     const body = bodyInput as DossierBodyView;
-    const expected = new Set<string>();
+    const expected = new Set<OrganSystem>();
 
     const top = body?.safety_profile?.faers?.data?.top_signals ?? [];
     for (const sig of top) {
@@ -81,17 +92,17 @@ export function expectedOrgansFromBody(bodyInput: unknown): string[] {
 
     const offTargets = body?.safety_profile?.off_target_panel?.data?.rows ?? [];
     for (const r of offTargets) {
-        if (r.organ_system && typeof r.organ_system === "string") expected.add(r.organ_system);
+        if (r.organ_system && isOrganSystem(r.organ_system)) expected.add(r.organ_system);
     }
 
     return [...expected].sort();
 }
 
-function presentOrgans(body: DossierBodyView): string[] {
+function presentOrgans(body: DossierBodyView): OrganSystem[] {
     const rows = body?.safety_profile?.organ_rollup?.data?.rows ?? [];
     return rows
         .map((r) => r.organ)
-        .filter((o): o is string => typeof o === "string")
+        .filter(isOrganSystem)
         .sort();
 }
 
@@ -104,7 +115,7 @@ function countDistinctPapers(body: DossierBodyView): number {
 
 function countDistinctTrials(body: DossierBodyView): number {
     const set = new Set<string>();
-    // V5 partitions ineligible trials into `excluded_rows`, so the distinct
+    // Ineligible trials are partitioned into `excluded_rows`, so the distinct
     // count must union both buckets for trials, failed_trials, and
     // discovery_trials. Outcomes preserves every row in `rows` and has no
     // `excluded_rows` bucket.
@@ -178,7 +189,7 @@ function hasClinicalEvidence(body: DossierBodyView): boolean {
     return found;
 }
 
-function highestRiskOrgan(body: DossierBodyView): string | null {
+function highestRiskOrgan(body: DossierBodyView): OrganSystem | null {
     const rows = body?.safety_profile?.organ_rollup?.data?.rows ?? [];
     const high = rows.find((r) => r.risk_level === "high");
     if (high) return high.organ;
@@ -238,13 +249,13 @@ function countHighExpressionTissues(body: DossierBodyView): number {
 }
 
 /**
- * Build the v4 derived sub-tree from a raw dossier body.
+ * Build the derived sub-tree from a raw dossier body.
  *
  * Pure function: no I/O, no LLM calls, no side effects. Defensive against
  * missing/partial bodies — always returns a best-effort result and never throws.
  * Schema validation happens at the persist boundary (Task 11), not here.
  */
-export function computeDerivedFields(bodyInput: unknown): DerivedV4 {
+export function computeDerivedFields(bodyInput: unknown): Derived {
     const body = bodyInput as DossierBodyView;
     const classLiabilityRows =
         body?.safety_profile?.class_precedent?.coverage === "available"

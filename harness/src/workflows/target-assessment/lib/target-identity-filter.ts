@@ -80,7 +80,7 @@ export async function resolveOnTargetChemblIds(assessmentUniprot: string): Promi
  * Resolve UniProt accessions of sibling receptors in the same IUPHAR family
  * as the assessment target. Used by `classifyTrialAttribution` so a trial
  * whose intervention hits a paralog (e.g., CALCRL when CALCR is the
- * assessment target) lands in `related_target_trials[]` rather than the
+ * assessment target) lands in the related bucket rather than the
  * primary trials list.
  */
 export async function resolveFamilySiblingUniprots(uniprotOrGeneSymbol: string): Promise<string[]> {

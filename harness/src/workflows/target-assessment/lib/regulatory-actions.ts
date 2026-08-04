@@ -5,15 +5,14 @@
  * for each drug, then maps both into the dossier's RegulatoryActionRow
  * shape.
  *
- * This is the data-source replacement for the hand-curated calcitonin seed
- * that previously lived next to it. Coverage that legitimately has no
+ * Coverage that legitimately has no
  * machine-readable source (e.g., EMA assessment-report procedure codes like
  * EMEA/H/A-31/1291) is omitted rather than backfilled with curation — the
  * source_url points at the canonical document where the human reader can
  * extract the additional context.
  */
 
-import type { RegulatoryActionRowV5 as RegulatoryActionRow } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { RegulatoryActionRow as RegulatoryActionRow } from "@inflexa-ai/harness/contracts/target-dossier.js";
 import { withHost } from "../../../lib/host-concurrency.js";
 import { getReferralsByDrug, type EmaReferral } from "../../../tools/lib/ema-client.js";
 import { getDrugLabelActions, type DrugLabelAction } from "../../../tools/lib/openfda-client.js";

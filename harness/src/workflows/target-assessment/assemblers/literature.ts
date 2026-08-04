@@ -1,4 +1,4 @@
-import type { EvidenceItem } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { ClinicalTrialAttribution, EvidenceItem } from "@inflexa-ai/harness/contracts/target-dossier.js";
 import type { Phase2Bundle } from "../steps/phase2-aggregate.js";
 import type { Phase3Bundle } from "../steps/phase3-aggregate.js";
 import { classifyTrialAttribution } from "../lib/target-identity-filter.js";
@@ -593,7 +593,7 @@ const CATEGORY_PATTERNS: Array<{
  * Match the first known failure-cause pattern against `whyStopped` and return
  * the category plus the matched substring (truncated to 200 chars). When no
  * pattern matches, falls back to "operational" with the first 200 chars of
- * `whyStopped` itself — the v4 schema requires the evidence excerpt to be a
+ * `whyStopped` itself — the schema requires the evidence excerpt to be a
  * literal substring of `why_stopped`, which holds by construction.
  */
 function classifyFailureCategory(whyStopped: string): {
@@ -613,7 +613,7 @@ function classifyFailureCategory(whyStopped: string): {
 }
 
 /**
- * Produce a v4 discriminated `failure_category` block. The "safety" branch
+ * Produce a discriminated `failure_category` block. The "safety" branch
  * uses `safety_evidence_excerpt`; all other branches use
  * `category_evidence_excerpt`.
  */
@@ -960,7 +960,13 @@ export function classifyClinicalTrialConfidence(
     return "low";
 }
 
-export async function assembleDiscoveryTrials(phase2: Phase2Bundle, symbol: string, attrCtx: AttributionContext, knownClassDrugNames: Set<string>) {
+export async function assembleDiscoveryTrials(
+    phase2: Phase2Bundle,
+    symbol: string,
+    attrCtx: AttributionContext,
+    knownClassDrugNames: Set<string>,
+    attachAttribution: <T extends { nct_id: string }>(row: T) => T & { attribution: ClinicalTrialAttribution; eligible_for_toxicology_aggregation: boolean },
+) {
     const ctgov = phase2.phase1.collectors.ctgov;
     if (ctgov.coverage !== "available") return null;
     const symU = symbol.toUpperCase();
@@ -995,7 +1001,7 @@ export async function assembleDiscoveryTrials(phase2: Phase2Bundle, symbol: stri
                 phase: t.phase,
                 status: t.status,
                 conditions: t.conditions,
-                // Convert null → undefined to match DiscoveryTrialRowV4Schema optional fields.
+                // Convert null → undefined to match DiscoveryTrialRowSchema optional fields.
                 start_date: t.startDate ?? undefined,
                 completion_date: t.primaryCompletionDate ?? undefined,
                 match_confidence: t.match_confidence,
@@ -1004,32 +1010,19 @@ export async function assembleDiscoveryTrials(phase2: Phase2Bundle, symbol: stri
         })
         .filter((row) => {
             // Drop low-confidence rows whose only basis is a generic condition string.
-            // These fail the DiscoveryTrialRowV4Schema superRefine invariant and must
+            // These fail the DiscoveryTrialRowSchema superRefine invariant and must
             // not reach the dossier.
             return !(row.match_confidence === "low" && row.relevance_basis.kind === "condition_match");
         });
 
-    const relatedRows = partitioned.related.map((t) => ({
-        nct_id: t.nctId,
-        title: t.title,
-        phase: t.phase,
-        status: t.status,
-        conditions: t.conditions,
-        start_date: t.startDate,
-        completion_date: t.primaryCompletionDate,
-        match_confidence: t.match_confidence as "off_target",
-    }));
+    if (primaryRows.length === 0) return null;
 
-    if (primaryRows.length === 0 && relatedRows.length === 0) return null;
-
+    // Trials attributed to a related receptor rather than the assessed target
+    // are not discovery candidates at all, so they are not carried here.
+    const attributed = primaryRows.slice(0, 100).map(attachAttribution);
     return {
-        rows: primaryRows.slice(0, 100),
-        ...(relatedRows.length > 0
-            ? {
-                  related_target_trials: relatedRows,
-                  related_receptor: partitioned.related_receptor,
-              }
-            : {}),
+        rows: attributed.filter((r) => r.eligible_for_toxicology_aggregation),
+        excluded_rows: attributed.filter((r) => !r.eligible_for_toxicology_aggregation),
     };
 }
 

@@ -117,7 +117,7 @@ type CitationDossierView = {
         failed_trials?: Section<{ rows?: TrialRow[] }>;
     };
     analytics?: { discovery_trials?: Section<{ rows?: TrialRow[] }> };
-    safety_profile?: { target_organ_liabilities?: Array<{ organ?: unknown }> };
+    safety_profile?: { target_organ_liabilities?: Section<{ rows?: Array<{ organ?: unknown }> }> };
 };
 
 function resolvePath(root: unknown, path: string): unknown {
@@ -335,7 +335,7 @@ export function validateRecommendationCitations(rec: RecLike, dossier: unknown):
         }
     }
 
-    const organLiabilities = dossierView?.safety_profile?.target_organ_liabilities ?? [];
+    const organLiabilities = dossierView?.safety_profile?.target_organ_liabilities?.data?.rows ?? [];
     const tolOrgans = new Set(
         organLiabilities
             .map((t) =>
