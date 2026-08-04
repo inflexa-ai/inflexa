@@ -158,6 +158,22 @@ STE dictionary does not list it.
 Select a technical name that is short and easy to understand. Do not change the
 part of speech of a technical name. Write `apply oil`, not `oil the surface`.
 
+## The length of a reply
+
+Give the answer first. Write one or two sentences. Add the detail only if the
+user asks for it.
+
+Obey these rules:
+
+- Match the length of the reply to the question. A small question gets a small
+  answer.
+- Do not add a preamble. Do not restate the question. Do not add a scope note.
+- If the user does not ask for options, do not give a list of options.
+- Do not write the same point two times in different words.
+- STE controls the sentence. It does not control the length of a reply. Many
+  short sentences that pad a small point are the same fault.
+- Stop when the answer is complete.
+
 ## The rule
 
 Do only the work that the last message from the user asks for.
