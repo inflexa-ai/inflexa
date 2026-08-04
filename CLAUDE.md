@@ -290,20 +290,23 @@ Do not design a capability as a feature of the embedder.
 
 ### Red CI on a change to the two subsystems
 
-A pull request that changes `cli` and `harness` together has red `cli` CI. This
-result is correct. Do not treat it as a defect.
+The `cli` jobs of `lint.yml` and `test.yml` treat the harness in two ways:
 
-`cli` uses an exact published version of `@inflexa-ai/harness`. The CI job
-installs that version from npm with a frozen lockfile. Thus `cli` code that uses
-a harness version that is not published cannot typecheck there. The jobs `lint
-(cli)` and `test (cli)` fail on a missing export, and the two harness jobs pass.
+- On a pull request, the jobs link the working-copy harness, the same as `bun
+  run harness:local`. Thus a pull request that changes `cli` and `harness`
+  together is green.
+- On a push to main, the jobs install the pinned npm version of
+  `@inflexa-ai/harness` with a frozen lockfile. `release.yml` waits on these
+  checks. Thus the release gate runs against the exact version that the binary
+  bundles.
 
-The `bun run harness:local` command makes a link to the working copy. This is the
-reason that the same code is green on your machine.
+As a result, when a combined change merges, the push run on main has red `cli`
+checks. The red stays until the harness version publishes and the pin bump
+lands on main. This result is correct. Do not treat it as a defect.
 
 Obey these rules:
 
-- Do not report the red CI as a finding.
+- Do not report the red CI on main as a finding.
 - Do not read the workflow files to find the cause again.
 - Do not recommend a branch split or a merge sequence.
 - The developer of the pull request controls the harness release and the version

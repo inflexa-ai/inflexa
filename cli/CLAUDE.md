@@ -24,8 +24,8 @@ this repository, and leave the coordination to the user.
 - A handoff document or a spec can describe a staged rollout. Read it for the
   technical context. Then change the applicable constraints into implementation
   requirements. Do not echo the orchestration framing back.
-- Red `cli` CI on a pull request that also changes `harness` is correct, and the
-  developer of the pull request controls it. Refer to the root
+- Red `cli` CI on a main push, after a combined `cli` and `harness` change
+  merges, is correct, and the developer controls it. Refer to the root
   [`CLAUDE.md`](../CLAUDE.md). Say nothing about it.
 
 ## Quick Start

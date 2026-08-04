@@ -124,10 +124,11 @@ jobs:
       # cli pins @inflexa-ai/harness to an exact version and installs it from
       # npm, so the binary bundles the published, attested harness artifact —
       # not a local build. The pinned version is always already on npm here:
-      # the harness bump is promoted first (release-harness.yml), and only a
-      # later, separate cli change consumes it — a combined harness+cli change
-      # cannot pass cli CI (the pin is unresolvable until harness publishes),
-      # so it never reaches this workflow.
+      # the harness bump is promoted first (release-harness.yml), and a later,
+      # separate cli change consumes it. PR checks link the local harness, but
+      # the push checks that the gate above waits on keep this same npm pin —
+      # thus a main commit whose cli wants an unpublished harness fails that
+      # gate, and it never reaches this step.
       - name: Install cli dependencies
         if: steps.gate.outputs.release == 'true'
         working-directory: cli
