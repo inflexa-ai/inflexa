@@ -13,6 +13,10 @@
  *          Advice only.
  * A gate that denies on a guess teaches people to route around it, so the blocking
  * set is deliberately the narrow one and grows only if a rule proves deterministic.
+ *
+ * Two entry points share one checker. As a hook it reads the tool call on stdin and
+ * answers with the hook protocol. As `ste-check.ts --file <path>` it prints a plain
+ * report and exits 1 on a hard finding, so a person and a CI job get the same verdict.
  */
 
 type Severity = "hard" | "soft";
@@ -272,6 +276,161 @@ function hasSignoff(command: string, message: string): boolean {
   return /^Signed-off-by:\s*\S+/m.test(message);
 }
 
+/**
+ * A word of a shell command. `expands` marks a `$name`, a `$(…)`, or a backtick, which
+ * only the shell resolves. The gate must report such a word as unreadable, never guess
+ * at the text that it carries.
+ */
+type Word = { text: string; expands: boolean };
+
+/** The flags that carry prose directly, across `gh pr` and `gh issue`. */
+const TEXT_FLAGS = new Set(["--title", "-t", "--body", "-b"]);
+/** The flags that name a file, or `-` for standard input. */
+const FILE_FLAGS = new Set(["--body-file", "-F"]);
+
+/**
+ * A heredoc holds data, not shell words, and it is the usual source of `--body-file -`.
+ * It comes out before the tokenizer runs, because a body that contains a line such as
+ * `-b something` would otherwise read as a flag and its value.
+ */
+const HEREDOC = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2(?=\s|$)/g;
+
+function takeHeredocs(command: string): { rest: string; bodies: Word[] } {
+  const bodies: Word[] = [];
+  const rest = command.replace(HEREDOC, (_all, quote: string, _delimiter: string, body: string) => {
+    // An unquoted delimiter lets the shell expand the body, thus this text is not final.
+    bodies.push({ text: body, expands: quote === "" && /[$`]/.test(body) });
+    return " ";
+  });
+  return { rest, bodies };
+}
+
+/**
+ * Splits a command into words under the quoting rules of the shell. A regex on the raw
+ * text cannot do this: it misses an unquoted value, and it cannot tell `--body` from
+ * `--body-file`, which is how a description reached a pull request unchecked.
+ */
+function tokenize(command: string): Word[] {
+  const words: Word[] = [];
+  let text = "";
+  let expands = false;
+  let open = false;
+
+  const end = () => {
+    if (open) words.push({ text, expands });
+    text = "";
+    expands = false;
+    open = false;
+  };
+
+  for (let i = 0; i < command.length; i += 1) {
+    const c = command[i];
+    if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+      end();
+      continue;
+    }
+    open = true;
+    if (c === "'") {
+      const close = command.indexOf("'", i + 1);
+      text += command.slice(i + 1, close === -1 ? undefined : close);
+      i = close === -1 ? command.length : close;
+      continue;
+    }
+    if (c === '"') {
+      let j = i + 1;
+      for (; j < command.length && command[j] !== '"'; j += 1) {
+        if (command[j] === "\\" && j + 1 < command.length) {
+          j += 1;
+          text += command[j];
+          continue;
+        }
+        if (command[j] === "$" || command[j] === "`") expands = true;
+        text += command[j];
+      }
+      i = j;
+      continue;
+    }
+    if (c === "\\" && i + 1 < command.length) {
+      i += 1;
+      text += command[i];
+      continue;
+    }
+    if (c === "$" || c === "`") expands = true;
+    text += c;
+  }
+  end();
+  return words;
+}
+
+/**
+ * Collects each piece of prose that a `gh` command publishes, from whichever flag
+ * carries it. A source that the gate cannot resolve goes into `unreadable` and becomes
+ * a hard finding. A silent skip of an unknown source is a gate in name only.
+ */
+async function ghPayload(command: string): Promise<{ texts: string[]; unreadable: string[] }> {
+  const { rest, bodies } = takeHeredocs(command);
+  const words = tokenize(rest);
+  const texts: string[] = [];
+  const unreadable: string[] = [];
+  let nextHeredoc = 0;
+
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i];
+    if (!word) continue;
+    const split = word.text.indexOf("=");
+    const name = split > 0 ? word.text.slice(0, split) : word.text;
+    const isText = TEXT_FLAGS.has(name);
+    if (!isText && !FILE_FLAGS.has(name)) continue;
+
+    // `--body=text` holds its value inline. `--body text` holds it in the next word.
+    // An inline value inherits the mark of its word, because half of a word that the
+    // shell expands cannot be separated from the other half.
+    const value: Word | undefined =
+      split > 0 ? { text: word.text.slice(split + 1), expands: word.expands } : words[i + 1];
+
+    if (!value) {
+      unreadable.push(`${name} has no value`);
+      continue;
+    }
+    if (isText) {
+      if (value.expands) unreadable.push(`${name} holds a shell expansion`);
+      else texts.push(value.text);
+      continue;
+    }
+    if (value.text === "-") {
+      const body = bodies[nextHeredoc];
+      nextHeredoc += 1;
+      if (!body) unreadable.push(`${name} reads standard input, and no heredoc supplies it`);
+      else if (body.expands) unreadable.push(`${name} reads a heredoc that the shell expands`);
+      else texts.push(body.text);
+      continue;
+    }
+    if (value.expands) {
+      unreadable.push(`${name} holds a shell expansion`);
+      continue;
+    }
+    // The path resolves against the directory of the hook, which is not always the
+    // directory of the command. A relative path that misses is reported, not skipped.
+    const file = Bun.file(value.text);
+    if (!(await file.exists())) {
+      unreadable.push(`${name} names ${value.text}, which the gate cannot open`);
+      continue;
+    }
+    texts.push(await file.text());
+  }
+  return { texts, unreadable };
+}
+
+/** The `gh` subcommands that publish prose. `--editor` and `--web` hand the text to a
+ * person instead, and a person is outside the reach of a tool hook. */
+const GH_TEXT_COMMAND = /\bgh\s+(pr|issue)\s+(create|edit|comment|review)\b/;
+
+function ghSubject(kind: string, action: string): string {
+  if (action === "comment") return "the comment";
+  if (action === "review") return "the review";
+  return kind === "issue" ? "the issue text" : "the pull request text";
+}
+
 function report(findings: Finding[], subject: string): string {
   const lines = [`Repository gate — ${subject}:`];
   for (const f of findings) {
@@ -280,7 +439,38 @@ function report(findings: Finding[], subject: string): string {
   return lines.join("\n");
 }
 
+/**
+ * The command entry point. It gives one checker to the hook, to a person, and to a CI
+ * job, and it gives a `gh` body the one payload source that the gate always opens.
+ *
+ * Exit 0 for a clean file or a soft finding. Exit 1 for a hard finding.
+ */
+async function checkFile(path: string): Promise<number> {
+  const traps = await loadTraps();
+  const where = path.replace(`${projectDir()}/`, "");
+  const source = await Bun.file(path).text();
+  const findings = checkText(where, traps, MAX_WORDS_DESCRIPTIVE, markdownProse(source));
+  if (findings.length === 0) {
+    console.log(`Repository gate — ${where}: no finding.`);
+    return 0;
+  }
+  console.log(report(findings, where));
+  return findings.some((f) => f.severity === "hard") ? 1 : 0;
+}
+
 async function main() {
+  // The command entry point answers before any read of standard input. With no hook to
+  // close the stream, a read there waits on a terminal that never sends an end.
+  const flag = process.argv[2] ?? "";
+  if (flag === "--file" || flag.startsWith("--file=")) {
+    const path = flag.startsWith("--file=") ? flag.slice("--file=".length) : process.argv[3];
+    if (!path) {
+      console.error("usage: ste-check.ts --file <path>");
+      process.exit(2);
+    }
+    process.exit(await checkFile(path));
+  }
+
   const input = JSON.parse((await Bun.stdin.text()) || "{}");
   const tool: string = input.tool_name ?? "";
   const event: string = input.hook_event_name ?? (input.tool_response ? "PostToolUse" : "PreToolUse");
@@ -311,11 +501,26 @@ async function main() {
           hint: "Use the `-s` option of `git commit` (CLAUDE.md, Commits)",
         });
       }
-    } else if (/\bgh\s+pr\s+(create|edit)\b/.test(command)) {
-      const parts = [...flagValues(command, "--title"), ...flagValues(command, "--body")];
-      if (parts.length > 0) {
-        subject = "the pull request text";
-        findings = checkText(subject, traps, MAX_WORDS_DESCRIPTIVE, markdownProse(parts.join("\n\n")));
+    } else {
+      const gh = GH_TEXT_COMMAND.exec(command);
+      if (gh) {
+        subject = ghSubject(gh[1] ?? "", gh[2] ?? "");
+        // A description and a comment go to other people, and neither one comes back.
+        // The commit surface denies for that reason, thus this surface denies too.
+        blocking = true;
+        const { texts, unreadable } = await ghPayload(command);
+        if (texts.length > 0) {
+          findings = checkText(subject, traps, MAX_WORDS_DESCRIPTIVE, markdownProse(texts.join("\n\n")));
+        }
+        for (const reason of unreadable) {
+          findings.push({
+            rule: "unreadable-payload",
+            severity: "hard",
+            where: subject,
+            quote: reason,
+            hint: "Write the text to a file. Then give `--body-file <absolute path>`",
+          });
+        }
       }
     }
   } else if (tool === "Write" || tool === "Edit" || tool === "MultiEdit") {
@@ -336,7 +541,7 @@ async function main() {
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           permissionDecision: "deny",
-          permissionDecisionReason: `${report(hard, subject)}\n\nCLAUDE.md gives these rules. Correct the commit, then commit again.`,
+          permissionDecisionReason: `${report(hard, subject)}\n\nCLAUDE.md gives these rules. Correct ${subject}, then run the command again.`,
         },
       }),
     );
@@ -353,9 +558,14 @@ async function main() {
 }
 
 main().catch((err) => {
-  // A broken checker must never stop work, but a silent one is a fake gate: say so.
-  console.log(
-    JSON.stringify({ systemMessage: `STE hook did not run: ${err instanceof Error ? err.message : err}` }),
-  );
+  const message = err instanceof Error ? err.message : String(err);
+  // Under the command entry point a broken checker must fail loudly, because a CI job
+  // that reads exit 0 would call the text clean.
+  if (process.argv.includes("--file") || process.argv.some((a) => a.startsWith("--file="))) {
+    console.error(`STE check did not run: ${message}`);
+    process.exit(2);
+  }
+  // As a hook it must never stop work, but a silent one is a fake gate: say so.
+  console.log(JSON.stringify({ systemMessage: `STE hook did not run: ${message}` }));
   process.exit(0);
 });
