@@ -45,6 +45,11 @@ LIBS = Path(os.environ.get("LIB_ROOT", "/mnt/libs"))
 STORE = LIBS / "store"
 FARMS = LIBS / "farms"
 
+# The path the sandbox mounts the store at, read-only. The provisioner must see the
+# store at this SAME path — the design's load-bearing detail — because a farm's
+# symlinks bake it as an absolute target the sandbox has to resolve.
+SANDBOX_MOUNT = Path(os.environ.get("SANDBOX_LIB_MOUNT", "/mnt/libs"))
+
 # The sandbox runs the system interpreter, so resolution and the compiled
 # extension suffixes have to be pinned to it, not to whatever uv would pick.
 PYTHON = "/usr/bin/python3"
@@ -258,6 +263,15 @@ def link_tree(dst: Path, src: str, collisions: list[str]) -> None:
 
 def build_farm(farm: Path, store_dirs: list[Path]) -> list[str]:
     """Assemble the per-analysis symlink farm from its closure's store dirs."""
+    # A farm's links are absolute targets under LIBS, and the sandbox resolves them
+    # at its own mount. They line up only when the provisioner sees the store at the
+    # same path the sandbox will — /mnt/libs in both. A store rooted elsewhere would
+    # bake a host path that resolves to nothing in the sandbox, so refuse to farm it.
+    if LIBS != SANDBOX_MOUNT:
+        raise SystemExit(
+            f"[provision] refusing to build a farm: store root {LIBS} is not the "
+            f"sandbox mount {SANDBOX_MOUNT}; farm links would bake a path the sandbox "
+            f"cannot resolve (set SANDBOX_LIB_MOUNT if the sandbox mounts elsewhere)")
     if farm.exists():
         shutil.rmtree(farm)
     site = farm / "python" / "site-packages"
