@@ -791,6 +791,67 @@ export const SafetyProfileSchema = z.object({
 });
 export type SafetyProfile = z.infer<typeof SafetyProfileSchema>;
 
+// ── §2.6a Safety corroboration spine ────────────────────────────────
+
+/**
+ * One source's signal for one organ.
+ *
+ * The source names itself in a field rather than occupying a field of its own.
+ * That is what keeps the contributing set open: a source that did not exist
+ * when this shape was written contributes by emitting a record, with no schema
+ * edit, no new branch, and no consumer change. A struct with one field per
+ * source would instead force a schema change per source — and, because a new
+ * source arriving before its field exists has nowhere to land, would invite a
+ * second, narrower evidence path alongside this one.
+ *
+ * `evidence` is claim evidence, so a contribution always resolves to a record a
+ * reader can go and check.
+ */
+export const OrganSignalContributionSchema = z.object({
+    /** Stable id of the source that produced the signal. */
+    source: z.string().min(1),
+    /** What this source says about the organ, in the source's own terms. */
+    signal: z.string().min(1),
+    evidence: ClaimEvidenceSchema,
+});
+export type OrganSignalContribution = z.infer<typeof OrganSignalContributionSchema>;
+
+/**
+ * The corroboration record for one organ: which sources carry a signal for it,
+ * how many of them are independent, and what each contributed.
+ *
+ * `independent_source_count` counts distinct source ids, not contributions — a
+ * source carrying three label warnings for one organ is still one source. The
+ * claim's evidence is the contributions' evidence, which is why a signal with
+ * no locator is never admitted as a contribution in the first place.
+ */
+export const OrganCorroborationRowSchema = withEvidence(
+    z.object({
+        organ: OrganSystemSchema,
+        contributions: z.array(OrganSignalContributionSchema).min(1),
+        corroborating_sources: z.array(z.string().min(1)).min(1),
+        independent_source_count: z.number().int().positive(),
+    }),
+);
+export type OrganCorroborationRow = z.infer<typeof OrganCorroborationRowSchema>;
+
+/**
+ * `dropped_count` on this section counts *signals* — the fold's input unit —
+ * discarded because their organ did not resolve, because they carried no
+ * locator, or because their organ drew fewer than `min_independent_sources`
+ * distinct sources.
+ */
+export const SafetyCorroborationSchema = withCoverage(
+    z.object({
+        rows: z.array(OrganCorroborationRowSchema),
+        /** Every source id that offered at least one signal on this run. */
+        sources_considered: z.array(z.string().min(1)),
+        /** Distinct sources an organ needed to be reported as corroborated. */
+        min_independent_sources: z.number().int().positive(),
+    }),
+);
+export type SafetyCorroboration = z.infer<typeof SafetyCorroborationSchema>;
+
 // ── §2.7 Off-tissue risk ────────────────────────────────────────────
 
 export const OffTissueRowSchema = withEvidence(
@@ -1330,6 +1391,7 @@ export const DossierSchema = z.object({
     drug_interactions: DrugInteractionsSchema,
     clinical_development: ClinicalDevelopmentSchema,
     safety_profile: SafetyProfileSchema,
+    safety_corroboration: SafetyCorroborationSchema,
     off_tissue_risk: OffTissueRiskSchema,
     off_target_panel: withCoverage(OffTargetPanelSchema),
     reference_biology: ReferenceBiologyShape,

@@ -6,7 +6,7 @@
  *
  *  Phase 0   `phase0Resolve`               — only step allowed to throw
  *                                            (terminates → `target-unresolved`)
- *  Phase 1   14 collectors in parallel     — coverage-envelope failures
+ *  Phase 1   15 collectors in parallel     — coverage-envelope failures
  *  Progress  `emitProgress("deciding")`
  *  Phase 2   2 decisions in parallel       — LLM calls, attempt-numbered
  *  Progress  `emitProgress("fanning_out")`
@@ -270,7 +270,7 @@ export async function runExecuteTargetAssessmentBody(
             throw err;
         });
 
-        // (§5.4) Phase 1 — 14 collectors in parallel. Each is its own DBOS
+        // (§5.4) Phase 1 — 15 collectors in parallel. Each is its own DBOS
         // step; coverage failures cache as `queried_no_data` and replay
         // returns the cached envelope. The per-collector run functions emit
         // different bundle shapes; the union is widened to `unknown` here
@@ -304,6 +304,7 @@ export async function runExecuteTargetAssessmentBody(
                 clinvar: collectorById["clinvar"],
                 cbioportal: collectorById["cbioportal"],
                 impc: collectorById["impc"],
+                monarch: collectorById["monarch"],
                 pubmedIndex: collectorById["pubmed-index"],
                 pathways: collectorById["pathways"],
                 stringPpi: collectorById["string-ppi"],

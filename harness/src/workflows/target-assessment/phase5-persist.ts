@@ -36,6 +36,7 @@ import { computeDerivedFields } from "./lib/compute-derived.js";
 import { detectStructuralEvidenceConflicts } from "./lib/evidence-conflict-detector.js";
 import { applyRecommendationQualityGates } from "./lib/recommendation-quality-gates.js";
 import { sanitizeRecommendation } from "./lib/recommendation-sanitizer.js";
+import { assembleSafetyCorroboration } from "./lib/safety-corroboration.js";
 
 import type { Phase2Bundle } from "./steps/phase2-aggregate.js";
 
@@ -177,6 +178,11 @@ function stampSynthesis(
     const next = structuredClone(phase4Dossier);
 
     next.safety_profile.regulatory_organ_signals = assembleRegulatoryOrganSignals(regulatoryOrganSignals);
+
+    next.safety_corroboration = assembleSafetyCorroboration({
+        phase1: phase2.phase1,
+        regulatoryOrganSignals,
+    });
 
     if (syn.bullets.coverage === "available") {
         next.liability_summary.liability_bullets = syn.bullets.data.bullets.map((b) => ({
