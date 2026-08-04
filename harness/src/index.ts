@@ -530,3 +530,46 @@ export { registerWatchdog } from "./sandbox/watchdog.js";
 export type { WatchdogDeps } from "./sandbox/watchdog.js";
 export { registerNotificationSweep } from "./sandbox/notification-sweep.js";
 export type { RegisterNotificationSweepDeps } from "./sandbox/notification-sweep.js";
+
+// The signed provenance recorder: folds execution facts into a per-analysis
+// W3C PROV document (tsprov), chain-hashes and signs every persisted snapshot,
+// and stores it whole through the embedder's snapshot sink. Events reach it by
+// a plain `record()` call — an event bus may sit in front, but the seam is the
+// function. The bridges adapt the two harness seams that observe execution
+// (`ArtifactRegistry.register`, `emitProvenance`) into recorder events; a host
+// wires them at its composition root and composes the registry bridge with its
+// own byte-syncing registry when it has one.
+export { createProvenanceRecorder } from "./provenance/recorder/recorder.js";
+export type {
+    ProvenanceRecorder,
+    ProvenanceRecorderDeps,
+    ProvSnapshotSink,
+    ProvSnapshotSeed,
+    ProvSnapshot,
+    ProvSinkError,
+} from "./provenance/recorder/recorder.js";
+export { createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS } from "./provenance/recorder/document.js";
+export type { ProvDocumentModel, ProvDocumentModelOptions, ProvDigest } from "./provenance/recorder/document.js";
+export { createProvenanceArtifactRegistry, createRunProvenanceEmitter } from "./provenance/recorder/bridge.js";
+export type { ProvBridgeDeps } from "./provenance/recorder/bridge.js";
+export { computeChainHash, computePayloadDigest, signHexDigest, verifyHexDigest, createKeypairSigner } from "./provenance/recorder/signing.js";
+export type { ProvSigner, ProvSigningError, ProvPublicKeyJwk } from "./provenance/recorder/signing.js";
+export { verifyProvenance, verifyPayload, verifySidecar, buildSidecar, formatVerifyResult, sidecarSchema } from "./provenance/recorder/verify.js";
+export type { Sidecar } from "./provenance/recorder/verify.js";
+export type {
+    ProvActor,
+    ProvModelId,
+    ProvSubject,
+    ProvEvent,
+    ProvInputRef,
+    ProvRunRef,
+    ProvRunOutcome,
+    ProvStepRef,
+    ProvStepOutcome,
+    ProvUsedInputRef,
+    ProvFileRef,
+    ProvFileKey,
+    ProvCommandInputRef,
+    ProvCommandRef,
+    VerifyResult,
+} from "./provenance/recorder/types.js";
