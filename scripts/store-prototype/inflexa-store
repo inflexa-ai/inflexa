@@ -9,6 +9,7 @@
 #   inflexa-store test                       acceptance checks
 #   inflexa-store du                         store/farm disk accounting
 #   inflexa-store verify                     re-hash the store, report drift (OFFLINE)
+#   inflexa-store repair                     clear abandoned staging from a crash (OFFLINE)
 #   inflexa-store clean                      remove the whole store
 #
 # The store lives at $LIB_STORE (default ~/.local/share/inflexa/libs), which is
@@ -155,6 +156,19 @@ cmd_verify() {
         --verify
 }
 
+# Clear an abandoned staging tree left by a crashed provisioning run. store/.staging
+# only holds an install in flight, so removing it reclaims space and never loses a
+# published package. Read-write (it deletes), but offline.
+cmd_repair() {
+    [[ -d "$LIB_STORE" ]] || die "no store at $LIB_STORE"
+    echo "==> repairing store (network off, read-write)"
+    "$CTR" run --rm \
+        --network none \
+        -v "$LIB_STORE:/mnt/libs:rw" \
+        "$PROVISIONER_IMAGE" \
+        --repair
+}
+
 cmd_clean() {
     read -rp "remove $LIB_STORE entirely? [y/N] " ans
     [[ "$ans" == "y" ]] || exit 0
@@ -172,6 +186,7 @@ case "${1:-}" in
     test)  shift; cmd_test "$@" ;;
     du)    shift; cmd_du "$@" ;;
     verify) shift; cmd_verify "$@" ;;
+    repair) shift; cmd_repair "$@" ;;
     clean) shift; cmd_clean "$@" ;;
     *) sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

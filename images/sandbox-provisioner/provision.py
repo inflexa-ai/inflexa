@@ -373,11 +373,31 @@ def verify_store() -> int:
     return 1 if bad else 0
 
 
+def repair_staging() -> int:
+    """Clear an abandoned staging tree left by an interrupted run.
+
+    `store/.staging/` only ever holds an install in flight: a completed publish is a
+    rename OUT of it, so anything left there is debris from a run that died before
+    its rename, never a published artifact. Removing it reclaims space and can never
+    lose a package. Safe under the single-writer assumption the per-store lock
+    enforces; two live provisioners are a separate concern.
+    """
+    staging = STORE / ".staging"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+        log("repair: cleared an abandoned store/.staging tree")
+    else:
+        log("repair: nothing to clear")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Provision packages into the library store.")
     ap.add_argument("--farm", help="analysis name (farm directory)")
     ap.add_argument("--verify", action="store_true",
                     help="re-hash every store directory, report any drift from its address, and exit")
+    ap.add_argument("--repair", action="store_true",
+                    help="clear an abandoned staging tree from an interrupted run, and exit")
     ap.add_argument("--warm", default="", help="comma-separated modules to import during warm-up")
     ap.add_argument("--warm-script", default=None,
                     help="path (inside the store) to a script that exercises jitted code paths")
@@ -386,13 +406,18 @@ def main() -> int:
 
     if args.verify:
         return verify_store()
+    if args.repair:
+        return repair_staging()
     if not args.farm:
-        log("usage: provide --farm <name> (with specs), or --verify")
+        log("usage: provide --farm <name> (with specs), or --verify / --repair")
         return 2
     reject_off_index(args.specs)
 
     STORE.mkdir(parents=True, exist_ok=True)
     FARMS.mkdir(parents=True, exist_ok=True)
+    # Every run repairs before it builds: anything in store/.staging is debris from
+    # an interrupted prior run (a completed publish renamed out of it).
+    repair_staging()
 
     farm = FARMS / args.farm
     lock_path = farm / "lock.json"
