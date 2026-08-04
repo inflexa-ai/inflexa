@@ -10,6 +10,7 @@
 #   inflexa-store du                         store/farm disk accounting
 #   inflexa-store verify                     re-hash the store, report drift (OFFLINE)
 #   inflexa-store repair                     clear abandoned staging from a crash (OFFLINE)
+#   inflexa-store reclaim                    remove store dirs no farm references (OFFLINE)
 #   inflexa-store clean                      remove the whole store
 #
 # The store lives at $LIB_STORE (default ~/.local/share/inflexa/libs), which is
@@ -169,6 +170,18 @@ cmd_repair() {
         --repair
 }
 
+# Remove store directories no farm references (explicit, never automatic). Offline
+# and read-write; the provisioner holds the per-store lock while it collects.
+cmd_reclaim() {
+    [[ -d "$LIB_STORE/store" ]] || die "no store at $LIB_STORE"
+    echo "==> reclaiming unreferenced store dirs (network off, read-write)"
+    "$CTR" run --rm \
+        --network none \
+        -v "$LIB_STORE:/mnt/libs:rw" \
+        "$PROVISIONER_IMAGE" \
+        --reclaim
+}
+
 cmd_clean() {
     read -rp "remove $LIB_STORE entirely? [y/N] " ans
     [[ "$ans" == "y" ]] || exit 0
@@ -187,6 +200,7 @@ case "${1:-}" in
     du)    shift; cmd_du "$@" ;;
     verify) shift; cmd_verify "$@" ;;
     repair) shift; cmd_repair "$@" ;;
+    reclaim) shift; cmd_reclaim "$@" ;;
     clean) shift; cmd_clean "$@" ;;
     *) sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

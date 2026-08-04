@@ -31,6 +31,8 @@ later read.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -49,6 +51,11 @@ FARMS = LIBS / "farms"
 # store at this SAME path — the design's load-bearing detail — because a farm's
 # symlinks bake it as an absolute target the sandbox has to resolve.
 SANDBOX_MOUNT = Path(os.environ.get("SANDBOX_LIB_MOUNT", "/mnt/libs"))
+
+# One lease file per sandbox that has the store mounted. The host adds a lease when
+# it starts a sandbox and drops it when the sandbox exits; the provisioner refuses to
+# re-point `current` while any lease is active (see flip_current).
+LEASES = LIBS / "leases"
 
 # The sandbox runs the system interpreter, so resolution and the compiled
 # extension suffixes have to be pinned to it, not to whatever uv would pick.
@@ -568,34 +575,136 @@ def repair_staging() -> int:
     return 0
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Provision packages into the library store.")
-    ap.add_argument("--farm", help="analysis name (farm directory)")
-    ap.add_argument("--verify", action="store_true",
-                    help="re-hash every store directory, report any drift from its address, and exit")
-    ap.add_argument("--repair", action="store_true",
-                    help="clear an abandoned staging tree from an interrupted run, and exit")
-    ap.add_argument("--warm", default="", help="comma-separated modules to import during warm-up")
-    ap.add_argument("--warm-script", default=None,
-                    help="path (inside the store) to a script that exercises jitted code paths")
-    ap.add_argument("--r-manifest", default=None,
-                    help="path to a lib-store manifest; provision its R track (CRAN + Bioconductor + git + GitHub) via pak")
-    ap.add_argument("specs", nargs="*", help="requirement specs to add")
-    args = ap.parse_args()
+@contextlib.contextmanager
+def store_lock():
+    """Hold an exclusive per-store lock for the length of a mutating run.
 
-    if args.verify:
-        return verify_store()
-    if args.repair:
-        return repair_staging()
-    if not args.farm:
-        log("usage: provide --farm <name> (with specs), or --verify / --repair")
+    Content addressing makes the package writes race-safe, but the `current` pointer
+    and farm assembly are not, so a whole provisioning (or reclaim) run holds this.
+    Non-blocking: a second run reports the conflict rather than queueing behind a
+    build of unknown length. Closing the fd releases the flock, including on crash.
+    """
+    LIBS.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(LIBS / ".provision.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise SystemExit("[provision] another provisioning run holds the store lock; retry when it finishes")
+        yield
+    finally:
+        os.close(fd)
+
+
+def active_leases() -> list[str]:
+    """Ids of sandboxes the host has recorded as holding the store mounted."""
+    if not LEASES.is_dir():
+        return []
+    return sorted(p.name for p in LEASES.iterdir() if p.is_file())
+
+
+def add_lease(lease_id: str) -> int:
+    LEASES.mkdir(parents=True, exist_ok=True)
+    (LEASES / lease_id).write_text(lease_id + "\n")
+    log(f"lease added: {lease_id}")
+    return 0
+
+
+def drop_lease(lease_id: str) -> int:
+    p = LEASES / lease_id
+    if p.exists():
+        p.unlink()
+        log(f"lease dropped: {lease_id}")
+    else:
+        log(f"lease not found: {lease_id}")
+    return 0
+
+
+def flip_current(farm_name: str, force: bool = False) -> None:
+    """Point `current` at farm_name, refusing to move it under a live sandbox.
+
+    Re-pointing the symlink breaks a container that has the store mounted — measured,
+    its /mnt/libs/current raises FileNotFoundError from then on — so a re-point is an
+    operation BETWEEN sandboxes. Re-pointing to the SAME target is a no-op: adding to
+    a farm `current` already selects is safe, because existing links are untouched.
+    The host clears the lease once it confirms no sandbox is mounted; --force-repoint
+    is the escape hatch for a stale lease.
+    """
+    current = LIBS / "current"
+    target = f"farms/{farm_name}"
+    if current.is_symlink() and os.readlink(current) == target:
+        return
+    leases = active_leases()
+    if leases and not force:
+        raise SystemExit(
+            f"[provision] refusing to re-point current to {farm_name}: "
+            f"{len(leases)} sandbox lease(s) active ({', '.join(leases[:5])}). "
+            f"A live sandbox resolves /mnt/libs/current; re-pointing breaks it.")
+    if current.is_symlink() or current.exists():
+        current.unlink()
+    current.symlink_to(target)
+
+
+def _referenced_store_dirs() -> set[str]:
+    """Store directory names any farm currently links to."""
+    referenced: set[str] = set()
+    if not FARMS.is_dir():
+        return referenced
+    for farm in FARMS.iterdir():
+        if not farm.is_dir():
+            continue
+        for link in farm.rglob("*"):
+            if link.is_symlink():
+                tgt = os.readlink(link)
+                if "/store/" in tgt:
+                    referenced.add(tgt.split("/store/", 1)[1].split("/", 1)[0])
+    return referenced
+
+
+def reclaim() -> int:
+    """Remove store directories no farm references.
+
+    A package no current farm uses is still kept until this runs, so an old analysis
+    can be rebuilt — reclamation is explicit and host-invoked, never automatic. This
+    is a harness operation; the user-facing command belongs to the CLI.
+    """
+    if not STORE.is_dir():
+        log("reclaim: no store")
+        return 0
+    referenced = _referenced_store_dirs()
+    removed = 0
+    for d in sorted(STORE.iterdir()):
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        if d.name not in referenced:
+            shutil.rmtree(d, ignore_errors=True)
+            removed += 1
+            log(f"  reclaimed {d.name}")
+    log(f"reclaim: {removed} unreferenced store dir(s) removed, {len(referenced)} still referenced")
+    return 0
+
+
+def remove_farm(farm_name: str) -> int:
+    """Remove a farm — the set of symlinks for one analysis. The store dirs it
+    referenced stay until reclaim runs. Refuses the farm `current` selects, since
+    that is the live one a sandbox may be reading."""
+    farm = FARMS / farm_name
+    if not farm.is_dir():
+        log(f"remove-farm: no such farm {farm_name}")
         return 2
-    reject_off_index(args.specs)
+    current = LIBS / "current"
+    if current.is_symlink() and os.readlink(current) == f"farms/{farm_name}":
+        raise SystemExit(f"[provision] refusing to remove farm {farm_name}: current points at it")
+    shutil.rmtree(farm, ignore_errors=True)
+    log(f"removed farm {farm_name} (run --reclaim to drop store dirs it alone referenced)")
+    return 0
 
+
+def _provision(args) -> int:
     STORE.mkdir(parents=True, exist_ok=True)
     FARMS.mkdir(parents=True, exist_ok=True)
-    # Every run repairs before it builds: anything in store/.staging is debris from
-    # an interrupted prior run (a completed publish renamed out of it).
+    # Every run repairs before it builds: anything in a staging dir is debris from an
+    # interrupted prior run (a completed publish renamed out of it).
     repair_staging()
 
     farm = FARMS / args.farm
@@ -631,12 +740,9 @@ def main() -> int:
     if args.r_manifest:
         r_result = provision_r(farm, Path(args.r_manifest))
 
-    # Flip `current` BEFORE warming, so the warm-up runs against the exact path
-    # the sandbox will import from (see the note in warm()).
-    current = LIBS / "current"
-    if current.is_symlink() or current.exists():
-        current.unlink()
-    current.symlink_to(f"farms/{args.farm}")
+    # Flip `current` BEFORE warming, so the warm-up runs against the exact path the
+    # sandbox will import from (see the note in warm()); refused under a live sandbox.
+    flip_current(args.farm, force=args.force_repoint)
 
     warm_targets = [m for m in args.warm.split(",") if m]
     warm_results = warm(farm, warm_targets, args.warm_script) if (warm_targets or args.warm_script) else {}
@@ -676,6 +782,55 @@ def main() -> int:
     subprocess.run(["chmod", "-R", "a+rX", str(farm)], check=True)
     log(f"farm '{args.farm}' ready: {len(pins)} distributions")
     return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Provision packages into the library store.")
+    ap.add_argument("--farm", help="analysis name (farm directory)")
+    ap.add_argument("--verify", action="store_true",
+                    help="re-hash every store directory, report any drift from its address, and exit")
+    ap.add_argument("--repair", action="store_true",
+                    help="clear an abandoned staging tree from an interrupted run, and exit")
+    ap.add_argument("--reclaim", action="store_true",
+                    help="remove store directories no farm references, and exit")
+    ap.add_argument("--add-lease", default=None, metavar="ID",
+                    help="record that a sandbox holds the store mounted (blocks re-pointing current)")
+    ap.add_argument("--drop-lease", default=None, metavar="ID",
+                    help="clear a sandbox's mount lease")
+    ap.add_argument("--remove-farm", default=None, metavar="NAME",
+                    help="remove a farm's symlinks (store dirs stay until --reclaim), and exit")
+    ap.add_argument("--force-repoint", action="store_true",
+                    help="re-point current even with active leases (host must confirm no sandbox is mounted)")
+    ap.add_argument("--warm", default="", help="comma-separated modules to import during warm-up")
+    ap.add_argument("--warm-script", default=None,
+                    help="path (inside the store) to a script that exercises jitted code paths")
+    ap.add_argument("--r-manifest", default=None,
+                    help="path to a lib-store manifest; provision its R track (CRAN + Bioconductor + git + GitHub) via pak")
+    ap.add_argument("specs", nargs="*", help="requirement specs to add")
+    args = ap.parse_args()
+
+    if args.verify:
+        return verify_store()
+    if args.repair:
+        return repair_staging()
+    if args.reclaim:
+        with store_lock():
+            return reclaim()
+    if args.add_lease:
+        return add_lease(args.add_lease)
+    if args.drop_lease:
+        return drop_lease(args.drop_lease)
+    if args.remove_farm:
+        with store_lock():
+            return remove_farm(args.remove_farm)
+    if not args.farm:
+        log("usage: --farm <name> (with specs / --r-manifest), or --verify / --repair / "
+            "--reclaim / --add-lease ID / --drop-lease ID / --remove-farm NAME")
+        return 2
+    reject_off_index(args.specs)
+
+    with store_lock():
+        return _provision(args)
 
 
 if __name__ == "__main__":
