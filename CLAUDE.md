@@ -244,3 +244,103 @@ Sign off each commit with the identity of the user. Use the `-s` option of `git 
 ```
 git commit -s -m "<message>"
 ```
+
+## This repository
+
+Inflexa is a monorepo of independent subsystems. Each subsystem has its own
+dependencies, tools, and documents.
+
+- Read `CONTEXT.md` for the map of the repository. Read `README.md` for the
+  product.
+- The root has no build, no package manager, and no task runner. Thus you must
+  work inside the subsystem that you change.
+- Go into that subsystem first, for example `cd cli` or `cd harness`. Then use
+  the scripts of that subsystem.
+- Read the `CLAUDE.md` of that subsystem before you start. Each subsystem has its
+  own conventions. The root has no shared set of conventions.
+
+## The boundary between the CLI and the harness
+
+The harness is the product core, and it is host-agnostic. Thus a capability, a
+concept, and a configuration option mean the same thing under the CLI and under a
+managed deployment.
+
+The CLI is an embedder, and an embedder is a consumer. It gives values at its
+composition root. These values are the configuration, the policies, and the
+realizations of the seams. An embedder never controls what the harness does.
+
+Design a new capability in the harness first. Then connect it from the embedder.
+Do not design a capability as a feature of the embedder.
+
+### Red CI on a change to the two subsystems
+
+A pull request that changes `cli` and `harness` together has red `cli` CI. This
+result is correct. Do not treat it as a defect.
+
+`cli` uses an exact published version of `@inflexa-ai/harness`. The CI job
+installs that version from npm with a frozen lockfile. Thus `cli` code that uses
+a harness version that is not published cannot typecheck there. The jobs `lint
+(cli)` and `test (cli)` fail on a missing export, and the two harness jobs pass.
+
+The `bun run harness:local` command makes a link to the working copy. This is the
+reason that the same code is green on your machine.
+
+Obey these rules:
+
+- Do not report the red CI as a finding.
+- Do not read the workflow files to find the cause again.
+- Do not recommend a branch split or a merge sequence.
+- The developer of the pull request controls the harness release and the version
+  change. Refer to `cli/CLAUDE.md`, "Scope: implementation only".
+
+## Agent-facing content
+
+A prompt, a skill, and a tool are three layers of one contract. The content gives
+the requirement. The runtime supplies the mechanism.
+
+Do not put the two layers together. Content cannot be typechecked. Thus a
+mismatch shows as a failed analysis, not as a failed build.
+
+| Layer | Holds | Must never |
+| --- | --- | --- |
+| A skill in `skills/` | The work: the dataset by name, and its contract — the key columns, the identifier space, the organism | Name a path, a directory, a file name, a format, or the tool that finds one |
+| A prompt in `harness/src/prompts/` | Which tools exist, and when to use one | List a dataset, or promise a format that the catalog does not give |
+| A tool in `harness/src/tools/` | Makes a path from a description, with the metadata to select between candidates | Make the caller find the location first |
+
+Obey these rules:
+
+- **A skill gives the task. A tool describes itself.** A tool carries its own
+  description into the context of an agent. Thus the name of a tool in a skill
+  gives nothing new, and it connects shared content to the tools of one host.
+- **A capability is not always a file.** Make sure that the data is on disk before
+  you tell a skill to find it. Data that only a tool gives has no path.
+- **A dataset name is not a path.** `CollecTRI` and `MSigDB hallmark` are domain
+  terms, and a skill can use them. The rule is about a location and a format, not
+  about a name.
+- **Describe the data well enough for a search by meaning.** The `format`,
+  `contents`, and `organism` fields in `harness/src/reference-data/catalog.ts` do
+  this work. A dataset with no real `contents` text cannot be found.
+- **Absence is a normal condition, not an error.** Say what to do when a resource
+  is not there. Report it, then continue with the data that you have. Do not use a
+  different resource in its place. Do not invent a path.
+
+Layout is a detail of the installer. Content that holds a layout makes a private
+decision into a public interface.
+
+`validateAgentSkills` reads only if each `SKILL.md` is readable. It never reads
+the prose. Thus a skill can name a tool that has a different name, or a tool that
+does not exist. Such a skill stays green until an agent tries the call. Review
+against this section is the only control.
+
+## Specs
+
+Each subsystem has its own OpenSpec specs. The two spec trees are
+`cli/openspec/specs` and `harness/openspec/specs`. The root has no spec tree.
+
+The harness has no `docs/adr` directory. Its design decisions are in its specs.
+
+Before you run the `openspec` CLI, go into the directory of the subsystem, for
+example `cd harness`. Then the change goes into the correct spec tree.
+
+`AGENTS.md` is a symbolic link to `CLAUDE.md` at each level. The two names give
+one file.
