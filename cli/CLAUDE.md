@@ -1,19 +1,32 @@
 ## Formatting
 
-**After editing source files in `src/`, run `bun run format:file <paths>` on the specific files you changed before reporting the task as complete.** Only format files inside `src/` — never format markdown, config, or spec files. Use `bun run format` for full-project formatting.
+**After you edit a source file in `src/`, run `bun run format:file <paths>` on the
+files that you changed.** Do this before you report the task as complete. Format
+only a file inside `src/`. Never format a markdown file, a config file, or a spec
+file. Use `bun run format` for the format of the full project.
 
 ## Postmortems
 
-[`HORRIBLE_BUG_FIXES.md`](./HORRIBLE_BUG_FIXES.md) documents catastrophic bugs, root cause analyses, and hard-won lessons. **Read the relevant entry before working in the same area.**
+[`HORRIBLE_BUG_FIXES.md`](./HORRIBLE_BUG_FIXES.md) records the catastrophic bugs,
+their root cause analyses, and the lessons. **Read the applicable entry before you
+work in the same area.**
 
 ## Scope: implementation only
 
-The user owns work orchestration. Stay focused on implementation in this repo and leave coordination to them.
+The user controls the orchestration of the work. Stay on the implementation in
+this repository, and leave the coordination to the user.
 
-- Don't discuss release ordering, PR sequencing, rollout staging, deploy timing, or "signaling" other teams.
-- Don't propose orchestration plans or ask coordination questions ("when should X merge?", "should we mark this consumed?", "how do we signal readiness?").
-- When a handoff doc or spec describes a staged rollout, read it for technical context, then translate the relevant constraints into implementation requirements without echoing the orchestration framing back.
-- Red `cli` CI on a PR that also changes `harness` is expected and owned by the developer driving the PR — see the root [`CLAUDE.md`](../CLAUDE.md). Say nothing about it.
+- Do not discuss the release order, the pull request sequence, the rollout stages,
+  the deploy time, or a signal to a different team.
+- Do not give an orchestration plan. Do not ask a coordination question, for
+  example "when must X merge?", "must we mark this consumed?", or "how do we
+  signal readiness?".
+- A handoff document or a spec can describe a staged rollout. Read it for the
+  technical context. Then change the applicable constraints into implementation
+  requirements. Do not echo the orchestration framing back.
+- Red `cli` CI on a pull request that also changes `harness` is correct, and the
+  developer of the pull request controls it. Refer to the root
+  [`CLAUDE.md`](../CLAUDE.md). Say nothing about it.
 
 ## Quick Start
 
@@ -27,118 +40,264 @@ bun run docs:gen     # Generate the CLI reference package (dist-docs/, untracked
 bun run test         # bun test — the whole suite in one process, exactly what CI runs
 ```
 
-The suite is plain `bun test`: one process, every test file sharing it, ~60s and under 1 GiB. Arguments pass straight through — `bun run test src/lib/lock.test.ts`, `-t <name>`, `--watch`.
+The suite is plain `bun test`. It runs in one process, each test file shares that
+process, and it takes about 60 seconds and less than 1 GiB. The arguments pass
+straight through, for example `bun run test src/lib/lock.test.ts`, `-t <name>`, and
+`--watch`.
 
-**`[test].preload` in `bunfig.toml` must never regain `"@opentui/solid/runtime-plugin-support"`.** Its catch-all `onResolve` leaks the directory handles it opens, and a shared-process run climbs to fd number ~21,400 — past the 10240 macOS `OPEN_MAX` at which `Bun.spawn` silently hands the child `/dev/null` instead of a socketpair. The child then runs fine and exits 0 while the parent reads zero bytes, so spawn-dependent tests fail with empty captured output and nothing in their own code explains why (`spawnInflexa — process bounds` in `src/modules/harness/inflexa_tool.test.ts`; the `launchWithBinary` readiness drain in `src/modules/embedding/local-provider.test.ts`). Without that entry the run peaks at fd 2307 — 4.4× of headroom — and nothing needs it, render tests included.
+**`[test].preload` in `bunfig.toml` must never get
+`"@opentui/solid/runtime-plugin-support"` again.** Its catch-all `onResolve` leaks
+the directory handles that it opens. A run in a shared process then climbs to file
+descriptor number about 21,400. That is past the macOS `OPEN_MAX` of 10240, at
+which `Bun.spawn` silently hands the child `/dev/null` instead of a socketpair.
+
+The child then runs correctly and exits 0, but the parent reads zero bytes. Thus a
+test that depends on spawn fails with empty captured output, and nothing in its own
+code explains why. The two known sites are `spawnInflexa — process bounds` in
+`src/modules/harness/inflexa_tool.test.ts`, and the `launchWithBinary` readiness
+drain in `src/modules/embedding/local-provider.test.ts`. Without that entry the run
+peaks at file descriptor 2307, which is 4.4 times of headroom. Nothing needs it,
+and that includes the render tests.
 
 ## Dependencies
 
-**No new dependencies without explicit approval.** If a task seems to need a new package, ask first — the default is to build on what's already here.
+**No new dependency without your explicit approval.** If a task seems to want a new
+package, ask first. The default is to build on what is already here.
 
 ## Coding
 
-- **Don't extract single-caller helpers or sub-components into separate files.** Keep them in the same file as their caller. A new file is justified only when multiple callers exist — that's when a real reusable pattern emerges.
+- **Do not extract a single-caller helper or sub-component into a separate file.**
+  Keep it in the same file as its caller. A new file is justified only when there
+  are multiple callers, because that is when a real reusable pattern emerges.
 
 ### Agent command policy — ask, never guess
 
-Every command in the registry (`src/cli/index.ts`) declares an `AgentPolicy` at registration via `registerAction(command, policy, handler)` — this is what decides whether the conversation agent's `run_inflexa` tool may run it (`auto` = prompt-free with a `safeFlags` allowlist, `approval` = the default in-chat prompt, `blocked` = never, with a mandatory reason). The required policy parameter makes an unclassified command a compile error; a lint rule bans raw `.action(` there; and a tree-walk + snapshot test (`agent_policy_tree.test.ts`) pins the whole `{grantKey → kind (+ safeFlags)}` table.
+Each command in the registry (`src/cli/index.ts`) declares an `AgentPolicy` at
+registration, through `registerAction(command, policy, handler)`. That policy
+decides if the `run_inflexa` tool of the conversation agent can run the command:
 
-**When adding a command — or adding an option to an `auto` command — ASK the user which classification it gets. Never guess `approval`/`auto`/`blocked` (or which flags are safe) for convenience.** The default is not "whatever compiles": a command that writes anything, however benign, is `approval`, and `auto` requires the user to have verified read-only-ness against the action's implementation. A flag belongs in `safeFlags` only when *every* value it can carry leaves the command read-only (output-shaping like `--json`), and a new option added to an `auto` command is unsafe until the user says otherwise.
+- `auto` — prompt-free, with a `safeFlags` allowlist
+- `approval` — the default in-chat prompt
+- `blocked` — never, with a mandatory reason.
 
-**An option that would change a command's effect class (read↔write) must be a new subcommand with its own policy, not a flag** (`refs refresh`, not `refs list --refresh`) — this keeps `safeFlags` small and each effect class independently classified.
+The policy parameter is required, thus an unclassified command is a compile error.
+A lint rule bans a raw `.action(` there. A tree-walk and a snapshot test
+(`agent_policy_tree.test.ts`) pin the whole `{grantKey → kind (+ safeFlags)}` table.
+
+**When you add a command, or when you add an option to an `auto` command, ASK the
+user which classification it gets.** Never guess `approval`, `auto`, or `blocked`
+for convenience. Never guess which flags are safe.
+
+The default is not "whatever compiles". A command that writes anything, even a small
+thing, is `approval`. `auto` needs the user to make sure of the read-only quality
+against the implementation of the action. A flag belongs in `safeFlags` only when
+*each* value that it can carry leaves the command read-only, for example an
+output-shaping flag such as `--json`. A new option on an `auto` command is unsafe
+until the user says differently.
+
+**An option must never change the effect class of a command, from read to write
+or from write to read.** Make it a new subcommand with its own policy, not a flag.
+Write `refs refresh`, not `refs list --refresh`. This keeps `safeFlags` small, and
+it classifies each effect class independently.
 
 ## Error handling — neverthrow first
 
-**`Result<T, E>` from `neverthrow` is the default error channel.** Every function that can fail returns `Result` (sync) or `ResultAsync` (async). The `eslint-plugin-neverthrow` `must-use-result` rule is set to `error` — an unconsumed `Result` is a build failure.
+**`Result<T, E>` from `neverthrow` is the default error channel.** Each function
+that can fail gives a `Result` (sync) or a `ResultAsync` (async). The
+`must-use-result` rule of `eslint-plugin-neverthrow` is set to `error`, thus a
+`Result` that nothing consumes is a build failure.
 
 ### The rule
 
-1. **Return `Result`, don't `throw`.** A function's failure mode is part of its signature. If it can fail, the return type says so (`Result<T, SomeError>`). Callers handle both branches with `.match`, `.andThen`, `.map`, `.mapErr`, etc.
-2. **`throw` requires explicit user approval.** Before writing a `throw`, get confirmation. The only pre-approved exceptions are:
-   - **Exhaustive-switch defaults** — `throw new Error("unhandled: ...")` (or `never`-typed) in a `default:` branch that the compiler should make unreachable. This is a programmer bug, not a runtime failure.
-   - **Top-level entry-point bail-outs** — `fail()` / `dieOn()` in `lib/cli.ts` at the CLI boundary, where the process is about to exit anyway.
-   - **`throw` inside `bun:sqlite` transactions** — bun's `transaction()` API uses throw-to-rollback; the `TxAbort` pattern in `db/util.ts` bridges this into `Result`.
-3. **Wrap throwing stdlib / external calls at the boundary.** When a function you don't control throws (`readFileSync`, `mkdirSync`, `writeFileSync`, `JSON.parse`, `crypto.*`, `Bun.spawn`, etc.), wrap it in a function that returns `Result`. The wrapper lives beside its callers (in `lib/` if cross-cutting, in the module if local). Existing examples: `tryQuery`/`tryMutation` in `db/util.ts`, `JSON.parseWith` in `extensions/json.ext.ts`.
-4. **`try/catch` is only for bridging throws into `Result`.** A `try/catch` that doesn't produce a `Result` is a code smell — it means either the caught function should return `Result` itself, or the catch block should.
+1. **Give a `Result`. Do not `throw`.** The failure mode of a function is part of
+   its signature. If it can fail, the return type says so (`Result<T, SomeError>`).
+   A caller handles the two branches with `.match`, `.andThen`, `.map`, `.mapErr`,
+   and the others.
+2. **A `throw` needs your explicit approval.** Get confirmation before you write a
+   `throw`. These are the only pre-approved exceptions:
+   - **An exhaustive-switch default** — `throw new Error("unhandled: ...")`, or a
+     `never`-typed branch, in a `default:` that the compiler must make
+     unreachable. This is a programmer bug, not a runtime failure.
+   - **A top-level entry-point bail-out** — `fail()` or `dieOn()` in `lib/cli.ts`,
+     at the CLI boundary, where the process is about to exit.
+   - **A `throw` inside a `bun:sqlite` transaction** — the `transaction()` API of
+     bun uses throw-to-rollback. The `TxAbort` pattern in `db/util.ts` bridges this
+     into a `Result`.
+3. **Wrap a throwing stdlib call or external call at the boundary.** A function
+   that you do not control can throw, for example `readFileSync`, `mkdirSync`,
+   `writeFileSync`, `JSON.parse`, `crypto.*`, or `Bun.spawn`. Wrap it in a function
+   that gives a `Result`. The wrapper lives beside its callers: in `lib/` when it
+   is cross-cutting, and in the module when it is local. The existing examples are
+   `tryQuery` and `tryMutation` in `db/util.ts`, and `JSON.parseWith` in
+   `extensions/json.ext.ts`.
+4. **A `try/catch` is only a bridge from a throw into a `Result`.** A `try/catch`
+   that gives no `Result` is a code smell. It means that the caught function must
+   give a `Result` itself, or that the catch block must.
 
 ### Error types
 
-- **Domain errors are discriminated unions** — `type FooError = { type: "x"; ... } | { type: "y"; ... }`, not `Error` subclasses. This gives exhaustive `switch` and zero prototype overhead.
-- **`DbError`** (in `db/errors.ts`) is the storage-layer error. Absence is `T | null` on the `ok` channel, never an error.
-- **Keep error types as narrow as the function needs.** A function that can only fail one way returns `Result<T, { type: "io_failed"; cause: unknown }>`, not `Result<T, AllErrors>`.
+- **A domain error is a discriminated union** —
+  `type FooError = { type: "x"; ... } | { type: "y"; ... }`, not an `Error`
+  subclass. This gives an exhaustive `switch` and zero prototype overhead.
+- **`DbError`** (in `db/errors.ts`) is the storage-layer error. Absence is
+  `T | null` on the `ok` channel, never an error.
+- **Keep an error type as narrow as the function wants.** A function that can fail
+  one way only gives `Result<T, { type: "io_failed"; cause: unknown }>`, not
+  `Result<T, AllErrors>`.
 
 ### Consuming Results
 
-- **At CLI boundaries:** `result.match(v => v, dieOn("context"))` — print and exit.
-- **In module logic:** `.andThen` / `.map` to chain, `.mapErr` to translate error types across layers.
-- **In the TUI:** the presentation layer may `.match` to render success/error states.
-- **Never `.unwrap()` or `._unsafeUnwrap()` in production code.** These defeat the purpose. If you need the value and want to crash on error, you're at a CLI boundary — use `dieOn`. **Exception:** test files (`*.test.ts`) may use `._unsafeUnwrap()` to extract values where an unexpected `Err` is itself a test failure.
+- **At a CLI boundary:** `result.match(v => v, dieOn("context"))` — print and exit.
+- **In module logic:** `.andThen` and `.map` to chain, and `.mapErr` to translate
+  an error type across a layer.
+- **In the TUI:** the presentation layer can `.match` to render a success state or
+  an error state.
+- **Never use `.unwrap()` or `._unsafeUnwrap()` in production code.** They defeat
+  the purpose. If you want the value and you want to crash on an error, you are at
+  a CLI boundary, thus use `dieOn`. **Exception:** a test file (`*.test.ts`) can
+  use `._unsafeUnwrap()` to extract a value, where an unexpected `Err` is itself a
+  test failure.
 
-### Migrating existing `throw` → `Result`
+### Migration from `throw` to `Result`
 
-The codebase has legacy `throw`/`try-catch` sites being migrated. When touching a function that throws, convert it to return `Result` if the change is contained (the function + its direct callers). Don't leave a half-migrated state where a function both throws AND returns `Result`. Mark sites you notice but can't convert in-scope with `// TODO(slop): neverthrow`.
+The codebase has legacy `throw` and `try-catch` sites in migration. When you touch
+a function that throws, change it to give a `Result`. Do this only if the change
+is contained, which means the function and its direct callers. Do not leave a half-migrated
+state, where a function both throws AND gives a `Result`. Mark a site that you see
+but cannot convert in scope with `// TODO(slop): neverthrow`.
 
 ## Code Comments
 
 Comment the why, not the what.
 
-- Do NOT write comments that restate what the code already says. If a comment paraphrases the line below it, delete it. TypeScript's types and good names already document the "what"; lean on them.
-- DO write comments that capture intent and reasoning: why the code works this way, what problem it solves, and what would otherwise be non-obvious to a future reader.
-- Prefer making the "what" self-evident through the type system (descriptive types, unions, branded types, `readonly`, exhaustive `switch`) so prose doesn't have to carry it.
+- Do NOT write a comment that restates what the code already says. If a comment
+  paraphrases the line below it, delete it. The types of TypeScript and good names
+  already document the "what". Depend on them.
+- DO write a comment that captures the intent and the reasoning: why the code works
+  this way, what problem it solves, and what a future reader would find
+  non-obvious.
+- Prefer to make the "what" self-evident through the type system: a descriptive
+  type, a union, a branded type, `readonly`, an exhaustive `switch`. Then the prose
+  does not have to carry it.
 
-Document the decisions you made.
+Document the decisions that you made.
 
-- Record which alternative approaches were considered and discarded, and why.
-- Record which downsides or trade-offs were explicitly accepted, and why (e.g., why you reached for `any`/`as`, why you disabled a lint rule, why you chose a library).
-- Every `// eslint-disable`, `@ts-expect-error`, `@ts-ignore`, or type assertion (`as X`, `!`) should carry a comment explaining why it is safe and necessary — these are the TS equivalent of escape hatches and must never be silent.
+- Record which alternative approaches you considered and discarded, and why.
+- Record which downsides or trade-offs you accepted, and why. Examples are the
+  reason for an `any` or an `as`, the reason for a disabled lint rule, and the
+  reason for a library.
+- Each `// eslint-disable`, `@ts-expect-error`, `@ts-ignore`, and type assertion
+  (`as X`, `!`) must carry a comment that explains why it is safe and necessary.
+  These are the TypeScript equivalent of an escape hatch, and they must never be
+  silent.
 
 Document what is NOT there.
 
-- Flag shortcuts and unhandled cases explicitly rather than leaving them silent. Use `err({ type: "not_implemented" })` when the function returns `Result`, or `throw new Error("not implemented")` only in exhaustive-switch defaults and pre-approved boundary sites (see [Error handling](#error-handling--neverthrow-first)), instead of a stub that returns a fake value.
-- In exhaustive `switch`/discriminated-union handling, use a `never`-typed default branch so the compiler flags any case you forgot — this documents "everything is handled" and breaks the build when it stops being true.
-- Note future optimization opportunities and the deliberate absence of an implementation (e.g., why a method is intentionally not provided, why a type guard is omitted).
+- Flag a shortcut and an unhandled case explicitly. Do not leave them silent. Use
+  `err({ type: "not_implemented" })` when the function gives a `Result`. Use
+  `throw new Error("not implemented")` only in an exhaustive-switch default and at
+  a pre-approved boundary site — refer to
+  [Error handling](#error-handling--neverthrow-first). Never write a stub that
+  gives a fake value.
+- In an exhaustive `switch` or a discriminated-union handler, use a `never`-typed
+  default branch. Then the compiler flags each case that you forgot. This documents
+  "each case is handled", and it breaks the build when that stops being true.
+- Note a future optimization opportunity, and note the deliberate absence of an
+  implementation. Examples are the reason that a method is intentionally absent,
+  and the reason that a type guard is omitted.
 
-Treat comments as first-class, and write them early.
+Treat a comment as first-class, and write it early.
 
-- Comments are among the most important code you write; treat them with the same care as the logic.
-- Consider writing the comment/contract before the implementation — sketch the intended behavior, inputs, and invariants in prose (or a JSDoc block) first, then fill in the code beneath it.
+- A comment is among the most important code that you write. Treat it with the same
+  care as the logic.
+- Think about the comment or the contract before the implementation. Sketch the
+  intended behavior, the inputs, and the invariants in prose, or in a JSDoc block,
+  first. Then fill in the code beneath it.
 
 Comment the surprising, the unsafe, and the load-bearing.
 
-- Clearly comment anything a reader would find unexpected: reliance on external or global state, mutation of shared objects, ordering or timing requirements (async sequencing, microtask vs. macrotask), subtle invariants, or a non-obvious algorithm choice.
-- The TypeScript analogue of "unsafe" is anywhere you defeat the type checker: `as`/`as unknown as`, non-null assertions (`!`), `any`, `@ts-expect-error`, type predicates (`x is T`), and unchecked casts of external data (JSON, API responses). Each such site needs a comment stating exactly which invariant the surrounding code upholds to make it sound (e.g., "validated by the zod schema above", "guaranteed non-null because we just `.set()` it").
+- Clearly comment anything that a reader would find unexpected. Examples are:
+  - a dependence on external or global state
+  - a mutation of a shared object
+  - an order or timing requirement (async sequence, microtask against macrotask)
+  - a subtle invariant
+  - a non-obvious algorithm choice.
+- The TypeScript analogue of "unsafe" is anywhere that you defeat the type checker:
+  `as`, `as unknown as`, a non-null assertion (`!`), `any`, `@ts-expect-error`, a
+  type predicate (`x is T`), and an unchecked cast of external data (JSON, an API
+  response). Each such site wants a comment that states exactly which invariant the
+  code around it upholds to make it sound. Examples are "the zod schema above
+  validates it" and "it is guaranteed non-null because we just `.set()` it".
 
-**Comments are not changelogs.** Never write change-history phrasing like "Bumped from X to Y", "Refactored to W", "Now does Z", "Renamed from V", "Extracted from U", "Previously did A". Git tracks history; comments describe the static rationale as a fresh reader will encounter it tomorrow. If a value is unusual, justify the value — not the diff.
+**A comment is not a changelog.** Never write change-history phrasing, for example
+"Bumped from X to Y", "Refactored to W", "Now does Z", "Renamed from V", "Extracted
+from U", or "Previously did A". Git tracks the history. A comment describes the
+static rationale as a fresh reader meets it tomorrow. If a value is unusual,
+justify the value, not the diff.
 
 ### Identifiers
 
-**Mint ids inline with `randomUUIDv7()` (`import { randomUUIDv7 } from "bun"`).** It is the single id scheme for everything — DB row ids, the write-once anchor marker, event ids. It is time-sortable (the role `ulid` used to fill), in-runtime (zero-dependency), and the only v7 source available: Node's `crypto` mints v4 only. **Never wrap id generation in a helper** like `newId()`/`newFooUuid()` — a function whose whole body is `return randomUUIDv7()` is pointless ceremony; write `randomUUIDv7()` at the call site. Don't reach for `ulid` or `crypto.randomUUID()`.
+**Mint an id inline with `randomUUIDv7()` (`import { randomUUIDv7 } from "bun"`).**
+It is the single id scheme for each thing: a DB row id, the write-once anchor
+marker, and an event id. It is time-sortable, which is the role that `ulid` used to
+fill. It is in-runtime, with zero dependencies. It is also the only v7 source that
+is available, because the `crypto` of Node mints v4 only.
+
+**Never wrap the id generation in a helper** such as `newId()` or `newFooUuid()`. A
+function whose whole body is `return randomUUIDv7()` is pointless ceremony. Write
+`randomUUIDv7()` at the call site. Do not reach for `ulid` or
+`crypto.randomUUID()`.
 
 ### TODO conventions
 
-Format: `// TODO(<tag>): <reason>`. Never use a bare `// TODO`.
+The format is `// TODO(<tag>): <reason>`. Never use a bare `// TODO`.
 
 | Tag | Purpose | Example |
 |-----|---------|---------|
-| `extend` | Hidden/omitted feature to revisit when capabilities expand | Command flag stubbed out until the real backend lands |
-| `perf` | Acceptable today, optimize at scale | `O(n)` scan that should be indexed |
-| `slop` | Works but should be extracted / cleaned up | Duplicated logic across two modules |
-| `robustness` | Missing hardening for stress conditions | No retry/backoff on a flaky external call |
+| `extend` | Hidden or omitted feature, to revisit when the capabilities expand | Command flag stubbed out until the real backend lands |
+| `perf` | Acceptable today, optimize at scale | `O(n)` scan that must be indexed |
+| `slop` | Works, but must be extracted or cleaned up | Duplicated logic across two modules |
+| `robustness` | Missing hardening for a stress condition | No retry or backoff on a flaky external call |
 
-### Local state can desync from the database — never hard-fail on it
+### Local state can go out of agreement with the database — never fail hard on it
 
-The SQLite database is a file on the **user's own machine**: they may delete it, restore an old copy, or hand-edit it at will, and they are entitled to. Meanwhile other state lives **outside** it and persists independently — on-disk anchor markers (`.inflexa/id`), output folders, config. So the two stores routinely disagree: a marker (or a row's foreign key) can reference an id the database no longer has.
+The SQLite database is a file on the **machine of the user**. The user can delete
+it, restore an old copy, or hand-edit it, and they are entitled to. Meanwhile other
+state lives **outside** it and persists independently: the anchor markers on disk
+(`.inflexa/id`), the output folders, and the configuration. Thus the two stores
+routinely disagree. A marker, or the foreign key of a row, can refer to an id that
+the database no longer has.
 
-**Treat "the referenced row is gone" as a normal, recoverable condition — never a hard error.** When code reads an id/marker/path from one store and looks it up in another, a miss must **heal** (reconstruct from the authoritative source — e.g. re-establish an anchor row from its on-disk marker, but only on a *deliberate* action, never a passive read — see the no-litter policy) or **degrade gracefully** (resolve to `null`/a sensible fallback and carry on), so the user still gets a working command. Returning a `query_failed`/`DbError` for a routine desync is a bug: it turns "your DB and your folders disagree" into a crash the user can't escape without surgery.
+**Treat "the referenced row is gone" as a normal, recoverable condition. It is
+never a hard error.** Code reads an id, a marker, or a path from one store and
+looks it up in another. A miss must **recover** or it must **degrade**.
 
-Concretely: a lookup that can legitimately miss returns `T | null` (the miss is in-band), not an error; the caller picks a fallback. Reserve the error channel for genuine faults (the query itself failed). See `resolveAnchor` (`modules/anchor/anchor.ts`): a marker pointing at a deleted anchor resolves to `null`, and bare `inflexa` then offers to start fresh in that folder rather than dying with `unknown anchor <id>`.
+To recover is to reconstruct from the authoritative source, for example to
+establish an anchor row again from its marker on disk. Do that only on a
+*deliberate* action, never on a passive read — refer to the no-litter policy. To
+degrade is to resolve to `null` or to a sensible fallback and continue. Then the
+user still gets a working command. A `query_failed` or a `DbError` for a routine
+disagreement is a bug: it changes "your DB and your folders disagree" into a crash
+that the user cannot escape without surgery.
+
+Concretely: a lookup that can legitimately miss gives `T | null`, thus the miss is
+in-band and it is not an error. The caller picks a fallback. Reserve the error
+channel for a genuine fault, which is a query that itself failed. Refer to
+`resolveAnchor` (`modules/anchor/anchor.ts`). A marker that points at a deleted
+anchor resolves to `null`. A bare `inflexa` then offers to start fresh in that
+folder, and it does not die with `unknown anchor <id>`.
 
 ### Resolving an id-or-name reference
 
-When a command resolves a user-supplied reference that may be **either an id or a human name/slug** (`inflexa resume <x>`, `--analysis <x>`, …):
+A command resolves a reference from the user that can be **either an id or a human
+name or slug** (`inflexa resume <x>`, `--analysis <x>`, and others). Obey these
+rules:
 
-- **Type the parameter `IdOrName`** (from `lib/types.ts`), never a bare `string` — the alias makes "resolve this by id OR name" legible at the call site.
-- **Resolve it in a SINGLE query, id-first** — never fetch-by-id then fall back to fetch-by-name, and never load all rows to `.find`/`.filter` in JS. Put the priority in SQL:
+- **Type the parameter `IdOrName`** (from `lib/types.ts`), never a bare `string`.
+  The alias makes "resolve this by id OR name" legible at the call site.
+- **Resolve it in a SINGLE query, id-first.** Never fetch by id and then fall back
+  to a fetch by name. Never load each row and then `.find` or `.filter` in JS. Put
+  the priority in SQL:
 
   ```sql
   -- one match (LIMIT 1):
@@ -147,31 +306,72 @@ When a command resolves a user-supplied reference that may be **either an id or 
   WHERE id = $ref OR slug = $ref OR name = $ref ORDER BY (id = $ref) DESC, created_at DESC
   ```
 
-  `(id = $ref)` sorts the exact-id hit first (ids are unique, so it is THE match); the named `$ref` param binds once. The caller takes `[0]`; "more than one row, none by id" means an ambiguous name/slug. The resolver lives in `db/primary_query.ts` (e.g. `findAnalysesByRef`/`findProjectByRef`).
+  `(id = $ref)` sorts the exact-id hit first, because an id is unique, thus it is
+  THE match. The named `$ref` param binds one time. The caller takes `[0]`. "More
+  than one row, none by id" means an ambiguous name or slug. The resolver is in
+  `db/primary_query.ts`, for example `findAnalysesByRef` and `findProjectByRef`.
 
-- **Wrap the resolver in a module `findX`/`matchX` only when the wrapper adds logic.** `matchAnalysis` earns its place — it reshapes the candidate set into `{ analysis, others }` to surface name collisions. When the resolver already returns the single answer (because the lookup column is `UNIQUE`, like `projects.name`), call it directly: a `findProject` whose whole body is `return findProjectByRef(ref)` is pointless ceremony — delete it and let callers import `findProjectByRef`. Same for a one-line write wrapper like `setProject` over `updateAnalysisProject`.
+- **Wrap the resolver in a module `findX` or `matchX` only when the wrapper adds
+  logic.** `matchAnalysis` earns its place, because it reshapes the candidate set
+  into `{ analysis, others }` to surface a name collision. When the resolver
+  already gives the single answer, because the lookup column is `UNIQUE` like
+  `projects.name`, call it directly. A `findProject` whose whole body is
+  `return findProjectByRef(ref)` is pointless ceremony. Delete it, and let a caller
+  import `findProjectByRef`. The same is true for a one-line write wrapper such as
+  `setProject` over `updateAnalysisProject`.
 
-This generalizes: **prefer one query over a read-then-decide round-trip whenever SQL can express the decision** — e.g. a targeted `UPDATE … SET col = ? WHERE id = ?` (rows-changed signals not-found) over read-the-row-then-rewrite-every-column.
+This generalizes. **Prefer one query over a read-then-decide round-trip whenever
+SQL can express the decision.** For example, prefer a targeted
+`UPDATE … SET col = ? WHERE id = ?`, where the rows-changed count signals
+not-found, over a read of the row and then a rewrite of each column.
 
-### Column & field ordering
+### Column and field ordering
 
-Order columns, type fields, and the parameters/bound-args of functions that carry them in three groups, **always in this order**:
+Order the columns, the type fields, and the parameters and bound args of the
+functions that carry them in three groups, **always in this order**:
 
-1. **Identity** — `id`, `created_at`, `updated_at`, colocated at the top. These three are the row's full identity; keep them together even though the timestamps are rarely read beside `id`. A table/type without timestamps has just `id`; a non-entity (e.g. the `analysis_inputs` reference rows) has no identity group at all.
-2. **Core data** — the fields the row is actually about (`name`, `slug`, `path`, `is_dir`, `data`, …).
-3. **Foreign keys** — every `*_id`/`*Id` reference, last (`anchor_id`, `project_id`, `session_id`, …).
+1. **Identity** — `id`, `created_at`, `updated_at`, colocated at the top. These
+   three are the full identity of the row. Keep them together, although the
+   timestamps are rarely read beside `id`. A table or type with no timestamps has
+   `id` only. A non-entity, for example the `analysis_inputs` reference rows, has
+   no identity group at all.
+2. **Core data** — the fields that the row is about (`name`, `slug`, `path`,
+   `is_dir`, `data`, and the others).
+3. **Foreign keys** — each `*_id` or `*Id` reference, last (`anchor_id`,
+   `project_id`, `session_id`, and the others).
 
-This governs `CREATE TABLE` columns, the `COLS` constant + row type + `fromRow` in `db/`, `INSERT`/`UPDATE` column lists **and their bound params**, the persisted entity types in `src/types/`, and the parameter lists of functions that pass these fields through. An `UPDATE … SET` omits `id` (it's the `WHERE`) but still leads with `updated_at`, then core, then FKs. Declare tables parent-before-child so every FK is a backward reference.
+This governs the `CREATE TABLE` columns, the `COLS` constant, the row type, and
+`fromRow` in `db/`. It governs the `INSERT` and `UPDATE` column lists **and their
+bound params**. It governs the persisted entity types in `src/types/`, and the
+parameter lists of the functions that pass these fields through. An
+`UPDATE … SET` omits `id`, because that is the `WHERE`, but it still leads with
+`updated_at`, then the core, then the FKs. Declare a table parent-before-child,
+thus each FK is a backward reference.
 
-A JSON-blob table — one whose payload rides a single `data` column — follows this at the **column** level (`id, data, <fk>`), but the blob's interior shape is application data, not columns, so it keeps its own narrative order. No table in the schema is shaped that way today; every live table is columnar.
+A JSON-blob table, whose payload rides a single `data` column, obeys this at the
+**column** level (`id, data, <fk>`). But the interior shape of the blob is
+application data, not columns, thus it keeps its own narrative order. No table in
+the schema is shaped that way today. Each live table is columnar.
 
 ## TypeScript
 
-- Prefer `type` over `interface`, `const` over `let`, `function` over arrow functions.
-- Always type function parameters and return values (except JSX returns).
-- Comment every `any`/`unknown` usage.
-- **Use domain types, never raw `string` for known value sets.** Shared domain types — persisted entity shapes (`session.ts`, `anchor.ts`, …) and the event contract (`events.ts`) — live in `src/types/`, grouped by domain. Everything else (command options, error unions, wire schemas) co-locates with its owning code. See [Project structure](#project-structure) for why the entity shapes are shared rather than module-local.
-- **Document every exported declaration — types, their properties, and functions — with JSDoc (`/** … */`) blocks, never `//` line comments** — JSDoc is the only form the LSP surfaces on hover and completion, so a `//` above a function is invisible at the call site where you read it. Reserve `//` for inline implementation notes (the WHY) inside a body. Place the block on the line above what it describes.
+- Prefer `type` over `interface`, `const` over `let`, and `function` over an arrow
+  function.
+- Always type the function parameters and the return values, except for a JSX
+  return.
+- Comment each `any` and each `unknown`.
+- **Use a domain type. Never use a raw `string` for a known value set.** The shared
+  domain types are in `src/types/`, grouped by domain: the persisted entity shapes
+  (`session.ts`, `anchor.ts`, and the others) and the event contract (`events.ts`).
+  Each other type (a command option, an error union, a wire schema) is colocated
+  with the code that has it. Refer to [Project structure](#project-structure) for
+  the reason that the entity shapes are shared and not module-local.
+- **Document each exported declaration — a type, its properties, and a function —
+  with a JSDoc (`/** … */`) block, never with a `//` line comment.** JSDoc is the
+  only form that the LSP surfaces on hover and on completion. Thus a `//` above a
+  function is invisible at the call site where you read it. Reserve `//` for an
+  inline implementation note (the WHY) inside a body. Put the block on the line
+  above what it describes.
 
   ```ts
   /** Invisible folder-identity record. Keyed by the marker id, not its path. */
@@ -189,110 +389,415 @@ A JSON-blob table — one whose payload rides a single `data` column — follows
 
 ## Naming conventions
 
-- **Files:** lowercase; snake_case for multi-word names (`primary_query.ts`).
-- **Named exports only.** No default exports, no barrel files, no re-exports. Use inline `export` on declarations.
-- When moving code, update ALL importers to the new location. Never add shims.
+- **Files:** lowercase. Use snake_case for a multi-word name
+  (`primary_query.ts`).
+- **Named exports only.** No default export, no barrel file, and no re-export. Use
+  an inline `export` on the declaration.
+- When you move code, update EACH importer to the new location. Never add a shim.
 
 ## Project structure
 
-Code is grouped **by feature (vertical slice)**, not by technical layer: a feature owns its logic, its CLI command action(s), and its logic-local types under `src/modules/<domain>/`. Shared infrastructure with no single owner stays in the layer directories.
+The code is in groups **by feature (a vertical slice)**, not by technical layer. A
+feature has its logic, its CLI command actions, and its logic-local types, under
+`src/modules/<domain>/`. Shared infrastructure with no single owner stays in the
+layer directories.
 
-- `src/index.ts` — entry point: telemetry/log wiring, shutdown hooks, then `cli.parse()`
-- `src/cli/` — the commander command **registry** (`index.ts`) + help formatting, nothing else. Each command lazy-imports its action: text commands from their module (e.g. `import("../modules/auth/login.ts")`), TUI screens from `tui/` (e.g. `import("../tui/app.launch.tsx")`).
-- `src/modules/<domain>/` — feature slices (see [Modules](#modules)): **headless** domain logic + the text command actions that drive them. Interactive views are NOT here (see `tui/`). Today: `auth/` (Auth0 device flow + `login`/`logout`/`whoami`), `proxy/` (the CLIProxyAPI model helpers in `models.ts` — client API key discovery + default-model ranking; the container lifecycle lives in `infra/`), `analysis/` (analysis lifecycle), `anchor/` (folder-identity markers + lazy path reconciliation), `harness/` (the harness embedder — boots the harness runtime (DBOS/sandbox/providers) and drives the chat turn, the model-free `run --plan` replay engine, data profiling, and the provenance bridge), `embedding/` (config-driven embedding-provider resolution + the in-process bge-small local model: download/verify/lifecycle), `infra/` (the container stack — `setup`/`up`/`down` provisioning CLIProxyAPI + Postgres/pgvector via a generated Docker Compose file), `libs/` (the published sandbox image variants (GHCR refs) + the `sandbox pull`/`status` actions), `project/` (project CRUD command actions — `project new`/`project ls`), `prov/` (the provenance recorder — a bus subscriber that builds, signs, and persists each analysis's PROV document, plus `prov export`/`prov verify`), `staging/` (stages analysis input files under the analysis workspace's `data/` root with content hashes into the harness-compatible `StagedInput` manifest).
-- `src/db/` — shared SQLite layer: `primary.ts` (connection), `primary_migrations.ts`, `primary_query.ts`, `primary_mutation.ts`, `errors.ts`, `util.ts`. Queries/mutations stay here (verb-split, beside the migrations); a module imports the functions it needs.
-- `src/tui/` — the **presentation layer / app shell**: the entry app plus shared, app-level, or reusable Solid/opentui code. Today: `app.tsx` (the root chat screen, launched by every command that opens a chat), `app.launch.tsx` (`launchTui`), `command_palette.tsx` / `commands.tsx` (the palette adapter + command registry), `app_config.tsx` (settings — an app-level screen), `theme.ts` (the reactive accessor — the id list + palette data live in `lib/design_system.ts`; also home to the shared `Notice` type + `noticeColor` mapping, since a notice kind maps onto a palette role), and `components/` (shared, domain-agnostic widgets — see below). Presentation sits *above* the logic modules: it may import module logic (view → logic); modules must never import `tui/`. **Where a view lives** mirrors Lumen's `components/` vs `modules/<m>/components/` split — shared / app-shell / app-level screens go here; a view owned by exactly one feature co-locates in that module. `app_config.tsx` is an app-level exception that lives here — not a license to put every view in `tui/`. Add `tui/<domain>/` (or module-side view folders) when a screen outgrows one file.
-  - `src/tui/components/` — shared TUI widgets. A widget belongs here **iff** it (a) imports only `theme` + opentui/solid (no `modules/`, `db/`, or other domain imports) and (b) has ≥2 callers; one component per file, no barrels. A feature-coupled adapter (e.g. `CommandPalette`, which maps `Command` objects) stays in the `tui/` app-shell, not here. Today: `dialog/` (the dialog subsystem — see below), `list_core.tsx` + `fixed_list.tsx` + `dynamic_list.tsx` (the list primitives — fuzzy-filtered grouped lists; `FixedList` reads its items ONCE and renders with `<For>`, `DynamicList` tracks reactive items and renders with `<Index>`; hosts own the filter input and pass `query` down. A row may be `pinned` to opt out of ranking — for an escape-hatch row whose action is "enter something these rows can't express", where the query is precisely the text its own label cannot match), `text_area.tsx` (`TextArea` — themed textarea with chrome tiers and mode tracking), `text_input.tsx` (`TextInput` — themed single-line input with per-keystroke callback). Both editors take an `autoFocus` opt-out (list-first hosts, gallery exhibits, showcased dialogs) that also seeds their chrome's focus signal, so a blurred mount renders blurred from the first frame.
-  - `src/tui/components/dialog/` — the dialog subsystem: the chrome shell, host/overlay, and reusable content dialogs. `dialog_host.tsx` is the **state machine**: a module-level stack where lower entries stay MOUNTED but hidden and inert (dialog-over-dialog preserves state); every dismissal routes through the single close funnel `dialogClose(reason)` with `reason ∈ cancel (esc) | dismiss (click-outside, ctrl+c, sweeps) | commit (the default — programmatic closes are the tail of a submit flow)`; the host owns the ONE structural esc binding — content dialogs never bind esc. Dialogs participate via hooks: `useDialogBindings` (key layers, auto-suspended while a dialog is stacked above — REQUIRED for all dialog keys, and for screen layers that must suspend under a prompt), `useDialogCancel` (wire an `onCancel` prop to every non-commit close), `useDialogCloseGuard` (veto closes — busy prompts, dirty forms; the app abort chord escalates past a veto on a quick second press), `useDialogEntry().setInitialFocus` (the host applies focus on push and reveal — no per-dialog mount-time focus microtasks), and `DialogShowcase` (render dialogs as inert gallery exhibits — the handle's `inert` flag threads into editors' `autoFocus` so exhibits grab no focus even at mount). Sizing comes from the `dialogSize` presets (fixed columns + `maxWidth` clamp; heights are FIXED for tiers whose content changes while open — `lg` pickers, `xl` — because a panel that resizes as its list filters is worse UX than empty rows; only static-content `md` is content-height — see `design_system.ts`); a percentage-capped panel must NOT be wrapped in an auto-sized box (yoga resolves % against the parent and squeezes the panel — the overlay's per-entry wrapper is full-inset for this reason), and click containment lives on `DialogPanel` itself (`dialogPanelMouseDown/Up`). Content dialogs: `alert_dialog.tsx`, `confirm_dialog.tsx` (+ `tone="danger"` chrome), `export_options_dialog.tsx`, `file_picker.tsx` (`FilePicker` — multi-select file browser on `DynamicList` with INSERT/NORMAL/REVIEW modes), `prompt_dialog.tsx` (`PromptDialog` — single-line `TextInput` by default, `multiline` opts into `TextArea`; busy state vetoes all dismissal), `results_dialog.tsx`, `select_dialog.tsx` (`SelectDialog` — the picker dialog composing a filter `TextInput` + `FixedList`; every "choose one of these" command). All are showcased in the design gallery.
-  - `src/tui/layout/` — the chat app-shell **composition kit**: a full-width status bar atop a main row of (stream + input) beside a toggleable, full-height **sidebar**. Files: `status_bar.tsx`, `message_block.tsx`, `chat_bar.tsx`, `sidebar.tsx` (the gutter marker set lives in `lib/design_system.ts`, not here). Distinguished from `components/` by **role** (shell composition vs reusable widget), it is a deliberate, scoped exception to the single-caller rule — a kit part MAY be single-caller and MAY import domain types/queries, and stays here even when generic + multi-caller (e.g. `StatusBar`, shared by `app.tsx` + `app_config.tsx`). Chat status lives in the reactive `src/tui/hooks/status.ts` store (the `theme.ts` pattern) — the app only renders it.
-  - `src/tui/keymap.ts` — the **keybinding engine**: bindings are DATA dispatched centrally — NEVER write a raw `useKeyboard` or `key.name === …` branch in a component. A component declares a reactive layer with `useBindings(() => ({ enabled?, mode?, target?, priority?, bindings }))`; exactly one `useKeymapRoot()` per renderer (chat `App`; standalone `ConfigApp` only when not embedded) installs the single `useKeyboard` that routes each keystroke to the winning binding. **Modal capture** is the mode stack: an open dialog `pushMode(MODE_MODAL)` (App's effect) suspends every `MODE_BASE` layer at once — no per-binding `if (dialogOpen)`. **Leader + chord sequences**: `leaderSeq("n")` / a `<leader>` spec build timed multi-stroke bindings (escape aborts a half-typed chord, backspace pops one stroke, comma = alternatives); the `WhichKey` overlay (`layout/which_key.tsx`) lists `reachableKeys()` live, free-documented from each binding's `desc`/`group`. **Focus `target`** gates a layer to when a renderable (or descendant) is focused — the fine-grained complement to `mode`. The chord is the single source: display labels are DERIVED (`chordLabel`), never hand-kept beside the chord. App-level keys are remappable via `config.keybinds` (command id → key string, e.g. `app.command-palette`); structural dialog keys come from the shared `KEYS`. Only the root handler + focus check touch opentui — the matcher (`matchChord`) stays structural. **Labels ALWAYS lowercase** (`ctrl+k`, `esc`); chords use **Ctrl, never Alt** (terminals deliver Alt/Option unreliably — macOS composes Option into a character) and never Cmd (not forwarded). Textarea submit/newline stay renderable-level (`text_area.tsx`, cursor-aware), sourced from `SUBMIT_CHORD`/`NEWLINE_CHORD`.
-- `src/lib/` — non-domain infrastructure: `env.ts` (sole `process.env` reader), `config.ts` (user config file), `bus.ts` (event bus), `log.ts` (pino), `otel.ts`, `shutdown.ts`, `design_system.ts` (the single merged source for the TUI's visual primitives — `GLYPHS`, the theme registry + `ThemeColors`, the layout `tokens` (`space`/`size`/`stroke`), the `zIndex` stacking ladder, and the gutter `MARKERS`; the reactive accessor over the theme data is `tui/theme.ts`, and any JSX/signal design helper lives in `tui/components/`. See [Glyphs](#glyphs)).
-- `src/extensions/` — global runtime extensions (see below)
-- `src/types/` — shared domain model, grouped by domain: persisted entity shapes (`session.ts`, `anchor.ts`, …) and the event contract (`events.ts`). These are shared, not module-local, because the `db/` layer references every entity shape and `lib/bus.ts` references the events — homing them in a module would invert the infra→feature dependency.
+- `src/index.ts` — the entry point: the telemetry and log wiring, the shutdown
+  hooks, then `cli.parse()`.
+- `src/cli/` — the commander command **registry** (`index.ts`) plus the help
+  format, and nothing else. Each command lazy-imports its action. A text command
+  comes from its module, for example `import("../modules/auth/login.ts")`. A TUI
+  screen comes from `tui/`, for example `import("../tui/app.launch.tsx")`.
+- `src/modules/<domain>/` — the feature slices (refer to [Modules](#modules)):
+  **headless** domain logic, plus the text command actions that operate them. An
+  interactive view is NOT here (refer to `tui/`). Today the slices are:
+  - `auth/` — the Auth0 device flow, with `login`, `logout`, and `whoami`
+  - `proxy/` — the CLIProxyAPI model helpers in `models.ts`: the client API key
+    discovery and the default-model rank. The container lifecycle is in `infra/`
+  - `analysis/` — the analysis lifecycle
+  - `anchor/` — the folder-identity markers, and the lazy path reconciliation
+  - `harness/` — the harness embedder. It boots the harness runtime (DBOS, the
+    sandbox, the providers) and operates the chat turn, the model-free
+    `run --plan` replay engine, the data profiler, and the provenance bridge
+  - `embedding/` — the embedding-provider resolution from the configuration, plus
+    the in-process bge-small local model: the download, the check, and the
+    lifecycle
+  - `infra/` — the container stack. `setup`, `up`, and `down` provision CLIProxyAPI
+    and Postgres with pgvector, through a generated Docker Compose file
+  - `libs/` — the published sandbox image variants (the GHCR refs), plus the
+    `sandbox pull` and `status` actions
+  - `project/` — the project CRUD command actions (`project new`, `project ls`)
+  - `prov/` — the provenance recorder. It is a bus subscriber that builds, signs,
+    and stores the PROV document of each analysis. It gives `prov export` and
+    `prov verify`
+  - `staging/` — it puts the analysis input files under the `data/` root of the
+    analysis workspace. It gives each file a content hash, and it writes the
+    `StagedInput` manifest that the harness accepts.
+- `src/db/` — the shared SQLite layer: `primary.ts` (the connection),
+  `primary_migrations.ts`, `primary_query.ts`, `primary_mutation.ts`, `errors.ts`,
+  and `util.ts`. The queries and the mutations stay here, verb-split, beside the
+  migrations. A module imports the functions that it wants.
+- `src/tui/` — the **presentation layer and app shell**: the entry app, plus the
+  shared, app-level, or reusable Solid and opentui code. Today it has `app.tsx`
+  (the root chat screen, which each command that opens a chat launches),
+  `app.launch.tsx` (`launchTui`), `command_palette.tsx` and `commands.tsx` (the
+  palette adapter and the command registry), `app_config.tsx` (the settings, an
+  app-level screen), `theme.ts` (the reactive accessor — the id list and the
+  palette data are in `lib/design_system.ts`, and it also has the shared `Notice`
+  type and the `noticeColor` mapping, because a notice kind maps onto a palette
+  role), and `components/` (the shared, domain-agnostic widgets, below).
+
+  The presentation sits *above* the logic modules. It can import module logic
+  (view to logic), but a module must never import `tui/`. **Where a view lives**
+  mirrors the `components/` and `modules/<m>/components/` split of Lumen. A shared,
+  app-shell, or app-level screen goes here. A view that exactly one feature has
+  colocates in that module. `app_config.tsx` is an app-level exception that lives
+  here. It is not a license to put each view in `tui/`. Add `tui/<domain>/`, or a
+  module-side view folder, when a screen outgrows one file.
+  - `src/tui/components/` — the shared TUI widgets. A widget belongs here **only
+    if** it imports `theme` plus opentui and solid only (no `modules/`, no `db/`,
+    and no other domain import), **and** it has 2 or more callers. There is one
+    component for each file, and no barrels. A feature-coupled adapter, for example
+    `CommandPalette`, which maps `Command` objects, stays in the `tui/` app-shell,
+    not here.
+
+    Today it has `dialog/` (the dialog subsystem, below). It has `list_core.tsx`,
+    `fixed_list.tsx`, and `dynamic_list.tsx` (the list primitives — fuzzy-filtered
+    grouped lists). `FixedList` reads its items ONCE and renders with `<For>`.
+    `DynamicList` tracks reactive items and renders with `<Index>`. A host has the
+    filter input and passes `query` down. A row can be `pinned` to opt out of the
+    rank. Use that for an escape-hatch row whose action is "enter something these
+    rows cannot express". There the query is precisely the text that its own label
+    cannot match.
+
+    It also has `text_area.tsx` (`TextArea` — a themed textarea with chrome tiers
+    and mode tracking) and `text_input.tsx` (`TextInput` — a themed single-line
+    input with a callback for each keystroke). The two editors take an `autoFocus`
+    opt-out (a list-first host, a gallery exhibit, a showcased dialog) that also
+    seeds the focus signal of their chrome. Thus a blurred mount renders blurred
+    from the first frame.
+  - `src/tui/components/dialog/` — the dialog subsystem: the chrome shell, the host
+    and overlay, and the reusable content dialogs. `dialog_host.tsx` is the **state
+    machine**. It has a module-level stack, where a lower entry stays MOUNTED but
+    hidden and inert, thus dialog-over-dialog preserves the state.
+
+    Each dismissal routes through the single close funnel `dialogClose(reason)`,
+    where `reason` is `cancel` (esc), `dismiss` (click-outside, ctrl+c, sweeps), or
+    `commit` (the default — a programmatic close is the tail of a submit flow). The
+    host has the ONE structural esc binding, and a content dialog never binds esc.
+
+    A dialog participates through hooks:
+    - `useDialogBindings` — key layers, auto-suspended while a dialog is stacked
+      above. It is REQUIRED for each dialog key, and for a screen layer that must
+      suspend under a prompt.
+    - `useDialogCancel` — wire an `onCancel` prop to each close that is not a
+      commit.
+    - `useDialogCloseGuard` — veto a close, for a busy prompt or a dirty form. The
+      app abort chord escalates past a veto on a quick second push.
+    - `useDialogEntry().setInitialFocus` — the host applies the focus on push and
+      on reveal. There is no mount-time focus microtask for each dialog.
+    - `DialogShowcase` — render a dialog as an inert gallery exhibit. The `inert`
+      flag of the handle threads into the `autoFocus` of an editor, thus an exhibit
+      grabs no focus even at mount.
+
+    The size comes from the `dialogSize` presets: fixed columns plus a `maxWidth`
+    clamp. The height is FIXED for a tier whose content changes while it is open:
+    the `lg` pickers and `xl`. A panel that resizes as its list filters is worse
+    UX than empty rows. Only the static-content `md` is content-height. Refer
+    to `design_system.ts`.
+
+    A percentage-capped panel must NOT be inside an auto-sized box, because yoga
+    resolves the percentage against the parent and squeezes the panel. The per-entry
+    wrapper of the overlay is full-inset for this reason. The click containment is
+    on `DialogPanel` itself (`dialogPanelMouseDown/Up`).
+
+    The content dialogs are `alert_dialog.tsx`, `confirm_dialog.tsx` (with
+    `tone="danger"` chrome), `export_options_dialog.tsx`, `file_picker.tsx`
+    (`FilePicker` — a multi-select file browser on `DynamicList`, with INSERT,
+    NORMAL, and REVIEW modes), `prompt_dialog.tsx` (`PromptDialog` — a single-line
+    `TextInput` by default, and `multiline` opts into `TextArea`. A busy state
+    vetoes each dismissal), `results_dialog.tsx`, and `select_dialog.tsx`
+    (`SelectDialog` — the picker dialog that composes a filter `TextInput` and a
+    `FixedList`, for each "choose one of these" command). The design gallery
+    showcases each one.
+  - `src/tui/layout/` — the **composition kit** of the chat app shell: a full-width
+    status bar above a main row of stream and input, beside a toggleable,
+    full-height **sidebar**. The files are `status_bar.tsx`, `message_block.tsx`,
+    `chat_bar.tsx`, and `sidebar.tsx`. The gutter marker set is in
+    `lib/design_system.ts`, not here.
+
+    Its **role** makes it different from `components/`: it is shell composition,
+    not a reusable widget. It is a deliberate, scoped exception to the
+    single-caller rule. A kit part CAN be single-caller, and it CAN import a domain
+    type or query. It stays here even when it is generic and multi-caller, for
+    example `StatusBar`, which `app.tsx` and `app_config.tsx` share. The chat
+    status is in the reactive `src/tui/hooks/status.ts` store, which is the pattern
+    of `theme.ts`. The app only renders it.
+  - `src/tui/keymap.ts` — the **keybinding engine**. A binding is DATA, dispatched
+    centrally. NEVER write a raw `useKeyboard` or a `key.name === …` branch in a
+    component. A component declares a reactive layer with
+    `useBindings(() => ({ enabled?, mode?, target?, priority?, bindings }))`.
+    Exactly one `useKeymapRoot()` for each renderer installs the single
+    `useKeyboard` that routes each keystroke to the winning binding. The renderers
+    are the chat `App`, and the standalone `ConfigApp` only when it is not
+    embedded.
+
+    **Modal capture** is the mode stack. An open dialog does `pushMode(MODE_MODAL)`
+    (the effect of App), which suspends each `MODE_BASE` layer at one time. There is
+    no `if (dialogOpen)` for each binding.
+
+    **A leader and a chord sequence**: `leaderSeq("n")`, or a `<leader>` spec,
+    builds a timed multi-stroke binding. Escape aborts a half-typed chord,
+    backspace pops one stroke, and a comma gives the alternatives. The `WhichKey`
+    overlay (`layout/which_key.tsx`) lists `reachableKeys()` live, documented free
+    from the `desc` and `group` of each binding.
+
+    **A focus `target`** gates a layer to when a renderable, or a descendant, has
+    the focus. It is the fine-grained complement to `mode`. The chord is the single
+    source: a display label is DERIVED (`chordLabel`), and it is never hand-kept
+    beside the chord. An app-level key is remappable through `config.keybinds`
+    (command id to key string, for example `app.command-palette`). A structural
+    dialog key comes from the shared `KEYS`. Only the root handler and the focus
+    check touch opentui. The matcher (`matchChord`) stays structural.
+
+    **A label is ALWAYS lowercase** (`ctrl+k`, `esc`). A chord uses **Ctrl, never
+    Alt**, because a terminal delivers Alt and Option unreliably, and macOS
+    composes Option into a character. A chord never uses Cmd, because a terminal
+    does not forward it. The textarea submit and newline stay at the renderable
+    level (`text_area.tsx`, cursor-aware), and they come from `SUBMIT_CHORD` and
+    `NEWLINE_CHORD`.
+- `src/lib/` — non-domain infrastructure: `env.ts` (the sole reader of
+  `process.env`), `config.ts` (the user config file), `bus.ts` (the event bus),
+  `log.ts` (pino), `otel.ts`, `shutdown.ts`, and `design_system.ts`.
+
+  `design_system.ts` is the single merged source for the visual primitives of the
+  TUI: `GLYPHS`, the theme registry and `ThemeColors`, the layout `tokens`
+  (`space`, `size`, `stroke`), the `zIndex` stacking ladder, and the gutter
+  `MARKERS`. The reactive accessor over the theme data is `tui/theme.ts`. A JSX or
+  signal design helper is in `tui/components/`. Refer to [Glyphs](#glyphs).
+- `src/extensions/` — the global runtime extensions (below).
+- `src/types/` — the shared domain model, grouped by domain: the persisted entity
+  shapes (`session.ts`, `anchor.ts`, and the others) and the event contract
+  (`events.ts`). These are shared, not module-local, because the `db/` layer refers
+  to each entity shape and `lib/bus.ts` refers to the events. To home them in a
+  module would invert the dependency from infra to feature.
 
 ## Modules
 
-A module under `src/modules/<domain>/` groups everything about one domain: its logic, its CLI command action(s), and its logic-local types. There is **no mandated file layout** — add files as the domain needs them, not preemptively (named exports only, no barrels, per [Naming conventions](#naming-conventions)).
+A module under `src/modules/<domain>/` groups each thing about one domain: its
+logic, its CLI command actions, and its logic-local types. There is **no mandated
+file layout**. Add a file as the domain wants it, not before. Use named exports
+only, and no barrels, per [Naming conventions](#naming-conventions).
 
-- **Public surface.** Whatever other layers import is the module's API; import it directly from the owning file (e.g. `ensureProxyReady` from `modules/proxy/setup.ts`). No barrel/index re-exports.
-- **Dependency direction.** Modules import shared infra (`lib/`, `db/`, `src/types/`, `extensions/`) and **other modules, acyclically** (e.g. `harness` → `proxy`; `analysis` → `anchor`). They must **not** import `tui/` — presentation depends on logic, never the reverse. Infrastructure (`lib/`, `db/`) must **never** import a module. If two modules need the same code, lift it to a shared layer.
+- **Public surface.** Whatever the other layers import is the API of the module.
+  Import it directly from the file that has it, for example `ensureProxyReady` from
+  `modules/proxy/setup.ts`. There is no barrel and no index re-export.
+- **Dependency direction.** A module imports the shared infra (`lib/`, `db/`,
+  `src/types/`, `extensions/`) and **other modules, acyclically**, for example
+  `harness` to `proxy`, and `analysis` to `anchor`. A module must **not** import
+  `tui/`, because the presentation depends on the logic and never the opposite. The
+  infrastructure (`lib/`, `db/`) must **never** import a module. If two modules want
+  the same code, lift it to a shared layer.
 
 ## Global extensions
 
-`src/extensions/*.ext.ts` augment built-in globals with small, broadly-useful methods (`Promise.sleep`, `JSON.parseWith`) so call sites don't each redeclare a one-line helper. Each file:
+`src/extensions/*.ext.ts` augments a built-in global with a small, broadly-useful
+method (`Promise.sleep`, `JSON.parseWith`). Thus a call site does not redeclare a
+one-line helper. Each file:
 
-- Declares the method on the relevant global interface via `declare global { interface PromiseConstructor { … } }` (use `PromiseConstructor`/`JSON`/etc. for statics, the instance interface for prototype methods), assigns the implementation, and ends with `export {}` to stay a module.
-- Is registered by adding one side-effect import to `src/extensions/index.ts` — the central loader, imported once from `src/index.ts` before `cli.parse()`. That loader is side-effect-only (not a re-export barrel, so it doesn't violate the no-barrel rule). Anything depending on an extension must run after the entry point loads it (all CLI commands do, since they lazy-import after startup).
+- Declares the method on the applicable global interface, through
+  `declare global { interface PromiseConstructor { … } }`. Use `PromiseConstructor`
+  or `JSON` for a static, and the instance interface for a prototype method. Then
+  it assigns the implementation, and it ends with `export {}` to stay a module.
+- Is registered by one side-effect import in `src/extensions/index.ts`. That is the
+  central loader, imported one time from `src/index.ts` before `cli.parse()`. The
+  loader is side-effect-only. It is not a re-export barrel, thus it does not
+  violate the no-barrel rule. Anything that depends on an extension must run after
+  the entry point loads it. Each CLI command does, because it lazy-imports after
+  startup.
 
-Reach for an extension only when a helper is genuinely cross-cutting; keep single-caller helpers in their owning file per the Coding rules.
+Reach for an extension only when a helper is genuinely cross-cutting. Keep a
+single-caller helper in the file that has it, per the Coding rules.
 
-## Event bus — single bus, typed events
+## Event bus — one bus, typed events
 
-There is **one bus** (`Bus` in `src/lib/bus.ts`), shared by every domain — session, provenance, and any future concern. Domain separation is by event `type` string, not by bus instance. **Never add a second bus** to separate concerns; if the current event contract feels wrong, the fix is better types, not more buses.
+There is **one bus** (`Bus` in `src/lib/bus.ts`), and each domain shares it:
+session, provenance, and any future concern. The domain separation is by the event
+`type` string, not by a bus instance. **Never add a second bus** to separate the
+concerns. If the current event contract feels wrong, the fix is better types, not
+more buses.
 
-- **One event type per domain action.** Each `BusEvent` member carries exactly the fields its action needs. Never pack multiple sub-actions into a single event discriminated by an interior field with nullable companions — that defeats TypeScript's narrowing and forces consumers to guard against impossible states. E.g. provenance has `prov.analysis_created`, `prov.input_added`, `prov.input_removed` — not one `prov.recorded` with a nullable `input`.
-- **Event types live in `src/types/events.ts`** — the `BusEvent` discriminated union is the contract. Every member today is analysis-scoped provenance (`prov.*`, carrying `analysisId`); the harness conversation path writes the Solid store directly and does not use the bus. Consumers filter by `type`.
-- **Design rationale:** a dedicated bus per domain only earns its keep when that domain needs its own subscriber lifecycle, backpressure, or error isolation. inflexa's bus is a fire-and-forget notification channel with one subscriber per concern — multiplying buses adds wiring overhead for no structural gain. (Validated against OpenCode, which routes ~80+ event types across all domains through a single typed bus.)
+- **One event type for each domain action.** Each `BusEvent` member carries exactly
+  the fields that its action wants. Never pack more than one sub-action into a single
+  event that an interior field discriminates, with nullable companions. That
+  defeats the narrowing of TypeScript, and it forces a consumer to guard against an
+  impossible state. For example, provenance has `prov.analysis_created`,
+  `prov.input_added`, and `prov.input_removed`. It does not have one
+  `prov.recorded` with a nullable `input`.
+- **The event types are in `src/types/events.ts`.** The `BusEvent` discriminated
+  union is the contract. Each member today is analysis-scoped provenance (`prov.*`,
+  which carries an `analysisId`). The harness conversation path writes the Solid
+  store directly, and it does not use the bus. A consumer filters by `type`.
+- **The design rationale:** a dedicated bus for each domain earns its keep only
+  when that domain wants its own subscriber lifecycle, backpressure, or error
+  isolation. The bus of inflexa is a fire-and-forget notification channel, with one
+  subscriber for each concern. To multiply the buses adds wiring overhead for no
+  structural gain. This was validated against OpenCode, which routes more than 80
+  event types across each domain through a single typed bus.
 
-## Solid + opentui (TUI)
+## Solid and opentui (the TUI)
 
-The TUI is Solid (`solid-js`) rendered to the terminal via `@opentui/solid`. Solid is not React: components run once, reactivity lives in signals/stores, and there are no re-renders.
+The TUI is Solid (`solid-js`), rendered to the terminal through `@opentui/solid`.
+Solid is not React: a component runs one time, the reactivity is in signals and
+stores, and there are no re-renders.
 
 ### Design gallery
 
-**Before writing or changing TUI code, consult the design gallery** (`src/tui/layout/design_gallery.tsx`, opened via the "Design gallery" command-palette entry) — the read-only showcase of every existing block/widget and its states. Reuse what it shows; match its patterns.
+**Before you write or change TUI code, consult the design gallery**
+(`src/tui/layout/design_gallery.tsx`, opened through the "Design gallery"
+command-palette entry). It is the read-only showcase of each existing block and
+widget, and of its states. Use again what it shows, and match its patterns.
 
-**If a task needs something the gallery doesn't cover** (a new block, state, or visual pattern), STOP and talk to the user about adding it to the design system / extending the gallery — don't invent ad-hoc UI off to the side. New surfaces become part of the gallery so it stays the single source of truth.
+**A task can want something that the gallery does not cover: a new block, a new
+state, or a new visual pattern. Then STOP, and talk to the user.** The subject is
+an addition to the design system, or an extension of the gallery. Do not invent an ad-hoc UI off to
+the side. A new surface becomes part of the gallery, thus the gallery stays the
+single source of truth.
 
 ### Launch and exit
 
-- Each TUI screen lives in `src/tui/` as its component plus a `launch*` function — co-located in one file (like `app_config.tsx`), or split into a `app.launch.tsx` beside a large component (like the chat `app.tsx`). `launch*` resolves its data (session lookup/creation) first, then calls `void render(...)` with `exitOnCtrlC: false`, `targetFps: 30`, `screenMode: "alternate-screen"`.
-- **Always `renderer.destroy()` before `shutdown(0)`.** `destroy()` restores the terminal (mouse tracking, alternate screen, cooked mode) — `process.exit()` alone skips OpenTUI's cleanup and leaves the shell broken.
-- `exitOnCtrlC` is false, so every TUI app must handle its own quit keys via `useKeyboard`.
+- Each TUI screen is in `src/tui/` as its component plus a `launch*` function. The
+  two are colocated in one file, like `app_config.tsx`, or split into an
+  `app.launch.tsx` beside a large component, like the chat `app.tsx`. `launch*`
+  resolves its data (the session lookup or creation) first. Then it calls
+  `void render(...)` with `exitOnCtrlC: false`, `targetFps: 30`, and
+  `screenMode: "alternate-screen"`.
+- **Always call `renderer.destroy()` before `shutdown(0)`.** `destroy()` restores
+  the terminal: the mouse tracking, the alternate screen, and the cooked mode.
+  `process.exit()` alone skips the cleanup of OpenTUI, and it leaves the shell
+  broken.
+- `exitOnCtrlC` is false, thus each TUI app must handle its own quit keys through
+  `useKeyboard`.
 
 ### Reactivity
 
-- Never destructure `props` — access `props.x` at use sites or reactivity is lost.
-- **`props` as a signal's initial value — `solid/reactivity` will warn; decide seed-once vs stay-in-sync.** Reading `props.x` at component-body top level (e.g. `createSignal(props.x)`) reads it once and drops the reactive link, which the lint rule flags. Two legitimate intents:
-  - **Seed-once** (the value is locally-owned mutable state, the prop is just the initial seed): keep `createSignal(props.x)` and add a scoped `eslint-disable solid/reactivity` with a `--` reason stating *why* a one-time read is safe (e.g. the component mounts once with fixed props). This is the common case in our single-mount screens (`app.tsx`'s `currentSessionId`/`currentWorkingDir`/`currentAnalysis` are seeded from `App`'s props, then mutated by the palette). Type the signal explicitly when the prop's type should be pinned (`createSignal<Analysis>(props.analysis)`).
-  - **Stay-in-sync** (the signal must follow later prop changes): seed it, then `createEffect(() => setX(props.x))`.
-  - Do NOT "fix" the warning by destructuring (forbidden above) or by storing a thunk (`createSignal(() => props.x)` stores a function, not the value). When a whole file's warnings are the same false positive — e.g. reads of a stable `ctx` prop inside opentui `onSelect`/`onSubmit` handlers the rule doesn't recognize (`commands.tsx`) — a file-level `eslint-disable solid/reactivity` with a `--` reason is cleaner than scattering per-line disables.
-- `createSignal` for scalars; `createStore` + `produce` for lists and nested data (e.g. messages).
-- Streaming deltas accumulate in a dedicated signal (`streamText`/`streamPartId` in `app.tsx`) and flush into the store only when the part completes — never write every delta into the store.
-- Control flow with `<For>`/`<Show>`, never `.map()` in JSX.
-- Renderable refs: `let ref: SomeRenderable | null = null` + a ref callback. Focus via `queueMicrotask(() => r.focus())` — the renderable isn't ready synchronously.
+- Never destructure `props`. Access `props.x` at the use site, or the reactivity is
+  lost.
+- **`props` as the initial value of a signal — `solid/reactivity` gives a warning.
+  Decide between seed-once and stay-in-sync.** A read of `props.x` at the top level
+  of the component body, for example `createSignal(props.x)`, reads it one time and
+  drops the reactive link. The lint rule flags that. There are two legitimate
+  intents:
+  - **Seed-once** (the value is locally-owned mutable state, and the prop is only
+    the initial seed): keep `createSignal(props.x)` and add a scoped
+    `eslint-disable solid/reactivity` with a `--` reason. The reason must state
+    *why* a one-time read is safe, for example that the component mounts one time
+    with fixed props. This is the common case in our single-mount screens: the
+    `currentSessionId`, `currentWorkingDir`, and `currentAnalysis` of `app.tsx` are
+    seeded from the props of `App`, and the palette then mutates them. Type the
+    signal explicitly when the type of the prop must be pinned
+    (`createSignal<Analysis>(props.analysis)`).
+  - **Stay-in-sync** (the signal must obey a later prop change): seed it, then
+    `createEffect(() => setX(props.x))`.
+  - Do NOT "fix" the warning by a destructure (forbidden above), and do not store a
+    thunk (`createSignal(() => props.x)` stores a function, not the value). When
+    the warnings of a whole file are the same false positive, a file-level
+    `eslint-disable solid/reactivity` with a `--` reason is cleaner than per-line
+    disables. An example is the reads of a stable `ctx` prop, inside the opentui
+    `onSelect` and `onSubmit` handlers that the rule does not recognize
+    (`commands.tsx`).
+- Use `createSignal` for a scalar. Use `createStore` plus `produce` for a list and
+  for nested data, for example the messages.
+- A streaming delta accumulates in a dedicated signal (`streamText` and
+  `streamPartId` in `app.tsx`). It flushes into the store only when the part
+  completes. Never write each delta into the store.
+- Control the flow with `<For>` and `<Show>`, never with `.map()` in JSX.
+- A renderable ref is `let ref: SomeRenderable | null = null` plus a ref callback.
+  Focus it through `queueMicrotask(() => r.focus())`, because the renderable is not
+  ready synchronously.
 
 ### Layout (flex) — opentui is NOT web CSS
 
-Two opentui-specific facts, both verified against the engine source and reproduced with the headless `testRender`/`captureCharFrame` harness (see "Verifying layout" below). When a layout overlaps, instrument it — do **not** reason by analogy to CSS.
+Two opentui-specific facts. Both were verified against the engine source, and both
+were reproduced with the headless `testRender` and `captureCharFrame` harness —
+refer to "How to do a check of a layout" below. When a layout overlaps, instrument it. Do
+**not** reason by analogy to CSS.
 
-**1. `flexShrink` is derived from the dimensions.** A child with a non-numeric size (`"100%"`, `"auto"`, unset) defaults to `flexShrink: 1`; a numeric size → `0`. So a `width="100%"` box (e.g. the whole input bar) shrinks by default, and on a short terminal it collapses below its own border. Essential chrome that must keep its rows needs an explicit `flexShrink={0}` (see `chat_bar.tsx`), letting the scroll region (`flexGrow` + `minHeight={0}`, as in `app.tsx`/`chat.tsx`) absorb the squeeze instead.
+**1. `flexShrink` comes from the dimensions.** A child with a non-numeric size
+(`"100%"`, `"auto"`, unset) defaults to `flexShrink: 1`. A numeric size gives `0`.
+Thus a `width="100%"` box, for example the whole input bar, shrinks by default, and
+on a short terminal it collapses below its own border. Essential chrome that must
+keep its rows wants an explicit `flexShrink={0}` — refer to `chat_bar.tsx`. Then
+the scroll region (`flexGrow` plus `minHeight={0}`, as in `app.tsx` and `chat.tsx`)
+absorbs the squeeze instead.
 
-**2. A `flexGrow` scrollbox overlaps its next flex sibling by one cell.** In a column, opentui's yoga layout gives a `flexGrow={1}` scrollbox a rendered height **one greater** than the height it contributes to the column flow — yoga places the following sibling at `scrollbox.y + height − 1`, *inside* the scrollbox's last row. The scroll content then bleeds onto whatever sits directly below (a footer hint, a detail line). This is **not** fixable with `minHeight`/`flexShrink`/`overflow`/wrapping/integer panel sizes — all were tried and reproduced the overlap; it is a yoga/scrollbox quirk, present at most panel heights, that only becomes *visible* when that row carries content.
+**2. A `flexGrow` scrollbox overlaps its next flex sibling by one cell.** In a
+column, the yoga layout of opentui gives a `flexGrow={1}` scrollbox a rendered
+height that is **one greater**. It is one greater than the height that the
+scrollbox contributes to the column flow. Yoga
+places the sibling that follows at `scrollbox.y + height − 1`, which is *inside* the
+last row of the scrollbox. The scroll content then bleeds onto whatever sits
+directly below, for example a footer hint or a detail line.
 
-The remedy: **any fixed chrome row placed directly below a `flexGrow` scrollbox must be a full-width box painted with the panel background** (`<box width="100%" flexShrink={0} backgroundColor={…}><text/></box>`), so it opaquely reclaims its whole row. A bare `<text>` is not enough — it paints only its own glyphs, leaving the bled content showing through the gaps. Live sites: `dialog/dialog_panel.tsx` (footer), `list_core.tsx` (detail line).
+This is **not** fixable with `minHeight`, `flexShrink`, `overflow`, a wrap, or an
+integer panel size. Each of those was tried, and each reproduced the overlap. It is
+a yoga and scrollbox quirk. It is present at most panel heights, and it only
+becomes *visible* when that row carries content.
 
-**Verifying layout.** `@opentui/solid`'s `testRender` + `captureCharFrame()` renders any component tree to a text frame at a fixed `{width, height}` with no TTY; `mockInput.pressKeys` drives scrolling, and a renderable's `.x/.y/.width/.height` + `yogaNode.getComputedLayout()` expose the computed boxes. Sweep a range of heights — these bugs are size-dependent and a single size hides them.
+The remedy: **a fixed chrome row that is directly below a `flexGrow` scrollbox must
+be a full-width box, painted with the panel background**
+(`<box width="100%" flexShrink={0} backgroundColor={…}><text/></box>`). Then it
+opaquely reclaims its whole row. A bare `<text>` is not enough, because it paints
+its own glyphs only, and the bled content shows through the gaps. The live sites
+are `dialog/dialog_panel.tsx` (the footer) and `list_core.tsx` (the detail line).
+
+**How to do a check of a layout.** The `testRender` and `captureCharFrame()` of
+`@opentui/solid` render any component tree to a text frame at a fixed
+`{width, height}`, with no TTY. `mockInput.pressKeys` operates the scroll. The
+`.x`, `.y`, `.width`, and `.height` of a renderable, plus
+`yogaNode.getComputedLayout()`, expose the computed boxes. Sweep a range of
+heights, because these bugs depend on the size and a single size hides them.
 
 ### Event bus (TUI consumption)
 
-The bus contract and design rationale live in [Event bus — single bus, typed events](#event-bus--single-bus-typed-events) above. TUI-specific rules:
+The bus contract and its design rationale are in
+[Event bus — one bus, typed events](#event-bus--one-bus-typed-events) above. These
+rules are TUI-specific:
 
-- Subscribe in component setup with `Bus.on("inflexa", handler)` and always pair with `onCleanup(() => Bus.off("inflexa", handler))`.
-- Handlers must filter events by `analysisId` (every bus member is analysis-scoped provenance) and apply only the domains they own.
+- Subscribe in the component setup with `Bus.on("inflexa", handler)`. Always pair
+  it with `onCleanup(() => Bus.off("inflexa", handler))`.
+- A handler must filter the events by `analysisId`, because each bus member is
+  analysis-scoped provenance. It applies only the domains that it has.
 
 ### Colors
 
-All colors come from `theme` in `src/tui/theme.ts` — ten palettes (five dark, then five light; `tokyo-night` is the default) mapped to semantic roles (`bg`, `fg`, `fgMuted`, `fgSubtle`, `border`, `accent`, `user`, `assistant`, `success`, `warning`, `error`, …). **Never inline hex in components.**
+Each color comes from `theme` in `src/tui/theme.ts`. There are ten palettes: five
+dark, then five light, and `tokyo-night` is the default. They map to semantic roles
+(`bg`, `fg`, `fgMuted`, `fgSubtle`, `border`, `accent`, `user`, `assistant`,
+`success`, `warning`, `error`, and others). **Never inline a hex value in a
+component.**
 
-**Every `<text>` resolves an explicit foreground.** opentui's text renderable defaults `fg` to opaque white (`RGBA.fromValues(1, 1, 1, 1)`), so a `<text>` that names no color paints `#ffffff`. On the five dark themes that scores 12–18:1 — off-palette (tokyo-night body text should be `#c0caf5`) but legible, which is exactly why the default hides the bug from anyone checking on the dark default. On the five light themes it scores 1.00–1.13:1: invisible. `github-light` (bg `#ffffff`) measures exactly 1.00:1.
+**Each `<text>` resolves an explicit foreground.** The text renderable of opentui
+defaults `fg` to opaque white (`RGBA.fromValues(1, 1, 1, 1)`). Thus a `<text>` that
+names no color paints `#ffffff`. On the five dark themes that scores 12:1 to 18:1.
+It is off-palette, because the body text of tokyo-night must be `#c0caf5`. But it
+is legible. That is exactly why the default hides the bug from a person who
+examines the dark default only. On the five light themes it scores 1.00:1 to 1.13:1, thus it
+is invisible. `github-light` (bg `#ffffff`) measures exactly 1.00:1.
 
-Two shapes satisfy the rule; both are correct:
+Two shapes satisfy the rule, and both are correct:
 
-- **`fg` on the element** — `<text fg={theme().fg}>…</text>`. The prop propagates into child spans that don't override it, so a nested `<Bold>` inherits it. A block whose whole line shares one color is better served by the prop than by wrapping each child.
-- **Wrap every information-bearing child** in `<Fg role={…}>` or `<Reverse>` — `<text><Fg role="fg">{heading()}</Fg></text>` (`components/plan_card_block.tsx`). Required once a line mixes colors.
+- **`fg` on the element** — `<text fg={theme().fg}>…</text>`. The prop propagates
+  into a child span that does not override it, thus a nested `<Bold>` inherits it.
+  A block whose whole line shares one color is better served by the prop than by a
+  wrap of each child.
+- **Wrap each information-bearing child** in `<Fg role={…}>` or `<Reverse>` —
+  `<text><Fg role="fg">{heading()}</Fg></text>`
+  (`components/plan_card_block.tsx`). This is required once a line mixes colors.
 
-**A bare string literal inside an `fg`-less `<text>` is the defect**, including one sitting beside correctly-wrapped siblings — `<Fg>` colors its own span, never the text next to it:
+**A bare string literal inside an `fg`-less `<text>` is the defect.** That includes
+one that sits beside correctly-wrapped siblings, because `<Fg>` colors its own span
+and never the text next to it:
 
 ```tsx
 // WRONG — the glyph is themed, ` DONE` paints #ffffff
@@ -301,25 +806,64 @@ Two shapes satisfy the rule; both are correct:
 <text fg={theme().fg}><Fg role="accent">{GLYPHS.check}</Fg> DONE</text>
 ```
 
-**Contrast floors.** Information-bearing text holds ≥4.5:1 against every background it lands on; non-text and decorative content — borders, progress-meter cells, separator glyphs, the `fgSubtle` tier — holds ≥3:1. The tiers, and which of them the 4.5:1 threshold exempts, are defined on `ThemeColors` in `src/lib/design_system.ts`; use that vocabulary rather than minting new tiers.
+**Contrast floors.** Information-bearing text holds 4.5:1 or more against each
+background that it lands on. Non-text and decorative content holds 3:1 or more:
+the borders, the progress-meter cells, the separator glyphs, and the `fgSubtle`
+tier. The tiers, and which of them the 4.5:1 threshold exempts, are defined on
+`ThemeColors` in `src/lib/design_system.ts`. Use that vocabulary. Do not mint a new
+tier.
 
-**Check every new or changed surface on a light theme**, never only the dark default — white's 12–18:1 on dark is what lets an unresolved foreground pass review. `github-light` is the sharpest case: `bg` is pure `#ffffff`, so an unresolved foreground is fully invisible rather than merely wrong.
+**Examine each new or changed surface on a light theme**, never on the dark default
+only. The 12:1 to 18:1 of white on dark is what lets an unresolved foreground pass
+a review. `github-light` is the sharpest case, because its `bg` is pure `#ffffff`,
+thus an unresolved foreground is fully invisible and not merely wrong.
 
-**A character-frame assertion cannot prove legibility.** `captureCharFrame()` + `toContain(…)` proves a glyph was emitted; frames carry no color, so an invisible span satisfies them identically to a correct one. Any claim that a surface is *visible* must assert on span color — `captureSpans()` exposes each span's resolved `fg` (`theme_contrast.render.test.tsx`, `diff_contrast.render.test.tsx`). Relatedly, **give fixtures distinct values for fields a frame assertion could confuse**: `openable_card_block.render.test.tsx` asserts `toContain("Volcano plot")` against a fixture where that string is both the card title and the row name, so the assertion passed on the row while the title rendered unpainted.
+**A character-frame assertion cannot prove legibility.** `captureCharFrame()` plus
+`toContain(…)` proves that a glyph was emitted. A frame carries no color, thus an
+invisible span satisfies it identically to a correct one. A claim that a surface is
+*visible* must assert on the span color. `captureSpans()` exposes the resolved `fg`
+of each span (`theme_contrast.render.test.tsx`, `diff_contrast.render.test.tsx`).
+
+Relatedly, **give a fixture distinct values for the fields that a frame assertion
+could confuse**. `openable_card_block.render.test.tsx` asserts
+`toContain("Volcano plot")` against a fixture where that string is both the card
+title and the row name. Thus the assertion passed on the row, while the title
+rendered unpainted.
 
 ### Glyphs
 
-Every non-ASCII glyph the TUI prints comes from `GLYPHS` in `src/lib/design_system.ts`, just as colors go through `theme`. **Never inline a glyph literal in `src/tui/`.** Keys are named by shape (one glyph serves many roles). No emoji or Nerd-Font glyphs — they break the fixed-width gutter. Exempt: ASCII `>`/`<` markers and prose em dashes.
+Each non-ASCII glyph that the TUI prints comes from `GLYPHS` in
+`src/lib/design_system.ts`, exactly as each color goes through `theme`. **Never
+inline a glyph literal in `src/tui/`.** A key is named by shape, because one glyph
+serves many roles. There is no emoji and there is no Nerd-Font glyph, because they
+break the fixed-width gutter. The exempt items are the ASCII `>` and `<` markers,
+and an em dash in prose.
 
 ### Time rendering
 
-Match the readout to the record's permanence. Durable, referenced records (detail dialogs for profiles/runs, record listings, the completed-profile rail line) render absolute local timestamps via `toLocaleString()`. Live / ephemeral fixed-width readouts (sidebar session/run ages, elapsed indicators) render compact relative ages via `Date.relativeAge`. Durations render via `Date.formatDuration` — one vocabulary, never a hand-rolled `ms`/`s`/`m` formatter at the call site.
+Match the readout to the permanence of the record. A durable, referenced record
+renders an absolute local timestamp through `toLocaleString()`. Examples are the
+detail dialogs for a profile or a run, a record listing, and the completed-profile
+rail line. A live or ephemeral fixed-width readout renders a compact relative age
+through `Date.relativeAge`. Examples are a sidebar session age, a run age, and an
+elapsed indicator. A duration renders through `Date.formatDuration` — one
+vocabulary, and never a hand-rolled `ms`, `s`, or `m` formatter at the call site.
 
 ### Text emphasis
 
-The "Type & emphasis" scale (one typeface, one size; hierarchy by weight, dim, color) is exposed as composable inline **JSX components** in `src/tui/components/emphasis.tsx`. **In `src/tui/`, reach for those components — `<Bold>`, `<Italic>`, `<Underline>`, `<Dim>`, `<Reverse>`, `<Fg role={…}>` — never hand-compose opentui's `t`/`bold`/`dim`/`italic`/`underline`/`reverse`/`fg`/`bg` primitives at the call site.** Each emits an inline span, so they nest inside a `<text>` and sit beside each other freely. `emphasis.tsx` is the ONE place the low-level opentui styling (and the `style={{…}}` span escape hatch it requires) is allowed to live.
+The "Type and emphasis" scale is one typeface and one size, with the hierarchy from
+the weight, the dim, and the color. It is exposed as composable inline **JSX
+components** in `src/tui/components/emphasis.tsx`.
 
-**Emphasis → component** (one source: this table):
+**In `src/tui/`, reach for those components — `<Bold>`, `<Italic>`, `<Underline>`,
+`<Dim>`, `<Reverse>`, `<Fg role={…}>`. Never hand-compose the `t`, `bold`, `dim`,
+`italic`, `underline`, `reverse`, `fg`, and `bg` primitives of opentui at the call
+site.** Each component emits an inline span, thus they nest inside a `<text>` and
+sit beside each other freely. `emphasis.tsx` is the ONE place where the low-level
+opentui styling can live. It is also the one place for the `style={{…}}` span
+escape hatch that the styling wants.
+
+**Emphasis to component** (one source: this table):
 
 | component | use for |
 |-----------|---------|
@@ -331,24 +875,55 @@ The "Type & emphasis" scale (one typeface, one size; hierarchy by weight, dim, c
 | `<Reverse>` | selection / cursor row (inverse video) |
 | `<Fg role={…}>` | apply a color — `role` is a `ThemeColors` key, NEVER a hex. The only way to color inline text |
 
-**Only `<Fg>` and `<Reverse>` resolve a color; the rest carry none.** `<Bold>`/`<Italic>`/`<Underline>`/`<Dim>` emit an attribute-only span (`<b>`/`<i>`/`<u>`/`{ dim: true }`) and inherit whatever an ancestor resolved — so **none of them may be the outermost colored element**. This is the mechanism behind the italic/dim guidance above: `<Fg role="fgMuted"><Italic>…</Italic></Fg>` is needed not only so the meaning survives a terminal that drops the ITALIC bit, but because without the `<Fg>` — or an `fg` on the enclosing `<text>` — the text has no color at all and falls through to opentui's white default (see [Colors](#colors)). `<Reverse>` is self-sufficient: it paints both `fg` and `bg` itself.
+**Only `<Fg>` and `<Reverse>` resolve a color. The others carry none.** `<Bold>`,
+`<Italic>`, `<Underline>`, and `<Dim>` emit an attribute-only span (`<b>`, `<i>`,
+`<u>`, `{ dim: true }`), and they inherit whatever an ancestor resolved. Thus none
+of them can be the outermost colored element.
 
-**Composing:** nest to combine — `<Fg role="fgMuted"><Italic>{text}</Italic></Fg>`. For a single whole-line color, `<text fg={theme().role}>…</text>` is still fine (don't wrap one line in `<Fg>`); reach for the components when a line **mixes** colors/styles.
+This is the mechanism behind the italic and dim guidance above.
+`<Fg role="fgMuted"><Italic>…</Italic></Fg>` is necessary for two reasons. The
+meaning must survive a terminal that drops the ITALIC bit. Also, the text has no color at all without
+the `<Fg>`, or without an `fg` on the enclosing `<text>`. It then falls through to
+the white default of opentui (refer to [Colors](#colors)). `<Reverse>`
+is self-sufficient, because it paints both the `fg` and the `bg` itself.
 
-**Never** nest a block `<text>` inside a `<text>` (rejected as a text-node child at runtime). The emphasis components avoid this by emitting spans — if you need new raw inline styling, add it to `emphasis.tsx` (with the `style={{…}}` channel documented there), never at the call site.
+**How to compose:** nest to combine —
+`<Fg role="fgMuted"><Italic>{text}</Italic></Fg>`. For a single whole-line color,
+`<text fg={theme().role}>…</text>` is still correct. Do not wrap one line in
+`<Fg>`. Reach for the components when a line **mixes** colors or styles.
+
+**Never** nest a block `<text>` inside a `<text>`. The runtime rejects it as a
+text-node child. The emphasis components prevent this, because they emit spans. If
+you want new raw inline styling, add it to `emphasis.tsx`, with the `style={{…}}`
+channel documented there. Never add it at the call site.
 
 ## CLI reference docs
 
-`bun run docs:gen` (`scripts/gen_docs.ts`) walks the commander registry and emits the publishable CLI reference package to `dist-docs/` (untracked): SSG-neutral CommonMark pages + `manifest.json`. The contract lives in the `cli-reference-docs` spec; the release workflow regenerates the package at the tagged commit and attaches it to the GitHub release as `cli-docs.tar.gz` (consumed by the website). Invariants:
+`bun run docs:gen` (`scripts/gen_docs.ts`) walks the commander registry. It emits
+the publishable CLI reference package to `dist-docs/` (untracked): SSG-neutral
+CommonMark pages plus `manifest.json`. The contract is in the
+`cli-reference-docs` spec. The release workflow generates the package again at the
+tagged commit, and it attaches it to the GitHub release as `cli-docs.tar.gz`, which
+the website consumes. The invariants are:
 
-- **Never run the generator under `bun test`** — the registry imports `lib/env.ts`, whose data-loss guard throws in a test process without the sandbox marker. Run it as a plain `bun scripts/gen_docs.ts`; CI invokes it as a subprocess.
-- **Dev-channel commands are excluded by design**: the generator bakes a production build channel before importing the registry, so the docs describe exactly the release binary's surface.
-- **Every visible command, argument, and option needs a description** — generation (and the lint CI job that runs it) fails otherwise. Declare positionals via `.argument(name, description)`, never inline in the command string.
+- **Never run the generator under `bun test`.** The registry imports `lib/env.ts`,
+  whose data-loss guard throws in a test process that has no sandbox marker. Run it
+  as a plain `bun scripts/gen_docs.ts`. CI invokes it as a subprocess.
+- **A dev-channel command is excluded by design.** The generator bakes a production
+  build channel before it imports the registry. Thus the docs describe exactly the
+  surface of the release binary.
+- **Each visible command, argument, and option wants a description.** The
+  generation, and the lint CI job that runs it, fails without one. Declare a
+  positional through `.argument(name, description)`, never inline in the command
+  string.
 
 ## References
 
 - [`CONTEXT.md`](./CONTEXT.md) — the cli domain map.
-- [`openspec/specs/`](./openspec/specs/) — feature specs; the source of truth for cli's decisions.
-- [`openspec/changes/`](./openspec/changes/) — active + archived change proposals; cli's decision log (there is no `docs/adr`).
-- [`docs/`](./docs/) — supplementary developer notes (audits, dev guides).
-- [`HORRIBLE_BUG_FIXES.md`](./HORRIBLE_BUG_FIXES.md) — postmortems; read the relevant entry before working the same area.
+- [`openspec/specs/`](./openspec/specs/) — the feature specs, and the source of
+  truth for the decisions of cli.
+- [`openspec/changes/`](./openspec/changes/) — the active and archived change
+  proposals, and the decision log of cli. There is no `docs/adr`.
+- [`docs/`](./docs/) — supplementary developer notes: audits and dev guides.
+- [`HORRIBLE_BUG_FIXES.md`](./HORRIBLE_BUG_FIXES.md) — the postmortems. Read the
+  applicable entry before you work in the same area.

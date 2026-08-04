@@ -1,66 +1,298 @@
 # Cortex Harness — context glossary
 
-Domain language and load-bearing architectural patterns for the OSS agent harness. Hard decisions and their reasoning live in the OpenSpec specs under `openspec/specs/` — the source of truth for harness design decisions.
+The domain language and the load-bearing architectural patterns of the OSS agent
+harness. The hard decisions and their reasons are in the OpenSpec specs under
+`openspec/specs/`, which is the source of truth for the harness design decisions.
 
 ## Domain
 
-- **Analysis** — Long-lived, resource-scoped entity that owns a conversation thread, an input-file tree staged under `data/inputs/` (see **Input staging**), and zero or more runs. Identified by `analysisId` (used as both `threadId` and `resourceId`). Lifecycle: `created → active ↔ suspended → archived`.
-- **Input staging** — Populating an analysis's `data/inputs/` tree is the **embedder's** responsibility, done *before* the harness is invoked, not the harness's ([data-profile-init](openspec/specs/data-profile-init/spec.md)). The harness's workflows and tools assume a populated tree; **there is no staging seam in the harness and no harness code calls stage.** The local CLI stages by copying/linking local files in its own repo. Inputs are immutable and staged exactly once, so a recovered run finds the tree already present (staging is not a durable step). `executeAnalysis` reads the tree directly; `runDataProfile` receives the staged-input manifest (`StagedInput[]`, the one harness staging *type*) in its workflow input. A staging failure is handled embedder-side (the profile is marked `failed`).
-- **Run** — One execution of a workflow against an analysis. Identified by `runId` — a bare UUID that *is* the DBOS `workflowID` (no composite prefix, no separate `workflow_id` column). Holds a run directory at `runs/{runId}/` (in the analysis's workspace tree) with per-step subdirectories. `runId` and the durable `RunSession` are minted at the async edge before `DBOS.startWorkflow` — the session rides in the workflow input and DBOS replay reconstructs it on resume.
-- **Step** — One node in an analysis plan DAG. Each step runs in its own sandbox container. The DAG is **dependency-gated and budget-admitted**: the parent workflow starts a step's child workflow once all its `depends_on` steps have completed *and* the machine resource budget (snapshotted into the workflow input at launch, when the embedder configures one) has capacity for the step's declared resources — no wave batching; without a budget every dependency-satisfied step starts immediately. A dependency-satisfied step held for capacity is emitted as `queued` on the dag-state part (dependency-held steps stay `pending`). A topological *level* may be computed for UI display, but it never gates execution. A step ends in one of three terminal states: **`completed`** (the agent persisted its deliverables and ended cleanly), **`blocked`** (the agent called `report_blocker` to declare — with a reason — that it could not fulfill the step; a distinct, honest terminal status), or **`failed`** (an unexpected error). Execution is **fail-fast**: the first step `failed` *or* `blocked` cancels in-flight siblings and stops scheduling new steps.
-- **Step deliverable** — A step's output is its **persisted files**: the scripts it wrote (`scripts/`), the data those scripts computed (`output/`), and figures (`figures/`). Conclusions are drawn from those computed output files (derived from the input data), never narrated from `execute_command` stdout. An agent that cannot produce them calls `report_blocker` rather than improvising an inline result — the harness does not infer "something went wrong" from output counts; honesty is structural (the blocker tool), and actual errors surface as `failed`.
-- **Blocker** — The terminal escape hatch an agent calls (`report_blocker({ reason })`) when it genuinely cannot do its work — missing data, an unavailable tool, a broken environment. Modeled on the synthesizer's `report_blocker` (shared `OutcomeHolder` mechanism). For a **step** agent it yields the `blocked` status and fails-fast; for the **synthesizer** it yields a non-fatal `skipped` outcome (the analysis steps already delivered — interpretive aggregation honestly having nothing to add is not a run failure).
-- **Sandbox** — Ephemeral container running the sandbox HTTP worker. The harness submits a command (`POST /exec`, signed) and retrieves its result by one of two **transports** (see next entry) rather than holding a long-lived `/exec` stream. `GET /exec/{execId}` returns the terminal result signed fresh at request time — the poll primitive in poll mode, and the recovery pull in callback mode.
-- **Transport (`SandboxTransport`)** — How a command's progress events and terminal result reach the host: **`poll`** (default) or **`callback`**. Backend-independent, chosen by the embedder at its composition root and carried to the container as `SANDBOX_TRANSPORT`. In **poll** mode the host polls `GET /exec/{execId}?since={cursor}` for a signed `{ status, events[], cursor, result? }`; the sandbox initiates nothing, needs no egress, and on Docker is confined by an in-container `iptables -P OUTPUT DROP` firewall (a root entrypoint with `CAP_NET_ADMIN` installs it, then `setpriv`-drops to uid 1000). A dead sandbox in poll mode fast-fails in-loop: sustained `unavailable` polls escalate to a durable `isAlive` probe (`sandbox/liveness.ts`), and an observably dead machine returns the synthetic-failure result without waiting out `step.timeout` (the watchdog's synthetic-complete is the callback-mode path). In **callback** mode the sandbox POSTs signed callbacks to `CORTEX_BASE_URL`, the embedder runs the ingress, and `awaitExec` uses `DBOS.recv` with the pull as its recovery backstop. There is no gateway sidecar and no `--internal` network — two transports removed the contradiction the gateway existed to reconcile. The local CLI defaults to poll.
-- **Active-sandbox registry** — Set of Sandbox machines currently bound to a running Step. Persisted as a projection over `cortex_step_executions` (rows with non-null `sandbox_ref` and `status='running'`). Owned by `state/active-sandboxes.ts`: written by `sandbox/create-sandbox.ts` when a machine is minted, cleared on teardown, and enumerated by the liveness watchdog (`sandbox/watchdog.ts`) which shards the registry and fans out per-shard `isAlive` checks. Dead-but-not-completed entries unblock the recv with a synthetic failure-`complete`.
-- **Orphaned sandbox** — A sandbox machine running in a configured backend that nothing in the harness references: no registry row, no DBOS step-cache entry. Produced when the process dies after the backend create but before the `sandbox.create` step checkpoint. Invisible to the registry-driven watchdog; only a backend inventory sweep can find it.
-- **Stale registry row** — A `cortex_step_executions` row still `status='running'` with a `sandbox_ref` whose owning workflow is terminal (typically a fail-fast-cancelled sibling — cancellation runs no teardown, so the machine may still be running too). The watchdog sees it dead, skips the synthetic send (workflow not PENDING/ENQUEUED). Cleared by the **sandbox reaper**, not the watchdog.
-- **Sandbox reaper** — A `@DBOS.scheduled` workflow (`sandbox/reaper.ts`, registered beside the watchdog) that cleans up orphaned sandboxes and stale registry rows. Distinct from the liveness watchdog: it sweeps **backend→registry** (the watchdog sweeps registry→backend), unsharded, on a slower cadence. Lists sandbox machines via `SandboxClient.listManagedSandboxes()`, reads their owner workflow metadata, and on a terminal/missing workflow status tears the machine down and reconciles the row. Keys off workflow status (written at enqueue, before the machine exists) so an in-flight create is never mistaken for an orphan. Cleanup is separate because DBOS forbids running a teardown step in a cancelled workflow ([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)).
-- **Workspace** — The analysis file tree + vector index under one consistent path model shared by every agent (see **Workspace path model** below). The tree's host root comes from the embedder's `resolveWorkspaceRoot(resourceId)` seam ([workspace-root-resolution](openspec/specs/workspace-root-resolution/spec.md)): the embedder owns *where* each analysis's tree lives, the harness owns the layout inside it; sandboxes always see it at `/{resourceId}` regardless. It has two surfaces with different requirements:
-  - **Read surface** (`WorkspaceFilesystem`) — `read_file`, `list_files`, `file_stat`, `grep`, semantic `workspace_search`. Operates on the filesystem and index directly; **sandbox-independent**. Available to non-sandbox agents (the conversation agent reads and searches the workspace without ever holding a sandbox).
-  - **Mutate surface** (`WorkspaceMutator`) — `write_file`, `edit_file`, plus the raw `execute_command` chokepoint. **Sandbox-gated**: `write_file`/`edit_file` resolve, confine to the agent's writable working directory, write through the sandbox, and record provenance — all behind the one `WorkspaceMutator` seam, not re-implemented per tool. `execute_command` defaults its `cwd` to the same working directory.
-- **Workspace working directory** — Each agent run has one writable **working directory**, supplied by the composition root: a plannable step → `runs/{runId}/{stepId}`; the data profiler → `runs/data-profile/profile`; a report build → `reports/{reportId}`; the conversation agent → the analysis root (read-only — chat cannot write). It is the agent's `execute_command` `cwd` and the confinement root for its writes.
-- **Workspace path model** — One resolution rule across every file tool (`read_file`, `list_files`, `file_stat`, `grep`, `write_file`, `edit_file`, `execute_command`) and the scripts agents run:
-  - **Relative paths are frame-local** — they resolve against the agent's working directory. `output/x.csv` names the same byte whether a script writes it, `write_file` writes it, or `read_file` reads it back.
-  - **Absolute `/{resourceId}/…` paths are canonical and frame-independent** — they ignore the working directory and resolve against the analysis root in every frame. This is the interchange format: any path that crosses an agent or frame boundary (passed to a sub-agent, stored in working memory, referenced in a plan) MUST be absolute.
-  - **Reads roam, writes are confined.** Reads resolve anywhere in the analysis tree (read-only outside the working directory); a write outside the working directory returns `out_of_prefix` with no I/O. Out-of-tree or foreign-analysis paths return `out_of_scope`.
-  - The reserved artifact-subdir names (`scripts`, `output`, `figures`, `logs`, `notebooks`) MUST NOT be used as step ids — plan validation rejects them so a step directory never collides with a subdir convention. See [harness-workspace-tools](openspec/specs/harness-workspace-tools/spec.md).
-- **Target assessment** — Separate top-level entity (NOT a kind of analysis). Snapshot-style target dossier. Backed by `cortex_target_assessments`; runs the `executeTargetAssessment` workflow. Schema lives in `src/contracts/target-dossier.ts`.
-- **Skills** — Runtime knowledge packs (`skills/<name>/SKILL.md` + `references/`) declared per-agent via `AgentMeta.skills` and surfaced to sandbox agents by the `skill_search` / `skill_read` tools (keyword search, not vector); `shared/omics-general` loads for every analysis agent.
+- **Analysis** — A long-lived, resource-scoped entity. It has a conversation
+  thread, an input-file tree under `data/inputs/` (refer to **Input staging**),
+  and zero or more runs. Its identifier is `analysisId`, which is also the
+  `threadId` and the `resourceId`. Its lifecycle is
+  `created → active ↔ suspended → archived`.
+- **Input staging** — The **embedder** fills the `data/inputs/` tree of an
+  analysis. This work happens *before* a call to the harness, and it is not the
+  work of the harness ([data-profile-init](openspec/specs/data-profile-init/spec.md)).
+  The workflows and the tools of the harness expect a full tree. **The harness has
+  no staging seam, and no harness code calls stage.** The local CLI stages a file
+  when it copies or links a local file in its own repository. An input is
+  immutable, and it is staged one time only, thus a recovered run finds the tree
+  in place. Staging is not a durable step. `executeAnalysis` reads the tree
+  directly. `runDataProfile` receives the staged-input manifest (`StagedInput[]`,
+  the one staging *type* of the harness) in its workflow input. The embedder
+  handles a staging failure, and it marks the profile `failed`.
+- **Run** — One execution of a workflow against an analysis. Its identifier is
+  `runId`, a bare UUID that *is* the DBOS `workflowID`. There is no composite
+  prefix and no separate `workflow_id` column. A run has a run directory at
+  `runs/{runId}/` in the workspace tree of the analysis, with one subdirectory for
+  each step. The `runId` and the durable `RunSession` are minted at the async edge,
+  before `DBOS.startWorkflow`. The session rides in the workflow input, and DBOS
+  replay builds it again on resume.
+- **Step** — One node in an analysis plan DAG. Each step runs in its own sandbox
+  container. The DAG is **dependency-gated and budget-admitted**. The parent
+  workflow starts the child workflow of a step under two conditions. Each of its
+  `depends_on` steps must be complete. The machine resource budget must have
+  capacity for the declared resources of the step.
 
-## Session & capability seams
+  The budget is a snapshot in the workflow input at launch,
+  when the embedder configures one. There is no wave batching. With no budget,
+  each step with satisfied dependencies starts immediately. A step that has its
+  dependencies but waits for capacity is emitted as `queued` on the dag-state
+  part. A step that waits for a dependency stays `pending`. A topological *level*
+  can be computed for the UI, but it never gates the execution. A step ends in one
+  of three terminal states:
+  - **`completed`** — the agent stored its deliverables and ended cleanly.
+  - **`blocked`** — the agent called `report_blocker` to declare, with a reason,
+    that it could not do the step. This is a distinct, honest terminal status.
+  - **`failed`** — an unexpected error.
 
-The harness's identity model is **host-agnostic**: a session carries an *opaque* auth capability that the harness forwards but never inspects. Everything the harness reaches *outside itself* — issuing a durable run, recording artifacts, resolving call attribution, publishing a report preview — is an injectable **seam** the harness *declares* and an **embedder** *wires* ([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)). The OSS build wires trivial **local realizations** for all of them. The harness never branches on which realization is bound, and unit tests pass fakes.
+  The execution is **fail-fast**. The first step that is `failed` *or* `blocked`
+  cancels the siblings that still run, and it stops the schedule of new steps.
+- **Step deliverable** — The output of a step is its **persisted files**: the
+  scripts that it wrote (`scripts/`), the data that those scripts computed
+  (`output/`), and the figures (`figures/`). The conclusions come from those
+  computed output files, which come from the input data. A conclusion never comes
+  from the stdout of `execute_command`. An agent that cannot make those files
+  calls `report_blocker`, and it does not improvise an inline result. The harness
+  does not conclude that something went wrong from a count of the outputs. Honesty
+  is structural, because the blocker tool gives it, and a real error shows as
+  `failed`.
+- **Blocker** — The terminal escape hatch. An agent calls
+  `report_blocker({ reason })` when it genuinely cannot do its work. Examples are
+  absent data, a tool that is not available, and a broken environment.
+  The model is the `report_blocker` of the synthesizer (the shared `OutcomeHolder`
+  mechanism). For a **step** agent it gives the `blocked` status and it fails
+  fast. For the **synthesizer** it gives a `skipped` outcome that is not fatal,
+  because the analysis steps already delivered. Interpretive aggregation that
+  honestly has nothing to add is not a run failure.
+- **Sandbox** — An ephemeral container that runs the sandbox HTTP worker. The
+  harness submits a command with a signed `POST /exec`, then it gets the result
+  through one of two **transports** (refer to the next entry). It does not hold a
+  long-lived `/exec` stream. `GET /exec/{execId}` gives the terminal result, and
+  the sandbox signs it fresh at request time. This is the poll primitive in poll
+  mode, and the recovery pull in callback mode.
+- **Transport (`SandboxTransport`)** — How the progress events and the terminal
+  result of a command come to the host: **`poll`** (the default) or
+  **`callback`**. It is backend-independent. The embedder selects it at its
+  composition root, and it goes to the container as `SANDBOX_TRANSPORT`.
+
+  In **poll** mode the host polls `GET /exec/{execId}?since={cursor}` for a signed
+  `{ status, events[], cursor, result? }`. The sandbox initiates nothing and needs
+  no egress. On Docker an in-container `iptables -P OUTPUT DROP` firewall confines
+  it: a root entrypoint with `CAP_NET_ADMIN` installs the rule, then `setpriv`
+  drops to uid 1000. The exec port is published to `127.0.0.1` only. The poll loop
+  is durable, and its per-attempt step names are unique
+  (`sandbox.poll-exec-result.${execId}.${n}`). A dead sandbox in poll mode fails
+  fast in the loop. Sustained
+  `unavailable` polls escalate to a durable `isAlive` probe
+  (`sandbox/liveness.ts`), and a machine that is dead gives the synthetic-failure
+  result without a wait for `step.timeout`. The synthetic-complete of the watchdog
+  is the callback-mode path.
+
+  In **callback** mode the sandbox POSTs signed callbacks to `CORTEX_BASE_URL`,
+  and the embedder runs the ingress. `awaitExec` uses `DBOS.recv`, with the pull
+  as its recovery backstop. There is no gateway sidecar and no `--internal` network,
+  because the two transports removed the contradiction that the gateway existed to
+  reconcile. The local CLI defaults to poll.
+- **Active-sandbox registry** — The set of sandbox machines that are bound to a
+  running step at this time. It is a projection over `cortex_step_executions`: the
+  rows with a non-null `sandbox_ref` and `status='running'`. `state/active-sandboxes.ts`
+  has it. `sandbox/create-sandbox.ts` writes a row when it mints a machine, and
+  the teardown clears it. The liveness watchdog (`sandbox/watchdog.ts`) enumerates
+  the registry, shards it, and fans out one `isAlive` check for each shard. An
+  entry that is dead but not complete unblocks the recv with a synthetic
+  failure-`complete`.
+- **Orphaned sandbox** — A sandbox machine that runs in a configured backend, but
+  nothing in the harness refers to it: no registry row, and no DBOS step-cache
+  entry. It comes from a process that dies after the backend creation but before
+  the `sandbox.create` step checkpoint. The registry-driven watchdog cannot see it.
+  Only a backend inventory sweep finds it.
+- **Stale registry row** — A `cortex_step_executions` row that is still
+  `status='running'` with a `sandbox_ref`, but the workflow that owns it is
+  terminal. This is usually a sibling that fail-fast canceled, because a
+  cancellation runs no teardown, thus the machine can still run too. The watchdog
+  sees it as dead and skips the synthetic send, because the workflow is not
+  PENDING or ENQUEUED. The **sandbox reaper** clears it, not the watchdog.
+- **Sandbox reaper** — A `@DBOS.scheduled` workflow (`sandbox/reaper.ts`,
+  registered beside the watchdog) that cleans up an orphaned sandbox and a stale
+  registry row. It is distinct from the liveness watchdog: it sweeps
+  **backend→registry**, the watchdog sweeps registry→backend. It is unsharded, and
+  it runs on a slower cadence. It lists the sandbox machines with
+  `SandboxClient.listManagedSandboxes()`, and it reads the workflow metadata of the
+  owner. On a terminal or missing workflow status it tears the machine down and it
+  reconciles the row. It keys off the workflow status, which is written at enqueue
+  before the machine exists. Thus a creation that is in flight is never an orphan.
+  The cleanup is separate because DBOS does not permit a teardown step in a
+  canceled workflow ([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)).
+- **Workspace** — The analysis file tree and the vector index under one consistent
+  path model that each agent shares (refer to **Workspace path model** below). The
+  host root of the tree comes from the `resolveWorkspaceRoot(resourceId)` seam of
+  the embedder ([workspace-root-resolution](openspec/specs/workspace-root-resolution/spec.md)):
+  the embedder has *where* the tree of each analysis lives, and the harness has the
+  layout inside it. A sandbox always sees it at `/{resourceId}`. The workspace has
+  two surfaces with different requirements:
+  - **Read surface** (`WorkspaceFilesystem`) — `read_file`, `list_files`,
+    `file_stat`, `grep`, and the semantic `workspace_search`. It operates on the
+    file system and the index directly, and it is **sandbox-independent**. It is
+    available to an agent with no sandbox. The conversation agent reads and
+    searches the workspace and never holds a sandbox.
+  - **Mutate surface** (`WorkspaceMutator`) — `write_file` and `edit_file`, plus
+    the raw `execute_command` chokepoint. It is **sandbox-gated**. `write_file`
+    and `edit_file` resolve the path, confine it to the writable working directory
+    of the agent, write through the sandbox, and record the provenance. All of
+    that is behind the one `WorkspaceMutator` seam, and no tool does it again.
+    `execute_command` defaults its `cwd` to the same working directory.
+- **Workspace working directory** — Each agent run has one writable **working
+  directory** that the composition root supplies. A plannable step gets
+  `runs/{runId}/{stepId}`. The data profiler gets `runs/data-profile/profile`. A
+  report build gets `reports/{reportId}`. The conversation agent gets the analysis
+  root, which is read-only, because chat cannot write. The working directory is
+  the `cwd` of `execute_command` for that agent, and it is the confinement root
+  for its writes.
+- **Workspace path model** — One resolution rule across each file tool
+  (`read_file`, `list_files`, `file_stat`, `grep`, `write_file`, `edit_file`,
+  `execute_command`) and the scripts that agents run:
+  - **A relative path is frame-local.** It resolves against the working directory
+    of the agent. `output/x.csv` names the same byte when a script writes it, when
+    `write_file` writes it, and when `read_file` reads it again.
+  - **An absolute `/{resourceId}/…` path is canonical and frame-independent.** It
+    ignores the working directory and resolves against the analysis root in each
+    frame. This is the interchange format. A path that crosses an agent boundary
+    or a frame boundary MUST be absolute. Examples are a path passed to a
+    sub-agent, a path stored in working memory, and a path in a plan.
+  - **A read roams, but a write is confined.** A read resolves anywhere in the
+    analysis tree, and it is read-only outside the working directory. A write
+    outside the working directory gives `out_of_prefix` with no I/O. A path out of
+    the tree or in a different analysis gives `out_of_scope`.
+  - The reserved artifact-subdir names (`scripts`, `output`, `figures`, `logs`,
+    `notebooks`) MUST NOT be step ids. Plan validation rejects them, thus a step
+    directory never collides with a subdir convention. Refer to
+    [harness-workspace-tools](openspec/specs/harness-workspace-tools/spec.md).
+- **Target assessment** — A separate top-level entity. It is NOT a kind of
+  analysis. It is a snapshot-style target dossier. `cortex_target_assessments`
+  holds it, and it runs the `executeTargetAssessment` workflow. Its schema is in
+  `src/contracts/target-dossier.ts`.
+- **Skills** — Runtime knowledge packs (`skills/<name>/SKILL.md` plus
+  `references/`). Each agent declares them with `AgentMeta.skills`, and the
+  `skill_search` and `skill_read` tools surface them to a sandbox agent. The
+  search is by keyword, not by vector. `shared/omics-general` loads for each
+  analysis agent.
+
+## Session and capability seams
+
+The identity model of the harness is **host-agnostic**. A session carries an
+*opaque* auth capability that the harness forwards but never inspects. Each thing
+that the harness reaches *outside itself* is an injectable **seam** that the
+harness *declares* and an **embedder** *wires*
+([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)).
+Examples are:
+
+- the issue of a durable run
+- the record of an artifact
+- the resolution of the call attribution
+- the publication of a report preview.
+
+The OSS build wires a trivial **local realization** for each of them. The harness
+never branches on which realization is bound, and a unit test passes a fake.
 
 ### Session model
 
-- **Session** — Per-request identity is two lifetime-typed bundles built from immutable value objects (`Identity`, `Scope`, `Credential`, `Provenance`, `RunFrame`, `auth`). `RequestSession` is the live request value, has no `RunFrame`, MUST NOT be JSON-serialized into durable state. `RunSession` is durable + JSON-serializable, carries a `RunFrame`, and is constructed solely at the `RunAuthorizer` seam (below) — async/durable APIs accept only `RunSession`, so starting async work without authorizing a run is unrepresentable. Workflow bodies never re-authorize — `RunSession` rides in workflow input, DBOS replay reconstructs it on resume; child workflows derive their input via `forStep(parent.runSession, stepId)`. Both bundles satisfy the structural `AgentSession` type consumed by the loop and providers; neither carries resolved call-attribution headers. See [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md), [harness-session-model](openspec/specs/harness-session-model/spec.md), and `src/auth/types.ts`.
-- **`Identity`** — `{ user }`, always complete. The one piece of caller identity the harness itself reads.
-- **`Scope`** — Discriminated union describing what the session acts on: `{ kind: "analysis"; analysisId; threadId? }` or `{ kind: "target-assessment"; targetAssessmentId; billingContextId }`. Read by the harness for routing and storage; the seams key their behavior off it.
-- **`Provenance`** — `{ agentId; callPath }`, read-only. Code MUST NOT branch on `callPath`; it is for event `source` stamping and sub-agent lineage only.
-- **`RunFrame`** — `{ runId; stepId? }`, present only inside a workflow run. Its presence is what distinguishes a `RunSession` from a `RequestSession` at the type level.
-- **`Credential` (opaque)** — A branded value the harness never reads. The harness only ever *forwards* it; its concrete shape is defined entirely embedder-side. The variant an OSS reader meets is the trivial local one. Branding makes the "never branch on credential kind" promise type-enforced.
-- **`AuthContext` (opaque auth capability)** — The `auth` field every session carries and the **sole source** of credential/scope behind a session (there is no top-level `orgId`/`credential` field). The harness forwards it untouched and never downcasts it; embedder adapters may downcast their own concrete shape. The OSS build supplies a trivial empty `auth` (`makeLocalAuth`, `auth/local-auth-context.ts`); the local harness never inspects it.
+- **Session** — The per-request identity is two lifetime-typed bundles, built from
+  immutable value objects (`Identity`, `Scope`, `Credential`, `Provenance`,
+  `RunFrame`, `auth`). `RequestSession` is the live request value. It has no
+  `RunFrame`, and it MUST NOT be JSON-serialized into durable state. `RunSession`
+  is durable and JSON-serializable, it carries a `RunFrame`, and the
+  `RunAuthorizer` seam (below) is its only constructor. An async or durable API
+  accepts only a `RunSession`, thus async work that starts without an authorized
+  run is unrepresentable. A workflow body never authorizes again: the `RunSession`
+  rides in the workflow input, and DBOS replay builds it again on resume. A child
+  workflow gets its input from `forStep(parent.runSession, stepId)`. The two
+  bundles both satisfy the structural `AgentSession` type that the loop and the
+  providers consume, and neither carries a resolved call-attribution header. Refer
+  to [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md),
+  [harness-session-model](openspec/specs/harness-session-model/spec.md), and
+  `src/auth/types.ts`.
+- **`Identity`** — `{ user }`, always complete. It is the one part of the caller
+  identity that the harness itself reads.
+- **`Scope`** — A discriminated union that describes what the session acts on:
+  `{ kind: "analysis"; analysisId; threadId? }` or
+  `{ kind: "target-assessment"; targetAssessmentId; billingContextId }`. The
+  harness reads it for the routing and the storage, and the seams key their
+  behavior off it.
+- **`Provenance`** — `{ agentId; callPath }`, read-only. Code MUST NOT branch on
+  `callPath`. It is for the `source` stamp of an event and for sub-agent lineage
+  only.
+- **`RunFrame`** — `{ runId; stepId? }`, present only inside a workflow run. Its
+  presence is what makes a `RunSession` different from a `RequestSession` at the
+  type level.
+- **`Credential` (opaque)** — A branded value that the harness never reads. The
+  harness only ever *forwards* it. The embedder side defines its concrete shape
+  fully. The variant that an OSS reader meets is the trivial local one. The brand
+  makes the promise "never branch on the credential kind" a type rule.
+- **`AuthContext` (the opaque auth capability)** — The `auth` field that each
+  session carries, and the **sole source** of the credential and the scope behind
+  a session. There is no top-level `orgId` field and no top-level `credential`
+  field. The harness forwards it untouched and never downcasts it. An embedder
+  adapter can downcast its own concrete shape. The OSS build gives a trivial empty
+  `auth` (`makeLocalAuth`, `auth/local-auth-context.ts`), and the local harness
+  never inspects it.
 
 ### The six seams
 
-Each seam is an interface the harness declares; an embedder binds one realization at the composition root.
+The harness declares each seam as an interface. An embedder binds one realization
+at the composition root.
 
-- **`RunAuthorizer`** (`execution/run-authorizer.ts`) — turns the opaque caller `auth` into a durable `RunSession` at the async edge. The sole constructor of `RunSession`, so it is the single chokepoint where in-process identity becomes durable workflow identity. OSS realization: `auth/local-run-authorizer.ts` issues a `RunSession` with no remote mint and no revoke — authorization is purely structural.
-- **`ResolveBilling`** (`billing/resolver.ts`) — returns a ready-to-attach call-attribution header map the provider spreads at the LLM/embedding call site; resolved lazily, only at the wire boundary. OSS realization: `createNoopBillingResolver` returns `{}` (empty headers).
-- **`ArtifactRegistry`** (`execution/artifact-registry.ts`) — post-step artifact recording (content-attested lineage): `register` the step's manifest + `sync` its bytes to permanent storage, both session-scoped (the adapter authenticates per-run off the session). OSS realization: `createNoopArtifactRegistry` — registers nothing externally and reports zero failures (the local `cortex_artifacts` ledger is written by the harness around the seam); `sync` is a no-op (bytes already live in the local workspace tree).
-- **`RunCharge`** (`billing/run-charge.ts`) — the run-level billing bracket `executeAnalysis` opens at init and closes on the terminal path (one of four reasons). Local realization: `createNoopRunCharge` — no-op.
-- **`UsageRecorder`** (`billing/usage-recorder.ts`) — one attributed `LlmUsageRecord` per completed LLM call, delivered from the loop; fire-and-forget by contract, so a realization must neither throw nor block, and consumers upsert on the record's replay-stable `recordKey`. Local realization: `createNoopUsageRecorder` (`billing/noop-usage-recorder.ts`) — drops every record.
-- **`PreviewPublisher`** (`tools/report/preview-publisher.ts`) — report preview URL publishing. Local realization: `UnavailablePreviewPublisher` — reports still build; preview URL minting is gated.
-- **`RunLauncher`** (`execution/run-launcher.ts`) — starts a registered workflow under a caller-chosen id (`launch` fire-and-forget, `launchAndAwait` inline with cancel-on-abort, cancellation hidden behind a discriminated `LaunchOutcome`). The DBOS quarantine seam: it is why `execute_plan` / `run_ephemeral` do not import the durability engine. Single host-neutral realization `createDbosRunLauncher` (`execution/dbos-run-launcher.ts`) shared by every embedder.
+- **`RunAuthorizer`** (`execution/run-authorizer.ts`) — it changes the opaque
+  caller `auth` into a durable `RunSession` at the async edge. It is the sole
+  constructor of a `RunSession`, thus it is the single chokepoint where the
+  in-process identity becomes the durable workflow identity. OSS realization:
+  `auth/local-run-authorizer.ts` issues a `RunSession` with no remote mint, no jti,
+  and no revoke, thus the authorization is purely structural.
+- **`ResolveBilling`** (`billing/resolver.ts`) — it gives a call-attribution
+  header map that the provider spreads at the LLM or embedding call site. It
+  resolves lazily, only at the wire boundary. OSS realization:
+  `createNoopBillingResolver` gives `{}`, an empty header map.
+- **`ArtifactRegistry`** (`execution/artifact-registry.ts`) — post-step artifact
+  recording with content-attested lineage. `register(input, session)` and
+  `sync(input, session)` are the two methods. `register` takes the manifest of the
+  step, and `sync` copies its bytes to permanent storage. The two are
+  session-scoped, and the adapter authenticates for each run off the session. OSS
+  realization: `createNoopArtifactRegistry` registers nothing outside and reports
+  zero failures, because the harness itself writes the local `cortex_artifacts`
+  ledger around the seam. Its `sync` does nothing, because the bytes are already
+  in the local workspace tree.
+- **`RunCharge`** (`billing/run-charge.ts`) — the run-level billing bracket that
+  `executeAnalysis` opens at the init and closes on the terminal path, for one of
+  four reasons. Local realization: `createNoopRunCharge` does nothing.
+- **`UsageRecorder`** (`billing/usage-recorder.ts`) — one attributed
+  `LlmUsageRecord` for each completed LLM call, delivered from the loop. The
+  contract makes it fire-and-forget, thus a realization must not throw and must
+  not block. A consumer upserts on the replay-stable `recordKey` of the record.
+  Local realization: `createNoopUsageRecorder`
+  (`billing/noop-usage-recorder.ts`) drops each record.
+- **`PreviewPublisher`** (`tools/report/preview-publisher.ts`) — it publishes the
+  URL of a report preview. Local realization: `UnavailablePreviewPublisher`. A
+  report still builds, but the mint of a preview URL is gated.
+- **`RunLauncher`** (`execution/run-launcher.ts`) — it starts a registered
+  workflow under an id that the caller chooses. `launch` is fire-and-forget.
+  `launchAndAwait` is inline with cancel-on-abort, and a discriminated
+  `LaunchOutcome` hides the cancellation. It is the DBOS quarantine seam, and it
+  is the reason that `execute_plan` and `run_ephemeral` do not import the
+  durability engine. One host-neutral realization, `createDbosRunLauncher`
+  (`execution/dbos-run-launcher.ts`), is shared by each embedder.
 
-### Embedder / composition roots
+### Embedder and composition roots
 
-The program that embeds the harness and wires its seams. The harness exports `assembleCoreRuntime` plus local seam realizations; the host owns its transport, process bootstrap, and any non-local adapters.
+The program that embeds the harness and wires its seams. The harness exports
+`assembleCoreRuntime` and the local seam realizations. The host has its transport,
+its process bootstrap, and any adapter that is not local.
 
 ## Streaming
 
-- **Chat data part** — Typed JSON event emitted by workflows. Persisted in the DBOS-backed stream (no separate JSONB blob). Consumers read Cortex-native types directly (no AI SDK mapping).
+- **Chat data part** — A typed JSON event that a workflow emits. It is persisted
+  in the DBOS-backed stream, and there is no separate JSONB blob. A consumer reads
+  the Cortex-native types directly, with no AI SDK mapping.
 
 ---
 
@@ -68,92 +300,423 @@ The program that embeds the harness and wires its seams. The harness exports `as
 
 ### Workflow scope
 
-- **Chat is in-process**, single host per turn. The agent loop runs synchronously in the embedder's request path. If the process dies mid-turn the caller resends — no DBOS workflow rows for chat. See [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md).
-- **DBOS workflows** are reserved for *durable operations*: `executeAnalysis`, `executeTargetAssessment`, and the background `runDataProfile`. **Every sandbox-backed run is a DBOS workflow** — there is no in-process sandbox consumer, and no in-memory exec transport. Sandbox exec callbacks route exclusively through `DBOS.send`/`recv`.
-- **Turn-scoped workflow** — `runEphemeral` is a DBOS workflow with a deliberately non-durable flavor: started by the `run_ephemeral` chat tool, **awaited inline** (`handle.getResult()` — the only chat tool that blocks on a workflow result), **cancelled** (`DBOS.cancelWorkflow`) when the chat turn disconnects, and **not recovered** after process death (the launch path cancels any `PENDING` `ephemeral:*` workflow for this executor before DBOS launch, so a re-run that would return its result to a dead turn never starts). It is a workflow only so its sandbox callbacks route via DBOS messaging like every other consumer; the **sandbox reaper** reaps its machine on cancel. See [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md).
+- **Chat is in-process**, one host for each turn. The agent loop runs
+  synchronously in the request path of the embedder. If the process dies in the
+  middle of a turn, the caller sends the message again. There are no DBOS workflow
+  rows for chat. Refer to
+  [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md).
+- **A DBOS workflow** is reserved for a *durable operation*: `executeAnalysis`,
+  `executeTargetAssessment`, and the background `runDataProfile`. **Each run that
+  a sandbox backs is a DBOS workflow.** A report is the exception: it renders
+  in-process with `iterate_report`, and it is not a DBOS workflow. There is no in-process sandbox consumer,
+  and no in-memory exec transport. A sandbox exec callback routes only through
+  `DBOS.send` and `DBOS.recv`.
+- **Turn-scoped workflow** — `runEphemeral` is a DBOS workflow with a deliberately
+  non-durable flavor. The `run_ephemeral` chat tool starts it. It is **awaited
+  inline** with `handle.getResult()`, and it is the only chat tool that blocks on
+  a workflow result. It is **canceled** with `DBOS.cancelWorkflow` when the chat
+  turn disconnects, and it is **not recovered** after the death of the process:
+  before the DBOS launch, the launch path cancels any `PENDING` `ephemeral:*`
+  workflow for this executor. Thus a re-run never starts, and no result goes to a
+  dead turn. It is a workflow only so that its sandbox callbacks route through
+  DBOS messaging like each other consumer. The **sandbox reaper** reaps its
+  machine on cancel. Refer to
+  [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md).
 
 ### Application service layer
 
-- **Application service (`app/`)** — Host-agnostic *ability* functions lifted out of the transport edge so every embedder can reuse them. Each is an `appFn(deps, params) → result` in the `app/chat-turn.ts` shape: **Deps** are construction-time values/seams (`pool`, `provider`, `embedder`, base paths, model ids), **Params** are call-time (`analysisId`/`runId`/`session`/`emit`), the return is a typed result. An app-fn owns the ability end-to-end — load → compute → persist → emit *domain* events — and owns none of the transport: no streaming/SSE framing, no HTTP status codes, no DBOS step boundary, no choice of which sink `emit` writes to or which billing the injected `embedder` carries. Members include `prepareChatTurn`, `assembleMessages`, `synthesizeRun`, and `data-profile-policy`.
+- **Application service (`app/`)** — Host-agnostic *ability* functions, lifted out
+  of the transport edge so that each embedder can use them again. Each one is an
+  `appFn(deps, params) → result` in the shape of `app/chat-turn.ts`. **Deps** are
+  construction-time values and seams (`pool`, `provider`, `embedder`, the base
+  paths, the model ids). **Params** are call-time (`analysisId`, `runId`,
+  `session`, `emit`). The return is a typed result. An app-fn has the ability from
+  end to end: load, compute, persist, and emit a *domain* event. It has none of
+  the transport:
+  - no stream framing and no SSE framing
+  - no HTTP status code
+  - no DBOS step boundary
+  - no choice of the sink that `emit` writes to
+  - no choice of the billing that the injected `embedder` carries.
+
+  Its members include `prepareChatTurn`,
+  `assembleMessages`, `synthesizeRun`, and `data-profile-policy`.
 
 ### Decomposition
 
-- `executeAnalysis` = parent workflow.
-- Per wave: one **child workflow per sandbox-agent run**, dispatched in parallel via `DBOS.startChildWorkflow`. Each child body is the sandbox-agent loop with per-LLM-call and per-tool-call DBOS steps inside.
-- `executeTargetAssessment` follows the same pattern; its `.foreach` sub-workflows are DBOS child workflows.
+- `executeAnalysis` is the parent workflow.
+- For each wave there is one **child workflow for each sandbox-agent run**,
+  dispatched in parallel with `DBOS.startChildWorkflow`. Each child body is the
+  sandbox-agent loop, with one DBOS step for each LLM call and each tool call
+  inside it.
+- `executeTargetAssessment` obeys the same pattern. Its `.foreach` sub-workflows
+  are DBOS child workflows.
 
 ### Post-step pipeline
 
-After a step's sandbox-agent loop returns, the child workflow body (`sandbox-step.ts`) runs a **typed post-step pipeline**. It walks the step's writable artifact tree **once** into a hashed manifest, then threads that manifest — and each stage's typed output — explicitly through the body: `manifest → file-metadata entries / step summary / reconciled manifest → vector index + step-detail emit`. Stage outputs are values the body holds and passes downstream (`PostStepArtifacts`), not shared mutable state — there is no module-global stash, the producer→consumer ordering is a type constraint, and `collectStepOutputs` is a pure function of the threaded products. **Integrity stages fail-fast, enrichment stages degrade** ([artifact-manifest](openspec/specs/artifact-manifest/spec.md)): artifact **registration** and **sync** are content-attested lineage — a drift, a whole-activity rejection, or an unhashable input is terminal and fails the step loudly (transient registry errors throw and DBOS-retry; an unavailable registry is a skip); **metadata / summary / vector-index** stay best-effort (`safeRun`/`safeRunValue` logs and degrades) so a flaky LLM describer never sinks a multi-hour run. The two post-step **LLM producers** (`generateFileMetadata`, `generateStepSummary`) are `DBOS.runStep`-wrapped so their outputs are checkpointed: the conditional terminal emits they gate become replay-stable and the LLM calls stop re-firing on recovery ([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)). The remaining stages (walk / reconcile / sync / index) still run inline and re-execute on replay; durably caching them is a deferred follow-up the typed returns enable.
+After the sandbox-agent loop of a step returns, the child workflow body
+(`sandbox-step.ts`) runs a **typed post-step pipeline**. It walks the writable
+artifact tree of the step **one time** into a hashed manifest. Then it threads
+that manifest, and the typed output of each stage, explicitly through the body:
+`manifest → file-metadata entries / step summary / reconciled manifest → vector
+index + step-detail emit`.
 
-**File metadata is lossless.** `generateFileMetadata` describes artifacts via a focused `runAgent` tool-call loop (mirrors `generatePlan`): the describer agent calls `submit_file_metadata` keyed **by path**, and the tool validates each path against the known artifact set — hallucinated paths are rejected with feedback, uncovered files are reported as `remaining`. Descriptions match files by path, never by array position, so a dropped or reordered entry cannot misalign onto the wrong file. Every input artifact yields exactly one result entry: a file the model never describes gets a **deterministic, no-LLM fallback** description (path + inferred type + size) — logged, but never silently dropped or chunked out of the index.
+A stage output is a value that the body holds and passes downstream
+(`PostStepArtifacts`), not shared mutable state. Thus there is no module-global
+stash, the producer-to-consumer order is a type constraint, and
+`collectStepOutputs` is a pure function of the threaded products.
+
+**An integrity stage fails fast, and an enrichment stage degrades**
+([artifact-manifest](openspec/specs/artifact-manifest/spec.md)). Artifact
+**registration** and **sync** are content-attested lineage: a drift, a
+whole-activity rejection, or an input that cannot be hashed is terminal, and it
+fails the step loudly. A transient registry error throws, and DBOS retries it. A
+registry that is not available is a skip. The **metadata, summary, and
+vector-index** stages stay best-effort (`safeRun` and `safeRunValue` log and
+degrade), thus a flaky LLM describer never sinks a run of many hours.
+
+The two post-step **LLM producers** (`generateFileMetadata`,
+`generateStepSummary`) are wrapped in `DBOS.runStep`, thus their outputs are
+checkpointed. The conditional terminal emits that they gate then become
+replay-stable, and the LLM calls stop the re-fire on recovery
+([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)). The
+other stages (walk, reconcile, sync, index) still run inline and run again on
+replay. A durable cache for them is a deferred follow-up that the typed returns
+make possible.
+
+**File metadata is lossless.** `generateFileMetadata` describes an artifact
+through a focused `runAgent` tool-call loop, which mirrors `generatePlan`. The
+describer agent calls `submit_file_metadata` keyed **by path**, and the tool
+validates each path against the known artifact set. A path that the model
+invented is rejected with feedback, and a file with no coverage is reported as
+`remaining`. A description matches a file by path, never by array position, thus
+a dropped or reordered entry cannot land on the wrong file. Each input artifact
+gives exactly one result entry. A file that the model never describes gets a
+**deterministic description with no LLM**: the path, the inferred type, and the
+size. That fallback is logged, and a file is never dropped in silence and never
+chunked out of the index.
 
 ### Workflow recovery
 
-No standing component (the harness-durable-runtime spec). The embedder supplies a stable `executorID` to DBOS. When the same executor identity launches again, DBOS recovery can reclaim its predecessor's in-flight workflows. The harness does not provide an HTTP recovery route; any operator-facing recovery control belongs to the host.
+There is no standing component (the harness-durable-runtime spec). The embedder
+supplies a stable `executorID` to DBOS. When the same executor identity launches
+again, DBOS recovery can reclaim the in-flight workflows of its predecessor. The
+harness gives no HTTP recovery route. Any operator-facing recovery control belongs
+to the host.
 
 ### Sandbox exec
 
-See [harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md) (protocol) and [harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md) (callback auth).
+Refer to [harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md) for
+the protocol and for the callback auth.
 
-Two distinct lifetimes — do not conflate them:
+Two distinct lifetimes. Do not conflate them:
 
-- **Exec command** — one `submit → recv result`. Many per sandbox; most are near-instant (`ls`, `find`) and produce only a finished message. `submitExec` POSTs the command with `execId = "${workflowId}:${stepId}:${functionId}"`; sandbox-server runs it in the background and idempotency-dedups duplicate submits. The workflow body `DBOS.recv`s the result, bounded by `step.timeout` (a single command may legitimately run hours). **No per-exec heartbeats.**
-- **Sandbox machine** — one per step, long-lived; the sandbox-agent loop issues many commands into the *same* container. Its concerns are machine-level: did it **start**, is it still **alive** (not crashed/OOMKilled/node-lost). Lifecycle (create/teardown) is owned by the child workflow as DBOS steps.
+- **Exec command** — one submit, then one recv of the result. There are many for
+  each sandbox, and most are near-instant (`ls`, `find`) and make only a finished
+  message. `submitExec` POSTs the command with
+  `execId = "${workflowId}:${stepId}:${functionId}"`. sandbox-server runs it in
+  the background and dedups a duplicate submit by idempotency. The workflow body
+  does `DBOS.recv` for the result, bounded by `step.timeout`, because one command
+  can legitimately run for hours. **There are no per-exec heartbeats.**
+- **Sandbox machine** — one for each step, and long-lived. The sandbox-agent loop
+  issues many commands into the *same* container. Its concerns are machine-level:
+  did it **start**, and is it still **alive** (not crashed, not OOMKilled, not
+  node-lost). The child workflow has the lifecycle (the creation and the teardown)
+  as DBOS steps.
 
-- **Events are sandbox-lifetime, on-change, coalesced.** The sandbox executor diffs its working tree and emits an update only when it changes (not per exec). Meaningful progress events flow sandbox → `POST /sandbox/:execId/event` → `DBOS.send` (per-exec topic) → the workflow body's `recv → verify HMAC → writeStream` forwarding loop. `DBOS.writeStream` is workflow-body-only, so the body — never the HTTP route — is the sole stream writer.
-- **Sandbox events are folded into typed per-step parts in the sandbox-step body.** Raw per-exec events never reach the observer as-is — one translator in the `sandbox-step.ts` `emit` chokepoint maps them to the typed parts the UI renders: the agent loop's `tool-started` → `data-step-activity` (phase `executing`, phrased by the called tool's own `describeCall` hook via `createDetailResolver(agent.tools)`, falling back to the tool name), and the executor's `file-tree` delta → `data-step-file-tree` (the body folds the per-exec `added`/`modified`/`removed` deltas into a per-step path set and emits the **full** tree, paths-only). Both use a stable per-step reconciling id, so the run-stream fold + observer collapse them latest-wins, and the terminal `walkArtifacts` tree reconciles onto the same file-tree id at step end. The fold is replay-stable because it is a 1:1 pure function of the checkpointed `recv` sequence (no Cortex-side timer/debounce — that would re-break [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)). Adding a new sandbox event kind is one case in that one translator.
-- **Completion** — the sandbox worker POSTs the final result to `/sandbox/:execId/complete`; the host callback handler verifies and forwards it with `DBOS.send` on the same per-exec topic with a `done` marker, which the forwarding loop recognizes and returns. One topic, one recv loop, no stuck recv.
-- **Liveness is per-sandbox-machine, not per-exec.** The oracle is always the backend inspect (`SandboxClient.isAlive(sandboxRef)`); who invokes it differs by transport. A `@DBOS.scheduled` workflow fans out over *active sandboxes* (registry = `cortex_step_executions` rows with `sandbox_ref` + status running) — sharded so no single invocation polls all sandboxes — and on dead + no completion recorded sends a synthetic failure-`complete` to unblock the recv (callback mode). In poll mode the await loop is its own fail-fast: sustained `unavailable` polls escalate to a durable `isAlive` probe (`sandbox/liveness.ts`) and a dead machine returns the synthetic failure in-loop — same oracle, same result constructor, no topic. Recovery also re-checks liveness before a recovered child continues a step. The `step.timeout`-bounded await is the durable backstop; the liveness verdict is the fail-fast.
-- **Create is two durable steps; cleanup is a separate reaper.** `sandbox.mint` checkpoints the machine identity (`sbx-{run8}-{uuid4}` + HMAC secret) before `sandbox.create` spawns it, so a crash mid-create re-runs the spawn and **adopts** the existing machine rather than leaking a second one ([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)). The **sandbox reaper** is the sole cleanup for the machines this doesn't cover (cancellation leaks, scale-down orphans) — see its glossary entry above.
+Other facts:
+
+- **Events are sandbox-lifetime, on-change, and coalesced.** The sandbox executor
+  diffs its working tree and emits an update only when the tree changes, not for
+  each exec. A meaningful progress event flows on this path:
+  - from the sandbox to `POST /sandbox/:execId/event`
+  - to `DBOS.send` on the per-exec topic
+  - to the forwarding loop of the workflow body.
+
+  That loop does recv, then it verifies the HMAC, then it does `writeStream`.
+- **A sandbox event is folded into a typed per-step part in the sandbox-step
+  body.** A raw per-exec event never reaches the observer as it is. One translator
+  in the `emit` chokepoint of `sandbox-step.ts` maps it to the typed part that the
+  UI renders. The `tool-started` of the agent loop becomes `data-step-activity`
+  with phase `executing`. The `describeCall` hook of the called tool phrases it,
+  through `createDetailResolver(agent.tools)`. The tool name is the fallback.
+  The `file-tree` delta of the executor becomes `data-step-file-tree`: the body
+  folds the per-exec `added`, `modified`, and `removed` deltas into a per-step path
+  set, and it emits the **full** tree, paths only. Both use a stable per-step
+  reconciling id, thus the run-stream fold and the observer collapse them
+  latest-wins. The terminal `walkArtifacts` tree reconciles onto the same file-tree
+  id at the end of the step. The fold is replay-stable because it is a 1:1 pure
+  function of the checkpointed `recv` sequence. There is no Cortex-side timer and
+  no debounce, because that would break
+  [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md) again.
+- **Completion** — the sandbox worker POSTs the final result to
+  `/sandbox/:execId/complete`. The host callback handler verifies it and forwards
+  it with `DBOS.send` on the same per-exec topic, with a `done` marker. The
+  forwarding loop recognizes the marker and returns. One topic, one recv loop, and
+  no stuck recv.
+- **Liveness is per-sandbox-machine, not per-exec.** The oracle is always the
+  backend inspect (`SandboxClient.isAlive(sandboxRef)`), but the transport decides
+  who invokes it. A `@DBOS.scheduled` workflow fans out over the *active
+  sandboxes* (the registry is the `cortex_step_executions` rows with a
+  `sandbox_ref` and status running). It is sharded, thus no single invocation
+  polls each sandbox. On dead with no completion recorded it sends a synthetic
+  failure-`complete` to unblock the recv, which is the callback mode. In poll mode
+  the await loop is its own fail-fast: sustained `unavailable` polls escalate to a
+  durable `isAlive` probe (`sandbox/liveness.ts`), and a dead machine gives the
+  synthetic failure in the loop. Same oracle, same result constructor, and no
+  topic. Recovery also checks the liveness again before a recovered child continues
+  a step. The await that `step.timeout` bounds is the durable backstop, and the
+  liveness verdict is the fail-fast.
+- **The creation is two durable steps, and the cleanup is a separate reaper.**
+  `sandbox.mint` checkpoints the machine identity (`sbx-{run8}-{uuid4}` plus the
+  HMAC secret) before `sandbox.create` spawns it. Thus a crash in the middle of the
+  creation runs the spawn again. The spawn **adopts** the existing machine, and it
+  does not leak a second one
+  ([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)). The
+  **sandbox reaper** is the sole cleanup for the machines that this does not
+  cover: a cancellation leak and a scale-down orphan. Refer to its glossary entry
+  above.
 
 ### Stream model
 
-- Single DBOS-backed stream per workflow. Live consumers and historical replay read the same source.
-- No AI SDK format mapping. Consumers read Cortex-native typed events directly.
-- Typed UI parts (RunStarted, DagState, StepActivity, StepOutput, RunCompleted, etc.). **All events persisted, fold-on-read**: every part is written to the one DBOS stream; reconciling events (by `id`) are folded latest-wins on read, keeping the read bounded though storage is append-only. Coalescing (no heartbeats, on-change tree only) keeps volume tractable on multi-hour runs.
-- **Run results are pull-only.** The workflow writes nothing to the conversation thread on completion. The UI run tracker shows completion from the stream, and the conversation agent fetches results on demand via `inspectRun`. DAG scheduling is dependency-gated and budget-admitted, not wave-batched — see [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md) and [resource-budgeted-scheduling](openspec/specs/resource-budgeted-scheduling/spec.md). The scheduler loop selects the next finished child with **`DBOS.waitFirst`** (a checkpointed "who finished first"), not `Promise.race` over `getResult` — the race winner is uncheckpointed and would reorder downstream function-ID-consuming ops on replay ([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)).
+- One DBOS-backed stream for each workflow. A live consumer and a historical
+  replay read the same source.
+- No AI SDK format mapping. A consumer reads the Cortex-native typed events
+  directly.
+- Typed UI parts (RunStarted, DagState, StepActivity, StepOutput, RunCompleted,
+  and others). **Each event is persisted, and the fold happens on read**: each
+  part is written to the one DBOS stream, and a reconciling event is folded
+  latest-wins by `id` on read. Thus the read stays bounded although the storage is
+  append-only. The coalescence (no heartbeats, and an on-change tree only) keeps
+  the volume tractable on a run of many hours.
+- **A run result is pull-only.** The workflow writes nothing to the conversation
+  thread on completion. The UI run tracker shows the completion from the stream,
+  and the conversation agent fetches the results on demand with `inspectRun`. The
+  DAG schedule is dependency-gated and budget-admitted, not wave-batched. Refer to
+  [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md) and
+  [resource-budgeted-scheduling](openspec/specs/resource-budgeted-scheduling/spec.md).
+  The scheduler loop selects the next finished child with **`DBOS.waitFirst`**, a
+  checkpointed "who finished first". It does not use `Promise.race` over
+  `getResult`. The race winner is not checkpointed, thus it reorders the
+  downstream operations that consume a function ID on replay
+  ([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)).
 
 ### Dependency injection
 
-- **Construction-time dependencies** (long-lived, shared, immutable) — `Pool`, `ChatProvider`, `EmbeddingProvider`, `Logger`, `SandboxClient` factory, plus the five seam realizations — are injected when a module is built. **Call-time values** (request-scoped) — `Session`, `AbortSignal`, `EmitFn` — are passed as explicit parameters.
-- Modules are **factory closures**: `createX(deps) => { op1, op2 }`. Single-operation modules are free functions taking deps as leading params. No classes, no god-ctx, no ALS, no magic-key bag.
-- **No ambient dependency accessors.** A process composition root constructs `env` and `pool` once and threads them as constructor deps. No module reaches for a dependency: `getPool()` is a pool factory/test seam, not a hidden request context. The conversation-agent factory is a nested composition root that receives its deps from the root and explodes them apart per tool; `ToolContext` is `{session, signal, emit, runStep}` — request-scoped seams only, no injected deps.
-- **Process facts are exempt** — one-per-process, write-only, never-faked state (the `lifecycle.ts` draining flag, `otel.ts` init guard, OTel instrument handles) stays module-level; injecting it buys no testability. A dependency is something you might swap or fake; a process fact is a one-per-process truth. See [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md) (incl. the 2026-05-29 amendment).
+- **A construction-time dependency** (long-lived, shared, immutable) is injected
+  when a module is built: `Pool`, `ChatProvider`, `EmbeddingProvider`, `Logger`,
+  the `SandboxClient` factory, and the five seam realizations. **A call-time
+  value** (request-scoped) is passed as an explicit parameter: `Session`,
+  `AbortSignal`, and `EmitFn`.
+- A module is a **factory closure**: `createX(deps) => { op1, op2 }`. A module
+  with one operation is a free function that takes the deps as leading
+  parameters. There are no classes, no god-ctx, no ALS, and no magic-key bag.
+- **There is no ambient dependency accessor.** A process composition root
+  constructs `env` and `pool` one time, and it threads them as constructor deps.
+  No module reaches for a dependency. `getPool()` is a pool factory and a test
+  seam, not a hidden request context. The conversation-agent factory is a nested
+  composition root: it receives its deps from the root and explodes them apart for
+  each tool. `ToolContext` is `{session, signal, emit, runStep}`, which is
+  request-scoped seams only, with no injected deps.
+- **A process fact is exempt.** State that is one for each process, write-only,
+  and never faked stays module-level: the `lifecycle.ts` draining flag, the
+  `otel.ts` init guard, and the OTel instrument handles. Injection of it buys no
+  testability. A dependency is something that you can swap or fake. A process fact
+  is a truth that is one for each process. Refer to
+  [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md),
+  and to the 2026-05-29 amendment in it.
 
 ### Loop primitives
 
-- **`ChatProvider`** — AI SDK-backed. AI SDK `ModelMessage` is the harness's lingua franca everywhere (loop, memory persistence, DBOS step cache); signed provider metadata (Anthropic thinking signatures, cache control) rides provider-scoped in `providerOptions`. A provider is built from an embedder-supplied AI SDK `LanguageModel` instance or endpoint/key/model configuration (`anthropic` | `openai-compatible`) and advertises `capabilities.toolCalling`. See [harness-providers](openspec/specs/harness-providers/spec.md). Two methods: `chat(req, session, signal?) → ResultAsync<ChatResponse, ProviderError>` (non-streaming — workflow steps, out-of-band calls; cacheable as a DBOS step) and `chatStream(req, session, signal?) → AsyncIterable<ChatStreamEvent>` (text deltas then one terminal `done` event — the chat loop). Output-token truncation surfaces as the AI SDK `finishReason: "length"`, so the loop sees exactly one truncation signal.
-- **`EmbeddingProvider`** — separate narrow interface for embeddings; takes `Session`.
-- **`defineTool({id, description, inputSchema: ZodSchema, execute(input, ctx) => result, executionMode?, describeCall?})`** — `ctx` is `ToolContext = {session, signal, emit, runStep}` (request-scoped seams, no deps). `runStep` is the durability seam a tool uses to wrap its own durable work (passthrough in chat, `DBOS.runStep` in workflows; the loop namespaces the name under the tool's own step name). Dep-bearing tools are factory closures (`createXTool(deps)`) that capture deps and call `defineTool`. Every tool declares or defaults to an **`executionMode`** — `step` | `workflow` | `inline` — see *The loop*. Error contract: expected outcomes (incl. "not found") are returned as data variants of the result type; unexpected failures throw or return `err(ToolError)` → the loop maps them to model-visible error tool results; Zod input-validation failure → error tool result at the boundary, without calling `execute`.
-- **`describeCall(input) => string` is the call-time counterpart of `description`** (the `tool-call-detail` capability). `description` self-describes the tool at attach time; `describeCall` self-describes one invocation, so a surface renders four `update_working_memory` calls as four distinct lines. It is optional, synchronous, pure, and typed against `z.infer<Schema>` — colocated with the schema because that is the one place the compiler checks the two against each other. The loop computes the detail best-effort at dispatch: it `safeParse`s the raw model input first and calls the hook only on success (a `tool-started` event is emitted BEFORE dispatch-time validation, so the value there is unvalidated), guards the call, and drops the detail on any failure. Normalization — one line, control characters stripped, secrets redacted, capped at 120 characters — happens once at the emit site, never in tool code. A host renders the string and parses nothing out of it. `createDetailResolver(tools)` maps `toolName + input → detail` for the surfaces that hold a name rather than a `Tool` (reload conversion, the sandbox and data-profile activity lines); the caller supplies the tool list, because tools contributed through the host-tools seam are invisible to any map the harness holds. Nothing is persisted — storage stays the pure model transcript.
-- **`tool-finished` reports `outcome: "ok" | "error" | "denied"`**, not an error boolean ([harness-agent-loop](openspec/specs/harness-agent-loop/spec.md)). The loop already separates a denial from a recoverable tool error in control flow — a denial hard-stops the turn — so the observation channel carries the same distinction, and a user who rejects an approval no longer sees their own decision reported as a fault. One three-state field rather than two booleans, which would admit the impossible "not an error, but denied".
-- **No processor pipeline.** SOUL kernel/conversational personality is static `systemPrompt` composition in the agent definition. Input sanitization (`normalizeUnicode`, trimmed `redactSecrets`) is two functions applied once to user input in the chat route. Analysis context is injected at chat-route message assembly.
-- **Sub-agents** — exposed as regular tools whose `execute` calls `runAgent(subAgent, prompt, childSession)`, where `childSession` derives agentId + callPath from the parent. No special delegation primitive, no message stripping. Sub-agent transcripts are ephemeral. Workflow-decides path uses `runAgent` directly without the tool wrapper.
-- **The loop** — `runAgent(agent, messages, session, {signal, emit, runStep}) → { messages, finish }`, where `finish = { reason, cappedOut, truncationRecoveries }` (the terminal finish reason, whether the iteration cap was hit, and how many truncations were recovered). `runStep` is injected (passthrough in chat, `DBOS.runStep` in workflows). The loop emits orchestration events stamped with `source` from `session.callPath`; at the iteration cap it forces a final tool-less wrap-up call rather than throwing. A `finishReason: "length"` truncation is a **recoverable soft-error, not a stop**: only the final content part can be truncated, so the loop does **not** execute a truncated trailing tool call (its input may be silently incomplete) — it feeds back a retryable error tool result and continues (earlier complete tool calls still dispatch; truncated prose gets a steer-and-continue turn), so a truncated write never lands a partial file. Step names (`llm-${i}`, `tool-${name}-${id}`) are a documented, deterministic contract — see [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
-- **Execution-mode partitioned dispatch** ([harness-tools](openspec/specs/harness-tools/spec.md)). Dispatch follows each tool's `executionMode`. `step` tools (the default — the ~35 external bio/chem API tools + workspace reads) are wrapped in a deterministic `runStep` and run concurrently (`Promise.all`, each reserving one function-ID synchronously in array order). `workflow` tools run sequentially **after**, unwrapped in the workflow body, so their internal `DBOS.recv` / `writeStream` (body-only) is legal — exactly `execute_command` / `write_file` / `edit_file`, which own their durability (submit is a step, recv is a body call; they reserve multiple function-IDs across awaits, so concurrent ones would race the counter). `inline` tools are pure deterministic logic and run unwrapped. Results are assembled by original index, so tool-result order holds. The loop emits (`iteration`/`tool-started`/`tool-finished`) are `await`ed so each body-path `writeStream` lands at a deterministic function-ID on replay ([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)).
+- **`ChatProvider`** — AI SDK-backed. The AI SDK `ModelMessage` is the lingua
+  franca of the harness everywhere: the loop, the memory persistence, and the DBOS
+  step cache. Signed provider metadata (an Anthropic thinking signature, a cache
+  control) rides provider-scoped in `providerOptions`. A provider is built from an
+  AI SDK `LanguageModel` instance that the embedder supplies, or from an endpoint,
+  key, and model configuration (`anthropic` or `openai-compatible`). It advertises
+  `capabilities.toolCalling`. Refer to
+  [harness-providers](openspec/specs/harness-providers/spec.md). It has two
+  methods:
+  - `chat(req, session, signal?) → ResultAsync<ChatResponse, ProviderError>` —
+    non-streaming, for a workflow step and an out-of-band call. It is cacheable as
+    a DBOS step.
+  - `chatStream(req, session, signal?) → AsyncIterable<ChatStreamEvent>` — text
+    deltas, then one terminal `done` event. This is the chat loop.
+
+  An output-token truncation shows as the AI SDK `finishReason: "length"`, thus
+  the loop sees exactly one truncation signal.
+- **`EmbeddingProvider`** — a separate narrow interface for the embeddings, and
+  `providers/types.ts` declares the two provider interfaces. It
+  takes a `Session`.
+- **`defineTool({id, description, inputSchema: ZodSchema, execute(input, ctx) => result, executionMode?, describeCall?})`**
+  — `ctx` is `ToolContext = {session, signal, emit, runStep}`, which is
+  request-scoped seams with no deps. `tools/define-tool.ts` has it. The
+  `z.toJSONSchema()` of Zod 4 emits the tool input schema that the AI SDK accepts:
+  a top-level object only, and it rejects a union at construction. `runStep` is the
+  durability seam that a tool
+  uses to wrap its own durable work: it is a passthrough in chat and
+  `DBOS.runStep` in a workflow, and the loop namespaces the name under the step
+  name of the tool. A tool that carries deps is a factory closure
+  (`createXTool(deps)`) that captures the deps and calls `defineTool`. Each tool
+  declares an **`executionMode`** or defaults to one: `step`, `workflow`, or
+  `inline`. Refer to *The loop*. The error contract: an expected outcome, which
+  includes "not found", is a data variant of the result type. An unexpected
+  failure throws or gives `err(ToolError)`, and the loop maps it to a
+  model-visible error tool result. A Zod input-validation failure gives an error
+  tool result at the boundary, without a call to `execute`.
+- **`describeCall(input) => string` is the call-time counterpart of
+  `description`** (the `tool-call-detail` capability). `description`
+  self-describes the tool at attach time. `describeCall` self-describes one
+  invocation, thus a surface renders four `update_working_memory` calls as four
+  distinct lines. It is optional, synchronous, pure, and typed against
+  `z.infer<Schema>`. It is colocated with the schema, because that is the one
+  place where the compiler checks the two against each other. The loop computes
+  the detail best-effort at dispatch: it does `safeParse` on the raw model input
+  first, and it calls the hook only on success. A `tool-started` event is emitted
+  BEFORE dispatch-time validation, thus the value there is unvalidated. It
+  guards the call, and it drops the detail on any failure. The normalization
+  happens one time at the emit site, never in tool code: one line, control
+  characters stripped, secrets redacted, and a cap of 120 characters. A host
+  renders the string and parses nothing out of it. `createDetailResolver(tools)`
+  maps a tool name and an input to a detail, for the surfaces that hold a name
+  rather than a `Tool`: the reload conversion, and the sandbox and data-profile
+  activity lines. The caller supplies the tool list, because a tool that comes
+  through the host-tools seam is invisible to any map that the harness holds.
+  Nothing is persisted, thus the storage stays the pure model transcript.
+- **`tool-finished` reports `outcome: "ok" | "error" | "denied"`**, not an error
+  boolean ([harness-agent-loop](openspec/specs/harness-agent-loop/spec.md)). The
+  loop already separates a denial from a recoverable tool error in the control
+  flow, because a denial hard-stops the turn. Thus the observation channel carries
+  the same distinction, and a user who rejects an approval no longer sees their
+  own decision reported as a fault. It is one three-state field, not two booleans,
+  which would admit the impossible "not an error, but denied".
+- **There is no processor pipeline.** The SOUL kernel and the conversational
+  personality are a static `systemPrompt` composition in the agent definition. The
+  input sanitization (`normalizeUnicode`, a trimmed `redactSecrets`) is two
+  functions, applied one time to the user input in the chat route. The analysis
+  context is injected at the message assembly of the chat route.
+- **Sub-agents** — exposed as regular tools. The `execute` of such a tool calls
+  `runAgent(subAgent, prompt, childSession)`, where `childSession` derives the
+  agentId and the callPath from the parent, through
+  `forSubAgent(ctx.session, childAgentId)`. The examples are `literature-reviewer`
+  and `analogical-reasoner`. There is no special delegation
+  primitive and no message stripping. A sub-agent transcript is ephemeral. The
+  workflow-decides path uses `runAgent` directly, with no tool wrapper.
+- **The loop** (`loop/run-agent.ts`) —
+  `runAgent(agent, messages, session, {signal, emit, runStep}) → { messages, finish }`,
+  where `finish = { reason, cappedOut, truncationRecoveries }`: the terminal
+  finish reason, whether the iteration cap was hit, and how many truncations were
+  recovered. `runStep` is injected: a passthrough in chat, and `DBOS.runStep` in a
+  workflow. The loop emits orchestration events stamped with `source` from
+  `session.callPath`. At the iteration cap it forces a final tool-less wrap-up
+  call, and it does not throw. A `finishReason: "length"` truncation is a
+  **recoverable soft-error, not a stop**. Only the final content part can be
+  truncated. Thus the loop does **not** execute a truncated trailing tool call,
+  because its input can be incomplete in silence. It feeds back a retryable error
+  tool result and continues: an earlier complete tool call still dispatches, and
+  truncated prose gets a steer-and-continue turn. Thus a truncated write never
+  lands a partial file. The step names (`llm-${i}`, `tool-${name}-${id}`) are a
+  documented, deterministic contract. Refer to
+  [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
+- **Execution-mode partitioned dispatch**
+  ([harness-tools](openspec/specs/harness-tools/spec.md)). The dispatch obeys the
+  `executionMode` of each tool. A `step` tool is the default: the ~35 external bio
+  and chem API tools, and the workspace reads. Each is wrapped in a deterministic
+  `runStep` and runs concurrently (`Promise.all`), and each reserves one function
+  ID synchronously in array order. A `workflow` tool runs sequentially **after**,
+  unwrapped in the workflow body, thus its internal `DBOS.recv` and `writeStream`
+  (body-only) are legal. These are exactly `execute_command`, `write_file`, and
+  `edit_file`, which have their own durability: the submit is a step, and the recv
+  is a body call. They reserve multiple function IDs across awaits, thus
+  concurrent ones would race the counter. An `inline` tool is pure deterministic
+  logic and runs unwrapped. The results are assembled by the original index, thus
+  the tool-result order holds. The loop emits (`iteration`, `tool-started`,
+  `tool-finished`) are awaited, thus each body-path `writeStream` lands at a
+  deterministic function ID on replay
+  ([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)).
 
 ### Memory
 
-- **Thread history** — `messages` table; rows store AI SDK model messages in a versioned envelope (`{kind: "ai-sdk-model-message", aiSdkMajor, message}`; legacy Anthropic rows are backfilled at startup). `appendTurn` writes a turn atomically, `loadRecent` walks newest-first to a token budget and snaps the window to valid turn boundaries (never an orphan tool-result continuation). Conversation-scoped.
-- **Working memory** — `cortex_working_memory`, one JSONB row per analysis. Four sections: `goal`, `constraints`, `hypotheses` (analysis-flat) and `findings` (run-scoped, keyed by `runId`). The agent maintains it section-by-section via one `updateWorkingMemory` tool (not whole-blob rewrites). Rendered to Markdown and injected as a user message in the window tail (cache-safe).
-- **No semantic recall.** Conversations operate inside the token-bounded thread window only. See [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
-- **Workflow / sandbox agent loops** — no `messages` table. Durability is the DBOS step cache; debugging is read-side reconstruction from `dbos.operation_outputs`. See [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
+- **Thread history** — the `messages` table. A row stores an AI SDK model message
+  in a versioned envelope (`{kind: "ai-sdk-model-message", aiSdkMajor, message}`).
+  A legacy Anthropic row is backfilled at startup. `appendTurn` writes a turn
+  atomically. `loadRecent` walks newest-first to a token budget, and it snaps the
+  window to a valid turn boundary, thus it never gives an orphan tool-result
+  continuation. It is conversation-scoped.
+- **Working memory** — `cortex_working_memory`, one JSONB row for each analysis.
+  It has four sections: `goal`, `constraints`, and `hypotheses` are analysis-flat,
+  and `findings` is run-scoped, keyed by `runId`. The agent maintains it section by
+  section with one `updateWorkingMemory` tool, and it does not rewrite the whole
+  blob. It is rendered to Markdown and injected as a user message in the window
+  tail, which is cache-safe.
+- **There is no semantic recall.** A conversation operates inside the
+  token-bounded thread window only. Refer to
+  [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
+- **Workflow and sandbox agent loops** — no `messages` table. The durability is
+  the DBOS step cache, and the debug method is read-side reconstruction from
+  `dbos.operation_outputs`. Refer to
+  [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
 
 ### Call attribution at the wire boundary
 
-- The session is the compile-time obligation. `ChatProvider.chat(req, session, signal?)` and `EmbeddingProvider.embed(texts, session)` both require an `AgentSession` — you cannot construct a wire call without one. The provider resolves call attribution internally via its injected `resolveBilling(session)` seam at call time, then spreads whatever header map the seam returns onto the request. The OSS realization returns an empty map.
-- No ALS, no fetch-patch, no wrapper. Read-only routes never resolve attribution — the seam is lazy and fires only at the LLM/embedding call site.
-- Background tasks (data profile triggers, async memory writes) and the `run_ephemeral` chat tool construct an explicit `RunSession` via the `RunAuthorizer` seam and pass it through; the scope is whatever resource the task acts against. Ephemeral and data-profile both keep their synthetic `RunFrame` literals (`"ephemeral"` / `"data-profile"`) as the run/step tag while the unique DBOS `workflowID` does the routing.
+- The session is the compile-time obligation. `ChatProvider.chat(req, session, signal?)`
+  and `EmbeddingProvider.embed(texts, session)` both take an `AgentSession`, thus
+  you cannot construct a wire call without one. The provider resolves the call
+  attribution internally, with its injected `resolveBilling(session)` seam at call
+  time. Then it spreads the header map that the seam gives onto the request. The
+  OSS realization gives an empty map.
+- There is no ALS, no fetch-patch, and no wrapper. A read-only route never
+  resolves the attribution, because the seam is lazy and fires only at the LLM or
+  embedding call site.
+- A background task (a data profile trigger, an async memory write) and the
+  `run_ephemeral` chat tool construct an explicit `RunSession` through the
+  `RunAuthorizer` seam and pass it through. The scope is whatever resource the
+  task acts against. Ephemeral and data-profile both keep their synthetic
+  `RunFrame` literals (`"ephemeral"` and `"data-profile"`) as the run tag and the
+  step tag. The unique DBOS `workflowID` does the routing.
 
 ### Budget-exceeded resume
 
-Two replay scenarios must not be conflated:
+Do not conflate the two replay scenarios:
 
-- **Pod-crash recovery** (the harness-durable-runtime spec) replays with the **same input** — the `attempt` is unchanged, so every step name is identical and the whole body cache-hits (cheap replay). This is the common case and it "just works."
-- **Budget resume** deliberately **bumps `attempt`** so the failed LLM call re-fires against a now-available budget. The mechanism:
-  - Step names carry the attempt as a suffix. `attemptStepNameFormatter` (in `sandbox-step.ts`) names the loop's steps `llm:${iteration}:${attempt}` and `tool:${name}:${toolUseId}:${attempt}`; the parent names its own steps `open-running-charge:${attempt}` / `close-running-charge:${attempt}` / `revoke-run-auth:${attempt}`. A bumped attempt is a name that has never been cached → the call fires fresh.
-  - On a budget error the caller catches the provider-specific error, calls `DBOS.cancelWorkflow(DBOS.workflowID!)`, and returns; the next step boundary throws `DBOSWorkflowCancelledError` and the status becomes **`CANCELLED`** (not `ERROR` — `ERROR` is terminal in DBOS v4 and cannot be resumed). Cortex marks the analysis `suspended` from the status flip.
-  - On resume, `prepareExecuteAnalysisResume` atomically bumps `cortex_runs.attempt_count`, then the caller calls `DBOS.resumeWorkflow(wfId)`. The parent body replays, re-reads the bumped `attempt`, and re-opens the running charge under a fresh step name. The workflow ID never moves, so `cortex_runs.workflow_id` is stable.
-  - **Why not `ERROR` + `forkWorkflow`?** Resuming from `ERROR` doesn't work — DBOS's resume excludes terminal statuses. `forkWorkflow` works but creates a new workflow ID, forcing Cortex to update its run-to-workflow mapping. `CANCELLED` + `resumeWorkflow` keeps the ID stable.
-- **Known limitation — child-level budget resume is not wired (follow-up).** A budget pause that originates inside a **child** sandbox-step (a sandbox-agent LLM call) is not cleanly resumable today. The parent re-dispatches children with `DBOS.startWorkflow(childWorkflowId)`, which **dedups on the existing (cancelled) child** (`initWorkflowStatus` returns the existing status and ignores the new input — so the bumped attempt never reaches the child); nothing calls `DBOS.resumeWorkflow(childWorkflowId)` (`resume-execute-analysis.ts` resumes only the parent); and the child id `${workflowId}-${idx}` carries **no attempt**, so even an explicit child resume would replay the cached-failed step. Fixing it requires the child id to carry the attempt (or `forkWorkflow`) **and** the resume path to re-fire cancelled children.
+- **Pod-crash recovery** (the harness-durable-runtime spec) replays with the
+  **same input**. The `attempt` does not change, thus each step name is identical
+  and the whole body hits the cache. This is the common case, and it works with no
+  extra work.
+- **Budget resume** deliberately **increases `attempt`**, thus the failed LLM call
+  fires again against a budget that is now available.
+
+The mechanism of the budget resume:
+
+- The step names carry the attempt as a suffix. `attemptStepNameFormatter` (in
+  `sandbox-step.ts`) names the loop steps `llm:${iteration}:${attempt}` and
+  `tool:${name}:${toolUseId}:${attempt}`. The parent names its own steps
+  `open-running-charge:${attempt}`, `close-running-charge:${attempt}`, and
+  `revoke-run-auth:${attempt}`. An increased attempt is a name that the cache has
+  never held, thus the call fires fresh.
+- On a budget error the caller catches the provider-specific error, calls
+  `DBOS.cancelWorkflow(DBOS.workflowID!)`, and returns. The next step boundary
+  throws `DBOSWorkflowCancelledError`, and the status becomes **`CANCELLED`**. It
+  is not `ERROR`, because `ERROR` is terminal in DBOS v4 and it cannot resume.
+  Cortex marks the analysis `suspended` from the status flip.
+- On resume, `prepareExecuteAnalysisResume` atomically increases
+  `cortex_runs.attempt_count`. Then the caller calls `DBOS.resumeWorkflow(wfId)`.
+  The parent body replays, reads the increased `attempt` again, and opens the
+  running charge again under a fresh step name. The workflow ID never moves, thus
+  `cortex_runs.workflow_id` is stable.
+- **Why not `ERROR` plus `forkWorkflow`?** A resume from `ERROR` does not work,
+  because the DBOS resume excludes a terminal status. `forkWorkflow` works, but it
+  makes a new workflow ID, thus Cortex must update its run-to-workflow mapping.
+  `CANCELLED` plus `resumeWorkflow` keeps the ID stable.
+- **A known limitation: child-level budget resume is not wired (a follow-up).** A
+  budget pause that starts inside a **child** sandbox-step (a sandbox-agent LLM
+  call) is not cleanly resumable today. Three facts cause this. The parent
+  dispatches a child again with `DBOS.startWorkflow(childWorkflowId)`, which
+  **dedups on the existing canceled child**: `initWorkflowStatus` gives the
+  existing status and ignores the new input, thus the increased attempt never
+  reaches the child. Nothing calls `DBOS.resumeWorkflow(childWorkflowId)`, because
+  `resume-execute-analysis.ts` resumes only the parent. The child id
+  `${workflowId}-${idx}` carries **no attempt**, thus even an explicit child
+  resume would replay the step that the cache holds as failed. A fix needs the
+  child id to carry the attempt, or it needs `forkWorkflow`. The resume path must
+  also fire the canceled children again.
