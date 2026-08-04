@@ -1,23 +1,32 @@
 # syntax=docker/dockerfile:1
-# sandbox-python-r — sandbox-python + the R libraries (CRAN, Bioconductor,
+# sandbox-python-r — sandbox-python + the R libraries (CRAN, Bioconductor, git,
 # GitHub). The R packages install into /mnt/libs/current/r/{cran,bioconductor,
 # github} — the same subtree the managed mount populates — so a baked image and
 # a mounted store present a byte-identical R library path.
 #
-# Multi-stage: a throwaway R builder carries the R build toolchain + r2u and
-# compiles/installs the R triple into the store; the final runtime stage is
-# `FROM sandbox-python` and only COPYs the finished r/ subtree + fragments in,
-# then regenerates packages.txt. No build toolchain reaches the runtime layer.
+# Multi-stage: a throwaway R builder resolves and installs the R libraries into the
+# store; the final runtime stage is `FROM sandbox-python` and only COPYs the
+# finished r/ subtree + fragments in, then regenerates packages.txt. No build
+# toolchain reaches the runtime layer.
 #
-# The R triple travels together or not at all: cran → bioconductor → github share
-# one .libPaths() and form a dependency chain, so a failed earlier track aborts
-# the later ones (and, on arm64 where the R source compile is patchy, the whole
-# sandbox-python-r build for that arch — best-effort per arch, handled by CI).
+# The R libraries build in two units:
+#   - the BULK — CRAN + Bioconductor + pinned git packages — resolves as one pak
+#     lockfile and installs together. pak reads each package's SystemRequirements
+#     and installs the missing apt libraries itself. The result is split into r/cran
+#     and r/bioconductor by the CRAN-ref dependency closure — the same boundary the
+#     previous two-stage (r2u then BiocManager) build produced. See images/gen-r-lock.R.
+#   - GitHub installs incrementally on top of the bulk (remotes::install_github,
+#     upgrade='never'), because the GitHub set does not resolve as one global lock:
+#     it needs Remotes: following, and it pins recommended packages against the base.
 #
-# Uses r2u (CRAN as .deb binaries) for fast R installs on amd64; on arm64 (r2u is
-# amd64-only) CRAN falls back to source install. Each track runs a best-effort
-# LOAD CHECK: library() each package, derive the fragment from what loaded, drop
-# a single failure, fail the build only when a track loaded ZERO packages (floor).
+# Reproducibility comes from the base image: rocker/r-ver:4.6.0 pins a dated P3M
+# snapshot, so an in-build resolve returns the same versions on every build.
+#
+# Each unit runs a best-effort LOAD CHECK: library() each package, derive the
+# fragment from what loaded, drop a single failure, fail the build only when a unit
+# loaded ZERO packages (floor). The bulk and GitHub share one .libPaths(); a failed
+# bulk aborts GitHub (and, on arm64 where source compiles are patchy, the whole arch
+# build — best-effort per arch, handled by CI).
 #
 # Build context is the repo ROOT (so COPY can reach images/lib-store-manifest.yaml).
 
@@ -37,15 +46,15 @@ ARG INFLEXA_LIB_ROOT=/mnt/libs/current
 ARG R_NCPUS=
 
 # =============================================================================
-# Stage: r-toolchain — R build deps, r2u, the manifest, the load-check helper.
+# Stage: r-toolchain — R build deps, the manifest, the load-check helper.
 # =============================================================================
 FROM ${BASE_IMAGE} AS r-toolchain
 ARG INFLEXA_LIB_ROOT
 
-# Build toolchain + dev headers for Bioconductor source compilation. The apt
-# build-dep set + retry config is shared with sandbox-python; python3-yaml (the
-# system-python YAML the manifest parse reads) installs in the same apt
-# transaction as a stage-specific extra.
+# Build toolchain + dev headers for source compilation. The apt build-dep set +
+# retry config is shared with sandbox-python; python3-yaml (the system-python YAML
+# the manifest parse reads) installs in the same apt transaction as a stage-specific
+# extra.
 #
 # The jags/libuv1t64/libprotobuf32t64/libglpk40 runtime .so set mirrors what
 # sandbox-base ships, and exists here for the load checks below — which run in this
@@ -54,39 +63,40 @@ ARG INFLEXA_LIB_ROOT
 # (and omit the package from packages.txt) for packages that are in fact fine in the
 # shipped image. Keep in sync with the runtime list in images/sandbox-base/Dockerfile:
 # a lib there but missing here reappears as a phantom arch-specific coverage gap.
-# On amd64 the r2u apt path pulls these in as transitive Depends; the arm64 P3M path
-# resolves no system libs at all, so they must be named explicitly.
+# pak installs most system libraries itself from each package's SystemRequirements;
+# these are named explicitly so the load check stays honest even for a package that
+# declares no requirement for the .so it dlopen()s.
 COPY images/install-build-toolchain.sh /tmp/install-build-toolchain.sh
 RUN bash /tmp/install-build-toolchain.sh python3-yaml jags libuv1t64 libprotobuf32t64 libglpk40
-
-# r2u — CRAN packages as Ubuntu .deb binaries. Patch the keyserver to hkps:443
-# — the script's default (port 11371) times out regularly from CI runners.
-RUN curl -fsSL https://raw.githubusercontent.com/eddelbuettel/r2u/master/inst/scripts/add_cranapt_noble.sh \
-      -o /tmp/r2u_setup.sh \
-    && sed -i 's|keyserver keyserver.ubuntu.com|keyserver hkps://keyserver.ubuntu.com:443|' /tmp/r2u_setup.sh \
-    && bash /tmp/r2u_setup.sh \
-    && rm /tmp/r2u_setup.sh
 
 COPY images/lib-store-manifest.yaml /tmp/manifest.yaml
 
 RUN mkdir -p ${INFLEXA_LIB_ROOT}/r/cran ${INFLEXA_LIB_ROOT}/r/bioconductor ${INFLEXA_LIB_ROOT}/r/github
 
-# Injection guard (defense-in-depth). R names are interpolated into R string
-# literals — install.packages('<name>'), install_github('<repo>') — where a quote
-# or backslash could break out. Reject any R name outside the safe charset once
-# here (every track branches from this stage).
+# Injection guard (defense-in-depth). R names and git coordinates are interpolated
+# into pak refs. Reject any value outside a safe shape once here (every stage
+# branches from this one).
 RUN python3 - <<'PYEOF'
 import re, sys, yaml
 m = yaml.safe_load(open("/tmp/manifest.yaml")) or {}
 r = m.get("r", {}) or {}
-safe = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@#-]*$")
-bad = [n for grp in ("cran", "bioconductor", "github") for n in (r.get(grp) or []) if not safe.match(str(n))]
+name = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@#-]*$")
+url  = re.compile(r"^https://[A-Za-z0-9._/-]+$")
+sha  = re.compile(r"^[0-9a-fA-F]{7,40}$")
+bad = []
+for grp in ("cran", "bioconductor", "github"):
+    for n in (r.get(grp) or []):
+        if not name.match(str(n)): bad.append(f"{grp}: {n!r}")
+for g in (r.get("git") or []):
+    if not name.match(str(g.get("name", ""))):  bad.append(f"git.name: {g.get('name')!r}")
+    if not url.match(str(g.get("url", ""))):    bad.append(f"git.url: {g.get('url')!r}")
+    if not sha.match(str(g.get("commit", ""))): bad.append(f"git.commit: {g.get('commit')!r}")
 if bad:
-    print("ERROR: R package name(s) outside the safe charset (shell/R injection guard):", file=sys.stderr)
+    print("ERROR: manifest R entries outside the safe shape (pak-ref injection guard):", file=sys.stderr)
     for b in bad:
-        print(f"  - {b!r}", file=sys.stderr)
+        print(f"  - {b}", file=sys.stderr)
     sys.exit(1)
-print("manifest R-name injection guard: all cran/bioconductor/github names within the safe charset")
+print("manifest R injection guard: all cran/bioconductor/github/git entries within the safe shape")
 PYEOF
 
 # Best-effort R load check — library() each package, write the fragment from the
@@ -116,53 +126,37 @@ cat(sprintf("Load check OK: %d/%d %s package(s) loaded\n", length(ok), length(pk
 RSCRIPT
 
 # =============================================================================
-# Stage: cran — R CRAN packages. Binary on both arches, by different routes.
-#   amd64: r2u .deb packages via apt (r2u is amd64-only). apt resolves each
-#          package's system libraries transitively, so they come in for free.
-#   arm64: install.packages() with NO repos= override. rocker/r-ver pins repos to
-#          a P3M snapshot and sets an HTTPUserAgent carrying the platform triple;
-#          that UA is what makes P3M serve prebuilt aarch64 binaries. Naming any
-#          repo here (e.g. cloud.r-project.org) drops that UA and silently falls
-#          back to ~300 source builds, which fail on every package needing a system
-#          -dev header: fs (uv.h), gmp, symengine, rjags, clarabel, otelsdk.
-#          Inheriting the option also keeps the snapshot in lockstep with BASE_IMAGE.
-#          Unlike the r2u path, P3M binaries do NOT pull system libs — anything
-#          with a runtime .so (e.g. rjags → libjags) needs it in the apt list above.
+# Stage: rlibs — the bulk (CRAN + Bioconductor + git) as one pak lockfile, split
+# into r/cran and r/bioconductor by the CRAN-ref dependency closure.
+#
+# pak resolves against the base image's pinned P3M snapshot: CRAN and most
+# Bioconductor packages arrive as binaries, the rest compile from source. The
+# generator passes no repos= override — naming a repo drops rocker's HTTPUserAgent
+# and forces ~300 source builds. pak installs each package's system libraries
+# itself, so no arch-specific apt list is maintained here.
 # =============================================================================
-FROM r-toolchain AS cran
+FROM r-toolchain AS rlibs
 ARG INFLEXA_LIB_ROOT
-ARG TARGETARCH
 ARG R_NCPUS
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-RUN CRAN_PKGS=$(python3 -c "\
-import yaml; \
-m = yaml.safe_load(open('/tmp/manifest.yaml')); \
-print('\n'.join(m.get('r',{}).get('cran',[])))" 2>/dev/null) \
-    && if [ "$TARGETARCH" = "amd64" ]; then \
-         echo "Installing CRAN packages via r2u (binary .deb)..." \
-         && apt-get update -qq \
-         && APT_PKGS=$(echo "$CRAN_PKGS" | while read -r pkg; do \
-              [ -n "$pkg" ] && echo "r-cran-$(echo "$pkg" | tr '[:upper:]' '[:lower:]')"; \
-            done | tr '\n' ' ') \
-         && apt-get install -y --no-install-recommends $APT_PKGS > /tmp/cran-apt.log 2>&1 \
-         && grep -E '^(Setting up|E:|Err:|dpkg:)' /tmp/cran-apt.log || true \
-         && cp -a /usr/lib/R/site-library/* ${INFLEXA_LIB_ROOT}/r/cran/ 2>/dev/null || true \
-         && cp -a /usr/local/lib/R/site-library/* ${INFLEXA_LIB_ROOT}/r/cran/ 2>/dev/null || true; \
-         rm -rf /var/lib/apt/lists/*; \
-       else \
-         echo "Installing CRAN packages via the base image's P3M snapshot (binary) on $TARGETARCH..." \
-         && R -e "\
-           pkgs <- trimws(strsplit('$(echo "$CRAN_PKGS" | tr "\n" ",")', ',')[[1]]); \
-           pkgs <- pkgs[nchar(pkgs) > 0]; \
-           install.packages(pkgs, lib='${INFLEXA_LIB_ROOT}/r/cran', \
-                            Ncpus=${R_NCPUS:-parallel::detectCores()}, quiet=FALSE)" > /tmp/cran-install.log 2>&1 \
-         && grep -E '^\* (installing|DONE)|^Error|^ERROR:|had non-zero|is not available' /tmp/cran-install.log || true; \
-       fi \
-    && test "$(ls ${INFLEXA_LIB_ROOT}/r/cran | wc -l)" -gt 0 || { echo "ERROR: no CRAN packages installed"; [ -f /tmp/cran-install.log ] && tail -n 200 /tmp/cran-install.log; [ -f /tmp/cran-apt.log ] && tail -n 200 /tmp/cran-apt.log; exit 1; }
+COPY images/gen-r-lock.R /usr/local/bin/gen-r-lock.R
 
-# Best-effort load check → ${INFLEXA_LIB_ROOT}/cran.packages.txt.
+# Resolve + install the bulk and split it into r/cran and r/bioconductor. Output
+# streams through an allow-based filter that drops gcc/boost compile noise (a
+# full-bulk source build otherwise blows past GHA's 4MB per-step cap); the full log
+# stays at /tmp/rlibs-install.log for the failure tail-dump. Install is best-effort
+# and the load checks below are the gate — the same contract the old stages used.
+RUN R -e "install.packages(c('pak', 'yaml'))" > /tmp/pak-bootstrap.log 2>&1 || { cat /tmp/pak-bootstrap.log; exit 1; } \
+    && NOISE='/boost/|/Eigen/|/RcppEigen/|/RcppNumerical/|(required from|required by substitution|In instantiation of|skipping [0-9]+ instantiation)|^[^:]*:[0-9]+:[0-9]+: (warning|note):|^[[:space:]]+[0-9]+[[:space:]]+\||^[[:space:]]+\|[[:space:]]|OpenTelemetry error:' \
+    && { R_NCPUS=${R_NCPUS} Rscript /usr/local/bin/gen-r-lock.R /tmp/manifest.yaml ${INFLEXA_LIB_ROOT} 2>&1 \
+         | tee /tmp/rlibs-install.log | grep --line-buffered -vE "$NOISE"; } || true \
+    && test "$(ls ${INFLEXA_LIB_ROOT}/r/cran 2>/dev/null | wc -l)" -gt 0 \
+       || { echo "ERROR: gen-r-lock.R placed no CRAN packages"; tail -n 500 /tmp/rlibs-install.log 2>/dev/null; exit 1; }
+
+# Best-effort load check → ${INFLEXA_LIB_ROOT}/cran.packages.txt (named CRAN
+# packages, resolved against r/cran).
 RUN CRAN_PKGS=$(python3 -c "\
 import yaml; \
 m = yaml.safe_load(open('/tmp/manifest.yaml')); \
@@ -170,82 +164,19 @@ print('\n'.join(m.get('r',{}).get('cran',[])))" 2>/dev/null) \
     && R_LIBS_SITE=${INFLEXA_LIB_ROOT}/r/cran Rscript /usr/local/bin/lib-store-loadtest.R \
          "R (CRAN)" ${INFLEXA_LIB_ROOT}/cran.packages.txt $CRAN_PKGS
 
-# =============================================================================
-# Stage: bioconductor — R Bioconductor packages (source compilation).
-# =============================================================================
-FROM cran AS bioconductor
-ARG INFLEXA_LIB_ROOT
-ARG R_NCPUS
-
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
-# Stream install output live through an allow-based filter that drops only
-# gcc/boost compile noise (RBGL's boost-template warnings alone blow past GHA's
-# 4MB per-step cap). Full unfiltered output goes to /tmp/*.log via tee for the
-# failure tail-dump.
-#
-# Only DEP is filtered out of the main batch. It was deprecated and dropped from
-# Bioc 3.23 — the release BiocManager pairs with R 4.6, i.e. the one the batch
-# installs from — so it comes from the last release that carried it, Bioc 3.22.
-# It is installed below, pinned to the RELEASE_3_22 branch commit on
-# git.bioconductor.org (that commit is DEP 1.32.0). The git server keeps release
-# branches indefinitely, whereas the frozen release archive is moved under
-# /archive once a newer Bioconductor release ships; refresh the commit with
-# `git ls-remote https://git.bioconductor.org/packages/DEP RELEASE_3_22`.
-#
-# ANCOMBC and MSstats/MSstatsTMT install straight from the batch on this R/Bioc
-# pair and need no workaround: ANCOMBC 2.14 no longer depends on CVXR (whose
-# removed ::solve broke the 3.22-era build), and MSstats' src/Makevars pins
-# CXX_STD=CXX11 — a standard R 4.6 dropped, so it silently compiles at the C++20
-# default, which is what RcppArmadillo requires anyway; no ~/.R/Makevars override
-# is needed. MSstatsTMT ships no compiled code at all.
+# Best-effort load check → ${INFLEXA_LIB_ROOT}/bioconductor.packages.txt (named
+# Bioconductor + git packages, resolved against r/bioconductor with r/cran on the
+# path). The git packages (e.g. DEP) live here because gen-r-lock.R places any
+# package outside the CRAN-ref closure into r/bioconductor.
 RUN BIOC_PKGS=$(python3 -c "\
 import yaml; \
-m = yaml.safe_load(open('/tmp/manifest.yaml')); \
-print(','.join([\"'\" + p + \"'\" for p in m.get('r',{}).get('bioconductor',[]) if p not in ('DEP',)]))" 2>/dev/null || true) \
-    && NOISE='/boost/|/Eigen/|/RcppEigen/|/RcppNumerical/|(required from|required by substitution|In instantiation of|skipping [0-9]+ instantiation)|^[^:]*:[0-9]+:[0-9]+: (warning|note):|^[[:space:]]+[0-9]+[[:space:]]+\||^[[:space:]]+\|[[:space:]]|OpenTelemetry error:' \
-    && DOWNLOAD_FAIL='cannot open URL|download .* failed|HTTP status was|Failed to connect|Connection (timed out|refused)|Could not resolve host' \
-    && retry_install() { \
-         desc="$1"; log="$2"; shift 2; \
-         attempt=1; max=3; \
-         while [ "$attempt" -le "$max" ]; do \
-           [ "$attempt" -gt 1 ] && { echo "--- Retry $attempt/$max for $desc (waiting $((attempt*15))s for transient origin outage) ---"; sleep $((attempt*15)); }; \
-           { "$@" 2>&1 | tee "$log" | grep --line-buffered -vE "$NOISE"; } || true; \
-           grep -qE "$DOWNLOAD_FAIL" "$log" || return 0; \
-           attempt=$((attempt+1)); \
-         done; \
-         echo "--- $desc still hitting transient download failures after $max attempts; the load check will catch missing pkgs ---"; \
-       } \
-    && if [ -n "$BIOC_PKGS" ]; then \
-       echo "--- Installing Bioconductor packages (DEP excluded) ---"; \
-       { R -e "\
-         .libPaths(c('${INFLEXA_LIB_ROOT}/r/bioconductor', '${INFLEXA_LIB_ROOT}/r/cran', .libPaths())); \
-         if (!requireNamespace('BiocManager', quietly=TRUE)) install.packages('BiocManager', lib='${INFLEXA_LIB_ROOT}/r/cran', repos='https://cloud.r-project.org/'); \
-         BiocManager::install(c($BIOC_PKGS), lib='${INFLEXA_LIB_ROOT}/r/bioconductor', ask=FALSE, update=FALSE, force=TRUE, Ncpus=${R_NCPUS:-parallel::detectCores()})" 2>&1 \
-         | tee /tmp/bioc-install.log \
-         | grep --line-buffered -vE "$NOISE"; } || true; \
-       echo "--- Installing DEP, pinned to git.bioconductor.org RELEASE_3_22 (deprecated and removed from the 3.23 batch above) ---"; \
-       retry_install "DEP (RELEASE_3_22 git pin)" /tmp/bioc-dep.log R -e "\
-         .libPaths(c('${INFLEXA_LIB_ROOT}/r/bioconductor', '${INFLEXA_LIB_ROOT}/r/cran', .libPaths())); \
-         options(repos=BiocManager::repositories()); \
-         remotes::install_git('https://git.bioconductor.org/packages/DEP', ref='251eef42dac5d6e648742ab8b79b8322d6218533', lib='${INFLEXA_LIB_ROOT}/r/bioconductor', dependencies=TRUE, upgrade='never')"; \
-    fi \
-    && echo "--- Capturing any bspm-apt-installed deps into the store bioconductor subtree ---" \
-    && cp -an /usr/lib/R/site-library/. ${INFLEXA_LIB_ROOT}/r/bioconductor/ 2>/dev/null || true
-
-# Best-effort load check → ${INFLEXA_LIB_ROOT}/bioconductor.packages.txt. On any
-# floor breach the shared script prints per-package DROP diagnostics; the full
-# install log remains at /tmp/bioc-install.log for the failure tail-dump.
-RUN BIOC_PKGS=$(python3 -c "\
-import yaml; \
-m = yaml.safe_load(open('/tmp/manifest.yaml')); \
-print('\n'.join(m.get('r',{}).get('bioconductor',[])))" 2>/dev/null) \
+m = yaml.safe_load(open('/tmp/manifest.yaml')); r = m.get('r',{}); \
+names = list(r.get('bioconductor',[])) + [g['name'] for g in (r.get('git') or [])]; \
+print('\n'.join(names))" 2>/dev/null) \
     && { R_LIBS_SITE=${INFLEXA_LIB_ROOT}/r/bioconductor:${INFLEXA_LIB_ROOT}/r/cran Rscript /usr/local/bin/lib-store-loadtest.R \
            "R (Bioconductor)" ${INFLEXA_LIB_ROOT}/bioconductor.packages.txt $BIOC_PKGS \
-         || { echo "=== Error lines in /tmp/bioc-install.log ==="; \
-              grep -n -B1 -A3 -E '^(ERROR:|Error:|installation of package .+ had non-zero|dependency .+ is not available)' /tmp/bioc-install.log 2>/dev/null || echo "(no explicit errors captured)"; \
-              echo "=== Last 1000 lines of /tmp/bioc-install.log ==="; \
-              tail -n 1000 /tmp/bioc-install.log 2>/dev/null || true; \
+         || { echo "=== Last 1000 lines of /tmp/rlibs-install.log ==="; \
+              tail -n 1000 /tmp/rlibs-install.log 2>/dev/null || true; \
               exit 1; }; }
 
 # =============================================================================
@@ -256,7 +187,7 @@ print('\n'.join(m.get('r',{}).get('bioconductor',[])))" 2>/dev/null) \
 # CI mounts the GHA-issued GITHUB_TOKEN as a BuildKit secret (1k req/hr per repo),
 # which `remotes` picks up via the GITHUB_PAT env var. `required=false` keeps the
 # stage runnable locally without a token (with the anonymous limit caveat).
-FROM bioconductor AS github
+FROM rlibs AS github
 ARG INFLEXA_LIB_ROOT
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]

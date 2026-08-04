@@ -277,7 +277,6 @@ r:
         - Spectra
         - xcms
         - CAMERA
-        - DEP
         - MSstats
         - MSstatsTMT
 
@@ -357,6 +356,22 @@ r:
           # reference rather than plan around it, and these entries are what make
           # that request answerable. What numbat buys over copykat is tolerance of
           # hyper- and hypodiploid genomes, where a median-ploidy baseline misleads.
+
+    git:
+        # R packages from a git remote pinned to a commit — the declarative form of
+        # what used to be a shell branch in the R Dockerfile. The lock generator
+        # turns each entry into a `git::<url>@<commit>` pak ref, resolves it into the
+        # bulk lock, and installs it into r/bioconductor. A `reason` is mandatory: a
+        # git pin is a standing exception and must say why it exists.
+        - name: DEP
+          url: https://git.bioconductor.org/packages/DEP
+          commit: 251eef42dac5d6e648742ab8b79b8322d6218533
+          reason: >
+            DEP was deprecated and dropped from Bioconductor 3.23, the release that
+            pairs with R 4.6, so it comes from the last release that carried it. This
+            commit is the RELEASE_3_22 branch tip (DEP 1.32.0). git.bioconductor.org
+            keeps release branches indefinitely; refresh the commit with
+            `git ls-remote https://git.bioconductor.org/packages/DEP RELEASE_3_22`.
 
 python:
     pip:
