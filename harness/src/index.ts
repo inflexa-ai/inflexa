@@ -436,6 +436,12 @@ export type {
 export { registerSandboxStep } from "./workflows/sandbox-step.js";
 export type { SandboxStepDeps, SandboxStepInput, SandboxStepResult, SandboxAgentBuildContext } from "./workflows/sandbox-step.js";
 
+// Target assessment — the bounds its claim-investigation phase runs under. An
+// embedder wiring `executeTargetAssessment` sets these at its composition root;
+// the dossier reports whichever values were in force.
+export { DEFAULT_CLAIM_INVESTIGATION_CONFIG } from "./workflows/target-assessment/investigation/index.js";
+export type { ClaimInvestigationConfig } from "./workflows/target-assessment/investigation/index.js";
+
 // Run-event read seam — the fine-grained durable channel beside `observeRun`.
 // The two are a deliberate pair, not a duplication: `observeRun` is the coarse,
 // in-process run/step snapshot a workflow hands its host synchronously, and it

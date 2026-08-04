@@ -74,6 +74,9 @@ import type { AttributionContext } from "./literature.js";
 
 const NOT_LOADED_PHASE5 = "Phase 5 synthesis not yet implemented";
 
+/** Sections the workflow body stamps between assembly and synthesis. */
+const NOT_LOADED_POST_ASSEMBLY = "assembled after Phase 4, from the segmented regulatory label signals";
+
 // Order matches evidence-priority rank: genetic > known_drug > animal_model > somatic > literature.
 function makeAssociationEvidence(a: {
     diseaseId: string;
@@ -753,8 +756,10 @@ export async function assembleDossier(
                     : { coverage: "queried_no_data" as const },
         },
         // The corroboration fold reads the FDA label signals segmented after
-        // Phase 4, so Phase 5 stamps it.
-        safety_corroboration: { coverage: "not_loaded", reason: NOT_LOADED_PHASE5 },
+        // Phase 4, and the claim investigation reads the fold, so both are
+        // stamped by the workflow body before synthesis runs.
+        safety_corroboration: { coverage: "not_loaded", reason: NOT_LOADED_POST_ASSEMBLY },
+        claim_investigation: { coverage: "not_loaded", reason: "the claim investigation runs after Phase 4, over the corroborated organ claims" },
         off_tissue_risk: offTissueSection,
         off_target_panel: offTargetPanel
             ? { coverage: "available", data: offTargetPanel }

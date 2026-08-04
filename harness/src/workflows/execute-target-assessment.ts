@@ -12,7 +12,10 @@
  *  Progress  `emitProgress("fanning_out")`
  *  Phase 3   4 fan-out blocks in parallel  — per-item HTTP, withHost semaphore
  *  Progress  `emitProgress("assembling")`
- *  Phase 4   `phase4Assemble`              — deterministic
+ *  Phase 4   `phase4Assemble`              — aggregation + cached annotator
+ *  Phase 4a  `ta-approval-precedents`      — one openFDA lookup, two projections
+ *  Phase 4b  `ta-safety-corroboration`     — pure fold over collected signals
+ *  Phase 4c  `investigateClaims`           — propose / critique / re-verify / converge
  *  Progress  `emitProgress("synthesizing")`
  *  Phase 5a  3 per-section syntheses in parallel
  *  Phase 5b  `dossierRecommendation` sequential
@@ -42,7 +45,9 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
+import { durableStep } from "../loop/run-step.js";
 import type { AgentChat } from "../providers/types.js";
+import { createPubMedTool } from "../tools/bio/pubmed.js";
 
 import { resolveTarget } from "../tools/lib/identifier-resolver.js";
 import { TargetAssessmentInputSchema, type Phase1Bundle, type ResolvedTarget } from "./target-assessment/schemas.js";
@@ -72,8 +77,11 @@ import {
     precedentLabelSafety,
     renderApprovalPrecedents,
 } from "./target-assessment/lib/approval-precedents.js";
+import type { ClinicalConsequenceAnnotatorDeps } from "./target-assessment/lib/clinical-consequence-annotator.js";
 import { segmentLabelSafety, type OrganSignalProjection } from "./target-assessment/lib/fda-label-safety.js";
 import { readBudgetExceededMarker } from "./target-assessment/lib/llm-step.js";
+import { assembleSafetyCorroboration } from "./target-assessment/lib/safety-corroboration.js";
+import { investigateClaims, isClaimInvestigationBudgetExceeded, type ClaimInvestigationConfig } from "./target-assessment/investigation/index.js";
 import { recordTerminalReason } from "./target-assessment/metrics.js";
 import { phase4Assemble } from "./target-assessment/phase4-assemble.js";
 import { DossierDerivedInvariantError, DossierSchemaViolationError, phase5Persist } from "./target-assessment/phase5-persist.js";
@@ -148,6 +156,13 @@ export interface ExecuteTargetAssessmentDeps {
     readonly synthesisModel: string;
     /** LLM usage-accounting seam for the assessment's agent loops; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /**
+     * Bounds the claim-investigation phase runs under. Omitted falls back to
+     * `DEFAULT_CLAIM_INVESTIGATION_CONFIG` — the values are cost and termination
+     * bounds, not domain constants, so an embedder wanting a deeper pass sets
+     * its own and the dossier reports what was in force.
+     */
+    readonly claimInvestigation?: Partial<ClaimInvestigationConfig>;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -455,9 +470,19 @@ export async function runExecuteTargetAssessmentBody(
             },
         };
 
-        // (§5.7) Phase 4 — deterministic assembly. Single DBOS step.
+        // (§5.7) Phase 4 — assembly. Single DBOS step. The annotator seam lets
+        // the off-target panel's clinical-consequence pass reach its LLM on a
+        // cache miss; per-row failures leave the row's fallback in place.
         await emitProgress(deps.pool, logger, input.assessmentId, "assembling");
-        const phase4 = await DBOS.runStep(() => phase4Assemble(deps.pool, phase3 as Parameters<typeof phase4Assemble>[1]), { name: "ta-phase4-assemble" });
+        const annotatorDeps: ClinicalConsequenceAnnotatorDeps = {
+            provider: deps.chatProvider,
+            session: buildSession(input, "off-target-annotator"),
+            model: deps.decisionModel,
+            ...(deps.usageRecorder ? { usageRecorder: deps.usageRecorder } : {}),
+        };
+        const phase4 = await DBOS.runStep(() => phase4Assemble(deps.pool, phase3 as Parameters<typeof phase4Assemble>[1], annotatorDeps), {
+            name: "ta-phase4-assemble",
+        });
 
         // (§5.8-pre) Approval-precedent grounding — one deterministic openFDA
         // lookup feeding two projections of the same typed labels: the markdown
@@ -487,6 +512,52 @@ export async function runExecuteTargetAssessmentBody(
         );
         const approvalPrecedents = precedentGrounding.block;
 
+        // (§5.8-pre) The corroboration fold. Pure over signals the run already
+        // holds, but it reads the label signals segmented above, so it runs here
+        // rather than at assembly — and here rather than at persist, because the
+        // claim investigation below is its consumer.
+        const corroboration = await DBOS.runStep(
+            () =>
+                Promise.resolve(
+                    assembleSafetyCorroboration({
+                        phase1,
+                        regulatoryOrganSignals: precedentGrounding.organSignals,
+                    }),
+                ),
+            { name: "ta-safety-corroboration" },
+        );
+
+        // (§5.8-pre) The claim investigation — propose a mechanism, argue
+        // against it, re-verify, converge. Runs before synthesis so the
+        // synthesis prompts read verdicts rather than bare agreement.
+        const investigation = await investigateClaims(
+            { corroboration, dossier: phase4.dossier },
+            {
+                logger,
+                chatProvider: deps.chatProvider,
+                session: buildSession(input, "ta-claim-investigation"),
+                model: deps.synthesisModel,
+                attempt: 0,
+                runStep: durableStep,
+                critiqueTools: [createPubMedTool({ ...(deps.ncbiApiKey ? { ncbiApiKey: deps.ncbiApiKey } : {}) })],
+                ...(deps.claimInvestigation ? { config: deps.claimInvestigation } : {}),
+                ...(deps.usageRecorder ? { usageRecorder: deps.usageRecorder } : {}),
+            },
+        );
+        if (isClaimInvestigationBudgetExceeded(investigation)) {
+            budgetExceeded = true;
+            throw new BudgetExceededSkip();
+        }
+
+        const phase4Investigated: typeof phase4 = {
+            ...phase4,
+            dossier: {
+                ...phase4.dossier,
+                safety_corroboration: corroboration,
+                claim_investigation: investigation,
+            },
+        };
+
         // (§5.8) Phase 5 — three per-section syntheses in parallel.
         await emitProgress(deps.pool, logger, input.assessmentId, "synthesizing");
         const synthesisDeps = (agentId: string) => ({
@@ -501,9 +572,9 @@ export async function runExecuteTargetAssessmentBody(
             SynthesisStepResult<SafetyFlagsTrailStepOutput>,
             SynthesisStepResult<TranslationalCommentaryStepOutput>,
         ] = await Promise.all([
-            liabilityBullets(phase4, synthesisDeps("liability-bullets")),
-            safetyFlagsTrail(phase4, synthesisDeps("safety-flags-trail")),
-            translationalCommentary(phase4, synthesisDeps("translational-commentary")),
+            liabilityBullets(phase4Investigated, synthesisDeps("liability-bullets")),
+            safetyFlagsTrail(phase4Investigated, synthesisDeps("safety-flags-trail")),
+            translationalCommentary(phase4Investigated, synthesisDeps("translational-commentary")),
         ]);
         if (isBudgetCancel(bulletsRes) || isBudgetCancel(flagsRes) || isBudgetCancel(commentaryRes)) {
             budgetExceeded = true;
@@ -513,7 +584,7 @@ export async function runExecuteTargetAssessmentBody(
         // (§5.9) Phase 5b — sequential dossier-recommendation step.
         const recommendationRes: SynthesisStepResult<DossierRecommendationStepOutput> = await dossierRecommendation(
             {
-                phase4,
+                phase4: phase4Investigated,
                 perSection: {
                     liabilityBullets: bulletsRes as LiabilityBulletsStepOutput,
                     safetyFlagsTrail: flagsRes as SafetyFlagsTrailStepOutput,
@@ -536,7 +607,7 @@ export async function runExecuteTargetAssessmentBody(
                 phase5Persist({
                     logger,
                     assessmentId: input.assessmentId,
-                    phase4Dossier: phase4.dossier,
+                    phase4Dossier: phase4Investigated.dossier,
                     phase2,
                     regulatoryOrganSignals: precedentGrounding.organSignals,
                     synthesis: {
