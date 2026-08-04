@@ -1,51 +1,189 @@
 # CLAUDE.md
 
-The open-source Inflexa product monorepo — a set of **independent subsystems**, each self-contained with its own dependencies, tooling, and documentation. There is no root build, package manager, or task runner: **work inside the subsystem you are changing** (`cd cli`, `cd harness`, …) and read that subsystem's own `CLAUDE.md` first. This file is only a map.
+## Language
 
-## Subsystems
+Write all text in ASD-STE100 Simplified Technical English (STE), issue 9.
 
-| Directory | What it is | Read first |
-|-|-|-|
-| `cli/` | Local-first TUI/CLI — the user-facing product. SQLite storage, auth, the local model proxy, the opentui chat app. | `cli/CLAUDE.md`, `cli/CONTEXT.md` |
-| `harness/` | `@inflexa-ai/harness` — the host-agnostic agent harness: agent loop, DBOS-durable workflows, sandbox protocol, providers. | `harness/CLAUDE.md`, `harness/CONTEXT.md` |
-| `skills/` | Shared bioinformatics skill packs the agent loads at runtime. | — |
-| `templates/` | Report-rendering templates (e.g. `report-html`). | — |
-| `images/sandbox-base/` | The sandbox Docker image, its Go `sandbox-server`, and the provenance hooks. | `images/sandbox-base/` |
+Use STE in:
 
-## How the pieces relate
+- each message to the user
+- each commit message
+- each document in this project
+- each comment and each docstring in the code
 
-`cli` and `harness` are **fully independent packages** — each owns its `package.json`, lockfile, and `node_modules`. `cli` is the *embedder*: it consumes `harness` as `@inflexa-ai/harness` (via `file:../harness`, or a published version) and wires the harness's capability seams to trivial local realizations. Nothing else crosses a subsystem boundary except the shared `skills/` and `templates/` content, which `harness` reads at runtime (`skillsDir` / `templatesDir`) — kept at the root precisely so both the OSS host and a managed deployment can load the same content.
+STE controls prose only. It does not control code, an identifier, a command, a
+tool name, or text that you copy from a file.
 
-**A PR that spans both subsystems has red `cli` CI, and that is expected.** `cli` pins an exact published `@inflexa-ai/harness` and CI installs it from npm with a frozen lockfile, so `cli` code written against an unreleased harness cannot typecheck there — `test (cli)` and `lint (cli)` fail on missing exports while both `harness` jobs pass. This is the normal, understood shape of a cross-subsystem change, not a discovery, not a blocker to escalate, and not a defect in the work. Do not report it as a finding, do not re-derive it from the workflow files, and do not propose branch splits or merge ordering to resolve it: sequencing the harness release and the version bump belongs to the developer driving the PR (see `cli/CLAUDE.md` → "Scope: implementation only"). Local `bun run harness:local` symlinks the working copy, which is why the same code is green on the machine and red in CI.
+### Words
 
-**Design rule for the boundary**: the harness is the product core and is designed from its own point of view — its capabilities, concepts, and configuration surface are harness-owned and host-agnostic, meaning the same thing under the CLI or a managed deployment. An embedder is a consumer: it supplies values at its composition root (configuration, policies, seam realizations) and never owns or redefines what the harness does. Design new capabilities harness-first, then wire them from the embedder — never as an embedder feature the harness happens to honor.
+- Give one meaning and one part of speech to each word. `follow` means "come
+  after". Use `obey` for a rule or an instruction.
+- Use one word for one thing each time. Do not change a term for style.
+- Use a short, common word. Use `use`, not `utilize`. Use `start`, not `initiate`.
+- Keep the articles `the`, `a`, and `an`. Write `set the flag`, not `set flag`.
+- Do not put more than three nouns together. Divide a longer group with `of` or
+  `for`.
+- Delete slang, idioms, and metaphors.
+- Use American English spelling.
 
-## Agent-facing content — declare *what*, never *how*
+### Verbs
 
-Prompts, skills, and tools are three layers of one contract: content states the **requirement**, the runtime resolves the **mechanism**. Collapsing the two freezes one environment's shape into content that outlives it — and content is the layer that cannot be typechecked, so the mismatch surfaces as a failed analysis rather than a failed build.
+- Use only these verb forms: the infinitive, the imperative, the simple present
+  tense, the simple past tense, the simple future tense, and the past participle
+  as an adjective.
+- Do not use the perfect tenses. Do not use the progressive tenses. Write `the
+  parser reads the file`, not `the parser is reading the file`.
+- Use the active voice. In a description, use the passive voice only when the
+  agent is unknown.
+- Do not use the `-ing` form as a verb or as an adjective. Write `the hook that
+  runs`, not `the running hook`. An `-ing` word is permitted as a technical name,
+  for example `Testing` or `welding torch`.
+- Use a verb for an action, not a noun. Write `do a check of the battery`, not
+  `check the battery`, when `check` is the noun.
+- Use `must` for a requirement. Do not use `shall` or `should`. Use `can` for a
+  possibility, not `may`.
 
-| Layer | Owns | Must never |
-|-|-|-|
-| **Skill** (`skills/`) | What the work needs: the dataset by name, and its contract — key columns, identifier space, organism | Name a path, directory, filename, or format — **or the tool that locates one** |
-| **System prompt** (`harness/src/prompts/`) | Which tools exist and when to reach for one | Enumerate specific datasets, or promise a format the catalog doesn't guarantee |
-| **Tool** (`harness/src/tools/`) | Turning a described need into a concrete path, with enough metadata to choose between candidates | Require the caller to already know where a thing lives |
+### Sentences
 
-The rules that follow from it:
+- Write one instruction in one sentence. Two actions need two sentences.
+- Write a maximum of 20 words in an instruction. Write a maximum of 25 words in a
+  description.
+- Write a maximum of 6 sentences in a paragraph. Give one topic to each paragraph.
+- Keep the conjunction `that`. Write `make sure that the test passes`.
+- Do not omit words. Do not use contractions. Write `do not`, not `don't`.
+- Put the condition before the action. Write `if the test fails, revert the
+  commit`.
+- Put the warning before the action. A warning shows a risk to a person. A
+  caution shows a risk to equipment or data.
+- Use a vertical list for complex data. Do not use the semicolon.
 
-- **A skill states the task; the tool describes itself.** Say "screen these identifiers against the safety panel" or "resolve the network from the reference inventory" — not `check_safety_panel`, not `list_available_refs`. **A tool carries its own `description` into context when it is attached to an agent**, so the agent already knows what it holds and what each one is for. The skill's job is to say what needs doing; the agent binds that to a tool. Naming the identifier therefore adds nothing the agent lacks, and quietly couples shared content to one host's inventory — `skills/` is loaded by the OSS host and by managed deployments alike. It is unverified by construction: `validateAgentSkills` reads only whether each declared `SKILL.md` is readable, never its prose, so a renamed, unwired, or invented tool name stays green until an agent tries the call. That gap is not a missing check to build — the guard is review against this document, which is why the rule has to hold on the way in.
-- **A capability is not always a file.** Before telling a skill to resolve something, confirm it is actually staged on disk. Data that ships inside the agent runtime and is served only through a tool has no path in any environment, so instructing an agent to go find it is the same failure as naming a stale one. Say it is a lookup, and say how to get its output into a script.
-- **Dataset names are not paths.** "CollecTRI", "MSigDB hallmark", "SILVA" are domain vocabulary and belong in skills. The ban is on locations and formats, not on naming the thing you need.
-- **Describe data well enough to be found by meaning.** This is what makes the rest survivable: an agent told "you need TF-target regulons" can only recognise `CollecTRI_regulons.csv` if something says what that file holds. That is the job of `format`/`contents`/`organism` in `harness/src/reference-data/catalog.ts` — a new dataset without a real `contents` description is effectively invisible.
-- **Absence is a normal state, not an error.** Say what to do when a resource is missing — report it and proceed with what exists. Never substitute silently, never invent a path.
+### Word traps
 
-Layout is an installer detail. Anything that encodes it has made a private decision into a public interface.
+Replace the word on the left with a word on the right.
 
-## Working here
+| Do not use | Use |
+| --- | --- |
+| ensure | make sure |
+| follow (a rule) | obey |
+| however | but |
+| therefore | thus, as a result |
+| prior to | before |
+| in order to | to |
+| via | with, through |
+| utilize | use |
+| perform | do |
+| check (verb) | make sure, examine, measure |
+| rotate | turn |
+| since (a cause) | because |
+| shall, should | must |
+| may | can |
 
-- Pick the subsystem, `cd` into it, then use its scripts (`bun install`, `bun run dev`, …). The root has none.
-- Each subsystem owns its conventions in its own `CLAUDE.md`; there is no shared root convention set.
-- Product orientation for users is [`README.md`](./README.md); the repository domain map is [`CONTEXT.md`](./CONTEXT.md).
+Do not make a phrasal verb from approved words. Write `extinguish the fire`, not
+`put out the fire`. Write `release the fumes`, not `give off the fumes`.
 
-## Specs (OpenSpec)
+Do not use a Latin abbreviation. Write `for example`, not `e.g.`.
 
-Each subsystem owns its own OpenSpec specs — `cli/openspec/specs` and `harness/openspec/specs`. There is no root-level spec set, and `harness` has **no** separate `docs/adr`: its design decisions live in its specs. When changing a subsystem, run the `openspec` CLI inside that subsystem's dir (e.g. `cd harness && openspec …`) so the change lands in the right spec tree. `AGENTS.md` is a symlink alias of `CLAUDE.md` at every level — same file, two names.
+### Example
+
+Non-STE:
+
+> The battery should be checked prior to installation, and if it's low it'll need
+> charging before you proceed.
+
+STE:
+
+> Before you install the battery, do a check of it. If the charge is low, charge
+> the battery. Then continue.
+
+### Technical names
+
+A technical name is permitted. A technical verb is permitted. A domain term such
+as `hook`, `commit`, or `repository` is a technical name. Use it even when the
+STE dictionary does not list it.
+
+## The rule
+
+Do only the work that the last message from the user asks for.
+
+Do not do other work. If the user does not name a thing, do not make that thing.
+
+## Work that is not permitted
+
+Do not make these files if the user does not ask for them:
+
+- configuration files
+- test files
+- document files
+- README files
+- example files
+- empty files for code that comes later
+
+Do not do these tasks if the user does not ask for them:
+
+- Do not make a directory into a package.
+- Do not make a package into a member of the workspace.
+- Do not add a dependency.
+- Do not change code that is not part of the request.
+- Do not clean, rename, or move code that is not part of the request.
+- Do not make code better.
+
+## Questions
+
+Give an answer to a question. Do not start work because of a question.
+
+These are questions:
+
+- "How does this work?"
+- "What are the options?"
+- "Can we do this?"
+- "Does this make sense?"
+
+Give the answer. Then stop.
+
+## Unknown information
+
+Do not guess:
+
+- Do not guess which tools this project uses.
+- Do not guess the structure of this project.
+- Do not use a different project as an example for this project.
+
+If the information is not in this project, ask the user for it.
+
+Do not make a test project to try an approach that the user does not ask for.
+
+## The end of a task
+
+Do not tell the user the next steps:
+
+- Do not give a list of possible tasks.
+- Do not ask the user for approval to continue.
+
+Stop when the work is complete.
+
+## More work
+
+More work can be necessary. Tell the user in one or two sentences. Then stop and wait.
+
+Do not do the work. Do not do the work and then tell the user about it.
+
+If something stops the request, name it. Then wait for a decision from the user.
+
+## The limits of a request
+
+A request includes only the work that it names.
+
+Approval of one task is not approval of a different task.
+
+Approval of a plan is not approval of a step that the request does not name.
+
+If a part of the request is not clear, ask the user about that part. Do not select the meaning that
+gives more work.
+
+## Commits
+
+Sign off each commit with the identity of the user. Use the `-s` option of `git commit`:
+
+```
+git commit -s -m "<message>"
+```
