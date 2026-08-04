@@ -1,7 +1,12 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { silentLogger } from "../__tests__/setup/logger.js";
 import type { Pool } from "pg";
 
+import { REPORT_BUILDER_SKILLS } from "../agents/report-builder.js";
+import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { bootHarness, type BootHarnessDeps } from "./boot.js";
 import type { CoreRuntimeDeps } from "./assemble.js";
 import type { DbosConfig } from "./dbos.js";
@@ -11,7 +16,7 @@ import type { ConnectionBudgetConfig } from "./connection-budget.js";
 function explodingPool(onUse: () => void): Pool {
     const trap = () => {
         onUse();
-        throw new Error("pool must not be touched before skill validation");
+        throw new Error("exploding pool: boot reached state init");
     };
     return { query: trap, connect: trap, end: async () => {} } as unknown as Pool;
 }
@@ -27,6 +32,25 @@ function bootDeps(overrides: Partial<BootHarnessDeps>): BootHarnessDeps {
         ...overrides,
     };
 }
+
+const SANDBOX_SKILLS = [...new Set(Object.values(SANDBOX_AGENT_META).flatMap((meta) => meta.skills))];
+
+const tempRoots: string[] = [];
+
+/** A skills tree holding a readable `SKILL.md` for each named pack, and nothing else. */
+async function skillsDirWith(packs: readonly string[]): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "boot-skills-"));
+    tempRoots.push(root);
+    for (const pack of packs) {
+        await mkdir(join(root, pack), { recursive: true });
+        await writeFile(join(root, pack, "SKILL.md"), "# pack\n");
+    }
+    return root;
+}
+
+afterAll(async () => {
+    await Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true })));
+});
 
 describe("bootHarness", () => {
     it("fails fast on an invalid skillsDir before any pool or launch work", async () => {
@@ -50,6 +74,40 @@ describe("bootHarness", () => {
         // beforeLaunch hook (which precedes DBOS launch).
         expect(poolUsed).toBe(false);
         expect(beforeLaunchRan).toBe(false);
+    });
+
+    it("fails fast when the report path's pack is absent from an otherwise complete tree", async () => {
+        let poolUsed = false;
+
+        await expect(
+            bootHarness(
+                bootDeps({
+                    skillsDir: await skillsDirWith(SANDBOX_SKILLS),
+                    pool: explodingPool(() => {
+                        poolUsed = true;
+                    }),
+                }),
+            ),
+        ).rejects.toThrow(/report-builder[\s\S]*report-html/);
+
+        expect(poolUsed).toBe(false);
+    });
+
+    it("clears skill validation once every declared pack resolves", async () => {
+        let poolUsed = false;
+
+        await expect(
+            bootHarness(
+                bootDeps({
+                    skillsDir: await skillsDirWith([...SANDBOX_SKILLS, ...REPORT_BUILDER_SKILLS]),
+                    pool: explodingPool(() => {
+                        poolUsed = true;
+                    }),
+                }),
+            ),
+        ).rejects.toThrow(/boot reached state init/);
+
+        expect(poolUsed).toBe(true);
     });
 
     it("runs injected telemetry init before it throws on a bad skillsDir", async () => {

@@ -186,7 +186,9 @@ validation before the first analysis runs, naming the offending agent and skill.
 
 This check SHALL be invoked from the harness-owned boot sequence
 `bootHarness` (`runtime/boot.ts`), using the `skillsDir` the embedder threads in
-and the harness-owned agent catalog (`SANDBOX_AGENT_META`). It SHALL run before
+and every harness-owned agent that declares packs: the sandbox catalog
+(`SANDBOX_AGENT_META`) and the report path (`REPORT_BUILDER_SKILLS`), which
+declares a pack without being plannable. It SHALL run before
 DBOS launch — after the injected telemetry init and before state init, the
 connection-budget guard, `assembleCoreRuntime`, and `launchDbos` — so a
 `meta.skills` typo or a `skillsDir` / image drift fails in milliseconds, before
@@ -198,6 +200,12 @@ any Postgres or DBOS cost is paid. `bootHarness` therefore SHALL require
 - **GIVEN** an agent declaring a skill whose `SKILL.md` does not exist under `skillsDir`
 - **WHEN** `validateAgentSkills` runs at boot
 - **THEN** it throws, naming the agent id, the missing skill, and the expected path
+
+#### Scenario: The report path's pack is validated too
+
+- **GIVEN** a `skillsDir` holding every pack the sandbox catalog declares but no `report-html`
+- **WHEN** the harness boots
+- **THEN** `bootHarness` SHALL reject, naming `report-builder` and `report-html`, rather than deferring the failure to a render
 
 #### Scenario: Boot fails on an unreadable pack before any launch work
 

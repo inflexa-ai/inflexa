@@ -52,7 +52,7 @@ import {
     type ReportOutcome,
     type PreviewUrlCell,
 } from "../tools/report/index.js";
-import { createReportBuilderAgent, REPORT_BUILDER_AGENT_ID } from "../agents/report-builder.js";
+import { createReportBuilderAgent, REPORT_BUILDER_AGENT_ID, REPORT_BUILDER_SKILLS } from "../agents/report-builder.js";
 import type { PreviewPublisher } from "../tools/report/preview-publisher.js";
 import { createSkillTools } from "../tools/sandbox/skills.js";
 import type { ChromeConfig } from "../lib/chrome.js";
@@ -60,9 +60,6 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { AgentRunUsage } from "../loop/metrics.js";
-
-/** Skill pack the report-builder prompt directs the model to read (design-system reference). */
-const REPORT_BUILDER_SKILLS = ["report-html"] as const;
 
 const REPORT_AGENT_MAX_STEPS = 75;
 

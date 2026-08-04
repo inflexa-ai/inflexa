@@ -11,9 +11,9 @@
  *      to a no-op so a library host never acquires process-wide telemetry (or a
  *      console banner) it did not ask for. An embedder that wants harness OTel
  *      passes `initOtel` / `shutdownOtel` here.
- *   2. `validateAgentSkills(skillsDir, SANDBOX_AGENT_META)` — pure fs stat, zero
- *      external deps. A `meta.skills` typo or a `skillsDir` / image drift dies in
- *      milliseconds, before any Postgres or DBOS cost is paid (agent-skill-assignment).
+ *   2. `validateAgentSkills(skillsDir, ...)` — pure fs stat, zero external deps.
+ *      A `meta.skills` typo or a `skillsDir` / image drift dies in milliseconds,
+ *      before any Postgres or DBOS cost is paid (agent-skill-assignment).
  *   3. `initCortexState(pool)` — app tables must exist before launch; recovery
  *      queries them on the first step.
  *   4. `assertConnectionBudget(...)` — needs the live pool; gates launch so a
@@ -42,6 +42,7 @@ import type { Pool } from "pg";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
+import { REPORT_BUILDER_AGENT_ID, REPORT_BUILDER_SKILLS } from "../agents/report-builder.js";
 import { validateAgentSkills } from "../agents/sandbox/validate-skills.js";
 import { initCortexState } from "../state/init.js";
 import { backfillConversationDisplayEnvelopes } from "../memory/conversation-display-backfill.js";
@@ -53,6 +54,17 @@ import { runShutdownSequence } from "./shutdown.js";
 
 const noop = (): void => {};
 const noopAsync = (): Promise<void> => Promise.resolve();
+
+/**
+ * Every agent whose declared packs must resolve before the first run. The
+ * report-builder is not in the sandbox catalog — it is not plannable — but it
+ * declares a pack all the same, and a missing one there surfaces as a failed
+ * render partway through a report rather than at boot.
+ */
+const SKILL_DECLARING_AGENTS = {
+    ...SANDBOX_AGENT_META,
+    [REPORT_BUILDER_AGENT_ID]: { id: REPORT_BUILDER_AGENT_ID, skills: REPORT_BUILDER_SKILLS },
+};
 
 export interface BootHarnessDeps {
     /** Everything `assembleCoreRuntime` needs (workflow + conversation deps, resource policy). */
@@ -96,7 +108,7 @@ export async function bootHarness(deps: BootHarnessDeps): Promise<BootedHarness>
 
     (deps.initTelemetry ?? noop)();
 
-    validateAgentSkills(skillsDir, SANDBOX_AGENT_META);
+    validateAgentSkills(skillsDir, SKILL_DECLARING_AGENTS);
 
     await initCortexState(pool);
     await assertConnectionBudget({ pool, logger, config: deps.connectionBudget });

@@ -44,12 +44,13 @@ export interface DbosConfig {
     readonly logLevel?: string;
 }
 
-interface State {
+/** DBOS lifecycle facts a host's readiness probe reports on. */
+export interface DbosState {
     launched: boolean;
     recoveryStarted: boolean;
 }
 
-const state: State = {
+const state: DbosState = {
     launched: false,
     recoveryStarted: false,
 };
@@ -191,7 +192,7 @@ export async function sweepEphemeralWorkflows({
 }
 
 /** Snapshot of DBOS lifecycle state — read by the readiness probe. */
-export function dbosState(): State {
+export function dbosState(): DbosState {
     return { ...state };
 }
 
@@ -202,7 +203,7 @@ export function __resetDbosStateForTest(): void {
 }
 
 /** Test hook: mark launched without calling DBOS. Test-only. */
-export function __setDbosStateForTest(next: Partial<State>): void {
+export function __setDbosStateForTest(next: Partial<DbosState>): void {
     if (next.launched !== undefined) state.launched = next.launched;
     if (next.recoveryStarted !== undefined) state.recoveryStarted = next.recoveryStarted;
 }

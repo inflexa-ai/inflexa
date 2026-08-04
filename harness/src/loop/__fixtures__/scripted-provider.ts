@@ -47,6 +47,17 @@ export function toolUseBlock(id: string, name: string, input: unknown): ToolUseB
     return { type: "tool-call", toolCallId: id, toolName: name, input };
 }
 
+/**
+ * The text a real provider would have streamed for this reply — one delta per
+ * text block. Reasoning and tool-call blocks carry no text on the wire, so they
+ * arrive only in the terminal `done` response.
+ */
+function textDeltas(response: ChatResponse): string[] {
+    const content = response.message.content;
+    if (typeof content === "string") return content === "" ? [] : [content];
+    return content.filter((part) => part.type === "text").map((part) => part.text);
+}
+
 export interface ScriptedProvider extends ChatProvider {
     readonly calls: ChatRequest[];
     readonly sessions: Session[];
@@ -76,8 +87,17 @@ export function scriptedProvider(script: ChatResponse[] | ((callIndex: number, r
             sessions.push(session);
             return okAsync(reply(i, request));
         },
-        chatStream(): AsyncIterable<ChatStreamEvent> {
-            throw new Error("scriptedProvider: chatStream is not used by runAgent");
+        chatStream(request: ChatRequest, session: Session): AsyncIterable<ChatStreamEvent> {
+            // The call is recorded and the reply resolved eagerly, as in `chat`, so
+            // an unscripted call fails at the same point either primitive is driven.
+            const i = calls.length;
+            calls.push(request);
+            sessions.push(session);
+            const response = reply(i, request);
+            return (async function* () {
+                for (const text of textDeltas(response)) yield { type: "text-delta", text };
+                yield { type: "done", response };
+            })();
         },
     };
 }
