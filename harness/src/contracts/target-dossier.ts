@@ -756,6 +756,28 @@ export const RegulatoryActionRowSchema = z
     });
 export type RegulatoryActionRow = z.infer<typeof RegulatoryActionRowSchema>;
 
+/**
+ * One warning fragment from an FDA label, attributed to a canonical organ.
+ *
+ * The application number plus the label section are what let a reader open the
+ * label and find the excerpt again, which is why the row carries both rather
+ * than a bare drug name.
+ */
+export const RegulatoryOrganSignalRowSchema = withEvidence(
+    z.object({
+        organ: OrganSystemSchema,
+        drug_name: z.string(),
+        agency: z.literal("FDA"),
+        application_number: z.string(),
+        label_section: z.string(),
+        excerpt: z.string(),
+    }),
+);
+export type RegulatoryOrganSignalRow = z.infer<typeof RegulatoryOrganSignalRowSchema>;
+
+export const RegulatoryOrganSignalsSchema = withCoverage(z.object({ rows: z.array(RegulatoryOrganSignalRowSchema) }));
+export type RegulatoryOrganSignals = z.infer<typeof RegulatoryOrganSignalsSchema>;
+
 export const SafetyProfileSchema = z.object({
     organ_rollup: withCoverage(z.object({ rows: z.array(OrganRiskRowSchema) })),
     faers: withCoverage(FaersSummarySchema),
@@ -765,6 +787,7 @@ export const SafetyProfileSchema = z.object({
     class_precedent: withCoverage(ClassPrecedentSchema),
     target_organ_liabilities: withCoverage(z.object({ rows: z.array(SafetyFlagSchema) })),
     regulatory_actions: withCoverage(z.object({ rows: z.array(RegulatoryActionRowSchema) })).optional(),
+    regulatory_organ_signals: RegulatoryOrganSignalsSchema.optional(),
 });
 export type SafetyProfile = z.infer<typeof SafetyProfileSchema>;
 

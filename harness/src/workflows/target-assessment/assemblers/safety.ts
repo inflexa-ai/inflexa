@@ -14,9 +14,12 @@ import type {
     ClaimSupport,
     EvidenceItem,
     RegulatoryActionRow,
+    RegulatoryOrganSignalRow,
+    RegulatoryOrganSignals,
     OffTargetRowSchema,
     ExcludedOffTargetRowSchema,
 } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import { ORGAN_RESOLUTION_FILTER, type OrganSignalProjection } from "../lib/fda-label-safety.js";
 import type { OrganSystem } from "../../../contracts/organ-system.js";
 import { expectedOrgansFromBody } from "../lib/compute-derived.js";
 import type { Phase2Bundle } from "../steps/phase2-aggregate.js";
@@ -541,6 +544,43 @@ export function claimSupportFrom(evidence: EvidenceItem[], reasonWhenUnsupported
 /** The evidence behind a claim, or nothing when the claim states it has none. */
 export function claimSupportEvidence(support: ClaimSupport): EvidenceItem[] {
     return support.state === "scored" ? support.evidence : [];
+}
+
+// ── Per-organ regulatory signals ────────────────────────────────────
+
+/**
+ * Turn segmented FDA label warnings into the dossier's per-organ regulatory
+ * signal section.
+ *
+ * The organ-resolution filter can legitimately empty this section: a set of
+ * labels whose every warning fragment names no canonical organ produces no
+ * rows. That is `filtered` with the count it discarded, never an `available`
+ * section with an empty list — the difference is whether a reader learns that
+ * signals existed and did not survive attribution.
+ */
+export function assembleRegulatoryOrganSignals(projection: OrganSignalProjection | null): RegulatoryOrganSignals {
+    if (projection === null) {
+        return { coverage: "not_loaded", reason: "no indication resolved, so no FDA label was queried" };
+    }
+
+    const rows: RegulatoryOrganSignalRow[] = projection.signals.map((s) => ({
+        organ: s.organ,
+        drug_name: s.drug_name,
+        agency: "FDA" as const,
+        application_number: s.application_number,
+        label_section: s.label_section,
+        excerpt: s.excerpt,
+        support: claimSupportFrom([s.evidence], `the ${s.label_section} warning for ${s.drug_name} carries no citable label reference`),
+    }));
+
+    if (rows.length === 0) {
+        if (projection.dropped_count > 0) {
+            return { coverage: "filtered", filter: ORGAN_RESOLUTION_FILTER, dropped_count: projection.dropped_count };
+        }
+        return { coverage: "queried_no_data", error: { message: "the FDA label query returned no attributable warning prose" } };
+    }
+
+    return { coverage: "available", data: { rows }, dropped_count: projection.dropped_count };
 }
 
 /**

@@ -21,6 +21,7 @@ export {
     aggregateTrialAes,
     aggregateOffTargetPanel,
     aggregateClassPrecedent,
+    assembleRegulatoryOrganSignals,
     buildOrganRollup,
 } from "./safety.js";
 

@@ -29,7 +29,8 @@ import {
     type SynthesisDiagnosticRow,
 } from "@inflexa-ai/harness/contracts/target-dossier.js";
 
-import { deterministicTranslationalCommentary } from "./assemblers/index.js";
+import { assembleRegulatoryOrganSignals, deterministicTranslationalCommentary } from "./assemblers/index.js";
+import type { OrganSignalProjection } from "./lib/fda-label-safety.js";
 import { validateRecommendationCitations, type RecommendationAudit } from "./lib/citation-validator.js";
 import { computeDerivedFields } from "./lib/compute-derived.js";
 import { detectStructuralEvidenceConflicts } from "./lib/evidence-conflict-detector.js";
@@ -77,6 +78,11 @@ export interface Phase5PersistInput {
     readonly assessmentId: string;
     readonly phase4Dossier: DossierBody;
     readonly phase2: Phase2Bundle;
+    /**
+     * Per-organ signals segmented from the FDA labels the approval-precedent
+     * step fetched. Null when no indication resolved and no label was queried.
+     */
+    readonly regulatoryOrganSignals: OrganSignalProjection | null;
     readonly synthesis: {
         readonly bullets: LiabilityBulletsStepOutput;
         readonly flags: SafetyFlagsTrailStepOutput;
@@ -161,8 +167,16 @@ interface CollectedSynthesis {
     readonly recommendation: DossierRecommendationStepOutput;
 }
 
-function stampSynthesis(logger: Logger, phase4Dossier: DossierBody, syn: CollectedSynthesis, phase2: Phase2Bundle): DossierBody {
+function stampSynthesis(
+    logger: Logger,
+    phase4Dossier: DossierBody,
+    syn: CollectedSynthesis,
+    phase2: Phase2Bundle,
+    regulatoryOrganSignals: OrganSignalProjection | null,
+): DossierBody {
     const next = structuredClone(phase4Dossier);
+
+    next.safety_profile.regulatory_organ_signals = assembleRegulatoryOrganSignals(regulatoryOrganSignals);
 
     if (syn.bullets.coverage === "available") {
         next.liability_summary.liability_bullets = syn.bullets.data.bullets.map((b) => ({
@@ -365,7 +379,13 @@ export async function phase5Persist(input: Phase5PersistInput): Promise<Phase5Pe
     // it. None of these casts is load-bearing for soundness:
     // `DossierSchema.safeParse(fullDossier)` at the end is the single
     // validation gate, and it throws before anything is returned.
-    let dossier: Record<string, unknown> = stampSynthesis(logger, input.phase4Dossier, input.synthesis, input.phase2) as unknown as Record<string, unknown>;
+    let dossier: Record<string, unknown> = stampSynthesis(
+        logger,
+        input.phase4Dossier,
+        input.synthesis,
+        input.phase2,
+        input.regulatoryOrganSignals,
+    ) as unknown as Record<string, unknown>;
 
     // Demote organ-claim flagged bullets into coverage_qualifier.unverified_bullets.
     const exec = dossier.executive_recommendation as { coverage: string; data?: ExecutiveRecommendationData } | undefined;

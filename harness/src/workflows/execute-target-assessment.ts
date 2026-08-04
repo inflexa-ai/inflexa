@@ -66,7 +66,13 @@ import {
     type PolypharmInputItem,
     type TrialItem,
 } from "./target-assessment/fanout/index.js";
-import { fetchApprovalPrecedents, pickIndicationForPrecedents, renderApprovalPrecedents } from "./target-assessment/lib/approval-precedents.js";
+import {
+    fetchApprovalPrecedents,
+    pickIndicationForPrecedents,
+    precedentLabelSafety,
+    renderApprovalPrecedents,
+} from "./target-assessment/lib/approval-precedents.js";
+import { segmentLabelSafety, type OrganSignalProjection } from "./target-assessment/lib/fda-label-safety.js";
 import { readBudgetExceededMarker } from "./target-assessment/lib/llm-step.js";
 import { recordTerminalReason } from "./target-assessment/metrics.js";
 import { phase4Assemble } from "./target-assessment/phase4-assemble.js";
@@ -453,10 +459,11 @@ export async function runExecuteTargetAssessmentBody(
         const phase4 = await DBOS.runStep(() => phase4Assemble(deps.pool, phase3 as Parameters<typeof phase4Assemble>[1]), { name: "ta-phase4-assemble" });
 
         // (§5.8-pre) Approval-precedent grounding — one deterministic openFDA
-        // lookup, rendered to markdown and injected into every synthesis prompt.
-        // A precedent-lookup failure must NOT fail the whole assessment: a fetch
-        // throw degrades to a "no precedents" block.
-        const approvalPrecedents = await DBOS.runStep(
+        // lookup feeding two projections of the same typed labels: the markdown
+        // block every synthesis prompt receives, and the per-organ regulatory
+        // signals the dossier carries. A precedent-lookup failure must NOT fail
+        // the whole assessment: a fetch throw degrades to a "no precedents" block.
+        const precedentGrounding: { block: string; organSignals: OrganSignalProjection | null } = await DBOS.runStep(
             async () => {
                 const indication = pickIndicationForPrecedents(phase4.dossier);
                 let result: Awaited<ReturnType<typeof fetchApprovalPrecedents>> | null = null;
@@ -468,10 +475,16 @@ export async function runExecuteTargetAssessmentBody(
                         result = null;
                     }
                 }
-                return renderApprovalPrecedents(indication, result);
+                return {
+                    block: renderApprovalPrecedents(indication, result),
+                    // A resolved indication was queried even when the lookup
+                    // degraded to nothing; only an unresolved one was not.
+                    organSignals: indication === null ? null : segmentLabelSafety(precedentLabelSafety(result?.precedents ?? [])),
+                };
             },
             { name: "ta-approval-precedents" },
         );
+        const approvalPrecedents = precedentGrounding.block;
 
         // (§5.8) Phase 5 — three per-section syntheses in parallel.
         await emitProgress(deps.pool, logger, input.assessmentId, "synthesizing");
@@ -524,6 +537,7 @@ export async function runExecuteTargetAssessmentBody(
                     assessmentId: input.assessmentId,
                     phase4Dossier: phase4.dossier,
                     phase2,
+                    regulatoryOrganSignals: precedentGrounding.organSignals,
                     synthesis: {
                         bullets: bulletsRes as LiabilityBulletsStepOutput,
                         flags: flagsRes as SafetyFlagsTrailStepOutput,
