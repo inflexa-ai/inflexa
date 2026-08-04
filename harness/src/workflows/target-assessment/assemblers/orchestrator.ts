@@ -10,7 +10,6 @@
  */
 
 import type { ClaimSupport, DossierBody, Entity, EvidenceItem, TractabilitySection } from "@inflexa-ai/harness/contracts/target-dossier.js";
-import type { OrganSystem } from "../../../contracts/organ-system.js";
 import {
     classifyClinicalEvidenceTrial,
     type ClinicalEvidenceAttributionContext,
@@ -28,6 +27,7 @@ import type { Pool } from "pg";
 import { annotateOffTargetPanel } from "../lib/clinical-consequence-annotator.js";
 import type { ClinicalConsequenceAnnotatorDeps } from "../lib/clinical-consequence-annotator.js";
 import { coverageFromRows } from "../coverage.js";
+import { toOrganSystems } from "../lib/impc-organ-map.js";
 import { fetchRegulatoryActions } from "../lib/regulatory-actions.js";
 import { HIGH_EXPRESSION_TPM_THRESHOLD } from "../lib/expression-constants.js";
 export { HIGH_EXPRESSION_TPM_THRESHOLD };
@@ -73,35 +73,6 @@ import { buildFailureCategoryDiscriminated } from "./literature.js";
 import type { AttributionContext } from "./literature.js";
 
 const NOT_LOADED_PHASE5 = "Phase 5 synthesis not yet implemented";
-
-/**
- * The IMPC phenotype vocabulary onto the canonical organ vocabulary. Buckets
- * with no organ system to land in (hearing, growth, mortality, craniofacial)
- * are absent: a phenotype is reported under the organ it affects or not at
- * all, never under an approximate neighbour.
- */
-const IMPC_ORGAN_SYSTEMS: Record<string, OrganSystem> = {
-    cardiovascular: "cardiac",
-    gastrointestinal: "gi",
-    endocrine: "endocrine_thyroid",
-    hematologic: "hematologic",
-    metabolic: "metabolic",
-    immune: "immune",
-    skin: "dermatologic",
-    hepatic: "hepatic",
-    musculoskeletal: "musculoskeletal",
-    skeleton: "musculoskeletal",
-    cns: "cns",
-    renal: "renal",
-    reproductive: "reproductive",
-    respiratory: "respiratory",
-    vision: "ocular",
-};
-
-function toOrganSystems(impcOrganSystems: string[]): OrganSystem[] {
-    const resolved = impcOrganSystems.map((o) => IMPC_ORGAN_SYSTEMS[o]).filter((o): o is OrganSystem => o !== undefined);
-    return [...new Set(resolved)];
-}
 
 // Order matches evidence-priority rank: genetic > known_drug > animal_model > somatic > literature.
 function makeAssociationEvidence(a: {
@@ -781,6 +752,9 @@ export async function assembleDossier(
                     ? { coverage: "available" as const, data: { rows: regulatoryActionRows } }
                     : { coverage: "queried_no_data" as const },
         },
+        // The corroboration fold reads the FDA label signals segmented after
+        // Phase 4, so Phase 5 stamps it.
+        safety_corroboration: { coverage: "not_loaded", reason: NOT_LOADED_PHASE5 },
         off_tissue_risk: offTissueSection,
         off_target_panel: offTargetPanel
             ? { coverage: "available", data: offTargetPanel }

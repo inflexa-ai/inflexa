@@ -337,6 +337,41 @@ export const TherapeuticProgramsBundleSchema = z.object({
 });
 export type TherapeuticProgramsBundle = z.infer<typeof TherapeuticProgramsBundleSchema>;
 
+/**
+ * Curated human phenotype and causal-disease evidence from Monarch.
+ *
+ * `ancestorIds` is the HPO ancestor closure, carried through so the consumer
+ * resolves a phenotype onto an organ by identifier rather than by its label.
+ */
+export const MonarchBundleSchema = z.object({
+    geneCurie: z.string(),
+    phenotypes: z.array(
+        z.object({
+            hpoId: z.string(),
+            label: z.string(),
+            ancestorIds: z.array(z.string()),
+            publications: z.array(z.string()),
+            diseaseContext: z.string().nullable(),
+            frequencyPercent: z.number().nullable(),
+            primaryKnowledgeSource: z.string().nullable(),
+        }),
+    ),
+    phenotypeTotal: z.number(),
+    phenotypesTruncated: z.boolean(),
+    diseases: z.array(
+        z.object({
+            mondoId: z.string(),
+            label: z.string(),
+            predicate: z.string(),
+            primaryKnowledgeSource: z.string().nullable(),
+            publications: z.array(z.string()),
+        }),
+    ),
+    diseaseTotal: z.number(),
+    diseasesTruncated: z.boolean(),
+});
+export type MonarchBundle = z.infer<typeof MonarchBundleSchema>;
+
 // ── Phase-1 keyed bundle (output of phase1Aggregate) ─────────────────
 
 export const Phase1BundleSchema = z.object({
@@ -355,6 +390,7 @@ export const Phase1BundleSchema = z.object({
         pathways: withCoverage(PathwaysBundleSchema),
         stringPpi: withCoverage(StringPpiBundleSchema),
         familyComplexes: withCoverage(FamilyComplexesBundleSchema),
+        monarch: withCoverage(MonarchBundleSchema),
         therapeuticPrograms: withCoverage(TherapeuticProgramsBundleSchema).optional(),
     }),
 });

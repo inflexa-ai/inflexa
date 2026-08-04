@@ -307,6 +307,9 @@ describe("createExecuteAnalysisTool plan mode", () => {
             ],
         });
         let mintCalls = 0;
+        // Saved and restored below: a stub left in place would answer every
+        // later test file's request from this one's fixture.
+        const realFetch = globalThis.fetch;
         globalThis.fetch = (async () => {
             mintCalls++;
             return new Response("{}", {
@@ -333,12 +336,16 @@ describe("createExecuteAnalysisTool plan mode", () => {
                 };
             },
         });
-        const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
-        expect(result).toMatchObject({ runId: "r-existing", status: "in_progress" });
-        expect(mintCalls).toBe(0);
-        expect(dispatched).toBe(false);
-        // The dedup pre-check is the only query that touched cortex_runs.
-        expect(queries.some((q) => q.text.includes("FROM cortex_runs"))).toBe(true);
+        try {
+            const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+            expect(result).toMatchObject({ runId: "r-existing", status: "in_progress" });
+            expect(mintCalls).toBe(0);
+            expect(dispatched).toBe(false);
+            // The dedup pre-check is the only query that touched cortex_runs.
+            expect(queries.some((q) => q.text.includes("FROM cortex_runs"))).toBe(true);
+        } finally {
+            globalThis.fetch = realFetch;
+        }
     });
 
     it("marks the reserved run failed and rethrows when authorization fails", async () => {

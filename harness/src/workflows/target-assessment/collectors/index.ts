@@ -38,6 +38,7 @@ import type {
     FaersByTargetBundle,
     FamilyComplexesBundle,
     ImpcBundle,
+    MonarchBundle,
     OpenTargetsBundle,
     PathwaysBundle,
     PubmedIndexBundle,
@@ -53,6 +54,7 @@ import { searchFailedTrials, searchTrialsForTarget } from "../../../tools/lib/cl
 import { filterInformative, searchClinvar } from "../../../tools/lib/clinvar-client.js";
 import { getKoPhenotypeProfile } from "../../../tools/lib/impc-client.js";
 import { getFamilyHeterodimers } from "../../../tools/lib/iuphar-client.js";
+import { getGenePhenotypeProfile } from "../../../tools/lib/monarch-client.js";
 import { getFaersByDrug, getFaersSeriousness } from "../../../tools/lib/openfda-client.js";
 import { getBaselineExpression, getTargetSafetyLiabilities, searchTargetAssociations } from "../../../tools/lib/opentargets-client.js";
 import { getPathwayMemberships } from "../../../tools/lib/pathway-client.js";
@@ -369,7 +371,60 @@ export async function collectImpc(input: ResolvedTarget): Promise<CoverageEnvelo
     }
 }
 
-// ── 10. Open Targets ─────────────────────────────────────────────────
+// ── 10. Monarch Initiative ───────────────────────────────────────────
+
+export async function collectMonarch(input: ResolvedTarget): Promise<CoverageEnvelope<MonarchBundle>> {
+    // Monarch resolves prefixed identifiers; HGNC is its native gene namespace
+    // and NCBI Gene is the fallback it also indexes.
+    const geneCurie = input.ids.hgnc ?? (input.ids.entrez ? `NCBIGene:${input.ids.entrez}` : null);
+    if (!geneCurie) {
+        return {
+            coverage: "not_loaded",
+            reason: "no HGNC or NCBI Gene id resolved",
+        };
+    }
+    try {
+        const profile = await withHost("monarch", () => getGenePhenotypeProfile(geneCurie));
+        if (profile.phenotypes.length === 0 && profile.diseases.length === 0) {
+            return {
+                coverage: "queried_no_data",
+                error: {
+                    message: `Monarch holds no human phenotype or causal-disease associations for ${geneCurie}`,
+                },
+            };
+        }
+        return {
+            coverage: "available",
+            data: {
+                geneCurie: profile.geneCurie,
+                phenotypes: profile.phenotypes.map((p) => ({
+                    hpoId: p.hpoId,
+                    label: p.label,
+                    ancestorIds: p.ancestorIds,
+                    publications: p.publications,
+                    diseaseContext: p.diseaseContext,
+                    frequencyPercent: p.frequencyPercent,
+                    primaryKnowledgeSource: p.primaryKnowledgeSource,
+                })),
+                phenotypeTotal: profile.phenotypeTotal,
+                phenotypesTruncated: profile.phenotypesTruncated,
+                diseases: profile.diseases.map((d) => ({
+                    mondoId: d.mondoId,
+                    label: d.label,
+                    predicate: d.predicate,
+                    primaryKnowledgeSource: d.primaryKnowledgeSource,
+                    publications: d.publications,
+                })),
+                diseaseTotal: profile.diseaseTotal,
+                diseasesTruncated: profile.diseasesTruncated,
+            },
+        };
+    } catch (err) {
+        return fail(err);
+    }
+}
+
+// ── 11. Open Targets ─────────────────────────────────────────────────
 
 export async function collectOpenTargets(input: ResolvedTarget): Promise<CoverageEnvelope<OpenTargetsBundle>> {
     const ensemblId = input.ids.ensembl;
@@ -405,7 +460,7 @@ export async function collectOpenTargets(input: ResolvedTarget): Promise<Coverag
     }
 }
 
-// ── 11. Pathways (Reactome + KEGG via the unified client) ────────────
+// ── 12. Pathways (Reactome + KEGG via the unified client) ────────────
 
 export async function collectPathways(input: ResolvedTarget): Promise<CoverageEnvelope<PathwaysBundle>> {
     try {
@@ -435,7 +490,7 @@ export async function collectPathways(input: ResolvedTarget): Promise<CoverageEn
     }
 }
 
-// ── 12. PubMed index ─────────────────────────────────────────────────
+// ── 13. PubMed index ─────────────────────────────────────────────────
 
 export async function collectPubmedIndex(input: ResolvedTarget, ctx: CollectorCtx): Promise<CoverageEnvelope<PubmedIndexBundle>> {
     const query = `"${input.geneSymbol}"[Gene]`;
@@ -465,7 +520,7 @@ export async function collectPubmedIndex(input: ResolvedTarget, ctx: CollectorCt
     }
 }
 
-// ── 13. STRING PPI ───────────────────────────────────────────────────
+// ── 14. STRING PPI ───────────────────────────────────────────────────
 
 export async function collectStringPpi(input: ResolvedTarget): Promise<CoverageEnvelope<StringPpiBundle>> {
     try {
@@ -490,7 +545,7 @@ export async function collectStringPpi(input: ResolvedTarget): Promise<CoverageE
     }
 }
 
-// ── 14. Therapeutic programs (non-ChEMBL curated set) ────────────────
+// ── 15. Therapeutic programs (non-ChEMBL curated set) ────────────────
 
 export async function collectTherapeuticPrograms(input: ResolvedTarget): Promise<CoverageEnvelope<TherapeuticProgramsBundle>> {
     const programs = findTherapeuticProgramsForTarget({
@@ -524,6 +579,7 @@ export const COLLECTOR_MANIFEST = [
     { id: "faers-by-target", run: collectFaersByTarget },
     { id: "family-complexes", run: collectFamilyComplexes },
     { id: "impc", run: collectImpc },
+    { id: "monarch", run: collectMonarch },
     { id: "opentargets", run: collectOpenTargets },
     { id: "pathways", run: collectPathways },
     { id: "pubmed-index", run: collectPubmedIndex },

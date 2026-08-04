@@ -28,6 +28,7 @@ const DEFAULT_LIMITS: Record<string, number> = {
     hgnc: 6,
     uniprot: 6,
     iuphar: 4,
+    monarch: 3,
     ema: 2,
     pubchem: 4,
     "annotation-llm": 4,
