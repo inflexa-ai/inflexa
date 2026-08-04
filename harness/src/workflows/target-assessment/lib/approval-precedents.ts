@@ -6,9 +6,15 @@
  * before synthesis so the fetched precedents can be injected into the synthesis
  * prompts as a static markdown block. The fetch, in-memory TTL cache, and
  * mapping mirror what a per-turn tool would have done, minus the tool wrapper.
+ *
+ * One fetch produces one typed form: each precedent keeps its label's safety
+ * sections as `LabelSafetyText`. The markdown block is a projection of that
+ * form, not a replacement for it — the same sections also project onto
+ * per-organ regulatory signals via `segmentLabelSafety`.
  */
 
 import type { DossierBody } from "../../../contracts/target-dossier.js";
+import { LABEL_SAFETY_SECTIONS, type FdaLabelSafety, type LabelSafetySection, type LabelSafetyText } from "./fda-label-safety.js";
 
 export type PrecedentModality = "small_molecule" | "biologic" | "gene_therapy" | "cell_therapy";
 
@@ -19,11 +25,12 @@ export interface FetchApprovalPrecedentsInput {
 }
 
 export interface Precedent {
-    application_number: string;
+    /** Null when openFDA published the label without one; such a label cannot be cited. */
+    application_number: string | null;
     brand_name?: string;
     generic_name?: string;
     approval_date?: string;
-    label_section_excerpts?: Record<string, string>;
+    safety_sections: LabelSafetyText[];
 }
 
 interface OpenFdaLabelResult {
@@ -37,6 +44,32 @@ interface OpenFdaLabelResult {
     warnings_and_precautions?: string[];
     warnings?: string[];
     contraindications?: string[];
+}
+
+/** Per-block ingest budget — enough prose to segment, bounded for the step cache. */
+const SECTION_INGEST_CHARS = 4000;
+
+/** Per-section budget in the rendered markdown, which rides in every synthesis prompt. */
+const SECTION_RENDER_CHARS = 1000;
+
+function ingestSafetySections(r: OpenFdaLabelResult): LabelSafetyText[] {
+    const sections: LabelSafetyText[] = [];
+    const push = (section: LabelSafetySection, blocks: string[] | undefined): void => {
+        for (const block of blocks ?? []) {
+            const text = block.trim();
+            if (text.length === 0) continue;
+            sections.push({ section, text: text.slice(0, SECTION_INGEST_CHARS) });
+        }
+    };
+
+    push("boxed_warning", r.boxed_warning);
+    // Current labels publish Section 5 as `warnings_and_precautions`; older ones
+    // publish the same prose as `warnings`. Ingesting both files it twice.
+    if (r.warnings_and_precautions?.length) push("warnings_and_precautions", r.warnings_and_precautions);
+    else push("warnings", r.warnings);
+    push("contraindications", r.contraindications);
+
+    return sections;
 }
 
 const cache = new Map<string, { ts: number; value: { precedents: Precedent[] } }>();
@@ -74,21 +107,13 @@ export async function fetchApprovalPrecedents(input: FetchApprovalPrecedentsInpu
     }
 
     const json = (await res.json()) as { results?: OpenFdaLabelResult[] };
-    const precedents: Precedent[] = (json.results ?? []).slice(0, 10).map((r) => {
-        const excerpts: Record<string, string> = {};
-        if (r.boxed_warning?.[0]) excerpts.boxed_warning = r.boxed_warning[0].slice(0, 1000);
-        if (r.warnings_and_precautions?.[0]) excerpts.warnings_and_precautions = r.warnings_and_precautions[0].slice(0, 1000);
-        else if (r.warnings?.[0]) excerpts.warnings = r.warnings[0].slice(0, 1000);
-        if (r.contraindications?.[0]) excerpts.contraindications = r.contraindications[0].slice(0, 1000);
-
-        return {
-            application_number: r.openfda?.application_number?.[0] ?? "(unknown)",
-            brand_name: r.openfda?.brand_name?.[0],
-            generic_name: r.openfda?.generic_name?.[0],
-            approval_date: r.effective_time,
-            label_section_excerpts: Object.keys(excerpts).length > 0 ? excerpts : undefined,
-        };
-    });
+    const precedents: Precedent[] = (json.results ?? []).slice(0, 10).map((r) => ({
+        application_number: r.openfda?.application_number?.[0] ?? null,
+        brand_name: r.openfda?.brand_name?.[0],
+        generic_name: r.openfda?.generic_name?.[0],
+        approval_date: r.effective_time,
+        safety_sections: ingestSafetySections(r),
+    }));
 
     const value = { precedents };
     cache.set(key, { ts: Date.now(), value });
@@ -115,9 +140,46 @@ export function pickIndicationForPrecedents(dossier: DossierBody): string | null
 }
 
 /**
+ * Project the fetched precedents onto the typed label form the per-organ
+ * segmentation reads. A label without an application number is skipped: its
+ * signals would carry no locator, and an unciteable signal is not evidence.
+ */
+export function precedentLabelSafety(precedents: readonly Precedent[]): FdaLabelSafety[] {
+    const labels: FdaLabelSafety[] = [];
+    for (const p of precedents) {
+        if (p.application_number === null || p.safety_sections.length === 0) continue;
+        labels.push({
+            application_number: p.application_number,
+            drug_name: p.generic_name ?? p.brand_name ?? p.application_number,
+            effective_time: p.approval_date,
+            sections: p.safety_sections,
+        });
+    }
+    return labels;
+}
+
+/**
+ * The prose a reader meets for one section: the longest block published under
+ * it. openFDA returns both the highlights summary and the full section under
+ * the same key, and the full section is the one worth grounding on.
+ */
+function renderableSections(precedent: Precedent): Array<[LabelSafetySection, string]> {
+    const longest = new Map<LabelSafetySection, string>();
+    for (const { section, text } of precedent.safety_sections) {
+        const current = longest.get(section);
+        if (current === undefined || text.length > current.length) longest.set(section, text);
+    }
+    return LABEL_SAFETY_SECTIONS.filter((section) => longest.has(section)).map((section) => [section, longest.get(section)!.slice(0, SECTION_RENDER_CHARS)]);
+}
+
+/**
  * Render the fetched precedents as a markdown block for injection into the
  * synthesis prompts. The block always begins with the `## FDA approval
  * precedents` header, which the synthesis briefs reference verbatim.
+ *
+ * Synthesis is a single-shot forced-`submit` call that can reach no tool, so
+ * this block is the whole of what the model gets: a plain string, no citation
+ * the model is expected to resolve itself.
  */
 export function renderApprovalPrecedents(indication: string | null, result: { precedents: Precedent[] } | null): string {
     const header = "## FDA approval precedents";
@@ -145,11 +207,10 @@ export function renderApprovalPrecedents(indication: string | null, result: { pr
         const generic = p.generic_name ?? "unknown generic";
         const brand = p.brand_name ?? "unknown brand";
         const date = p.approval_date ?? "unknown date";
-        lines.push(`- ${generic} (${brand}), ${p.application_number}, approved ${date}`);
-        if (p.label_section_excerpts) {
-            for (const [section, excerpt] of Object.entries(p.label_section_excerpts)) {
-                lines.push(`  - ${section}: ${excerpt}`);
-            }
+        const application = p.application_number ?? "unknown application number";
+        lines.push(`- ${generic} (${brand}), ${application}, approved ${date}`);
+        for (const [section, excerpt] of renderableSections(p)) {
+            lines.push(`  - ${section}: ${excerpt}`);
         }
     }
     return lines.join("\n");

@@ -16,6 +16,7 @@ import type { RegulatoryActionRow as RegulatoryActionRow } from "@inflexa-ai/har
 import { withHost } from "../../../lib/host-concurrency.js";
 import { getReferralsByDrug, type EmaReferral } from "../../../tools/lib/ema-client.js";
 import { getDrugLabelActions, type DrugLabelAction } from "../../../tools/lib/openfda-client.js";
+import { segmentLabelSafety, type FdaLabelSafety, type LabelSafetySection, type LabelSafetyText } from "./fda-label-safety.js";
 
 export interface DrugForRegulatoryActions {
     chemblId: string;
@@ -42,12 +43,39 @@ function clipFinding(text: string): string {
     return `${cleaned.slice(0, FINDING_CHAR_LIMIT - 1).trimEnd()}…`;
 }
 
+/**
+ * Project a fetched label onto the shared typed safety form. Returns null when
+ * the label carries no application number: its warnings could not then be cited
+ * back to a document, and an uncitable warning is not evidence.
+ */
+function labelSafetyOf(drug: DrugForRegulatoryActions, label: DrugLabelAction): FdaLabelSafety | null {
+    if (!label.applicationNumber) return null;
+    const sections: LabelSafetyText[] = [];
+    if (label.boxedWarning) sections.push({ section: "boxed_warning", text: label.boxedWarning });
+    if (label.warningsAndCautions) sections.push({ section: "warnings_and_precautions", text: label.warningsAndCautions });
+    if (sections.length === 0) return null;
+    return {
+        application_number: label.applicationNumber,
+        drug_name: label.genericName ?? label.brandName ?? drug.name,
+        effective_time: label.effectiveTime ?? undefined,
+        source_url: label.sourceUrl || undefined,
+        sections,
+    };
+}
+
 function fdaRowsFor(drug: DrugForRegulatoryActions, labels: DrugLabelAction[]): RegulatoryActionRow[] {
     if (labels.length === 0) return [];
     const sorted = [...labels].sort((a, b) => (b.effectiveTime ?? "").localeCompare(a.effectiveTime ?? ""));
     const latest = sorted[0]!;
     const rows: RegulatoryActionRow[] = [];
     const actionDate = formatEffectiveTime(latest.effectiveTime);
+
+    // The label's own prose, segmented once and attributed to organs, is what
+    // lets each row cite the section a reader can open rather than only the
+    // agency and the date.
+    const labelSafety = labelSafetyOf(drug, latest);
+    const signals = labelSafety ? segmentLabelSafety([labelSafety]).signals : [];
+    const evidenceFrom = (section: LabelSafetySection) => signals.filter((s) => s.source_section === section).map((s) => s.evidence);
 
     if (latest.boxedWarning) {
         rows.push({
@@ -61,7 +89,7 @@ function fdaRowsFor(drug: DrugForRegulatoryActions, labels: DrugLabelAction[]): 
             application_number: latest.applicationNumber ?? undefined,
             finding: clipFinding(latest.boxedWarning),
             source_url: latest.sourceUrl || undefined,
-            evidence: [],
+            evidence: evidenceFrom("boxed_warning"),
         });
     }
     if (latest.warningsAndCautions) {
@@ -77,7 +105,7 @@ function fdaRowsFor(drug: DrugForRegulatoryActions, labels: DrugLabelAction[]): 
             label_section: "5",
             finding: clipFinding(latest.warningsAndCautions),
             source_url: latest.sourceUrl || undefined,
-            evidence: [],
+            evidence: evidenceFrom("warnings_and_precautions"),
         });
     }
     if (latest.hasRems) {

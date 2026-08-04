@@ -5,6 +5,7 @@ import {
     __resetApprovalPrecedentCacheForTest,
     fetchApprovalPrecedents,
     pickIndicationForPrecedents,
+    precedentLabelSafety,
     renderApprovalPrecedents,
     type Precedent,
 } from "./approval-precedents.js";
@@ -103,10 +104,10 @@ describe("renderApprovalPrecedents", () => {
                 brand_name: "Keytruda",
                 generic_name: "pembrolizumab",
                 approval_date: "20140904",
-                label_section_excerpts: {
-                    boxed_warning: "Immune-mediated adverse reactions may occur.",
-                    contraindications: "None.",
-                },
+                safety_sections: [
+                    { section: "boxed_warning", text: "Immune-mediated adverse reactions may occur." },
+                    { section: "contraindications", text: "None." },
+                ],
             },
         ];
         const block = renderApprovalPrecedents("melanoma", { precedents });
@@ -114,6 +115,48 @@ describe("renderApprovalPrecedents", () => {
         expect(block).toContain("- pembrolizumab (Keytruda), BLA125514, approved 20140904");
         expect(block).toContain("  - boxed_warning: Immune-mediated adverse reactions may occur.");
         expect(block).toContain("  - contraindications: None.");
+    });
+
+    it("renders the full section rather than the highlights blurb repeating it", () => {
+        const precedents: Precedent[] = [
+            {
+                application_number: "NDA021436",
+                generic_name: "exenatide",
+                approval_date: "20050428",
+                safety_sections: [
+                    { section: "warnings_and_precautions", text: "5.1 Pancreatitis: see full prescribing information." },
+                    {
+                        section: "warnings_and_precautions",
+                        text: "5.1 Pancreatitis: Acute pancreatitis, including fatal and non-fatal haemorrhagic pancreatitis, has been reported post-marketing.",
+                    },
+                ],
+            },
+        ];
+        const block = renderApprovalPrecedents("type 2 diabetes mellitus", { precedents });
+        expect(block).toContain("haemorrhagic pancreatitis");
+        expect(block).not.toContain("see full prescribing information");
+    });
+});
+
+describe("precedentLabelSafety", () => {
+    it("skips a precedent whose label carries no application number", () => {
+        const labels = precedentLabelSafety([
+            {
+                application_number: null,
+                generic_name: "unlisted drug",
+                safety_sections: [{ section: "boxed_warning", text: "Hepatotoxicity has been reported." }],
+            },
+            {
+                application_number: "NDA012345",
+                generic_name: "listed drug",
+                safety_sections: [{ section: "boxed_warning", text: "Hepatotoxicity has been reported." }],
+            },
+        ]);
+        expect(labels.map((l) => l.application_number)).toEqual(["NDA012345"]);
+    });
+
+    it("skips a precedent whose label carries no safety prose", () => {
+        expect(precedentLabelSafety([{ application_number: "NDA012345", safety_sections: [] }])).toEqual([]);
     });
 });
 
@@ -145,10 +188,43 @@ describe("fetchApprovalPrecedents", () => {
         expect(precedents[0]!.application_number).toBe("BLA125514");
         expect(precedents[0]!.generic_name).toBe("pembrolizumab");
         expect(precedents[0]!.approval_date).toBe("20140904");
-        expect(precedents[0]!.label_section_excerpts).toEqual({
-            boxed_warning: "Immune-mediated adverse reactions may occur.",
-            contraindications: "None.",
-        });
+        expect(precedents[0]!.safety_sections).toEqual([
+            { section: "boxed_warning", text: "Immune-mediated adverse reactions may occur." },
+            { section: "contraindications", text: "None." },
+        ]);
+    });
+
+    it("keeps every block a section published, not only the first", async () => {
+        __resetApprovalPrecedentCacheForTest();
+        stubFetch(() =>
+            json({
+                results: [
+                    {
+                        openfda: { application_number: ["NDA021436"] },
+                        warnings_and_precautions: ["5.1 Pancreatitis: see full prescribing information.", "5.1 Pancreatitis: Acute pancreatitis reported."],
+                    },
+                ],
+            }),
+        );
+        const { precedents } = await fetchApprovalPrecedents({ indication: "type 2 diabetes mellitus" });
+        expect(precedents[0]!.safety_sections).toHaveLength(2);
+    });
+
+    it("ingests the legacy warnings section only when warnings_and_precautions is absent", async () => {
+        __resetApprovalPrecedentCacheForTest();
+        stubFetch(() =>
+            json({
+                results: [
+                    {
+                        openfda: { application_number: ["NDA000111"] },
+                        warnings_and_precautions: ["5.1 Hepatotoxicity: transaminase elevations observed."],
+                        warnings: ["Hepatic failure has been reported."],
+                    },
+                ],
+            }),
+        );
+        const { precedents } = await fetchApprovalPrecedents({ indication: "melanoma" });
+        expect(precedents[0]!.safety_sections.map((s) => s.section)).toEqual(["warnings_and_precautions"]);
     });
 
     it("treats a 404 as an empty precedent set", async () => {
