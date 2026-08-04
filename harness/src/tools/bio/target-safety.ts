@@ -17,16 +17,9 @@
 import { ok } from "neverthrow";
 import { z } from "zod";
 
-import {
-    CHEMBL_RE,
-    ORGAN_SYSTEMS,
-    SEVERITIES,
-    SafetyPanelFileSchema,
-    UNIPROT_RE,
-    type OrganSystem,
-    type SafetyTarget,
-    type Severity,
-} from "../../data/safety-panel-schema.js";
+import { ORGAN_SYSTEMS, type OrganSystem } from "../../contracts/organ-system.js";
+import { SEVERITIES, type Severity } from "../../contracts/severity.js";
+import { CHEMBL_RE, SafetyPanelFileSchema, UNIPROT_RE, type SafetyTarget } from "../../data/safety-panel-schema.js";
 import panelData from "../../data/safety-panel.json" with { type: "json" };
 import { defineTool } from "../define-tool.js";
 import { resolveSymbolToEnsemblId } from "../lib/ensembl-client.js";

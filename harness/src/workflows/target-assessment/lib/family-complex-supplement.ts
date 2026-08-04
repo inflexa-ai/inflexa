@@ -1,8 +1,7 @@
 /**
  * Build the obligate-cofactor supplement rows shown in
- * OffTargetPanelV4.excluded_rows from the IUPHAR family-complexes collector
- * bundle. Replaces the hand-curated calcitonin-only supplement that
- * previously lived next to it.
+ * OffTargetPanel.excluded_rows from the IUPHAR family-complexes collector
+ * bundle.
  *
  * pchembl is set to 0 because IUPHAR exposes complex structure, not
  * ligand affinity for the complex; the row is marked selectivity_unknown
@@ -12,13 +11,13 @@
  * the per-row annotation step runs.
  */
 
-import type { ExcludedOffTargetRowV4Schema } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { ExcludedOffTargetRowSchema } from "@inflexa-ai/harness/contracts/target-dossier.js";
 import type { z } from "zod";
 import type { FamilyComplexesBundle } from "../schemas.js";
 
-type ExcludedOffTargetRowV4 = z.infer<typeof ExcludedOffTargetRowV4Schema>;
+type ExcludedOffTargetRow = z.infer<typeof ExcludedOffTargetRowSchema>;
 
-export function buildFamilyComplexSupplement(bundle: FamilyComplexesBundle): (Omit<ExcludedOffTargetRowV4, "evidence"> & { evidence: [] })[] {
+export function buildFamilyComplexSupplement(bundle: FamilyComplexesBundle): (Omit<ExcludedOffTargetRow, "evidence"> & { evidence: [] })[] {
     return bundle.complexes.map((c) => {
         const accDesc = c.accessoryNames.length > 0 ? c.accessoryNames.join("+") : "an accessory protein";
         return {

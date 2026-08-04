@@ -2,7 +2,7 @@
  * Phase 4 — deterministic dossier assembly.
  *
  * Pure function over a Phase-3 bundle. Calls `assembleDossier` (~3.5K LOC
- * of pure compute) and returns the assembled `DossierV4Body`. The Phase-5
+ * of pure compute) and returns the assembled `DossierBody`. The Phase-5
  * synthesis sections (translational commentary, liability bullets, safety-
  * flags trail) are stamped by the Phase-5 persist step after this step
  * completes.
@@ -20,7 +20,7 @@
 
 import type { Pool } from "pg";
 
-import { DossierV4BodySchema } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import { DossierBodySchema } from "@inflexa-ai/harness/contracts/target-dossier.js";
 import { z } from "zod";
 
 import { assembleDossier } from "./assemblers/index.js";
@@ -29,7 +29,7 @@ import { Phase3BundleSchema } from "./steps/phase3-aggregate.js";
 
 export const Phase4OutputSchema = z.object({
     assessmentId: z.string(),
-    dossier: DossierV4BodySchema,
+    dossier: DossierBodySchema,
 });
 
 export type Phase4Output = z.infer<typeof Phase4OutputSchema>;
@@ -38,7 +38,7 @@ export { Phase3BundleSchema };
 export type { Phase3Bundle };
 
 /**
- * Run Phase 4 — assemble the v4 dossier body from the Phase-3 bundle.
+ * Run Phase 4 — assemble the dossier body from the Phase-3 bundle.
  * Deterministic over its inputs; safely cached on DBOS replay.
  */
 export async function phase4Assemble(pool: Pool, phase3: Phase3Bundle): Promise<Phase4Output> {

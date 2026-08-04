@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import type { DossierV4Body } from "../../../contracts/target-dossier.js";
+import type { DossierBody } from "../../../contracts/target-dossier.js";
 import {
     __resetApprovalPrecedentCacheForTest,
     fetchApprovalPrecedents,
@@ -30,7 +30,7 @@ function json(body: unknown, status = 200): Response {
 function makeDossier(opts: {
     indications: { coverage: "available"; rows: Array<{ disease_name: string; composite_score: number }> } | { coverage: "queried_no_data" | "not_loaded" };
     inferredTherapeuticArea: string | null;
-}): DossierV4Body {
+}): DossierBody {
     const indications =
         opts.indications.coverage === "available"
             ? { coverage: "available" as const, data: { rows: opts.indications.rows } }
@@ -38,7 +38,7 @@ function makeDossier(opts: {
     return {
         indications,
         liability_summary: { inferred_therapeutic_area: opts.inferredTherapeuticArea },
-    } as unknown as DossierV4Body;
+    } as unknown as DossierBody;
 }
 
 describe("pickIndicationForPrecedents", () => {

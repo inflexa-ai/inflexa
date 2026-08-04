@@ -8,7 +8,7 @@
  * mapping mirror what a per-turn tool would have done, minus the tool wrapper.
  */
 
-import type { DossierV4Body } from "../../../contracts/target-dossier.js";
+import type { DossierBody } from "../../../contracts/target-dossier.js";
 
 export type PrecedentModality = "small_molecule" | "biologic" | "gene_therapy" | "cell_therapy";
 
@@ -105,7 +105,7 @@ export function __resetApprovalPrecedentCacheForTest(): void {
  * row by `composite_score` (only when indications coverage is available and
  * has rows), falling back to the inferred therapeutic area, else null.
  */
-export function pickIndicationForPrecedents(dossier: DossierV4Body): string | null {
+export function pickIndicationForPrecedents(dossier: DossierBody): string | null {
     const indications = dossier.indications;
     if (indications.coverage === "available" && indications.data.rows.length > 0) {
         const top = indications.data.rows.reduce((best, row) => (row.composite_score > best.composite_score ? row : best));

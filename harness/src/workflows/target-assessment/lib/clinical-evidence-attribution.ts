@@ -1,4 +1,4 @@
-import type { ClinicalTrialAttributionV5, ClinicalTrialRowV5, ResolvedTrialInterventionV5 } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { ClinicalTrialAttribution, ClinicalTrialRow, ResolvedTrialIntervention } from "@inflexa-ai/harness/contracts/target-dossier.js";
 
 type TrialLike = {
     nctId: string;
@@ -42,7 +42,7 @@ export type ClinicalEvidenceAttributionContext = {
 };
 
 export type ClinicalEvidenceAttributionResult = {
-    attribution: ClinicalTrialAttributionV5;
+    attribution: ClinicalTrialAttribution;
     eligible_for_toxicology_aggregation: boolean;
 };
 
@@ -89,8 +89,8 @@ function interventionDetails(trial: TrialLike): NonNullable<TrialLike["intervent
 function toResolvedIntervention(
     intervention: NonNullable<TrialLike["interventionDetails"]>[number],
     source: string,
-    extras: Partial<ResolvedTrialInterventionV5> = {},
-): ResolvedTrialInterventionV5 {
+    extras: Partial<ResolvedTrialIntervention> = {},
+): ResolvedTrialIntervention {
     return {
         name: intervention.name,
         intervention_type: intervention.type ?? null,
@@ -117,11 +117,11 @@ function targetBiomarkerMention(trial: TrialLike, symbol: string): boolean {
 }
 
 function excluded(
-    relationship: ClinicalTrialAttributionV5["relationship"],
+    relationship: ClinicalTrialAttribution["relationship"],
     reason: string,
-    basisKind: ClinicalTrialAttributionV5["basis"][number]["kind"],
+    basisKind: ClinicalTrialAttribution["basis"][number]["kind"],
     source: string,
-    resolved_interventions: ResolvedTrialInterventionV5[],
+    resolved_interventions: ResolvedTrialIntervention[],
 ): ClinicalEvidenceAttributionResult {
     return {
         eligible_for_toxicology_aggregation: false,
@@ -250,7 +250,7 @@ export function classifyClinicalEvidenceTrial(trial: TrialLike, ctx: ClinicalEvi
 export function attachClinicalEvidenceAttribution<T extends TrialLike>(
     trial: T,
     ctx: ClinicalEvidenceAttributionContext,
-): T & Pick<ClinicalTrialRowV5, "attribution" | "eligible_for_toxicology_aggregation"> {
+): T & Pick<ClinicalTrialRow, "attribution" | "eligible_for_toxicology_aggregation"> {
     const result = classifyClinicalEvidenceTrial(trial, ctx);
     return { ...trial, ...result };
 }
