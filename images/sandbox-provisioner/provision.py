@@ -114,7 +114,8 @@ def resolve(specs: list[str]) -> dict[str, list[str]]:
     address alone leaves open: the address proves the installed tree is intact, the
     source hash proves the artifact it was built from was not substituted upstream.
     Resolution runs against the pinned index only, with `--no-config` so no ambient
-    configuration can add another.
+    configuration can add another; a resolved requirement carrying a URL — an
+    artifact from an unexpected host — fails the resolve.
     """
     req = Path("/tmp/requirements.in")
     req.write_text("\n".join(specs) + "\n")
@@ -136,6 +137,12 @@ def resolve(specs: list[str]) -> dict[str, list[str]]:
             if current is not None:
                 pins[current].append(line[len("--hash="):])
             continue
+        # A resolved requirement must be `name==version` from the pinned index. A URL
+        # or VCS requirement here means a dependency resolved off-index; fail rather
+        # than silently drop it (the tokens check below would) or install it from an
+        # unexpected host. This is the resolved-output half of the pinned-index guard.
+        if "://" in line:
+            raise SystemExit(f"[provision] resolved artifact from an unexpected host: {line!r}")
         # A requirement line: `name==version`, possibly trailed by an environment
         # marker or an inline `--hash=`. Markers were already evaluated against this
         # interpreter by the compile step.
