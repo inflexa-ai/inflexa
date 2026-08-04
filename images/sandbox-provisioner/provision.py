@@ -303,6 +303,155 @@ def build_farm(farm: Path, store_dirs: list[Path]) -> list[str]:
     return collisions
 
 
+# --- R track -----------------------------------------------------------------
+# R installs differently from Python: pak resolves and installs the bulk (CRAN +
+# Bioconductor + git) as one lockfile via images/gen-r-lock.R, then GitHub installs
+# incrementally on top. Once installed, each R package DIRECTORY is content-addressed
+# and farmed exactly like a Python distribution — measured, an installed R package
+# holds no reference to its install path, so relocation by symlink is safe.
+
+R_SUBTREES = ("cran", "bioconductor", "github")
+
+
+def read_r_pkg(pkg_dir: Path) -> tuple[str, str]:
+    """(Package, Version) read from an installed R package's DESCRIPTION."""
+    name = version = None
+    for line in (pkg_dir / "DESCRIPTION").read_text(errors="replace").splitlines():
+        if line.startswith("Package:"):
+            name = line.split(":", 1)[1].strip()
+        elif line.startswith("Version:"):
+            version = line.split(":", 1)[1].strip()
+        if name and version:
+            break
+    if not name or not version:
+        raise SystemExit(f"[provision] R package at {pkg_dir}: DESCRIPTION lacks Package/Version")
+    return name, version
+
+
+def store_r_package(pkg_dir: Path) -> tuple[Path, bool]:
+    """Content-address an already-installed R package directory into the store.
+
+    Like ensure_stored, but pak already built the package into the staging library,
+    so this only hashes the tree, writes the pin marker, and publishes by rename.
+    pkg_dir must live under the store's filesystem (the staging root does), so the
+    rename stays on one device. Reuse is by content and pin, exactly as for Python:
+    two farms resolving the same version share one store directory.
+    """
+    name, version = read_r_pkg(pkg_dir)
+    pin = f"{name}=={version}"
+    existing = find_stored(pin)
+    if existing is not None:
+        return existing, False
+    digest = tree_hash(pkg_dir)[:16]   # no PIN_MARKER yet; tree_hash excludes it regardless
+    final = STORE / f"{canon(name)}-{version}-{digest}"
+    if final.exists():
+        return final, False
+    (pkg_dir / PIN_MARKER).write_text(pin + "\n")
+    subprocess.run(["chmod", "-R", "a+rX", str(pkg_dir)], check=True)
+    pkg_dir.rename(final)
+    return final, True
+
+
+def build_r_farm(farm: Path, stored: dict[str, list[tuple[str, Path]]]) -> None:
+    """Link stored R packages into farm/r/{cran,bioconductor,github}.
+
+    Each subtree is a directory of symlinks to store package directories, matching
+    the three paths R_LIBS_SITE already carries. An empty subtree is NOT created, so
+    the inventory does not advertise an empty R track — the same rule build_farm
+    applies to conda and node.
+    """
+    for sub in R_SUBTREES:
+        pkgs = stored.get(sub) or []
+        if not pkgs:
+            continue
+        subdir = farm / "r" / sub
+        subdir.mkdir(parents=True, exist_ok=True)
+        for name, store_dir in pkgs:
+            link = subdir / name
+            if link.is_symlink() or link.exists():
+                link.unlink()
+            link.symlink_to(str(store_dir))
+
+
+def r_version_of(manifest: Path) -> str | None:
+    import yaml
+    return (yaml.safe_load(manifest.read_text()) or {}).get("r_version")
+
+
+def bioc_version() -> str | None:
+    """The Bioconductor release the packages were built against, queried from R.
+    Best effort — null when BiocManager is absent, since pak does not require it.
+    Recorded because Bioconductor couples its release to the R version."""
+    proc = subprocess.run(["Rscript", "-e", "cat(as.character(BiocManager::version()))"],
+                          capture_output=True, text=True)
+    return proc.stdout.strip() or None
+
+
+def install_r(manifest: Path, stage_root: Path) -> None:
+    """Install the manifest's R track into stage_root/r/{cran,bioconductor,github}.
+
+    The bulk (CRAN + Bioconductor + git) reuses images/gen-r-lock.R — pak resolves it
+    as one lockfile and installs it, adding each package's system libraries itself,
+    and splits the result into r/cran and r/bioconductor by the CRAN-ref closure.
+    GitHub installs incrementally on top (remotes::install_github, upgrade='never'),
+    because it does not join the global solve. stage_root lives under the store so
+    each package publishes into the store by rename, never a cross-device copy.
+    """
+    import yaml
+    for sub in R_SUBTREES:
+        (stage_root / "r" / sub).mkdir(parents=True, exist_ok=True)
+    log("R bulk: resolving + installing via pak (gen-r-lock.R)")
+    subprocess.run(["Rscript", "/usr/local/bin/gen-r-lock.R", str(manifest), str(stage_root)],
+                   check=True)
+    gh = ((yaml.safe_load(manifest.read_text()) or {}).get("r", {}) or {}).get("github", []) or []
+    github_lib = stage_root / "r" / "github"
+    for repo in gh:
+        log(f"R github: installing {repo} (incremental, best-effort)")
+        rexpr = (
+            f".libPaths(c('{github_lib}', '{stage_root}/r/bioconductor', "
+            f"'{stage_root}/r/cran', .libPaths())); "
+            f"remotes::install_github('{repo}', lib='{github_lib}', "
+            f"dependencies=TRUE, upgrade='never')"
+        )
+        if subprocess.run(["R", "-q", "-e", rexpr]).returncode != 0:
+            log(f"WARNING: github install of {repo} did not finish cleanly; keeping what installed")
+
+
+def provision_r(farm: Path, manifest: Path) -> dict:
+    """Install, content-address, and farm the manifest's R track."""
+    stage_root = STORE / ".staging-r"
+    if stage_root.exists():
+        shutil.rmtree(stage_root)
+    stage_root.mkdir(parents=True)
+    install_r(manifest, stage_root)
+
+    stored: dict[str, list[tuple[str, Path]]] = {sub: [] for sub in R_SUBTREES}
+    for sub in R_SUBTREES:
+        libdir = stage_root / "r" / sub
+        if not libdir.is_dir():
+            continue
+        for pkg_dir in sorted(p for p in libdir.iterdir() if (p / "DESCRIPTION").is_file()):
+            name, _ = read_r_pkg(pkg_dir)
+            store_dir, _is_new = store_r_package(pkg_dir)
+            stored[sub].append((name, store_dir))
+
+    build_r_farm(farm, stored)
+    # TODO(task 6.6): verify each farmed R package loads — library() plus a
+    # compiled-code call — against the farm's R_LIBS_SITE. The baked build does this
+    # with lib-store-loadtest.R, which is currently inline in sandbox-python-r's
+    # Dockerfile; wiring it here needs that helper extracted to a standalone file.
+    # Keep the pak bulk lock as provenance: it records the full resolved set,
+    # including the LinkingTo packages the compiled objects were built against.
+    bulk_lock = stage_root / "r" / "r-bulk.lock"
+    if bulk_lock.is_file():
+        shutil.copy2(bulk_lock, farm / "r-bulk.lock")
+    shutil.rmtree(stage_root, ignore_errors=True)
+
+    counts = {sub: len(v) for sub, v in stored.items()}
+    log(f"R farm: {counts}")
+    return {"packages": counts, "r_version": r_version_of(manifest), "bioc_version": bioc_version()}
+
+
 def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, str]:
     """Pre-build numba JIT and matplotlib font caches into the store.
 
@@ -382,7 +531,9 @@ def verify_store() -> int:
         return 0
     checked, bad = 0, []
     for d in sorted(STORE.iterdir()):
-        if not d.is_dir() or d.name == ".staging":
+        # Skip any dot-dir — the staging areas (.staging, .staging-r) and any other
+        # bookkeeping. A published store dir is always <name>-<version>-<hash>.
+        if not d.is_dir() or d.name.startswith("."):
             continue
         recorded = d.name.rsplit("-", 1)[-1]
         actual = tree_hash(d)[:16]
@@ -397,16 +548,21 @@ def verify_store() -> int:
 def repair_staging() -> int:
     """Clear an abandoned staging tree left by an interrupted run.
 
-    `store/.staging/` only ever holds an install in flight: a completed publish is a
-    rename OUT of it, so anything left there is debris from a run that died before
+    A staging directory only ever holds an install in flight: a completed publish is
+    a rename OUT of it, so anything left there is debris from a run that died before
     its rename, never a published artifact. Removing it reclaims space and can never
-    lose a package. Safe under the single-writer assumption the per-store lock
-    enforces; two live provisioners are a separate concern.
+    lose a package. The Python track stages in .staging, the R track in .staging-r.
+    Safe under the single-writer assumption the per-store lock enforces; two live
+    provisioners are a separate concern.
     """
-    staging = STORE / ".staging"
-    if staging.exists():
-        shutil.rmtree(staging, ignore_errors=True)
-        log("repair: cleared an abandoned store/.staging tree")
+    cleared = []
+    for name in (".staging", ".staging-r"):
+        d = STORE / name
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+            cleared.append(name)
+    if cleared:
+        log("repair: cleared abandoned " + ", ".join(cleared))
     else:
         log("repair: nothing to clear")
     return 0
@@ -422,6 +578,8 @@ def main() -> int:
     ap.add_argument("--warm", default="", help="comma-separated modules to import during warm-up")
     ap.add_argument("--warm-script", default=None,
                     help="path (inside the store) to a script that exercises jitted code paths")
+    ap.add_argument("--r-manifest", default=None,
+                    help="path to a lib-store manifest; provision its R track (CRAN + Bioconductor + git + GitHub) via pak")
     ap.add_argument("specs", nargs="*", help="requirement specs to add")
     args = ap.parse_args()
 
@@ -448,23 +606,30 @@ def main() -> int:
         previous = json.loads(lock_path.read_text()).get("requested", [])
 
     requested = sorted(set(previous) | set(args.specs))
-    if not requested:
+    if not requested and not args.r_manifest:
         log("nothing requested and no existing lock — nothing to do")
         return 2
 
-    resolved = resolve(requested)
-    pins = list(resolved)
-
-    store_dirs, added = [], []
-    for pin in pins:
-        path, is_new = ensure_stored(pin, resolved[pin])
-        store_dirs.append(path)
-        if is_new:
-            added.append(pin)
-    log(f"{len(added)} newly installed, {len(pins) - len(added)} reused from store")
-    shutil.rmtree(STORE / ".staging", ignore_errors=True)
+    resolved: dict[str, list[str]] = {}
+    pins: list[str] = []
+    store_dirs: list[Path] = []
+    if requested:
+        resolved = resolve(requested)
+        pins = list(resolved)
+        added = []
+        for pin in pins:
+            path, is_new = ensure_stored(pin, resolved[pin])
+            store_dirs.append(path)
+            if is_new:
+                added.append(pin)
+        log(f"{len(added)} newly installed, {len(pins) - len(added)} reused from store")
+        shutil.rmtree(STORE / ".staging", ignore_errors=True)
 
     collisions = build_farm(farm, store_dirs)
+
+    r_result: dict = {}
+    if args.r_manifest:
+        r_result = provision_r(farm, Path(args.r_manifest))
 
     # Flip `current` BEFORE warming, so the warm-up runs against the exact path
     # the sandbox will import from (see the note in warm()).
@@ -483,10 +648,15 @@ def main() -> int:
 
     # Second of the two completeness markers libStoreUsable requires before it
     # will bind the store; without it the mount is silently dropped.
+    tracks = []
+    if store_dirs:
+        tracks.append("python")
+    if r_result.get("packages"):
+        tracks.append("r")
     (farm / "meta.json").write_text(json.dumps({
         "version": args.farm,
         "arch": f"linux-{'arm64' if os.uname().machine == 'aarch64' else 'amd64'}",
-        "tracks": ["python"],
+        "tracks": tracks,
     }, indent=2) + "\n")
 
     lock_path.write_text(json.dumps({
@@ -494,6 +664,7 @@ def main() -> int:
         "resolved": pins,
         "hashes": resolved,
         "store_dirs": [d.name for d in store_dirs],
+        "r": r_result,
         "collisions": collisions,
         # Recorded so a cache check can replay exactly what was warmed. numba keys
         # its cache per type signature, so only the call shapes this script

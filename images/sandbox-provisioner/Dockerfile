@@ -37,14 +37,26 @@ RUN declared="$(grep -E '^base_image:' /tmp/lib-store-manifest.yaml \
 
 # The same toolchain the image builds use, from the same script, so a package
 # that compiles during a CI image build also compiles during a user install.
+# python3-yaml is the system-python YAML the manifest parse reads; the jags/libuv/
+# libprotobuf/libglpk runtime .so set mirrors sandbox-base so R packages that
+# dlopen them at library() time load in the provisioner too (pak installs most
+# system libraries itself from each package's SystemRequirements).
 COPY images/install-build-toolchain.sh /tmp/install-build-toolchain.sh
-RUN bash /tmp/install-build-toolchain.sh python3-yaml
+RUN bash /tmp/install-build-toolchain.sh python3-yaml jags libuv1t64 libprotobuf32t64 libglpk40
 
 # Pinned to sandbox-base's uv so resolution and wheel selection are identical to
 # what the baked images got.
 ARG UV_VERSION=0.7.12
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
     && cp /root/.local/bin/uv /usr/local/bin/uv
+
+# pak resolves and installs the R track (bulk CRAN + Bioconductor + git) from one
+# lockfile, adding each package's system libraries itself. gen-r-lock.R is the same
+# generator the baked image build uses, so the provisioner and the image resolve the
+# R track identically against the base's pinned P3M snapshot.
+RUN R -e "install.packages(c('pak', 'yaml'))" > /tmp/pak-bootstrap.log 2>&1 \
+    || { cat /tmp/pak-bootstrap.log; exit 1; }
+COPY images/gen-r-lock.R /usr/local/bin/gen-r-lock.R
 
 # The same packages.txt producer the published images run, so a store assembled
 # here and a store baked into an image advertise their contents identically.
