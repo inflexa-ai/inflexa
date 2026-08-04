@@ -24,6 +24,9 @@ import { composeSystemPrompt } from "./system-prompt.js";
 
 export const REPORT_BUILDER_AGENT_ID = "report-builder";
 
+/** Skill pack the report-builder prompt directs the model to read (design-system reference). */
+export const REPORT_BUILDER_SKILLS = ["report-html"] as const;
+
 /** Runaway guard — Jinja recovery may take several build/edit cycles. */
 const REPORT_BUILDER_MAX_ITERATIONS = 75;
 

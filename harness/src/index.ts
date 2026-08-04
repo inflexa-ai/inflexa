@@ -317,6 +317,13 @@ export type { CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } fr
 // otherwise re-dispatch. No current workflow creates that prefix.
 export { launchDbos, shutdownDbos, sweepEphemeralWorkflows } from "./runtime/dbos.js";
 export type { DbosConfig } from "./runtime/dbos.js";
+// The readiness pair. Both flags are mutated by harness-owned code an embedder
+// does not call itself — `launchDbos` flips the DBOS state, and the `shutdown`
+// handle `bootHarness` returns marks draining — so the reads have to come from
+// here for a host's own probe to reflect them at all.
+export { dbosState } from "./runtime/dbos.js";
+export type { DbosState } from "./runtime/dbos.js";
+export { isDraining } from "./runtime/lifecycle.js";
 // DBOS workflow-status vocabulary. An embedder that reads its own
 // `dbos.workflow_status` rows must classify them against the SDK's status set,
 // but must never depend on `@dbos-inc/dbos-sdk` directly — the SDK is
