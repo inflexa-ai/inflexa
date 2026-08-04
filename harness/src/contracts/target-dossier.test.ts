@@ -3,9 +3,12 @@ import { describe, expect, test } from "bun:test";
 import { ORGAN_SYSTEMS } from "./organ-system.js";
 import {
     ClaimEvidenceSchema,
+    ClaimInvestigationSchema,
     ClaimSupportSchema,
+    ClaimVerdictSchema,
     CoverageSchema,
     DossierSchema,
+    InvestigatedClaimRowSchema,
     RowCoverageSchema,
     SafetyFlagSchema,
     SafetyProfileSchema,
@@ -83,6 +86,63 @@ describe("claim evidence", () => {
         for (const l of [{ pmid: "1" }, { doi: "10.1/x" }, { accession: "ENSG00000141510" }, { regulatory_reference: { document: "NDA 021436" } }]) {
             expect(ClaimEvidenceSchema.safeParse({ source: "s", ...l }).success).toBe(true);
         }
+    });
+});
+
+describe("claim investigation", () => {
+    const row = {
+        organ: "hepatic",
+        mechanism: { statement: "bile-salt export pump inhibition", support: { state: "unknown", reason: "no citable record" } },
+        critique: { objection: "both sources trace to one curation", support: { state: "unknown", reason: "nothing retrieved" } },
+        verdict: "weakened",
+        rounds_run: 1,
+        convergence: "verdict_settled",
+        support: { state: "scored", evidence: [{ source: "pubmed", pmid: "12345678" }] },
+    };
+
+    test("the verdict vocabulary is closed and carries no numeric grade", () => {
+        expect(new Set(ClaimVerdictSchema.options)).toEqual(new Set(["upheld", "weakened", "overturned", "undetermined"]));
+        expect(ClaimVerdictSchema.safeParse(0.8).success).toBe(false);
+    });
+
+    test("a row parses, and a numeric soundness field is not part of it", () => {
+        expect(InvestigatedClaimRowSchema.safeParse(row).success).toBe(true);
+        const parsed = InvestigatedClaimRowSchema.parse({ ...row, soundness: 0.8 }) as Record<string, unknown>;
+        expect("soundness" in parsed).toBe(false);
+    });
+
+    test("a row with no mechanism and no critique still carries its verdict", () => {
+        expect(InvestigatedClaimRowSchema.safeParse({ ...row, mechanism: null, critique: null }).success).toBe(true);
+    });
+
+    test("a verdict cannot be scored without evidence", () => {
+        expect(InvestigatedClaimRowSchema.safeParse({ ...row, support: { state: "scored", evidence: [] } }).success).toBe(false);
+    });
+
+    test("a round count is always at least one round", () => {
+        expect(InvestigatedClaimRowSchema.safeParse({ ...row, rounds_run: 0 }).success).toBe(false);
+    });
+
+    test("an available section reports both bounds, and may hold only a completeness list", () => {
+        const emptied = {
+            coverage: "available",
+            data: {
+                rows: [],
+                not_investigated: [{ organ: "ocular", reason: "not_corroborated", detail: "fewer independent sources than the fold requires" }],
+                round_bound: 2,
+                claim_budget: 6,
+            },
+        };
+        expect(ClaimInvestigationSchema.safeParse(emptied).success).toBe(true);
+        expect(ClaimInvestigationSchema.safeParse({ ...emptied, data: { ...emptied.data, round_bound: 0 } }).success).toBe(false);
+    });
+
+    test("an uninvestigated entry names a canonical organ and a stated reason", () => {
+        const section = {
+            coverage: "available",
+            data: { rows: [], not_investigated: [{ organ: "liver", reason: "not_corroborated", detail: "d" }], round_bound: 2, claim_budget: 6 },
+        };
+        expect(ClaimInvestigationSchema.safeParse(section).success).toBe(false);
     });
 });
 

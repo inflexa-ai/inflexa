@@ -28,7 +28,7 @@ import { forSubAgent } from "../../../auth/types.js";
 import { finalText, runAgent } from "../../../loop/run-agent.js";
 import { passthroughStep } from "../../../loop/run-step.js";
 import type { AgentDefinition } from "../../../loop/types.js";
-import type { ChatProvider } from "../../../providers/types.js";
+import type { AgentChat } from "../../../providers/types.js";
 import type { UsageRecorder } from "../../../billing/usage-recorder.js";
 
 export const OffTargetAnnotationSchema = z.object({
@@ -38,7 +38,7 @@ export const OffTargetAnnotationSchema = z.object({
 export type OffTargetAnnotation = z.infer<typeof OffTargetAnnotationSchema>;
 
 export interface ClinicalConsequenceAnnotatorDeps {
-    readonly provider: ChatProvider;
+    readonly provider: AgentChat;
     readonly session: AgentSession;
     readonly model: string;
     /** LLM usage-accounting seam for the annotator loop; omitted falls back to the no-op recorder. */

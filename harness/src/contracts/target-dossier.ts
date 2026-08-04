@@ -852,6 +852,101 @@ export const SafetyCorroborationSchema = withCoverage(
 );
 export type SafetyCorroboration = z.infer<typeof SafetyCorroborationSchema>;
 
+// ── §2.6b Claim investigation ───────────────────────────────────────
+
+/**
+ * What became of a claim once it was argued against.
+ *
+ * Four words, no number. A numeric soundness would need a threshold to mean
+ * anything, and a threshold on this axis deletes real liabilities: the organs
+ * with the thinnest published mechanism are routinely the ones worth the most
+ * attention. `undetermined` is a real outcome — the argument ran and settled
+ * nothing — not a failure to produce one of the other three.
+ */
+export const ClaimVerdictSchema = z.enum(["upheld", "weakened", "overturned", "undetermined"]);
+export type ClaimVerdict = z.infer<typeof ClaimVerdictSchema>;
+
+/** Which stopping condition ended a claim's investigation. */
+export const InvestigationConvergenceSchema = z.enum(["verdict_terminal", "verdict_settled", "round_bound_reached"]);
+export type InvestigationConvergence = z.infer<typeof InvestigationConvergenceSchema>;
+
+/** How the target is proposed to produce the liability in an organ. */
+export const MechanismProposalSchema = withEvidence(z.object({ statement: z.string().min(1) }));
+export type MechanismProposal = z.infer<typeof MechanismProposalSchema>;
+
+/**
+ * The case against the claim.
+ *
+ * Its `support` is the counter-evidence, held to the same contract as the claim
+ * it attacks: an objection that cannot cite a record is `unknown` with a reason,
+ * which is what stops "no supporting literature was found" being dressed up as a
+ * finding of its own.
+ */
+export const ClaimCritiqueSchema = withEvidence(z.object({ objection: z.string().min(1) }));
+export type ClaimCritique = z.infer<typeof ClaimCritiqueSchema>;
+
+/**
+ * One organ claim, after interrogation.
+ *
+ * The row's own `support` backs the **verdict** — the assertion the row exists
+ * to make. The mechanism and the critique are nested claims carrying their own
+ * support, because they are separate assertions that can independently fail to
+ * be evidenced; flattening all three onto one `support` would make it
+ * unreadable which of them it was for.
+ *
+ * `critique` is singular: objections are deduplicated by organ, so a later
+ * round's critique replaces the earlier one it was written against, and
+ * `rounds_run` says how many passes it took.
+ */
+export const InvestigatedClaimRowSchema = withEvidence(
+    z.object({
+        organ: OrganSystemSchema,
+        /** Null when no mechanism was proposable from the evidence collected. */
+        mechanism: MechanismProposalSchema.nullable(),
+        /** Null when the critique step produced no objection worth recording. */
+        critique: ClaimCritiqueSchema.nullable(),
+        verdict: ClaimVerdictSchema,
+        rounds_run: z.number().int().positive(),
+        convergence: InvestigationConvergenceSchema,
+    }),
+);
+export type InvestigatedClaimRow = z.infer<typeof InvestigatedClaimRowSchema>;
+
+/** Why a candidate organ claim produced no investigated row. */
+export const UninvestigatedClaimReasonSchema = z.enum(["not_corroborated", "exceeded_claim_budget", "investigation_unavailable"]);
+export type UninvestigatedClaimReason = z.infer<typeof UninvestigatedClaimReasonSchema>;
+
+export const UninvestigatedClaimSchema = z.object({
+    organ: OrganSystemSchema,
+    reason: UninvestigatedClaimReasonSchema,
+    detail: z.string().min(1),
+});
+export type UninvestigatedClaim = z.infer<typeof UninvestigatedClaimSchema>;
+
+/**
+ * The investigation record.
+ *
+ * `not_investigated` is part of the data rather than a diagnostic beside it: a
+ * run that investigated nothing still has something to say, and it is the only
+ * thing that case has to say. That is why `rows` may be empty on an `available`
+ * section — every candidate that produced no row is named here with its reason.
+ *
+ * The two bounds ride in the section because they are what a reader needs to
+ * know how hard each claim was pushed, and they are configuration, so the value
+ * in force is not derivable from the code a reader happens to be looking at.
+ */
+export const ClaimInvestigationSchema = withCoverage(
+    z.object({
+        rows: z.array(InvestigatedClaimRowSchema),
+        not_investigated: z.array(UninvestigatedClaimSchema),
+        /** Propose → critique → re-verify rounds a single claim was allowed. */
+        round_bound: z.number().int().positive(),
+        /** Corroborated claims this run was allowed to investigate. */
+        claim_budget: z.number().int().positive(),
+    }),
+);
+export type ClaimInvestigation = z.infer<typeof ClaimInvestigationSchema>;
+
 // ── §2.7 Off-tissue risk ────────────────────────────────────────────
 
 export const OffTissueRowSchema = withEvidence(
@@ -1392,6 +1487,7 @@ export const DossierSchema = z.object({
     clinical_development: ClinicalDevelopmentSchema,
     safety_profile: SafetyProfileSchema,
     safety_corroboration: SafetyCorroborationSchema,
+    claim_investigation: ClaimInvestigationSchema,
     off_tissue_risk: OffTissueRiskSchema,
     off_target_panel: withCoverage(OffTargetPanelSchema),
     reference_biology: ReferenceBiologyShape,
