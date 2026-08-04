@@ -67,7 +67,7 @@ import {
     type TrialItem,
 } from "./target-assessment/fanout/index.js";
 import { fetchApprovalPrecedents, pickIndicationForPrecedents, renderApprovalPrecedents } from "./target-assessment/lib/approval-precedents.js";
-import { readBudgetExceededMarker } from "./target-assessment/lib/llm-step.js";
+import { readBudgetExceededMarker } from "./lib/llm-step.js";
 import { recordTerminalReason } from "./target-assessment/metrics.js";
 import { phase4Assemble } from "./target-assessment/phase4-assemble.js";
 import { DossierDerivedInvariantError, DossierSchemaViolationError, phase5Persist } from "./target-assessment/phase5-persist.js";

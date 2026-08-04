@@ -28,7 +28,7 @@ import { toProviderError } from "../../../providers/errors.js";
 import { setupDbosForTests, type DbosTestRig } from "../../../__tests__/setup/dbos.js";
 import { silentLogger } from "../../../__tests__/setup/logger.js";
 import { insertAssessment, getAssessment } from "../../../state/target-assessments.js";
-import { BUDGET_EXCEEDED_SENTINEL, BUDGET_EXCEEDED_TOPIC, runLlmStep, type BudgetExceededMarker } from "../../target-assessment/lib/llm-step.js";
+import { BUDGET_EXCEEDED_SENTINEL, BUDGET_EXCEEDED_TOPIC, runLlmStep, type BudgetExceededMarker } from "../../lib/llm-step.js";
 import { emitProgress } from "../../target-assessment/progress.js";
 import type { AgentChat, ChatRequest, ChatResponse } from "../../../providers/types.js";
 import { makeMessage, textBlock } from "../../../loop/__fixtures__/scripted-provider.js";
