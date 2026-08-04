@@ -4,6 +4,31 @@
     "pr": ""
   },
   "hooks": {
-    "PreToolUse": []
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/ste-check.ts\"",
+            "timeout": 15,
+            "statusMessage": "STE check"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/ste-check.ts\"",
+            "timeout": 15,
+            "statusMessage": "STE check"
+          }
+        ]
+      }
+    ]
   }
 }
