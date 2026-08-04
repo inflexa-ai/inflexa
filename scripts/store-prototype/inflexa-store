@@ -8,6 +8,7 @@
 #   inflexa-store shell                      interactive sandbox shell
 #   inflexa-store test                       acceptance checks
 #   inflexa-store du                         store/farm disk accounting
+#   inflexa-store verify                     re-hash the store, report drift (OFFLINE)
 #   inflexa-store clean                      remove the whole store
 #
 # The store lives at $LIB_STORE (default ~/.local/share/inflexa/libs), which is
@@ -140,6 +141,19 @@ cmd_du() {
     du -sh "$LIB_STORE"
 }
 
+# Re-hash every store directory and report any that no longer match their address.
+# Offline and read-only: the provisioner only reads the store, and content drift
+# means corruption or tampering, since the store is write-once.
+cmd_verify() {
+    [[ -d "$LIB_STORE/store" ]] || die "no store at $LIB_STORE"
+    echo "==> verifying store (network off, read-only)"
+    "$CTR" run --rm \
+        --network none \
+        -v "$LIB_STORE:/mnt/libs:ro" \
+        "$PROVISIONER_IMAGE" \
+        --verify
+}
+
 cmd_clean() {
     read -rp "remove $LIB_STORE entirely? [y/N] " ans
     [[ "$ans" == "y" ]] || exit 0
@@ -156,6 +170,7 @@ case "${1:-}" in
     shell) shift; cmd_shell "$@" ;;
     test)  shift; cmd_test "$@" ;;
     du)    shift; cmd_du "$@" ;;
+    verify) shift; cmd_verify "$@" ;;
     clean) shift; cmd_clean "$@" ;;
     *) sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

@@ -49,6 +49,14 @@ FARMS = LIBS / "farms"
 # extension suffixes have to be pinned to it, not to whatever uv would pick.
 PYTHON = "/usr/bin/python3"
 
+# The one package index the provisioner may resolve and download from. Pinning it
+# stops a dependency from pulling an artifact off an unexpected host, and every
+# install runs under `--require-hashes`, so a substituted artifact fails its hash
+# check rather than installing. The provisioner image enforces the same boundary at
+# the network layer (its egress firewall allows only this host); this is the
+# resolver-level half of that guarantee.
+INDEX_URL = os.environ.get("INFLEXA_INDEX_URL", "https://pypi.org/simple")
+
 # Marker written inside each store directory recording the exact pin it was
 # installed from, so a name+version glob can be confirmed rather than trusted.
 PIN_MARKER = ".inflexa-pin"
@@ -98,27 +106,49 @@ def tree_hash(root: Path) -> str:
     return h.hexdigest()
 
 
-def resolve(specs: list[str]) -> list[str]:
-    """Full dependency closure of `specs`, as pinned name==version strings."""
+def resolve(specs: list[str]) -> dict[str, list[str]]:
+    """Full dependency closure of `specs`, as pinned name==version -> source hashes.
+
+    `--generate-hashes` records a hash for every resolved artifact, and the install
+    step enforces it with `--require-hashes`. Together they close the gap a content
+    address alone leaves open: the address proves the installed tree is intact, the
+    source hash proves the artifact it was built from was not substituted upstream.
+    Resolution runs against the pinned index only, with `--no-config` so no ambient
+    configuration can add another.
+    """
     req = Path("/tmp/requirements.in")
     req.write_text("\n".join(specs) + "\n")
     out = Path("/tmp/requirements.txt")
     log(f"resolving closure of: {', '.join(specs)}")
     subprocess.run(
         ["uv", "pip", "compile", "--python", PYTHON, "--no-header", "--quiet",
+         "--generate-hashes", "--index-url", INDEX_URL, "--no-config",
          str(req), "-o", str(out)],
         check=True,
     )
-    pins = []
-    for line in out.read_text().splitlines():
-        line = line.split("#", 1)[0].strip().rstrip("\\").strip()
-        # Markers were already evaluated against this interpreter by the compile
-        # step; whatever follows `;` is noise for the install call.
-        line = line.split(";", 1)[0].strip()
-        if line and "==" in line:
-            pins.append(line)
+    pins: dict[str, list[str]] = {}
+    current: str | None = None
+    for raw in out.read_text().splitlines():
+        line = raw.split("#", 1)[0].strip().rstrip("\\").strip()
+        if not line:
+            continue
+        if line.startswith("--hash="):
+            if current is not None:
+                pins[current].append(line[len("--hash="):])
+            continue
+        # A requirement line: `name==version`, possibly trailed by an environment
+        # marker or an inline `--hash=`. Markers were already evaluated against this
+        # interpreter by the compile step.
+        tokens = line.split(";", 1)[0].split()
+        if not tokens or "==" not in tokens[0]:
+            continue
+        current = tokens[0]
+        pins.setdefault(current, [])
+        for tok in tokens[1:]:
+            if tok.startswith("--hash="):
+                pins[current].append(tok[len("--hash="):])
     log(f"closure: {len(pins)} distributions")
-    return sorted(pins)
+    return dict(sorted(pins.items()))
 
 
 def find_stored(pin: str) -> Path | None:
@@ -131,13 +161,21 @@ def find_stored(pin: str) -> Path | None:
     return None
 
 
-def ensure_stored(pin: str) -> tuple[Path, bool]:
-    """Return the store directory for `pin`, installing it if absent."""
+def ensure_stored(pin: str, hashes: list[str]) -> tuple[Path, bool]:
+    """Return the store directory for `pin`, installing it if absent.
+
+    Install runs under `--require-hashes`: the pin is written to a fragment with its
+    source hashes, and uv refuses an artifact whose download matches none of them. A
+    pin that reached here without a hash fails loudly rather than installing
+    unverified.
+    """
     existing = find_stored(pin)
     if existing is not None:
         return existing, False
 
     name, version = pin.split("==", 1)
+    if not hashes:
+        raise SystemExit(f"[provision] refusing to install {pin} without a source hash")
     # Staged inside the store, not under /tmp: publishing is a rename, and a
     # rename is only atomic within one filesystem. The store is a bind mount, so
     # anywhere else is a different device and the publish would have to be a copy.
@@ -146,10 +184,16 @@ def ensure_stored(pin: str) -> tuple[Path, bool]:
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
+    # A one-line requirements fragment carrying the pin and its hashes, because
+    # `--require-hashes` reads hashes from a file, not from the command line.
+    frag = Path("/tmp") / f"req-{canon(name)}.txt"
+    frag.write_text(pin + "".join(f" --hash={h}" for h in hashes) + "\n")
+
     log(f"installing {pin}")
     subprocess.run(
         ["uv", "pip", "install", "--python", PYTHON, "--no-deps", "--no-cache",
-         "--break-system-packages", "--target", str(staging), pin],
+         "--require-hashes", "--index-url", INDEX_URL, "--no-config",
+         "--break-system-packages", "--target", str(staging), "-r", str(frag)],
         check=True,
     )
 
@@ -293,14 +337,59 @@ def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, str]:
     return results
 
 
+def reject_off_index(specs: list[str]) -> None:
+    """Refuse a spec that would fetch from anywhere but the pinned index.
+
+    A direct URL, a VCS ref, or a local path (`pkg @ https://…`, `git+https://…`,
+    `./dist/pkg.whl`) bypasses the index and its hashes, so it is refused at the
+    request boundary. Naming a package is allowed; naming a location is not.
+    """
+    off = [s for s in specs
+           if "://" in s or s.strip().startswith((".", "/"))
+           or s.strip().endswith((".whl", ".tar.gz", ".zip"))]
+    if off:
+        raise SystemExit(
+            f"[provision] refusing specs that bypass the pinned index {INDEX_URL}: {off}")
+
+
+def verify_store() -> int:
+    """Re-hash every store directory and report any whose content drifted from its
+    address. The store is write-once, so a mismatch is corruption or tampering, not a
+    legitimate change."""
+    if not STORE.is_dir():
+        log("verify: no store")
+        return 0
+    checked, bad = 0, []
+    for d in sorted(STORE.iterdir()):
+        if not d.is_dir() or d.name == ".staging":
+            continue
+        recorded = d.name.rsplit("-", 1)[-1]
+        actual = tree_hash(d)[:16]
+        checked += 1
+        if actual != recorded:
+            bad.append(d.name)
+            log(f"  MISMATCH {d.name}: address {recorded} != content {actual}")
+    log(f"verify: {checked} store dir(s) checked, {len(bad)} mismatch(es)")
+    return 1 if bad else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Provision packages into the library store.")
-    ap.add_argument("--farm", required=True, help="analysis name (farm directory)")
+    ap.add_argument("--farm", help="analysis name (farm directory)")
+    ap.add_argument("--verify", action="store_true",
+                    help="re-hash every store directory, report any drift from its address, and exit")
     ap.add_argument("--warm", default="", help="comma-separated modules to import during warm-up")
     ap.add_argument("--warm-script", default=None,
                     help="path (inside the store) to a script that exercises jitted code paths")
     ap.add_argument("specs", nargs="*", help="requirement specs to add")
     args = ap.parse_args()
+
+    if args.verify:
+        return verify_store()
+    if not args.farm:
+        log("usage: provide --farm <name> (with specs), or --verify")
+        return 2
+    reject_off_index(args.specs)
 
     STORE.mkdir(parents=True, exist_ok=True)
     FARMS.mkdir(parents=True, exist_ok=True)
@@ -317,11 +406,12 @@ def main() -> int:
         log("nothing requested and no existing lock — nothing to do")
         return 2
 
-    pins = resolve(requested)
+    resolved = resolve(requested)
+    pins = list(resolved)
 
     store_dirs, added = [], []
     for pin in pins:
-        path, is_new = ensure_stored(pin)
+        path, is_new = ensure_stored(pin, resolved[pin])
         store_dirs.append(path)
         if is_new:
             added.append(pin)
@@ -356,6 +446,7 @@ def main() -> int:
     lock_path.write_text(json.dumps({
         "requested": requested,
         "resolved": pins,
+        "hashes": resolved,
         "store_dirs": [d.name for d in store_dirs],
         "collisions": collisions,
         # Recorded so a cache check can replay exactly what was warmed. numba keys
