@@ -954,6 +954,36 @@ describe("categoryLabel", () => {
         }
     });
 
+    test("a prefix renders before the title and never ranks", async () => {
+        // The reason `prefix` is a field and not a title concatenation: a mode string folded into the
+        // fuzzy target would make `d` rank every directory above a file actually named `data`.
+        const [query, setQuery] = createSignal("");
+        const items: SelectItem<string>[] = [
+            { value: "dir", title: "assets/", prefix: "rwxr-xr-x" },
+            { value: "file", title: "data.csv", prefix: "rw-r--r--" },
+        ];
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={items} query={query()} emptyText="none" />
+                </Harness>
+            ),
+            { width: 44, height: 10 },
+        );
+        try {
+            let frame = await settle(setup);
+            const line = frame.split("\n").find((l) => l.includes("assets/")) ?? "";
+            expect(line.slice(0, line.indexOf("assets/"))).toContain("rwxr-xr-x");
+
+            setQuery("d"); // matches the title `data.csv`, and both prefixes hold a `d`-less triple
+            frame = await settle(setup);
+            expect(frame).toContain("data.csv");
+            expect(frame).not.toContain("assets/");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
     test("hints form a right-aligned column, whatever the titles measure", async () => {
         // The point of a hint column is scanning DOWN it. Left-adjacent hints chase each title's
         // length, which makes two sizes on adjacent rows impossible to compare at a glance.
