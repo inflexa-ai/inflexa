@@ -146,9 +146,13 @@ describe("defineTool", () => {
 
         it("types the hook against the tool's own input", () => {
             // The guard this capability rests on: the hook and the schema are
-            // checked against each other. Test files are outside the build
-            // tsconfig, so this directive is verified by the lint program
-            // (`tsc -p tsconfig.eslint.json --noEmit`), which includes all of src/.
+            // checked against each other.
+            //
+            // CAUTION: the directive below documents the contract, and no gate
+            // enforces it. `tsconfig.json` excludes `src/**/*.test.ts`, thus the
+            // build typecheck never reads this file. ESLint builds its program
+            // from `tsconfig.eslint.json`, but it reports its own rules only and
+            // never a type error. Thus a regression here stays green.
             const tool = defineTool({
                 id: "typed-hook",
                 description: "Declares only `path`.",
@@ -159,6 +163,22 @@ describe("defineTool", () => {
             });
 
             expect(tool.id).toBe("typed-hook");
+        });
+
+        it("requires the decision — an omitted describeCall does not typecheck", () => {
+            // The point of the required decision: a tool cannot ship undescribed
+            // by omission. Read the CAUTION above — no gate enforces this
+            // directive either, thus it documents the contract rather than
+            // guards it.
+            // @ts-expect-error -- the definition declares neither a hook nor "none".
+            const tool = defineTool({
+                id: "undecided",
+                description: "Declares no describeCall at all.",
+                inputSchema: z.object({ path: z.string() }),
+                execute: async () => ok({}),
+            });
+
+            expect(tool.id).toBe("undecided");
         });
     });
 });

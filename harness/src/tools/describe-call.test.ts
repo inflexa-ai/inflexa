@@ -17,6 +17,7 @@ import { createUpdateWorkingMemoryTool } from "./memory/update-working-memory.js
 import { createGeneratePlanTool } from "./research/generate-plan.js";
 import { createInspectDataProfileTool } from "./research/inspect-data-profile.js";
 import { createInspectRunTool } from "./research/inspect-run.js";
+import { createResolveCitationTool } from "./research/resolve-citation.js";
 import { createListAvailablePackagesTool } from "./sandbox/list-available-packages.js";
 import { createListAvailableRefsTool } from "./sandbox/list-available-refs.js";
 import { createEditFileTool } from "./workspace/edit-file.js";
@@ -88,6 +89,14 @@ describe("describeCall — conversation roster", () => {
         expect(describeCall(tool, { page: 3 })).toBe("run list (page 3)");
     });
 
+    it("resolve_citation names the citation it verifies", () => {
+        const tool = createResolveCitationTool(unused);
+
+        expect(describeCall(tool, { citation: "doi:10.1000/example" })).toBe("verify doi:10.1000/example");
+        // The metadata fields are comparison inputs, not the subject of the call.
+        expect(describeCall(tool, { citation: "Watson & Crick 1953", year: 1953, venue: "Nature" })).toBe("verify Watson & Crick 1953");
+    });
+
     it("pubmed names the subject each action acts on", () => {
         const tool = createPubMedTool({ ncbiApiKey: "k" });
 
@@ -156,6 +165,12 @@ describe("describeCall — conversation roster", () => {
         expect(describeCall(tool, { path: "managed/collectri", category: "msigdb" })).toBe("managed/collectri");
         // `query` narrows the entries of the named subtree; it does not replace it.
         expect(describeCall(tool, { category: "msigdb", query: "hallmark" })).toBe("msigdb");
+        // A blank value is no filter and no target inside `execute`, thus the
+        // detail names the browse that actually happens.
+        expect(describeCall(tool, { query: "   " })).toBe("full reference store");
+        expect(describeCall(tool, { path: "" })).toBe("full reference store");
+        // A blank path still suppresses the category, exactly as `execute` does.
+        expect(describeCall(tool, { path: "", category: "msigdb" })).toBe("full reference store");
     });
 
     it("list_available_packages names the presence check before any filter", () => {
@@ -170,6 +185,10 @@ describe("describeCall — conversation roster", () => {
         expect(describeCall(tool, { names: ["Seurat"], query: "umap", language: "r" })).toBe("Seurat");
         // An empty array is not a presence check, and `execute` lists the store.
         expect(describeCall(tool, { names: [], language: "r" })).toBe("r packages");
+        // `queryPackages` trims the needle and filters on nothing when it is
+        // blank, thus a blank query never names the call.
+        expect(describeCall(tool, { query: "  ", language: "r" })).toBe("r packages");
+        expect(describeCall(tool, { query: "" })).toBe("full package list");
     });
 
     it("show_plan names the plan", () => {

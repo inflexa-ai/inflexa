@@ -543,9 +543,12 @@ async function dispatchTools(
     isFatalLoopError: (err: unknown) => boolean,
     runStep: RunStep,
     toolStepName: (toolName: string, toolUseId: string) => string,
-): Promise<{ results: ToolResultPart[]; durations: number[] }> {
+): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[] }> {
     const results = new Array<ToolResultPart>(toolUses.length);
-    const durations = new Array<number>(toolUses.length);
+    // The array starts with holes, which read as `undefined`. The element type
+    // says so, thus it agrees with what `settleRound` accepts. Every index is in
+    // fact assigned, because the mode partition below covers each call.
+    const durations = new Array<number | undefined>(toolUses.length);
     const stepTools: { tu: ToolCallPart; idx: number }[] = [];
     const workflowTools: { tu: ToolCallPart; idx: number }[] = [];
     const inlineTools: { tu: ToolCallPart; idx: number }[] = [];

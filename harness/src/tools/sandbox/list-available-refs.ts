@@ -589,7 +589,17 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
         // `execute` resolves `path ?? category`, and it ignores `category` when
         // `path` is present. `query` filters the result of that choice, thus it
         // names the call only when neither of the two other fields does.
-        describeCall: ({ path, category, query }) => path ?? category ?? query ?? "full reference store",
+        //
+        // A blank value counts as absent, because `execute` treats it that way:
+        // it browses the store root for a blank target, and it applies no filter
+        // for a blank needle. The precedence stays `??` and never `||`, thus a
+        // blank `path` still suppresses `category` exactly as `execute` does.
+        describeCall: ({ path, category, query }) => {
+            const target = path ?? category;
+            if (target !== undefined && target.trim() !== "") return target;
+            const needle = query?.trim();
+            return needle === undefined || needle === "" ? "full reference store" : needle;
+        },
         execute: async ({ path, category, query, limit }) => {
             // `category` is shorthand for a top-level path; an explicit `path` wins.
             const requestedInput = path ?? category;
