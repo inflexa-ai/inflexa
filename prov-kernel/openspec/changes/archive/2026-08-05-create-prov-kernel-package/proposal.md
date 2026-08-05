@@ -8,7 +8,7 @@ and a future Go writer in Nexus. Each producer must mint the same identifiers
 for the same facts, or `unified()` keeps both copies and the lineage graph
 forks.
 
-The dialect first lived inside a harness recorder. That home was wrong for
+The dialect must be its own package, not a module of a harness recorder, for
 three reasons:
 
 - **The harness must not own the tracked vocabulary.** The harness observes
@@ -29,11 +29,11 @@ three reasons:
 
 - Add the `prov-kernel/` subsystem: the published package `@inflexa-ai/prov-kernel` at
   version 0.1.0.
-- Move the reviewed dialect code into the kernel: the document model
-  (`document.ts`), the signing primitives (`signing.ts`), verification and
-  the sidecar (`verify.ts`), and the value types (`types.ts`).
-- Drop the `ProvEvent` union from the moved types. The kernel keeps only the
-  actor and ref value types that the builders accept, plus `VerifyResult`.
+- Add the dialect code: the document model (`document.ts`), the signing
+  primitives (`signing.ts`), verification and the sidecar (`verify.ts`), and
+  the value types (`types.ts`).
+- Keep any event union out of the types. The kernel keeps only the actor and
+  ref value types that the builders accept, plus `VerifyResult`.
 - Add `SPEC.md`: the wire format, derived from the code, sufficient for an
   independent implementation.
 - Add a golden fixture test: a fully deterministic document, compared against
@@ -59,8 +59,8 @@ three reasons:
 - New subsystem `prov-kernel/` with its own package manifest, lockfile, lint and
   build configuration, tests, `SPEC.md`, and OpenSpec tree. The scaffolding
   mirrors `harness/`.
-- No existing subsystem changes in this change. A host that adopts the kernel
-  replaces its local copy of the dialect with the package in its own change.
+- No existing subsystem changes in this change. Each host adopts the kernel
+  in its own change.
 - Excluded on purpose: the `ProvEvent` union, any event reducer, the recorder
   lifecycle (sink, flush, queue, CAS), and the harness bridges. Those are
   host-owned. The kernel declares the `ProvSigner` seam; key custody stays

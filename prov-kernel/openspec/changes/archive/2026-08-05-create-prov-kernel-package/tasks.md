@@ -12,18 +12,18 @@
 - [x] 1.3 Run `bun install` and commit `bun.lock` (CI installs with
   `--frozen-lockfile`).
 
-## 2. Move the kernel sources
+## 2. Write the kernel sources
 
-- [x] 2.1 Port `types.ts` without the `ProvEvent` union: keep `ProvActor`,
+- [x] 2.1 Write `types.ts` with no event union: `ProvActor`,
   `ProvModelId`, `ProvSubject`, the input/run/step/file/command refs, the
   outcomes, `ProvFileKey`, and `VerifyResult`.
-- [x] 2.2 Port `document.ts` whole: `createProvDocumentModel`,
+- [x] 2.2 Write `document.ts`: `createProvDocumentModel`,
   `PROV_UNIFY_OPTIONS`, `defaultProvDigest`, and every QName and relation-id
-  derivation, implementation unchanged.
-- [x] 2.3 Port `signing.ts` whole: `ProvSigner`, `ProvSigningError`,
+  derivation.
+- [x] 2.3 Write `signing.ts`: `ProvSigner`, `ProvSigningError`,
   `createKeypairSigner`, `computeChainHash`, `computePayloadDigest`,
   `signHexDigest`, `verifyHexDigest`, `ProvPublicKeyJwk`.
-- [x] 2.4 Port `verify.ts` whole: `verifyProvenance`, `verifyPayload`,
+- [x] 2.4 Write `verify.ts`: `verifyProvenance`, `verifyPayload`,
   `buildSidecar`, `verifySidecar`, `sidecarSchema`, `formatVerifyResult`.
 - [x] 2.5 Add the `src/index.ts` barrel with the public surface.
 

@@ -9,6 +9,15 @@ A document is W3C PROV, serialized as PROV-JSON. The kernel builds it with
 `@inflexa-ai/tsprov` and collapses duplicate records with `unified()` at
 serialize time.
 
+The serialized form is minified JSON — no whitespace between tokens. Object
+members keep record insertion order, and each top-level section (`entity`,
+`agent`, `activity`, each relation kind) appears at the position of its first
+record. The committed fixture
+`src/__fixtures__/golden-document.json` holds the exact bytes of one fully
+deterministic document. A conforming producer must reproduce it
+byte-for-byte, and the golden test compares the raw serialized string against
+it.
+
 ## Namespace
 
 Each Inflexa-minted identifier lives under one namespace:
@@ -31,11 +40,12 @@ relation id. The default digest is:
 The digest is **injectable**. It is identity-load-bearing: each file, input,
 command, and model-agent QName embeds its output. A producer with existing
 documents must keep its historical digest function, or its identifier space
-forks. The default digest is canonical for cloud-written documents. The CLI
-historically injects a `Bun.hash` digest for its existing documents.
+forks. The default digest is canonical for new documents.
 
 The localpart sanitizer `qnameSafe(s)` replaces each character that is not in
-`[A-Za-z0-9_-]` with `_`.
+`[A-Za-z0-9_-]` with `_`. Only the user-actor id passes through it. The
+`analysisId`, `runId`, and `stepId` values embed **unsanitized** into QNames
+and relation ids. The host must supply values that are already QName-safe.
 
 ## QName formats
 
@@ -45,10 +55,17 @@ The localpart sanitizer `qnameSafe(s)` replaces each character that is not in
 
 | Kind | QName | Attributes |
 |-|-|-|
-| user | `inflexa:agent-user-{qnameSafe(email)}` | `prov:type` `prov:Person`, `inflexa:email` |
+| user | `inflexa:agent-user-{qnameSafe(id)}` | `prov:type` `prov:Person`, optional `inflexa:email` |
 | anonymous | `inflexa:agent-anonymous` | `prov:type` `prov:Person`, `prov:label` `Anonymous user` |
 | system | `inflexa:agent-system` | `prov:type` `prov:SoftwareAgent`, `prov:label` = host label, `inflexa:version`, optional `inflexa:commit` |
 | model | `inflexa:agent-model-{digest(model)}` | `prov:type` `["prov:SoftwareAgent", "inflexa:Model"]`, `prov:label` = model, `inflexa:model` |
+
+The user QName keys on an **opaque stable id**, never on personal data. A
+document is immutable and signed, thus the identity-bearing key must not
+change when a person changes an email address, and a writer must not be
+forced to embed personal data into an identifier. `inflexa:email` is an
+optional attribute. A host can choose to include it; a cloud writer must
+not.
 
 The model identifier is the vendor-qualified `{provider}/{model}` name.
 
@@ -77,17 +94,17 @@ A written file carries `prov:type` `inflexa:File`, `inflexa:path`,
 
 | Kind | QName | Formal times |
 |-|-|-|
-| lifecycle action | `inflexa:action-{mintActionId()}` | start = end = append-time wall clock |
+| lifecycle action | `inflexa:action-{mintActionId()}` | start = end = the model clock at append time |
 | run | `inflexa:run-{runId}` | start from `startedAtMs`, end from `completedAtMs` |
 | step | `inflexa:step-{runId}-{stepId}` | end from `completedAtMs` |
 | command | `inflexa:cmd-{runId}-{stepId}-{groupDigest}` | none |
 
 `mintActionId` mints one fresh id per genuine user action. The default minter
-is a random UUID. A lifecycle action (`inflexa:CreateAnalysis`,
-`inflexa:AddInput`, `inflexa:RemoveInput`) is deliberately not deterministic.
-
-Each formal time is the ISO-8601 UTC string of the epoch-ms payload value, in
-the form `new Date(ms).toISOString()` gives (`YYYY-MM-DDTHH:mm:ss.sssZ`).
+is a random UUID. The model clock (`now`) defaults to the wall clock. Both are
+injectable, and a lifecycle action (`inflexa:CreateAnalysis`,
+`inflexa:AddInput`, `inflexa:RemoveInput`, or a host-defined type through the
+generic lifecycle-action builder) is deliberately not deterministic by
+default.
 
 The command group digest is:
 
@@ -97,17 +114,68 @@ groupDigest = digest( sort(map(outputs, fileDigest)).join("|") )
 
 Sort the per-output `fileDigest` strings lexicographically, join them with
 `|`, then digest the joined string. The command activity carries `prov:type`
-`inflexa:Command` with `inflexa:command`, optional `inflexa:args` (the vector
-joined with one space), `inflexa:exitCode`, optional `inflexa:durationMs`, and
-optional `inflexa:unresolvedScript`. A file-tool write carries `prov:type`
-`inflexa:FileToolWrite` and `inflexa:tool`. A command activity carries **no
-formal time**: its observation timestamp is replay-unstable, and a
-replay-unstable value must not enter an identifier or a formal PROV position.
+`inflexa:Command` with `inflexa:command`, optional `inflexa:args`,
+`inflexa:exitCode`, optional `inflexa:durationMs`, and optional
+`inflexa:unresolvedScript`. `inflexa:args` is the argument vector joined with
+one space, and it is present **only when the vector has at least one
+element** — an empty vector emits no attribute. A file-tool write carries
+`prov:type` `inflexa:FileToolWrite` and `inflexa:tool`. A command activity
+carries **no formal time**: its observation timestamp is replay-unstable, and
+a replay-unstable value must not enter an identifier or a formal PROV
+position.
 
 Run and step activities carry terminal attributes on completion:
 `inflexa:status` and optional `inflexa:durationMs`. A run also carries
 `inflexa:runId` and optional `inflexa:planSummary`. A step also carries
 `prov:type` `inflexa:Step`, `inflexa:runId`, and `inflexa:stepId`.
+
+### Script resolution
+
+A command ref can name a `scriptPath` with no hash. The builder resolves the
+path against `(path, hash)` pairs that it already holds: first the group's
+**outputs**, then its **inputs**, first match wins. A resolved script adds a
+`used` edge from the command activity to the script's file entity, under the
+same `inflexa:used-cmd-…-{fileDigest}` id scheme as every other command read.
+Thus a script that is also a listed input gets **one** merged `used` edge, not
+two. A path that matches neither list has no `(path, hash)` key, so it seeds
+no entity and no edge — the path instead rides the command activity as the
+`inflexa:unresolvedScript` attribute.
+
+## Time serialization
+
+Each formal time (`prov:startTime`, `prov:endTime`, and the `prov:time` of a
+timed relation) serializes in the Python `datetime.isoformat()` shape:
+
+```
+YYYY-MM-DDTHH:MM:SS[.ffffff]+00:00
+```
+
+The rules are:
+
+- The offset is always written as `+00:00` for UTC, never `Z`. The kernel
+  supplies every instant in UTC, thus the offset is always `+00:00`.
+- When the instant has zero milliseconds, there is **no** fractional part.
+- When the instant has non-zero milliseconds, the fractional part is exactly
+  **6 digits**: the millisecond value times 1000, left-padded with zeros.
+
+Examples: epoch-ms `1700000000000` serializes as `2023-11-14T22:13:20+00:00`;
+epoch-ms `1700000100123` serializes as `2023-11-14T22:15:00.123000+00:00`.
+
+## Attribute encodings
+
+PROV-JSON attribute values encode per JSON type of the supplied value:
+
+| Value type | Encoding | Dialect attributes |
+|-|-|-|
+| string | plain JSON string | `inflexa:path`, `inflexa:hash`, `inflexa:name`, `inflexa:slug`, `inflexa:command`, `inflexa:args`, `inflexa:tool`, `inflexa:source`, `inflexa:fileId`, `inflexa:status`, `inflexa:runId`, `inflexa:stepId`, `inflexa:planSummary`, `inflexa:unresolvedScript`, `inflexa:email`, `inflexa:version`, `inflexa:commit`, `inflexa:model`, `prov:label`, `prov:type` (the type name is a plain string) |
+| boolean | plain JSON boolean | `inflexa:isDir` |
+| integral number | `{"$": n, "type": "xsd:int"}` | `inflexa:size`, `inflexa:exitCode`, `inflexa:durationMs` |
+| non-integral number | `{"$": n, "type": "xsd:double"}` | none in the dialect |
+| multiple values | JSON array of the encoded values | the model agent's `prov:type` |
+
+Every numeric dialect attribute is integral, thus each one serializes as an
+`xsd:int` typed literal. The integral test is on the value, not on a declared
+type.
 
 ## Relation identifiers
 
@@ -141,8 +209,17 @@ leaf file with no producing command gets the same id from its step activity.
 The two authorities write the same identifier, thus re-emission merges.
 
 A lifecycle relation (creation, input add, input remove) carries no explicit
-identifier and stamps the append-time wall clock. Only the execution relations
-obey the deterministic-id rule.
+identifier. Only the execution relations obey the deterministic-id rule. On
+serialization each identifier-less record receives a blank-node id `_:idN`:
+one document-wide counter that starts at 1 and increments per distinct
+anonymous record, in record insertion order. Value-equal anonymous records
+share one id.
+
+Only the **timed** lifecycle relations stamp the model clock time: the
+creation `wasGeneratedBy(analysis, action, time)`, the input-add
+`used(action, input, time)`, and the input-remove
+`wasInvalidatedBy(input, action, time)`. The lifecycle `wasAttributedTo` and
+`wasDerivedFrom` relations carry **no** time.
 
 ## The chain rule
 
@@ -185,15 +262,18 @@ and the sidecar alone.
     "payloadDigestMethod": "verbatim",
     "signatureAlgorithm": "Ed25519",
     "signature": "<lowercase hex Ed25519 signature over the digest bytes>",
-    "publicKey": { "kty": "OKP", "crv": "Ed25519", "...": "signer public JWK" }
+    "publicKey": { "kty": "OKP", "crv": "Ed25519", "...": "signer public JWK" },
+    "kid": "<optional signer id>"
 }
 ```
 
 `payloadType`, `payloadDigestAlgorithm`, `payloadDigestMethod`, and
 `signatureAlgorithm` are literals. `payloadDigestMethod` `verbatim` means the
-digest input is the exact payload bytes. The public key travels in the
-sidecar, thus the sidecar proves integrity, not origin. For origin trust a
-host pins the signer's public key and compares before verification.
+digest input is the exact payload bytes. `kid` is optional: when several
+writers sign exports of one document, `kid` says which key signed this one.
+Verification ignores it. The public key travels in the sidecar, thus the
+sidecar proves integrity, not origin. For origin trust a host pins the
+signer's public key and compares before verification.
 
 ## Unify semantics
 

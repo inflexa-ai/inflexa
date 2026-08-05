@@ -28,7 +28,15 @@ export type {
 export { createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS } from "./document.js";
 export type { ProvDigest, ProvDocumentModel, ProvDocumentModelOptions } from "./document.js";
 
-export { computeChainHash, computePayloadDigest, createKeypairSigner, signHexDigest, verifyHexDigest } from "./signing.js";
+export {
+    computeChainHash,
+    computePayloadDigest,
+    createKeypairSigner,
+    importPrivateKeyJwk,
+    importPublicKeyJwk,
+    signHexDigest,
+    verifyHexDigest,
+} from "./signing.js";
 export type { ProvPublicKeyJwk, ProvSigner, ProvSigningError } from "./signing.js";
 
 export { buildSidecar, formatVerifyResult, sidecarSchema, verifyPayload, verifyProvenance, verifySidecar } from "./verify.js";

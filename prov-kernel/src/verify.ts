@@ -1,7 +1,15 @@
 import { z } from "zod";
 import { err, type Result } from "neverthrow";
 import type { VerifyResult } from "./types.js";
-import { computeChainHash, computePayloadDigest, verifyHexDigest, type ProvPublicKeyJwk, type ProvSigner, type ProvSigningError } from "./signing.js";
+import {
+    computeChainHash,
+    computePayloadDigest,
+    importPublicKeyJwk,
+    verifyHexDigest,
+    type ProvPublicKeyJwk,
+    type ProvSigner,
+    type ProvSigningError,
+} from "./signing.js";
 
 /**
  * Provenance verification, parameterized on stored values — no database, no filesystem. Hosts wrap
@@ -122,6 +130,8 @@ export const sidecarSchema = z.object({
     signature: z.string(),
     /** The signer's public key as JWK — lets the recipient verify without any key file. */
     publicKey: z.record(z.string(), z.unknown()),
+    /** Optional signer id — when several writers sign one document's exports, `kid` says which key signed this one. */
+    kid: z.string().optional(),
 });
 
 /** The validated sidecar shape — inferred from the schema so the type never drifts. */
@@ -133,7 +143,7 @@ export type Sidecar = z.infer<typeof sidecarSchema>;
  * when signing is unavailable — provenance is never exported unsigned. The sidecar is
  * self-contained: a recipient verifies with just the payload and the sidecar.
  */
-export async function buildSidecar(signer: ProvSigner, provJson: string): Promise<Result<Sidecar, ProvSigningError>> {
+export async function buildSidecar(signer: ProvSigner, provJson: string, opts?: { kid?: string }): Promise<Result<Sidecar, ProvSigningError>> {
     const pubKeyResult = await signer.exportPublicKeyJwk();
     if (pubKeyResult.isErr()) return err(pubKeyResult.error);
     const publicKeyJwk: ProvPublicKeyJwk | null = pubKeyResult.value;
@@ -148,6 +158,7 @@ export async function buildSidecar(signer: ProvSigner, provJson: string): Promis
             signatureAlgorithm: "Ed25519" as const,
             signature,
             publicKey: publicKeyJwk,
+            ...(opts?.kid !== undefined ? { kid: opts.kid } : {}),
         })),
     );
 }
@@ -162,11 +173,7 @@ export async function buildSidecar(signer: ProvSigner, provJson: string): Promis
  * checks the sidecar's key against the pinned one before calling this.
  */
 export async function verifySidecar(provJson: string, sidecar: Sidecar): Promise<VerifyResult> {
-    let publicKey: CryptoKey;
-    try {
-        publicKey = await crypto.subtle.importKey("jwk", sidecar.publicKey, "Ed25519", true, ["verify"]);
-    } catch {
-        return { status: "invalid-key" };
-    }
-    return verifyPayload(provJson, sidecar.payloadDigest, sidecar.signature, publicKey);
+    const keyResult = await importPublicKeyJwk(sidecar.publicKey);
+    if (keyResult.isErr()) return { status: "invalid-key" };
+    return verifyPayload(provJson, sidecar.payloadDigest, sidecar.signature, keyResult.value);
 }

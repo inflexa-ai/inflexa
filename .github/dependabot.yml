@@ -1,7 +1,7 @@
 version: 2
 updates:
-  # JavaScript dependencies (real manifests in cli/ and harness/; the repo root
-  # has none). Version-update PRs are disabled here (limit 0) on purpose:
+  # JavaScript dependencies (real manifests in cli/, harness/, and prov-kernel/;
+  # the repo root has none). Version-update PRs are disabled here (limit 0) on purpose:
   # Dependabot's npm ecosystem bumps package.json but does not maintain Bun's
   # text bun.lock, so every such PR fails CI immediately at
   # `bun install --frozen-lockfile` ("lockfile had changes, but lockfile is
@@ -14,6 +14,7 @@ updates:
     directories:
       - "/cli"
       - "/harness"
+      - "/prov-kernel"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 0

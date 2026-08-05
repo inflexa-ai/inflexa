@@ -2,7 +2,7 @@ name: Lint
 
 # Lints/typechecks the independent subsystems. `cli/` has ESLint + a tsc
 # typecheck; `harness/` has no ESLint config, so its lint is the tsc typecheck;
-# `prov-kernel/` mirrors the harness job.
+# `prov-kernel/` has ESLint + a tsc typecheck over its test-inclusive config.
 on:
   push:
     branches: [main]
@@ -110,5 +110,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: ESLint
+        run: bun run lint
+
+      # The eslint tsconfig widens the build tsconfig to the colocated test
+      # files, so the typecheck covers them too.
       - name: Typecheck
-        run: bunx tsc -p tsconfig.json --noEmit
+        run: bunx tsc -p tsconfig.eslint.json --noEmit

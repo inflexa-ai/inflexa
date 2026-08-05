@@ -50,6 +50,13 @@ describe("sidecar", () => {
         expect(await verifySidecar(provJson, sidecar)).toEqual({ status: "valid" });
     });
 
+    test("a kid rides the sidecar and does not affect verification", async () => {
+        const kp = await makeKeypair();
+        const sidecar = (await buildSidecar(createKeypairSigner(kp), provJson, { kid: "signer-1" }))._unsafeUnwrap();
+        expect(sidecarSchema.parse(sidecar).kid).toBe("signer-1");
+        expect(await verifySidecar(provJson, sidecar)).toEqual({ status: "valid" });
+    });
+
     test("a modified payload reads tampered", async () => {
         const kp = await makeKeypair();
         const sidecar = (await buildSidecar(createKeypairSigner(kp), provJson))._unsafeUnwrap();
