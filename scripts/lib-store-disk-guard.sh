@@ -17,16 +17,18 @@
 #              confusing mid-build error.
 #   cleanup    Report, reclaim to the cap, and report again. Never fails.
 #
-# The floors below come from the measured content of one amd64 build:
+# The floors below come from the measured content of one amd64 build. Each figure
+# is the uncompressed byte total of the published image's own layers:
 #   * the sandbox-python-r chain is 11.4 GB of GHCR layers, and overlay2 holds
-#     them unpacked — about 29 GB at the 1.9x to 3.4x expansion those layers
-#     measure;
-#   * `staging/` holds the store extracted out of that image with its symlinks
-#     dereferenced — about 27 GB;
-#   * `dist/` holds the zstd track tarballs — about 9 GB.
-# Thus one build touches about 65 GB: about 29 GB under the docker root, and
-# about 36 GB under the workspace. The cap keeps one build generation of warm
-# layers and no more.
+#     them unpacked — about 23 GB;
+#   * `staging/` holds the store extracted out of that image — about 21 GB
+#     (python 9.2, bioconductor 6.4, conda 3.0, github 1.6, cran 0.9, node 0.04),
+#     and more wherever the extract dereferences a symlink;
+#   * `dist/` holds one track tarball at a time — at most about 4 GB, for python.
+# The build frees the images before the pack, and the pack tears each track down
+# as it publishes, so the two do not add up. One build therefore needs about
+# 23 GB under the docker root and about 25 GB under the workspace. The cap keeps
+# one build generation of warm layers and no more.
 #
 # Usage: lib-store-disk-guard.sh <preflight|cleanup>
 
@@ -34,9 +36,9 @@ set -euo pipefail
 
 MODE="${1:?usage: lib-store-disk-guard.sh <preflight|cleanup>}"
 
-BUILDKIT_CAP="29GB"
-DOCKER_ROOT_FLOOR_GB=32
-WORKSPACE_FLOOR_GB=36
+BUILDKIT_CAP="23GB"
+DOCKER_ROOT_FLOOR_GB=26
+WORKSPACE_FLOOR_GB=27
 
 DOCKER_ROOT="$(docker info --format '{{.DockerRootDir}}')"
 WORKSPACE="${GITHUB_WORKSPACE:-$PWD}"

@@ -24,6 +24,11 @@ LIB_STORE_ROOT="${INFLEXA_LIB_ROOT:-/mnt/libs/current}"
 # shellcheck disable=SC2034 # consumed by the scripts that source this file
 LIB_STORE_ALL_TRACKS="cran bioconductor github python conda node"
 
+# zstd level for every track tarball. One value, because a tarball packed on the
+# streaming publish path and one packed locally must be the same bytes.
+# shellcheck disable=SC2034 # consumed by the scripts that source this file
+LIB_STORE_ZSTD_LEVEL=3
+
 # packages.txt fragment concat order (R sections, then python, tools, node).
 # shellcheck disable=SC2034 # consumed by the scripts that source this file
 LIB_STORE_CONCAT_ORDER="cran bioconductor github python conda node"
@@ -95,6 +100,30 @@ lib_store_track_members() {
 # True when $2 is a whitespace-delimited member of the list $1.
 lib_store_list_has() {
   case " $1 " in *" $2 "*) return 0 ;; *) return 1 ;; esac
+}
+
+# True when track $2 is complete in staging tree $1 — its subtree AND its
+# fragment are present. A track that did not build has neither.
+lib_store_track_staged() {
+  [ -d "$1/$(lib_store_track_dir "$2")" ] && [ -f "$1/$(lib_store_track_fragment "$2")" ]
+}
+
+# Byte size of a file, on GNU and on BSD stat.
+lib_store_file_size() {
+  stat -c%s "$1" 2>/dev/null || stat -f%z "$1"
+}
+
+# Pack track $3 out of staging tree $1 into <$2>/<track>.tar.zst at zstd level
+# $4, and write the sha256 and the byte size beside it. Those two sidecars are
+# what the manifest pins, and they outlive the tarball when the streaming
+# publish deletes it to hold the disk peak down.
+lib_store_pack_track() {
+  local staging="$1" out="$2" track="$3" level="$4" members
+  members="$(lib_store_track_members "$track")" || return 1
+  # shellcheck disable=SC2086 # members is an intentional word list
+  tar -C "$staging" -cf - $members | zstd -q -f "-${level}" -o "$out/$track.tar.zst"
+  sha256sum "$out/$track.tar.zst" | awk '{print $1}' > "$out/$track.tar.zst.sha256"
+  lib_store_file_size "$out/$track.tar.zst" > "$out/$track.tar.zst.size"
 }
 
 # The two-line header prepended to every assembled packages.txt.
