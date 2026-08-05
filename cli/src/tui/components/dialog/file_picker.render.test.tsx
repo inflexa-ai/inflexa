@@ -68,6 +68,20 @@ async function openPicker(
     return settle(setup);
 }
 
+/**
+ * The selection gutter of the row carrying `name`, or "" when no row does.
+ *
+ * Read positionally rather than by `toContain("● name")`: the row renders gutter, then the
+ * permission column, then the name, so the glyph and the name are never adjacent in the frame.
+ */
+function gutterOf(frame: string, name: string): string {
+    const line = frame.split("\n").find((l) => l.includes(name)) ?? "";
+    const before = line.slice(0, line.indexOf(name));
+    if (before.includes(GLYPHS.circle)) return GLYPHS.circle;
+    if (before.includes(GLYPHS.circleHollow)) return GLYPHS.circleHollow;
+    return "";
+}
+
 describe("FilePicker", () => {
     test("lists dirs first with a trailing slash, hides dotfiles, prepends ..", async () => {
         const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
@@ -118,7 +132,7 @@ describe("FilePicker", () => {
             setup.mockInput.pressKey(" ");
             frame = await settle(setup);
             expect(frame).toContain("1 selected");
-            expect(frame).toContain(`${GLYPHS.circle} alpha.txt`);
+            expect(gutterOf(frame, "alpha.txt")).toBe(GLYPHS.circle);
 
             // Walk into beta and back: the toggle must survive both listings.
             setup.mockInput.pressArrow("up");
@@ -129,7 +143,7 @@ describe("FilePicker", () => {
 
             setup.mockInput.pressArrow("left");
             frame = await settle(setup);
-            expect(frame).toContain(`${GLYPHS.circle} alpha.txt`);
+            expect(gutterOf(frame, "alpha.txt")).toBe(GLYPHS.circle);
             expect(frame).toContain("1 selected");
         } finally {
             setup.renderer.destroy();
@@ -219,7 +233,7 @@ describe("FilePicker", () => {
             frame = await settle(setup);
             expect(frame).toContain("NORMAL");
             expect(frame).toContain("1 selected");
-            expect(frame).toContain(`${GLYPHS.circleHollow} alpha.txt`); // removed in review → unchecked here
+            expect(gutterOf(frame, "alpha.txt")).toBe(GLYPHS.circleHollow); // removed in review → unchecked here
         } finally {
             setup.renderer.destroy();
         }
@@ -277,7 +291,7 @@ describe("FilePicker", () => {
             await settle(setup);
             // The seed is what classifyInputPath records: the symlink's canonical TARGET.
             const frame = await openPicker(setup, { seed: [outside] });
-            expect(frame).toContain(`${GLYPHS.circle} ext/`);
+            expect(gutterOf(frame, "ext/")).toBe(GLYPHS.circle);
             expect(frame).toContain("1 selected");
         } finally {
             setup.renderer.destroy();
@@ -303,8 +317,8 @@ describe("FilePicker", () => {
             expect(frame).toContain("..");
             expect(frame).toContain("1 selected");
             // Navigation-only row: neither checked nor uncheckable-looking.
-            expect(frame).not.toContain(`${GLYPHS.circle} ..`);
-            expect(frame).not.toContain(`${GLYPHS.circleHollow} ..`);
+            expect(gutterOf(frame, "..")).not.toBe(GLYPHS.circle);
+            expect(gutterOf(frame, "..")).not.toBe(GLYPHS.circleHollow);
         } finally {
             setup.renderer.destroy();
         }
@@ -348,11 +362,47 @@ describe("FilePicker entry metadata", () => {
             await settle(setup);
             const frame = await openPicker(setup);
             const line = rowLine(frame, "sized.txt");
-            expect(line).toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
+            // The mode sits LEFT of the name, as `ls -l` puts it.
+            expect(line.slice(0, line.indexOf("sized.txt"))).toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
             expect(line).toContain("2.0 KB");
             // Absolute local time, never a relative age — a record listing reads on the absolute side.
-            expect(line).toMatch(/\d{1,2}\/\d{1,2}\/\d{2,4}/);
+            expect(line).toMatch(/\d{2}\/\d{2}\/\d{2}/);
             expect(line).not.toMatch(/\b\d+[dhm]\b/);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("the size and date land in aligned columns across rows", async () => {
+        // The whole point of the facts: comparing them down a column. Ragged fields defeat it, and
+        // the two causes are independent — an unpadded size, and a date whose parts are not zero-padded.
+        const setup = await testRender(() => <Harness />, { width: 100, height: 26 });
+        writeFileSync(join(root, "small.txt"), "x".repeat(600));
+        writeFileSync(join(root, "large.txt"), "x".repeat(140_000));
+        try {
+            await settle(setup);
+            const frame = await openPicker(setup);
+            const small = rowLine(frame, "small.txt");
+            const large = rowLine(frame, "large.txt");
+            // Sizes of different widths ("600 B" vs "136.7 KB") end at the same column.
+            expect(small.indexOf(GLYPHS.middot)).toBe(large.indexOf(GLYPHS.middot));
+            // And the dates start together, which only holds while every part is zero-padded.
+            const dateAt = (l: string): number => l.search(/\d{2}\/\d{2}\/\d{2}/);
+            expect(dateAt(small)).toBe(dateAt(large));
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a directory keeps the date column despite carrying no size", async () => {
+        const setup = await testRender(() => <Harness />, { width: 100, height: 26 });
+        writeFileSync(join(root, "sized.txt"), "x".repeat(2048));
+        try {
+            await settle(setup);
+            const frame = await openPicker(setup);
+            const dateAt = (l: string): number => l.search(/\d{2}\/\d{2}\/\d{2}/);
+            // The blank size field spans its separator too, or the dir's date would slide left.
+            expect(dateAt(rowLine(frame, "beta/"))).toBe(dateAt(rowLine(frame, "sized.txt")));
         } finally {
             setup.renderer.destroy();
         }
@@ -364,7 +414,7 @@ describe("FilePicker entry metadata", () => {
             await settle(setup);
             const frame = await openPicker(setup);
             const line = rowLine(frame, "beta/");
-            expect(line).toMatch(/\d{1,2}\/\d{1,2}\/\d{2,4}/);
+            expect(line).toMatch(/\d{2}\/\d{2}\/\d{2}/);
             // Counting members would cost a readdir per row — the budget this listing protects.
             expect(line).not.toMatch(/\d+(\.\d+)?\s?(B|KB|MB|GB)/);
         } finally {
@@ -428,7 +478,7 @@ describe("FilePicker entry metadata", () => {
             const frame = await openPicker(setup);
             const line = rowLine(frame, "dangling.txt");
             expect(line).not.toBe("");
-            expect(line).not.toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
+            expect(line.slice(0, line.indexOf("dangling.txt"))).not.toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
         } finally {
             setup.renderer.destroy();
         }
@@ -449,7 +499,7 @@ describe("FilePicker entry metadata", () => {
             const frame = await settle(setup);
             expect(frame).toContain("details off (large folder)");
             const line = rowLine(frame, "f0.txt");
-            expect(line).not.toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
+            expect(line.slice(0, line.indexOf("f0.txt"))).not.toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
         } finally {
             setup.renderer.destroy();
         }
