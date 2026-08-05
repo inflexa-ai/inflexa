@@ -1,7 +1,7 @@
 # chat-command Specification
 
 ## Purpose
-The `inflexa chat <analysis>` command — a dev/E2E surface (a clack/stdout REPL, not a TUI) that converses with the harness conversation agent scoped to a resolved analysis, exercising the whole embedded conversational loop headlessly. The product conversation surface is the TUI chat (capability `tui-harness-chat`); this REPL is registered only in the dev channel (see `dev-commands`) and is absent from release builds. Both surfaces drive the same shared turn engine (`src/modules/harness/turn.ts`). Lives in `src/modules/harness/chat.ts` (+ `chat_printer.ts`).
+The `inflexa chat <analysis>` command — a dev/E2E surface (a clack/stdout REPL, not a TUI) that converses with the harness conversation agent scoped to a resolved analysis, exercising the whole embedded conversational loop headlessly. The product conversation surface is the TUI chat (capability `tui-harness-chat`); this REPL is registered only in the dev channel (see `dev-commands`) and is absent from release builds. Both surfaces drive the same shared turn engine (`src/modules/harness/turn.ts`), and both narrate one event stream through the shared readers in `src/modules/harness/chat_printer.ts`. Lives in `src/modules/harness/dev/chat.ts`, which holds the REPL and the stdout printer it builds.
 ## Requirements
 ### Requirement: Chat is a dev-channel harness REPL
 
