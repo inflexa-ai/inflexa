@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ctypes
+import errno
 import fcntl
 import hashlib
 import json
@@ -56,6 +58,22 @@ SANDBOX_MOUNT = Path(os.environ.get("SANDBOX_LIB_MOUNT", "/mnt/libs"))
 # it starts a sandbox and drops it when the sandbox exits; the provisioner refuses to
 # re-point `current` while any lease is active (see flip_current).
 LEASES = LIBS / "leases"
+
+# A farm is assembled in a staging directory beside the farms, then swapped into
+# place in one atomic step (see publish_farm). Thus a stop, a refusal, or a crash
+# leaves either the old complete farm or the new complete farm, and never a farm with
+# links and no records. The staging and the superseded farm are dot-directories, so
+# they are unreachable: `current` never selects one, and a later run reads
+# `farms/<name>`. An interrupted swap is recovered by repair_staging.
+FARM_STAGING = ".staging-"
+FARM_SUPERSEDED = ".superseded-"
+
+# renameat2(RENAME_EXCHANGE) swaps two existing directories in one atomic step, so
+# the live farm is never absent for an instant. It is Linux-only, thus on another
+# platform (the unit tests run on the host) publish_farm falls back to a two-step
+# rename that repair_staging recovers.
+_AT_FDCWD = -100
+_RENAME_EXCHANGE = 1 << 1
 
 # The sandbox runs the system interpreter, so resolution and the compiled
 # extension suffixes have to be pinned to it, not to whatever uv would pick.
@@ -348,6 +366,57 @@ def build_farm(farm: Path, store_dirs: list[Path]) -> list[str]:
     return collisions
 
 
+def _renameat2_exchange(old: Path, new: Path) -> None:
+    """Atomically exchange two existing paths with renameat2(RENAME_EXCHANGE).
+
+    The call raises OSError when the platform or the filesystem does not support the
+    flag, and AttributeError when the C library has no renameat2 symbol, so
+    publish_farm can fall back. Both paths must exist.
+    """
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    libc.renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p,
+                               ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    res = libc.renameat2(_AT_FDCWD, os.fsencode(old), _AT_FDCWD, os.fsencode(new),
+                         _RENAME_EXCHANGE)
+    if res != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+
+
+def publish_farm(staging: Path, farm: Path) -> None:
+    """Make the fully assembled `staging` the farm at `farm`, in one atomic step.
+
+    This is the farm-level form of the store's publish-by-rename. `staging` holds the
+    complete new farm — its links AND its records — thus the swap never exposes a farm
+    with links and no records.
+
+    A first run of an analysis has no farm yet, thus a single rename publishes the
+    staging to the fresh name. When the farm exists, renameat2(RENAME_EXCHANGE) swaps
+    the two directories atomically: `farm` becomes the new farm and `staging` becomes
+    the old one, which is then removed. On a platform or a filesystem without
+    RENAME_EXCHANGE, a two-step rename does the swap, and repair_staging recovers if a
+    crash lands between the two steps.
+    """
+    if not farm.exists():
+        os.rename(staging, farm)
+        return
+    try:
+        _renameat2_exchange(staging, farm)
+    except (OSError, AttributeError):
+        # No RENAME_EXCHANGE here. Move the old farm aside under a well-known name,
+        # then move the new farm in. A crash between the two renames leaves the old
+        # farm at FARM_SUPERSEDED and the farm missing, and repair_staging restores it.
+        superseded = farm.parent / (FARM_SUPERSEDED + farm.name)
+        if superseded.exists():
+            shutil.rmtree(superseded)
+        os.rename(farm, superseded)
+        os.rename(staging, farm)
+        shutil.rmtree(superseded, ignore_errors=True)
+        return
+    # RENAME_EXCHANGE put the old farm at the staging path; drop it.
+    shutil.rmtree(staging, ignore_errors=True)
+
+
 # --- R track -----------------------------------------------------------------
 # R installs differently from Python: pak resolves and installs the bulk (CRAN +
 # Bioconductor + git) as one lockfile via images/gen-r-lock.R, then GitHub installs
@@ -634,12 +703,21 @@ def verify_store() -> int:
 
 
 def repair_staging() -> int:
-    """Clear an abandoned staging tree left by an interrupted run.
+    """Clear an abandoned staging tree, and recover an interrupted farm swap.
 
-    A staging directory only ever holds an install in flight: a completed publish is
-    a rename OUT of it, so anything left there is debris from a run that died before
-    its rename, never a published artifact. Removing it reclaims space and can never
-    lose a package. The Python track stages in .staging, the R track in .staging-r.
+    A store staging directory only ever holds an install in flight: a completed
+    publish is a rename OUT of it, so anything left there is debris from a run that
+    died before its rename, never a published artifact. Removing it reclaims space and
+    can never lose a package. The Python track stages in store/.staging, the R track
+    in store/.staging-r.
+
+    A farm swap can also stop in the middle. publish_farm assembles the new farm in
+    farms/.staging-<name> and, on a platform without RENAME_EXCHANGE, moves the old
+    farm to farms/.superseded-<name> for one instant. This step recovers both: it
+    restores the old farm when a crash left the farm missing, and it removes any
+    leftover staging or superseded farm. Thus the reachable farm is always the old
+    complete farm or the new complete farm, never a half-built tree.
+
     Safe under the single-writer assumption the per-store lock enforces; two live
     provisioners are a separate concern.
     """
@@ -648,7 +726,31 @@ def repair_staging() -> int:
         d = STORE / name
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
-            cleared.append(name)
+            cleared.append(f"store/{name}")
+
+    if FARMS.is_dir():
+        # Recover an interrupted swap first. A superseded farm means publish_farm
+        # moved the old farm aside. If the farm is now missing, the swap died between
+        # the two renames, so restore the old farm. Otherwise the new farm is already
+        # in place and the superseded copy is only debris.
+        for sup in sorted(FARMS.glob(FARM_SUPERSEDED + "*")):
+            farm_name = sup.name[len(FARM_SUPERSEDED):]
+            farm = FARMS / farm_name
+            if farm.exists():
+                shutil.rmtree(sup, ignore_errors=True)
+                cleared.append(f"farms/{sup.name}")
+            else:
+                stg = FARMS / (FARM_STAGING + farm_name)
+                if stg.exists():
+                    shutil.rmtree(stg, ignore_errors=True)
+                os.rename(sup, farm)
+                cleared.append(f"farms/{sup.name} (restored {farm_name})")
+        # Any staging farm left now is an un-published build, or the old farm that a
+        # completed RENAME_EXCHANGE left behind. Neither is the reachable farm.
+        for stg in sorted(FARMS.glob(FARM_STAGING + "*")):
+            shutil.rmtree(stg, ignore_errors=True)
+            cleared.append(f"farms/{stg.name}")
+
     if cleared:
         log("repair: cleared abandoned " + ", ".join(cleared))
     else:
@@ -732,7 +834,10 @@ def _referenced_store_dirs() -> set[str]:
     if not FARMS.is_dir():
         return referenced
     for farm in FARMS.iterdir():
-        if not farm.is_dir():
+        # A dot-directory is a staging or a superseded farm from an interrupted swap,
+        # not a real farm. Skipping it keeps its transient links from holding a store
+        # directory that reclaim could otherwise remove.
+        if not farm.is_dir() or farm.name.startswith("."):
             continue
         for link in farm.rglob("*"):
             if link.is_symlink():
@@ -789,6 +894,7 @@ def _provision(args) -> int:
     repair_staging()
 
     farm = FARMS / args.farm
+    staging = FARMS / (FARM_STAGING + args.farm)
     lock_path = farm / "lock.json"
 
     previous: list[str] = []
@@ -815,11 +921,33 @@ def _provision(args) -> int:
         log(f"{len(added)} newly installed, {len(pins) - len(added)} reused from store")
         shutil.rmtree(STORE / ".staging", ignore_errors=True)
 
-    collisions = build_farm(farm, store_dirs)
+    # Assemble the whole new farm in a staging directory beside the farms, never in
+    # `farm` itself. The live farm stays untouched until the atomic swap below, thus a
+    # stop, a refusal, or a crash before the swap leaves the old farm intact, and the
+    # half-built farm stays at the unreachable staging path.
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+
+    # Carry the prepared caches forward from the old farm. Each numba entry is keyed on
+    # its source file path, so an entry for a package this run does not change still
+    # loads, and a fresh farm would force the sandbox to recompile it. A move of the
+    # directory is atomic and reads no file content, thus it holds where a copy of the
+    # symlink farm does not. Cache preservation is an optimization, thus a move that
+    # fails is logged, never fatal, and the cache rebuilds on the next warm.
+    for cache in ("numba-cache", "matplotlib_config"):
+        src = farm / cache
+        if src.is_dir():
+            try:
+                os.rename(src, staging / cache)
+            except OSError as exc:
+                log(f"  note: could not carry {cache} forward ({exc}); it rebuilds on the next warm")
+
+    collisions = build_farm(staging, store_dirs)
 
     r_result: dict = {}
     if args.r_manifest:
-        r_result = provision_r(farm, Path(args.r_manifest))
+        r_result = provision_r(staging, Path(args.r_manifest))
 
     lock = {
         "requested": requested,
@@ -835,13 +963,15 @@ def _provision(args) -> int:
         "warm": {},
     }
 
-    def write_lock() -> None:
-        lock_path.write_text(json.dumps(lock, indent=2) + "\n")
+    def write_lock(dest: Path) -> None:
+        (dest / "lock.json").write_text(json.dumps(lock, indent=2) + "\n")
 
-    # The same producer the images use, so packages.txt is byte-identical in shape
-    # to what list_available_packages already parses.
+    # The records go into the staging farm, thus the farm the swap publishes already
+    # holds every marker the harness needs. The same producer the images use writes
+    # packages.txt, so it is byte-identical in shape to what list_available_packages
+    # already parses.
     subprocess.run(["/usr/local/bin/inflexa-libs-refresh", "--rederive"],
-                   env={**os.environ, "INFLEXA_LIB_ROOT": str(farm)}, check=True)
+                   env={**os.environ, "INFLEXA_LIB_ROOT": str(staging)}, check=True)
 
     # Second of the two completeness markers libStoreUsable requires before it
     # will bind the store; without it the mount is silently dropped.
@@ -850,30 +980,34 @@ def _provision(args) -> int:
         tracks.append("python")
     if r_result.get("packages"):
         tracks.append("r")
-    (farm / "meta.json").write_text(json.dumps({
+    (staging / "meta.json").write_text(json.dumps({
         "version": args.farm,
         "arch": f"linux-{'arm64' if os.uname().machine == 'aarch64' else 'amd64'}",
         "tracks": tracks,
     }, indent=2) + "\n")
 
-    # The farm is complete BEFORE the next step can stop the run. flip_current
-    # refuses under a live sandbox lease, which is a designed outcome, and that
-    # refusal must cost the farm nothing: it keeps its requested set, and a later
-    # run can select it. The mode goes with the records, because the sandbox reads
-    # the farm as a different uid the moment `current` selects it.
-    write_lock()
-    subprocess.run(["chmod", "-R", "a+rX", str(farm)], check=True)
+    write_lock(staging)
+    # The mode goes with the records, because the sandbox reads the farm as a
+    # different uid the moment `current` selects it.
+    subprocess.run(["chmod", "-R", "a+rX", str(staging)], check=True)
 
-    # Flip `current` BEFORE warming, so the warm-up runs against the exact path the
-    # sandbox will import from (see the note in warm()); refused under a live sandbox.
+    # The staging farm is complete. Swap it into place in one atomic step, thus the
+    # farm is never a half-built tree that the harness could mount or a later run could
+    # read. From here on `farm` is the new complete farm.
+    publish_farm(staging, farm)
+
+    # Flip `current` AFTER the swap, so a refusal leaves the new complete farm in place
+    # and `current` unchanged. flip_current refuses under a live sandbox lease, which
+    # is a designed outcome and costs the farm nothing. Flipping before warming makes
+    # the warm-up run against the exact path the sandbox will import from (see warm()).
     flip_current(args.farm, force=args.force_repoint)
 
     warm_targets = [m for m in args.warm.split(",") if m]
     if warm_targets or args.warm_script:
         lock["warm"] = warm(farm, warm_targets, args.warm_script)
-        # The lock is the record of what the caches hold, so the warm results go
-        # into it, and the caches the warm wrote get the mode the sandbox needs.
-        write_lock()
+        # The lock is the record of what the caches hold, so the warm results go into
+        # it, and the caches the warm wrote get the mode the sandbox needs.
+        write_lock(farm)
         subprocess.run(["chmod", "-R", "a+rX", str(farm)], check=True)
 
     log(f"farm '{args.farm}' ready: {len(pins)} distributions")
@@ -930,4 +1064,15 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except OSError as exc:
+        # A filesystem error — no space, a read-only store, a permission — reaches
+        # here as a clean message and a non-zero exit, in place of a traceback. This
+        # is the same contract resolve() and ensure_stored() hold for a failed tool.
+        # The staging farm that the run left behind is unreachable, and the next run
+        # repairs it, so the farm the harness sees stays complete.
+        name = errno.errorcode.get(exc.errno, "?") if exc.errno else "?"
+        where = f": {exc.filename}" if exc.filename else ""
+        sys.exit(f"[provision] a filesystem error stopped the run: "
+                 f"{exc.strerror or exc} ({name}){where}")

@@ -23,6 +23,10 @@ Run with either::
   FlipCurrentTests.test_refused_under_active_lease                    -> 9.10, 7.2
   FarmAssemblyTests.test_build_farm_invariants                        -> 4.1/4.3/4.4, 4.6-guard
   FarmAssemblyTests.test_build_r_farm_skips_empty_subtree             -> 6.2
+  PublishFarmTests.test_publish_to_fresh_name                         -> 4.5 (atomic publish)
+  PublishFarmTests.test_swap_replaces_existing_farm                   -> 4.5 (atomic swap)
+  FarmSwapRecoveryTests.test_repair_restores_farm_after_interrupted_swap -> 9.5/4.5
+  FarmSwapRecoveryTests.test_repair_drops_superseded_and_staging_debris  -> 9.5
   BiocReleaseTests.test_cran_only_lock_names_no_release               -> 6.4
   BiocReleaseTests.test_one_release_is_deduplicated                   -> 6.4
   BiocReleaseTests.test_two_releases_are_both_kept_and_sorted         -> 6.4
@@ -786,6 +790,80 @@ class ReclaimTests(StoreTestCase):
 
         # An unknown farm is a soft failure (exit code 2), not a raise.
         self.assertEqual(provision.remove_farm("nonexistent"), 2)
+
+
+class PublishFarmTests(StoreTestCase):
+    """§4.5 — a farm is published by an atomic swap, so it is never half-built.
+
+    On the host these run the two-step fallback, because RENAME_EXCHANGE is Linux-only;
+    the container checks exercise the atomic path.
+    """
+
+    def _dir_with(self, path: Path, content: str) -> Path:
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "meta.json").write_text(content)
+        return path
+
+    def test_publish_to_fresh_name(self):
+        """A first run has no farm yet, so a single rename publishes the staging."""
+        staging = self._dir_with(provision.FARMS / (provision.FARM_STAGING + "an1"), "new\n")
+        farm = provision.FARMS / "an1"
+        provision.publish_farm(staging, farm)
+        self.assertTrue(farm.is_dir())
+        self.assertEqual((farm / "meta.json").read_text(), "new\n")
+        self.assertFalse(staging.exists())
+
+    def test_swap_replaces_existing_farm(self):
+        """A re-run swaps the new farm in and drops the old one, leaving no debris."""
+        farm = self._dir_with(provision.FARMS / "an1", "old\n")
+        staging = self._dir_with(provision.FARMS / (provision.FARM_STAGING + "an1"), "new\n")
+        provision.publish_farm(staging, farm)
+        self.assertEqual((farm / "meta.json").read_text(), "new\n")
+        self.assertFalse(staging.exists())
+        self.assertFalse((provision.FARMS / (provision.FARM_SUPERSEDED + "an1")).exists())
+
+
+class FarmSwapRecoveryTests(StoreTestCase):
+    """§9.5 — repair recovers an interrupted farm swap and clears its debris.
+
+    The reachable farm is always the old complete farm or the new complete farm, so a
+    crash never leaves a farm with links and no records for the harness to mount.
+    """
+
+    def _dir_with(self, path: Path, content: str) -> Path:
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "meta.json").write_text(content)
+        return path
+
+    def test_repair_restores_farm_after_interrupted_swap(self):
+        """The two-step fallback died between the renames: the farm is missing, the old
+        farm is at the superseded name, the new farm at the staging name. Repair
+        restores the old complete farm — the run did not finish — and clears the rest."""
+        self._dir_with(provision.FARMS / (provision.FARM_SUPERSEDED + "demo"), "old\n")
+        self._dir_with(provision.FARMS / (provision.FARM_STAGING + "demo"), "new\n")
+        self.assertFalse((provision.FARMS / "demo").exists())
+
+        self.assertEqual(provision.repair_staging(), 0)
+
+        farm = provision.FARMS / "demo"
+        self.assertTrue(farm.is_dir())
+        self.assertEqual((farm / "meta.json").read_text(), "old\n")
+        self.assertFalse((provision.FARMS / (provision.FARM_SUPERSEDED + "demo")).exists())
+        self.assertFalse((provision.FARMS / (provision.FARM_STAGING + "demo")).exists())
+
+    def test_repair_drops_superseded_and_staging_debris(self):
+        """The swap completed — the farm is the new one — but the process died before
+        it removed the old farm and the staging copy. Both are debris; the farm stays."""
+        self._dir_with(provision.FARMS / "demo", "new\n")
+        self._dir_with(provision.FARMS / (provision.FARM_SUPERSEDED + "demo"), "old\n")
+        self._dir_with(provision.FARMS / (provision.FARM_STAGING + "demo"), "leftover\n")
+
+        self.assertEqual(provision.repair_staging(), 0)
+
+        farm = provision.FARMS / "demo"
+        self.assertEqual((farm / "meta.json").read_text(), "new\n")
+        self.assertFalse((provision.FARMS / (provision.FARM_SUPERSEDED + "demo")).exists())
+        self.assertFalse((provision.FARMS / (provision.FARM_STAGING + "demo")).exists())
 
 
 if __name__ == "__main__":
