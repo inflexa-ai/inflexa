@@ -30,21 +30,28 @@ const artifactPinShape = {
 };
 
 /**
- * The authored belief about the value at a reference. `tolerance` gives the permitted numeric
- * difference. `hash` pins the exact bytes. Resolution matches a fresh read against these fields.
+ * The authored belief about the one value that a reference resolves to. `tolerance` gives the permitted
+ * numeric difference.
+ *
+ * Each kind carries only the assert fields that mean something for it. A shared assert would let an
+ * author write a belief that the resolver has no way to match, and silence there defeats the one
+ * mechanism that catches a wrong number.
  */
-const AssertSchema = z.strictObject({
-    value: z.union([z.string(), z.number()]).describe("The value the author expects at resolution time."),
+const assertValueShape = {
+    value: z.union([z.string(), z.number()]).optional().describe("The value the author expects at resolution time."),
     tolerance: z.number().optional().describe("The permitted absolute difference for a numeric match."),
-    hash: z.string().optional().describe("An optional content hash that the resolved value must match."),
-});
+};
+
+/** The authored belief about the bytes behind a reference. It pins the content hash of the artifact. */
+const assertHashShape = {
+    hash: z.string().optional().describe("An optional content hash that the resolved artifact must match."),
+};
 
 /**
- * The fields that every reference kind can carry. `assert` is the authored belief. `unit` and `format`
- * are hints for how a renderer shows the resolved value.
+ * The display hints that every reference kind can carry. `unit` and `format` tell a renderer how to show
+ * the resolved value.
  */
-const commonShape = {
-    assert: AssertSchema.optional().describe("The authored belief that resolution matches against."),
+const displayShape = {
     unit: z.string().optional().describe("The unit of the resolved value, for example `%` or `kb`."),
     format: z.string().optional().describe("A display format hint for the resolved value."),
 };
@@ -71,39 +78,70 @@ const LocatorSchema = z
         message: "A locator needs exactly one of `rowFilter` or `row`.",
     });
 
-/** A reference to one scalar value inside an artifact, addressed by a locator. */
+/**
+ * A reference to one scalar value inside an artifact, addressed by a locator. It resolves to a scalar
+ * and it is artifact-backed, thus its assert carries both the value fields and the hash field.
+ */
 export const ArtifactValueReferenceSchema = z.strictObject({
     kind: z.literal("artifact-value"),
     ...artifactPinShape,
     locator: LocatorSchema.describe("The address of the one value that this reference binds."),
-    ...commonShape,
+    assert: z
+        .strictObject({ ...assertValueShape, ...assertHashShape })
+        .optional()
+        .describe("The authored belief that resolution matches against."),
+    ...displayShape,
 });
 
-/** A reference to a whole table artifact. It carries no locator, because it binds every row. */
+/**
+ * A reference to a whole table artifact. It carries no locator, because it binds every row. A table is
+ * not one value, thus its assert pins the content hash only.
+ */
 export const ArtifactTableReferenceSchema = z.strictObject({
     kind: z.literal("artifact-table"),
     ...artifactPinShape,
     columns: z.array(z.string()).optional().describe("An optional column subset to render. Omit to bind every column."),
-    ...commonShape,
+    assert: z
+        .strictObject({ ...assertHashShape })
+        .optional()
+        .describe("The authored belief about the bytes of the table."),
+    ...displayShape,
 });
 
 /**
  * A reference to a whole artifact file, for example an image. It carries no locator and no columns,
- * because a file is pinned whole and has no addressable cell inside it.
+ * because a file is pinned whole and has no addressable cell inside it. Thus its assert pins the content
+ * hash only.
  */
 export const ArtifactFileReferenceSchema = z.strictObject({
     kind: z.literal("artifact-file"),
     ...artifactPinShape,
-    ...commonShape,
+    assert: z
+        .strictObject({ ...assertHashShape })
+        .optional()
+        .describe("The authored belief about the bytes of the file."),
+    ...displayShape,
 });
 
-/** A reference to an external source, addressed by an external identifier. */
+/**
+ * A reference to an external source, addressed by an external identifier. It resolves to the prefixed
+ * key, thus its assert compares against that key and carries no hash.
+ */
 export const CitationReferenceSchema = z.strictObject({
     kind: z.literal("citation"),
     idKind: z.enum(["doi", "pmid", "arxiv"]).describe("The external identifier space."),
     id: z.string().describe("The external identifier value."),
     raw: z.string().describe("The original citation text."),
-    ...commonShape,
+    assert: z
+        .strictObject({
+            value: z
+                .union([z.string(), z.number()])
+                .optional()
+                .describe("The expected citation key in the prefixed `idKind:id` form, for example `pmid:12345`, and not the bare id."),
+        })
+        .optional()
+        .describe("The authored belief about the citation key that resolution gives."),
+    ...displayShape,
 });
 
 /**
@@ -118,14 +156,19 @@ export const NonDerivationReferenceSchema = z.discriminatedUnion("kind", [
 ]);
 
 /**
- * A reference to a value computed from other references. The three operations each take two inputs at
- * most, thus `inputs` holds one or two non-derivation references.
+ * A reference to a value computed from other references. Each of the three operations takes two inputs,
+ * thus `inputs` holds exactly two non-derivation references and no other count is representable. The
+ * result is computed and not artifact-backed, thus its assert carries the value fields only.
  */
 export const DerivationReferenceSchema = z.strictObject({
     kind: z.literal("derivation"),
     op: z.enum(["ratio", "delta", "pctChange"]).describe("The operation over the inputs."),
-    inputs: z.array(NonDerivationReferenceSchema).min(1).max(2).describe("The input references. Each operation needs at most two."),
-    ...commonShape,
+    inputs: z.array(NonDerivationReferenceSchema).length(2).describe("The two input references. Each operation takes exactly two."),
+    assert: z
+        .strictObject({ ...assertValueShape })
+        .optional()
+        .describe("The authored belief that resolution matches against."),
+    ...displayShape,
 });
 
 /** The full reference union. A block binds to one of these. */

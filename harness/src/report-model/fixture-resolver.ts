@@ -17,8 +17,14 @@ import type {
 } from "../contracts/report-reference.js";
 import type { ReferenceResolver, ReportSnapshot, ResolveOutcome, ResolvedValue } from "./reference-resolver.js";
 
-/** The authored belief that resolution matches against. Every reference kind can carry one. */
-type Assertion = NonNullable<Reference["assert"]>;
+/**
+ * The relative epsilon of a value match with no authored tolerance.
+ *
+ * An author writes a rounded figure, but the resolver computes the value again in floating point. Thus
+ * exact equality would report ordinary float noise as a fabrication. This epsilon absorbs the noise, and
+ * it is still far too small to hide a real mismatch such as 1.5 against 1.05.
+ */
+const RELATIVE_EPSILON = 1e-9;
 
 /** Build a failure outcome. The `detail` key is present only when there is a detail to carry. */
 function fail(reference: Reference, reason: UnresolvedReason, detail?: string): ResolveOutcome {
@@ -40,42 +46,50 @@ function describeReference(reference: NonDerivationReference): string {
     }
 }
 
-/** A numeric match uses the tolerance as an absolute difference. Any other pair matches on exact equality. */
+/**
+ * Match a resolved value against an authored one.
+ *
+ * An authored tolerance is an absolute difference, and it is the author's own statement of how close is
+ * close enough. With no tolerance the comparison is relative, because an exact match would fail on the
+ * float noise of a computed value. Any pair that is not two numbers matches on exact equality.
+ */
 function valuesMatch(expected: string | number, actual: string | number, tolerance: number | undefined): boolean {
     if (typeof expected === "number" && typeof actual === "number") {
-        return Math.abs(expected - actual) <= (tolerance ?? 0);
+        if (tolerance !== undefined) {
+            return Math.abs(expected - actual) <= tolerance;
+        }
+        return Math.abs(expected - actual) <= RELATIVE_EPSILON * Math.max(1, Math.abs(expected), Math.abs(actual));
     }
     return expected === actual;
 }
 
-/**
- * Match the resolved value against the authored belief.
- *
- * `artifactHash` is the fresh hash for an artifact kind, and `undefined` for a derivation or a citation.
- * Thus `assert.hash` compares only where an artifact hash exists. `assert.value` has no meaning for a
- * table or a file, because neither has a single value, thus the value check skips the two of them.
- */
-function checkAssertion(
-    reference: Reference,
-    value: ResolvedValue,
-    assert: Assertion | undefined,
-    artifactHash: string | undefined,
-): UnresolvedReference | undefined {
-    if (assert === undefined) {
+/** Match the fresh content hash of an artifact against the authored one. */
+function checkHashAssertion(reference: Reference, expected: string | undefined, artifactHash: string): UnresolvedReference | undefined {
+    if (expected === undefined || expected === artifactHash) {
         return undefined;
     }
-    if (assert.hash !== undefined && artifactHash !== undefined && assert.hash !== artifactHash) {
-        return { reference, reason: "assertion-failed", detail: `expected hash ${assert.hash} but the artifact hash is ${artifactHash}` };
+    return { reference, reason: "assertion-failed", detail: `expected hash ${expected} but the artifact hash is ${artifactHash}` };
+}
+
+/** Match a resolved scalar against the authored value, under the authored tolerance. */
+function checkValueAssertion(
+    reference: Reference,
+    expected: string | number | undefined,
+    tolerance: number | undefined,
+    resolved: string | number,
+): UnresolvedReference | undefined {
+    if (expected === undefined || valuesMatch(expected, resolved, tolerance)) {
+        return undefined;
     }
-    if (assert.value !== undefined) {
-        if (value.type === "scalar" && !valuesMatch(assert.value, value.value, assert.tolerance)) {
-            return { reference, reason: "assertion-failed", detail: `expected ${String(assert.value)} but resolved ${String(value.value)}` };
-        }
-        if (value.type === "citation" && assert.value !== value.id) {
-            return { reference, reason: "assertion-failed", detail: `expected ${String(assert.value)} but resolved citation ${value.id}` };
-        }
+    return { reference, reason: "assertion-failed", detail: `expected ${String(expected)} but resolved ${String(resolved)}` };
+}
+
+/** Match the resolved citation key against the authored value. The key carries its `idKind:` prefix. */
+function checkCitationAssertion(reference: Reference, expected: string | number | undefined, resolved: string): UnresolvedReference | undefined {
+    if (expected === undefined || expected === resolved) {
+        return undefined;
     }
-    return undefined;
+    return { reference, reason: "assertion-failed", detail: `expected ${String(expected)} but resolved citation ${resolved}` };
 }
 
 function resolveArtifactValue(reference: ArtifactValueReference, snapshot: ReportSnapshot): ResolveOutcome {
@@ -113,12 +127,24 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
         return fail(reference, "locator-out-of-range", "the locator selects no row");
     }
 
-    if (!(locator.column in selectedRow)) {
-        return fail(reference, "locator-out-of-range", `column ${locator.column} is not in the selected row`);
+    // A real table holds an empty cell, and a parser gives it back as an absent key, `undefined`, or
+    // `null`. None of the three is a value that a scalar reference can bind. An empty string is a value,
+    // thus it stays valid. The wider annotation admits the three, because the row type promises a value
+    // for each key that it holds.
+    const cell: string | number | null | undefined = selectedRow[locator.column];
+    if (cell === undefined || cell === null) {
+        return fail(reference, "locator-out-of-range", `column ${locator.column} holds no value in the selected row`);
     }
-    const scalar: ResolvedValue = { type: "scalar", value: selectedRow[locator.column] };
-    const assertionFailure = checkAssertion(reference, scalar, reference.assert, artifact.hash);
-    return assertionFailure !== undefined ? { ok: false, failure: assertionFailure } : { ok: true, value: scalar };
+
+    const hashFailure = checkHashAssertion(reference, reference.assert?.hash, artifact.hash);
+    if (hashFailure !== undefined) {
+        return { ok: false, failure: hashFailure };
+    }
+    const valueFailure = checkValueAssertion(reference, reference.assert?.value, reference.assert?.tolerance, cell);
+    if (valueFailure !== undefined) {
+        return { ok: false, failure: valueFailure };
+    }
+    return { ok: true, value: { type: "scalar", value: cell } };
 }
 
 function resolveArtifactTable(reference: ArtifactTableReference, snapshot: ReportSnapshot): ResolveOutcome {
@@ -150,8 +176,8 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
         value = { type: "table", rows };
     }
 
-    const assertionFailure = checkAssertion(reference, value, reference.assert, artifact.hash);
-    return assertionFailure !== undefined ? { ok: false, failure: assertionFailure } : { ok: true, value };
+    const hashFailure = checkHashAssertion(reference, reference.assert?.hash, artifact.hash);
+    return hashFailure !== undefined ? { ok: false, failure: hashFailure } : { ok: true, value };
 }
 
 function resolveArtifactFile(reference: ArtifactFileReference, snapshot: ReportSnapshot): ResolveOutcome {
@@ -164,8 +190,8 @@ function resolveArtifactFile(reference: ArtifactFileReference, snapshot: ReportS
     }
 
     const value: ResolvedValue = { type: "file", path: reference.path, hash: artifact.hash };
-    const assertionFailure = checkAssertion(reference, value, reference.assert, artifact.hash);
-    return assertionFailure !== undefined ? { ok: false, failure: assertionFailure } : { ok: true, value };
+    const hashFailure = checkHashAssertion(reference, reference.assert?.hash, artifact.hash);
+    return hashFailure !== undefined ? { ok: false, failure: hashFailure } : { ok: true, value };
 }
 
 async function resolveDerivation(reference: DerivationReference, snapshot: ReportSnapshot): Promise<ResolveOutcome> {
@@ -186,10 +212,6 @@ async function resolveDerivation(reference: DerivationReference, snapshot: Repor
         numbers.push(resolved.value);
     }
 
-    if (numbers.length !== 2) {
-        return fail(reference, "locator-out-of-range", `operation ${reference.op} needs 2 inputs but got ${numbers.length}`);
-    }
-
     const a = numbers[0];
     const b = numbers[1];
     let result: number;
@@ -208,9 +230,8 @@ async function resolveDerivation(reference: DerivationReference, snapshot: Repor
         return fail(reference, "locator-out-of-range", `operation ${reference.op} does not yield a finite value, because the divisor is zero`);
     }
 
-    const scalar: ResolvedValue = { type: "scalar", value: result };
-    const assertionFailure = checkAssertion(reference, scalar, reference.assert, undefined);
-    return assertionFailure !== undefined ? { ok: false, failure: assertionFailure } : { ok: true, value: scalar };
+    const valueFailure = checkValueAssertion(reference, reference.assert?.value, reference.assert?.tolerance, result);
+    return valueFailure !== undefined ? { ok: false, failure: valueFailure } : { ok: true, value: { type: "scalar", value: result } };
 }
 
 function resolveCitation(reference: CitationReference, snapshot: ReportSnapshot): ResolveOutcome {
@@ -219,8 +240,8 @@ function resolveCitation(reference: CitationReference, snapshot: ReportSnapshot)
         return fail(reference, "artifact-missing", `the citation ${key} is not in the pinned evidence`);
     }
     const value: ResolvedValue = { type: "citation", id: key };
-    const assertionFailure = checkAssertion(reference, value, reference.assert, undefined);
-    return assertionFailure !== undefined ? { ok: false, failure: assertionFailure } : { ok: true, value };
+    const citationFailure = checkCitationAssertion(reference, reference.assert?.value, key);
+    return citationFailure !== undefined ? { ok: false, failure: citationFailure } : { ok: true, value };
 }
 
 async function resolve(reference: Reference, snapshot: ReportSnapshot): Promise<ResolveOutcome> {
