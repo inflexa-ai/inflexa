@@ -18,13 +18,10 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
-import type { ReportSnapshot } from "./reference-resolver.js";
+import { fileTypeHoldsNoCell, type ReportSnapshot } from "./reference-resolver.js";
 
 /** The three reference kinds that name one artifact directly. Each one carries the artifact pin fields. */
 type PinnedReference = ArtifactValueReference | ArtifactTableReference | ArtifactFileReference;
-
-/** The file type of an entry that holds no cell for a reference to address. */
-const FILE_TYPES_WITH_NO_CELL: ReadonlySet<string> = new Set(["figure", "script", "log", "notebook"]);
 
 /** Build an `Err` that carries the unresolved reference. The `detail` key is present only when there is a detail to carry. */
 function fail(reference: Reference, reason: UnresolvedReason, detail?: string): Result<void, UnresolvedReference> {
@@ -42,17 +39,12 @@ function validatePin(reference: PinnedReference, snapshot: ReportSnapshot): Resu
         return fail(reference, "hash-mismatch", `expected ${reference.hash} but the artifact hash is ${entry.hash}`);
     }
 
-    // The file type states a role, and it does not state a data format. Thus the rule runs one way only:
-    // it refuses a kind, and it never confirms one. An `output` passes, because it covers a table and an
-    // image alike, and only a read of the artifact settles which one it is. An entry with no file type
-    // passes for the same reason.
-    //
     // An `artifact-file` pins the bytes of a whole file, thus each file type is valid for it. A figure
     // block binds through `artifact-file`, and a rule that refused a `figure` here would fail each figure
     // of each report.
     const readsACell = reference.kind === "artifact-value" || reference.kind === "artifact-table";
     const fileType = entry.fileType;
-    if (readsACell && fileType !== undefined && fileType !== null && FILE_TYPES_WITH_NO_CELL.has(fileType)) {
+    if (readsACell && fileTypeHoldsNoCell(fileType)) {
         return fail(reference, "unreadable-artifact", `the ${fileType} at ${reference.path} holds no cell to read`);
     }
     return ok();

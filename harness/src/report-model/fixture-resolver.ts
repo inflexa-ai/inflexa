@@ -17,7 +17,7 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
-import { columnsHeldByNoRow, type ReferenceResolver, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
+import { columnsHeldByNoRow, fileTypeHoldsNoCell, type ReferenceResolver, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
 
 /**
  * The relative epsilon of a value match with no authored tolerance.
@@ -120,6 +120,13 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
         return fail(reference, "hash-mismatch", `expected ${reference.hash} but the artifact hash is ${artifact.hash}`);
     }
 
+    // A caller supplies the rows of a fixture. A fixture that supplies rows for a figure would resolve a
+    // cell that no real artifact holds. Thus the refusal comes before the read of the rows.
+    const valueFileType = artifact.fileType;
+    if (fileTypeHoldsNoCell(valueFileType)) {
+        return fail(reference, "unreadable-artifact", `the ${valueFileType} at ${reference.path} holds no cell to read`);
+    }
+
     // An artifact with no rows is pinned whole, thus it addresses no cell and every locator over it lands
     // out of range.
     const rows = artifact.rows ?? [];
@@ -166,6 +173,11 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
     }
     if (artifact.hash !== reference.hash) {
         return fail(reference, "hash-mismatch", `expected ${reference.hash} but the artifact hash is ${artifact.hash}`);
+    }
+
+    const tableFileType = artifact.fileType;
+    if (fileTypeHoldsNoCell(tableFileType)) {
+        return fail(reference, "unreadable-artifact", `the ${tableFileType} at ${reference.path} holds no cell to read`);
     }
 
     const rows = artifact.rows ?? [];
