@@ -11,6 +11,8 @@
 #   r/cran  r/bioconductor  r/github  python/  conda/  node/
 #   <track>.packages.txt          (one fragment per track, at the root)
 #   packages.txt                  (the concatenation the harness reads)
+#   meta.json                     ({version,arch,tracks}; the harness mounts a
+#                                  store only when it and packages.txt are present)
 
 # The runtime mount contract path: where the assembled store lives inside a
 # sandbox image (baked or read-only-mounted). INFLEXA_LIB_ROOT overrides it to
