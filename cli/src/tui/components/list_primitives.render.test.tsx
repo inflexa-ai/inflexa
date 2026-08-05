@@ -880,3 +880,132 @@ describe("two-line meta rows", () => {
         }
     });
 });
+
+describe("categoryLabel", () => {
+    // Rows keyed by an opaque id, labelled by a readable path — the analysis switcher's shape.
+    const ANCHORED: SelectItem<string>[] = [
+        { value: "a1", title: "A1", category: "anchor-111", categoryLabel: "~/repos/one" },
+        { value: "a2", title: "A1", category: "anchor-222", categoryLabel: "~/repos/two" },
+        { value: "a3", title: "Iulia", category: "anchor-222", categoryLabel: "~/repos/two" },
+    ];
+
+    test("the header prints the label, never the key", async () => {
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={ANCHORED} emptyText="none" />
+                </Harness>
+            ),
+            { width: 44, height: 14 },
+        );
+        try {
+            const frame = await settle(setup);
+            expect(frame).toContain("~/repos/one");
+            expect(frame).toContain("~/repos/two");
+            expect(frame).not.toContain("anchor-111");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("two keys sharing one label stay two groups", async () => {
+        // The whole point of separating key from label: a stale cachedPath can make two live
+        // anchors print the same folder, and merging them would hide a dead anchor's analyses
+        // among the live ones. Both headers must render, so the same text appears twice.
+        const collided: SelectItem<string>[] = [
+            { value: "x", title: "alpha", category: "anchor-111", categoryLabel: "~/same" },
+            { value: "y", title: "beta", category: "anchor-222", categoryLabel: "~/same" },
+        ];
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={collided} emptyText="none" />
+                </Harness>
+            ),
+            { width: 44, height: 14 },
+        );
+        try {
+            const frame = await settle(setup);
+            const headers = frame.split("\n").filter((l) => l.includes("~/same"));
+            expect(headers).toHaveLength(2);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("the label is the ranked field, so filtering by it works", async () => {
+        const [query, setQuery] = createSignal("");
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={ANCHORED} query={query()} emptyText="none" />
+                </Harness>
+            ),
+            { width: 44, height: 14 },
+        );
+        try {
+            setQuery("repos/two"); // matches no title — only the visible group label
+            const frame = await settle(setup);
+            expect(frame).toContain("Iulia");
+            expect(frame).toContain("~/repos/two");
+            expect(frame).not.toContain("~/repos/one");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a tone outranks the cursor highlight", async () => {
+        // Landing on a row must not erase the mark that is the reason to notice it, so the two rows
+        // below stay differently colored even as the cursor moves onto the toned one.
+        const items: SelectItem<string>[] = [
+            { value: "ok", title: "readable.txt" },
+            { value: "no", title: "locked.bam", tone: "warning" },
+        ];
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={items} emptyText="none" />
+                </Harness>
+            ),
+            { width: 40, height: 10 },
+        );
+        try {
+            await settle(setup);
+            const fgOf = (needle: string): unknown =>
+                setup
+                    .captureSpans()
+                    .lines.flatMap((l) => l.spans)
+                    .find((s) => s.text.includes(needle))?.fg;
+            const cursorFirst = fgOf("readable.txt");
+            const tonedUnfocused = fgOf("locked.bam");
+            expect(tonedUnfocused).toBeDefined();
+            expect(tonedUnfocused).not.toEqual(cursorFirst);
+
+            setup.mockInput.pressArrow("down"); // cursor onto the toned row
+            await settle(setup);
+            expect(fgOf("locked.bam")).toEqual(tonedUnfocused);
+            // And the row it left takes the plain color, proving the cursor moved at all.
+            expect(fgOf("readable.txt")).not.toEqual(cursorFirst);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("no label falls back to the category string", async () => {
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={FRUIT} emptyText="none" />
+                </Harness>
+            ),
+            { width: 40, height: 14 },
+        );
+        try {
+            const frame = await settle(setup);
+            expect(frame).toContain("fruit");
+            expect(frame).toContain("veg");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
