@@ -154,6 +154,19 @@ resolved value within `tolerance`. A mismatch MUST return an `UnresolvedReferenc
 with reason `assertion-failed`. Thus a transcription error or a hallucinated number
 fails even when the coordinate resolves.
 
+A match on a numeral MUST compare the numeric value. It MUST NOT compare the storage
+type of the cell. A text-backed artifact such as a CSV holds each cell as a string,
+thus the cell `"0.01"` matches the authored number 0.01. A cell that does not read as
+a finite number stays text, thus `"12 genes"` never matches 12.
+
+With no `tolerance`, the match MUST absorb the noise of float arithmetic and nothing
+more. Thus a computed 0.19999999999999998 matches an authored 0.2. An author who
+wants a rounded figure to pass MUST state a `tolerance`.
+
+A `citation` assert MUST carry a `value` that is text, and it MUST carry no
+`tolerance`. The value is the prefixed `idKind:id` key, for example `pmid:12345`.
+Resolution gives that key as text, thus a number could never match it.
+
 An `assert` MUST carry no hash. An artifact reference already pins `hash`, and
 resolution compares that pin against the fresh read. A second hash compares the
 reference against itself, thus it adds no evidence.
@@ -181,6 +194,26 @@ the only belief that an author can hold about the bytes.
 
 - **WHEN** an `artifact-table` or an `artifact-file` reference carries an `assert`
 - **THEN** validation rejects the reference
+
+#### Scenario: A numeric assert matches a text cell
+
+- **WHEN** an artifact holds the cell `"0.01"` as text and a reference asserts the number 0.01
+- **THEN** resolution matches the two and returns the value
+
+#### Scenario: A cell that holds text never matches a number
+
+- **WHEN** an artifact holds the cell `"12 genes"` and a reference asserts the number 12
+- **THEN** resolution returns an `UnresolvedReference` with reason `assertion-failed`
+
+#### Scenario: A rounded figure needs a tolerance
+
+- **WHEN** a derivation computes 0.19999999999999998 and the reference asserts 0.19 with no `tolerance`
+- **THEN** resolution returns an `UnresolvedReference` with reason `assertion-failed`
+
+#### Scenario: A numeric citation assert is rejected
+
+- **WHEN** a `citation` reference carries an `assert.value` that is a number
+- **THEN** validation rejects the reference, because the resolved key is always text
 
 ### Requirement: Mechanical validation rejects fabrication
 
@@ -225,8 +258,9 @@ not a failure, because a natural-language numeral is brittle to enforce.
 The default MUST materialize a derived value as a hashed artifact, and the claim MUST
 bind to a cell in that artifact. A `derivation` reference MUST be the escape hatch,
 and it carries an `op` of `ratio`, `delta`, or `pctChange` and an `inputs` array.
-Each input MUST be a non-derivation reference that resolves, so a derivation cannot
-nest. Validation MUST resolve each input, run the transform, then match the
+Each input MUST be an `artifact-value` reference, the one kind that resolves to a
+scalar. Thus a derivation cannot nest, and a table, a file, and a citation cannot sit
+in an input. Validation MUST resolve each input, run the transform, then match the
 assertion.
 
 Over the inputs `a` and `b`, `ratio` MUST give `a / b` and `delta` MUST give
@@ -253,6 +287,16 @@ fraction.
 
 - **WHEN** a `derivation` reference carries an input that is itself a `derivation`
 - **THEN** validation rejects the reference, because a derivation cannot nest
+
+#### Scenario: A derivation whose input resolves to no scalar is rejected
+
+- **WHEN** a `derivation` reference carries an input that is an `artifact-table`, an `artifact-file`, or a `citation`
+- **THEN** validation rejects the reference, because none of the three resolves to a scalar
+
+#### Scenario: A derivation runs the arithmetic over text cells
+
+- **WHEN** a `derivation` reference carries two inputs whose cells hold numerals as text
+- **THEN** resolution reads each cell as a number and runs the transform
 
 ### Requirement: The reference serializes for cross-session transfer
 

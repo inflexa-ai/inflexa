@@ -130,9 +130,10 @@ export const CitationReferenceSchema = z.strictObject({
     raw: z.string().describe("The original citation text."),
     assert: z
         .strictObject({
-            value: z
-                .union([z.string(), z.number()])
-                .describe("The expected citation key in the prefixed `idKind:id` form, for example `pmid:12345`, and not the bare id."),
+            // The value is a string and not the wider scalar union of a value assert. Resolution gives the
+            // key as text, thus a number here can never match and the schema would admit a belief that
+            // always fails.
+            value: z.string().describe("The expected citation key in the prefixed `idKind:id` form, for example `pmid:12345`, and not the bare id."),
         })
         .optional()
         .describe("The authored belief about the citation key that resolution gives."),
@@ -140,19 +141,18 @@ export const CitationReferenceSchema = z.strictObject({
 });
 
 /**
- * The references that a derivation can consume. A derivation is not in this set, thus a derivation over
- * a derivation is unrepresentable at the type level, and not a rule that a later check must enforce.
+ * The one reference kind that a derivation can consume.
+ *
+ * The arithmetic needs a scalar, and `artifact-value` is the only reference that resolves to one without
+ * itself being a derivation. A table, a file, and a citation resolve to something else, thus each is
+ * unrepresentable here rather than a parse that succeeds and then always fails at resolution. A
+ * derivation is out of the set too, thus a derivation over a derivation stays unrepresentable.
  */
-export const NonDerivationReferenceSchema = z.discriminatedUnion("kind", [
-    ArtifactValueReferenceSchema,
-    ArtifactTableReferenceSchema,
-    ArtifactFileReferenceSchema,
-    CitationReferenceSchema,
-]);
+export const DerivationInputReferenceSchema = ArtifactValueReferenceSchema;
 
 /**
  * A reference to a value computed from other references. Each of the three operations takes two inputs,
- * thus `inputs` holds exactly two non-derivation references and no other count is representable. The
+ * thus `inputs` holds exactly two scalar-resolving references and no other count is representable. The
  * result is computed and not artifact-backed, thus its assert carries the value fields only.
  */
 export const DerivationReferenceSchema = z.strictObject({
@@ -162,7 +162,10 @@ export const DerivationReferenceSchema = z.strictObject({
         .describe(
             "The operation over the two inputs `a` and `b`: `ratio` gives `a / b`, `delta` gives `a - b`, and `pctChange` gives `(a - b) / b` as a fraction and not as a percent. A change of one half resolves to 0.5, thus an `assert.value` states the fraction and a `unit` of `%` is a display hint only.",
         ),
-    inputs: z.array(NonDerivationReferenceSchema).length(2).describe("The two input references. Each operation takes exactly two."),
+    inputs: z
+        .array(DerivationInputReferenceSchema)
+        .length(2)
+        .describe("The two input references. Each operation takes exactly two, and each one must resolve to a scalar."),
     assert: AssertValueSchema.optional().describe("The authored belief that resolution matches against."),
     ...displayShape,
 });
@@ -196,7 +199,7 @@ export type ArtifactValueReference = z.infer<typeof ArtifactValueReferenceSchema
 export type ArtifactTableReference = z.infer<typeof ArtifactTableReferenceSchema>;
 export type ArtifactFileReference = z.infer<typeof ArtifactFileReferenceSchema>;
 export type CitationReference = z.infer<typeof CitationReferenceSchema>;
-export type NonDerivationReference = z.infer<typeof NonDerivationReferenceSchema>;
+export type DerivationInputReference = z.infer<typeof DerivationInputReferenceSchema>;
 export type DerivationReference = z.infer<typeof DerivationReferenceSchema>;
 export type Reference = z.infer<typeof ReferenceSchema>;
 export type ScalarReference = z.infer<typeof ScalarReferenceSchema>;

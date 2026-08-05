@@ -13,6 +13,11 @@ import type { Reference, UnresolvedReference } from "../contracts/report-referen
 /**
  * One pinned artifact: its content hash, and its rows as plain cells.
  *
+ * A cell is a string or a number, because a realization gives back whatever its store holds. A
+ * text-backed artifact such as a CSV gives a numeric column as a string. Thus a realization is free to
+ * skip a type inference pass, and resolution compares a numeral by its numeric value and never by its
+ * JavaScript type.
+ *
  * `rows` is optional because an image is pinned by its hash alone and holds no cells. An empty array in
  * that position would say that the artifact holds zero rows, which is a different and false claim.
  */

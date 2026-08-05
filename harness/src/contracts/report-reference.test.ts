@@ -217,6 +217,33 @@ describe("parseReference — schema rejection", () => {
             "schema-mismatch",
         );
     });
+
+    /**
+     * The arithmetic needs a scalar, and only an `artifact-value` resolves to one. Each other kind is
+     * rejected by the grammar, thus it never parses into a reference that always fails at resolution.
+     */
+    const scalarInput = { kind: "artifact-value", run: "r", path: "a.csv", hash: HASH, locator: { column: "value", row: 0 } };
+
+    it("rejects a derivation whose input is an artifact-table", () => {
+        expectParseError(
+            encodeUnchecked({ kind: "derivation", op: "ratio", inputs: [scalarInput, { kind: "artifact-table", run: "r", path: "t.csv", hash: HASH }] }),
+            "schema-mismatch",
+        );
+    });
+
+    it("rejects a derivation whose input is an artifact-file", () => {
+        expectParseError(
+            encodeUnchecked({ kind: "derivation", op: "ratio", inputs: [scalarInput, { kind: "artifact-file", run: "r", path: "f.png", hash: HASH }] }),
+            "schema-mismatch",
+        );
+    });
+
+    it("rejects a derivation whose input is a citation", () => {
+        expectParseError(
+            encodeUnchecked({ kind: "derivation", op: "ratio", inputs: [scalarInput, { kind: "citation", idKind: "pmid", id: "1", raw: "t" }] }),
+            "schema-mismatch",
+        );
+    });
 });
 
 describe("parseReference — the per-kind assert shape", () => {
@@ -262,6 +289,21 @@ describe("parseReference — the per-kind assert shape", () => {
 
     it("rejects an asserted hash on a citation", () => {
         expectParseError(encodeUnchecked({ kind: "citation", idKind: "doi", id: "10.1/x", raw: "text", assert: { hash: HASH } }), "schema-mismatch");
+    });
+
+    it("round-trips a citation assert that holds the prefixed key", () => {
+        expectRoundTrip({ kind: "citation", idKind: "pmid", id: "12345", raw: "text", assert: { value: "pmid:12345" } });
+    });
+
+    it("rejects a numeric citation assert, because the resolved key is always text", () => {
+        expectParseError(encodeUnchecked({ kind: "citation", idKind: "pmid", id: "12345", raw: "text", assert: { value: 12345 } }), "schema-mismatch");
+    });
+
+    it("rejects a tolerance on a citation assert, because a key match is exact", () => {
+        expectParseError(
+            encodeUnchecked({ kind: "citation", idKind: "pmid", id: "12345", raw: "text", assert: { value: "pmid:12345", tolerance: 1 } }),
+            "schema-mismatch",
+        );
     });
 
     it("rejects a tolerance with no asserted value", () => {
