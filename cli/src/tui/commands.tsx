@@ -687,9 +687,6 @@ function SwitchAnalysisDialog(): JSX.Element {
     // Mirrored from the list so the copy binding below can act on the highlighted row: the list owns
     // the cursor, and `onCursorChange` is the sanctioned way for a host to read it.
     const [cursor, setCursor] = createSignal<Analysis | undefined>(items[0]?.value);
-    // ctrl+y, NOT a bare `y`: this picker's filter input holds focus for its whole life (single mode
-    // has no NORMAL state to fall back to), so a bare printable would be swallowed as typed text.
-    // Ctrl, never Alt — terminals deliver Alt/Option unreliably and macOS composes it into a glyph.
     useDialogBindings(() => ({
         bindings: [
             {
@@ -1380,6 +1377,44 @@ function inputMetaLine(input: AnalysisInput, abs: string | null): string {
 }
 
 /**
+ * The absolute path of each input, with ONE anchor resolution for each distinct anchor and no
+ * heartbeat write.
+ *
+ * `resolveInputPath` is the per-input form, and it is wrong for a listing twice over. It resolves
+ * the same anchor again for every row that shares it. Its resolve also defaults to `touch: true`,
+ * so opening a dialog to LOOK at the rows would record a sighting of the folder and pay a
+ * synchronous SQLite write for each row. A sighting belongs to a deliberate act (launch, `open`) —
+ * the same reasoning that keeps `detectSourceAnalysis` off `resolveAnchor`, and that makes the
+ * analysis switcher above read the cached path.
+ *
+ * `null` is the unlocatable anchor, which the caller renders rather than treats as an error.
+ */
+function inputAbsolutePaths(inputs: readonly AnalysisInput[]): Map<AnalysisInput, string | null> {
+    const byAnchor = new Map<string, string | null>();
+    const out = new Map<AnalysisInput, string | null>();
+    for (const input of inputs) {
+        // A null anchor means the stored path is already absolute — there is nothing to resolve.
+        if (input.anchorId === null) {
+            out.set(input, input.path);
+            continue;
+        }
+        const anchorId = input.anchorId;
+        if (!byAnchor.has(anchorId)) {
+            byAnchor.set(
+                anchorId,
+                resolveAnchor(anchorId, { touch: false }).match(
+                    (resolved) => resolved?.path ?? null,
+                    () => null,
+                ),
+            );
+        }
+        const dir = byAnchor.get(anchorId) ?? null;
+        out.set(input, dir === null ? null : join(dir, input.path));
+    }
+    return out;
+}
+
+/**
  * The flat view of every registered input, with multi-select removal.
  *
  * It stays a SEPARATE surface from "Manage inputs" rather than folding into that picker, because an
@@ -1400,8 +1435,9 @@ function RemoveInputsDialog(): JSX.Element {
               () => [],
           )
         : [];
+    const absolute = inputAbsolutePaths(inputs);
     const items = inputs.map((input: AnalysisInput) => {
-        const abs = resolveInputPath(input).unwrapOr(null);
+        const abs = absolute.get(input) ?? null;
         const shown = abs ?? input.path;
         return {
             value: input,

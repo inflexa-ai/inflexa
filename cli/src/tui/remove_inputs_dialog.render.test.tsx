@@ -8,7 +8,7 @@ import type { JSX } from "solid-js";
 import { freshDb } from "../test_support/db.ts";
 import { str256 } from "../lib/types.ts";
 import { createAnalysis } from "../modules/analysis/analysis.ts";
-import { listAnalysisInputs } from "../db/primary_query.ts";
+import { listAnalysisInputs, listAnchors } from "../db/primary_query.ts";
 import { useKeymapRoot } from "./keymap.ts";
 import { DialogOverlay, dialogClear, dialogPush } from "./components/dialog/dialog_host.tsx";
 import { WorkspaceContext, type Workspace } from "./contexts/workspace.ts";
@@ -169,6 +169,30 @@ describe("the flat inputs list", () => {
             await settle(setup);
 
             expect(listAnalysisInputs(analysis.id)._unsafeUnwrap()).toHaveLength(1);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("opening the list records no sighting of the anchor folder", async () => {
+        // A listing is not a sighting. `resolveAnchor` writes a `lastSeen` heartbeat by default, so
+        // the per-input form would make this dialog measure dialog opens and pay one synchronous
+        // SQLite write for each row it draws.
+        const before = listAnchors()
+            ._unsafeUnwrap()
+            .map((anchor) => anchor.lastSeen);
+        const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
+        try {
+            // `settle` waits 20ms, so any heartbeat the open writes carries a strictly later stamp.
+            await settle(setup);
+            openRemoveInputs(ws());
+            await settle(setup);
+
+            expect(
+                listAnchors()
+                    ._unsafeUnwrap()
+                    .map((anchor) => anchor.lastSeen),
+            ).toEqual(before);
         } finally {
             setup.renderer.destroy();
         }

@@ -32,8 +32,14 @@ the one view of the whole input set.
 
 ### Requirement: The flat inputs list names an input by its absolute path
 
-The row title MUST be the absolute path of the input, resolved through
-`resolveInputPath`. It MUST NOT be the stored `path`, which is relative to the anchor.
+The row title MUST be the absolute path of the input. It MUST NOT be the stored `path`,
+which is relative to the anchor.
+
+The list MUST resolve each distinct anchor one time, and it MUST turn the `lastSeen`
+heartbeat off. A listing is not a sighting of the folder. The per-input helper
+`resolveInputPath` resolves the same anchor again for each row, and it writes a heartbeat
+each time. Thus an open of this dialog would measure the opens of the dialog. It would also
+pay one SQLite write for each row that it draws.
 
 A directory row MUST carry a trailing path separator, as the file picker rows do.
 
@@ -43,6 +49,12 @@ row MUST use `meta`, and not `hint`, because an absolute path is long and it wra
 An input whose file is gone MUST still list, and MUST still be removable. Its `meta` line
 reports that the file is absent. Removal resolves against the registered set, never
 against the filesystem.
+
+#### Scenario: An open records no sighting
+
+- **GIVEN** an analysis whose inputs share one anchor
+- **WHEN** the user opens the flat inputs list
+- **THEN** the `lastSeen` of that anchor does not change
 
 #### Scenario: The row names the full path
 
