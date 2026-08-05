@@ -69,7 +69,7 @@
 - [ ] 9.4 Add the store-against-image comparison: same manifest both ways, requiring versions and import results to agree
 - [ ] 9.5 Add a test that an interrupted provisioning run leaves a store a later run can repair
 - [ ] 9.6 Add a test that a tampered artifact hash fails the run and installs nothing
-- [ ] 9.7 Add a test that provisioning fails with an actionable message when the disk fills, leaving no partial store directory
+- [ ] 9.7 Add a test that the run fails with a clear message when the disk fills, and that it publishes no store directory. A publish is a rename out of `store/.staging/`, so a partial tree stays there, and task 9.5 covers it
 - [ ] 9.8 Add a test that two concurrent provisioning runs against one store do not corrupt it, and that the second reports the conflict
 - [ ] 9.9 Add a scale test at roughly 500 packages, recording farm build time, import time, and store size
 - [ ] 9.10 Add a test that re-pointing `current` is refused while a sandbox has the store mounted
