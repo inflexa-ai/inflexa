@@ -38,13 +38,8 @@ export function nativeCopyCommand(platform: typeof process.platform, wayland: bo
     return ["xclip", "-selection", "clipboard"];
 }
 
-/**
- * Copy `text` to the clipboard via OSC 52 AND the native OS tool. Best-effort: a missing native tool
- * (`xclip`/`wl-copy` not installed → spawn throws ENOENT) is swallowed so it never crashes the TUI —
- * the OSC 52 path may still have succeeded, and copy is convenience feedback, not a critical path.
- */
-export async function writeClipboard(text: string): Promise<void> {
-    writeOsc52(text);
+/** Run the platform's clipboard tool. Best-effort — see {@link writeClipboard} for why it swallows. */
+async function nativeCopy(text: string): Promise<void> {
     const cmd = nativeCopyCommand(process.platform, terminalEnv.wayland);
     if (!cmd) return;
     try {
@@ -55,4 +50,32 @@ export async function writeClipboard(text: string): Promise<void> {
         // `err` is an unknown spawn failure (typically ENOENT — tool not installed). Logged, not thrown.
         log.debug({ err, cmd }, "native clipboard copy failed");
     }
+}
+
+let nativeWriter: (text: string) => Promise<void> = nativeCopy;
+
+/**
+ * Swap the native-tool leg for a double, returning its restore function. Mirrors the `__set…ForTest`
+ * accessors elsewhere; production code never calls it.
+ *
+ * A copy has no other observable: the OSC 52 leg is a deliberate no-op off a TTY (so it never leaks
+ * into piped output), and letting a test reach the real `pbcopy` would overwrite the clipboard of
+ * whoever runs the suite — a side effect no assertion is worth.
+ */
+export function __setClipboardWriterForTest(next: (text: string) => Promise<void>): () => void {
+    const previous = nativeWriter;
+    nativeWriter = next;
+    return () => {
+        nativeWriter = previous;
+    };
+}
+
+/**
+ * Copy `text` to the clipboard via OSC 52 AND the native OS tool. Best-effort: a missing native tool
+ * (`xclip`/`wl-copy` not installed → spawn throws ENOENT) is swallowed so it never crashes the TUI —
+ * the OSC 52 path may still have succeeded, and copy is convenience feedback, not a critical path.
+ */
+export async function writeClipboard(text: string): Promise<void> {
+    writeOsc52(text);
+    await nativeWriter(text);
 }
