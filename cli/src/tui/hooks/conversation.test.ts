@@ -159,6 +159,21 @@ describe("send() drives the adapter + engine", () => {
         expect(chips.map((c) => c.durationMs)).toEqual([480, 3]);
     });
 
+    test("a zero duration from the harness is kept, not replaced by the bracket", async () => {
+        // The fallback must be `??` and never `||`. A sub-millisecond call reports
+        // a real `0`, and `||` would discard it for the round-wide bracket — the
+        // exact false figure this requirement removes.
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            const source = { agentId: "tui-chat", callPath: ["tui-chat"] };
+            void emit({ type: "tool-started", source, toolUseId: "t0", name: "list_files", input: {} });
+            void emit({ type: "tool-finished", source, toolUseId: "t0", name: "list_files", outcome: "ok", durationMs: 0 });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        expect(tool?.durationMs).toBe(0);
+    });
+
     test("an event without a duration falls back to the observed elapsed time", async () => {
         const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
             const source = { agentId: "tui-chat", callPath: ["tui-chat"] };
@@ -175,13 +190,14 @@ describe("send() drives the adapter + engine", () => {
         // No start arrived, thus the adapter has no stamp of its own to bracket.
         const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
             const source = { agentId: "tui-chat", callPath: ["tui-chat"] };
-            void emit({ type: "tool-finished", source, toolUseId: "orphan", name: "grep", outcome: "ok", durationMs: 17 });
+            void emit({ type: "tool-finished", source, toolUseId: "orphan", name: "grep", outcome: "ok", durationMs: 0 });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
         const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
         expect(tool?.name).toBe("grep");
-        expect(tool?.durationMs).toBe(17);
+        // There is no start stamp to bracket, thus `||` would yield `undefined` here.
+        expect(tool?.durationMs).toBe(0);
     });
 
     test("tool error outcome is honored", async () => {
@@ -888,6 +904,10 @@ describe("send() turn cleanup", () => {
         expect(tool).toBeDefined();
         // Drained to a terminal state — never left `running` at idle.
         expect(tool?.status).toBe("error");
+        // No tool-finished arrived, thus nothing measured this call. The elapsed
+        // time since its start stamp would be the round's, and a multi-call round
+        // would strand every chip with one identical figure.
+        expect(tool?.durationMs).toBeUndefined();
         expect(chatStatus()).toBe("idle");
     });
 

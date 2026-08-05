@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { AgentSession, AskApproval, AskRequest, ToolContext } from "@inflexa-ai/harness";
+import { DETAIL_MAX_LENGTH } from "@inflexa-ai/harness/loop/tool-detail.js";
 
 import { Bus } from "../../lib/bus.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
@@ -167,9 +168,25 @@ describe("manage_inputs — describeCall", () => {
         expect(describeCall({ action: "add", paths: ["counts.csv"] })).toBe("add counts.csv");
     });
 
-    test("a multi-path remove reports what it acts on, without an unbounded list", () => {
+    test("a multi-path remove enumerates what fits on one line", () => {
         expect(describeCall({ action: "remove", paths: ["a.csv", "b.csv"] })).toBe("remove a.csv, b.csv");
-        expect(describeCall({ action: "remove", paths: ["a.csv", "b.csv", "c.csv"] })).toBe("remove 3 files");
+        // A count is not the gate: five short names still fit.
+        expect(describeCall({ action: "add", paths: ["a.csv", "b.csv", "c.csv", "d.csv", "e.csv"] })).toBe("add a.csv, b.csv, c.csv, d.csv, e.csv");
+    });
+
+    test("a list too long for the cap becomes a count, never a cut path", () => {
+        // The harness would cut mid-path and mark it, which names a file that does
+        // not exist. Two long absolute paths are enough to reach that.
+        const long = [
+            "/Users/alice/data/experiments/rnaseq/batch-02/counts_matrix_filtered.csv",
+            "/Users/alice/data/experiments/rnaseq/batch-02/sample_metadata.tsv",
+        ];
+        expect(describeCall({ action: "add", paths: long })).toBe("add 2 paths");
+
+        // The boundary: a rendered line of exactly the cap still enumerates.
+        const atCap = "x".repeat(DETAIL_MAX_LENGTH - "add ".length);
+        expect([...describeCall({ action: "add", paths: [atCap] })].length).toBe(DETAIL_MAX_LENGTH);
+        expect(describeCall({ action: "add", paths: [`${atCap}y`] })).toBe("add 1 path");
     });
 
     test("a list call is described by its action alone", () => {

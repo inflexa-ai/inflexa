@@ -714,10 +714,16 @@ function reportAppendError(e: DbError | undefined): void {
  * status union has no `interrupted`), and the part already carries its name from `tool-started`, so
  * the empty `name` here is never read (`updateToolPart` only uses it on the never-taken append path).
  * The same reasoning covers the absent detail: the part already carries the one `tool-started` set.
+ *
+ * The duration is absent, and deliberately so. No `tool-finished` arrived, thus no call reported
+ * what it took. The elapsed time since the start stamp measures the ROUND, because the loop emits
+ * every `tool-started` of a round together — so a multi-call round would strand several chips each
+ * asserting one identical figure. That is the false claim `durationMs` on the event exists to
+ * remove, and an unmeasured call states nothing rather than a number it did not earn.
  */
 function drainOpenTools(): void {
-    for (const [toolUseId, startedAt] of openTools) {
-        updateToolPart(toolUseId, "", "error", Date.now() - startedAt, undefined);
+    for (const [toolUseId] of openTools) {
+        updateToolPart(toolUseId, "", "error", undefined, undefined);
     }
     openTools.clear();
     deepestSubAgentDepth = 0;
