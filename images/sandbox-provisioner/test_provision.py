@@ -23,6 +23,12 @@ Run with either::
   FlipCurrentTests.test_refused_under_active_lease                    -> 9.10, 7.2
   FarmAssemblyTests.test_build_farm_invariants                        -> 4.1/4.3/4.4, 4.6-guard
   FarmAssemblyTests.test_build_r_farm_skips_empty_subtree             -> 6.2
+  BiocReleaseTests.test_cran_only_lock_names_no_release               -> 6.4
+  BiocReleaseTests.test_one_release_is_deduplicated                   -> 6.4
+  BiocReleaseTests.test_two_releases_are_both_kept_and_sorted         -> 6.4
+  BiocReleaseTests.test_git_pin_contributes_no_release                -> 6.4
+  BiocReleaseTests.test_absent_lock_gives_empty_list                  -> 6.4
+  BiocReleaseTests.test_damaged_entries_are_skipped                   -> 6.4
   SupplyChainTests.test_reject_off_index                              -> 3.1 (request boundary)
   SupplyChainTests.test_resolve_parses_hashes_and_rejects_off_host    -> 3.1 (resolved output)
   ProvisionRunTests.test_refused_repoint_keeps_farm_and_requested_set -> 9.10/7.2, 3.4, 4.5
@@ -414,6 +420,143 @@ class FarmAssemblyTests(StoreTestCase):
         self.assertEqual(os.readlink(farm / "r" / "cran" / "rpkgA"), str(ra))
         self.assertTrue((farm / "r" / "bioconductor" / "rpkgB").is_symlink())
         self.assertFalse((farm / "r" / "github").exists())  # empty subtree skipped
+
+
+class BiocReleaseTests(StoreTestCase):
+    """§6.4 — the Bioconductor releases come from the pak lock, not from a query to R.
+
+    The lock holds the URL each package came from, so it is the one record that
+    states which releases a farm holds. A farm can hold more than one release, thus
+    the result is a list. Every entry below copies the shape of a real pak lock.
+    """
+
+    def _lock(self, *packages: dict) -> Path:
+        """Write a pak lock file that holds `packages`, and give back its path."""
+        path = self.root / "r-bulk.lock"
+        path.write_text(json.dumps({
+            "lockfile_version": 1,
+            "os": "linux",
+            "r_version": "4.5.1",
+            "platform": "aarch64-unknown-linux-gnu-ubuntu-24.04",
+            "packages": list(packages),
+            "sysreqs": [],
+        }))
+        return path
+
+    @staticmethod
+    def _cran(name: str, version: str) -> dict:
+        repo = "https://p3m.dev/cran/__linux__/noble/2026-06-23"
+        return {
+            "package": name, "version": version, "type": "standard", "repotype": "cran",
+            "platform": "aarch64-unknown-linux-gnu-ubuntu-24.04",
+            "sources": [f"{repo}/src/contrib/{name}_{version}.tar.gz"],
+            "metadata": {"RemoteRepos": repo},
+        }
+
+    @staticmethod
+    def _bioc(name: str, version: str, release: str) -> dict:
+        repo = f"https://bioconductor.org/packages/{release}/bioc"
+        return {
+            "package": name, "version": version, "type": "bioc", "repotype": "bioc",
+            "platform": "source",
+            "sources": [f"{repo}/src/contrib/{name}_{version}.tar.gz"],
+            "metadata": {"RemoteRepos": repo},
+        }
+
+    def test_cran_only_lock_names_no_release(self):
+        """A lock with only CRAN packages names no Bioconductor release."""
+        lock = self._lock(self._cran("jsonlite", "2.0.0"), self._cran("cli", "3.6.5"))
+        self.assertEqual(provision.bioc_releases(lock), [])
+
+    def test_one_release_is_deduplicated(self):
+        """Two packages from one release give that release one time."""
+        lock = self._lock(
+            self._cran("jsonlite", "2.0.0"),
+            self._bioc("BiocGenerics", "0.58.1", "3.23"),
+            self._bioc("S4Vectors", "0.48.0", "3.23"),
+        )
+        self.assertEqual(provision.bioc_releases(lock), ["3.23"])
+
+    def test_two_releases_are_both_kept_and_sorted(self):
+        """A farm can hold two releases at the same time, and both are recorded.
+
+        The order is the order of the numbers. Release 3.9 comes before release 3.23,
+        but as text it sorts after it.
+        """
+        lock = self._lock(
+            self._bioc("BiocGenerics", "0.58.1", "3.23"),
+            self._bioc("limma", "3.64.1", "3.22"),
+        )
+        self.assertEqual(provision.bioc_releases(lock), ["3.22", "3.23"])
+
+        lock = self._lock(
+            self._bioc("BiocGenerics", "0.58.1", "3.23"),
+            self._bioc("limma", "3.40.6", "3.9"),
+        )
+        self.assertEqual(provision.bioc_releases(lock), ["3.9", "3.23"])
+
+        # An annotation package comes from a different repo of the same release, and
+        # it must not add a second entry.
+        lock = self._lock(
+            self._bioc("BiocGenerics", "0.58.1", "3.23"),
+            {"package": "org.Hs.eg.db", "version": "3.23.0", "type": "bioc",
+             "repotype": "bioc", "platform": "source",
+             "sources": ["https://bioconductor.org/packages/3.23/data/annotation/"
+                         "src/contrib/org.Hs.eg.db_3.23.0.tar.gz"],
+             "metadata": {"RemoteRepos": "https://bioconductor.org/packages/3.23/data/annotation"}},
+        )
+        self.assertEqual(provision.bioc_releases(lock), ["3.23"])
+
+    def test_git_pin_contributes_no_release(self):
+        """A package pinned to a git commit names no release, and none is invented.
+
+        The URL carries the package name where a release URL carries the release, and
+        the commit is not a release. The other packages in the lock still count.
+        """
+        lock = self._lock(
+            self._bioc("BiocGenerics", "0.58.1", "3.23"),
+            {"package": "DEP", "version": "1.31.0", "type": "git", "repotype": "bioc",
+             "platform": "source",
+             "sources": ["https://git.bioconductor.org/packages/DEP"],
+             "metadata": {"RemoteRef": "RELEASE_3_22",
+                          "RemoteSha": "0f2b1c9e4a7d6b3f8c5e2a1d9b4f7c0e3a6d8b25",
+                          "RemoteUrl": "https://git.bioconductor.org/packages/DEP"}},
+        )
+        self.assertEqual(provision.bioc_releases(lock), ["3.23"])
+
+    def test_absent_lock_gives_empty_list(self):
+        """A run that writes no lock gives an empty list and raises nothing.
+
+        A Python-only run has no R lock at all, and an R run can end before pak writes
+        one.
+        """
+        self.assertEqual(provision.bioc_releases(self.root / "no-such.lock"), [])
+        self.assertEqual(provision.bioc_releases(self.root), [])  # a directory, not a file
+
+    def test_damaged_entries_are_skipped(self):
+        """A partial or damaged entry is skipped, and the good entries still count."""
+        lock = self._lock(
+            {"package": "nosources", "version": "1.0"},
+            {"package": "nometadata", "version": "1.0", "sources": []},
+            {"package": "junkurl", "version": "1.0", "sources": ["not a url at all"],
+             "metadata": {"RemoteRepos": None}},
+            {"package": "wrongtypes", "version": "1.0", "sources": "a string, not a list",
+             "metadata": "a string, not a dict"},
+            "a string where an object belongs",
+            self._bioc("BiocGenerics", "0.58.1", "3.23"),
+        )
+        self.assertEqual(provision.bioc_releases(lock), ["3.23"])
+
+        # A lock that is not JSON, and a lock without a `packages` list, both give an
+        # empty list rather than a raise: the releases are provenance, and provenance
+        # that cannot be read must not lose the packages that are already installed.
+        damaged = self.root / "damaged.lock"
+        damaged.write_text("{not json at all")
+        self.assertEqual(provision.bioc_releases(damaged), [])
+        damaged.write_text(json.dumps({"lockfile_version": 1}))
+        self.assertEqual(provision.bioc_releases(damaged), [])
+        damaged.write_text(json.dumps([1, 2, 3]))
+        self.assertEqual(provision.bioc_releases(damaged), [])
 
 
 class ProvisionRunTests(StoreTestCase):

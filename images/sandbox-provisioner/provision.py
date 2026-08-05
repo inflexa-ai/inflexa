@@ -423,13 +423,52 @@ def r_version_of(manifest: Path) -> str | None:
     return (yaml.safe_load(manifest.read_text()) or {}).get("r_version")
 
 
-def bioc_version() -> str | None:
-    """The Bioconductor release the packages were built against, queried from R.
-    Best effort — null when BiocManager is absent, since pak does not require it.
-    Recorded because Bioconductor couples its release to the R version."""
-    proc = subprocess.run(["Rscript", "-e", "cat(as.character(BiocManager::version()))"],
-                          capture_output=True, text=True)
-    return proc.stdout.strip() or None
+# Bioconductor serves every artifact of a release under `.../packages/<release>/`, and
+# a release is always two numbers. The number shape is what separates a release from
+# the package name in a git URL such as `https://git.bioconductor.org/packages/DEP`.
+BIOC_RELEASE_IN_URL = re.compile(r"https?://[^/]*bioconductor[^/]*/packages/(\d+\.\d+)(?:/|$)")
+
+
+def bioc_releases(lock_path: Path) -> list[str]:
+    """The Bioconductor releases that a pak lock file names, sorted and with no duplicate.
+
+    The lock holds the source URL of each package. Thus the lock is the true record of
+    the releases in a farm. BiocManager can also name a release, but it reads a static
+    map of the R version in use. That map is a claim about a table, not a fact about
+    the packages on disk, and the two disagree as soon as one package comes from a
+    frozen release. A farm can hold more than one release at the same time, thus the
+    value is a list and not one string.
+
+    A git-pinned Bioconductor package carries a commit, not a release, so its lock
+    entry has no release to read. This function skips it.
+
+    An absent or damaged lock gives an empty list, because a Python-only run writes no
+    lock and a lock entry can lack `sources` or `metadata`.
+    """
+    try:
+        lock = json.loads(Path(lock_path).read_text())
+    except (OSError, ValueError):
+        return []
+    packages = lock.get("packages") if isinstance(lock, dict) else None
+    if not isinstance(packages, list):
+        return []
+    found: set[str] = set()
+    for pkg in packages:
+        if not isinstance(pkg, dict):
+            continue
+        # pak writes the release into the artifact URL and into RemoteRepos. Read both
+        # and keep whatever parses, because either one alone can be absent.
+        urls = pkg.get("sources")
+        candidates = list(urls) if isinstance(urls, list) else []
+        metadata = pkg.get("metadata")
+        if isinstance(metadata, dict):
+            candidates.append(metadata.get("RemoteRepos"))
+        for candidate in candidates:
+            if isinstance(candidate, str):
+                found.update(BIOC_RELEASE_IN_URL.findall(candidate))
+    # Sort on the numbers, because release 3.9 comes before release 3.23 but sorts
+    # after it as text.
+    return sorted(found, key=lambda release: tuple(int(part) for part in release.split(".")))
 
 
 def install_r(manifest: Path, stage_root: Path) -> None:
@@ -488,13 +527,17 @@ def provision_r(farm: Path, manifest: Path) -> dict:
     # Keep the pak bulk lock as provenance: it records the full resolved set,
     # including the LinkingTo packages the compiled objects were built against.
     bulk_lock = stage_root / "r" / "r-bulk.lock"
+    releases: list[str] = []
     if bulk_lock.is_file():
+        # Read the releases here, because the lock still exists at this point. The
+        # step below removes the staging tree that holds it.
+        releases = bioc_releases(bulk_lock)
         shutil.copy2(bulk_lock, farm / "r-bulk.lock")
     shutil.rmtree(stage_root, ignore_errors=True)
 
     counts = {sub: len(v) for sub, v in stored.items()}
-    log(f"R farm: {counts}")
-    return {"packages": counts, "r_version": r_version_of(manifest), "bioc_version": bioc_version()}
+    log(f"R farm: {counts}, Bioconductor release(s): {releases or 'none'}")
+    return {"packages": counts, "r_version": r_version_of(manifest), "bioc_releases": releases}
 
 
 def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, str]:
