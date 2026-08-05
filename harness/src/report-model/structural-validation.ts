@@ -18,7 +18,7 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
-import { fileTypeHoldsNoCell, type ReportSnapshot } from "./reference-resolver.js";
+import { fileTypeHoldsNoCell, snapshotEntry, type ReportSnapshot } from "./reference-resolver.js";
 
 /** The three reference kinds that name one artifact directly. Each one carries the artifact pin fields. */
 type PinnedReference = ArtifactValueReference | ArtifactTableReference | ArtifactFileReference;
@@ -31,7 +31,7 @@ function fail(reference: Reference, reason: UnresolvedReason, detail?: string): 
 
 /** Validate the artifact pin of one reference: its membership in the snapshot, its identity, and the file type of its entry. */
 function validatePin(reference: PinnedReference, snapshot: ReportSnapshot): Result<void, UnresolvedReference> {
-    const entry = snapshot.artifacts[reference.path];
+    const entry = snapshotEntry(snapshot, reference.path);
     if (entry === undefined) {
         return fail(reference, "artifact-missing", `no artifact at ${reference.path}`);
     }

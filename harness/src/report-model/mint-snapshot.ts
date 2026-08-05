@@ -22,7 +22,7 @@ import type { ArtifactSnapshot, ReportSnapshot } from "./reference-resolver.js";
  */
 export type MintSnapshotError = {
     kind: "ledger-read-failed";
-    cause?: unknown;
+    cause: unknown;
 };
 
 /**
@@ -42,7 +42,9 @@ export async function mintReportSnapshot(pool: Querier, analysisId: string): Pro
         return err({ kind: "ledger-read-failed", cause });
     }
 
-    const artifacts: Record<string, ArtifactSnapshot> = {};
+    // The ledger accepts any path. A null-prototype map keeps a key such as `__proto__` an ordinary
+    // entry, thus no path collides with a prototype slot.
+    const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
     for (const row of ledgerRows) {
         artifacts[row.path] = { hash: row.hash, fileType: row.fileType };
     }

@@ -17,7 +17,14 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
-import { columnsHeldByNoRow, fileTypeHoldsNoCell, type ReferenceResolver, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
+import {
+    columnsHeldByNoRow,
+    fileTypeHoldsNoCell,
+    snapshotEntry,
+    type ReferenceResolver,
+    type ReportSnapshot,
+    type ResolvedValue,
+} from "./reference-resolver.js";
 
 /**
  * The relative epsilon of a value match with no authored tolerance.
@@ -112,7 +119,7 @@ function checkCitationAssertion(reference: Reference, expected: string | undefin
 }
 
 function resolveArtifactValue(reference: ArtifactValueReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
-    const artifact = snapshot.artifacts[reference.path];
+    const artifact = snapshotEntry(snapshot, reference.path);
     if (artifact === undefined) {
         return fail(reference, "artifact-missing", `no artifact at ${reference.path}`);
     }
@@ -167,7 +174,7 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
 }
 
 function resolveArtifactTable(reference: ArtifactTableReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
-    const artifact = snapshot.artifacts[reference.path];
+    const artifact = snapshotEntry(snapshot, reference.path);
     if (artifact === undefined) {
         return fail(reference, "artifact-missing", `no artifact at ${reference.path}`);
     }
@@ -209,7 +216,7 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
 }
 
 function resolveArtifactFile(reference: ArtifactFileReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
-    const artifact = snapshot.artifacts[reference.path];
+    const artifact = snapshotEntry(snapshot, reference.path);
     if (artifact === undefined) {
         return fail(reference, "artifact-missing", `no artifact at ${reference.path}`);
     }
