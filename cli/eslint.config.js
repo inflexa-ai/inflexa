@@ -210,4 +210,48 @@ export default defineConfig([
             ],
         },
     },
+    {
+        // The dev-channel command surfaces live under `src/modules/harness/dev/` (see the `dev-commands`
+        // spec and CLAUDE.md's "The `dev/` subdirectory"). The dependency runs ONE way: a dev surface is a
+        // consumer of the product, so it may import product code, but a product file that imports `dev/`
+        // would drag a command a release build does not carry into the product's own module graph.
+        //
+        // Structure alone cannot state that — the directory name is a convention a reader has to know —
+        // so the boundary is a rule rather than a review item.
+        //
+        // The pattern is `**/dev/*`, matched against the import STRING and not a resolved path. That
+        // distinction is the whole trick: a sibling reaches the directory as `./dev/chat.ts`, so the
+        // narrower-looking `**/modules/harness/dev/*` silently matches nothing from inside
+        // `modules/harness/` and the rule reads as armed while catching nothing.
+        //
+        // SCOPE: static `import` and re-export only. `no-restricted-imports` does not visit an
+        // `ImportExpression`, so a dynamic `await import("./dev/…")` from a product file passes. That is the
+        // form the registry uses for lazy command actions and the form a product file has no reason to
+        // write, so the gap is the cheap side of the trade: covering it wants `no-restricted-syntax`, which
+        // REPLACES rather than extends per block (see sharedRestrictedSyntax), and threading that through
+        // the `src/cli/**` block below would cost the `.action()` ban its scope.
+        //
+        // Two exemptions, and no others:
+        //   - `src/modules/harness/dev/**` — the surfaces import each other (`dev/run.ts` → `dev/status.ts`).
+        //   - `src/cli/index.ts` — the registration gate itself, the one crossing the spec sanctions. Its
+        //     three `import()` calls sit inside `devCommandsEnabled()`, so a release build never evaluates
+        //     them. Exempted as a file (like `agent_policy.ts` above) rather than through inline disables,
+        //     which would put the justification at three sites instead of the one that owns the decision.
+        files: ["src/**/*.{ts,tsx}"],
+        ignores: ["src/modules/harness/dev/**", "src/cli/index.ts"],
+        rules: {
+            "no-restricted-imports": [
+                "error",
+                {
+                    patterns: [
+                        {
+                            group: ["**/dev/*", "**/dev/**"],
+                            message:
+                                "A product file must not import `modules/harness/dev/` — those are dev-channel command surfaces a release build does not carry. If a helper is wanted by both, home it in the module that owns its subject (see CLAUDE.md, 'The `dev/` subdirectory').",
+                        },
+                    ],
+                },
+            ],
+        },
+    },
 ]);

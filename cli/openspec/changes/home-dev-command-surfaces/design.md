@@ -93,4 +93,8 @@ Phase 1 dissolves the two mixed files. Phase 2 moves the dev code. The order mat
 
 **`runtime.ts` grows to about 1197 lines** → accepted. The alternative separates a union from the mapper that exhausts it, and that costs a reader more than the length does.
 
-**The `dev/` boundary has no automated guard** → no lint rule blocks a product file that imports `dev/`. The direction rests on review, as the module rules of `cli/CLAUDE.md` already do. A guard is possible later and is not part of this change.
+**The `dev/` boundary guard covers a static import only** → a `no-restricted-imports` rule in `eslint.config.js` fails a build when a product file imports `dev/`. It exempts the files under `dev/` and the registration gate.
+
+Two facts shaped it, and both cost a wrong first attempt. The pattern matches the import STRING, not a resolved path, so `**/modules/harness/dev/*` reads as armed while matching nothing from inside `modules/harness/` — a sibling writes `./dev/chat.ts`. The pattern is `**/dev/*`, confirmed against a sibling form and a deep form.
+
+`no-restricted-imports` never visits an `ImportExpression`, so a dynamic `await import("./dev/…")` from a product file still passes. Covering it wants `no-restricted-syntax`, which REPLACES rather than extends per block, and threading that through the `src/cli/**` block would cost the `.action()` ban its scope. The dynamic form is what the registry uses and what a product file has no reason to write, so that gap stays a review item.
