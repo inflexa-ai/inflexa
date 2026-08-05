@@ -75,3 +75,9 @@
 - [ ] 9.10 Add a test that re-pointing `current` is refused while a sandbox has the store mounted
 - [ ] 9.11 Run the whole suite on amd64; every measurement backing this change was taken on arm64
 - [ ] 9.12 Re-measure import time on Linux and record it, since the macOS figure is dominated by virtiofs rather than by the design
+
+## 10. Publish
+
+- [ ] 10.1 Push the store to GHCR as an OCI artifact with ORAS, one artifact for each architecture, one layer for each track
+- [ ] 10.2 Refuse a same-version publish whose content differs, and fail the build loudly
+- [ ] 10.3 Decide the workflow that builds and pushes the store: a new workflow, or the existing `lib-store.yml` build

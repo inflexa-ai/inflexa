@@ -18,6 +18,34 @@ The content-addressed form SHALL carry the same `packages.txt`, produced by the 
 - **WHEN** it is mounted at `/mnt/libs`
 - **THEN** the sandbox resolves imports exactly as it does from an extracted tarball store
 
+### Requirement: The content-addressed store publishes to GHCR as an OCI artifact
+
+The build SHALL publish the content-addressed store to GHCR as an OCI artifact,
+through an ORAS push. It SHALL push one artifact for each architecture, with one
+layer for each track. The OCI manifest SHALL carry the sha256 digest of each
+layer. A
+version tag SHALL be immutable in content: the build SHALL refuse to publish a
+version again with different content, rather than move the tag. A `latest`
+pointer SHALL be a tag move only. The artifact SHALL be pullable anonymously,
+over https, with no credentials.
+
+#### Scenario: One artifact for each architecture
+
+- **WHEN** the build publishes the store for an architecture
+- **THEN** it pushes one OCI artifact whose layers are the tracks of that architecture, and each layer descriptor carries its sha256 digest
+
+#### Scenario: A version built again with different bytes is refused
+
+- **GIVEN** a published version tag
+- **WHEN** the build publishes the same version with different content
+- **THEN** the push fails loudly, and the tag does not move
+
+#### Scenario: An anonymous consumer can pull
+
+- **GIVEN** a published store artifact
+- **WHEN** a client with no credentials requests the token, the manifest, and a blob, over https
+- **THEN** the registry serves each of them
+
 ### Requirement: Cache preparation is verified to take effect at run time
 
 The build SHALL verify that prepared caches are used by the runtime rather than merely present on disk. It SHALL run a workload that exercises compiled-on-first-call code under the unprivileged runtime user against the read-only store, and SHALL count cache loads against cache writes. A run that writes a new cache entry for a prepared code path SHALL fail the check.
@@ -57,9 +85,10 @@ listing that track's contents. Both architectures SHALL attempt every track; the
 set of track tarballs produced for an arch SHALL be exactly those that met the
 non-empty floor for that arch (best-effort), rather than a fixed per-arch set.
 
-This form remains the published artifact for the managed mount. It is now one of
-two forms the build can emit; the content-addressed store is the other, and
-neither supersedes the other while both are published.
+This form remains the published artifact for the managed mount only, until the
+managed delivery change replaces it (decoupled, 2026-08-05). It is one of two
+forms the build can emit. The content-addressed store is the other, and it is the
+published artifact for the CLI channel.
 
 #### Scenario: A track tarball carries its own fragment
 
