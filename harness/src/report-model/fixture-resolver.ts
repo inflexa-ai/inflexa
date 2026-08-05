@@ -17,7 +17,7 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
-import type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "./reference-resolver.js";
+import { columnsHeldByNoRow, type ReferenceResolver, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
 
 /**
  * The relative epsilon of a value match with no authored tolerance.
@@ -63,14 +63,6 @@ function valuesMatch(expected: string | number, actual: string | number, toleran
         return Math.abs(expected - actual) <= RELATIVE_EPSILON * Math.max(1, Math.abs(expected), Math.abs(actual));
     }
     return expected === actual;
-}
-
-/** Match the fresh content hash of an artifact against the authored one. */
-function checkHashAssertion(reference: Reference, expected: string | undefined, artifactHash: string): UnresolvedReference | undefined {
-    if (expected === undefined || expected === artifactHash) {
-        return undefined;
-    }
-    return { reference, reason: "assertion-failed", detail: `expected hash ${expected} but the artifact hash is ${artifactHash}` };
 }
 
 /** Match a resolved scalar against the authored value, under the authored tolerance. */
@@ -138,15 +130,8 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
         return fail(reference, "locator-out-of-range", `column ${locator.column} holds no value in the selected row`);
     }
 
-    const hashFailure = checkHashAssertion(reference, reference.assert?.hash, artifact.hash);
-    if (hashFailure !== undefined) {
-        return err(hashFailure);
-    }
     const valueFailure = checkValueAssertion(reference, reference.assert?.value, reference.assert?.tolerance, cell);
-    if (valueFailure !== undefined) {
-        return err(valueFailure);
-    }
-    return ok({ type: "scalar", value: cell });
+    return valueFailure !== undefined ? err(valueFailure) : ok({ type: "scalar", value: cell });
 }
 
 function resolveArtifactTable(reference: ArtifactTableReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
@@ -160,26 +145,30 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
 
     const rows = artifact.rows ?? [];
     const columns = reference.columns;
-    let value: ResolvedValue;
-    if (columns !== undefined) {
-        // Project each row onto the requested columns. A table tolerates a ragged row, thus a column that
-        // a given row lacks is left out of that row and is not a failure.
-        const projectedRows = rows.map((row) => {
-            const projected: Record<string, string | number> = {};
-            for (const column of columns) {
-                if (column in row) {
-                    projected[column] = row[column];
-                }
-            }
-            return projected;
-        });
-        value = { type: "table", rows: projectedRows, columns };
-    } else {
-        value = { type: "table", rows };
+    if (columns === undefined) {
+        return ok({ type: "table", rows });
     }
 
-    const hashFailure = checkHashAssertion(reference, reference.assert?.hash, artifact.hash);
-    return hashFailure !== undefined ? err(hashFailure) : ok(value);
+    // A name that no row holds addresses nothing. Without this check a projection onto an invented column
+    // gives an empty cell for each row and still resolves, which is the fabrication that grounding exists
+    // to reject.
+    const absent = columnsHeldByNoRow(rows, columns);
+    if (absent.length > 0) {
+        return fail(reference, "locator-out-of-range", `the table at ${reference.path} holds no column ${absent.join(", ")}`);
+    }
+
+    // Project each row onto the requested columns. A table tolerates a ragged row, thus a column that a
+    // given row lacks is left out of that row and is not a failure.
+    const projectedRows = rows.map((row) => {
+        const projected: Record<string, string | number> = {};
+        for (const column of columns) {
+            if (column in row) {
+                projected[column] = row[column];
+            }
+        }
+        return projected;
+    });
+    return ok({ type: "table", rows: projectedRows, columns });
 }
 
 function resolveArtifactFile(reference: ArtifactFileReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
@@ -191,9 +180,7 @@ function resolveArtifactFile(reference: ArtifactFileReference, snapshot: ReportS
         return fail(reference, "hash-mismatch", `expected ${reference.hash} but the artifact hash is ${artifact.hash}`);
     }
 
-    const value: ResolvedValue = { type: "file", path: reference.path, hash: artifact.hash };
-    const hashFailure = checkHashAssertion(reference, reference.assert?.hash, artifact.hash);
-    return hashFailure !== undefined ? err(hashFailure) : ok(value);
+    return ok({ type: "file", path: reference.path, hash: artifact.hash });
 }
 
 async function resolveDerivation(reference: DerivationReference, snapshot: ReportSnapshot): Promise<Result<ResolvedValue, UnresolvedReference>> {
@@ -225,6 +212,8 @@ async function resolveDerivation(reference: DerivationReference, snapshot: Repor
             result = a - b;
             break;
         case "pctChange":
+            // A fraction, not a percent. A change of one half gives 0.5, thus an author asserts 0.5 and a
+            // `unit` of `%` only tells a renderer how to show it.
             result = (a - b) / b;
             break;
     }

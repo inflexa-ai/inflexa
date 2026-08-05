@@ -25,11 +25,20 @@ approval precedents as prompt context for a target dossier.
 
 The harness MUST define one `Reference` object, and every evidentiary block MUST
 carry it. A reference MUST carry a `kind` of `artifact-value`, `artifact-table`,
-`artifact-file`, `derivation`, or `citation`. An artifact reference MUST pin `run`,
-`path`, and `hash`, and it can carry a `snapshot`. It can carry an `assert`, a
-`unit`, and a `format`. The reference MUST reuse the coordinates that the harness
-already keys on, the run id `cortex_runs.run_id` and the file key
-`cortex_artifacts(path, hash)`.
+`artifact-file`, `derivation`, or `citation`. An artifact reference MUST pin `path`
+and `hash`, and it can carry a `run` and a `snapshot`. It can carry a `unit` and a
+`format`. The reference MUST reuse the coordinates that the harness already keys on,
+the run id `cortex_runs.run_id` and the file key `cortex_artifacts(path, hash)`. The
+`path` MUST be analysis-relative, because `cortex_artifacts` keys on `(analysis_id,
+path)` and that path already holds the run segment of a run output.
+
+The `run` MUST be optional. A staged input file under `data/inputs/` has no run that
+produced it. Thus a mandatory `run` prevents a binding to an input file.
+
+#### Scenario: A staged input artifact binds without a run
+
+- **WHEN** a reference names an input file that no run produced, with a `path` and a `hash` but no `run`
+- **THEN** the grounding contract accepts the reference shape
 
 An `artifact-value` reference MUST address one value with a `locator`. An
 `artifact-table` and an `artifact-file` reference MUST pin the whole file, and they
@@ -79,6 +88,35 @@ default. A locator MUST resolve to exactly one value. Zero matches MUST give
 - **WHEN** a locator carries a `rowFilter` that matches more than one row
 - **THEN** resolution returns an `UnresolvedReference` with reason `ambiguous-match`
 
+### Requirement: A column name must address a real column
+
+A column name that no row of the bound table holds MUST give
+`locator-out-of-range`. This covers the `columns` subset of an `artifact-table`
+reference and each channel of a `chart` encoding. A projection onto a name that
+addresses nothing gives an empty cell for each row. Thus without this rule an
+invented column resolves, and the report renders as grounded.
+
+A table with no rows MUST accept each name. There is no evidence against a name, and
+an empty result table is a real outcome.
+
+A column that only some rows hold MUST resolve. A table tolerates a ragged row, thus
+a sparse column is different from a column that does not exist.
+
+#### Scenario: An invented column subset is rejected
+
+- **WHEN** an `artifact-table` reference names a `columns` entry that no row holds
+- **THEN** resolution returns an `UnresolvedReference` with reason `locator-out-of-range`
+
+#### Scenario: A chart channel that names no real column is rejected
+
+- **WHEN** a `chart` encoding names a column that the bound table does not hold
+- **THEN** validation fails the block with reason `locator-out-of-range`
+
+#### Scenario: A ragged column resolves
+
+- **WHEN** an `artifact-table` reference names a column that only some rows hold
+- **THEN** resolution returns the table
+
 ### Requirement: A reference resolves against a pinned snapshot
 
 The harness MUST expose a `ReferenceResolver` seam. Its `resolve(reference,
@@ -110,11 +148,19 @@ over time.
 
 ### Requirement: An assertion is matched on resolve
 
-If a reference carries an `assert.value` or an `assert.hash`, resolution MUST
-re-read the artifact and match the resolved value within `tolerance`. A mismatch
-MUST return an `UnresolvedReference` with reason `assertion-failed`. Thus a
-transcription error or a hallucinated number fails even when the coordinate
-resolves.
+An `assert` MUST carry a mandatory `value` and an optional `tolerance`. If a
+reference carries an `assert`, resolution MUST read the artifact again and match the
+resolved value within `tolerance`. A mismatch MUST return an `UnresolvedReference`
+with reason `assertion-failed`. Thus a transcription error or a hallucinated number
+fails even when the coordinate resolves.
+
+An `assert` MUST carry no hash. An artifact reference already pins `hash`, and
+resolution compares that pin against the fresh read. A second hash compares the
+reference against itself, thus it adds no evidence.
+
+Only a reference that resolves to one scalar MUST carry an `assert`. An
+`artifact-table` and an `artifact-file` MUST carry none, because the pinned `hash` is
+the only belief that an author can hold about the bytes.
 
 #### Scenario: A correct assertion passes
 
@@ -125,6 +171,16 @@ resolves.
 
 - **WHEN** a reference carries an `assert.value` that differs from the resolved value beyond `tolerance`
 - **THEN** resolution returns an `UnresolvedReference` with reason `assertion-failed`
+
+#### Scenario: An assert with a tolerance but no value is rejected
+
+- **WHEN** a reference carries an `assert` that holds a `tolerance` and no `value`
+- **THEN** validation rejects the reference, because the tolerance has nothing to compare against
+
+#### Scenario: An assert on a whole-file reference is rejected
+
+- **WHEN** an `artifact-table` or an `artifact-file` reference carries an `assert`
+- **THEN** validation rejects the reference
 
 ### Requirement: Mechanical validation rejects fabrication
 
@@ -172,6 +228,11 @@ and it carries an `op` of `ratio`, `delta`, or `pctChange` and an `inputs` array
 Each input MUST be a non-derivation reference that resolves, so a derivation cannot
 nest. Validation MUST resolve each input, run the transform, then match the
 assertion.
+
+Over the inputs `a` and `b`, `ratio` MUST give `a / b` and `delta` MUST give
+`a - b`. `pctChange` MUST give `(a - b) / b` as a fraction and not as a percent.
+Thus a change of one half resolves to 0.5, and an `assert.value` states the
+fraction.
 
 #### Scenario: A materialize-first derived value validates
 

@@ -22,9 +22,10 @@ export interface ArtifactSnapshot {
 }
 
 /**
- * The pinned evidence that a resolver reads. The `artifacts` map is keyed by the run-relative path, the
- * same path that an artifact reference names. `citations` holds each known external id as an `idKind:id`
- * string, for example `pmid:12345`.
+ * The pinned evidence that a resolver reads. The `artifacts` map is keyed by the analysis-relative path,
+ * the same path that an artifact reference names and the same key as `cortex_artifacts.path`. That path
+ * is unique across the analysis, thus one map holds the artifacts of every run without a collision.
+ * `citations` holds each known external id as an `idKind:id` string, for example `pmid:12345`.
  */
 export interface ReportSnapshot {
     artifacts: Record<string, ArtifactSnapshot>;
@@ -55,4 +56,21 @@ export type ResolvedValue =
  */
 export interface ReferenceResolver {
     resolve(reference: Reference, snapshot: ReportSnapshot): Promise<Result<ResolvedValue, UnresolvedReference>>;
+}
+
+/**
+ * Give back each name in `columns` that no row holds, in the order of `columns`.
+ *
+ * A table tolerates a ragged row, thus a column that only some rows hold is present. A column that no
+ * row holds is a name that addresses nothing, and it is the difference between a sparse table and a
+ * column that does not exist.
+ *
+ * A table with no rows gives back nothing. There is no evidence to contradict any name, and an empty
+ * result table is a real scientific outcome that must not fail for the shape of its emptiness.
+ */
+export function columnsHeldByNoRow(rows: Array<Record<string, string | number>>, columns: readonly string[]): string[] {
+    if (rows.length === 0) {
+        return [];
+    }
+    return columns.filter((column) => !rows.some((row) => column in row));
 }

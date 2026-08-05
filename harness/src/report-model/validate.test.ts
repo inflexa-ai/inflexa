@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { Block, ReportDocument } from "../contracts/report-blocks.js";
+import { parseReference, serializeReference, type Reference } from "../contracts/report-reference.js";
 import { createFixtureResolver } from "./fixture-resolver.js";
 import type { ReportSnapshot } from "./reference-resolver.js";
 import { validateReport, type ReportValidation } from "./validate.js";
@@ -10,11 +11,14 @@ const TABLE_B_PATH = "runs/run-1/step-b/output/counts.csv";
 const FLOAT_PATH = "runs/run-1/step-c/output/floats.csv";
 const SPARSE_PATH = "runs/run-1/step-c/output/sparse.csv";
 const FIGURE_PATH = "runs/run-1/step-b/figures/volcano.png";
+// A staged input file, which no run produced. Its reference carries no `run`.
+const INPUT_PATH = "data/inputs/file-1/cohort.csv";
 const TABLE_A_HASH = `sha256:${"a".repeat(64)}`;
 const TABLE_B_HASH = `sha256:${"b".repeat(64)}`;
 const FLOAT_HASH = `sha256:${"e".repeat(64)}`;
 const SPARSE_HASH = `sha256:${"f".repeat(64)}`;
 const FIGURE_HASH = `sha256:${"d".repeat(64)}`;
+const INPUT_HASH = `sha256:${"1".repeat(64)}`;
 const WRONG_HASH = `sha256:${"c".repeat(64)}`;
 
 const resolver = createFixtureResolver();
@@ -60,6 +64,7 @@ const snapshot: ReportSnapshot = {
             ],
         },
         [SPARSE_PATH]: { hash: SPARSE_HASH, rows: sparseRows },
+        [INPUT_PATH]: { hash: INPUT_HASH, rows: [{ samples: 24 }] },
         // An image carries a hash and no rows, thus it pins whole and addresses no cell.
         [FIGURE_PATH]: { hash: FIGURE_HASH },
     },
@@ -670,6 +675,100 @@ describe("validateReport — an artifact-table with a column subset", () => {
         const valid = expectValid(result);
         expect(valid.warnings).toEqual([]);
     });
+
+    it("reports locator-out-of-range for a column that no row holds", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "table",
+                id: "table-invented",
+                title: "Invented",
+                binding: { kind: "artifact-table", run: "run-1", path: TABLE_A_PATH, hash: TABLE_A_HASH, columns: ["gene", "pValueAdjusted"] },
+            }),
+            snapshot,
+            resolver,
+        );
+        const invalid = expectInvalid(result);
+        const failures = invalid.resolutionFailures ?? [];
+        expect(failures[0].blockId).toBe("table-invented");
+        expect(failures[0].failure.reason).toBe("locator-out-of-range");
+        expect(failures[0].failure.detail).toContain("pValueAdjusted");
+    });
+
+    it("validates a column that only some rows hold, because a table tolerates a ragged row", async () => {
+        // The sparse rows share `label`, but only three of the four hold `value`.
+        const result = await validateReport(
+            reportWith({
+                kind: "table",
+                id: "table-ragged",
+                title: "Ragged",
+                binding: { kind: "artifact-table", run: "run-1", path: SPARSE_PATH, hash: SPARSE_HASH, columns: ["label", "value"] },
+            }),
+            snapshot,
+            resolver,
+        );
+        expectValid(result);
+    });
+});
+
+describe("validateReport — a chart encoding", () => {
+    /** Bind a chart to table B, whose rows hold `sample` and `value`, under the given encoding. */
+    function chartWith(id: string, encoding: { x?: string; y?: string; group?: string; value?: string }): Block {
+        return {
+            kind: "chart",
+            id,
+            binding: { kind: "artifact-table", run: "run-1", path: TABLE_B_PATH, hash: TABLE_B_HASH },
+            chartType: "bar",
+            encoding,
+        };
+    }
+
+    it("validates an encoding whose channels name real columns", async () => {
+        expectValid(await validateReport(reportWith(chartWith("chart-ok", { x: "sample", y: "value" })), snapshot, resolver));
+    });
+
+    it("reports locator-out-of-range for a channel that names a column the table does not hold", async () => {
+        const invalid = expectInvalid(await validateReport(reportWith(chartWith("chart-invented", { x: "sample", y: "invented" })), snapshot, resolver));
+        const failures = invalid.resolutionFailures ?? [];
+        expect(failures[0].blockId).toBe("chart-invented");
+        expect(failures[0].failure.reason).toBe("locator-out-of-range");
+        expect(failures[0].failure.detail).toContain("invented");
+    });
+
+    it("names each absent channel, across every encoding slot", async () => {
+        const invalid = expectInvalid(
+            await validateReport(
+                reportWith(chartWith("chart-many", { x: "nope-x", y: "value", group: "nope-group", value: "nope-value" })),
+                snapshot,
+                resolver,
+            ),
+        );
+        const detail = (invalid.resolutionFailures ?? [])[0].failure.detail ?? "";
+        expect(detail).toContain("nope-x");
+        expect(detail).toContain("nope-group");
+        expect(detail).toContain("nope-value");
+    });
+
+    it("reports a channel that the bound column subset leaves out", async () => {
+        // The projection drops `value`, thus the y channel addresses nothing in the resolved table.
+        const invalid = expectInvalid(
+            await validateReport(
+                reportWith({
+                    kind: "chart",
+                    id: "chart-outside-subset",
+                    binding: { kind: "artifact-table", run: "run-1", path: TABLE_B_PATH, hash: TABLE_B_HASH, columns: ["sample"] },
+                    chartType: "bar",
+                    encoding: { x: "sample", y: "value" },
+                }),
+                snapshot,
+                resolver,
+            ),
+        );
+        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+    });
+
+    it("validates an encoding with no channel at all", async () => {
+        expectValid(await validateReport(reportWith(chartWith("chart-bare", {})), snapshot, resolver));
+    });
 });
 
 describe("validateReport — free-numeral warnings", () => {
@@ -691,6 +790,26 @@ describe("validateReport — free-numeral warnings", () => {
         );
         const valid = expectValid(result);
         expect(valid.warnings).toEqual([]);
+    });
+
+    it("gives no warning for the digits inside a gene symbol", async () => {
+        const result = await validateReport(
+            reportWith({ kind: "text", id: "text-symbols", content: { prose: "TP53, CD8, IL6, and the hg38 build agree." } }),
+            snapshot,
+            resolver,
+        );
+        const valid = expectValid(result);
+        expect(valid.warnings).toEqual([]);
+    });
+
+    it("still warns on a free figure that sits beside a symbol", async () => {
+        const result = await validateReport(
+            reportWith({ kind: "text", id: "text-mixed", content: { prose: "TP53 rose 42% across 3 cohorts." } }),
+            snapshot,
+            resolver,
+        );
+        const valid = expectValid(result);
+        expect(valid.warnings.map((warning) => warning.detail)).toEqual(["42%", "3"]);
     });
 });
 
@@ -740,35 +859,49 @@ describe("validateReport — multiple failures", () => {
     });
 });
 
-describe("validateReport — the hash assert", () => {
-    /** Bind a metric to the first cell of table A, under the given assert. */
-    function metricWithAssert(id: string, assertion: { hash?: string; value?: string | number; tolerance?: number }): Block {
-        return {
-            kind: "metric",
-            id,
-            label: "Pinned",
-            value: {
-                kind: "artifact-value",
-                run: "run-1",
-                path: TABLE_A_PATH,
-                hash: TABLE_A_HASH,
-                locator: { column: "log2FoldChange", row: 0 },
-                assert: assertion,
-            },
+describe("validateReport — the pin carries the belief about the bytes", () => {
+    it("rejects an assert that carries a hash, because the pin already compares it", async () => {
+        const document = {
+            title: "R",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [
+                        {
+                            kind: "metric",
+                            id: "m",
+                            label: "Pinned",
+                            value: {
+                                kind: "artifact-value",
+                                run: "run-1",
+                                path: TABLE_A_PATH,
+                                hash: TABLE_A_HASH,
+                                locator: { column: "log2FoldChange", row: 0 },
+                                assert: { hash: TABLE_A_HASH },
+                            },
+                        },
+                    ],
+                },
+            ],
         };
-    }
-
-    it("validates an artifact-value under a hash-only assert that matches", async () => {
-        const result = await validateReport(reportWith(metricWithAssert("metric-hash-ok", { hash: TABLE_A_HASH })), snapshot, resolver);
-        expectValid(result);
+        const invalid = expectInvalid(await validateReport(document, snapshot, resolver));
+        expect(invalid.schemaIssues?.length ?? 0).toBeGreaterThan(0);
     });
 
-    it("reports assertion-failed for a hash-only assert that differs", async () => {
-        const result = await validateReport(reportWith(metricWithAssert("metric-hash-bad", { hash: WRONG_HASH })), snapshot, resolver);
-        const invalid = expectInvalid(result);
-        const failures = invalid.resolutionFailures ?? [];
-        expect(failures[0].blockId).toBe("metric-hash-bad");
-        expect(failures[0].failure.reason).toBe("assertion-failed");
+    it("validates a metric bound to a staged input artifact that carries no run", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "metric",
+                id: "metric-input",
+                label: "Input",
+                value: { kind: "artifact-value", path: INPUT_PATH, hash: INPUT_HASH, locator: { column: "samples", row: 0 } },
+            }),
+            snapshot,
+            resolver,
+        );
+        expectValid(result);
     });
 });
 
@@ -868,6 +1001,29 @@ describe("validateReport — a cell that holds no value", () => {
     it("reports locator-out-of-range for a column that the row does not hold", async () => {
         const invalid = expectInvalid(await validateReport(reportWith(sparseMetric("metric-absent", "absent-cell")), snapshot, resolver));
         expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+    });
+});
+
+describe("the resolver — cross-session resolution", () => {
+    it("resolves a parsed reference to the same value as the original", async () => {
+        const reference: Reference = {
+            kind: "artifact-value",
+            run: "run-1",
+            path: TABLE_A_PATH,
+            hash: TABLE_A_HASH,
+            locator: { column: "log2FoldChange", rowFilter: { column: "gene", op: "eq", value: "TP53" } },
+        };
+        const parsed = parseReference(serializeReference(reference));
+        if (parsed.isErr()) {
+            throw new Error("expected the serialized reference to parse");
+        }
+
+        const fromOriginal = await resolver.resolve(reference, snapshot);
+        const fromParsed = await resolver.resolve(parsed.value, snapshot);
+
+        expect(fromParsed.isOk()).toBe(fromOriginal.isOk());
+        expect(fromParsed._unsafeUnwrap()).toEqual(fromOriginal._unsafeUnwrap());
+        expect(fromParsed._unsafeUnwrap()).toEqual({ type: "scalar", value: 6 });
     });
 });
 
