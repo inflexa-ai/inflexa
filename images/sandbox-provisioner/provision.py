@@ -133,12 +133,20 @@ def resolve(specs: list[str]) -> dict[str, list[str]]:
     req.write_text("\n".join(specs) + "\n")
     out = Path("/tmp/requirements.txt")
     log(f"resolving closure of: {', '.join(specs)}")
-    subprocess.run(
+    proc = subprocess.run(
         ["uv", "pip", "compile", "--python", PYTHON, "--no-header", "--quiet",
          "--generate-hashes", "--index-url", INDEX_URL, "--no-config",
          str(req), "-o", str(out)],
-        check=True,
+        capture_output=True, text=True,
     )
+    if proc.returncode != 0:
+        # Only uv knows the real cause — no route to the index, two constraints in
+        # conflict, or a spec that no version satisfies — so its own message goes to
+        # the user in place of a traceback.
+        raise SystemExit(
+            f"[provision] uv could not resolve {', '.join(specs)} against the index "
+            f"{INDEX_URL} (exit {proc.returncode}). The provisioner must reach that "
+            f"index.\n{proc.stderr.strip() or '(uv wrote nothing to stderr)'}")
     pins: dict[str, list[str]] = {}
     current: str | None = None
     for raw in out.read_text().splitlines():
@@ -209,12 +217,19 @@ def ensure_stored(pin: str, hashes: list[str]) -> tuple[Path, bool]:
     frag.write_text(pin + "".join(f" --hash={h}" for h in hashes) + "\n")
 
     log(f"installing {pin}")
-    subprocess.run(
+    proc = subprocess.run(
         ["uv", "pip", "install", "--python", PYTHON, "--no-deps", "--no-cache",
          "--require-hashes", "--index-url", INDEX_URL, "--no-config",
          "--break-system-packages", "--target", str(staging), "-r", str(frag)],
-        check=True,
+        capture_output=True, text=True,
     )
+    if proc.returncode != 0:
+        # A refused artifact, a hash that does not match, and a build that fails all
+        # arrive here as one exit code. uv's message is what separates them.
+        raise SystemExit(
+            f"[provision] uv could not install {pin} from the index {INDEX_URL} "
+            f"(exit {proc.returncode})."
+            f"\n{proc.stderr.strip() or '(uv wrote nothing to stderr)'}")
 
     digest = tree_hash(staging)[:16]
     final = STORE / f"{canon(name)}-{version}-{digest}"
@@ -279,8 +294,31 @@ def build_farm(farm: Path, store_dirs: list[Path]) -> list[str]:
             f"[provision] refusing to build a farm: store root {LIBS} is not the "
             f"sandbox mount {SANDBOX_MOUNT}; farm links would bake a path the sandbox "
             f"cannot resolve (set SANDBOX_LIB_MOUNT if the sandbox mounts elsewhere)")
-    if farm.exists():
-        shutil.rmtree(farm)
+    # Remove only what this run makes again. The farm's records — lock.json,
+    # meta.json, and the packages.txt inventory — must outlive a run that stops
+    # early: a farm without them loses its requested set, and the harness then
+    # drops the mount with no message. Each rebuilt subtree goes in full, so no
+    # link from an earlier run stays behind.
+    #
+    # The inventory fragment of a removed subtree goes with it. The producer
+    # re-derives a fragment only for a subtree that exists, but it concatenates
+    # every fragment it finds, so a fragment from an earlier run would advertise
+    # packages the farm no longer holds. packages.txt itself stays, because it is
+    # one of the two markers the harness needs, and this run writes it again.
+    #
+    # The prepared caches stay as well. Each numba entry is keyed on its source
+    # file, so an entry for a package this run replaced can never load, and the
+    # entries for the packages that did not change stay usable.
+    rebuilt = ["python", "conda", "r", "r-bulk.lock",
+               *(f"{sub}.packages.txt" for sub in R_SUBTREES)]
+    for name in rebuilt:
+        stale = farm / name
+        if stale.is_symlink():
+            stale.unlink()
+        elif stale.is_dir():
+            shutil.rmtree(stale)
+        elif stale.exists():
+            stale.unlink()
     site = farm / "python" / "site-packages"
     site.mkdir(parents=True)
     # conda is deliberately never farmed: its binaries carry their build prefix
@@ -740,12 +778,22 @@ def _provision(args) -> int:
     if args.r_manifest:
         r_result = provision_r(farm, Path(args.r_manifest))
 
-    # Flip `current` BEFORE warming, so the warm-up runs against the exact path the
-    # sandbox will import from (see the note in warm()); refused under a live sandbox.
-    flip_current(args.farm, force=args.force_repoint)
+    lock = {
+        "requested": requested,
+        "resolved": pins,
+        "hashes": resolved,
+        "store_dirs": [d.name for d in store_dirs],
+        "r": r_result,
+        "collisions": collisions,
+        # Recorded so a cache check can replay exactly what was warmed. numba keys
+        # its cache per type signature, so only the call shapes this script
+        # actually executed are cached; any other shape recompiles.
+        "warm_script": args.warm_script,
+        "warm": {},
+    }
 
-    warm_targets = [m for m in args.warm.split(",") if m]
-    warm_results = warm(farm, warm_targets, args.warm_script) if (warm_targets or args.warm_script) else {}
+    def write_lock() -> None:
+        lock_path.write_text(json.dumps(lock, indent=2) + "\n")
 
     # The same producer the images use, so packages.txt is byte-identical in shape
     # to what list_available_packages already parses.
@@ -765,21 +813,26 @@ def _provision(args) -> int:
         "tracks": tracks,
     }, indent=2) + "\n")
 
-    lock_path.write_text(json.dumps({
-        "requested": requested,
-        "resolved": pins,
-        "hashes": resolved,
-        "store_dirs": [d.name for d in store_dirs],
-        "r": r_result,
-        "collisions": collisions,
-        # Recorded so a cache check can replay exactly what was warmed. numba keys
-        # its cache per type signature, so only the call shapes this script
-        # actually executed are cached; any other shape recompiles.
-        "warm_script": args.warm_script,
-        "warm": warm_results,
-    }, indent=2) + "\n")
-
+    # The farm is complete BEFORE the next step can stop the run. flip_current
+    # refuses under a live sandbox lease, which is a designed outcome, and that
+    # refusal must cost the farm nothing: it keeps its requested set, and a later
+    # run can select it. The mode goes with the records, because the sandbox reads
+    # the farm as a different uid the moment `current` selects it.
+    write_lock()
     subprocess.run(["chmod", "-R", "a+rX", str(farm)], check=True)
+
+    # Flip `current` BEFORE warming, so the warm-up runs against the exact path the
+    # sandbox will import from (see the note in warm()); refused under a live sandbox.
+    flip_current(args.farm, force=args.force_repoint)
+
+    warm_targets = [m for m in args.warm.split(",") if m]
+    if warm_targets or args.warm_script:
+        lock["warm"] = warm(farm, warm_targets, args.warm_script)
+        # The lock is the record of what the caches hold, so the warm results go
+        # into it, and the caches the warm wrote get the mode the sandbox needs.
+        write_lock()
+        subprocess.run(["chmod", "-R", "a+rX", str(farm)], check=True)
+
     log(f"farm '{args.farm}' ready: {len(pins)} distributions")
     return 0
 

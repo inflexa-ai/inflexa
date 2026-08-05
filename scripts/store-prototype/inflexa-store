@@ -146,9 +146,12 @@ cmd_du() {
 
 # Re-hash every store directory and report any that no longer match their address.
 # Offline and read-only: the provisioner only reads the store, and content drift
-# means corruption or tampering, since the store is write-once.
+# means corruption or tampering, because the store is write-once.
+#
+# Only the store root must exist. A root with no store/ directory yet is a normal
+# empty store, and the provisioner reports it as such and exits 0.
 cmd_verify() {
-    [[ -d "$LIB_STORE/store" ]] || die "no store at $LIB_STORE"
+    [[ -d "$LIB_STORE" ]] || die "no store at $LIB_STORE"
     echo "==> verifying store (network off, read-only)"
     "$CTR" run --rm \
         --network none \
@@ -172,8 +175,9 @@ cmd_repair() {
 
 # Remove store directories no farm references (explicit, never automatic). Offline
 # and read-write; the provisioner holds the per-store lock while it collects.
+# Only the store root must exist, for the same reason as `verify`.
 cmd_reclaim() {
-    [[ -d "$LIB_STORE/store" ]] || die "no store at $LIB_STORE"
+    [[ -d "$LIB_STORE" ]] || die "no store at $LIB_STORE"
     echo "==> reclaiming unreferenced store dirs (network off, read-write)"
     "$CTR" run --rm \
         --network none \

@@ -25,6 +25,11 @@ Run with either::
   FarmAssemblyTests.test_build_r_farm_skips_empty_subtree             -> 6.2
   SupplyChainTests.test_reject_off_index                              -> 3.1 (request boundary)
   SupplyChainTests.test_resolve_parses_hashes_and_rejects_off_host    -> 3.1 (resolved output)
+  ProvisionRunTests.test_refused_repoint_keeps_farm_and_requested_set -> 9.10/7.2, 3.4, 4.5
+  ProvisionRunTests.test_rebuild_drops_stale_links_but_keeps_records  -> 4.1/4.4, 4.5
+  ProvisionRunTests.test_warm_runs_through_current_and_reaches_lock   -> 4.6, 5.2/5.4
+  FailureMessageTests.test_failed_resolve_reports_uv_stderr           -> 3.1 (actionable failure)
+  FailureMessageTests.test_failed_install_reports_uv_stderr           -> 3.2 (actionable failure)
   ReclaimTests.test_reclaim_keeps_referenced_drops_orphan            -> 7.3
   ReclaimTests.test_remove_farm_refuses_current                       -> 7.3
 
@@ -46,6 +51,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import shutil
 import sys
@@ -94,6 +100,13 @@ class StoreTestCase(unittest.TestCase):
         # for; a test overrides these before exercising the relevant code path.
         self.compile_text = ""
         self.install_tree: dict[str, str] = {}
+        # What the fake uv reports, so a test can drive the failure paths.
+        self.uv_rc = 0
+        self.uv_stderr = ""
+        # One entry per warm-up child: the PYTHONPATH it was given, and that path
+        # resolved AT THAT MOMENT. The resolution has to happen in the fake,
+        # because it is what proves `current` already selected the farm.
+        self.warm_paths: list[tuple[str, str]] = []
 
         self._orig_run = provision.subprocess.run
         provision.subprocess.run = self._fake_run
@@ -112,18 +125,65 @@ class StoreTestCase(unittest.TestCase):
           ``-o`` path the resolver asked for; the real logic then parses it.
         - ``uv pip install`` -> populate the ``--target`` staging dir with the
           canned install tree, so tree_hash sees real files.
+        - ``inflexa-libs-refresh`` -> write the inventory the real producer would
+          (see ``_fake_refresh``).
+        - the warm-up interpreter -> record its PYTHONPATH and report success.
+
+        ``self.uv_rc`` makes both uv steps fail with ``self.uv_stderr``.
         """
         argv = list(cmd)
         prog = argv[0]
         if prog == "chmod":
-            return SimpleNamespace(returncode=0)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
         if prog == "uv" and "compile" in argv:
+            if self.uv_rc:
+                return SimpleNamespace(returncode=self.uv_rc, stdout="", stderr=self.uv_stderr)
             Path(argv[argv.index("-o") + 1]).write_text(self.compile_text)
-            return SimpleNamespace(returncode=0)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
         if prog == "uv" and "install" in argv:
+            if self.uv_rc:
+                return SimpleNamespace(returncode=self.uv_rc, stdout="", stderr=self.uv_stderr)
             self._write_tree(Path(argv[argv.index("--target") + 1]), self.install_tree)
-            return SimpleNamespace(returncode=0)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if prog.endswith("inflexa-libs-refresh"):
+            self._fake_refresh(Path(kwargs["env"]["INFLEXA_LIB_ROOT"]))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if prog == provision.PYTHON:
+            ppath = (kwargs.get("env") or {}).get("PYTHONPATH", "")
+            self.warm_paths.append((ppath, os.path.realpath(ppath)))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
         raise AssertionError(f"test triggered an unexpected subprocess: {argv!r}")
+
+    @staticmethod
+    def _fake_refresh(root: Path) -> None:
+        """Stand in for ``inflexa-libs-refresh --rederive``.
+
+        Models the two properties of the real producer that the farm's records
+        depend on: it re-derives a fragment only for a subtree that exists, and it
+        concatenates every fragment it finds into packages.txt.
+        """
+        site = root / "python" / "site-packages"
+        if site.is_dir():
+            names = sorted(d.name.split("-")[0] for d in site.iterdir()
+                           if d.name.endswith(".dist-info"))
+            (root / "python.packages.txt").write_text(
+                "## Python (pip)\n" + ", ".join(names) + "\n")
+        for sub in provision.R_SUBTREES:
+            subtree = root / "r" / sub
+            if subtree.is_dir():
+                (root / f"{sub}.packages.txt").write_text(
+                    f"## R ({sub})\n" + ", ".join(sorted(p.name for p in subtree.iterdir())) + "\n")
+        text = "# Available packages in the sandbox environment.\n\n"
+        for frag in sorted(root.glob("*.packages.txt")):
+            text += frag.read_text()
+        (root / "packages.txt").write_text(text)
+
+    @staticmethod
+    def _args(farm: str, specs: list[str] | None = None, **over) -> SimpleNamespace:
+        """The parsed command line ``_provision`` reads, with the parser defaults."""
+        defaults = dict(farm=farm, specs=specs or [], r_manifest=None,
+                        warm="", warm_script=None, force_repoint=False)
+        return SimpleNamespace(**{**defaults, **over})
 
     @staticmethod
     def _write_tree(root: Path, tree: dict[str, str]) -> None:
@@ -354,6 +414,150 @@ class FarmAssemblyTests(StoreTestCase):
         self.assertEqual(os.readlink(farm / "r" / "cran" / "rpkgA"), str(ra))
         self.assertTrue((farm / "r" / "bioconductor" / "rpkgB").is_symlink())
         self.assertFalse((farm / "r" / "github").exists())  # empty subtree skipped
+
+
+class ProvisionRunTests(StoreTestCase):
+    """A whole run of ``_provision``: what the farm keeps, and what it rebuilds.
+
+    The farm's records (lock.json, meta.json, and the packages.txt inventory) are
+    written before the step that can refuse, so a stop between the two never leaves
+    a farm the harness drops without a message.
+    """
+
+    FOO_1 = "foo==1.0 \\\n    --hash=sha256:aaa\n"
+    FOO_1_TREE = {"foo/__init__.py": "x = 1\n",
+                  "foo-1.0.dist-info/RECORD": "foo/__init__.py,,\n"}
+    RECORDS = ("lock.json", "meta.json", "packages.txt", "python.packages.txt")
+
+    def _run(self, farm: str, specs: list[str] | None = None, **over) -> int:
+        """Run a provisioning, with the run's own log kept out of the test output."""
+        with contextlib.redirect_stdout(io.StringIO()):
+            return provision._provision(self._args(farm, specs, **over))
+
+    def test_refused_repoint_keeps_farm_and_requested_set(self):
+        """A refused re-point costs the farm nothing: every record stays, and a
+        later run reads the requested set back and adds to it."""
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+
+        # A sandbox holds the store mounted, and `current` selects another farm, so
+        # the re-point this run asks for is refused.
+        provision.flip_current("other")
+        provision.add_lease("s1")
+
+        farm = provision.FARMS / "demo"
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            provision._provision(self._args("demo", ["foo"]))
+        self.assertIn("refusing to re-point", str(cm.exception))
+
+        # `current` is untouched, and the farm it did NOT select is complete: both
+        # markers libStoreUsable needs, plus the lock that carries the request.
+        self.assertEqual(os.readlink(provision.LIBS / "current"), "farms/other")
+        for record in self.RECORDS:
+            self.assertTrue((farm / record).is_file(), f"{record} did not survive")
+        lock = json.loads((farm / "lock.json").read_text())
+        self.assertEqual(lock["requested"], ["foo"])
+        self.assertEqual(lock["resolved"], ["foo==1.0"])
+        self.assertEqual(json.loads((farm / "meta.json").read_text())["tracks"], ["python"])
+        self.assertTrue((farm / "python" / "site-packages" / "foo").is_symlink())
+
+        # The request survived, so the next run adds to it instead of reporting that
+        # there is nothing to do (exit 2), which is what a lost lock produces.
+        provision.drop_lease("s1")
+        self.compile_text = "bar==2.0 \\\n    --hash=sha256:bbb\n" + self.FOO_1
+        self.install_tree = {"bar/__init__.py": "y = 2\n",
+                             "bar-2.0.dist-info/RECORD": "bar/__init__.py,,\n"}
+        self.assertEqual(self._run("demo", ["bar"]), 0)
+        self.assertEqual(json.loads((farm / "lock.json").read_text())["requested"],
+                         ["bar", "foo"])
+        self.assertEqual(os.readlink(provision.LIBS / "current"), "farms/demo")
+
+    def test_rebuild_drops_stale_links_but_keeps_records(self):
+        """A farm holds this run's closure and nothing else: a link, an R subtree,
+        and an inventory fragment from an earlier run all go."""
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        farm = provision.FARMS / "demo"
+        self.assertEqual(self._run("demo", ["foo"]), 0)
+
+        site = farm / "python" / "site-packages"
+        first_target = os.readlink(site / "foo")
+        self.assertTrue((site / "foo-1.0.dist-info").is_symlink())
+
+        # An R track from an earlier run, with the fragment that run derived from it.
+        # This run passes no R manifest, so both belong to the previous farm only.
+        (farm / "r" / "cran").mkdir(parents=True)
+        (farm / "r" / "cran" / "oldRpkg").symlink_to(
+            str(provision.STORE / "oldrpkg-1.0-000000000000dead"))
+        (farm / "cran.packages.txt").write_text("## R (CRAN)\noldRpkg\n")
+        (farm / "r-bulk.lock").write_text("{}\n")
+
+        # The same spec resolves to a new version, which is the real shape of a
+        # stale link: the 1.0 metadata directory has no place in the 2.0 closure.
+        self.compile_text = "foo==2.0 \\\n    --hash=sha256:ccc\n"
+        self.install_tree = {"foo/__init__.py": "x = 2\n",
+                             "foo-2.0.dist-info/RECORD": "foo/__init__.py,,\n"}
+        self.assertEqual(self._run("demo"), 0)
+
+        self.assertTrue((site / "foo-2.0.dist-info").is_symlink())
+        self.assertFalse((site / "foo-1.0.dist-info").is_symlink())
+        self.assertNotEqual(os.readlink(site / "foo"), first_target)
+        self.assertFalse((farm / "r").exists())
+        self.assertFalse((farm / "r-bulk.lock").exists())
+        self.assertFalse((farm / "cran.packages.txt").exists())
+        # The inventory must not advertise a package the farm no longer holds.
+        self.assertNotIn("oldRpkg", (farm / "packages.txt").read_text())
+
+        # The records stayed, and they describe this run.
+        for record in self.RECORDS:
+            self.assertTrue((farm / record).is_file(), f"{record} did not survive")
+        lock = json.loads((farm / "lock.json").read_text())
+        self.assertEqual(lock["requested"], ["foo"])
+        self.assertEqual(lock["resolved"], ["foo==2.0"])
+
+    def test_warm_runs_through_current_and_reaches_lock(self):
+        """The warm-up still runs after the flip and through `current`, and the lock
+        still carries its results — neither is lost to the split write."""
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        farm = provision.FARMS / "demo"
+        self.assertEqual(self._run("demo", ["foo"], warm="foo"), 0)
+
+        self.assertEqual(len(self.warm_paths), 1)
+        given, resolved = self.warm_paths[0]
+        # Through `current`, never the farm's own path: the JIT cache key holds the
+        # source path the sandbox will import from.
+        self.assertEqual(given, str(provision.LIBS / "current" / "python" / "site-packages"))
+        # And `current` already selected this farm when the child ran, which is what
+        # makes that path resolve to the farm.
+        self.assertEqual(resolved, os.path.realpath(farm / "python" / "site-packages"))
+
+        lock = json.loads((farm / "lock.json").read_text())
+        self.assertTrue(lock["warm"]["foo"].startswith("ok"), lock["warm"])
+        self.assertEqual(lock["warm"]["_numba_cache_entries"], "0")
+
+
+class FailureMessageTests(StoreTestCase):
+    """A tool that fails reports what failed, with the tool's own message."""
+
+    def test_failed_resolve_reports_uv_stderr(self):
+        self.uv_rc = 2
+        self.uv_stderr = "error: Failed to fetch https://pypi.org/simple/numpy/"
+        with self.assertRaises(SystemExit) as cm:
+            provision.resolve(["numpy"])
+        msg = str(cm.exception)
+        self.assertIn("[provision] uv could not resolve numpy", msg)
+        self.assertIn("exit 2", msg)
+        self.assertIn(self.uv_stderr, msg)  # uv names the real cause
+
+    def test_failed_install_reports_uv_stderr(self):
+        self.uv_rc = 1
+        self.uv_stderr = "error: Hash mismatch for foo==1.0"
+        with self.assertRaises(SystemExit) as cm:
+            provision.ensure_stored("foo==1.0", ["sha256:aaa"])
+        msg = str(cm.exception)
+        self.assertIn("[provision] uv could not install foo==1.0", msg)
+        self.assertIn(self.uv_stderr, msg)
 
 
 class SupplyChainTests(StoreTestCase):
