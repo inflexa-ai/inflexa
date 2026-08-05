@@ -355,12 +355,18 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     </DialogShowcase>
                     {/* The Switch analysis picker is the ONE surface that reports a whole-analysis total,
                         because comparing analyses is the only question such a total answers. The figure
-                        claims the row's inline `hint` (right-aligned, muted, same line as the title) —
-                        these rows carry no `meta`, which would take the right edge for itself. An
-                        analysis with nothing recorded carries NO hint rather than a zeroed one, which is
-                        why the second row is bare. */}
+                        rides the row's inline `hint` (muted, same line as the title, after it) — these
+                        rows carry no `meta`, which suppresses a hint entirely. An analysis with nothing
+                        recorded carries NO figure rather than a zeroed one, which is why the third row
+                        shows a date alone.
+
+                        Rows GROUP by anchor: `category` is the anchor id and `categoryLabel` is the
+                        folder printed as the header. Both `rna-seq` rows below are the collision this
+                        exists for — one name, two folders, indistinguishable without the header. The
+                        date is absolute (a record listing), and the cursor row's `description` carries
+                        the id and slug, the only unambiguous handle a row has. */}
                     <text fg={theme().fgMuted}>
-                        SelectDialog — the picker dialog composing panel + filter + FixedList (Switch analysis: figure as an inline hint):
+                        SelectDialog — the picker dialog composing panel + filter + FixedList (Switch analysis: grouped by anchor):
                     </text>
                     <DialogShowcase>
                         <SelectDialog
@@ -368,16 +374,71 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             items={[
                                 {
                                     value: "1",
-                                    title: "rna-seq-2026",
-                                    hint: formatTokenFigure({ inputTokens: 2_140_000, outputTokens: 96_300 }),
-                                    description: "differential expression",
+                                    title: "rna-seq",
+                                    category: "anchor-a",
+                                    categoryLabel: "~/repos/inflexa3/cli",
+                                    hint: `7/24/26, 4:13 PM ${GLYPHS.middot} ${formatTokenFigure({ inputTokens: 2_140_000, outputTokens: 96_300 })}`,
+                                    description: `019f9442-baec-7000-8e9b-97ba98572818 ${GLYPHS.middot} rna-seq ${GLYPHS.middot} created 7/24/2026, 4:13:49 PM`,
                                 },
-                                { value: "2", title: "scrna-atlas" },
+                                {
+                                    value: "2",
+                                    title: "rna-seq",
+                                    category: "anchor-b",
+                                    categoryLabel: "~/repos/cliosstest",
+                                    hint: `7/22/26, 2:28 PM ${GLYPHS.middot} ${formatTokenFigure({ inputTokens: 84_100 })}`,
+                                },
+                                { value: "3", title: "scrna-atlas", category: "anchor-b", categoryLabel: "~/repos/cliosstest", hint: "7/19/26, 6:49 PM" },
                             ]}
                             emptyText="No analyses"
                             onSelect={noop}
                             onCancel={noop}
                         />
+                    </DialogShowcase>
+                    {/* The flat inputs list: multi-select removal over the WHOLE registered set, which is
+                        why it is not the file picker — an input outside the browse root has no row there.
+                        Titles are absolute (the stored path is anchor-relative, so two anchors collide),
+                        which makes them long, which is why the facts take a `meta` line instead of a hint. */}
+                    <text fg={theme().fgMuted}>SelectDialog in multi mode — the flat inputs list (absolute titles, facts on a meta line):</text>
+                    <DialogShowcase>
+                        <SelectDialog
+                            title="Remove inputs"
+                            mode="multi"
+                            items={[
+                                { value: "1", title: "~/repos/inflexa2/cli/data/", meta: `directory ${GLYPHS.middot} 7/24/26, 4:13 PM` },
+                                {
+                                    value: "2",
+                                    title: "~/repos/inflexa2/cli/counts.tsv",
+                                    meta: `file ${GLYPHS.middot} 12.4 MB ${GLYPHS.middot} 7/24/26, 4:13 PM`,
+                                },
+                                { value: "3", title: "/Volumes/scratch/gse12345/matrix.mtx", meta: `file ${GLYPHS.middot} not on disk` },
+                            ]}
+                            emptyText="No inputs to remove"
+                            onConfirm={noop}
+                            onCancel={noop}
+                        />
+                    </DialogShowcase>
+                    {/* An entry the process cannot READ. `tone` names the meaning and the theme picks the
+                        color, so the mark holds on all ten palettes. It is advisory: the row still toggles,
+                        because mode bits do not see an ACL or a macOS TCC rule — staging is where a read is
+                        actually attempted and refused. Shown on a list rather than in the live picker
+                        below, which lists a real cwd where every file happens to be readable. */}
+                    <text fg={theme().fgMuted}>File picker rows — permissions/size/date as a hint, and the unreadable tone:</text>
+                    <DialogShowcase>
+                        <box height={4} width="100%">
+                            <FixedList
+                                items={[
+                                    { value: "d", title: "src/", hint: `drwxr-xr-x ${GLYPHS.middot} 8/2/26, 4:05 PM` },
+                                    { value: "f", title: "counts.tsv", hint: `rw-r--r-- ${GLYPHS.middot} 12.4 MB ${GLYPHS.middot} 8/2/26, 4:05 PM` },
+                                    {
+                                        value: "u",
+                                        title: "locked.bam",
+                                        hint: `rw------- ${GLYPHS.middot} 4.2 GB ${GLYPHS.middot} 7/19/26, 6:49 PM`,
+                                        tone: "warning",
+                                    },
+                                ]}
+                                emptyText="Empty folder"
+                            />
+                        </box>
                     </DialogShowcase>
                     <text fg={theme().fgMuted}>FilePicker — multi-select browser on DynamicList (lists the live cwd, inert keys):</text>
                     <DialogShowcase>
