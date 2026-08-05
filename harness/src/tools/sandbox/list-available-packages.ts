@@ -235,9 +235,12 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
         }),
         // `queryPackages` returns on `names` before it reads another field, thus
         // the presence check comes first. An empty array is not a presence check.
+        // A blank query counts as absent, because `queryPackages` trims the
+        // needle and applies no filter when nothing is left.
         describeCall: ({ names, query, language }) => {
             if (names !== undefined && names.length > 0) return names.join(", ");
-            if (query !== undefined) return language === undefined ? query : `${query} (${language})`;
+            const needle = query?.trim();
+            if (needle !== undefined && needle !== "") return language === undefined ? needle : `${needle} (${language})`;
             if (language !== undefined) return `${language} packages`;
             return "full package list";
         },

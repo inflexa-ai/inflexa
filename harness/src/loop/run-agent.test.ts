@@ -968,7 +968,9 @@ describe("runAgent — tool-finished outcome", () => {
 
 /** How long one call reported on its `tool-finished` event. */
 function finishedDurationMs(events: readonly Extract<EmitEvent, { type: "tool-started" | "tool-finished" }>[], toolUseId: string): number {
-    const finished = events.find((e) => e.type === "tool-finished" && e.toolUseId === toolUseId) as { durationMs?: number } | undefined;
+    // The predicate narrows to the union member itself rather than to a cast
+    // shape. Thus a `durationMs` dropped from `EmitEvent` fails here.
+    const finished = events.find((e): e is Extract<EmitEvent, { type: "tool-finished" }> => e.type === "tool-finished" && e.toolUseId === toolUseId);
     expect(finished).toBeDefined();
     expect(typeof finished!.durationMs).toBe("number");
     return finished!.durationMs!;
@@ -1034,5 +1036,21 @@ describe("runAgent — per-call duration", () => {
 
         expect(events[1]).toMatchObject({ type: "tool-finished", outcome: "error" });
         expect(finishedDurationMs(events, "tu-1")).toBeGreaterThanOrEqual(0);
+    });
+
+    it("reports a duration on the truncated-round path too", async () => {
+        // The truncated round is the second dispatch path. It must report timing
+        // through the same call as the normal one, or the two disagree.
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-A", "echo", { label: "A", ms: SLOW_MS }), toolUseBlock("tu-cut", "echo", { label: "cut" })], "max_tokens"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([echoTool()], provider);
+
+        expect(finishedDurationMs(events, "tu-A")).toBeGreaterThanOrEqual(SLOW_MS - 10);
+        // The trailing call is refused rather than dispatched, thus it settles
+        // outside the round and reports no finished event of its own.
+        expect(events.some((e) => e.type === "tool-finished" && e.toolUseId === "tu-cut")).toBe(false);
     });
 });

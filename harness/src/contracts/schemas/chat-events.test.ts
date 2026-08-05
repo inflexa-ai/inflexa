@@ -62,6 +62,22 @@ describe("ToolFinishedEventSchema", () => {
         expect(ToolFinishedEventSchema.safeParse({ type: "tool-finished", toolUseId: "tu-1", name: "write_file", source }).success).toBe(false);
     });
 
+    it("carries an optional duration, and omits the key when it is absent", () => {
+        // `z.object` STRIPS an undeclared key. Thus a schema that loses the
+        // `durationMs` line drops the field silently, and a fixture that never
+        // sets it passes either way. The round-trip is what pins the declaration.
+        const event: ToolFinished = { type: "tool-finished", toolUseId: "tu-1", name: "write_file", outcome: "ok", source };
+
+        expect(ToolFinishedEventSchema.parse({ ...event, durationMs: 42 }).durationMs).toBe(42);
+        expect("durationMs" in ToolFinishedEventSchema.parse(event)).toBe(false);
+    });
+
+    it("rejects a non-numeric duration", () => {
+        const event = { type: "tool-finished", toolUseId: "tu-1", name: "write_file", outcome: "ok", durationMs: "42", source };
+
+        expect(ToolFinishedEventSchema.safeParse(event).success).toBe(false);
+    });
+
     it("rejects the isError boolean it replaced", () => {
         const legacy = { type: "tool-finished", toolUseId: "tu-1", name: "write_file", isError: false, source };
 
