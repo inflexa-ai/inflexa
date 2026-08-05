@@ -30,7 +30,7 @@ import { driveForceReprofile, profileWorkInFlight } from "./hooks/profile_parity
 import { absTime, absTimeShort, idTail, shortRunName } from "./hooks/sidebar_live.ts";
 import { restoreActivityPanel } from "./hooks/activity_panel.ts";
 import { chatStatus } from "./hooks/status.ts";
-import { keybindLabel } from "./keymap.ts";
+import { chordLabel, keybindLabel, type Chord } from "./keymap.ts";
 import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
@@ -628,6 +628,14 @@ function NewAnalysisInputsDialog(props: { name: Str256 }): JSX.Element {
 }
 
 /**
+ * Copy the cursor row's analysis id. Ctrl-modified, NOT a bare `y`: the switcher is a single-mode
+ * picker whose filter input holds focus for the whole life of the dialog, so a bare printable would be
+ * swallowed as typed text. Ctrl and never Alt — terminals deliver Alt/Option unreliably, and macOS
+ * composes Option into a character. One constant so the binding and its footer label cannot drift.
+ */
+const COPY_ANALYSIS_ID: Chord = { key: "y", ctrl: true };
+
+/**
  * The analysis switcher — and the ONE place the interface reports a whole-analysis total.
  *
  * Every other surface reports the entity it names or the open working context; this is where analyses
@@ -685,7 +693,7 @@ function SwitchAnalysisDialog(): JSX.Element {
     useDialogBindings(() => ({
         bindings: [
             {
-                chord: { key: "y", ctrl: true },
+                chord: COPY_ANALYSIS_ID,
                 run: () => {
                     const a = cursor();
                     if (!a) return;
@@ -703,6 +711,8 @@ function SwitchAnalysisDialog(): JSX.Element {
             placeholder={`Search analyses${GLYPHS.ellipsis}`}
             items={items}
             emptyText="No analyses yet — use ctrl+k → New analysis to create one"
+            // Derived from the chord itself, so the footer can never advertise a key the binding lost.
+            footerHint={`${chordLabel(COPY_ANALYSIS_ID)} copy id`}
             onCursorChange={setCursor}
             onCancel={() => ws.closeDialog()}
             onSelect={(a: Analysis) => {
