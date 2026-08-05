@@ -39,6 +39,13 @@ export type SelectDialogProps<T> = {
     onSelect?: (value: T) => void;
     /** Multi mode: the batch was confirmed (enter). The caller closes the dialog. */
     onConfirm?: (values: T[]) => void;
+    /**
+     * One extra footer segment, for a key the HOST binds rather than the dialog (the analysis switcher's
+     * copy-id chord). The dialog owns its footer and stays domain-agnostic, so a host binding would
+     * otherwise be reachable but unadvertised — discoverable only through the WhichKey overlay, which a
+     * user has to already suspect something is there to open.
+     */
+    footerHint?: string;
     /** Wired to every non-commit close (esc, click-outside, ctrl+c) via the dialog funnel. */
     onCancel: () => void;
 };
@@ -49,10 +56,14 @@ export type SelectDialogProps<T> = {
  * input and hands its value down as the list's `query`; the list owns cursor, selection, and
  * submit.
  *
- * Multi mode runs a minimal INSERT/NORMAL split, because space must type into a focused filter
- * yet toggle rows otherwise (the bare-printable-key rule): esc while the input is focused BLURS
- * it (a close-guard veto — dialogs never bind esc themselves) unlocking space/`i`; esc again
- * cancels. Single mode has no such split — enter and arrows don't collide with typing.
+ * Multi mode runs the app's INSERT/NORMAL split, because space must type into a focused filter
+ * yet toggle rows otherwise (the bare-printable-key rule). It MOUNTS IN NORMAL, as FilePicker
+ * does: `i` enters the filter, esc while focused BLURS back (a close-guard veto — dialogs never
+ * bind esc themselves), and esc in NORMAL cancels. The footer leads with the mode word, because
+ * the same keystroke does different things in each state and nothing else on screen says which.
+ *
+ * Single mode has no split and mounts focused — enter and arrows don't collide with typing, and
+ * its only verb is "find one, press enter".
  */
 export function SelectDialog<T>(props: SelectDialogProps<T>): JSX.Element {
     const dialog = useDialogEntry();
@@ -80,20 +91,29 @@ export function SelectDialog<T>(props: SelectDialogProps<T>): JSX.Element {
         bindings: [{ chord: FILTER_KEY, run: () => inputRef?.focus(), desc: "Filter", group: "List" }],
     }));
 
+    // The footer names only what is SPECIFIC to this surface. Cursor movement is app-wide vocabulary —
+    // arrows, ctrl+p/n, page keys, and in NORMAL the vim set (j/k, gg, G) — carried by every navigable
+    // surface and documented live by the WhichKey overlay. Spelling it here costs the row's width to
+    // restate what the user already knows, and it reads as though THIS list navigates differently.
+    //
+    // The mode WORD does earn its place in multi mode: the same keystroke does different things in each
+    // state, and nothing else on screen says which state is live.
     function footer(): string {
         const sep = ` ${GLYPHS.middot} `;
-        const move = `${chordLabel(KEYS.up)}/${chordLabel(KEYS.down)} move`;
+        const extra = props.footerHint ? [props.footerHint] : [];
         if (mode() === "single") {
-            return [move, `${chordLabel(KEYS.enter)} select`, `${chordLabel(KEYS.escape)} cancel`].join(sep);
+            return [`${chordLabel(KEYS.enter)} select`, `${chordLabel(KEYS.escape)} cancel`, ...extra].join(sep);
         }
         const count = `${selCount()} selected`;
         return inputFocused()
-            ? [move, `${chordLabel(KEYS.enter)} confirm`, `${chordLabel(KEYS.escape)} list keys`, count].join(sep)
+            ? ["INSERT", `${chordLabel(KEYS.enter)} confirm`, `${chordLabel(KEYS.escape)} normal`, ...extra, count].join(sep)
             : [
+                  "NORMAL",
                   `${chordLabel(KEYS.space)} toggle`,
                   `${chordLabel(KEYS.enter)} confirm`,
                   `${chordLabel(FILTER_KEY)} filter`,
                   `${chordLabel(KEYS.escape)} cancel`,
+                  ...extra,
                   count,
               ].join(sep);
     }
@@ -102,12 +122,19 @@ export function SelectDialog<T>(props: SelectDialogProps<T>): JSX.Element {
         <DialogPanel title={props.title} size="lg" padY footer={footer()}>
             <TextInput
                 chrome="bare"
-                /* Showcased exhibits must not grab focus at mount — see DialogEntryHandle.inert. */
-                autoFocus={!(dialog?.inert ?? false)}
+                /* Single mode opens in INSERT — its only verb is "find one and press enter", so the filter
+                   is where the hands belong. Multi mode opens in NORMAL, matching FilePicker: its verbs are
+                   space and enter, and mounting focused means the very first space types a character
+                   instead of selecting a row, with no visible cue that a mode even exists.
+                   Showcased exhibits must not grab focus at mount either — see DialogEntryHandle.inert. */
+                autoFocus={mode() === "single" && !(dialog?.inert ?? false)}
                 placeholder={props.placeholder ?? `Type to filter${GLYPHS.ellipsis}`}
                 onRef={(r: InputRenderable) => {
                     inputRef = r;
-                    dialog?.setInitialFocus(r);
+                    // Only claim the entry's initial focus when this dialog means to open focused: the host
+                    // applies it on push AND on reveal, so registering it would re-focus a NORMAL-mode
+                    // dialog every time a stacked dialog above it closes.
+                    if (mode() === "single") dialog?.setInitialFocus(r);
                 }}
                 onFocusChange={setInputFocused}
                 onInput={setQuery}

@@ -128,6 +128,32 @@ describe("the flat inputs list", () => {
         }
     });
 
+    test("opens in NORMAL, so the first space toggles instead of typing", async () => {
+        // The state a user actually meets. Mounting focused made space type a character into the
+        // filter with nothing on screen explaining why the row would not select.
+        const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
+        try {
+            await settle(setup);
+            openRemoveInputs(ws());
+            let frame = await settle(setup);
+            expect(frame).toContain("NORMAL");
+
+            await setup.mockInput.pressKeys([" "]);
+            frame = await settle(setup);
+            expect(frame).toContain("1 selected");
+
+            // `i` returns to filtering, and the mode word follows.
+            await setup.mockInput.pressKeys(["i"]);
+            frame = await settle(setup);
+            expect(frame).toContain("INSERT");
+            await setup.mockInput.pressKeys([" "]);
+            frame = await settle(setup);
+            expect(frame).toContain("1 selected"); // the space typed, it did not toggle a second row
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
     test("two inputs leave in one pass", async () => {
         const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
         try {
@@ -135,9 +161,7 @@ describe("the flat inputs list", () => {
             openRemoveInputs(ws());
             await settle(setup);
 
-            // Multi mode: esc blurs the filter to NORMAL, then space toggles and enter confirms.
-            setup.mockInput.pressEscape();
-            await settle(setup);
+            // Multi mode mounts in NORMAL (the FilePicker convention), so space toggles straight away.
             await setup.mockInput.pressKeys([" "]);
             setup.mockInput.pressArrow("down");
             await setup.mockInput.pressKeys([" "]);
@@ -162,8 +186,6 @@ describe("the flat inputs list", () => {
             expect(frame).toContain("not on disk");
 
             // The far input sorts last (creation order), so walk to it and drop it.
-            setup.mockInput.pressEscape();
-            await settle(setup);
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressArrow("down");
             await setup.mockInput.pressKeys([" "]);

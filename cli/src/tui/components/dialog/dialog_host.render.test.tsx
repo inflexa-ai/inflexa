@@ -397,16 +397,19 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
     });
 
     test("multi SelectDialog: space types while filtering, esc unlocks list keys, space toggles, enter confirms", async () => {
-        // The INSERT/NORMAL-lite seam: with the filter focused, space MUST reach the input as a
-        // character (bare-printable rule); the first esc is consumed by the close-guard veto
-        // (blur, dialog stays open), unlocking space-to-toggle.
+        // The INSERT/NORMAL seam: multi mode MOUNTS in NORMAL (the FilePicker convention), `i` enters
+        // the filter, and with it focused space MUST reach the input as a character (bare-printable
+        // rule); esc is then consumed by the close-guard veto (blur, dialog stays open), unlocking
+        // space-to-toggle again.
         const items = [
             { value: "a", title: "alpha" },
             { value: "b", title: "beta" },
             { value: "c", title: "gamma" },
         ];
         const confirmed: string[][] = [];
-        const setup = await testRender(() => <Harness />, { width: 80, height: 20 });
+        // Wider than the other cases: the multi footer leads with its mode word, and at 80 columns the
+        // trailing "N selected" wraps mid-phrase, which no assertion about the COUNT should trip over.
+        const setup = await testRender(() => <Harness />, { width: 110, height: 20 });
         const settle = makeSettle(setup);
         const frame = () => setup.captureCharFrame();
         try {
@@ -425,6 +428,11 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
             await settle();
             expect(frame()).toContain(`${GLYPHS.circle} gamma`); // seed renders filled
             expect(frame()).toContain("1 selected");
+
+            expect(frame()).toContain("NORMAL");
+            await setup.mockInput.pressKeys(["i"]); // NORMAL → INSERT
+            await settle();
+            expect(frame()).toContain("INSERT");
 
             await setup.mockInput.typeText("al");
             setup.mockInput.pressKey(" "); // INSERT: types into the filter, must NOT toggle

@@ -372,7 +372,9 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
         const sel = selected().size;
         const count = sel === 0 ? "none selected" : `${sel} selected`;
         if (review()) return ["REVIEW", `${chordLabel(KEYS.enter)} remove`, `${chordLabel(KEYS.escape)} back`, count].join(sep);
-        if (inputFocused()) return ["INSERT", `${chordLabel(KEYS.up)}/${chordLabel(KEYS.down)} move`, `${chordLabel(KEYS.escape)} normal`, count].join(sep);
+        // No movement keys: the cursor vocabulary is app-wide and the same on every navigable surface —
+        // see the footer rationale in `select_dialog.tsx`.
+        if (inputFocused()) return ["INSERT", `${chordLabel(KEYS.escape)} normal`, count].join(sep);
         return [
             "NORMAL",
             `${chordLabel(KEYS.space)} toggle`,
