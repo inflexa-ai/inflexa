@@ -284,11 +284,16 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
      * in what they count. An error tool result is otherwise invisible to every sink —
      * it is not a thrown failure, so nothing reports it and the loop simply feeds it
      * back — and a run that ends badly is usually a run whose tool calls were failing.
+     *
+     * `details` and `durations` are positionally aligned with `calls`. `dispatchTools`
+     * measures a duration around the call itself, because this sink emits every finish
+     * event only after the whole round settles.
      */
     const settleRound = async (
         calls: readonly ToolCallPart[],
         results: readonly ToolResultPart[],
         details: readonly (ToolCallDetail | undefined)[],
+        durations: readonly (number | undefined)[],
     ): Promise<string[]> => {
         const errored: string[] = [];
         for (let idx = 0; idx < calls.length; idx++) {
@@ -302,7 +307,15 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
                 toolErrorCount++;
                 errored.push(tu.toolName);
             }
-            await emit({ type: "tool-finished", source, toolUseId: tu.toolCallId, name: tu.toolName, outcome, ...detailField(details[idx]) });
+            await emit({
+                type: "tool-finished",
+                source,
+                toolUseId: tu.toolCallId,
+                name: tu.toolName,
+                outcome,
+                ...detailField(details[idx]),
+                ...durationField(durations[idx]),
+            });
         }
         return errored;
     };
@@ -361,8 +374,8 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             for (const [idx, tu] of earlier.entries()) {
                 await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(earlierDetails[idx]) });
             }
-            const results = await dispatchTools(earlier, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool);
-            const errored = await settleRound(earlier, results, earlierDetails);
+            const { results, durations } = await dispatchTools(earlier, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool);
+            const errored = await settleRound(earlier, results, earlierDetails, durations);
             results.push(errorResult(trailing, TRUNCATED_TOOL_USE_ERROR));
             // The trailing call was never dispatched, but it reaches the model as an error
             // result like any other — so it counts, or `toolErrors` reports a cleaner run
@@ -391,8 +404,8 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         for (const [idx, tu] of toolCalls.entries()) {
             await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(details[idx]) });
         }
-        const results = await dispatchTools(toolCalls, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool);
-        const errored = await settleRound(toolCalls, results, details);
+        const { results, durations } = await dispatchTools(toolCalls, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool);
+        const errored = await settleRound(toolCalls, results, details, durations);
         if (errored.length > 0) log.debug("tool results returned errors", { iteration: i, tools: errored });
         messages.push({ role: "tool", content: results });
         if (hasDenial(results)) return stopOnDenial(i);
@@ -513,6 +526,16 @@ function markLastLoopAssistant(messages: LoopMessage[], initialCount: number): v
     }
 }
 
+/**
+ * Dispatch one round of tool calls, and measure the time of each call.
+ *
+ * `results` and `durations` are positionally aligned with `toolUses`.
+ *
+ * Each measurement brackets the same unit that the loop awaits for that call. For a
+ * step-mode call that unit is `runStep`, thus the figure includes the durable-step
+ * wrapper. The wrapper is part of what the call cost, and a cached replay of a step
+ * is genuinely fast. A bracket inside the step would report a body that did not run.
+ */
 async function dispatchTools(
     toolUses: readonly ToolCallPart[],
     toolsById: Map<string, Tool>,
@@ -520,8 +543,9 @@ async function dispatchTools(
     isFatalLoopError: (err: unknown) => boolean,
     runStep: RunStep,
     toolStepName: (toolName: string, toolUseId: string) => string,
-): Promise<ToolResultPart[]> {
+): Promise<{ results: ToolResultPart[]; durations: number[] }> {
     const results = new Array<ToolResultPart>(toolUses.length);
+    const durations = new Array<number>(toolUses.length);
     const stepTools: { tu: ToolCallPart; idx: number }[] = [];
     const workflowTools: { tu: ToolCallPart; idx: number }[] = [];
     const inlineTools: { tu: ToolCallPart; idx: number }[] = [];
@@ -534,21 +558,32 @@ async function dispatchTools(
     }
 
     await Promise.all(
-        stepTools.map(({ tu, idx }) =>
-            runStep(toolStepName(tu.toolName, tu.toolCallId), () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError)).then((r) => {
+        stepTools.map(({ tu, idx }) => {
+            const startedAt = performance.now();
+            return runStep(toolStepName(tu.toolName, tu.toolCallId), () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError)).then((r) => {
+                durations[idx] = elapsedMs(startedAt);
                 results[idx] = r;
-            }),
-        ),
+            });
+        }),
     );
 
     for (const { tu, idx } of workflowTools) {
+        const startedAt = performance.now();
         results[idx] = await dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError);
+        durations[idx] = elapsedMs(startedAt);
     }
     for (const { tu, idx } of inlineTools) {
+        const startedAt = performance.now();
         results[idx] = await dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError);
+        durations[idx] = elapsedMs(startedAt);
     }
 
-    return results;
+    return { results, durations };
+}
+
+/** Whole milliseconds since `startedAt`, on the monotonic clock that took that mark. */
+function elapsedMs(startedAt: number): number {
+    return Math.round(performance.now() - startedAt);
 }
 
 async function dispatchTool(
@@ -664,6 +699,17 @@ function outcomeOf(result: ToolResultPart): ToolOutcome {
  */
 function detailField(detail: ToolCallDetail | undefined): { detail?: ToolCallDetail } {
     return detail === undefined ? {} : { detail };
+}
+
+/**
+ * The optional `durationMs` field, present only for a call that the loop measured.
+ *
+ * Spread rather than assigned, for the same reason as {@link detailField}: an
+ * unmeasured call emits no `durationMs` key. A zero here is a real measurement of a
+ * call that took under half a millisecond, and it is never a stand-in for no figure.
+ */
+function durationField(durationMs: number | undefined): { durationMs?: number } {
+    return durationMs === undefined ? {} : { durationMs };
 }
 
 function hasDenial(results: readonly ToolResultPart[]): boolean {

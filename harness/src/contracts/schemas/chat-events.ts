@@ -37,6 +37,8 @@ export const ToolFinishedEventSchema = z.object({
     name: z.string(),
     outcome: ToolOutcomeSchema,
     detail: z.string().optional(),
+    /** Optional and absent when unmeasured — never a zero in place of a figure. */
+    durationMs: z.number().optional(),
     source: EventSourceSchema,
 });
 

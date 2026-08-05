@@ -92,6 +92,15 @@ export interface ToolFinishedEvent {
     outcome: ToolOutcome;
     /** The same detail the matching `tool-started` carried. */
     detail?: ToolCallDetail;
+    /**
+     * The time in milliseconds around this call's own dispatch. Absent — never
+     * zero — when the harness took no measurement.
+     *
+     * A host must read it as `event.durationMs ?? (its own bracket)`. The bracket
+     * of a host spans the whole round, because the loop emits every start before
+     * it dispatches anything. Thus the fallback is correct only for one call.
+     */
+    durationMs?: number;
     source: EventSource;
 }
 

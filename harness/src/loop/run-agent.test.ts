@@ -71,6 +71,7 @@ function echoTool(): Tool {
             label: z.string(),
             ms: z.number().default(0),
         }),
+        describeCall: "none",
         execute: async ({ label, ms }) => {
             if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
             return ok({ label });
@@ -205,6 +206,7 @@ describe("runAgent — workflow tools run unwrapped, in order", () => {
             description: "A workflow-backed tool.",
             executionMode: "workflow",
             inputSchema: z.object({ label: z.string() }),
+            describeCall: "none",
             execute: async ({ label }) => ok({ label }),
         });
     }
@@ -260,6 +262,7 @@ describe("runAgent — tool-error boundary", () => {
             id: "boom",
             description: "Always throws.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => {
                 throw new Error("kaboom");
             },
@@ -279,6 +282,7 @@ describe("runAgent — tool-error boundary", () => {
             id: "ok_tool",
             description: "Returns an ok Result.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => ok({ answer: 42 }),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "ok_tool", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
@@ -298,6 +302,7 @@ describe("runAgent — tool-error boundary", () => {
             id: "binary_tool",
             description: "Returns bytes read off disk.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => ok({ header: `MAGIC${NUL}rest`, lines: [`a${NUL}b`] }),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "binary_tool", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
@@ -315,6 +320,7 @@ describe("runAgent — tool-error boundary", () => {
             id: "noisy_tool",
             description: "Throws with stderr quoted verbatim.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => {
                 throw new Error(`segfault${NUL} core dumped`);
             },
@@ -337,6 +343,7 @@ describe("runAgent — tool-error boundary", () => {
             id: "err_tool",
             description: "Returns an err Result.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => err({ error: "upstream down", retryable: true } as const),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "err_tool", {})], "tool_use"), makeMessage([textBlock("recovered")], "end_turn")]);
@@ -357,6 +364,7 @@ describe("runAgent — tool-error boundary", () => {
             id: "strict",
             description: "Needs a number.",
             inputSchema: z.object({ n: z.number() }),
+            describeCall: "none",
             execute: async () => {
                 executed = true;
                 return ok({ ok: true });
@@ -382,6 +390,7 @@ describe("runAgent — tool-error boundary", () => {
             description: "Throws a fatal workflow error.",
             executionMode: "workflow",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => {
                 throw fatal;
             },
@@ -406,6 +415,7 @@ describe("runAgent — tool-error boundary", () => {
             id: "abort",
             description: "Aborts.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => {
                 throw aborted;
             },
@@ -425,6 +435,7 @@ describe("runAgent — max_tokens recovery", () => {
             id: "writer",
             description: "Writes a payload.",
             inputSchema: z.object({ body: z.string() }),
+            describeCall: "none",
             execute: async () => {
                 executed = true;
                 return ok({ ok: true });
@@ -541,6 +552,7 @@ describe("runAgent — aborted terminal path", () => {
             id: "boom",
             description: "Honors the abort signal by throwing.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => {
                 throw new Error("aborted mid-tool");
             },
@@ -656,6 +668,7 @@ function guardedTool(): Tool {
         id: "guarded",
         description: "Requests approval before acting.",
         inputSchema: z.object({}),
+        describeCall: "none",
         execute: async (_input, ctx) => {
             await ctx.ask({ title: "Guarded action", command: "delete everything" });
             return ok({ ran: true });
@@ -686,6 +699,7 @@ describe("runAgent — approval denial", () => {
             id: "plain",
             description: "An ordinary tool.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => ok({ b: true }),
         });
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-A", "guarded", {}), toolUseBlock("tu-B", "plain", {})], "tool_use")]);
@@ -852,6 +866,7 @@ describe("runAgent — tool call detail", () => {
 
         expect(detail).not.toContain("\n");
         expect(detail).toHaveLength(120);
+        expect(detail.endsWith("…")).toBe(true);
     });
 
     it("dispatches normally when the hook throws, emitting no detail", async () => {
@@ -931,6 +946,7 @@ describe("runAgent — tool-finished outcome", () => {
             id: "strict",
             description: "Requires a numeric count.",
             inputSchema: z.object({ count: z.number() }),
+            describeCall: "none",
             execute: async () => {
                 executed = true;
                 return ok({});
@@ -945,5 +961,78 @@ describe("runAgent — tool-finished outcome", () => {
 
         expect(events[1]).toMatchObject({ type: "tool-finished", outcome: "error" });
         expect(executed).toBe(false);
+    });
+});
+
+// ── Per-call duration (see the harness-agent-loop spec) ─────────────
+
+/** How long one call reported on its `tool-finished` event. */
+function finishedDurationMs(events: readonly Extract<EmitEvent, { type: "tool-started" | "tool-finished" }>[], toolUseId: string): number {
+    const finished = events.find((e) => e.type === "tool-finished" && e.toolUseId === toolUseId) as { durationMs?: number } | undefined;
+    expect(finished).toBeDefined();
+    expect(typeof finished!.durationMs).toBe("number");
+    return finished!.durationMs!;
+}
+
+/** The delay of the slow call in each duration case, in milliseconds. */
+const SLOW_MS = 60;
+
+/** A workflow-mode echo. The loop dispatches these one after another, not concurrently. */
+function workflowEchoTool(): Tool {
+    return defineTool({
+        id: "workflow_echo",
+        description: "Echo the label back from a workflow-backed tool.",
+        executionMode: "workflow",
+        inputSchema: z.object({ label: z.string(), ms: z.number().default(0) }),
+        describeCall: "none",
+        execute: async ({ label, ms }) => {
+            if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+            return ok({ label });
+        },
+    });
+}
+
+describe("runAgent — per-call duration", () => {
+    it("reports the own duration of each concurrent step-mode call", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-slow", "echo", { label: "slow", ms: SLOW_MS }), toolUseBlock("tu-fast", "echo", { label: "fast" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([echoTool()], provider);
+
+        // The round takes as long as the slow call. Thus one shared round figure
+        // would charge the fast call for the slow one.
+        expect(finishedDurationMs(events, "tu-slow")).toBeGreaterThanOrEqual(SLOW_MS - 10);
+        expect(finishedDurationMs(events, "tu-fast")).toBeLessThan(SLOW_MS - 20);
+    });
+
+    it("does not charge a sequential workflow-mode call for its predecessor", async () => {
+        const provider = scriptedProvider([
+            makeMessage(
+                [toolUseBlock("tu-first", "workflow_echo", { label: "first", ms: SLOW_MS }), toolUseBlock("tu-second", "workflow_echo", { label: "second" })],
+                "tool_use",
+            ),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([workflowEchoTool()], provider);
+
+        // The second call dispatches only after the first call completes. A figure
+        // that started at the start of the round would include the first delay.
+        expect(finishedDurationMs(events, "tu-first")).toBeGreaterThanOrEqual(SLOW_MS - 10);
+        expect(finishedDurationMs(events, "tu-second")).toBeLessThan(SLOW_MS - 20);
+    });
+
+    it("reports a duration for a call that errors", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "read", { path: "a.csv" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([describedRead(true)], provider);
+
+        expect(events[1]).toMatchObject({ type: "tool-finished", outcome: "error" });
+        expect(finishedDurationMs(events, "tu-1")).toBeGreaterThanOrEqual(0);
     });
 });
