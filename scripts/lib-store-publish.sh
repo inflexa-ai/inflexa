@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Publish a built library store to S3 — immutable versions, and advance `latest`
 # for this arch (build-floor gated; acceptance is non-gating and moves nothing):
-#   1. Upload each packed track tarball write-once to <version>/linux-<arch>/<track>.tar.zst.
+#   1. Upload each packed track tarball write-once to <version>/linux-<arch>/<track>.tar.zst,
+#      together with the two store files no tarball carries — the assembled
+#      packages.txt and meta.json. The harness mounts a `current/` only when both
+#      are present, so a puller downloads them instead of deriving them.
 #   2. If the arch's full track set built, write the per-arch manifest (the
 #      lockfile the CLI pulls) to <version>/linux-<arch>/manifest.json and
 #      record the candidate pointer — version plus the top image ref — at
@@ -31,25 +34,38 @@ source "$SCRIPT_DIR/lib-store-common.sh"
 
 ARCH_DIR="linux-$ARCH"
 
-# Scratch dir for the intermediate manifest.json / manifest.published.json — keep
-# them off CWD so a stray repo-root file is never clobbered.
+# Scratch dir for the generated meta.json and the intermediate manifest.json /
+# manifest.published.json — keep them off CWD so a stray repo-root file is never
+# clobbered.
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 # Immutable: a version is never rewritten; skip an object that already exists.
+put_once() {
+  local src="$1" key="$VERSION/$ARCH_DIR/$2"
+  if aws s3api head-object --bucket "$S3_BUCKET" --key "$key" >/dev/null 2>&1; then
+    echo "immutable: s3://$S3_BUCKET/$key already exists — skipping"
+  else
+    aws s3 cp "$src" "s3://$S3_BUCKET/$key"
+  fi
+}
+
 while read -r track; do
   [ -n "$track" ] || continue
-  KEY="$VERSION/$ARCH_DIR/$track.tar.zst"
-  if aws s3api head-object --bucket "$S3_BUCKET" --key "$KEY" >/dev/null 2>&1; then
-    echo "immutable: s3://$S3_BUCKET/$KEY already exists — skipping"
-  else
-    aws s3 cp "$DIST/$track.tar.zst" "s3://$S3_BUCKET/$KEY"
-  fi
+  put_once "$DIST/$track.tar.zst" "$track.tar.zst"
 done < "$DIST/tracks.txt"
 
 # Best-effort: publish the manifest for exactly the tracks that packed (the floor
 # already dropped empty tracks). Only guard the R triple's all-or-none invariant.
 lib_store_assert_r_triple "$(tr '\n' ' ' < "$DIST/tracks.txt")" || exit 1
+
+# The two files the harness requires before it mounts a store: packages.txt (what
+# list_available_packages reads) and meta.json (the version the store carries).
+# Neither is in a track tarball, so both travel as their own write-once objects
+# beside them.
+"$SCRIPT_DIR/lib-store-write-meta.sh" "$ARCH" "$VERSION" "$DIST" > "$WORK/meta.json"
+put_once "$DIST/packages.txt" packages.txt
+put_once "$WORK/meta.json" meta.json
 
 # manifest.json is immutable too, not just the tarballs. Nothing pins upstream package
 # versions, so a same-version retry (VERSION = date+sha) can rebuild different bytes: the

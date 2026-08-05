@@ -5,7 +5,7 @@
 # staging dir, emit <out>/<track>.tar.zst plus <out>/<track>.tar.zst.sha256
 # (the digest the manifest pins). Tracks that did not build are skipped, so a
 # partial build packs whatever succeeded. Writes <out>/tracks.txt listing the
-# packed tracks.
+# packed tracks, and <out>/packages.txt assembled from their fragments.
 #
 # Usage: lib-store-pack.sh <staging_dir> <out_dir> [zstd_level]
 
@@ -15,8 +15,9 @@ STAGING="${1:?usage: lib-store-pack.sh <staging_dir> <out_dir> [zstd_level]}"
 OUT="${2:?usage: lib-store-pack.sh <staging_dir> <out_dir> [zstd_level]}"
 ZSTD_LEVEL="${3:-3}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib-store-common.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-store-common.sh"
+source "$SCRIPT_DIR/lib-store-common.sh"
 
 [ -d "$STAGING" ] || { echo "ERROR: staging dir not found: $STAGING" >&2; exit 1; }
 mkdir -p "$OUT"
@@ -42,4 +43,10 @@ fi
 
 # shellcheck disable=SC2086 # packed is an intentional word list, one per line
 printf '%s\n' $packed > "$OUT/tracks.txt"
+
+# The assembled packages.txt spans tracks, so no per-track tarball can carry it.
+# It travels beside them as its own object.
+"$SCRIPT_DIR/lib-store-write-packages.sh" "$STAGING" "$packed" > "$OUT/packages.txt"
+
 echo "Packed tracks:$packed"
+echo "assembled $OUT/packages.txt ($(wc -l < "$OUT/packages.txt" | tr -d ' ') lines)"
