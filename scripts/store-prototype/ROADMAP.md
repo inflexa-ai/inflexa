@@ -308,9 +308,10 @@ Retention gets a reclamation *operation* here; the *policy* waits. The lock is w
 regardless; whether the analysis record keeps it is a Phase 4 choice. Per-analysis
 farms and the Kubernetes storage class are non-goals here (§8).
 
-**One question, deferred to U10.** Build the store in a new workflow (the honest test),
-or emit it from the existing `lib-store.yml` build (cheaper)? Decide at U10. The
-publish target is decided (2026-08-05): GHCR through ORAS, not S3. See Phase 4.
+**The U10 questions are decided (2026-08-05).** The store builds in a new, dedicated
+workflow, not in `lib-store.yml`. The honest test builds the store with the
+Provisioner, and Phase 3 compares both artifacts. The publish target is GHCR
+through ORAS, not S3. See Phase 4.
 
 **A live run on 2026-08-05, with podman on macOS, on linux/arm64.** The provisioner
 image builds, and the store that it makes loads in a real sandbox. These parts passed:
@@ -542,8 +543,9 @@ Make these decisions early. They gate the work.
    to it? The additive path is safer. It keeps a working fallback.
 2. **Storage class.** Which Kubernetes storage class does the managed service use?
    This gates Phase 5. It does not gate the CLI channel.
-3. **Per-analysis or per-installation store.** One `current` pointer gives one
-   active farm per installation. A per-analysis store needs a per-sandbox mount.
+3. **Per-analysis or per-installation store — decided (2026-08-05).** The store
+   is per-installation. One `current` pointer gives one active farm. A
+   per-analysis store waits for the per-sandbox mount work.
 4. **Retention.** How long does the store keep a package that no current farm uses?
    An old analysis may need it again.
 5. **Version choice — decided in shape.** The lock file pins the version, for

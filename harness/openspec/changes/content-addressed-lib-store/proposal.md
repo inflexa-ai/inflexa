@@ -39,7 +39,7 @@ Out of scope, deferred to later changes: per-sandbox farms and the Kubernetes cl
 ## Impact
 
 - `images/`: a new provisioner Dockerfile, built from the same digest-pinned base as `sandbox-base` so the compiled extensions match the runtime ABI. `sandbox-base/sandbox-entrypoint.sh` gains the cache-seeding step, which runs before the workload in every transport mode.
-- `.github/workflows/lib-store.yml`: the build pushes the store to GHCR as an OCI artifact, one for each architecture. Whether that push lives in this workflow or a new one is an open task-level decision.
+- `.github/workflows/`: a new, dedicated store-build workflow builds the provisioner image, builds the store with it, and pushes the artifact to GHCR, one for each architecture (decided 2026-08-05). `lib-store.yml` does not change.
 - `openspec/specs/lib-store/spec.md` and `openspec/specs/lib-store-build/spec.md`: delta specs.
 - `src/sandbox/`: no change. The seam already exists and is exercised by the prototype.
 - Agent-facing copy in `src/tools/sandbox/list-available-packages.ts:209` and `src/prompts/sandbox-standards.ts:94` states that installation is impossible. Both become inaccurate and are corrected here, even though the tool that performs an install arrives in a later change.

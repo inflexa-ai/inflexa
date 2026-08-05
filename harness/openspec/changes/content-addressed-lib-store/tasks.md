@@ -80,4 +80,4 @@
 
 - [ ] 10.1 Push the store to GHCR as an OCI artifact with ORAS, one artifact for each architecture, one layer for each track
 - [ ] 10.2 Refuse a same-version publish whose content differs, and fail the build loudly
-- [ ] 10.3 Decide the workflow that builds and pushes the store: a new workflow, or the existing `lib-store.yml` build
+- [ ] 10.3 Add the dedicated store-build workflow: build the provisioner image, build the store with it, and push to GHCR. Decided 2026-08-05: a new workflow, and `lib-store.yml` does not change
