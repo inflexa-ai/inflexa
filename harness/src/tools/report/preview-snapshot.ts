@@ -82,6 +82,7 @@ export function createPreviewSnapshotTool(state: PreviewSnapshotToolState): Tool
                 .optional()
                 .describe("Optional extra wait in ms after the theme-ready event (e.g., for chart paint). Capped at 30s."),
         }),
+        describeCall: "none",
         execute: async (input): Promise<Result<PreviewSnapshotOutput, ToolError>> => {
             let url = state.urlCell.url;
             const expiresAt = state.urlCell.expiresAt;

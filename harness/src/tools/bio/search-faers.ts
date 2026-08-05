@@ -29,6 +29,7 @@ export const searchFaersTool = defineTool({
             ),
         serious: z.boolean().default(false).describe("When true, count only reports flagged serious (death, hospitalization, life-threatening, disabling)."),
     }),
+    describeCall: "none",
     execute: async ({ drugName, limit = 15, serious = false }) => {
         const result = await getFaersByDrug(drugName, { limit, serious });
         return ok({

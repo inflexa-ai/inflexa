@@ -37,6 +37,7 @@ function echoTool(): Tool {
         id: "echo",
         description: "Echo the label back.",
         inputSchema: z.object({ label: z.string() }),
+        describeCall: "none",
         execute: async ({ label }) => ok({ label }),
     });
 }
@@ -46,6 +47,7 @@ function submitTool(cell: { value: string | null }): Tool {
         id: "submit",
         description: "Record the final answer.",
         inputSchema: z.object({ answer: z.string() }),
+        describeCall: "none",
         execute: async ({ answer }) => {
             cell.value = answer;
             return ok({ accepted: true });
@@ -165,6 +167,7 @@ describe("runAgent — level follows the outcome class", () => {
             id: "risky",
             description: "Needs approval.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => {
                 throw new AskRejectedError("nope");
             },

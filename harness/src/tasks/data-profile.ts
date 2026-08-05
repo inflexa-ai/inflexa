@@ -386,6 +386,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 description:
                     "Submit the profiling results. Call this tool once after completing " + "all profiling work — it validates and records your findings.",
                 inputSchema: ProfilerOutputSchema,
+                describeCall: "none",
                 execute: async (input) => {
                     capturedProfile = input;
                     return ok({ status: "accepted" });

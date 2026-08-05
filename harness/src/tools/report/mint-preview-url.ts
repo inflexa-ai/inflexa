@@ -44,6 +44,7 @@ export function createMintPreviewUrlTool(state: MintPreviewUrlToolState): Tool {
         inputSchema: z.object({
             version: z.number().optional().describe("Version to mint for. Defaults to the iteration's current version."),
         }),
+        describeCall: "none",
         execute: async (input): Promise<Result<MintPreviewUrlOutput, ToolError>> => {
             const version = input.version ?? state.currentVersion;
             const result = await state.previews.mintPreviewAccess(state.resourceId, state.previewId);

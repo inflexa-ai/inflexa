@@ -26,6 +26,7 @@ export const searchArxivTool = defineTool({
             .describe('Optional arXiv category filters (e.g., ["cs.LG", "math.OC"]). ' + "Combined with the query using AND."),
         limit: z.number().int().min(1).max(20).default(10).describe("Maximum results (1–20, default 10)."),
     }),
+    describeCall: "none",
     execute: async ({ query, categories, limit }, context): Promise<Result<SearchArxivOutput, ToolError>> => {
         const result = await source.search({ query, ...(categories === undefined ? {} : { categories }), limit }, context.signal);
         if (result.status !== "ok") return ok({ success: false as const, error: result.detail, papers: [] });

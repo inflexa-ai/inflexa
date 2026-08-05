@@ -17,6 +17,7 @@ const hooklessTool: Tool = defineTool({
     id: "list_files",
     description: "List files.",
     inputSchema: z.object({ dir: z.string() }),
+    describeCall: "none",
     execute: async () => ok({}),
 });
 

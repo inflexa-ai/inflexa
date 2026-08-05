@@ -84,6 +84,7 @@ export function createSkillTools(deps: SkillToolsDeps) {
             query: z.string().min(1).describe("Keywords to match (e.g. 'PyDESeq2 contrast syntax')."),
             topK: z.number().int().min(1).max(MAX_TOP_K).optional().describe(`Max results to return. Defaults to ${DEFAULT_TOP_K}.`),
         }),
+        describeCall: "none",
         execute: async ({ query, topK }): Promise<Result<SkillSearchOutput, ToolError>> => {
             if (allowed.size === 0) {
                 return ok({ status: "no_skills" as const });
@@ -146,6 +147,7 @@ export function createSkillTools(deps: SkillToolsDeps) {
             skill: z.string().min(1).describe("Skill name (one of your declared skills)."),
             path: z.string().min(1).describe("File path within the skill, e.g. 'SKILL.md' or 'references/pydeseq2-api.md'."),
         }),
+        describeCall: "none",
         execute: async ({ skill, path }): Promise<Result<SkillReadOutput, ToolError>> => {
             if (!allowed.has(skill)) {
                 return ok({ status: "skill_not_declared" as const, skill });

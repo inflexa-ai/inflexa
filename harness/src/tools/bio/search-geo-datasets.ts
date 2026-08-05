@@ -74,6 +74,7 @@ export const searchGeoDatasetsTool = defineTool({
             .default(10)
             .describe("Max datasets to return (default 10, max 50). totalFound reports the true match count regardless."),
     }),
+    describeCall: "none",
     execute: async ({ query, organism, datasetType = "gse", limit = 10 }) => {
         let searchQuery = query;
         // Escape backslashes first, then quotes, so a `\` in the organism value

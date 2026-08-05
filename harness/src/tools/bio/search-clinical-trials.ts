@@ -50,6 +50,7 @@ export const searchClinicalTrialsTool = defineTool({
                     "per trial.",
             ),
     }),
+    describeCall: "none",
     execute: async ({ query, phase, status, limit = 10, includeSummaries = false }) => {
         const result = await searchTrials(query, { phase, status, limit });
         const trials = includeSummaries

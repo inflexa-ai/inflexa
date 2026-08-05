@@ -44,6 +44,7 @@ const resolveDetail = createDetailResolver([
         id: "submit_profile",
         description: "Submit the profiling results. Declares no hook.",
         inputSchema: z.object({}),
+        describeCall: "none",
         execute: async () => ok({ status: "accepted" }),
     }),
 ]);

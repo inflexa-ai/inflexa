@@ -150,6 +150,7 @@ export const targetSafetyTool = defineTool({
         "means no CURATED liability, not that none exists. Both are valid no-data — do not retry. Read `perSource` and each row's `opentargetsNote`: a " +
         "ChEMBL or UniProt identifier absent from the panel cannot be resolved to an Ensembl id, so its Open Targets half is skipped rather than empty.",
     inputSchema,
+    describeCall: "none",
     execute: async ({ identifiers, identifierType, sources, filterOrgan, minSeverity, liabilityLimit }) => {
         const selected = sources ?? [...SOURCES];
         const wantPanel = selected.includes("panel");

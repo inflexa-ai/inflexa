@@ -586,6 +586,10 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
             "The store is provisioned by the host and is NOT frozen: datasets can be added through the host's own provisioning path, and whatever is added shows up on a later call. " +
             "So before you report a gap as permanent, check whether any tool you hold reaches that provisioning path — offer that route if one exists, and call the gap permanent only when none does.",
         inputSchema: ListAvailableRefsInputSchema,
+        // `execute` resolves `path ?? category`, and it ignores `category` when
+        // `path` is present. `query` filters the result of that choice, thus it
+        // names the call only when neither of the two other fields does.
+        describeCall: ({ path, category, query }) => path ?? category ?? query ?? "full reference store",
         execute: async ({ path, category, query, limit }) => {
             // `category` is shorthand for a top-level path; an explicit `path` wins.
             const requestedInput = path ?? category;

@@ -59,6 +59,7 @@ export function createSubmitReportTool(state: SubmitReportToolState): Tool {
                         "Leave empty when the report shipped cleanly.",
                 ),
         }),
+        describeCall: "none",
         execute: async (input) => {
             const problems: string[] = [];
 

@@ -44,6 +44,7 @@ describe("activityForTool", () => {
             id: "hookless_probe",
             description: "Declares no hook, so the fallback is what it exercises.",
             inputSchema: z.object({ dir: z.string() }),
+            describeCall: "none",
             execute: async () => ok({}),
         }),
     ]);

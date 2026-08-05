@@ -160,6 +160,7 @@ function buildSubmitTool(holder: Map<string, SubmittedFileDescription>, knownPat
             "remaining}: accepted=true means every file now has metadata — STOP. " +
             "Otherwise drop the unknownPaths and describe the remaining files.",
         inputSchema: SubmitFileMetadataInputSchema,
+        describeCall: "none",
         execute: async (input) => {
             const unknownPaths: string[] = [];
             for (const entry of input.files) {

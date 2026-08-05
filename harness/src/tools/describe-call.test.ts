@@ -12,13 +12,20 @@ import { normalizeDetail } from "../loop/tool-detail.js";
 import { createExecuteAnalysisTool } from "./execute-analysis.js";
 import { createPubMedTool } from "./bio/pubmed.js";
 import { searchGeneTool } from "./bio/search-gene.js";
+import { showUserTool } from "./display/show-user.js";
 import { createUpdateWorkingMemoryTool } from "./memory/update-working-memory.js";
+import { createGeneratePlanTool } from "./research/generate-plan.js";
+import { createInspectDataProfileTool } from "./research/inspect-data-profile.js";
 import { createInspectRunTool } from "./research/inspect-run.js";
+import { createListAvailablePackagesTool } from "./sandbox/list-available-packages.js";
+import { createListAvailableRefsTool } from "./sandbox/list-available-refs.js";
 import { createEditFileTool } from "./workspace/edit-file.js";
 import { createExecuteCommandTool } from "./workspace/execute-command.js";
 import { createGrepTool } from "./workspace/grep.js";
 import { createListFilesTool } from "./workspace/list-files.js";
 import { createReadFileTool } from "./workspace/read-file.js";
+import { showFileTool } from "./workspace/show-file.js";
+import { createShowPlanTool } from "./workspace/show-plan.js";
 import { createWorkspaceSearchTool } from "./workspace/workspace-search.js";
 import { createWriteFileTool } from "./workspace/write-file.js";
 import type { Tool } from "./define-tool.js";
@@ -118,6 +125,72 @@ describe("describeCall — conversation roster", () => {
 
         expect(describeCall(tool, { mode: "plan", planId: "plan-42" })).toBe("plan plan-42");
         expect(describeCall(tool, { mode: "adhoc", request: "compare cluster 3 against cluster 5" })).toBe("ad hoc: compare cluster 3 against cluster 5");
+    });
+
+    it("inspect_data_profile names the scope, and the page of the file records", () => {
+        const tool = createInspectDataProfileTool(unused);
+
+        // Both fields are defaulted inside `execute`, so the call that names none
+        // is the common one. A hook without the defaults describes it as nothing.
+        expect(describeCall(tool, {})).toBe("overview");
+        expect(describeCall(tool, { scope: "files" })).toBe("files (page 1)");
+        expect(describeCall(tool, { scope: "files", page: 3 })).toBe("files (page 3)");
+        // `page` acts on the file records only, the same as in `execute`.
+        expect(describeCall(tool, { page: 3 })).toBe("overview");
+    });
+
+    it("generate_plan names the research question", () => {
+        const tool = createGeneratePlanTool(unused);
+
+        expect(describeCall(tool, { researchQuestion: "which genes drive resistance in cluster 3" })).toBe("which genes drive resistance in cluster 3");
+    });
+
+    it("list_available_refs names what it inspects, never the filter over it", () => {
+        const tool = createListAvailableRefsTool(unused);
+
+        expect(describeCall(tool, {})).toBe("full reference store");
+        expect(describeCall(tool, { path: "managed/collectri" })).toBe("managed/collectri");
+        expect(describeCall(tool, { category: "msigdb" })).toBe("msigdb");
+        expect(describeCall(tool, { query: "regulon" })).toBe("regulon");
+        // `execute` resolves `path ?? category`, thus the path wins over the category.
+        expect(describeCall(tool, { path: "managed/collectri", category: "msigdb" })).toBe("managed/collectri");
+        // `query` narrows the entries of the named subtree; it does not replace it.
+        expect(describeCall(tool, { category: "msigdb", query: "hallmark" })).toBe("msigdb");
+    });
+
+    it("list_available_packages names the presence check before any filter", () => {
+        const tool = createListAvailablePackagesTool(unused);
+
+        expect(describeCall(tool, {})).toBe("full package list");
+        expect(describeCall(tool, { names: ["Seurat", "scanpy"] })).toBe("Seurat, scanpy");
+        expect(describeCall(tool, { query: "seurat" })).toBe("seurat");
+        expect(describeCall(tool, { language: "python" })).toBe("python packages");
+        expect(describeCall(tool, { query: "umap", language: "r" })).toBe("umap (r)");
+        // `queryPackages` returns on `names` before it reads `query` or `language`.
+        expect(describeCall(tool, { names: ["Seurat"], query: "umap", language: "r" })).toBe("Seurat");
+        // An empty array is not a presence check, and `execute` lists the store.
+        expect(describeCall(tool, { names: [], language: "r" })).toBe("r packages");
+    });
+
+    it("show_plan names the plan", () => {
+        const tool = createShowPlanTool(unused);
+
+        expect(describeCall(tool, { planId: "pln-1a2b3c4d", title: "Revised plan" })).toBe("pln-1a2b3c4d");
+    });
+
+    it("show_file names the one file, or counts the group", () => {
+        expect(describeCall(showFileTool, { files: [{ path: "runs/run-abc/step-1/figures/volcano.png" }] })).toBe("runs/run-abc/step-1/figures/volcano.png");
+        expect(
+            describeCall(showFileTool, {
+                title: "QC figures",
+                files: [{ path: "figures/a.png" }, { path: "figures/b.png" }, { path: "figures/c.png" }],
+            }),
+        ).toBe("3 files");
+    });
+
+    it("show_user names the kind, plus the title when the call carries one", () => {
+        expect(describeCall(showUserTool, { kind: "markdown", body: "## Results" })).toBe("markdown");
+        expect(describeCall(showUserTool, { kind: "echart", title: "PCA by batch", spec: {} })).toBe("echart: PCA by batch");
     });
 });
 

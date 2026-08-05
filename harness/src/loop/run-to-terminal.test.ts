@@ -18,6 +18,7 @@ function submitTool(cell: { value: string | null }): Tool {
         id: "submit",
         description: "Record the final answer.",
         inputSchema: z.object({ answer: z.string() }),
+        describeCall: "none",
         execute: async ({ answer }) => {
             cell.value = answer;
             return ok({ accepted: true });

@@ -163,6 +163,7 @@ export const genePreclinicalProfileTool = defineTool({
         "SPARSE OUTPUT IS VALID NO-DATA, not an error — do not retry. A null humanEnsemblId means the symbol did not resolve; a null mouseMarkerSymbol " +
         "with no phenotype terms means the gene has not been IMPC-phenotyped, which is common.",
     inputSchema,
+    describeCall: "none",
     execute: async ({ geneSymbol, include, species, minRank, tissueLimit, phenotypeLimit }) => {
         const halves = include ?? ["expression", "knockout"];
         const wantExpression = halves.includes("expression");

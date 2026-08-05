@@ -182,6 +182,7 @@ export function createDrugGeneInteractionsTool(deps: { drugbankApiKey: string; l
             "not be reached (a missing DRUGBANK_API_KEY lands here — tell the user and proceed with DGIdb). A `found: false` entry means the identifier " +
             "is not in DGIdb at all, usually a non-HUGO symbol or a brand name. Neither is worth retrying unchanged.",
         inputSchema,
+        describeCall: "none",
         execute: async (input) => {
             const inputs = typeof input.query === "string" ? [input.query] : input.query;
             const selected = input.sources ?? (["dgidb"] as Source[]);
