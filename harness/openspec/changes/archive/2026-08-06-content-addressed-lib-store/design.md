@@ -74,7 +74,7 @@ The baked image and the store can coexist indefinitely, and probably should: bak
 
 ## Open Questions
 
-- Does the store replace the baked image, or add to it? This design permits either and does not decide it.
+- Does the store replace the baked image, or add to it? Decided (2026-08-05): the store adds to the image. The roadmap records it, and the baked path stays as the fallback.
 - Which storage class does the managed service use? It decides whether many pods can share one store, and it gates the Kubernetes change. It does not gate this change or the CLI channel (decoupled, 2026-08-05).
 - How long does a store keep a package that no current farm references?
 - Should the lock file be part of the provenance record for the analysis? It is the only artifact that makes the environment reproducible after the fact.

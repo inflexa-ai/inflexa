@@ -82,6 +82,19 @@ When two distributions provide the same top-level name, the provisioner SHALL cr
 
 A farm SHALL expose only the closure of its own analysis.
 
+A farm SHALL publish atomically, with its records. The provisioner SHALL
+assemble a new farm and its records in a staging path that no consumer
+resolves. It SHALL swap the staging farm into place in one step. After any
+stop or crash, the farm path SHALL hold either the previous complete farm or
+the new complete farm, each with its records. A repair pass SHALL clear the
+staging debris at the start of the next run.
+
+#### Scenario: A stopped run does not destroy the records of a farm
+
+- **GIVEN** a farm with its records
+- **WHEN** a re-provisioning run stops at any point
+- **THEN** the farm path holds a complete farm with its records, old or new
+
 #### Scenario: Links resolve inside the sandbox
 
 - **WHEN** a farm is assembled

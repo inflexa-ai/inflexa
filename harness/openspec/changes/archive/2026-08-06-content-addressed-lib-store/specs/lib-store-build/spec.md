@@ -22,8 +22,11 @@ The content-addressed form SHALL carry the same `packages.txt`, produced by the 
 
 The build SHALL publish the content-addressed store to GHCR as an OCI artifact,
 through an ORAS push. It SHALL push one artifact for each architecture, with one
-layer for each track. The OCI manifest SHALL carry the sha256 digest of each
-layer. A
+layer for each track. A track layer SHALL hold the store directories of that
+track's packages, as a tar that keeps symlinks. One more layer SHALL hold the
+farms, the `current` pointer, and the empty mount points. Extraction of all the
+layers SHALL reassemble the store root exactly. The OCI manifest SHALL carry the
+sha256 digest of each layer. A
 version tag SHALL be immutable in content: the build SHALL refuse to publish a
 version again with different content, rather than move the tag. A `latest`
 pointer SHALL be a tag move only. The artifact SHALL be pullable anonymously,
