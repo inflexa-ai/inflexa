@@ -132,9 +132,52 @@ def modules_for(dist: str) -> list[str]:
     return mods
 
 
+# --- farm-backed store detection --------------------------------------------
+
+def find_store_dir(store_root: Path) -> Path | None:
+    """Return the content-addressed ``store/`` directory that backs a farm, or None.
+
+    A farm is a directory of symbolic links whose targets live in a sibling
+    ``store/`` directory. The root can be ``current`` (a symlink to a farm) or a
+    farm path itself. Resolve the root, then walk up until a ``store/`` directory
+    appears beside it. A baked tree holds real package directories and no such
+    sibling, so it returns None."""
+    try:
+        real = store_root.resolve()
+    except OSError:
+        return None
+    for base in (real, *real.parents):
+        cand = base / "store"
+        if cand.is_dir():
+            return cand.resolve()
+    return None
+
+
+def _loaded_from_store(mod, store_dir: Path) -> bool:
+    """Report whether an imported module resolves into the content store.
+
+    A farm link points a top-level name at a ``store/`` directory, so the real
+    path of a module the farm serves is under ``store_dir``. A module that
+    resolves elsewhere came from a baked or system location, not from the farm."""
+    paths = []
+    f = getattr(mod, "__file__", None)
+    if f:
+        paths.append(f)
+    for p in getattr(mod, "__path__", []) or []:
+        paths.append(p)
+    for p in paths:
+        try:
+            real = Path(p).resolve()
+        except OSError:
+            continue
+        if real == store_dir or store_dir in real.parents:
+            return True
+    return False
+
+
 # --- import-all (the invariant) ---------------------------------------------
 
-def check_python(names: list[str]) -> list[str]:
+def check_python(names: list[str], farm_store: Path | None = None) -> list[str]:
     failed = []
     for name in names:
         mods = modules_for(name)
@@ -143,14 +186,26 @@ def check_python(names: list[str]) -> list[str]:
             failed.append(name)
             continue
         last = ""
+        imported = None
+        used = ""
         for mod in mods:
             try:
-                importlib.import_module(mod)
+                imported = importlib.import_module(mod)
+                used = mod
                 break
             except Exception as e:  # noqa: BLE001
                 last = f"{mod}: {type(e).__name__}: {e}"
-        else:
+        if imported is None:
             print(f"  FAIL python {name}: {last}")
+            failed.append(name)
+            continue
+        # In farm mode the invariant is stronger: an advertised package must load
+        # FROM the farm, not from a stray baked or system copy. A module that
+        # resolves outside the store means packages.txt names a package the farm
+        # does not actually serve.
+        if farm_store is not None and not _loaded_from_store(imported, farm_store):
+            src = getattr(imported, "__file__", "no __file__")
+            print(f"  FAIL python {name}: {used} imported from outside the farm store ({src})")
             failed.append(name)
     print(f"import-all python: {len(names) - len(failed)}/{len(names)} OK")
     return failed
@@ -310,11 +365,27 @@ def main() -> int:
                     help=argparse.SUPPRESS)
     ap.add_argument("--no-validators", dest="validators", action="store_false",
                     help="import-all only (skip the per-library smoke-test suite) — quick local check")
+    ap.add_argument("--farm", action="store_true",
+                    help="validate a farm-backed store root: run import-all only, and confirm "
+                         "every advertised Python package loads from the farm's content store")
     args = ap.parse_args()
 
     if not PACKAGES_TXT.exists():
         print(f"ERROR: {PACKAGES_TXT} not found — is the store mounted?", file=sys.stderr)
         return 2
+
+    farm_store: Path | None = None
+    if args.farm:
+        # A farm has a sibling content store. Its absence means the root is a baked
+        # tree or an empty mount, so --farm cannot prove "loaded from the farm".
+        farm_store = find_store_dir(STORE)
+        if farm_store is None:
+            print(f"ERROR: --farm given, but {STORE} is not backed by a content store "
+                  f"(no sibling store/ directory found)", file=sys.stderr)
+            return 2
+        # The per-library smoke suite is a baked-image concern and its tree is not
+        # mounted for a farm. Import-all is the whole of the farm rule.
+        args.validators = False
 
     this_arch = arch()
     try:
@@ -325,14 +396,17 @@ def main() -> int:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
     advertised = {n for names in pkgs.values() for n in names}
-    print(f"=== lib-store validation ({this_arch}) — {len(advertised)} advertised packages ===")
+    mode = "farm-backed" if farm_store is not None else "baked tree"
+    print(f"=== lib-store validation ({this_arch}, {mode}) — {len(advertised)} advertised packages ===")
+    if farm_store is not None:
+        print(f"    content store: {farm_store}")
 
     # 1. import-all == the invariant: every advertised package must be loadable.
     #    One-way on purpose — packages.txt must not LIE; extra loadable packages
     #    it does not advertise are tolerated (advertised ⊆ loadable).
     print("\n[1/2] import-all (the advertised == loadable invariant)")
     failures: dict[str, list[str]] = {}
-    failures["python"] = check_python(pkgs["python"])
+    failures["python"] = check_python(pkgs["python"], farm_store=farm_store)
     failures["node"] = check_node(pkgs["node"])
     failures["conda"] = check_conda(pkgs["conda"])
     failures["r"] = check_r(pkgs["r"])
