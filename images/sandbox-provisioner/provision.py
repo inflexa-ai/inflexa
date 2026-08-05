@@ -91,10 +91,17 @@ INDEX_URL = os.environ.get("INFLEXA_INDEX_URL", "https://pypi.org/simple")
 # installed from, so a name+version glob can be confirmed rather than trusted.
 PIN_MARKER = ".inflexa-pin"
 
+# Marker written beside PIN_MARKER in a stored R package. It records the LinkingTo
+# packages from the package's DESCRIPTION. A package that compiles against another
+# package's headers stays recorded with it, so the pair stays consistent. The
+# marker is excluded from the content address like the other markers.
+R_LINKING_MARKER = ".inflexa-r-linking"
+
 # Never part of a distribution's content and never farmed: `.lock` is uv's own
 # per-target mutex, identical in every install, so farming it makes every package
-# after the first collide on it.
-NOT_CONTENT = {PIN_MARKER, ".lock"}
+# after the first collide on it. The two markers are metadata the provisioner
+# writes, not installed content, so they stay out of the content address too.
+NOT_CONTENT = {PIN_MARKER, R_LINKING_MARKER, ".lock"}
 
 # Derived data that must not participate in the content address: warm-up writes
 # numba's compiled artifacts and CPython bytecode into the tree AFTER the hash is
@@ -442,6 +449,36 @@ def read_r_pkg(pkg_dir: Path) -> tuple[str, str]:
     return name, version
 
 
+def read_r_linking(pkg_dir: Path) -> list[str]:
+    """Bare names of the LinkingTo packages of an installed R package.
+
+    A package that compiles against another package's headers names it in the
+    LinkingTo field of DESCRIPTION. The field is a comma-separated list, and a long
+    list continues on each indented line. An entry can carry a version constraint in
+    parentheses, and this function removes it to keep the bare name.
+    """
+    lines = (pkg_dir / "DESCRIPTION").read_text(errors="replace").splitlines()
+    value: str | None = None
+    for index, line in enumerate(lines):
+        if line.startswith("LinkingTo:"):
+            value = line.split(":", 1)[1]
+            # A DESCRIPTION field continues on each following indented line.
+            for cont in lines[index + 1:]:
+                if cont[:1] in (" ", "\t"):
+                    value += " " + cont.strip()
+                else:
+                    break
+            break
+    if not value:
+        return []
+    names = []
+    for entry in value.split(","):
+        name = entry.split("(", 1)[0].strip()
+        if name:
+            names.append(name)
+    return names
+
+
 def store_r_package(pkg_dir: Path) -> tuple[Path, bool]:
     """Content-address an already-installed R package directory into the store.
 
@@ -461,6 +498,9 @@ def store_r_package(pkg_dir: Path) -> tuple[Path, bool]:
     if final.exists():
         return final, False
     (pkg_dir / PIN_MARKER).write_text(pin + "\n")
+    # Record the LinkingTo packages beside the pin, so a package built against
+    # another package's headers stays recorded with it.
+    (pkg_dir / R_LINKING_MARKER).write_text(json.dumps(read_r_linking(pkg_dir)) + "\n")
     subprocess.run(["chmod", "-R", "a+rX", str(pkg_dir)], check=True)
     pkg_dir.rename(final)
     return final, True
@@ -485,6 +525,44 @@ def build_r_farm(farm: Path, stored: dict[str, list[tuple[str, Path]]]) -> None:
             if link.is_symlink() or link.exists():
                 link.unlink()
             link.symlink_to(str(store_dir))
+
+
+def check_r_loads(farm: Path, stored: dict[str, list[tuple[str, Path]]]) -> None:
+    """Load each farmed R package through the farm, and run its compiled code.
+
+    A package can install and farm cleanly and still fail to load, because the farm
+    resolves it through symlinks and a compiled package finds its shared object by
+    the path R gives it. The check sets the same three R_LIBS_SITE paths the sandbox
+    uses, then runs library() on each farmed package. For a package that carries
+    compiled code, it also reads the registered native routines, which runs the
+    package's own compiled code. A package that does not load names itself and stops
+    the run, because a farm that cannot load is not usable.
+    """
+    lib_dirs = [farm / "r" / sub for sub in R_SUBTREES if (farm / "r" / sub).is_dir()]
+    packages = [(name, store_dir)
+                for sub in R_SUBTREES for name, store_dir in stored.get(sub, [])]
+    if not packages:
+        return
+    libs_expr = ", ".join(f"'{d}'" for d in lib_dirs)
+    for name, store_dir in packages:
+        # A compiled package keeps its shared object under libs/. Load it, then read
+        # its registered routines, so the check runs the compiled code and not only
+        # the symlink resolution.
+        if (store_dir / "libs").is_dir():
+            probe = (f"d <- getLoadedDLLs()[['{name}']]; "
+                     f"if (!is.null(d)) invisible(getDLLRegisteredRoutines(d)); ")
+        else:
+            probe = ""
+        rexpr = (f".libPaths(c({libs_expr}, .libPaths())); "
+                 f"suppressMessages(library('{name}', character.only = TRUE)); {probe}")
+        proc = subprocess.run(["Rscript", "-e", rexpr], capture_output=True, text=True)
+        if proc.returncode != 0:
+            tail = (proc.stderr or "").strip().splitlines()
+            raise SystemExit(
+                f"[provision] R package {name} does not load through the farm "
+                f"(exit {proc.returncode}): "
+                f"{tail[-1] if tail else '(R wrote nothing to stderr)'}")
+    log(f"R load check: {len(packages)} package(s) load through the farm")
 
 
 def r_version_of(manifest: Path) -> str | None:
@@ -589,10 +667,9 @@ def provision_r(farm: Path, manifest: Path) -> dict:
             stored[sub].append((name, store_dir))
 
     build_r_farm(farm, stored)
-    # TODO(task 6.6): verify each farmed R package loads — library() plus a
-    # compiled-code call — against the farm's R_LIBS_SITE. The baked build does this
-    # with lib-store-loadtest.R, which is currently inline in sandbox-python-r's
-    # Dockerfile; wiring it here needs that helper extracted to a standalone file.
+    # A farmed package can install cleanly and still fail to load. Load each one
+    # through the farm before the run reports success.
+    check_r_loads(farm, stored)
     # Keep the pak bulk lock as provenance: it records the full resolved set,
     # including the LinkingTo packages the compiled objects were built against.
     bulk_lock = stage_root / "r" / "r-bulk.lock"
@@ -949,6 +1026,15 @@ def _provision(args) -> int:
     if args.r_manifest:
         r_result = provision_r(staging, Path(args.r_manifest))
 
+    # The warm workload is what the caches hold, so record it before the lock is
+    # written. Read the script bytes once and keep their hash, because a path can
+    # later point at a different file, and a replay must run the same bytes.
+    warm_targets = [m for m in args.warm.split(",") if m]
+    warm_script_hash = None
+    if args.warm_script:
+        with contextlib.suppress(OSError):
+            warm_script_hash = hashlib.sha256(Path(args.warm_script).read_bytes()).hexdigest()
+
     lock = {
         "requested": requested,
         "resolved": pins,
@@ -956,10 +1042,17 @@ def _provision(args) -> int:
         "store_dirs": [d.name for d in store_dirs],
         "r": r_result,
         "collisions": collisions,
-        # Recorded so a cache check can replay exactly what was warmed. numba keys
-        # its cache per type signature, so only the call shapes this script
-        # actually executed are cached; any other shape recompiles.
+        # The path of the warm script, kept so the effectiveness check can run it.
         "warm_script": args.warm_script,
+        # The workload the warm step ran, recorded so the effectiveness check can
+        # replay exactly it. numba keys its cache per type signature, thus only the
+        # call shapes the workload ran are cached, and any other shape recompiles.
+        # The module list and a content hash of the script let a replay confirm the
+        # same bytes ran, not merely a file at the same path.
+        "warm_workload": {
+            "modules": warm_targets,
+            "script_sha256": warm_script_hash,
+        },
         "warm": {},
     }
 
@@ -1002,7 +1095,6 @@ def _provision(args) -> int:
     # the warm-up run against the exact path the sandbox will import from (see warm()).
     flip_current(args.farm, force=args.force_repoint)
 
-    warm_targets = [m for m in args.warm.split(",") if m]
     if warm_targets or args.warm_script:
         lock["warm"] = warm(farm, warm_targets, args.warm_script)
         # The lock is the record of what the caches hold, so the warm results go into

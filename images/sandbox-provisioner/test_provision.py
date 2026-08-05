@@ -60,6 +60,7 @@ tools / a running host, i.e. CI- or container-gated, not unit-verifiable):
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -262,6 +263,36 @@ class ContentAddressingTests(StoreTestCase):
         self.assertEqual(final2, final)
         self.assertFalse(is_new2)
 
+    def test_store_r_package_records_linking_to(self):
+        """§6.5: a stored R package records the LinkingTo packages from its
+        DESCRIPTION, so a package compiled against another package's headers is
+        recorded together with it. The record does not change the content address."""
+        staging = provision.STORE / ".staging-r" / "cran"
+        staging.mkdir(parents=True)
+        pkg = staging / "cpkg"
+        (pkg / "R").mkdir(parents=True)
+        (pkg / "R" / "code.R").write_text("f <- function() 1L\n")
+        # LinkingTo spans two lines and carries a version constraint; the record keeps
+        # the bare names only.
+        (pkg / "DESCRIPTION").write_text(
+            "Package: cpkg\nVersion: 1.0\nTitle: t\n"
+            "LinkingTo: Rcpp (>= 1.0.0), RcppArmadillo,\n    BH\n"
+            "Imports: methods\n")
+
+        final, is_new = provision.store_r_package(pkg)
+        self.assertTrue(is_new)
+        record = json.loads((final / provision.R_LINKING_MARKER).read_text())
+        self.assertEqual(record, ["Rcpp", "RcppArmadillo", "BH"])
+
+        # The marker is excluded from the content address, so verify re-hashes clean.
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision.verify_store(), 0)
+
+        # A package with no LinkingTo records an empty list, not a missing marker.
+        plain = self._make_r_pkg(staging / "plainpkg", "plainpkg", "2.0")
+        final_plain, _ = provision.store_r_package(plain)
+        self.assertEqual(json.loads((final_plain / provision.R_LINKING_MARKER).read_text()), [])
+
 
 class VerifyStoreTests(StoreTestCase):
     """§9.6 / §2.5 — a tampered store dir fails verify; a clean one passes; dot-dirs skipped."""
@@ -405,6 +436,23 @@ class FarmAssemblyTests(StoreTestCase):
             self.assertIn("refusing to build a farm", str(cm.exception))
         finally:
             provision.SANDBOX_MOUNT = saved
+
+    def test_conda_is_empty_mount_point_and_no_node(self):
+        """§4.4: conda/ is a bare, empty mount point, and node/ is never created, so
+        the inventory advertises no empty conda or node section."""
+        store_dir = provision.STORE / "demo-1.0-000000000000000f"
+        (store_dir / "demo").mkdir(parents=True)
+        (store_dir / "demo" / "__init__.py").write_text("x = 1\n")
+
+        farm = provision.FARMS / "an1"
+        with contextlib.redirect_stdout(io.StringIO()):
+            provision.build_farm(farm, [store_dir])
+
+        conda = farm / "conda"
+        self.assertTrue(conda.is_dir())
+        self.assertFalse(conda.is_symlink())        # a real mount point, not a link
+        self.assertEqual(list(conda.iterdir()), [])  # empty: nothing is farmed into it
+        self.assertFalse((farm / "node").exists())   # no node subtree at all
 
     def test_build_r_farm_skips_empty_subtree(self):
         """§4.4/6.2: R packages link into r/{cran,bioconductor}; an empty subtree
@@ -683,6 +731,65 @@ class ProvisionRunTests(StoreTestCase):
         self.assertTrue(lock["warm"]["foo"].startswith("ok"), lock["warm"])
         self.assertEqual(lock["warm"]["_numba_cache_entries"], "0")
 
+    def test_union_reresolve_over_prior_request(self):
+        """§3.4: a re-run resolves the union of the prior request and the new specs.
+
+        The first run requests foo. The second requests bar, and the resolver then
+        runs over both, so the farm holds both and the lock records both."""
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        farm = provision.FARMS / "demo"
+        self.assertEqual(self._run("demo", ["foo"]), 0)
+        self.assertEqual(json.loads((farm / "lock.json").read_text())["requested"], ["foo"])
+
+        # Capture what the resolver receives on the second run, which proves the
+        # re-run solves over the union and not over the new spec alone.
+        captured: list[list[str]] = []
+        orig = provision.resolve
+
+        def spy(specs):
+            captured.append(list(specs))
+            return orig(specs)
+
+        provision.resolve = spy
+        try:
+            # foo==1.0 is already in the store, so the second run reuses it; only bar
+            # installs. The compile output lists both, as the real resolver would.
+            self.compile_text = "bar==2.0 \\\n    --hash=sha256:bbb\n" + self.FOO_1
+            self.install_tree = {"bar/__init__.py": "y = 2\n",
+                                 "bar-2.0.dist-info/RECORD": "bar/__init__.py,,\n"}
+            self.assertEqual(self._run("demo", ["bar"]), 0)
+        finally:
+            provision.resolve = orig
+
+        self.assertEqual(captured[-1], ["bar", "foo"])   # resolved over the union
+        lock = json.loads((farm / "lock.json").read_text())
+        self.assertEqual(lock["requested"], ["bar", "foo"])
+        site = farm / "python" / "site-packages"
+        self.assertTrue((site / "foo").is_symlink())      # the earlier request stays
+        self.assertTrue((site / "bar").is_symlink())      # the new request is added
+
+    def test_warm_workload_recorded_in_lock(self):
+        """§5.4: the lock records the warm workload — the module list and a content
+        hash of the script — so an effectiveness check can replay exactly what ran."""
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        farm = provision.FARMS / "demo"
+
+        script = provision.STORE / "warmup.py"
+        script_bytes = b"import foo\nfoo\n"
+        script.write_bytes(script_bytes)
+
+        self.assertEqual(
+            self._run("demo", ["foo"], warm="foo,bar", warm_script=str(script)), 0)
+
+        lock = json.loads((farm / "lock.json").read_text())
+        workload = lock["warm_workload"]
+        self.assertEqual(workload["modules"], ["foo", "bar"])
+        self.assertEqual(workload["script_sha256"], hashlib.sha256(script_bytes).hexdigest())
+        # The path stays too, so the effectiveness check can run the script.
+        self.assertEqual(lock["warm_script"], str(script))
+
 
 class FailureMessageTests(StoreTestCase):
     """A tool that fails reports what failed, with the tool's own message."""
@@ -864,6 +971,74 @@ class FarmSwapRecoveryTests(StoreTestCase):
         self.assertEqual((farm / "meta.json").read_text(), "new\n")
         self.assertFalse((provision.FARMS / (provision.FARM_SUPERSEDED + "demo")).exists())
         self.assertFalse((provision.FARMS / (provision.FARM_STAGING + "demo")).exists())
+
+
+class RLoadCheckTests(StoreTestCase):
+    """§6.6 — the R load check loads each farmed package through the farm.
+
+    ``provision.subprocess.run`` is replaced with a local fake per test, so no real R
+    runs; the check's structure and its failure path are what the tests assert. The
+    base ``tearDown`` restores the original ``subprocess.run``.
+    """
+
+    def _stored(self, *packages: tuple[str, bool]) -> dict[str, list[tuple[str, Path]]]:
+        """Build a farm with the given R packages; a compiled one gets a libs/ dir."""
+        (provision.FARMS / "rf" / "r" / "cran").mkdir(parents=True)
+        pkgs = []
+        for name, compiled in packages:
+            store_dir = provision.STORE / f"{name.lower()}-1.0-000000000000000a"
+            store_dir.mkdir()
+            if compiled:
+                (store_dir / "libs").mkdir()
+            pkgs.append((name, store_dir))
+        return {"cran": pkgs, "bioconductor": [], "github": []}
+
+    def test_load_check_runs_library_per_package_and_compiled_probe(self):
+        """One R invocation per farmed package names that package with library(); only
+        a package with compiled code reads its registered routines."""
+        stored = self._stored(("pkgA", False), ("pkgB", True))
+
+        calls: list[list[str]] = []
+
+        def fake(cmd, *a, **k):
+            calls.append(list(cmd))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        provision.subprocess.run = fake
+        with contextlib.redirect_stdout(io.StringIO()):
+            provision.check_r_loads(provision.FARMS / "rf", stored)   # no raise
+
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(c[0] == "Rscript" for c in calls))
+        self.assertIn("library('pkgA'", calls[0][-1])
+        self.assertIn("library('pkgB'", calls[1][-1])
+        # The pure-R package does not touch compiled code; the compiled one does.
+        self.assertNotIn("getDLLRegisteredRoutines", calls[0][-1])
+        self.assertIn("getDLLRegisteredRoutines", calls[1][-1])
+
+    def test_load_check_names_the_package_that_fails(self):
+        """A package that does not load names itself and stops the run."""
+        stored = self._stored(("pkgA", False))
+
+        def fake(cmd, *a, **k):
+            return SimpleNamespace(
+                returncode=1, stdout="",
+                stderr="Error: package or namespace load failed for 'pkgA'")
+
+        provision.subprocess.run = fake
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            provision.check_r_loads(provision.FARMS / "rf", stored)
+        self.assertIn("pkgA", str(cm.exception))
+        self.assertIn("does not load", str(cm.exception))
+
+    def test_load_check_skips_when_no_r_package(self):
+        """A farm with no R package runs no R at all."""
+        def fake(cmd, *a, **k):
+            raise AssertionError("check_r_loads must not run R with no R package")
+
+        provision.subprocess.run = fake
+        provision.check_r_loads(provision.FARMS / "rf",
+                                {"cran": [], "bioconductor": [], "github": []})
 
 
 if __name__ == "__main__":
