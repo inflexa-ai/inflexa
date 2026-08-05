@@ -336,7 +336,14 @@ LABEL org.opencontainers.image.description="Inflexa sandbox with the full baked 
 
 USER root
 
-COPY --from=github ${INFLEXA_LIB_ROOT}/r ${INFLEXA_LIB_ROOT}/r
+# One COPY per R track, in the canonical track order. A single COPY of r/ fuses
+# the triple into one 5.3 GB layer, so a change to any one track reships all
+# three and a client can cache none of them apart. The tree the three COPYs
+# produce is identical, modes included — the builder stage already made it
+# world-readable.
+COPY --from=github ${INFLEXA_LIB_ROOT}/r/cran ${INFLEXA_LIB_ROOT}/r/cran
+COPY --from=github ${INFLEXA_LIB_ROOT}/r/bioconductor ${INFLEXA_LIB_ROOT}/r/bioconductor
+COPY --from=github ${INFLEXA_LIB_ROOT}/r/github ${INFLEXA_LIB_ROOT}/r/github
 COPY --from=github ${INFLEXA_LIB_ROOT}/cran.packages.txt ${INFLEXA_LIB_ROOT}/cran.packages.txt
 COPY --from=github ${INFLEXA_LIB_ROOT}/bioconductor.packages.txt ${INFLEXA_LIB_ROOT}/bioconductor.packages.txt
 COPY --from=github ${INFLEXA_LIB_ROOT}/github.packages.txt ${INFLEXA_LIB_ROOT}/github.packages.txt
