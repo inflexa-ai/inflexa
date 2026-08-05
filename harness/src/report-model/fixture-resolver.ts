@@ -11,8 +11,8 @@ import type {
     ArtifactTableReference,
     ArtifactValueReference,
     CitationReference,
+    DerivationInputReference,
     DerivationReference,
-    NonDerivationReference,
     Reference,
     UnresolvedReason,
     UnresolvedReference,
@@ -22,9 +22,12 @@ import { columnsHeldByNoRow, type ReferenceResolver, type ReportSnapshot, type R
 /**
  * The relative epsilon of a value match with no authored tolerance.
  *
- * An author writes a rounded figure, but the resolver computes the value again in floating point. Thus
- * exact equality would report ordinary float noise as a fabrication. This epsilon absorbs the noise, and
- * it is still far too small to hide a real mismatch such as 1.5 against 1.05.
+ * Float arithmetic shifts a computed value in its last bits. For example, `0.3 - 0.1` gives
+ * 0.19999999999999998, and exact equality would report that noise as a fabrication.
+ *
+ * The epsilon absorbs the noise and nothing else. It is far below the difference that a rounded figure
+ * makes, thus an author who writes 0.05 against a true 0.0499 still fails. An author who wants a rounded
+ * figure to pass states a `tolerance`, which is the one place where the intent belongs.
  */
 const RELATIVE_EPSILON = 1e-9;
 
@@ -35,32 +38,54 @@ function fail(reference: Reference, reason: UnresolvedReason, detail?: string): 
 }
 
 /** A short account of a derivation input, for a detail that names which input broke the arithmetic. */
-function describeReference(reference: NonDerivationReference): string {
-    switch (reference.kind) {
-        case "artifact-value":
-            return `artifact value at ${reference.path} column ${reference.locator.column}`;
-        case "artifact-table":
-            return `artifact table at ${reference.path}`;
-        case "artifact-file":
-            return `artifact file at ${reference.path}`;
-        case "citation":
-            return `citation ${reference.idKind}:${reference.id}`;
+function describeReference(reference: DerivationInputReference): string {
+    return `artifact value at ${reference.path} column ${reference.locator.column}`;
+}
+
+/**
+ * Read an authored value or a resolved cell as a finite number.
+ *
+ * A text-backed artifact such as a CSV holds every cell as a string, thus a numeric column arrives as
+ * `"0.01"` and not as `0.01`. A comparison that respects the JavaScript type would fail an author who
+ * states the number, and the arithmetic of a derivation could never run over a real CSV.
+ *
+ * The parse reads the whole string, thus `"12 genes"` stays text and never reads as 12. `Number` accepts
+ * the exponent form that a p-value uses, for example `"1.2e-45"`. A blank string is not a number, because
+ * `Number("")` gives 0 and an empty cell must never read as zero.
+ */
+function asFiniteNumber(value: string | number): number | undefined {
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? value : undefined;
     }
+    if (value.trim() === "") {
+        return undefined;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/** Name a value with its type, so that a failed match never reads as two identical values. */
+function describeValue(value: string | number): string {
+    return typeof value === "string" ? `the string ${JSON.stringify(value)}` : `the number ${value}`;
 }
 
 /**
  * Match a resolved value against an authored one.
  *
- * An authored tolerance is an absolute difference, and it is the author's own statement of how close is
- * close enough. With no tolerance the comparison is relative, because an exact match would fail on the
- * float noise of a computed value. Any pair that is not two numbers matches on exact equality.
+ * The comparison is numeric whenever both sides read as a finite number, thus the CSV cell `"0.01"`
+ * matches the number 0.01 that an author states. An authored tolerance is an absolute difference, and it
+ * is the author's own statement of how close is close enough. With no tolerance the comparison is
+ * relative, because an exact match would fail on the float noise of a computed value. Any other pair
+ * matches on exact equality.
  */
 function valuesMatch(expected: string | number, actual: string | number, tolerance: number | undefined): boolean {
-    if (typeof expected === "number" && typeof actual === "number") {
+    const expectedNumber = asFiniteNumber(expected);
+    const actualNumber = asFiniteNumber(actual);
+    if (expectedNumber !== undefined && actualNumber !== undefined) {
         if (tolerance !== undefined) {
-            return Math.abs(expected - actual) <= tolerance;
+            return Math.abs(expectedNumber - actualNumber) <= tolerance;
         }
-        return Math.abs(expected - actual) <= RELATIVE_EPSILON * Math.max(1, Math.abs(expected), Math.abs(actual));
+        return Math.abs(expectedNumber - actualNumber) <= RELATIVE_EPSILON * Math.max(1, Math.abs(expectedNumber), Math.abs(actualNumber));
     }
     return expected === actual;
 }
@@ -75,11 +100,11 @@ function checkValueAssertion(
     if (expected === undefined || valuesMatch(expected, resolved, tolerance)) {
         return undefined;
     }
-    return { reference, reason: "assertion-failed", detail: `expected ${String(expected)} but resolved ${String(resolved)}` };
+    return { reference, reason: "assertion-failed", detail: `expected ${describeValue(expected)} but resolved ${describeValue(resolved)}` };
 }
 
 /** Match the resolved citation key against the authored value. The key carries its `idKind:` prefix. */
-function checkCitationAssertion(reference: Reference, expected: string | number | undefined, resolved: string): UnresolvedReference | undefined {
+function checkCitationAssertion(reference: Reference, expected: string | undefined, resolved: string): UnresolvedReference | undefined {
     if (expected === undefined || expected === resolved) {
         return undefined;
     }
@@ -193,12 +218,13 @@ async function resolveDerivation(reference: DerivationReference, snapshot: Repor
             return fail(reference, inputResult.error.reason, inputResult.error.detail);
         }
         const resolved = inputResult.value;
-        if (resolved.type !== "scalar" || typeof resolved.value !== "number" || !Number.isFinite(resolved.value)) {
-            // The arithmetic needs a finite number. A table, a citation, or a non-numeric cell does not
-            // address a usable scalar, thus the closest reason is that the coordinate is out of range.
+        const numeric = resolved.type === "scalar" ? asFiniteNumber(resolved.value) : undefined;
+        if (numeric === undefined) {
+            // The arithmetic needs a finite number. A cell that holds text does not address a usable
+            // scalar, thus the closest reason is that the coordinate is out of range.
             return fail(reference, "locator-out-of-range", `input ${describeReference(input)} did not resolve to a finite number`);
         }
-        numbers.push(resolved.value);
+        numbers.push(numeric);
     }
 
     const a = numbers[0];

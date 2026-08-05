@@ -10,6 +10,8 @@ const TABLE_A_PATH = "runs/run-1/step-a/output/de.csv";
 const TABLE_B_PATH = "runs/run-1/step-b/output/counts.csv";
 const FLOAT_PATH = "runs/run-1/step-c/output/floats.csv";
 const SPARSE_PATH = "runs/run-1/step-c/output/sparse.csv";
+// A text-backed artifact. A CSV holds every cell as a string, thus a numeric column arrives as text.
+const TEXT_PATH = "runs/run-1/step-d/output/text.csv";
 const FIGURE_PATH = "runs/run-1/step-b/figures/volcano.png";
 // A staged input file, which no run produced. Its reference carries no `run`.
 const INPUT_PATH = "data/inputs/file-1/cohort.csv";
@@ -17,6 +19,7 @@ const TABLE_A_HASH = `sha256:${"a".repeat(64)}`;
 const TABLE_B_HASH = `sha256:${"b".repeat(64)}`;
 const FLOAT_HASH = `sha256:${"e".repeat(64)}`;
 const SPARSE_HASH = `sha256:${"f".repeat(64)}`;
+const TEXT_HASH = `sha256:${"9".repeat(64)}`;
 const FIGURE_HASH = `sha256:${"d".repeat(64)}`;
 const INPUT_HASH = `sha256:${"1".repeat(64)}`;
 const WRONG_HASH = `sha256:${"c".repeat(64)}`;
@@ -61,6 +64,15 @@ const snapshot: ReportSnapshot = {
                 { name: "a", value: 0.3 },
                 { name: "b", value: 0.1 },
                 { name: "c", value: 1.05 },
+            ],
+        },
+        [TEXT_PATH]: {
+            hash: TEXT_HASH,
+            // Each cell is a string, as a CSV parser gives it back. `padj` holds the exponent form that a
+            // p-value uses, and `note` holds a cell that is text and never a number.
+            rows: [
+                { gene: "TP53", padj: "1.2e-45", count: "40", note: "n/a" },
+                { gene: "EGFR", padj: "0.02", count: "10", note: "12 genes" },
             ],
         },
         [SPARSE_PATH]: { hash: SPARSE_HASH, rows: sparseRows },
@@ -463,29 +475,43 @@ describe("validateReport — the whole-file pin", () => {
         expect(failures[0].failure.reason).toBe("hash-mismatch");
     });
 
-    it("reports locator-out-of-range for a derivation given an artifact-file input", async () => {
-        const result = await validateReport(
-            reportWith({
-                kind: "metric",
-                id: "metric-file-input",
-                label: "FileInput",
-                value: {
-                    kind: "derivation",
-                    op: "ratio",
-                    inputs: [
-                        { kind: "artifact-value", run: "run-1", path: TABLE_A_PATH, hash: TABLE_A_HASH, locator: { column: "log2FoldChange", row: 0 } },
-                        // A file pins whole bytes, thus it addresses no numeric scalar for the arithmetic.
-                        { kind: "artifact-file", run: "run-1", path: FIGURE_PATH, hash: FIGURE_HASH },
+    it("rejects a derivation given an artifact-file input, because a file addresses no scalar", async () => {
+        const document = {
+            title: "R",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [
+                        {
+                            kind: "metric",
+                            id: "metric-file-input",
+                            label: "FileInput",
+                            value: {
+                                kind: "derivation",
+                                op: "ratio",
+                                inputs: [
+                                    {
+                                        kind: "artifact-value",
+                                        run: "run-1",
+                                        path: TABLE_A_PATH,
+                                        hash: TABLE_A_HASH,
+                                        locator: { column: "log2FoldChange", row: 0 },
+                                    },
+                                    // A file pins whole bytes, thus it addresses no numeric scalar for the
+                                    // arithmetic. The grammar rejects it, and resolution never runs.
+                                    { kind: "artifact-file", run: "run-1", path: FIGURE_PATH, hash: FIGURE_HASH },
+                                ],
+                            },
+                        },
                     ],
                 },
-            }),
-            snapshot,
-            resolver,
-        );
-        const invalid = expectInvalid(result);
-        const failures = invalid.resolutionFailures ?? [];
-        expect(failures[0].blockId).toBe("metric-file-input");
-        expect(failures[0].failure.reason).toBe("locator-out-of-range");
+            ],
+        };
+        const invalid = expectInvalid(await validateReport(document, snapshot, resolver));
+        expect(invalid.schemaIssues?.length ?? 0).toBeGreaterThan(0);
+        expect(invalid.resolutionFailures).toBeUndefined();
     });
 });
 
@@ -936,8 +962,15 @@ describe("validateReport — a value match with no tolerance", () => {
         };
     }
 
-    it("validates a rounded authored figure against a value that float arithmetic shifts", async () => {
+    it("absorbs the float noise of a computed value", async () => {
         expectValid(await validateReport(reportWith(deltaMetric("metric-delta-ok", 0.2)), snapshot, resolver));
+    });
+
+    it("rejects a rounded authored figure, because only a tolerance permits one", async () => {
+        // The delta is 0.19999999999999998. A rounded 0.19 sits far above the float noise that the
+        // epsilon absorbs, thus the author must state a tolerance to accept it.
+        const rounded = expectInvalid(await validateReport(reportWith(deltaMetric("metric-delta-rounded", 0.19)), snapshot, resolver));
+        expect((rounded.resolutionFailures ?? [])[0].failure.reason).toBe("assertion-failed");
     });
 
     it("reports assertion-failed for a real mismatch with no tolerance", async () => {
@@ -1079,5 +1112,219 @@ describe("validateReport — block id uniqueness", () => {
     it("gives no duplicateIds for a document whose ids are unique", async () => {
         const valid = expectValid(await validateReport(groundedReport(), snapshot, resolver));
         expect(valid).not.toHaveProperty("duplicateIds");
+    });
+});
+
+describe("validateReport — a text-backed artifact", () => {
+    /** Bind a metric to a cell of the text artifact, in the row of the given gene, under the given assert. */
+    function textMetric(id: string, column: string, assert?: { value: string | number; tolerance?: number }, gene = "TP53"): Block {
+        return {
+            kind: "metric",
+            id,
+            label: "Text",
+            value: {
+                kind: "artifact-value",
+                run: "run-1",
+                path: TEXT_PATH,
+                hash: TEXT_HASH,
+                locator: { column, rowFilter: { column: "gene", op: "eq", value: gene } },
+                ...(assert !== undefined ? { assert } : {}),
+            },
+        };
+    }
+
+    it("matches a numeric assert against the string cell that a CSV holds", async () => {
+        expectValid(await validateReport(reportWith(textMetric("metric-text-number", "count", { value: 40 })), snapshot, resolver));
+    });
+
+    it("matches a numeric assert against a cell in the exponent form of a p-value", async () => {
+        expectValid(await validateReport(reportWith(textMetric("metric-text-exponent", "padj", { value: 1.2e-45 })), snapshot, resolver));
+    });
+
+    it("matches a string assert against the same string cell", async () => {
+        expectValid(await validateReport(reportWith(textMetric("metric-text-string", "note", { value: "n/a" })), snapshot, resolver));
+    });
+
+    it("reports assertion-failed for a numeric assert that the string cell does not hold", async () => {
+        const invalid = expectInvalid(await validateReport(reportWith(textMetric("metric-text-wrong", "count", { value: 41 })), snapshot, resolver));
+        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("assertion-failed");
+    });
+
+    it("names the type of each side, thus a failed match never reads as two identical values", async () => {
+        const invalid = expectInvalid(await validateReport(reportWith(textMetric("metric-text-typed", "note", { value: 12 }, "EGFR")), snapshot, resolver));
+        const detail = (invalid.resolutionFailures ?? [])[0].failure.detail ?? "";
+        expect(detail).toContain("the number 12");
+        expect(detail).toContain(`the string "12 genes"`);
+    });
+
+    it("reads a cell that holds text as text, thus a leading numeral never matches", async () => {
+        const invalid = expectInvalid(await validateReport(reportWith(textMetric("metric-text-prefix", "note", { value: "12" }, "EGFR")), snapshot, resolver));
+        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("assertion-failed");
+    });
+
+    it("runs the arithmetic of a derivation over two string cells", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "metric",
+                id: "metric-text-ratio",
+                label: "Ratio",
+                value: {
+                    kind: "derivation",
+                    op: "ratio",
+                    inputs: [
+                        {
+                            kind: "artifact-value",
+                            run: "run-1",
+                            path: TEXT_PATH,
+                            hash: TEXT_HASH,
+                            locator: { column: "count", rowFilter: { column: "gene", op: "eq", value: "TP53" } },
+                        },
+                        {
+                            kind: "artifact-value",
+                            run: "run-1",
+                            path: TEXT_PATH,
+                            hash: TEXT_HASH,
+                            locator: { column: "count", rowFilter: { column: "gene", op: "eq", value: "EGFR" } },
+                        },
+                    ],
+                    assert: { value: 4 },
+                },
+            }),
+            snapshot,
+            resolver,
+        );
+        expectValid(result);
+    });
+
+    it("reports locator-out-of-range for a derivation input whose cell holds text", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "metric",
+                id: "metric-text-nonnumeric",
+                label: "Ratio",
+                value: {
+                    kind: "derivation",
+                    op: "ratio",
+                    inputs: [
+                        {
+                            kind: "artifact-value",
+                            run: "run-1",
+                            path: TEXT_PATH,
+                            hash: TEXT_HASH,
+                            locator: { column: "note", rowFilter: { column: "gene", op: "eq", value: "TP53" } },
+                        },
+                        {
+                            kind: "artifact-value",
+                            run: "run-1",
+                            path: TEXT_PATH,
+                            hash: TEXT_HASH,
+                            locator: { column: "count", rowFilter: { column: "gene", op: "eq", value: "TP53" } },
+                        },
+                    ],
+                },
+            }),
+            snapshot,
+            resolver,
+        );
+        const invalid = expectInvalid(result);
+        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+        expect((invalid.resolutionFailures ?? [])[0].failure.detail).toContain("note");
+    });
+});
+
+describe("validateReport — a citation assertion", () => {
+    /** Bind a citation block to the pinned pmid, under the given asserted key. */
+    function citationBlock(id: string, assert?: { value: string }): Block {
+        return {
+            kind: "citation",
+            id,
+            binding: { kind: "citation", idKind: "pmid", id: "12345", raw: "Author et al.", ...(assert !== undefined ? { assert } : {}) },
+        };
+    }
+
+    it("validates a citation whose asserted key matches the resolved key", async () => {
+        expectValid(await validateReport(reportWith(citationBlock("cite-ok", { value: "pmid:12345" })), snapshot, resolver));
+    });
+
+    it("reports assertion-failed for an asserted key that names a different source", async () => {
+        const invalid = expectInvalid(await validateReport(reportWith(citationBlock("cite-wrong", { value: "pmid:99999" })), snapshot, resolver));
+        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("assertion-failed");
+    });
+
+    it("reports assertion-failed for a bare id, because the key carries its idKind prefix", async () => {
+        const invalid = expectInvalid(await validateReport(reportWith(citationBlock("cite-bare", { value: "12345" })), snapshot, resolver));
+        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("assertion-failed");
+    });
+});
+
+describe("validateReport — the remaining resolution outcomes", () => {
+    it("reports locator-out-of-range for a fixed row index past the last row", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "metric",
+                id: "metric-row-past-end",
+                label: "Past",
+                value: { kind: "artifact-value", run: "run-1", path: TABLE_A_PATH, hash: TABLE_A_HASH, locator: { column: "log2FoldChange", row: 7 } },
+            }),
+            snapshot,
+            resolver,
+        );
+        const invalid = expectInvalid(result);
+        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+        expect((invalid.resolutionFailures ?? [])[0].failure.detail).toContain("7");
+    });
+
+    /** Bind to the `value` cell of the sparse row that holds an empty string. */
+    const blankCell = {
+        kind: "artifact-value",
+        run: "run-1",
+        path: SPARSE_PATH,
+        hash: SPARSE_HASH,
+        locator: { column: "value", rowFilter: { column: "label", op: "eq", value: "blank" } },
+    } as const;
+
+    it("reports assertion-failed for a zero asserted against a blank cell", async () => {
+        // `Number("")` gives 0. A blank cell that reads as zero would ground a figure on an absence.
+        const result = await validateReport(
+            reportWith({ kind: "metric", id: "metric-blank-zero", label: "Blank", value: { ...blankCell, assert: { value: 0 } } }),
+            snapshot,
+            resolver,
+        );
+        expect((expectInvalid(result).resolutionFailures ?? [])[0].failure.reason).toBe("assertion-failed");
+    });
+
+    it("reports locator-out-of-range for a derivation over a blank cell", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "metric",
+                id: "metric-blank-input",
+                label: "Blank",
+                value: {
+                    kind: "derivation",
+                    op: "ratio",
+                    inputs: [
+                        { kind: "artifact-value", run: "run-1", path: TABLE_A_PATH, hash: TABLE_A_HASH, locator: { column: "log2FoldChange", row: 0 } },
+                        blankCell,
+                    ],
+                },
+            }),
+            snapshot,
+            resolver,
+        );
+        expect((expectInvalid(result).resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+    });
+
+    it("reports artifact-missing for a table bound to an absent path", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "table",
+                id: "table-absent",
+                binding: { kind: "artifact-table", run: "run-1", path: "runs/run-1/absent-table.csv", hash: TABLE_A_HASH },
+            }),
+            snapshot,
+            resolver,
+        );
+        const invalid = expectInvalid(result);
+        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("artifact-missing");
     });
 });
