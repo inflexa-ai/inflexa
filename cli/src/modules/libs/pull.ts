@@ -1,23 +1,26 @@
 /**
- * The `inflexa sandbox` command actions — pull, status — plus the config write
- * that records the chosen image. `sandboxPull` is the ONE dogfooded provisioning
- * path: the `sandbox pull` command and the `inflexa setup` wizard both funnel
- * through it. There is no second image-fetch path.
+ * The sandbox image, end to end: the `inflexa sandbox` command actions (pull, status), the config
+ * write that records the chosen image, and the pre-flight gate that a launch passes through.
+ *
+ * Two entry points reach the registry, and each one owns a different question. `sandboxPull` is the
+ * DELIBERATE provisioning path — the `sandbox pull` command and the `inflexa setup` wizard both
+ * funnel through it, and it re-pulls a moving `:latest` so it doubles as the upgrade path.
+ * `ensureSandboxImage` is the IMPLICIT one — a launch asking only whether the configured image is
+ * here, and pulling it when it is not. Both live here so neither can drift from the variant naming
+ * and the presence read they share.
  *
  * The model: the user picks an image VARIANT (`python` | `python-r`), the CLI
  * `docker pull`s `ghcr.io/inflexa-ai/sandbox-<variant>`, and records it as
  * `harness.sandboxImage` so sandboxes launch on the baked image — no local store
  * directory, no `/mnt/libs` bind mount, and no arch-forcing (a multi-arch manifest
- * resolves the host architecture automatically). The pre-flight `ensureSandboxImage`
- * (modules/harness/profile.ts) pulls the configured image on launch when it is
- * absent; the per-track tarballs are managed-only (mounted by infra, not this
- * CLI).
+ * resolves the host architecture automatically). The per-track tarballs are managed-only
+ * (mounted by infra, not this CLI).
  */
 
 import { isCancel, log, select as clackSelect } from "@clack/prompts";
 import { err, ok, type Result } from "neverthrow";
 
-import { confirm } from "../../lib/cli.ts";
+import { confirm, fail } from "../../lib/cli.ts";
 import { ensureRuntime, readConfig, selectedRuntime, writeConfig } from "../../lib/config.ts";
 import { capture, firstReadyRuntime, inherit, runtimeIds, runtimes, type ContainerRuntime } from "../../lib/container.ts";
 import { DEFAULT_SANDBOX_IMAGE, SANDBOX_VARIANTS, VARIANT_DESCRIPTIONS, VARIANT_LABELS, variantImage, variantOfImage, type SandboxVariant } from "./images.ts";
@@ -101,6 +104,53 @@ export function isMovingTag(image: string): boolean {
     const colon = lastSegment.indexOf(":");
     const tag = colon === -1 ? "latest" : lastSegment.slice(colon + 1);
     return tag === "latest";
+}
+
+/**
+ * Pre-flight gate: the configured sandbox image must be present before a command stages anything.
+ * After staging it is too late to find out. A missing PUBLISHED variant is pulled from GHCR (offered
+ * and confirmed on a TTY, pulled directly otherwise). A missing CUSTOM local tag cannot be pulled, so
+ * this names the build command instead. Never a silent dead-end.
+ *
+ * A present image short-circuits, which is the deliberate difference from {@link sandboxPull}. That
+ * one re-pulls a moving `:latest` even when it is present, because it doubles as the upgrade path. A
+ * gate that downloaded on every launch would be a tax on every launch.
+ *
+ * This is the one function here that exits the process through `fail` instead of giving a `Result`.
+ * Every caller is a CLI entry point at a pre-flight gate with nothing to recover to: with no sandbox
+ * image the command cannot run at all, so a `Result` would buy each caller one `match` that ends in
+ * this same exit. {@link sandboxPull} keeps its `Result` because a declined pull is a state the setup
+ * wizard genuinely continues past.
+ */
+export async function ensureSandboxImage(image: string): Promise<void> {
+    const rtResult = await ensureRuntime();
+    if (rtResult.isErr()) fail(rtResult.error.message);
+    const rt = rtResult.value;
+    if (await imagePresent(rt, image)) return;
+
+    const variant = variantOfImage(image);
+    if (variant === null) {
+        // A custom local tag (a user's `FROM` image) — we cannot pull it.
+        fail(
+            [
+                `Sandbox image "${image}" not found in ${rt.id}.`,
+                `Build it locally (e.g. \`${rt.bin} build -f images/sandbox-python-r/Dockerfile -t ${image} .\`),`,
+                "or set `harness.sandboxImage` to a published `ghcr.io/inflexa-ai/sandbox-*` tag and run `inflexa sandbox pull`.",
+            ].join("\n"),
+        );
+    }
+
+    // Published variant: offer + pull. The image is genuinely required to launch a
+    // sandbox, so a decline is an actionable stop, not a silent dead-end.
+    if (process.stdin.isTTY) {
+        console.log(`\n  Sandbox image "${image}" (${variant}) is not installed.`);
+        const proceed = await confirm("Pull it from GitHub Packages now? (may be a multi-GB download)");
+        if (!proceed) fail("A sandbox image is required to run a profile. Run `inflexa sandbox pull` and retry.");
+    } else {
+        console.log(`  Sandbox image "${image}" not present — pulling ${variant} from GitHub Packages…`);
+    }
+    const code = await inherit(rt, ["pull", image]);
+    if (code !== 0) fail(`Failed to pull ${image} (\`${rt.bin} pull\` exited ${code}). Check your network and that ghcr.io is reachable.`);
 }
 
 /**

@@ -198,6 +198,96 @@ export type HarnessBootError =
     | { type: "runtime_already_active"; holderPid: number }
     | { type: "runtime_boot_failed"; cause: unknown };
 
+/**
+ * Each {@link HarnessBootError} variant as one actionable line that names the remedy.
+ *
+ * Lives beside the union it exhausts. The `never` guard in the default branch turns a forgotten
+ * variant into a compile error, and that guard only earns its keep while the mapping cannot drift
+ * away from the union it mirrors — a variant and its message are one edit, not two.
+ *
+ * Every boot entry point renders through this one mapping: the TUI boot store and the dev
+ * `chat`/`profile`/`run` commands all share the same prerequisites, so a divergent second phrasing
+ * of "your proxy is unreachable" would be a difference with no cause behind it.
+ */
+export function describeBootError(e: HarnessBootError): string {
+    switch (e.type) {
+        case "harness_config_invalid":
+            return `Your \`harness\` config has an invalid field — ${e.issues}. Fix it in config.json and re-run.`;
+        case "model_connection_invalid":
+            return `Your \`models.connection\` config is invalid — ${e.issues}. Fix it in config.json and re-run.`;
+        case "embedding_unresolved":
+            return ["Profiling's vector indexing requires an embedder, and none could be resolved from the `embedding` config key.", e.cause.message].join(
+                "\n",
+            );
+        case "embedding_probe_failed":
+            return [
+                `The configured embedder failed a probe embedding (${e.detail}) — profiling would otherwise fail after the sandbox run already spent its work.`,
+                "For `local` mode, re-run `inflexa setup --embeddings local`; for `api-key` mode, check `embedding.apiKey` and `embedding.baseURL` in config.json.",
+            ].join("\n");
+        case "embedding_dimension_mismatch":
+            return [
+                `The configured embedding model returns ${e.actual}-dimensional vectors, but the embedder is declared as ${e.expected}-dimensional (\`embedding.dimensions\`).`,
+                `Set \`embedding.dimensions\` to ${e.actual} in config.json so the vector indexes are sized to what the model actually emits.`,
+            ].join("\n");
+        case "skills_dir_missing":
+            return `Skills directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.skillsDir\` in config.json (a checkout's \`skills/\` tree).`;
+        case "templates_dir_missing":
+            return `Templates directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.templatesDir\` in config.json (a checkout's \`templates/\` tree).`;
+        case "content_materialize_failed":
+            return [
+                `Could not unpack the bundled skills/templates into ${env.contentDir} (${e.cause.type}).`,
+                "Ensure the data directory is writable, or point `harness.skillsDir`/`harness.templatesDir` at your own trees in config.json.",
+            ].join("\n");
+        case "proxy_key_missing":
+            return "Proxy client key not found — run `inflexa setup` to provision the proxy first.";
+        case "model_api_key_missing":
+            return [
+                `A direct model connection needs its API key, but neither \`INFLEXA_MODEL_API_KEY\` nor \`${e.providerVar}\` (the provider-conventional variable) is set.`,
+                `Export one (e.g. \`export ${e.providerVar}=…\`) — the key is read from the environment only, never from ${env.configPath}.`,
+            ].join("\n");
+        case "model_unresolved":
+            // `cooling_down` is a temporary all-credential block the proxy recovers from on its own —
+            // rendering it as "unreachable" would send the user chasing a container that is fine.
+            if (e.cause.type === "cooling_down")
+                return "The proxy is briefly refusing your provider credential after upstream errors (it recovers on its own) — wait a moment and retry.";
+            return e.cause.type === "no_models"
+                ? "The proxy lists no models — authenticate a provider via `inflexa setup`, or set `harness.model` in config.json."
+                : `The proxy is unreachable (${e.cause.type === "proxy_unreachable" ? e.cause.detail : e.cause.type}) — is the container running? Try \`inflexa setup\`.`;
+        case "model_provider_mismatch":
+            return [
+                `The proxy's auto-resolved model "${e.model}" does not match the configured provider "${e.provider}", but the chat route is built for that provider.`,
+                `Authenticate the "${e.provider}" account via \`inflexa setup\`, or set \`harness.model\` (a model that provider serves) or \`models.connection.provider\` in config.json.`,
+            ].join("\n");
+        case "model_required":
+            return [
+                `A direct model connection needs an explicit model for the ${e.agents.join(" and ")} agent${e.agents.length > 1 ? "s" : ""} — there is no proxy \`/models\` to auto-resolve one from.`,
+                "Set `harness.model` in config.json (applies to all model roles), or `models.agents.<role>` per role, to the model id your endpoint serves.",
+            ].join("\n");
+        case "sandbox_engine_unresolved":
+            // The message was built at resolution time against the pinned runtime AND
+            // host platform (start the podman machine on macOS; enable `podman.socket`
+            // on Linux; or the container-runtime remediation when no runtime resolved),
+            // so it already names the exact command to run — surface it verbatim.
+            return e.message;
+        case "postgres_unavailable":
+            return e.cause.message;
+        case "ingress_failed":
+            return "Could not bind the local callback listener (loopback, ephemeral port) — check for exhausted ports or a restrictive firewall.";
+        case "runtime_already_active":
+            // Accepted-for-now limitation of the embedded-runtime topology (one DBOS engine,
+            // executor "local", per machine). The fix is the client–server split — a single
+            // `inflexa serve` daemon owning the runtime, commands as HTTP clients — tracked
+            // with full context in inflexa-ai/inf-cli#33.
+            return `Another \`inflexa\` process (pid ${e.holderPid}) is already running the harness runtime. Only one harness runtime per machine at a time — wait for it to finish or stop that process.`;
+        case "runtime_boot_failed":
+            return `Harness runtime failed to boot: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`;
+        default: {
+            const exhaustive: never = e;
+            throw new Error(`unhandled boot error: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+}
+
 /** Why the embedding probe failed — a failed/hung embed call vs. a working-but-wrong-width model. */
 export type EmbeddingProbeError = { kind: "embed_failed"; detail: string } | { kind: "dimension_mismatch"; expected: number; actual: number };
 
