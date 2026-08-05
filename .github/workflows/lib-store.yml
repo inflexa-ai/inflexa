@@ -203,6 +203,18 @@ jobs:
           echo "top_image=$TOP" >> "$GITHUB_OUTPUT"
           bash scripts/lib-store-extract-tarballs.sh "$TOP" staging
 
+      - name: Free the built images
+        # The images are pushed and their tracks are in `staging/`, so the ~29 GB
+        # they hold in overlay2 is dead weight for the rest of the job. Free it
+        # here, before the pack — the pack is where the box runs out of disk.
+        # Newest first, so each image drops its own layers as it goes. Cleanup
+        # removes them again, because this step does not run when an earlier one
+        # fails.
+        run: |
+          docker rmi "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}" "${IMAGE_PYTHON}:${VERSION}-${ARCH}" "${IMAGE_BASE}:${VERSION}-${ARCH}" 2>/dev/null || true
+          docker image prune -f >/dev/null 2>&1 || true
+          df -h .
+
       - name: Coverage report (want vs loaded, regression diff)
         id: coverage
         env:
