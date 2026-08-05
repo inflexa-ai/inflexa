@@ -15,6 +15,7 @@ import * as conversation from "./hooks/conversation.ts";
 import { activeAsk, queuedCount, settleAsk, type PendingAsk } from "./hooks/asks.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
+import { forceFullRepaint, watchScreenDamage } from "./hooks/repaint.ts";
 import { profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
 import { usePromptRecall } from "./hooks/prompt_recall.ts";
 import { watchOpenThread } from "./hooks/thread.ts";
@@ -468,6 +469,11 @@ export function App(props: AppProps) {
     // at the ready edge and follows every later swap/schedule. Under App's reactive owner.
     watchAgentModels();
 
+    // Recover from a screen wiped without the renderer's knowledge — Terminal.app's ⌘K being the
+    // reproducible case (full rationale in hooks/repaint.ts). Under App's reactive owner so the key
+    // observer is torn down with the app.
+    watchScreenDamage(renderer);
+
     // Open the DATA PROFILE details view. Snapshots the profile as of open (a
     // point-in-time view) and hands the composed lines to `ResultsDialog`, reused verbatim. The
     // optional `r re-profile` footer action drives a DELIBERATE force re-profile: offered only when
@@ -764,6 +770,16 @@ export function App(props: AppProps) {
         renderer.clearSelection();
     }
 
+    // Redraw, deliberately WITHOUT a `mode`, so it stays live in every mode: screen damage does not
+    // care whether a dialog is open, and a redraw key that a modal suspends is useless exactly when a
+    // modal is the thing that got wiped. Safe to leave unsuspended because a full repaint is idempotent
+    // and touches no app state. No desc/group: which-key lists only continuations of a pending sequence
+    // (`reachableKeys`), so metadata on a single-stroke chord can never render — the `<leader>l` twin
+    // below is what documents this key, matching the direct-chord bindings in the base layer.
+    useBindings(() => ({
+        bindings: [{ chord: resolveKeybind("app.redraw"), run: () => forceFullRepaint(renderer) }],
+    }));
+
     // Base chat keys, live only in base mode: opening a dialog pushes MODE_MODAL (effect below),
     // which suspends this whole layer at once — the declarative replacement for `if (dialogOpen)`.
     // Each app key has a direct chord AND a `<leader>` sequence (the leader, ctrl+x by default,
@@ -792,6 +808,7 @@ export function App(props: AppProps) {
             { chord: leaderSeq("s"), run: () => runCommandById("session.switch"), desc: "Switch session", group: "Session" },
             { chord: leaderSeq("t"), run: () => runCommandById("view.theme"), desc: "Change theme", group: "View" },
             { chord: leaderSeq("e"), run: openTurnError, desc: "Turn error details", group: "App" },
+            { chord: leaderSeq("l"), run: () => forceFullRepaint(renderer), desc: "Redraw screen", group: "App" },
             { chord: leaderSeq("q"), run: () => void quit(), desc: "Quit", group: "App" },
         ],
     }));
