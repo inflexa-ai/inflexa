@@ -47,19 +47,18 @@ import {
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
 
-import { describeCause } from "../../lib/cause.ts";
-import { fail, dieOn, failViaShutdown } from "../../lib/cli.ts";
-import { shutdown } from "../../lib/shutdown.ts";
-import { listAnalysisInputs } from "../../db/primary_query.ts";
-import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
-import { workspaceDataDir } from "../analysis/output.ts";
-import { stageInputs } from "../staging/staging.ts";
-import { resolveHarnessConfig } from "./config.ts";
-import { validatePlanFile, persistPlan, type PlanIntakeError } from "./plan_intake.ts";
-import { describeBootError, ensureSandboxImage, formatElapsed, readNewestWorkflowStep, runWorkflowFamily, withStatusPool } from "./profile.ts";
-import { bootHarnessRuntime, type RunTriggerDeps } from "./runtime.ts";
-
-type Spinner = ReturnType<typeof spinner>;
+import { describeCause } from "../../../lib/cause.ts";
+import { fail, dieOn, failViaShutdown, type Spinner } from "../../../lib/cli.ts";
+import { shutdown } from "../../../lib/shutdown.ts";
+import { listAnalysisInputs } from "../../../db/primary_query.ts";
+import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../../analysis/context.ts";
+import { workspaceDataDir } from "../../analysis/output.ts";
+import { ensureSandboxImage } from "../../libs/pull.ts";
+import { stageInputs } from "../../staging/staging.ts";
+import { resolveHarnessConfig } from "../config.ts";
+import { validatePlanFile, persistPlan, type PlanIntakeError } from "../plan_intake.ts";
+import { formatElapsed, readNewestWorkflowStep, runWorkflowFamily, withStatusPool } from "./status.ts";
+import { bootHarnessRuntime, describeBootError, type RunTriggerDeps } from "../runtime.ts";
 
 // ── The replicated trigger flow ───────────────────────
 

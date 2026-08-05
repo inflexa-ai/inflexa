@@ -12,7 +12,7 @@ import type { OpenableEntry, OpenTarget, PresentationBody } from "../../types/se
 // into a normalized card model, plus open-time RESOLUTION (reference → path) and MATERIALIZATION
 // (echart/svg spec → a self-contained file under the analysis workspace's `presentations/` directory).
 // Consumed by BOTH the TUI store adapter (`hooks/conversation.ts` wraps the readouts into `Part`s) and
-// the REPL printer (`chat_printer.ts` renders them as OSC 8 links), so the coercion + resolution logic
+// the REPL printer (`dev/chat.ts` renders them as OSC 8 links), so the coercion + resolution logic
 // lives in one place.
 //
 // COPY-ON-RECEIVE: the readers run inside the in-process emit path, whose `data` shares mutable

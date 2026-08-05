@@ -304,7 +304,7 @@ export function buildProgram(): Command {
                 .option("--status", "Show the profile run state instead of starting a run"),
             { kind: "approval" },
             async (options: { analysis?: string; status?: boolean }) => {
-                const { runProfile, runProfileStatus } = await import("../modules/harness/profile.ts");
+                const { runProfile, runProfileStatus } = await import("../modules/harness/dev/profile.ts");
                 const flags = { analysis: options.analysis };
                 if (options.status) await runProfileStatus(flags);
                 else await runProfile(flags);
@@ -322,7 +322,7 @@ export function buildProgram(): Command {
                 .option("--status", "Show this analysis's run history instead of launching a run"),
             { kind: "approval" },
             async (analysis: string | undefined, options: { plan?: string; status?: boolean }) => {
-                const { runAnalysis, runAnalysisStatus } = await import("../modules/harness/run.ts");
+                const { runAnalysis, runAnalysisStatus } = await import("../modules/harness/dev/run.ts");
                 const flags = { analysis };
                 if (options.status) await runAnalysisStatus(flags);
                 else await runAnalysis(flags, options.plan);
@@ -344,7 +344,7 @@ export function buildProgram(): Command {
                 reason: "`inflexa chat` opens an interactive prompt loop, which cannot run as a captured subprocess. It is not available to you.",
             },
             async (analysis: string | undefined, options: { thread?: string }) => {
-                const { runChat } = await import("../modules/harness/chat.ts");
+                const { runChat } = await import("../modules/harness/dev/chat.ts");
                 await runChat({ analysis }, options.thread);
             },
         );
