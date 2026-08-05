@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { renderFrame } from "../../../test_support/tui.ts";
+import { dialogSize } from "../../../lib/design_system.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
 import { ResultsDialog } from "./results_dialog.tsx";
 import { SelectDialog } from "./select_dialog.tsx";
@@ -32,10 +33,12 @@ describe("DialogPanel", () => {
                 <text>b</text>
             </DialogPanel>
         );
-        // Wide terminal: lg renders at its fixed 88 columns, NOT a fraction of the 200 available.
-        const wide = await renderFrame(panel, { width: 200, height: 20 });
+        // Wide terminal: lg renders at its OWN fixed column count, NOT a fraction of the 200 available.
+        // Read from the preset rather than restated here — a duplicated literal turns every legitimate
+        // retune into a red test while proving nothing about fixed-vs-fraction, which is the claim.
+        const wide = await renderFrame(panel, { width: 200, height: 60 });
         const wideCols = Math.max(...wide.split("\n").map((l) => l.length));
-        expect(wideCols).toBe(88);
+        expect(wideCols).toBe(dialogSize.lg.width);
         // Narrow terminal: the fixed width would overflow, so the 90% clamp takes over (36 of 40).
         const narrow = await renderFrame(panel, { width: 40, height: 20 });
         const narrowCols = Math.max(...narrow.split("\n").map((l) => l.length));
@@ -62,8 +65,8 @@ describe("DialogPanel", () => {
                 <text>b</text>
             </DialogPanel>
         );
-        const tall = await renderFrame(panel, { width: 100, height: 40 });
-        expect(tall.split("\n").length).toBe(20);
+        const tall = await renderFrame(panel, { width: 100, height: 60 });
+        expect(tall.split("\n").length).toBe(dialogSize.lg.height);
         const short = await renderFrame(panel, { width: 100, height: 15 });
         expect(short.split("\n").length).toBeLessThanOrEqual(12);
     });
@@ -77,11 +80,11 @@ describe("lg consumers hold a stable height", () => {
 
     test("ResultsDialog is the same height for 1 line and 50 lines, and scrolls the overflow", async () => {
         const render = (lines: string[]) =>
-            renderFrame(() => <ResultsDialog title="Results" lines={lines} emptyText="none" onClose={() => {}} />, { width: 100, height: 40 });
+            renderFrame(() => <ResultsDialog title="Results" lines={lines} emptyText="none" onClose={() => {}} />, { width: 120, height: 60 });
         const many = await render(LINES);
         const one = await render(["only line"]);
-        expect(many.split("\n").length).toBe(20);
-        expect(one.split("\n").length).toBe(20);
+        expect(many.split("\n").length).toBe(dialogSize.lg.height);
+        expect(one.split("\n").length).toBe(dialogSize.lg.height);
         expect(many).toContain("line 0");
         expect(one).toContain("only line");
         expect(many).toContain("close");
@@ -91,13 +94,13 @@ describe("lg consumers hold a stable height", () => {
         const items = Array.from({ length: 30 }, (_, i) => ({ value: i, title: `item ${i}` }));
         const render = (subset: typeof items) =>
             renderFrame(() => <SelectDialog title="Pick" items={subset} emptyText="none" onSelect={() => {}} onCancel={() => {}} />, {
-                width: 100,
-                height: 40,
+                width: 120,
+                height: 60,
             });
         const full = await render(items);
         const filtered = await render(items.slice(0, 2));
-        expect(full.split("\n").length).toBe(20);
-        expect(filtered.split("\n").length).toBe(20);
+        expect(full.split("\n").length).toBe(dialogSize.lg.height);
+        expect(filtered.split("\n").length).toBe(dialogSize.lg.height);
         expect(filtered).toContain("item 0");
         expect(full).toContain("select");
     });

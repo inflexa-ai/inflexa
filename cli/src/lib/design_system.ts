@@ -792,8 +792,15 @@ export type Stroke = keyof typeof stroke;
 export const dialogSize = {
     /** Short prompts, confirms, alerts — static content, content height. */
     md: { width: 64, maxWidth: "90%", height: undefined, maxHeight: "80%" },
-    /** Pickers, lists, results — fixed rows so filtering never resizes the panel. */
-    lg: { width: 88, maxWidth: "90%", height: 20, maxHeight: "80%" },
+    /**
+     * Pickers, lists, results — fixed rows so filtering never resizes the panel.
+     *
+     * Sized for a row that carries FACTS beside its name, not a bare label: a file entry spends ~35
+     * columns on permissions, size, and timestamp, and a picker whose names then truncate defeats the
+     * point of listing them. The height follows the same logic — 28 rows leaves ~20 for the list after
+     * the panel's chrome, which is a working set rather than a keyhole to scroll through.
+     */
+    lg: { width: 108, maxWidth: "90%", height: 28, maxHeight: "80%" },
     /** Full showcases, galleries, large forms — near-full-screen. */
     xl: { width: 116, maxWidth: "90%", height: "85%", maxHeight: undefined },
 } as const satisfies Record<string, DialogDims>;
