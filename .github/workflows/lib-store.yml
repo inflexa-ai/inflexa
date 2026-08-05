@@ -233,21 +233,6 @@ jobs:
             --out dist/coverage.json "${PREV_ARG[@]}" | tee coverage.out
           cat coverage.out >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Pack per-track tarballs
-        id: pack
-        run: |
-          bash scripts/lib-store-pack.sh staging dist
-          {
-            echo "## Image build ($ARCH)"
-            echo "| Image | Result |"
-            echo "|-|-|"
-            echo "| sandbox-base | pushed |"
-            echo "| sandbox-python | pushed |"
-            echo "| sandbox-python-r | ${{ steps.python_r.outcome }} |"
-            echo "Extracted from: ${{ steps.extract.outputs.top_image }}"
-            echo "Packed tracks: $(tr '\n' ' ' < dist/tracks.txt)"
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Publish configuration
         id: publish
         run: |
@@ -265,8 +250,13 @@ jobs:
           role-to-assume: ${{ vars.LIB_STORE_PUBLISH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
 
-      - name: Publish track tarballs + candidate manifest + coverage
-        if: steps.publish.outputs.enabled == 'true'
+      # Packing and publishing are one step because they interleave: each track is
+      # packed, uploaded, and then torn down — tarball and staging subtree both —
+      # before the next track packs. Peak disk is the largest single track rather
+      # than all six. The step runs whether or not S3 is configured, so the pack is
+      # proven and the disk profile is the same either way.
+      - name: Pack, publish and tear down each track
+        id: pack
         env:
           S3_BUCKET: ${{ vars.LIB_STORE_S3_BUCKET }}
           PUBLIC_URL: ${{ vars.LIB_STORE_PUBLIC_URL || 'https://lib-store.inflexa.ai' }}
@@ -274,8 +264,25 @@ jobs:
           PYTHON_VERSION: ${{ needs.prepare.outputs.python_version }}
           GIT_SHA: ${{ github.sha }}
           TOP_IMAGE: ${{ steps.extract.outputs.top_image }}
+          PUBLISH_ENABLED: ${{ steps.publish.outputs.enabled }}
         run: |
-          scripts/lib-store-publish.sh "$ARCH" "$VERSION" dist
+          scripts/lib-store-publish.sh "$ARCH" "$VERSION" staging dist
+          {
+            echo "## Image build ($ARCH)"
+            echo "| Image | Result |"
+            echo "|-|-|"
+            echo "| sandbox-base | pushed |"
+            echo "| sandbox-python | pushed |"
+            echo "| sandbox-python-r | ${{ steps.python_r.outcome }} |"
+            echo "Extracted from: ${{ steps.extract.outputs.top_image }}"
+            echo "Packed tracks: $(tr '\n' ' ' < dist/tracks.txt)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the coverage baseline
+        if: steps.publish.outputs.enabled == 'true'
+        env:
+          S3_BUCKET: ${{ vars.LIB_STORE_S3_BUCKET }}
+        run: |
           # The coverage baseline travels with the immutable version, and advances
           # latest alongside the manifest (lib-store-publish.sh) so the next build's
           # regression diff references this build. Acceptance is non-gating and moves

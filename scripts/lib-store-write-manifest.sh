@@ -28,15 +28,18 @@ tracks="$(tr '\n' ' ' < "$DIST/tracks.txt")"
 lib_store_assert_r_triple "$tracks" || exit 1
 arch_dir="linux-$ARCH"
 
+# The digest and size sidecars, not the tarball: a streaming publish uploads each
+# tarball and deletes it before the next track packs, so the tarball is gone by
+# the time the manifest is written.
 for t in $tracks; do
-  [ -f "$DIST/$t.tar.zst.sha256" ] && [ -f "$DIST/$t.tar.zst" ] \
-    || { echo "ERROR: track '$t' listed in tracks.txt but not packed in $DIST" >&2; exit 1; }
+  [ -f "$DIST/$t.tar.zst.sha256" ] && [ -f "$DIST/$t.tar.zst.size" ] \
+    || { echo "ERROR: track '$t' listed in tracks.txt but has no packed digest and size in $DIST" >&2; exit 1; }
 done
 
 tracks_json=""
 for t in $tracks; do
   sha="$(cat "$DIST/$t.tar.zst.sha256")"
-  size="$(stat -c%s "$DIST/$t.tar.zst" 2>/dev/null || stat -f%z "$DIST/$t.tar.zst")"
+  size="$(cat "$DIST/$t.tar.zst.size")"
   # Emit BOTH a store-relative `path` (the CLI joins it onto its RESOLVED base, so an
   # INFLEXA_LIB_STORE_URL/libStoreUrl mirror redirects the payload downloads too) and the
   # absolute `url` baked at PUBLIC_URL (a compat fallback for a client predating `path`).

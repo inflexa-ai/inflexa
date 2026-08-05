@@ -1,36 +1,54 @@
 #!/usr/bin/env bash
 # Publish a built library store to S3 — immutable versions, and advance `latest`
 # for this arch (build-floor gated; acceptance is non-gating and moves nothing):
-#   1. Upload each packed track tarball write-once to <version>/linux-<arch>/<track>.tar.zst,
-#      together with the two store files no tarball carries — the assembled
-#      packages.txt and meta.json. The harness mounts a `current/` only when both
-#      are present, so a puller downloads them instead of deriving them.
-#   2. If the arch's full track set built, write the per-arch manifest (the
-#      lockfile the CLI pulls) to <version>/linux-<arch>/manifest.json and
-#      record the candidate pointer — version plus the top image ref — at
-#      candidate/linux-<arch>.json.
-#      An incomplete build uploads its tarballs (they are content-addressed and
-#      reusable) but publishes no manifest and no candidate.
-#   3. Advance latest/linux-<arch>/manifest.json to this version, mirroring the
+#   1. Pack, upload and TEAR DOWN one track at a time: pack <track>.tar.zst out of
+#      the staging tree, upload it write-once to
+#      <version>/linux-<arch>/<track>.tar.zst, then delete the tarball AND that
+#      track's staging subtree before the next track packs. The peak disk is one
+#      track, not six. This is serial on purpose: a parallel pack raises the peak,
+#      and the job has time to spare. The digest and size sidecars and the
+#      packages.txt fragment stay behind — the manifest and packages.txt are
+#      written from them once the loop ends.
+#   2. Upload the two store files no tarball carries — the assembled packages.txt
+#      and meta.json. The harness mounts a `current/` only when both are present,
+#      so a puller downloads them instead of deriving them.
+#   3. Write the per-arch manifest (the lockfile the CLI pulls) to
+#      <version>/linux-<arch>/manifest.json and record the candidate pointer —
+#      version plus the top image ref — at candidate/linux-<arch>.json. Both land
+#      after the loop, so a track that failed to upload can never reach a
+#      published manifest.
+#   4. Advance latest/linux-<arch>/manifest.json to this version, mirroring the
 #      image :latest tag the build also advances. This is gated by the build's own
 #      load check + non-empty floor + coverage regression guard — the same gate
 #      that decides whether the build publishes at all.
 #
-# Usage: lib-store-publish.sh <amd64|arm64> <version> <dist_dir>
+# PUBLISH_ENABLED=false packs and tears down exactly the same and uploads nothing,
+# so a run with no S3 configuration still proves the pack and still holds the same
+# disk peak.
+#
+# Usage: lib-store-publish.sh <amd64|arm64> <version> <staging_dir> <dist_dir>
 # Env:   S3_BUCKET PUBLIC_URL TOP_IMAGE  (TOP_IMAGE is the extracted top image ref
 #        recorded in the candidate pointer; BASE_IMAGE R_VERSION PYTHON_VERSION
 #        GIT_SHA are forwarded to lib-store-write-manifest.sh as manifest metadata)
+#        PUBLISH_ENABLED  "true" (default) uploads; anything else packs only
 
 set -euo pipefail
-
-ARCH="${1:?usage: lib-store-publish.sh <amd64|arm64> <version> <dist_dir>}"
-VERSION="${2:?version}"
-DIST="${3:?dist_dir}"
-: "${S3_BUCKET:?}" "${PUBLIC_URL:?}" "${TOP_IMAGE:?}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib-store-common.sh
 source "$SCRIPT_DIR/lib-store-common.sh"
+
+ARCH="${1:?usage: lib-store-publish.sh <amd64|arm64> <version> <staging_dir> <dist_dir>}"
+VERSION="${2:?version}"
+STAGING="${3:?staging_dir}"
+DIST="${4:?dist_dir}"
+PUBLISH_ENABLED="${PUBLISH_ENABLED:-true}"
+if [ "$PUBLISH_ENABLED" = "true" ]; then
+  : "${S3_BUCKET:?}" "${PUBLIC_URL:?}" "${TOP_IMAGE:?}"
+fi
+
+[ -d "$STAGING" ] || { echo "ERROR: staging dir not found: $STAGING" >&2; exit 1; }
+mkdir -p "$DIST"
 
 ARCH_DIR="linux-$ARCH"
 
@@ -43,6 +61,10 @@ trap 'rm -rf "$WORK"' EXIT
 # Immutable: a version is never rewritten; skip an object that already exists.
 put_once() {
   local src="$1" key="$VERSION/$ARCH_DIR/$2"
+  if [ "$PUBLISH_ENABLED" != "true" ]; then
+    echo "publish disabled: skipped the upload of $key"
+    return 0
+  fi
   if aws s3api head-object --bucket "$S3_BUCKET" --key "$key" >/dev/null 2>&1; then
     echo "immutable: s3://$S3_BUCKET/$key already exists — skipping"
   else
@@ -50,22 +72,46 @@ put_once() {
   fi
 }
 
-while read -r track; do
-  [ -n "$track" ] || continue
-  put_once "$DIST/$track.tar.zst" "$track.tar.zst"
-done < "$DIST/tracks.txt"
+# Decide the track set BEFORE anything uploads, so a partial R triple fails the
+# run rather than leaving half of one in the bucket. Tracks that did not build
+# have neither a subtree nor a fragment and are simply absent; the floor already
+# dropped the empty ones.
+tracks=""
+for track in $LIB_STORE_ALL_TRACKS; do
+  if lib_store_track_staged "$STAGING" "$track"; then tracks="$tracks $track"; fi
+done
+if [ -z "$tracks" ]; then
+  echo "ERROR: no complete tracks (subtree + fragment) found in $STAGING" >&2
+  exit 1
+fi
+lib_store_assert_r_triple "$tracks" || exit 1
 
-# Best-effort: publish the manifest for exactly the tracks that packed (the floor
-# already dropped empty tracks). Only guard the R triple's all-or-none invariant.
-lib_store_assert_r_triple "$(tr '\n' ' ' < "$DIST/tracks.txt")" || exit 1
+packed=""
+for track in $tracks; do
+  lib_store_pack_track "$STAGING" "$DIST" "$track" "$LIB_STORE_ZSTD_LEVEL"
+  echo "packed $track -> $DIST/$track.tar.zst ($(du -h "$DIST/$track.tar.zst" | cut -f1), sha256 $(cut -c1-12 "$DIST/$track.tar.zst.sha256")…)"
+  put_once "$DIST/$track.tar.zst" "$track.tar.zst"
+  rm -rf "${DIST:?}/$track.tar.zst" "${STAGING:?}/$(lib_store_track_dir "$track")"
+  packed="$packed $track"
+  echo "tore down $track — free on $DIST: $(df -Ph "$DIST" | awk 'NR==2 {print $4}')"
+done
+
+# shellcheck disable=SC2086 # packed is an intentional word list, one per line
+printf '%s\n' $packed > "$DIST/tracks.txt"
 
 # The two files the harness requires before it mounts a store: packages.txt (what
 # list_available_packages reads) and meta.json (the version the store carries).
 # Neither is in a track tarball, so both travel as their own write-once objects
-# beside them.
+# beside them. packages.txt reads the fragments, which the teardown keeps.
+"$SCRIPT_DIR/lib-store-write-packages.sh" "$STAGING" "$packed" > "$DIST/packages.txt"
 "$SCRIPT_DIR/lib-store-write-meta.sh" "$ARCH" "$VERSION" "$DIST" > "$WORK/meta.json"
 put_once "$DIST/packages.txt" packages.txt
 put_once "$WORK/meta.json" meta.json
+
+if [ "$PUBLISH_ENABLED" != "true" ]; then
+  echo "publish disabled: packed and tore down [$packed]; no manifest, no latest, no candidate."
+  exit 0
+fi
 
 # manifest.json is immutable too, not just the tarballs. Nothing pins upstream package
 # versions, so a same-version retry (VERSION = date+sha) can rebuild different bytes: the

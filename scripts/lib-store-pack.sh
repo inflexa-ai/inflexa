@@ -2,35 +2,34 @@
 # Pack a staging tree into one content-addressed tarball per track.
 #
 # For each track whose subtree AND packages.txt fragment are present in the
-# staging dir, emit <out>/<track>.tar.zst plus <out>/<track>.tar.zst.sha256
-# (the digest the manifest pins). Tracks that did not build are skipped, so a
-# partial build packs whatever succeeded. Writes <out>/tracks.txt listing the
-# packed tracks, and <out>/packages.txt assembled from their fragments.
+# staging dir, emit <out>/<track>.tar.zst plus its sha256 and byte size (what the
+# manifest pins). Tracks that did not build are skipped, so a partial build packs
+# whatever succeeded. Writes <out>/tracks.txt listing the packed tracks, and
+# <out>/packages.txt assembled from their fragments.
+#
+# This is the whole-tree packer, for the local/offline path — it holds every
+# tarball at once. CI packs through lib-store-publish.sh, which streams one track
+# at a time to hold the disk peak down.
 #
 # Usage: lib-store-pack.sh <staging_dir> <out_dir> [zstd_level]
 
 set -euo pipefail
 
-STAGING="${1:?usage: lib-store-pack.sh <staging_dir> <out_dir> [zstd_level]}"
-OUT="${2:?usage: lib-store-pack.sh <staging_dir> <out_dir> [zstd_level]}"
-ZSTD_LEVEL="${3:-3}"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib-store-common.sh
 source "$SCRIPT_DIR/lib-store-common.sh"
+
+STAGING="${1:?usage: lib-store-pack.sh <staging_dir> <out_dir> [zstd_level]}"
+OUT="${2:?usage: lib-store-pack.sh <staging_dir> <out_dir> [zstd_level]}"
+ZSTD_LEVEL="${3:-$LIB_STORE_ZSTD_LEVEL}"
 
 [ -d "$STAGING" ] || { echo "ERROR: staging dir not found: $STAGING" >&2; exit 1; }
 mkdir -p "$OUT"
 
 packed=""
 for track in $LIB_STORE_ALL_TRACKS; do
-  dir="$STAGING/$(lib_store_track_dir "$track")"
-  frag="$STAGING/$(lib_store_track_fragment "$track")"
-  if [ -d "$dir" ] && [ -f "$frag" ]; then
-    members="$(lib_store_track_members "$track")"
-    # shellcheck disable=SC2086 # members is an intentional word list
-    tar -C "$STAGING" -cf - $members | zstd -q -f "-${ZSTD_LEVEL}" -o "$OUT/$track.tar.zst"
-    sha256sum "$OUT/$track.tar.zst" | awk '{print $1}' > "$OUT/$track.tar.zst.sha256"
+  if lib_store_track_staged "$STAGING" "$track"; then
+    lib_store_pack_track "$STAGING" "$OUT" "$track" "$ZSTD_LEVEL"
     echo "packed $track -> $OUT/$track.tar.zst ($(du -h "$OUT/$track.tar.zst" | cut -f1), sha256 $(cut -c1-12 "$OUT/$track.tar.zst.sha256")…)"
     packed="$packed $track"
   fi
