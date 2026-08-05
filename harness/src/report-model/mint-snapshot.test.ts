@@ -77,6 +77,17 @@ describe("mintReportSnapshot", () => {
         expect(Object.keys(later.artifacts).sort()).toEqual([DE_TABLE, LATE_TABLE].sort());
     });
 
+    it("keeps a path of `__proto__` an ordinary entry", async () => {
+        // The ledger accepts any path. A plain object treats `__proto__` as the prototype setter, thus
+        // the entry vanishes. The null-prototype map keeps the key an own member of the snapshot.
+        await upsertArtifact(pool, artifact("__proto__", "sha256:eee", "output"));
+
+        const snapshot = (await mintReportSnapshot(pool, ANALYSIS))._unsafeUnwrap();
+
+        expect(Object.hasOwn(snapshot.artifacts, "__proto__")).toBe(true);
+        expect(snapshot.artifacts["__proto__"]).toEqual({ hash: "sha256:eee", fileType: "output" });
+    });
+
     it("keeps a row whose bytes are unrecoverable", async () => {
         await upsertArtifact(pool, artifact(DE_TABLE, "sha256:aaa", "output"));
         const marked = await pool.query("UPDATE cortex_artifacts SET unrecoverable_at = $1 WHERE analysis_id = $2 AND path = $3", [

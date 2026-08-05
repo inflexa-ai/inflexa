@@ -9,6 +9,7 @@
 import type { Result } from "neverthrow";
 
 import type { Reference, UnresolvedReference } from "../contracts/report-reference.js";
+import type { ArtifactType } from "../schemas/artifact-manifest.js";
 
 /**
  * One pinned artifact: its content hash, and its rows as plain cells.
@@ -89,8 +90,14 @@ export function columnsHeldByNoRow(rows: Array<Record<string, string | number>>,
     return columns.filter((column) => !rows.some((row) => column in row));
 }
 
-/** The file type of an entry that holds no cell for a reference to address. */
-const FILE_TYPES_WITH_NO_CELL: ReadonlySet<string> = new Set(["figure", "script", "log", "notebook"]);
+/**
+ * The file type of an entry that holds no cell for a reference to address.
+ *
+ * The `satisfies` clause ties each literal to a member of `ArtifactType`. A renamed member of
+ * `ArtifactType` becomes a compile error here. A new member passes with no error, because the rule
+ * refuses a kind and never confirms one.
+ */
+const FILE_TYPES_WITH_NO_CELL: ReadonlySet<string> = new Set(["figure", "script", "log", "notebook"] satisfies readonly ArtifactType[]);
 
 /**
  * Give back `true` for a file type that holds no cell for a reference to address.
@@ -105,4 +112,19 @@ const FILE_TYPES_WITH_NO_CELL: ReadonlySet<string> = new Set(["figure", "script"
  */
 export function fileTypeHoldsNoCell(fileType: string | null | undefined): boolean {
     return fileType !== undefined && fileType !== null && FILE_TYPES_WITH_NO_CELL.has(fileType);
+}
+
+/**
+ * Give back the snapshot entry at `path`, or `undefined` when the map holds no such own key.
+ *
+ * An agent authors a report reference, thus the path is untrusted text. The `artifacts` map is a plain
+ * object, and a bracket lookup with a path such as `constructor` finds an inherited member. Then the
+ * refusal reads `hash-mismatch`, but the true answer is `artifact-missing`. The `Object.hasOwn` guard
+ * admits an own key only, thus an inherited member reads as absent.
+ *
+ * The structural tier and the fixture resolver both read this one lookup. Thus the two tiers can never
+ * disagree about membership.
+ */
+export function snapshotEntry(snapshot: ReportSnapshot, path: string): ArtifactSnapshot | undefined {
+    return Object.hasOwn(snapshot.artifacts, path) ? snapshot.artifacts[path] : undefined;
 }

@@ -97,6 +97,22 @@ describe("validateReferenceStructure", () => {
             expect(failure?.reason).toBe("hash-mismatch");
         });
 
+        it("fails an artifact-table against a path that the snapshot does not hold", () => {
+            const failure = failureFor(tableReference(ABSENT_PATH, ABSENT_HASH));
+            expect(failure?.reason).toBe("artifact-missing");
+            expect(failure?.detail).toContain(ABSENT_PATH);
+        });
+
+        it("fails an artifact-file whose hash differs from the entry", () => {
+            expect(failureFor(fileReference(OUTPUT_PATH, WRONG_HASH))?.reason).toBe("hash-mismatch");
+        });
+
+        it("fails an artifact-value whose path is constructor with artifact-missing and not hash-mismatch", () => {
+            // An agent authors the path, thus it is untrusted text. An inherited member of a plain object,
+            // for example `constructor`, must not read as an entry.
+            expect(failureFor(valueReference("constructor", WRONG_HASH))?.reason).toBe("artifact-missing");
+        });
+
         it("passes a pin that names the entry and its hash", () => {
             expect(failureFor(valueReference(OUTPUT_PATH, OUTPUT_HASH))).toBeUndefined();
         });
