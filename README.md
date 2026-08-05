@@ -108,6 +108,7 @@ This repository is a monorepo of independent subsystems — work inside the one 
 |-|-|
 | [`cli/`](./cli) | The local-first TUI/CLI — this product. SQLite storage, auth, the chat UI. Start here to run from source. |
 | [`harness/`](./harness) | `@inflexa-ai/harness`, the host-agnostic agent harness: agent loop, durable workflows, sandbox protocol, providers. The execution model and its design decisions live here — see [`harness/CONTEXT.md`](./harness/CONTEXT.md) and the specs in [`harness/openspec/specs/`](./harness/openspec/specs/). |
+| [`prov-kernel/`](./prov-kernel) | `@inflexa-ai/prov-kernel`, the provenance format kernel: the PROV dialect vocabulary, document model, and chain/signature primitives. The harness emits observation hooks; hosts own their recorders and consume this kernel. |
 | [`skills/`](./skills) | Shared bioinformatics skill packs the agent loads at runtime. |
 | [`templates/`](./templates) | Report-rendering templates. |
 | [`images/`](./images) | The sandbox images: the base image with its Go execution server, and the published `python` / `python-r` variants with the analysis packages baked in. |

@@ -1,13 +1,14 @@
 name: Version Guard
 
-# The version fields of cli/package.json and harness/package.json are release
-# triggers: a cli bump landing on main mints a tag, a GitHub release, and
-# production binaries (release.yml); a harness bump publishes
-# @inflexa-ai/harness to npm (release-harness.yml). Branch rulesets can only
-# gate whole file paths, not a field inside a file — and gating the whole
-# manifests would also block every legitimate dependency edit — so this check
-# enforces the field-level rule: a PR may change a version only when its
-# author is a maintainer.
+# The version fields of cli/package.json, harness/package.json, and
+# prov-kernel/package.json are release triggers: a cli bump landing on main
+# mints a tag, a GitHub release, and production binaries (release.yml); a
+# harness bump publishes @inflexa-ai/harness to npm (release-harness.yml); a
+# prov-kernel bump publishes @inflexa-ai/prov-kernel to npm
+# (release-prov-kernel.yml). Branch rulesets can only gate whole file paths,
+# not a field inside a file — and gating the whole manifests would also block
+# every legitimate dependency edit — so this check enforces the field-level
+# rule: a PR may change a version only when its author is a maintainer.
 #
 # The job runs on EVERY pull request, with no paths filter, because it is a
 # required status check: a path-filtered workflow reports nothing on PRs that
@@ -49,7 +50,7 @@ jobs:
           git fetch --depth=1 origin "$BASE_SHA"
 
           bumps=""
-          for pkg in cli/package.json harness/package.json; do
+          for pkg in cli/package.json harness/package.json prov-kernel/package.json; do
             base_version=$(git show "$BASE_SHA:$pkg" | jq -r .version)
             head_version=$(jq -r .version "$pkg")
             if [ "$base_version" != "$head_version" ]; then

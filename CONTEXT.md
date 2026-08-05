@@ -34,6 +34,10 @@ the report of the results.
   also has the agent loop, the sandbox submit and receive protocol, the durable
   workflows, the providers, and the model of the workspace paths. Refer to `harness/CONTEXT.md`
   and `harness/openspec/specs/`.
+- **`prov-kernel/` — the provenance format kernel.** It publishes `@inflexa-ai/prov-kernel`:
+  the PROV dialect vocabulary, the document model, and the chain and signature
+  primitives. The harness emits observation hooks. Each host owns its recorder
+  and consumes this kernel.
 - **`skills/` and `templates/` — shared runtime content.** The harness reads them
   at runtime. They are not code, and no package holds them. They are at the root,
   thus the two hosts load the same content.
@@ -47,6 +51,6 @@ The harness runs under any host. Thus the open-source product `cli` and a manage
 deployment can share one harness, and they are different only at the seams. Refer
 to [`harness/openspec/specs/harness-durable-runtime`](./harness/openspec/specs/harness-durable-runtime/spec.md).
 
-`cli` and `harness` are independent. They have different lockfiles, and the root
-has no workspace. This independence keeps the boundary correct: the host uses the
+`cli`, `harness`, and `prov-kernel` are independent. They have different lockfiles, and
+the root has no workspace. This independence keeps the boundary correct: the host uses the
 harness through its published package, and the harness never uses the host.

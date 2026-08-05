@@ -270,8 +270,8 @@ dependencies, tools, and documents.
   product.
 - The root has no build, no package manager, and no task runner. Thus you must
   work inside the subsystem that you change.
-- Go into that subsystem first, for example `cd cli` or `cd harness`. Then use
-  the scripts of that subsystem.
+- Go into that subsystem first, for example `cd cli`, `cd harness`, or
+  `cd prov-kernel`. Then use the scripts of that subsystem.
 - Read the `CLAUDE.md` of that subsystem before you start. Each subsystem has its
   own conventions. The root has no shared set of conventions.
 
@@ -353,8 +353,9 @@ against this section is the only control.
 
 ## Specs
 
-Each subsystem has its own OpenSpec specs. The two spec trees are
-`cli/openspec/specs` and `harness/openspec/specs`. The root has no spec tree.
+Each subsystem has its own OpenSpec specs. The three spec trees are
+`cli/openspec/specs`, `harness/openspec/specs`, and `prov-kernel/openspec/specs`. The
+root has no spec tree.
 
 The harness has no `docs/adr` directory. Its design decisions are in its specs.
 
