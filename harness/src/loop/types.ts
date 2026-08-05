@@ -91,6 +91,19 @@ export type EmitEvent =
           readonly outcome: ToolOutcome;
           /** The same detail the matching `tool-started` carried. */
           readonly detail?: ToolCallDetail;
+          /**
+           * The time around this call's own dispatch, in milliseconds.
+           *
+           * A host cannot measure this itself. The loop emits every
+           * `tool-started` of a round before it dispatches anything, and every
+           * `tool-finished` after the round settles. Thus a host that brackets
+           * the two events measures the round, and each call of a multi-call
+           * round reports the same figure.
+           *
+           * The field is optional, and it is absent when no measurement was
+           * taken. As a result a host can fall back to its own observation.
+           */
+          readonly durationMs?: number;
       };
 
 /**
