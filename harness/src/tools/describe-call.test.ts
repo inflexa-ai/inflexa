@@ -154,17 +154,20 @@ describe("describeCall — conversation roster", () => {
         expect(describeCall(tool, { researchQuestion: "which genes drive resistance in cluster 3" })).toBe("which genes drive resistance in cluster 3");
     });
 
-    it("list_available_refs names what it inspects, never the filter over it", () => {
+    it("list_available_refs names the subtree it inspects, and marks a filter over it", () => {
         const tool = createListAvailableRefsTool(unused);
 
         expect(describeCall(tool, {})).toBe("full reference store");
         expect(describeCall(tool, { path: "managed/collectri" })).toBe("managed/collectri");
         expect(describeCall(tool, { category: "msigdb" })).toBe("msigdb");
-        expect(describeCall(tool, { query: "regulon" })).toBe("regulon");
+        // A bare needle reads as a path, thus a search-only call marks the filter.
+        expect(describeCall(tool, { query: "regulon" })).toBe('matching "regulon"');
         // `execute` resolves `path ?? category`, thus the path wins over the category.
         expect(describeCall(tool, { path: "managed/collectri", category: "msigdb" })).toBe("managed/collectri");
-        // `query` narrows the entries of the named subtree; it does not replace it.
-        expect(describeCall(tool, { category: "msigdb", query: "hallmark" })).toBe("msigdb");
+        // `query` narrows the named subtree; the detail names both halves, so the
+        // filter no longer hides behind the target.
+        expect(describeCall(tool, { category: "msigdb", query: "hallmark" })).toBe('msigdb · matching "hallmark"');
+        expect(describeCall(tool, { path: "human", query: "kinase" })).toBe('human · matching "kinase"');
         // A blank value is no filter and no target inside `execute`, thus the
         // detail names the browse that actually happens.
         expect(describeCall(tool, { query: "   " })).toBe("full reference store");
@@ -178,9 +181,10 @@ describe("describeCall — conversation roster", () => {
 
         expect(describeCall(tool, {})).toBe("full package list");
         expect(describeCall(tool, { names: ["Seurat", "scanpy"] })).toBe("Seurat, scanpy");
-        expect(describeCall(tool, { query: "seurat" })).toBe("seurat");
+        // A bare needle reads as a package name, thus a search marks the filter.
+        expect(describeCall(tool, { query: "seurat" })).toBe('matching "seurat"');
         expect(describeCall(tool, { language: "python" })).toBe("python packages");
-        expect(describeCall(tool, { query: "umap", language: "r" })).toBe("umap (r)");
+        expect(describeCall(tool, { query: "umap", language: "r" })).toBe('matching "umap" (r)');
         // `queryPackages` returns on `names` before it reads `query` or `language`.
         expect(describeCall(tool, { names: ["Seurat"], query: "umap", language: "r" })).toBe("Seurat");
         // An empty array is not a presence check, and `execute` lists the store.

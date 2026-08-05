@@ -235,12 +235,17 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
         }),
         // `queryPackages` returns on `names` before it reads another field, thus
         // the presence check comes first. An empty array is not a presence check.
-        // A blank query counts as absent, because `queryPackages` trims the
-        // needle and applies no filter when nothing is left.
+        // `names` are exact identifiers a caller checks for, thus they name the
+        // call as they are. A blank query counts as absent, because `queryPackages`
+        // trims the needle and applies no filter when nothing is left.
+        //
+        // A needle rides behind `matching "…"`, because a bare needle reads as a
+        // package name. `language` stays a trailing qualifier, exactly as `execute`
+        // treats it.
         describeCall: ({ names, query, language }) => {
             if (names !== undefined && names.length > 0) return names.join(", ");
             const needle = query?.trim();
-            if (needle !== undefined && needle !== "") return language === undefined ? needle : `${needle} (${language})`;
+            if (needle !== undefined && needle !== "") return language === undefined ? `matching "${needle}"` : `matching "${needle}" (${language})`;
             if (language !== undefined) return `${language} packages`;
             return "full package list";
         },
