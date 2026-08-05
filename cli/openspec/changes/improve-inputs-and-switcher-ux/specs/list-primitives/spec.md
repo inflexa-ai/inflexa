@@ -10,9 +10,13 @@ Both MUST consume a row as `SelectItem<T>`: `value`, `title`, and the optional
 `description`, `hint`, `meta`, `prefix`, `category`, `categoryLabel`, `tone`, and `pinned`.
 Both MUST share one internal core (ranking, grouping, cursor, selection, row rendering).
 
-`prefix` renders BEFORE the title, in the recessive `fgSubtle` tier, and it MUST NOT rank.
+`prefix` renders BEFORE the title, in the secondary `fgMuted` tier, and it MUST NOT rank.
 A fixed-width column that folds into `title` would score against the fuzzy filter. Thus a
 query of `rwx` would match each directory of the file picker.
+
+`prefix` MUST NOT use the recessive `fgSubtle` tier. That tier is for content whose loss
+costs the user nothing. A permission triple is the one place its bits appear, because a
+`tone` marks a denied read alone. Thus the column holds the 4.5:1 text floor.
 
 `prefix` MUST NOT shrink. A short mode string reads as a DIFFERENT mode, and not as a
 short one.

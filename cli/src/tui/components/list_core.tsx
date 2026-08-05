@@ -33,18 +33,19 @@ export type SelectItem<T> = {
     /** The primary label, the main fuzzy-match target. */
     readonly title: string;
     /**
-     * Optional fixed-width column rendered BEFORE the title, in the recessive `fgSubtle` tier — the
+     * Optional fixed-width column rendered BEFORE the title, in the secondary `fgMuted` tier — the
      * file picker's `ls`-style permission bits.
      *
      * Separate from `title` because `title` is the weight-2 fuzzy target: folding a mode string into
      * it would make a query of `rwx` match every directory, and `d` rank every folder above a file
      * named `data`. This field never ranks.
      *
-     * Its tier is deliberate. The column is near-constant (most rows read `rw-r--r--`), so it is
-     * scanned for EXCEPTIONS rather than read per row; painting it level with the title would put
-     * nine characters of low-information text in front of the one thing the eye is hunting. That
-     * places it in the design system's 3:1 tier rather than the 4.5:1 one — sound here because the
-     * facts it carries are also available per-row elsewhere, and nothing depends on reading it.
+     * `fgMuted` and NOT the recessive `fgSubtle`, though the column is near-constant and is scanned
+     * for exceptions rather than read per row: the design system reserves `fgSubtle` for content
+     * whose loss costs the user nothing, and a permission triple is the only place these bits appear
+     * — a `tone` marks a denied READ alone, and says nothing about write or execute. Information the
+     * row carries nowhere else holds the 4.5:1 text floor. It stays under the title's own tier, which
+     * is what keeps it from competing with the name.
      */
     readonly prefix?: string;
     /** Optional detail shown for the cursor row in the list's bottom detail line. */
@@ -417,11 +418,11 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                         <Show when={mode() === "multi"}>
                             <text fg={isSel() ? theme().success : theme().fgSubtle}>{gutter()}</text>
                         </Show>
-                        {/* Its own span, so it keeps the recessive tier while the title takes the cursor
+                        {/* Its own span, so it keeps the muted tier while the title takes the cursor
                             and tone colors — see `SelectItem.prefix`. `flexShrink={0}` protects the column:
                             a shortened mode string would read as a DIFFERENT mode, not a shortened one. */}
                         <Show when={item().prefix}>
-                            <text fg={theme().fgSubtle} flexShrink={0}>
+                            <text fg={theme().fgMuted} flexShrink={0}>
                                 {item().prefix}{" "}
                             </text>
                         </Show>

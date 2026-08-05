@@ -77,7 +77,45 @@ const METADATA_ENTRY_CEILING = 2000;
  * or without its facts. `readable` is `null` where the platform has no POSIX ids to decide it.
  */
 type Row = { name: string; isDir: boolean; abs: string; meta?: RowMeta };
-type RowMeta = { size: number; mtimeMs: number; mode: number; readable: boolean | null };
+
+/**
+ * One row's facts, with the size and the date already RENDERED.
+ *
+ * Strings, not the raw byte count and epoch: the items memo reads `query()`, so it rebuilds every
+ * row on each keystroke of the filter, and formatting there would pay the whole listing's cost per
+ * character. Formatting once per listing keeps that loop to concatenation.
+ */
+type RowMeta = { mode: number; readable: boolean | null; sizeLabel: string; dateLabel: string };
+
+/** A directory listing, and whether it resolved metadata at all — see {@link METADATA_ENTRY_CEILING}. */
+type Listing = { rows: Row[]; withMetadata: boolean };
+
+/**
+ * What an unreadable directory reads as: no rows, and no claim that a ceiling suppressed anything.
+ * A module constant rather than a literal at the call site, because every read of the listing runs
+ * through here and each one would otherwise allocate.
+ */
+const EMPTY_LISTING: Listing = { rows: [], withMetadata: true };
+
+/**
+ * The fixed-width local timestamp of the date column.
+ *
+ * ONE formatter for the process, never `Date.prototype.toLocaleString` per row: the option-bearing
+ * form builds an `Intl.DateTimeFormat` on each call, which measured 48.6ms over 2000 rows against
+ * 2.5ms for this one. The locale is read at module load, which no surface changes at runtime.
+ *
+ * `{ dateStyle: "short", timeStyle: "short" }` — the app's usual compact form — varies from 15 to 17
+ * columns (`8/5/26, 3:32 PM` against `7/17/26, 11:21 PM`), which makes a column of them ragged. The
+ * explicit 2-digit fields zero-pad every part, so the width is constant with no padding of our own,
+ * and the value stays locale-ordered. This is exactly what `ls` does to its day column.
+ *
+ * Local and absolute, never a relative age: this listing is a record of what is on disk, which the
+ * time convention puts on the absolute side, and "3d" cannot be compared down a column.
+ */
+const COLUMN_TIME = new Intl.DateTimeFormat(undefined, { year: "2-digit", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+/** The width of the `rwxr-xr-x` triple — the blank a row with no metadata holds the column with. */
+const MODE_COLUMN_BLANK = " ".repeat(9);
 
 /** Props for {@link FilePicker}. All paths are absolute; the caller owns the browse root. */
 export type FilePickerProps = {
@@ -104,7 +142,7 @@ export type FilePickerProps = {
  * channel is the human-readable message (permission, broken mount): the caller renders it as the
  * list's error line and the user ascends — a single unreadable folder must not abort the picker.
  */
-function listDir(dir: string, hideHidden: boolean, identity: ProcessIdentity | null): Result<Row[], string> {
+function listDir(dir: string, hideHidden: boolean, identity: ProcessIdentity | null): Result<Listing, string> {
     let entries: Dirent[];
     try {
         entries = readdirSync(dir, { withFileTypes: true });
@@ -129,7 +167,10 @@ function listDir(dir: string, hideHidden: boolean, identity: ProcessIdentity | n
         rows.push({ name: e.name, isDir, abs, meta: withMetadata ? entryMeta(abs, identity) : undefined });
     }
     rows.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) : a.isDir ? -1 : 1));
-    return ok(rows);
+    // The flag travels with the rows rather than being inferred from them downstream: "every row
+    // lost its stat" is ALSO what a folder holding one broken symlink looks like, and reporting that
+    // as a large folder states a cause that is not the one at hand.
+    return ok({ rows, withMetadata });
 }
 
 /**
@@ -144,7 +185,12 @@ function listDir(dir: string, hideHidden: boolean, identity: ProcessIdentity | n
  */
 function entryMeta(abs: string, identity: ProcessIdentity | null): RowMeta | undefined {
     return statResult(abs, "filePicker:entryMeta").match(
-        (s): RowMeta => ({ size: s.size, mtimeMs: s.mtimeMs, mode: s.mode, readable: identity ? isReadableBy(s, identity) : null }),
+        (s): RowMeta => ({
+            mode: s.mode,
+            readable: identity ? isReadableBy(s, identity) : null,
+            sizeLabel: s.size.formatBytes(),
+            dateLabel: COLUMN_TIME.format(s.mtimeMs),
+        }),
         () => undefined,
     );
 }
@@ -160,36 +206,28 @@ function safeSymlinkIsDir(abs: string): boolean {
 
 /**
  * The permission bits as the `rwxr-xr-x` triple every shell user already reads, or `undefined`
- * where they mean nothing.
+ * where the whole listing carries none.
  *
  * It rides the row's `prefix`, LEFT of the name, because that is where `ls -l` puts it and the
- * habit is worth more than the nine columns it takes from the name. Always exactly 9 characters,
- * so the column aligns with no padding.
+ * habit is worth more than the nine columns it takes from the name.
  *
- * Windows is the `undefined` case: Node synthesizes a mode there that describes no real ACL, so
- * printing it would be a confident lie. The type marker is the row's trailing `/`, so the leading
- * `d` a full `ls -l` mode carries would be a second, redundant one — the triple starts at the bits.
+ * A row whose own `stat` failed inside a listing that HAS metadata keeps the column as blanks. It
+ * would otherwise start its name nine columns left, in the mode column — which reads as a mode
+ * string, not as a missing one, and breaks the alignment the column exists for. A listing with no
+ * metadata at all (over the ceiling, or Windows) drops the column instead: holding an empty column
+ * on every row spends the name's width to say nothing.
+ *
+ * Windows is the `undefined` case for a second reason: Node synthesizes a mode there that describes
+ * no real ACL, so printing it would be a confident lie. The type marker is the row's trailing `/`,
+ * so the leading `d` a full `ls -l` mode carries would be a second, redundant one — the triple
+ * starts at the bits.
  */
-function modeTriple(row: Row, identity: ProcessIdentity | null): string | undefined {
-    if (identity === null || !row.meta) return undefined;
+function modeTriple(row: Row, identity: ProcessIdentity | null, withMetadata: boolean): string | undefined {
+    if (identity === null || !withMetadata) return undefined;
+    if (!row.meta) return MODE_COLUMN_BLANK;
     const rwx = (bits: number): string => `${bits & 4 ? "r" : "-"}${bits & 2 ? "w" : "-"}${bits & 1 ? "x" : "-"}`;
     const mode = row.meta.mode;
     return `${rwx((mode >> 6) & 7)}${rwx((mode >> 3) & 7)}${rwx(mode & 7)}`;
-}
-
-/**
- * The modification time as a FIXED-WIDTH local timestamp.
- *
- * `{ dateStyle: "short", timeStyle: "short" }` — the app's usual compact form — varies from 15 to 17
- * columns (`8/5/26, 3:32 PM` against `7/17/26, 11:21 PM`), which makes a column of them ragged. The
- * explicit 2-digit fields zero-pad every part, so the width is constant with no padding of our own,
- * and the value stays locale-ordered. This is exactly what `ls` does to its day column.
- *
- * Local and absolute, never a relative age: this listing is a record of what is on disk, which the
- * time convention puts on the absolute side, and "3d" cannot be compared down a column.
- */
-function columnTime(mtimeMs: number): string {
-    return new Date(mtimeMs).toLocaleString(undefined, { year: "2-digit", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 /**
@@ -208,8 +246,8 @@ function entryHint(row: Row, sizeWidth: number): string | undefined {
     const meta = row.meta;
     if (!meta) return undefined;
     const separator = ` ${GLYPHS.middot} `;
-    const size = row.isDir ? "".padStart(sizeWidth + separator.length) : meta.size.formatBytes().padStart(sizeWidth) + separator;
-    return `${size}${columnTime(meta.mtimeMs)}`;
+    const size = row.isDir ? "".padStart(sizeWidth + separator.length) : meta.sizeLabel.padStart(sizeWidth) + separator;
+    return `${size}${meta.dateLabel}`;
 }
 
 /** The cwd tail, segment-collapsed when deep — head + tail always shown, mid-segments ellipsized. */
@@ -245,7 +283,8 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
     const identity = processIdentity();
 
     const listed = createMemo(() => listDir(cwd(), hideHidden(), identity));
-    const rows = (): Row[] => listed().unwrapOr([]);
+    const listing = (): Listing => listed().unwrapOr(EMPTY_LISTING);
+    const rows = (): Row[] => listing().rows;
     const listError = (): string | null =>
         listed().match(
             () => null,
@@ -258,18 +297,18 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
     // it, and an unreadable dir drops it so the error surfaces as the list's empty state (← still
     // ascends). Dir titles carry a trailing `/` — the type marker that needs no color.
     const items = createMemo<SelectItem<string>[]>(() => {
-        const listing = rows();
+        const { rows: listed, withMetadata } = listing();
         // One pass for the size column's width before any row is built: every row must agree on it,
         // or right-aligning the numbers aligns nothing.
         let sizeWidth = 0;
-        for (const r of listing) if (!r.isDir && r.meta) sizeWidth = Math.max(sizeWidth, r.meta.size.formatBytes().length);
+        for (const r of listed) if (!r.isDir && r.meta) sizeWidth = Math.max(sizeWidth, r.meta.sizeLabel.length);
         const out: SelectItem<string>[] = [];
         if (query().trim() === "" && listError() === null) out.push({ value: parentAbs(), title: ".." });
-        for (const r of listing) {
+        for (const r of listed) {
             out.push({
                 value: r.abs,
                 title: r.isDir ? `${r.name}/` : r.name,
-                prefix: modeTriple(r, identity),
+                prefix: modeTriple(r, identity, withMetadata),
                 hint: entryHint(r, sizeWidth),
                 // Advisory only — the row stays selectable. Mode bits do not see an ACL or a macOS
                 // TCC rule, so this warns; staging is where a read is actually attempted and refused.
@@ -391,7 +430,7 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
 
     // A listing over the ceiling carries names only. Say so where the user is already looking:
     // silence would read as "these files have no size", which is a different and false claim.
-    const metadataSuppressed = (): boolean => rows().length > 0 && rows().every((r) => r.meta === undefined);
+    const metadataSuppressed = (): boolean => rows().length > 0 && !listing().withMetadata;
 
     function footer(): string {
         const sep = ` ${GLYPHS.middot} `;

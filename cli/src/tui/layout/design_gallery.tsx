@@ -423,14 +423,18 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         actually attempted and refused. Shown on a list rather than in the live picker
                         below, which lists a real cwd where every file happens to be readable. */}
                     {/* The `ls -l` reading order: mode, then name, then the facts. The mode rides `prefix`
-                        (never the title — it would rank against the fuzzy filter) in the recessive tier, so a
-                        near-constant column does not compete with the names. The size right-aligns in a field
-                        as wide as the listing needs, and the date is zero-padded to a fixed width; together
-                        those are what land the two columns under each other. A directory's blank size field
-                        spans its separator too, so its date does not slide left. */}
+                        (never the title — it would rank against the fuzzy filter) in the muted tier under the
+                        title's own, so a near-constant column does not compete with the names. The size
+                        right-aligns in a field as wide as the listing needs, and the date is zero-padded to a
+                        fixed width; together those are what land the two columns under each other. A
+                        directory's blank size field spans its separator too, so its date does not slide left.
+
+                        The last row is an entry whose `stat` failed — a file deleted between the readdir and
+                        the stat. It holds the mode column as blanks rather than dropping it: a name that
+                        starts nine columns left reads as a mode string, not as a missing one. */}
                     <text fg={theme().fgMuted}>File picker rows — mode as a left prefix, aligned size/date columns, the unreadable tone:</text>
                     <DialogShowcase>
-                        <box height={4} width="100%">
+                        <box height={5} width="100%">
                             <FixedList
                                 items={[
                                     { value: "d", title: "src/", prefix: "rwxr-xr-x", hint: "          08/02/26, 04:05 PM" },
@@ -442,6 +446,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                                         hint: `  4.2 GB ${GLYPHS.middot} 07/19/26, 06:49 PM`,
                                         tone: "warning",
                                     },
+                                    { value: "g", title: "vanished.tmp", prefix: "         " },
                                 ]}
                                 emptyText="Empty folder"
                             />
