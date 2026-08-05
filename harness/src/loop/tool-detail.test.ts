@@ -75,10 +75,30 @@ describe("normalizeDetail", () => {
         expect(detail).not.toContain("sk-ant-api03");
     });
 
-    it("caps an over-long value", () => {
-        const detail = normalizeDetail("x".repeat(5000));
+    // The mark is what tells a reader that the line is short of what the hook returned. It costs
+    // one of the capped code points, so the marked result still obeys the bound.
+    it("caps an over-long value and marks the cut", () => {
+        const detail = normalizeDetail("x".repeat(5000))!;
 
+        expect(detail.endsWith("…")).toBe(true);
+        expect(Array.from(detail).length).toBeLessThanOrEqual(DETAIL_MAX_LENGTH);
         expect(detail).toHaveLength(DETAIL_MAX_LENGTH);
+    });
+
+    it("leaves a value within the cap unmarked", () => {
+        const fits = "x".repeat(DETAIL_MAX_LENGTH);
+
+        expect(normalizeDetail("output/summary.md")).not.toContain("…");
+        expect(normalizeDetail(fits)).toBe(fits);
+    });
+
+    // `trimEnd` runs before the append, so a cut that lands on a space gives `word…`, not `word …`.
+    it("does not strand a space before the mark", () => {
+        // The 119th code point is a space, which is exactly where the cut falls.
+        const detail = normalizeDetail(`${"a".repeat(DETAIL_MAX_LENGTH - 2)} ${"b".repeat(50)}`)!;
+
+        expect(detail).not.toContain(" …");
+        expect(detail.endsWith("a…")).toBe(true);
     });
 
     it("redacts before capping, so a secret cannot survive by being cut", () => {
@@ -122,6 +142,7 @@ describe("computeDetail", () => {
             id: "undescribed",
             description: "Declares no hook.",
             inputSchema: z.object({ path: z.string() }),
+            describeCall: "none",
             execute: async () => ok({}),
         });
 
