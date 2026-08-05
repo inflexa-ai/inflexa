@@ -30,9 +30,11 @@ A tool whose input cannot distinguish its calls — one whose schema admits a si
 
 ### Requirement: The emit site normalizes every detail
 
-Normalization SHALL happen once, at the emit site, and SHALL NOT be delegated to tool authors. The loop SHALL collapse the detail to a single line, remove control characters, apply the harness secret redaction, and cap the result at 120 characters.
+Normalization SHALL happen once, at the emit site, and SHALL NOT be delegated to tool authors. The loop SHALL collapse the detail to a single line, remove control characters, apply the harness secret redaction, and cap the result at 120 code points.
 
-When the cap actually shortens a detail, the emitted string SHALL carry a truncation mark, and the marked result SHALL still fall within the 120-character bound. A detail that fits SHALL be emitted unmarked. A reader SHALL therefore be able to tell a shortened detail from a complete one, which matters because a hook returning free-form prose reaches the cap on ordinary input while a hook returning a path or an identifier never does.
+The unit SHALL be the code point, not the UTF-16 unit and not the display column. A cut at a fixed UTF-16 index can split a surrogate pair and emit a lone surrogate. A column count would claim knowledge of the font metrics of the renderer. The harness does not have that knowledge. A host measures columns, because only a host knows the width of its own line.
+
+When the cap actually shortens a detail, the emitted string SHALL carry a truncation mark, and the marked result SHALL still fall within the 120-code-point bound. A detail that fits SHALL be emitted unmarked. A reader SHALL therefore be able to tell a shortened detail from a complete one, which matters because a hook returning free-form prose reaches the cap on ordinary input while a hook returning a path or an identifier never does.
 
 A tool author is therefore free to return whatever reads best. A leak or a runaway string is one auditable line's responsibility, not thirty authors'.
 
@@ -46,7 +48,7 @@ A tool author is therefore free to return whatever reads best. A leak or a runaw
 
 - **GIVEN** a `describeCall` that returns 5000 characters
 - **WHEN** the loop normalizes it
-- **THEN** the emitted detail is at most 120 characters and ends with a truncation mark
+- **THEN** the emitted detail is at most 120 code points and ends with a truncation mark
 
 #### Scenario: A detail within the cap carries no mark
 
