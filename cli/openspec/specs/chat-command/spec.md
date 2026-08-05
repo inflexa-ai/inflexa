@@ -1,20 +1,26 @@
 # chat-command Specification
 
 ## Purpose
-The `inflexa chat <analysis>` command — a dev/E2E surface (a clack/stdout REPL, not a TUI) that converses with the harness conversation agent scoped to a resolved analysis, exercising the whole embedded conversational loop headlessly. The product conversation surface is the TUI chat (capability `tui-harness-chat`); this REPL is registered only in the dev channel (see `dev-commands`) and is absent from release builds. Both surfaces drive the same shared turn engine (`src/modules/harness/turn.ts`), and both narrate one event stream through the shared readers in `src/modules/harness/chat_printer.ts`. Lives in `src/modules/harness/dev/chat.ts`, which holds the REPL and the stdout printer it builds.
+
+The `inflexa chat <analysis>` command — a dev/E2E surface that converses with the harness conversation agent, scoped to a resolved analysis. It is a clack/stdout REPL, not a TUI, and it exercises the whole embedded conversational loop headlessly.
+
+The product conversation surface is the TUI chat (capability `tui-harness-chat`). This REPL is registered only in the dev channel (refer to `dev-commands`), and a release build does not carry it.
+
+Both surfaces drive the same shared turn engine (`src/modules/harness/turn.ts`). Both narrate one event stream through the shared readers in `src/modules/harness/chat_printer.ts`.
+
+Lives in `src/modules/harness/dev/chat.ts`, which holds the REPL and the stdout printer that it builds.
+
 ## Requirements
+
 ### Requirement: Chat is a dev-channel harness REPL
 
-The system SHALL provide a dedicated `inflexa chat <analysis>` command — a clack/stdout REPL, not a
-TUI surface — that converses with the harness conversation agent scoped to a resolved analysis,
-registered ONLY in the dev channel (see `dev-commands`): release builds do not carry it. The
-command module SHALL carry a `TODO(extend)` comment block stating its standing role: the product
-conversation surface is the TUI chat (capability `tui-harness-chat`); this REPL exists to exercise
-the harness loop headlessly (dev/E2E) and is excluded from production builds by the channel gate.
-No passive flow SHALL boot the runtime or start a chat — deliberate boot actions are this command,
-the profile/run commands (dev channel), and opening an analysis chat in the TUI. The command SHALL
-run the same pre-flight prerequisite gates as the run/profile launches before booting, and SHALL
-acquire the per-analysis instance lock after resolution and before boot.
+The system MUST give a dedicated `inflexa chat <analysis>` command that converses with the harness conversation agent, scoped to a resolved analysis. It is a clack/stdout REPL, not a TUI surface. The dev channel registers it alone, and a release build does not carry it. Refer to `dev-commands`.
+
+The command module MUST carry a `TODO(extend)` comment block that states its standing role. That block names the TUI chat (capability `tui-harness-chat`) as the product conversation surface. It also states that this REPL exists to exercise the harness loop headlessly, and that the channel gate keeps it out of a production build.
+
+A passive flow MUST NOT boot the runtime or start a chat. There are three deliberate boot actions: this command, the `profile` and `run` commands of the dev channel, and an analysis chat that the TUI opens.
+
+Before it boots, the command MUST run the same pre-flight prerequisite gates as the run and profile launches. It MUST acquire the per-analysis instance lock after the resolution and before the boot.
 
 #### Scenario: The dev surface is marked in code
 
@@ -28,7 +34,7 @@ acquire the per-analysis instance lock after resolution and before boot.
 
 #### Scenario: Failed prerequisite is reported before side effects
 
-- **WHEN** a pre-flight gate (sandbox image, embedding endpoint, skills dir, templates dir, proxy key, model, Postgres) fails
+- **WHEN** a pre-flight gate fails (the sandbox image, the embedding endpoint, the skills directory, the templates directory, the proxy key, the model, or Postgres)
 - **THEN** the command exits with that gate's actionable message and the runtime was never booted
 
 #### Scenario: Locked analysis is refused before boot
@@ -38,25 +44,27 @@ acquire the per-analysis instance lock after resolution and before boot.
 
 ### Requirement: The turn loop runs through the harness app-fn seam
 
-Each turn SHALL be exactly the harness's transport-free sequence: `prepareChatTurn` (ownership
-check, title seed, analysis-status load, message assembly) → `runAgent` with the agent the harness
-resolves for the thread's type, the booted runtime's provider, a turn-scoped abort signal, the
-surface's emit sink, and the pass-through run step → `appendTurn` persisting
-`[userMessage, ...loopOutput]` to the pg thread store. The engine SHALL resolve the agent between
-prepare and run — `agents.forThread(threadType)` over the type the prepare ok result reports — never
-from a pre-selected agent a caller passes in. A type the harness refuses (`unregistered_thread_type`)
-SHALL end the turn as its own terminal outcome, distinct from a prepare failure: `runAgent` is never
-called and nothing is persisted, matching the persistence contract that appends only on
-`runAgent`-reaching paths. This sequence SHALL live in ONE shared turn-engine module consumed by both
-this REPL and the TUI chat — the REPL SHALL NOT carry its own copy of the turn body. The agent
-session SHALL carry the thread id in scope, so a plan executed from chat stamps
-`cortex_runs.thread_id`. The cli SHALL NOT import the DBOS SDK or issue raw SQL against
-harness-owned tables anywhere in the chat path.
+Each turn MUST be exactly the transport-free sequence of the harness:
+
+1. `prepareChatTurn` — the ownership gate, the title seed, the analysis-status load, and the message assembly.
+2. `runAgent` — with the agent that the harness resolves for the thread's type. It also takes the
+   provider of the booted runtime, a turn-scoped abort signal, the emit sink of the surface, and
+   the pass-through run step.
+3. `appendTurn` — which persists `[userMessage, ...loopOutput]` to the pg thread store.
+
+The engine MUST resolve the agent between the prepare step and the run step. It resolves `agents.forThread(threadType)` over the type that the prepare ok result reports. It MUST NOT take a pre-selected agent from a caller.
+
+A type that the harness refuses (`unregistered_thread_type`) MUST end the turn as its own terminal outcome, distinct from a prepare failure. The engine never calls `runAgent` and it persists nothing. This obeys the persistence contract, which appends only on a path that reaches `runAgent`.
+
+This sequence MUST live in ONE shared turn-engine module that both this REPL and the TUI chat consume. The REPL MUST NOT carry its own copy of the turn body.
+
+The agent session MUST carry the thread id in its scope, so a plan that runs from chat stamps `cortex_runs.thread_id`. The cli MUST NOT import the DBOS SDK anywhere in the chat path. It MUST NOT issue raw SQL against a harness-owned table there either.
 
 #### Scenario: A turn round-trips the thread machinery
 
 - **WHEN** a user sends a second message in the same chat
-- **THEN** the assembled context contains the persisted prior turn (token-budgeted window), the working-memory render, and the analysis context, and the new turn is appended to the same thread
+- **THEN** the assembled context contains the persisted prior turn (token-budgeted window), the working-memory render, and the analysis context
+- **AND** the new turn is appended to the same thread
 
 #### Scenario: Chat-launched runs carry thread lineage
 
@@ -66,7 +74,7 @@ harness-owned tables anywhere in the chat path.
 #### Scenario: One turn engine serves both surfaces
 
 - **WHEN** the REPL and the TUI each run a turn
-- **THEN** both drive the same exported turn-engine function; neither carries a private prepare→run→append sequence
+- **THEN** both drive the same exported turn-engine function, and neither carries a private prepare-run-append sequence
 
 #### Scenario: A conversation thread resolves the conversation agent
 
@@ -76,14 +84,14 @@ harness-owned tables anywhere in the chat path.
 #### Scenario: An unregistered thread type refuses the turn before the loop
 
 - **WHEN** a turn runs on a thread whose type has no registered agent in this build
-- **THEN** the engine returns the unresolved-agent outcome naming the thread type, `runAgent` is never called, nothing is appended to the thread, and the REPL prints the refusal to stderr
+- **THEN** the engine returns the unresolved-agent outcome naming the thread type
+- **AND** `runAgent` is never called, nothing is appended to the thread, and the REPL prints the refusal to stderr
 
 ### Requirement: Thread selection is new-by-default with explicit resume
 
-A chat invocation SHALL create a fresh thread for the analysis by default, and SHALL
-accept an explicit thread reference to resume an existing one. A thread that does not
-exist or belongs to a different analysis SHALL be refused with an actionable message
-(the harness reports both as not-found; the command must not distinguish them).
+By default, a chat invocation MUST make a fresh thread for the analysis. It MUST also accept an explicit thread reference, to resume an existing thread.
+
+The command MUST refuse a thread that does not exist, and a thread that belongs to a different analysis, with an actionable message. The harness reports both as not-found, and the command must not tell them apart.
 
 #### Scenario: Default invocation starts a fresh thread
 
@@ -102,25 +110,22 @@ exist or belongs to a different analysis SHALL be refused with an actionable mes
 
 ### Requirement: The printer renders the emit stream coarsely and safely
 
-The command's emit sink SHALL render, to stdout: accumulated `text-delta` content as it
-arrives (no paced/typewriter reveal), one-line tool chips on `tool-started` completed on
-`tool-finished` (tool name and outcome), and text renderings of the `data-plan` (plan
-id, title, and the step dependency graph — the same `planToDag` rendering the TUI
-plan-card block uses, emitted as plain text, falling back to a per-step list when steps
-are absent or rendering fails) and `data-run-card` (run id, title, step count — the fields the
-harness `RunCardData` contract carries; it has no run-status field) parts. Text-shaped
-`data-presentation` parts (`markdown`, `code`, `table`) SHALL print inline as text
-(markdown source; code fenced; tables as aligned text). Pixel-shaped parts —
-`echart`/`svg` presentations (materialized through the shared cache),
-`data-file-reference` entries, and `data-report-preview` — SHALL print one line per
-entry carrying a kind tag, title, and the resolved path wrapped in an OSC 8 `file://`
-hyperlink with the plain path visible for terminals without hyperlink support;
-`data-report-preview-failed` prints its reason. Events originating from sub-agents
-(call path deeper than the top-level agent) SHALL be dropped. Any other
-conversation-emitted part SHALL print a one-line tagged fallback rather than being
-silently swallowed. The sink SHALL extract what it renders at receipt and SHALL NOT
-retain received event or part objects (in-process emit shares mutable references with
-the agent loop). Diagnostics go to stderr; stdout carries only the conversation.
+The emit sink of the command MUST render these to stdout:
+
+- Accumulated `text-delta` content as it arrives, with no paced or typewriter reveal.
+- A one-line tool chip on `tool-started`, closed on `tool-finished` with the tool name and the outcome.
+- The `data-plan` part as text: the plan id, the title, and the step dependency graph. The graph is the same `planToDag` rendering that the TUI plan-card block uses, emitted as plain text. If the plan has no steps, or the graph fails to render, the sink falls back to a per-step list.
+- The `data-run-card` part as text: the run id, the title, and the step count. These are the fields that the harness `RunCardData` contract carries, and it has no run-status field.
+
+A text-shaped `data-presentation` part (`markdown`, `code`, `table`) MUST print inline as text. Markdown prints as its source, code prints fenced, and a table prints as aligned text.
+
+A pixel-shaped part MUST print one line for each entry. These parts are an `echart` or `svg` presentation (materialized through the shared cache), a `data-file-reference` entry, and a `data-report-preview`. The line carries a kind tag, a title, and the resolved path inside an OSC 8 `file://` hyperlink. The plain path stays visible, for a terminal with no hyperlink support. A `data-report-preview-failed` part prints its reason.
+
+The sink MUST drop an event that a sub-agent emits, which is one whose call path is deeper than the top-level agent. Any other conversation-emitted part MUST print a one-line tagged fallback, so the sink observes it rather than swallows it.
+
+The sink MUST extract what it renders at receipt. It MUST NOT retain a received event or part object, because an in-process emit shares mutable references with the agent loop.
+
+Diagnostics go to stderr. Only the conversation goes to stdout.
 
 #### Scenario: Streaming text renders as it arrives
 
@@ -134,13 +139,15 @@ the agent loop). Diagnostics go to stderr; stdout carries only the conversation.
 
 #### Scenario: A plan part renders readably
 
-- **WHEN** the agent presents a plan via `show_plan`
-- **THEN** stdout renders the plan id, title, and the step dependency graph as plain text, falling back to a per-step list when the plan has no steps or the graph fails to render
+- **WHEN** the agent presents a plan through `show_plan`
+- **THEN** stdout renders the plan id, the title, and the step dependency graph as plain text
+- **AND** it falls back to a per-step list when the plan has no steps, or when the graph fails to render
 
 #### Scenario: An openable renders as a linked path
 
-- **WHEN** the agent shows a file via `show_file`
-- **THEN** stdout prints a line per file with its caption and resolved absolute path, hyperlinked via OSC 8 and readable as plain text
+- **WHEN** the agent shows a file through `show_file`
+- **THEN** stdout prints one line for each file, with its caption and resolved absolute path
+- **AND** the path is hyperlinked through OSC 8 and stays readable as plain text
 
 #### Scenario: Sub-agent traffic stays out of the transcript
 
@@ -154,12 +161,9 @@ the agent loop). Diagnostics go to stderr; stdout carries only the conversation.
 
 ### Requirement: Plan approval is conversational
 
-The command SHALL NOT add any approval mechanism beyond the conversation itself: the
-prompt-enforced product gate (present plan → ask → the user's message licenses
-`execute_plan`) is the whole mechanism, and the command SHALL NOT auto-approve,
-auto-execute, or inject synthetic approval messages. (The structural fallback, if
-unprompted launches are ever observed, is a refusing `RunAuthorizer` realization — an
-embedder seam, recorded in the design, not built here.)
+The command MUST NOT add an approval mechanism beyond the conversation itself. The prompt-enforced product gate is the whole mechanism: the agent presents a plan, it asks, and the user's message licenses `execute_plan`.
+
+The command MUST NOT auto-approve, auto-execute, or inject a synthetic approval message. If an unprompted launch is ever observed, the structural fallback is a `RunAuthorizer` realization that refuses. That is an embedder seam, recorded in the design and not built here.
 
 #### Scenario: Declining a plan launches nothing
 
@@ -168,22 +172,21 @@ embedder seam, recorded in the design, not built here.)
 
 ### Requirement: Interrupt aborts the turn, not the process
 
-During a streaming turn, an interrupt (Ctrl+C) SHALL abort the in-flight turn via its
-abort signal and return to the prompt. The aborted run RESOLVES with its partial transcript under
-the harness abort contract, and the engine SHALL persist `[userMessage, …partialLoopOutput]` — the
-tokens already streamed to the terminal enter the thread, carrying the harness interruption marker
-on the final assistant message; an abort before any output persists the user's message alone. At
-the idle prompt, an interrupt (or EOF) SHALL exit the REPL cleanly: release held locks
-and shut the runtime down through the existing graceful-shutdown path. A second interrupt
-while an abort is already in flight MAY force-exit the process.
+During a streaming turn, an interrupt (Ctrl+C) MUST abort the in-flight turn through its abort signal, and return to the prompt.
+
+Under the abort contract of the harness, the aborted run RESOLVES with its partial transcript. The engine MUST persist `[userMessage, …partialLoopOutput]`. Thus the tokens already streamed to the terminal enter the thread, and the final assistant message carries the interruption marker of the harness. An abort before any output persists the user's message alone.
+
+At the idle prompt, an interrupt or an EOF MUST exit the REPL cleanly. The command releases each held lock and shuts the runtime down through the existing graceful-shutdown path.
+
+A second interrupt, while an abort is already in flight, can force the process to exit.
 
 #### Scenario: Mid-turn interrupt returns to the prompt
 
 - **WHEN** the user presses Ctrl+C while the agent is mid-turn
-- **THEN** the turn's signal aborts, the user's message and the streamed partial are persisted to the thread, and the REPL shows the next prompt in the same process
+- **THEN** the turn's signal aborts, and the user's message and the streamed partial are persisted to the thread
+- **AND** the REPL shows the next prompt in the same process
 
 #### Scenario: At-prompt interrupt exits cleanly
 
 - **WHEN** the user presses Ctrl+C (or EOF) at the idle prompt
 - **THEN** the REPL releases held locks and exits through the graceful-shutdown path
-
