@@ -85,7 +85,6 @@ export const ExternalCitationSchema = z.object({
     fetched_at: z.string().datetime().optional(),
     excerpt: z.string().max(500),
 });
-export type ExternalCitation = z.infer<typeof ExternalCitationSchema>;
 
 export const DossierRecommendationOutputSchema = z.object({
     disposition: z.enum(["pursue", "conditional", "de_prioritize", "insufficient_evidence"]),

@@ -14,7 +14,7 @@
  * and counts it rather than filing it under a neighbour.
  */
 
-import { ORGAN_SYSTEMS, type OrganSystem } from "../../../contracts/organ-system.js";
+import type { OrganSystem } from "../../../contracts/organ-system.js";
 
 /**
  * Order matters: more-specific patterns first. GI is matched before
@@ -140,22 +140,4 @@ export function classifyTrialAe(ae: { term?: string | null; organ?: string | nul
     const fromSoc = TRIAL_AE_ORGAN_MAP[ae.organ ?? ""];
     if (fromSoc) return fromSoc;
     return classifyOrgan(ae.term ?? "");
-}
-
-const ORGAN_SYSTEM_NAMES = new Set<string>(ORGAN_SYSTEMS);
-
-/**
- * Classify a polypharm off-target panel row by its `organ_system` string, which
- * the curated safety panel already keys to the canonical vocabulary.
- *
- * Falls back to `classifyOrgan` if the upstream string is non-canonical;
- * this preserves coverage if a future collector emits MedDRA terms instead
- * of canonical organ names.
- */
-export function classifyPolypharmOrgan(organSystem: string | null | undefined): OrganSystem | null {
-    const sys = (organSystem ?? "").toLowerCase().trim();
-    if (!sys) return null;
-    // Canonical names from the safety panel enum match by direct string equality.
-    if (ORGAN_SYSTEM_NAMES.has(sys)) return sys as OrganSystem;
-    return classifyOrgan(sys);
 }

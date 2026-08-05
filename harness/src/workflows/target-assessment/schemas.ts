@@ -21,7 +21,6 @@ export const TargetAssessmentInputSchema = z.object({
     /** Requesting user id (identity sub claim). */
     requestedBy: z.string(),
 });
-export type TargetAssessmentInput = z.infer<typeof TargetAssessmentInputSchema>;
 
 export const ResolvedTargetSchema = z.object({
     assessmentId: z.string().uuid(),

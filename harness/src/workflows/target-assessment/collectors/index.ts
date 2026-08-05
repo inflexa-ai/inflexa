@@ -575,5 +575,3 @@ export const COLLECTOR_MANIFEST = [
     { id: "string-ppi", run: collectStringPpi },
     { id: "therapeutic-programs", run: collectTherapeuticPrograms },
 ] as const;
-
-export type CollectorId = (typeof COLLECTOR_MANIFEST)[number]["id"];

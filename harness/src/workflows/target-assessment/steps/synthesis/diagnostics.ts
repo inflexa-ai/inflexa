@@ -42,22 +42,3 @@ export function buildDiagnosticsRow(input: BuildDiagnosticsRowInput): SynthesisD
         error_message: input.errorMessage ?? null,
     };
 }
-
-/**
- * Build a "skipped" diagnostics row for the case where the step never
- * even attempted an LLM call (e.g., upstream coverage was not_loaded
- * and the step short-circuited).
- */
-export function buildSkippedDiagnosticsRow(stepId: StepId, modelId: string, reason: string): SynthesisDiagnosticRow {
-    return {
-        step_id: stepId,
-        model_id: modelId,
-        attempt_count: 1,
-        retry_critique: null,
-        output_chars: 0,
-        probe_verdict: "skipped",
-        final_coverage: "queried_no_data",
-        error_kind: null,
-        error_message: reason,
-    };
-}

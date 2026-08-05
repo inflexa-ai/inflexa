@@ -224,7 +224,6 @@ export const LiabilityBulletDroppedSchema = LiabilityBulletBodySchema.extend({
     reason: z.string(),
     cited_pmid: z.string().optional(),
 });
-export type LiabilityBulletDropped = z.infer<typeof LiabilityBulletDroppedSchema>;
 
 /** `.strict()` rejects the derived counters, which live in the derived sub-tree. */
 export const LiabilitySummarySchema = z
@@ -355,7 +354,6 @@ export const ClinicalTrialAttributionBasisSchema = z.object({
     excerpt: z.string().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
 });
-export type ClinicalTrialAttributionBasis = z.infer<typeof ClinicalTrialAttributionBasisSchema>;
 
 export const ResolvedTrialInterventionSchema = z.object({
     name: z.string(),
@@ -922,7 +920,6 @@ export type InvestigatedClaimRow = z.infer<typeof InvestigatedClaimRowSchema>;
 
 /** Why a candidate organ claim produced no investigated row. */
 export const UninvestigatedClaimReasonSchema = z.enum(["not_corroborated", "exceeded_claim_budget", "investigation_unavailable"]);
-export type UninvestigatedClaimReason = z.infer<typeof UninvestigatedClaimReasonSchema>;
 
 export const UninvestigatedClaimSchema = z.object({
     organ: OrganSystemSchema,
@@ -1089,7 +1086,6 @@ export const NormalTissueExpressionSchema = z
             });
         }
     });
-export type NormalTissueExpression = z.infer<typeof NormalTissueExpressionSchema>;
 
 // ── §3.10 Preclinical ───────────────────────────────────────────────
 
@@ -1256,7 +1252,6 @@ export const DiscoveryTrialRowSchema = z
             });
         }
     });
-export type DiscoveryTrialRow = z.infer<typeof DiscoveryTrialRowSchema>;
 
 export const DiscoveryTrialsSchema = withCoverage(
     z.object({
@@ -1333,7 +1328,6 @@ export const SynthesisDiagnosticRowSchema = z.object({
 export type SynthesisDiagnosticRow = z.infer<typeof SynthesisDiagnosticRowSchema>;
 
 export const SynthesisDiagnosticsSchema = withCoverage(z.object({ rows: z.array(SynthesisDiagnosticRowSchema) }));
-export type SynthesisDiagnostics = z.infer<typeof SynthesisDiagnosticsSchema>;
 
 // ── §4.7 Recommendation citation audit ──────────────────────────────
 

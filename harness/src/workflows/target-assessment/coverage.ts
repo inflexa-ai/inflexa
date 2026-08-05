@@ -6,20 +6,14 @@
  * instead of throwing. Only Phase 0 (target resolution) is allowed to
  * throw — that legitimately aborts the workflow.
  *
- * Coverage states:
- *   - "available"        — the upstream returned data; payload is present.
- *   - "queried_no_data"  — the upstream was queried but came back empty
- *                          (no rows / 404 / etc.) OR threw an error which
- *                          we serialized into `error` instead of bubbling.
- *   - "not_loaded"       — the upstream was never queried (feature flag,
- *                          config disable, or upstream skipped because a
- *                          precondition was not met).
+ * `CoverageSchema` in `contracts/target-dossier.ts` is the one enumeration of
+ * the coverage states, and the helpers below emit its members. A step envelope
+ * carries the three states a step can reach on its own; `filtered` is a
+ * judgement one of our own filters makes, so only the assembler helpers below
+ * produce it.
  */
 
 import { z } from "zod";
-
-export const CoverageSchema = z.enum(["available", "queried_no_data", "not_loaded"]);
-export type Coverage = z.infer<typeof CoverageSchema>;
 
 export const SerializedErrorSchema = z.object({
     message: z.string(),
@@ -27,13 +21,6 @@ export const SerializedErrorSchema = z.object({
     stack: z.string().optional(),
 });
 export type SerializedError = z.infer<typeof SerializedErrorSchema>;
-
-export function serializeError(err: unknown): SerializedError {
-    if (err instanceof Error) {
-        return { message: err.message, name: err.name, stack: err.stack };
-    }
-    return { message: String(err) };
-}
 
 /**
  * Build the schema for a `{ coverage, data, error? }` step output.
@@ -56,22 +43,6 @@ export function withCoverage<TData extends z.ZodTypeAny>(dataSchema: TData) {
             reason: z.string().optional(),
         }),
     ]);
-}
-
-/**
- * Run a step body with the standard try/catch envelope. If the body
- * resolves, returns `{ coverage: "available", data }`. If it throws,
- * returns `{ coverage: "queried_no_data", error: serializeError(err) }`.
- */
-export async function runWithCoverage<T>(
-    body: () => Promise<T>,
-): Promise<{ coverage: "available"; data: T } | { coverage: "queried_no_data"; error: SerializedError }> {
-    try {
-        const data = await body();
-        return { coverage: "available", data };
-    } catch (err) {
-        return { coverage: "queried_no_data", error: serializeError(err) };
-    }
 }
 
 /**

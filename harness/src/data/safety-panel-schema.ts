@@ -39,5 +39,3 @@ export const SafetyPanelFileSchema = z.object({
     curated_at: IsoDateSchema,
     targets: z.array(SafetyTargetSchema),
 });
-
-export type SafetyPanelFile = z.infer<typeof SafetyPanelFileSchema>;

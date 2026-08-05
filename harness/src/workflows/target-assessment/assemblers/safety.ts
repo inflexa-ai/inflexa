@@ -33,7 +33,7 @@ import { makeHeterodimerOfAssessmentFilter } from "../lib/heterodimer-filter.js"
 import { buildFamilyComplexSupplement } from "../lib/family-complex-supplement.js";
 import type { FamilyComplexesBundle } from "../schemas.js";
 import { computeSelectivity } from "../lib/compute-selectivity.js";
-import { classifyOrgan, classifyPolypharmOrgan, classifyTrialAe } from "../lib/meddra-organ-map.js";
+import { classifyOrgan, classifyTrialAe } from "../lib/meddra-organ-map.js";
 import { HIGH_EXPRESSION_TPM_THRESHOLD, CNS_REGION_TPM_FLOOR, MUSCULOSKELETAL_TPM_FLOOR } from "../lib/expression-constants.js";
 export { HIGH_EXPRESSION_TPM_THRESHOLD };
 import type { ChemblModulator } from "../../../tools/lib/chembl-client.js";
@@ -1047,11 +1047,9 @@ export function buildOrganRollup(
     // below, so widening the vocabulary widens the rollup rather than opening
     // a gap between expected and present organs.
     const rows = ORGAN_SYSTEMS.map((organ) => {
-        // off_target_panel.organ_system carries a canonical token from the
-        // curated safety panel. Use direct string equality first;
-        // `classifyOrgan` falls back if a future collector emits a
-        // non-canonical string.
-        const polypharmHits = (offTarget ?? []).filter((r) => classifyPolypharmOrgan(r.organ_system) === organ);
+        // off_target_panel.organ_system is a canonical token, so the match is
+        // equality on the vocabulary rather than a comparison of prose.
+        const polypharmHits = (offTarget ?? []).filter((r) => r.organ_system === organ);
         const polypharmCount = polypharmHits.length;
 
         const faersHits = (faers?.top_signals ?? []).filter((s) => s.organ === organ);
@@ -1197,19 +1195,6 @@ export function buildOrganRollup(
     }
 
     return filtered;
-}
-
-/**
- * Testable wrapper around `buildOrganRollup` that accepts named parameters.
- * Exported for unit tests; production code calls `buildOrganRollup` directly
- * inside `assembleDossier`.
- */
-export function assembleOrganRollupRows(opts: {
-    classPrecedent?: ReturnType<typeof aggregateClassPrecedent> | null;
-    regulatoryActions?: { coverage: string; data?: { rows: RegulatoryActionRow[] } } | null;
-}): ReturnType<typeof buildOrganRollup> extends null ? never[] : NonNullable<ReturnType<typeof buildOrganRollup>> {
-    const regRows = opts.regulatoryActions?.coverage === "available" ? (opts.regulatoryActions.data?.rows ?? null) : null;
-    return buildOrganRollup(null, null, null, opts.classPrecedent ?? null, regRows) ?? [];
 }
 
 // ── §2.4 Drug Interactions ──────────────────────────────────────────
