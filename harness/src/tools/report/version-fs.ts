@@ -69,6 +69,7 @@ export function createVersionFsTools(state: VersionFsToolsState): Tool[] {
             path: z.string().min(1),
             content: z.string(),
         }),
+        describeCall: "none",
         execute: async ({ path, content }): Promise<Result<WriteFileOutput, ToolError>> => {
             const resolved = resolveAgentPath(path, state.versionDir);
             if (resolved.kind === "out_of_scope") {
@@ -100,6 +101,7 @@ export function createVersionFsTools(state: VersionFsToolsState): Tool[] {
             oldText: z.string().min(1),
             newText: z.string(),
         }),
+        describeCall: "none",
         execute: async ({ path, oldText, newText }): Promise<Result<EditFileOutput, ToolError>> => {
             const resolved = resolveAgentPath(path, state.versionDir);
             if (resolved.kind === "out_of_scope") {
@@ -140,6 +142,7 @@ export function createVersionFsTools(state: VersionFsToolsState): Tool[] {
         inputSchema: z.object({
             path: z.string().min(1),
         }),
+        describeCall: "none",
         execute: async ({ path }): Promise<Result<ReadFileOutput, ToolError>> => {
             const resolved = resolveAgentPath(path, state.versionDir);
             if (resolved.kind === "out_of_scope") {
@@ -177,6 +180,7 @@ export function createVersionFsTools(state: VersionFsToolsState): Tool[] {
         inputSchema: z.object({
             path: z.string().min(1),
         }),
+        describeCall: "none",
         execute: async ({ path }): Promise<Result<MkdirOutput, ToolError>> => {
             const resolved = resolveAgentPath(path, state.versionDir);
             if (resolved.kind === "out_of_scope") {

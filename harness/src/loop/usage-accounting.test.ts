@@ -90,6 +90,7 @@ const echoTool: Tool = defineTool({
     id: "echo",
     description: "Echo the label back.",
     inputSchema: z.object({ label: z.string() }),
+    describeCall: "none",
     execute: async ({ label }) => ok({ label }),
 });
 
@@ -382,6 +383,7 @@ function delegateTool(childProvider: ChatProvider, recorder: UsageRecorder, capt
         id: "delegate",
         description: "Run a child agent.",
         inputSchema: z.object({}),
+        describeCall: "none",
         execute: async (_input, ctx) => {
             const result = await runAgent(child, [{ role: "user", content: "child go" }], forSubAgent(ctx.session, "child-agent"), {
                 provider: childProvider,

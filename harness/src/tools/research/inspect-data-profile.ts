@@ -196,6 +196,10 @@ export function createInspectDataProfileTool(pool: Pool) {
                 .optional()
                 .describe(`Per-file records per page. Only used when scope is 'files'. Default ${DEFAULT_PAGE_SIZE}, max ${MAX_PAGE_SIZE}.`),
         }),
+        // `execute` defaults both fields internally, and the hook applies the same
+        // defaults. Without them the ordinary call, which names no field at all,
+        // gives no detail. `page` acts only on the `files` scope, as in `execute`.
+        describeCall: ({ scope, page }) => ((scope ?? "overview") === "files" ? `files (page ${page ?? 1})` : "overview"),
         execute: async (input, ctx): Promise<Result<InspectDataProfileOutput, ToolError>> => {
             const resourceId = scopeResource(ctx.session.scope).resourceId;
             const status = unwrapOrThrow(await loadDataProfileStatus(pool, resourceId));

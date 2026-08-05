@@ -75,6 +75,7 @@ export const openTargetsTool = defineTool({
         "disease name silently returns an EMPTY result rather than an error — resolve a symbol to its ENSG id with search_gene first.\n" +
         "NO-DATA IS FINAL — do not retry the same id. Empty associations mean no evidence, or an unresolvable id.",
     inputSchema,
+    describeCall: "none",
     execute: async (input): Promise<Result<OpenTargetsOutput, ToolError>> => {
         const limit = input.limit ?? DEFAULT_LIMIT;
         switch (input.action) {

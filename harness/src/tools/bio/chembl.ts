@@ -146,6 +146,7 @@ export const chemblTool = defineTool({
         "compounds here first. If ChEMBL misses the compound, resolve it via pubchem action='compound' and bridge back with pubchem action='crossrefs'.\n" +
         "An empty array is valid no-data, not an error — do not retry the same call.",
     inputSchema,
+    describeCall: "none",
     execute: async ({ action, query, searchType, chemblId, idType, activityType, limit }): Promise<Result<ChemblOutput, ToolError>> => {
         switch (action) {
             case "compounds":

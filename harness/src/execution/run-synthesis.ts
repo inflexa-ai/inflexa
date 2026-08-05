@@ -346,6 +346,7 @@ function buildValidateTool(ctx: InnerToolContext): Tool {
         inputSchema: z.object({
             synthesis: z.unknown().describe("The candidate synthesis, in any shape. Field-by-field schema: see submit_synthesis."),
         }),
+        describeCall: "none",
         execute: async (input) => {
             const result = fullyValidate(input.synthesis, ctx);
             return ok(result.valid ? { valid: true as const, issues: [] as ValidationIssue[] } : { valid: false as const, issues: result.issues });
@@ -367,6 +368,7 @@ function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool {
             "already-accepted synthesis untouched; a later accepted submission " +
             "supersedes an earlier one.",
         inputSchema: z.object({ synthesis: RunSynthesisSchema }),
+        describeCall: "none",
         execute: async (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
             const result = fullyValidate(input.synthesis, ctx);
             if (!result.valid) {

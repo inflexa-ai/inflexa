@@ -14,6 +14,7 @@ describe("defineTool", () => {
                 query: z.string().describe("The search query"),
                 limit: z.number().default(10),
             }),
+            describeCall: (input) => input.query,
             execute: async (input) => ok({ found: input.query }),
         });
 
@@ -32,6 +33,7 @@ describe("defineTool", () => {
             id: "default-step",
             description: "Defaults to a durable step.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => ok({ done: true }),
         });
 
@@ -44,6 +46,7 @@ describe("defineTool", () => {
             description: "Uses workflow context.",
             executionMode: "workflow",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => ok({ done: true }),
         });
         const inline = defineTool({
@@ -51,6 +54,7 @@ describe("defineTool", () => {
             description: "Pure deterministic helper.",
             executionMode: "inline",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => ok({ done: true }),
         });
 
@@ -69,6 +73,7 @@ describe("defineTool", () => {
                 id: "union-tool",
                 description: "A tool with a union input.",
                 inputSchema: unionSchema,
+                describeCall: "none",
                 execute: async () => ok({}),
             }),
         ).toThrow(/union-tool.*type.*object/s);
@@ -87,16 +92,31 @@ describe("defineTool", () => {
             expect(tool.describeCall?.({ path: "output/summary.md" })).toBe("output/summary.md");
         });
 
-        it("constructs without a hook, and carries no key for one", () => {
+        it("packages no hook for a definition that declines with the sentinel", () => {
             const tool = defineTool({
                 id: "undescribed",
-                description: "Declares no hook.",
+                description: "Declines the hook.",
                 inputSchema: z.object({ path: z.string() }),
+                describeCall: "none",
                 execute: async () => ok({}),
             });
 
             expect(tool.describeCall).toBeUndefined();
             expect("describeCall" in tool).toBe(false);
+        });
+
+        it("keeps the sentinel off the packaged tool and off its serialized form", () => {
+            const tool = defineTool({
+                id: "declined",
+                description: "Declines the hook.",
+                inputSchema: z.object({ path: z.string() }),
+                describeCall: "none",
+                execute: async () => ok({}),
+            });
+
+            expect(Object.values(tool)).not.toContain("none");
+            expect(JSON.stringify(tool.jsonSchema)).not.toContain("none");
+            expect(JSON.stringify(createRegistry([tool]).definitions())).not.toContain("none");
         });
 
         it("never reaches the model — the emitted AI SDK definition is unchanged", () => {
@@ -112,6 +132,7 @@ describe("defineTool", () => {
                 id: "same-tool",
                 description: "Reads a file.",
                 inputSchema: schema,
+                describeCall: "none",
                 execute: async () => ok({}),
             });
 

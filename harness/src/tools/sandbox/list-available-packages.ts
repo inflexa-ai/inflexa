@@ -233,6 +233,14 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
                     `Cap the packages listed. Omit to get the whole set — the store fits well within the ${DEFAULT_LIMIT} ceiling. Ignored when \`names\` is given.`,
                 ),
         }),
+        // `queryPackages` returns on `names` before it reads another field, thus
+        // the presence check comes first. An empty array is not a presence check.
+        describeCall: ({ names, query, language }) => {
+            if (names !== undefined && names.length > 0) return names.join(", ");
+            if (query !== undefined) return language === undefined ? query : `${query} (${language})`;
+            if (language !== undefined) return `${language} packages`;
+            return "full package list";
+        },
         execute: async (input): Promise<Result<PackagesResult, ToolError>> => {
             // An unreadable inventory is an expected environment state — model it as an
             // `available: false` data variant telling the caller the set is UNKNOWN.

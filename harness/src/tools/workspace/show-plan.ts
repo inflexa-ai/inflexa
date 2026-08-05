@@ -40,6 +40,7 @@ export function createShowPlanTool(pool: Pool) {
                 .describe("Plan ID (`pln-<8hex>`) from `generate_plan` (newly created) or `inspect_run` (each run carries the planId it ran)"),
             title: z.string().optional().describe("Optional card heading; defaults to the plan's own title"),
         }),
+        describeCall: ({ planId }) => planId,
         execute: async ({ planId, title }, ctx): Promise<Result<ShowPlanOutput, ToolError>> => {
             const resourceId = scopeResource(ctx.session.scope).resourceId;
             // "Plan not found" / "plan no longer parses" are expected outcomes —

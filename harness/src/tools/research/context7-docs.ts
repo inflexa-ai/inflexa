@@ -36,6 +36,7 @@ export const resolveLibraryIdTool = defineTool({
         libraryName: z.string().describe("Package or library name to search for (e.g., 'scanpy', 'pysam', 'lifelines')."),
         query: z.string().describe("What you need help with — used to rank results by relevance (e.g., 'how to run differential expression')."),
     }),
+    describeCall: "none",
     execute: async ({ libraryName, query }): Promise<Result<ResolveLibraryIdOutput, ToolError>> => {
         const result = await apiFetchValidated(
             `${CONTEXT7_BASE}/search?query=${encodeURIComponent(libraryName)}&topic=${encodeURIComponent(query)}`,
@@ -66,6 +67,7 @@ export const queryDocsTool = defineTool({
         libraryId: z.string().describe("Context7 library ID from resolve-library-id (e.g., '/scverse/scanpy')."),
         query: z.string().describe("Specific question about the library (e.g., 'rank_genes_groups function parameters and usage')."),
     }),
+    describeCall: "none",
     execute: async ({ libraryId, query }): Promise<Result<QueryDocsOutput, ToolError>> => {
         const result = await apiFetchValidated(
             `${CONTEXT7_BASE}/docs?libraryId=${encodeURIComponent(libraryId)}&query=${encodeURIComponent(query)}`,

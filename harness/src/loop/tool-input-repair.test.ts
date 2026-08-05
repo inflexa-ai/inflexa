@@ -29,6 +29,7 @@ function submitTool(): { tool: Tool; seen: unknown[] } {
             synthesis: z.object({ runId: z.string(), findings: z.array(z.string()) }),
             note: z.string().optional(),
         }),
+        describeCall: "none",
         execute: async (input) => {
             seen.push(input);
             if (input.synthesis.findings.length === 0) {

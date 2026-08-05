@@ -513,6 +513,7 @@ function buildInnerTools(
             // structured issue reporting.
             plan: z.union([PlannerPlanSchema, z.unknown()]).describe("Candidate plan; malformed values are reported in issues."),
         }),
+        describeCall: "none",
         execute: async (input): Promise<Result<SubmitPlanOutput, ToolError>> => {
             if (holder.outcome !== null) {
                 trace.duplicateTerminalCalls++;
@@ -589,6 +590,7 @@ function buildInnerTools(
             question: z.string().min(1),
             questionContext: z.string().optional(),
         }),
+        describeCall: "none",
         execute: async (input) => {
             if (holder.outcome !== null) {
                 trace.duplicateTerminalCalls++;
@@ -920,6 +922,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 .optional()
                 .describe("The planId of the prior plan being iterated on. Set only when " + "the user is asking for modifications to an existing plan."),
         }),
+        describeCall: ({ researchQuestion }) => researchQuestion,
         execute: async (input, ctx): Promise<Result<PlanningAgentOutput, ToolError>> => {
             const analysisId = scopeResource(ctx.session.scope).resourceId;
             // Bound per invocation: `analysisId` comes from the call-time session, not from

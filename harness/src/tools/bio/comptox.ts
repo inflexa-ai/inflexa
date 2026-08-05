@@ -150,6 +150,7 @@ export function createComptoxTool(deps: { apiKey: string }) {
             "This is environmental/industrial-chemical data: for drug-like compounds prefer PubChem or ChEMBL — dataset 'chemical' returns " +
             "`detail.pubchemCid` to bridge back.",
         inputSchema,
+        describeCall: "none",
         execute: async (input): Promise<Result<ComptoxOutput, ToolError>> => {
             const headers = getEpaCcteHeaders(deps.apiKey);
             const resolved = await resolveDtxsid(input.query, headers);

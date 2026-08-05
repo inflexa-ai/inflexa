@@ -487,6 +487,7 @@ export const planReportTool: Tool = defineTool({
         "existing preview with `modifications` needs no brief — you may go " +
         "straight to `submit_report`.)",
     inputSchema: z.object({}),
+    describeCall: "none",
     executionMode: "inline",
     execute: async () =>
         ok({
@@ -600,6 +601,7 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
             "as an `error` string. Returns the preview id + version and emits a " +
             "preview card.",
         inputSchema: submitReportInputSchema,
+        describeCall: "none",
         execute: async (input, ctx): Promise<Result<SubmitReportOutput, ToolError>> => {
             // The brief rides as `unknown` so its ~12k schema stays off the
             // always-on tool surface. Validate it here and return issues as DATA

@@ -25,6 +25,7 @@ export function createBuildReportTool(state: BuildReportToolState): Tool {
             "Always use this — never invoke a build script directly. Returns " +
             "structured errors with line numbers when the template is broken.",
         inputSchema: z.object({}),
+        describeCall: "none",
         execute: async () => {
             return ok(
                 await renderReport({

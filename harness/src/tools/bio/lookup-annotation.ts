@@ -163,6 +163,7 @@ export const lookupAnnotationTool = defineTool({
         "search_interactions({action:'enrichment'}), which does the statistics.\n" +
         "An empty terms / annotations / pathways array is valid no-data — do not retry the same input.",
     inputSchema,
+    describeCall: "none",
     execute: async ({ vocabulary, query, goId, geneProductId, taxonId, organism, includeGenes, limit }): Promise<Result<AnnotationOutput, ToolError>> => {
         const cap = limit ?? DEFAULT_LIMIT;
 

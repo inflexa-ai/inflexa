@@ -64,6 +64,7 @@ export function createReportBlockerToolFor(deps: ReportBlockerDeps): Tool {
         id: "report_blocker",
         description: `Terminal. ${deps.blockedWhen} Pass a clear reason. Stop immediately after calling — take no further actions.`,
         inputSchema: ReportBlockerInputSchema,
+        describeCall: "none",
         execute: async (input) => {
             deps.record({ kind: "blocker", reason: input.reason });
             return ok({

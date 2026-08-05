@@ -232,6 +232,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
             "latency on the same failure). Surface the message and ask the user to " +
             "narrow the problem.",
         inputSchema: generateAnalogyReportInputSchema,
+        describeCall: "none",
         execute: async (input, ctx) => {
             const childSession = forSubAgent(ctx.session, AGENT_ID);
 

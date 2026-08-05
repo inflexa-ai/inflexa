@@ -98,6 +98,7 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
                         "context. The reviewer sees only this — include everything it needs.",
                 ),
         }),
+        describeCall: "none",
         execute: async ({ brief }, ctx) => {
             const { messages: transcript } = await runAgent(agent, [{ role: "user", content: brief }], forSubAgent(ctx.session, AGENT_ID), {
                 provider: deps.provider,

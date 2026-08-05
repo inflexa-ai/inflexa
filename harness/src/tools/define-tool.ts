@@ -106,20 +106,28 @@ export interface ToolDefinition<Schema extends z.ZodType, Output> {
     readonly inputSchema: Schema;
     readonly executionMode?: ToolExecutionMode;
     /**
-     * One line naming what THIS call is doing — the call-time counterpart of
+     * One line that names what THIS call does — the call-time counterpart of
      * `description`. `description` self-describes the tool at attach time, so an
-     * agent knows what it holds; `describeCall` self-describes one invocation, so
+     * agent knows what it holds. `describeCall` self-describes one invocation, so
      * a surface can render four `update_working_memory` calls as four distinct
      * lines instead of four identical chips.
      *
-     * It lives here, beside `inputSchema`, because that is the one place the
-     * compiler checks the two against each other. A host-side formatter reading
-     * `input.path` by string key breaks silently the day the schema moves; this
-     * one fails to build. The tool author writes it because the tool author knows
-     * which field matters.
+     * The decision is REQUIRED. Give a hook, or give the literal `"none"`.
+     * `"none"` declares that the input of the tool cannot distinguish its calls,
+     * thus a hook can only restate the name of the tool. `defineTool` consumes
+     * the sentinel at construction, and the sentinel never reaches a packaged
+     * tool. Thus a reader of a `Tool` sees a function, or sees nothing. A hook
+     * that returns the string `"none"` is still a hook, because the discriminator
+     * is `typeof`, not equality.
      *
-     * Synchronous and pure — no I/O, no ambient state. Dispatch is what the user
-     * waits on, and a description must never be able to fail a call: the loop
+     * A hook lives here, beside `inputSchema`, because that is the one place
+     * where the compiler checks the two against each other. A host-side formatter
+     * that reads `input.path` by string key breaks silently the day the schema
+     * moves. This one fails to build. The tool author writes it, because the tool
+     * author knows which field matters.
+     *
+     * A hook is synchronous and pure — no I/O, no ambient state. Dispatch is what
+     * the user waits on, and a description must never fail a call: the loop
      * validates the input against `inputSchema` first, guards the call, and drops
      * the detail on any failure (see the tool-call-detail capability).
      *
@@ -127,10 +135,9 @@ export interface ToolDefinition<Schema extends z.ZodType, Output> {
      * removed, secrets redacted, length capped — happens once at the emit site,
      * never here.
      *
-     * OPTIONAL, and absence is a normal state: a tool without it is observable
-     * exactly as it is today. The hook never reaches the model.
+     * The hook never reaches the model.
      */
-    describeCall?(input: z.infer<Schema>): string;
+    describeCall: ((input: z.infer<Schema>) => string) | "none";
     execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
@@ -163,9 +170,11 @@ export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition
         inputSchema: def.inputSchema,
         jsonSchema,
         executionMode,
-        // Spread rather than assigned: a tool that declares no hook carries no
+        // Spread rather than assigned: a tool that declines carries no
         // `describeCall` key at all, so "has a hook" is one property check.
-        ...(def.describeCall === undefined ? {} : { describeCall: def.describeCall }),
+        // `typeof` is the discriminator, not equality with the sentinel, so a
+        // hook that returns the string `"none"` still packages as a hook.
+        ...(typeof def.describeCall === "function" ? { describeCall: def.describeCall } : {}),
         execute: def.execute,
     };
 }

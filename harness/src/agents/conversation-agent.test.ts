@@ -149,6 +149,7 @@ describe("createConversationAgent", () => {
             id: "host_echo",
             description: "A host-contributed tool.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async () => ok({ done: true }),
         });
         const agent = buildAgent([hostTool]);
@@ -173,6 +174,7 @@ describe("createConversationAgent", () => {
             id: "host_needs_approval",
             description: "A host tool that pauses for user approval.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async (_input, ctx) => {
                 await ctx.ask({ title: "Host action", command: "do the thing" });
                 return ok({ approved: true });
