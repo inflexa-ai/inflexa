@@ -21,6 +21,11 @@ command action through the lazy `import()` that registration already uses. That 
 `devCommandsEnabled()`, so a release build never evaluates it. Nothing else outside `dev/` MUST name
 a path under it.
 
+A lint rule MUST enforce that direction for a static import, so the boundary fails a build rather
+than a review. The rule MUST exempt the files under `dev/` and the registration gate. It MUST match
+the import string, not a resolved path. A sibling reaches the directory as `./dev/<file>`, which a
+pattern anchored on the full module path never matches.
+
 A helper that both a product surface and a dev surface call MUST stay outside `dev/`, in
 the module that owns its subject. A shared helper MUST NOT move into `dev/` because a dev
 surface calls it. A dev-only helper MUST NOT stay outside `dev/` when no product file calls
@@ -56,6 +61,20 @@ registration".
 - **WHEN** the dev surfaces are homed under `dev/`
 - **THEN** `seedProfileLedger` stays outside `dev/`
 - **AND** the dev `profile` command actions import it from there
+
+#### Scenario: The lint rule refuses a product file's static import
+
+- **GIVEN** a file under `src/` that is neither in `dev/` nor the registration gate
+- **WHEN** it declares a static import of a path under `src/modules/harness/dev/`
+- **THEN** `bun run lint` reports a `no-restricted-imports` error naming the boundary
+- **AND** the error fires for a sibling's `./dev/<file>` form and for a deep `../modules/harness/dev/<file>` form alike
+
+#### Scenario: The lint rule leaves the sanctioned traffic alone
+
+- **GIVEN** a file under `src/modules/harness/dev/` that imports another file in that directory
+- **WHEN** `bun run lint` runs
+- **THEN** it reports no error for that import
+- **AND** the registration gate's three lazy imports report none either
 
 #### Scenario: A mixed file splits on the channel line
 
