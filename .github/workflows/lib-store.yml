@@ -112,7 +112,9 @@ jobs:
         # Use the docker daemon's built-in builder (not a docker-container builder):
         # its BuildKit cache lives in /var/lib/docker — the persistent EBS volume —
         # so warm layers survive the box's stop/start with no long-lived builder to
-        # leave stale state, and no runner-writable cache dir to provision.
+        # leave stale state, and no runner-writable cache dir to provision. The
+        # disk-guard step below caps that cache: persistent plus uncapped fills
+        # the volume.
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
           driver: docker
@@ -121,6 +123,13 @@ jobs:
         # AL2023 ships zstd; fail loudly rather than install (the runner user has no
         # sudo on the self-hosted builders).
         run: command -v zstd >/dev/null || { echo "::error::zstd not found on the builder"; exit 1; }
+
+      - name: Reclaim disk, then check the free-space floor
+        # The box's EBS volume is persistent and nothing else reclaims it, so a run
+        # starts by capping the BuildKit cache and dropping the last run's debris.
+        # A box that is still short fails here, with the shortfall named, rather
+        # than mid-build.
+        run: bash scripts/lib-store-disk-guard.sh preflight
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
@@ -282,8 +291,7 @@ jobs:
         run: |
           docker rmi "${IMAGE_BASE}:${VERSION}-${ARCH}" "${IMAGE_PYTHON}:${VERSION}-${ARCH}" "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}" 2>/dev/null || true
           rm -rf staging dist candidate
-          docker image prune -f 2>/dev/null || true
-          docker container prune -f 2>/dev/null || true
+          bash scripts/lib-store-disk-guard.sh cleanup
 
   # Combine the per-arch image tags into multi-arch manifest lists so
   # `docker pull` resolves the host arch automatically. Only the arch tags that
