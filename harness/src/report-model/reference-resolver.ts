@@ -6,6 +6,8 @@
  * and a fixture realization can read an in-memory snapshot. The two obey the same contract.
  */
 
+import type { Result } from "neverthrow";
+
 import type { Reference, UnresolvedReference } from "../contracts/report-reference.js";
 
 /**
@@ -41,19 +43,16 @@ export type ResolvedValue =
     | { type: "citation"; id: string };
 
 /**
- * The outcome of one resolution. It is plain, discriminated data, and not a `Result` from neverthrow. An
- * unresolved reference is a normal domain outcome that a reviewer reads, and not an error channel that a
- * caller must bridge. Thus resolution never throws.
- */
-export type ResolveOutcome = { ok: true; value: ResolvedValue } | { ok: false; failure: UnresolvedReference };
-
-/**
  * The capability seam that resolves one reference against a snapshot.
  *
  * The method is async because a production realization reads storage. A synchronous signature would
  * force a local realization onto every host, thus the seam stays async even when a realization is
  * in-memory.
+ *
+ * The `Ok` channel carries the resolved value. The `Err` channel carries the `UnresolvedReference`,
+ * which names the reason and the detail that a reference did not bind. The validator collects each such
+ * `Err` into its report, thus a caller reads the reason as data and resolution never throws.
  */
 export interface ReferenceResolver {
-    resolve(reference: Reference, snapshot: ReportSnapshot): Promise<ResolveOutcome>;
+    resolve(reference: Reference, snapshot: ReportSnapshot): Promise<Result<ResolvedValue, UnresolvedReference>>;
 }

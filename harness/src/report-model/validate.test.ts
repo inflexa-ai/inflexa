@@ -582,6 +582,94 @@ describe("validateReport — derivations", () => {
         const invalid = expectInvalid(result);
         expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
     });
+
+    it("validates a pctChange over two grounded cells", async () => {
+        // TP53 is 6 and EGFR is 3, thus (6 - 3) / 3 is exactly 1.
+        const result = await validateReport(
+            reportWith({
+                kind: "metric",
+                id: "metric-pctchange",
+                label: "PctChange",
+                value: {
+                    kind: "derivation",
+                    op: "pctChange",
+                    inputs: [
+                        {
+                            kind: "artifact-value",
+                            run: "run-1",
+                            path: TABLE_A_PATH,
+                            hash: TABLE_A_HASH,
+                            locator: { column: "log2FoldChange", rowFilter: { column: "gene", op: "eq", value: "TP53" } },
+                        },
+                        {
+                            kind: "artifact-value",
+                            run: "run-1",
+                            path: TABLE_A_PATH,
+                            hash: TABLE_A_HASH,
+                            locator: { column: "log2FoldChange", rowFilter: { column: "gene", op: "eq", value: "EGFR" } },
+                        },
+                    ],
+                    assert: { value: 1, tolerance: 0.0001 },
+                },
+            }),
+            snapshot,
+            resolver,
+        );
+        expectValid(result);
+    });
+
+    it("reports locator-out-of-range for a pctChange whose divisor is zero", async () => {
+        // S1 is 10 and S2 is 0, thus (10 - 0) / 0 is not finite.
+        const result = await validateReport(
+            reportWith({
+                kind: "metric",
+                id: "metric-pctchange-divzero",
+                label: "PctChangeDivZero",
+                value: {
+                    kind: "derivation",
+                    op: "pctChange",
+                    inputs: [
+                        {
+                            kind: "artifact-value",
+                            run: "run-1",
+                            path: TABLE_B_PATH,
+                            hash: TABLE_B_HASH,
+                            locator: { column: "value", rowFilter: { column: "sample", op: "eq", value: "S1" } },
+                        },
+                        {
+                            kind: "artifact-value",
+                            run: "run-1",
+                            path: TABLE_B_PATH,
+                            hash: TABLE_B_HASH,
+                            locator: { column: "value", rowFilter: { column: "sample", op: "eq", value: "S2" } },
+                        },
+                    ],
+                },
+            }),
+            snapshot,
+            resolver,
+        );
+        const invalid = expectInvalid(result);
+        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+    });
+});
+
+describe("validateReport — an artifact-table with a column subset", () => {
+    it("validates a table bound to a column subset of a wider artifact", async () => {
+        // Table A holds four columns, thus a two-column subset is a strict projection that resolves.
+        const result = await validateReport(
+            reportWith({
+                kind: "table",
+                id: "table-subset",
+                title: "Subset",
+                binding: { kind: "artifact-table", run: "run-1", path: TABLE_A_PATH, hash: TABLE_A_HASH, columns: ["gene", "log2FoldChange"] },
+            }),
+            snapshot,
+            resolver,
+        );
+        const valid = expectValid(result);
+        expect(valid.warnings).toEqual([]);
+    });
 });
 
 describe("validateReport — free-numeral warnings", () => {
