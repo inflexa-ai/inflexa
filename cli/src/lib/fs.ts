@@ -65,3 +65,49 @@ export function statResult(path: string, op: string): Result<Stats, FsError> {
         return err({ type: "io_failed", op, cause });
     }
 }
+
+/**
+ * The identity a readability decision is made against: this process's effective user, its effective
+ * group, and every supplementary group it belongs to. Read ONCE per listing (the ids cannot change
+ * mid-render) and passed down, so {@link isReadableBy} stays a pure function of two inputs.
+ */
+export type ProcessIdentity = { uid: number; gid: number; groups: readonly number[] };
+
+/**
+ * This process's identity, or `null` on a platform without POSIX ids.
+ *
+ * `process.getuid` is undefined on Windows, where Node also synthesizes mode bits that describe no
+ * real permission — so "no identity" is the honest answer there, not a fabricated one, and every
+ * caller must render no readability signal rather than a wrong one.
+ */
+export function processIdentity(): ProcessIdentity | null {
+    // Feature-detected rather than branched on `process.platform`: these are documented as
+    // POSIX-only, and the presence of the function is the exact condition that makes the read safe.
+    if (!process.getuid || !process.getgid || !process.getgroups) return null;
+    return { uid: process.getuid(), gid: process.getgid(), groups: process.getgroups() };
+}
+
+/**
+ * Whether `identity` can read the file `stats` describes, decided from the mode bits and the owning
+ * ids alone — NO syscall.
+ *
+ * This exists to avoid an `accessSync(R_OK)` pass over a directory listing. A `stat` is already
+ * taken for the size and the mtime, and it carries everything this needs; measured over a 468-entry
+ * directory, the extra `access` pass cost 2.5–4.7ms against `stat`'s 0.69ms, for an answer the
+ * `Stats` object already implies.
+ *
+ * ACCEPTED IMPRECISION: mode bits are not the whole access story. A POSIX ACL, a macOS TCC rule, or
+ * a file flag can deny a read this reports as permitted. The result is therefore advisory — it
+ * colors a row, and never refuses a selection. The authoritative refusal stays where the file is
+ * actually opened (staging), which already reports a failure the user can act on.
+ */
+export function isReadableBy(stats: Stats, identity: ProcessIdentity): boolean {
+    // Root bypasses the permission bits for reads, so the mode check below would report false for a
+    // 0600 file owned by someone else — a "you cannot read this" that is simply untrue as root.
+    if (identity.uid === 0) return true;
+    if (stats.uid === identity.uid) return (stats.mode & 0o400) !== 0;
+    // Supplementary groups count, not just the effective gid: a file group-readable by `staff` is
+    // readable by a user who merely belongs to `staff`, which `getgid()` alone would miss.
+    if (stats.gid === identity.gid || identity.groups.includes(stats.gid)) return (stats.mode & 0o040) !== 0;
+    return (stats.mode & 0o004) !== 0;
+}
