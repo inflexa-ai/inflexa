@@ -11,7 +11,7 @@ import { createListAvailablePackagesTool, parsePackagesFile, queryPackages } fro
 // lines the producers emit, then `## <Section>` headings each followed by one
 // comma-separated line of names. The real file carries NO version strings.
 const PACKAGES_TXT = `# Available packages in the sandbox environment.
-# Do NOT attempt to install packages — there is no network access and no build toolchain.
+# You cannot install packages from inside the sandbox (no network, read-only store); adding one is a host action, applied to a later sandbox.
 
 ## R (CRAN)
 Seurat, dplyr, ggplot2

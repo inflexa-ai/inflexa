@@ -35,7 +35,7 @@ ORDER = ["cran", "bioconductor", "github", "python", "conda", "node"]
 
 HEADER = (
     "# Available packages in the sandbox environment.\n"
-    "# Do NOT attempt to install packages — there is no network access and no build toolchain.\n"
+    "# You cannot install packages from inside the sandbox (no network, read-only store); adding one is a host action, applied to a later sandbox.\n"
     "\n"
 )
 

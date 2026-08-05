@@ -11,7 +11,7 @@
  * followed by that track's packages as a single comma-separated line.
  *
  *     # Available packages in the sandbox environment.
- *     # Do NOT attempt to install packages — ...
+ *     # You cannot install packages from inside the sandbox — ...
  *
  *     ## R (CRAN)
  *     Seurat, dplyr, ggplot2, ...
@@ -59,7 +59,7 @@ const UNAVAILABLE_NOTE =
     "Do not assume any package is present, and do not infer one from the analysis you were asked to run. " +
     "Probe each package you intend to use before relying on it (`python3 -c 'import <pkg>'`, " +
     'R `requireNamespace("<pkg>", quietly = TRUE)`) and degrade gracefully when it is absent. ' +
-    "Nothing can be installed at runtime.";
+    "The sandbox cannot install a package itself (no network, read-only store); report a missing package rather than trying to install it.";
 
 /** One language track of the store, in `packages.txt` section order. */
 export interface Section {
@@ -190,7 +190,7 @@ export function queryPackages(sections: readonly Section[], { names, query, lang
             total: 0,
             returned: 0,
             hasMore: false,
-            content: `No packages match this filter${scope ? ` (${scope})` : ""}. Nothing can be installed at runtime.`,
+            content: `No packages match this filter${scope ? ` (${scope})` : ""}. The sandbox cannot install a package itself; report a missing one rather than trying to install it.`,
         };
     }
 
@@ -206,7 +206,7 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
     return defineTool({
         id: "list_available_packages",
         description:
-            "Query the R, Python, CLI, and Node packages installed in the sandbox. No packages can be installed at runtime — only what this tool reports is importable. " +
+            "Query the R, Python, CLI, and Node packages installed in the sandbox. The sandbox cannot install a package itself (no network, read-only store), so only what this tool reports is importable; report a missing package rather than trying to install it. " +
             "A full listing is small (a few hundred packages) and is returned whole by default, so a listing you get back is the complete set unless `hasMore` says otherwise. " +
             '`names`: check specific packages (e.g. ["Seurat", "scanpy"]) — returns present/absent plus the language track for each, case-insensitively; this is the cheapest call and the right one for \'is X available?\'. ' +
             "`query`: case-insensitive substring filter over package names. " +
