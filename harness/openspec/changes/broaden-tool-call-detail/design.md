@@ -22,7 +22,7 @@ The loop's dispatch round is **all-starts, then all-work, then all-finishes** (`
 - The bio-tool pass (`lookup_annotation`, `chembl`, `pubchem`, `open_targets`, …). Deferred, and now visibly deferred — each declares the opt-out until it gets a real hook.
 - The result side (`✓ ok` for a call that did nothing) — issue #281.
 - Any change to the round's emit ordering, the resolver, the wire `detail` field, or host rendering.
-- Retrofitting durations onto already-persisted turns. The reload path gains the *ability* to show one; it does not reconstruct history.
+- Any duration on the reload path. `recordToolCall` stores the outcome and the detail, and `ToolCallPart` declares no duration field. Thus a recorded call replays without one, and this change does not add it. The duration is a live-surface diagnostic here.
 
 ## Decisions
 
@@ -30,7 +30,7 @@ The loop's dispatch round is **all-starts, then all-work, then all-finishes** (`
 
 `ToolDefinition.describeCall` becomes `((input: z.infer<Schema>) => string) | "none"` and is required. `Tool.describeCall` — the packaged shape every consumer reads — is left exactly as it is: `describeCall?(input: Input): string`. `defineTool` packages the key only when the definition supplied a function, so `"none"` is consumed at construction and never reaches a reader.
 
-This is the whole reason the enforcement is cheap. `computeDetail`, `createDetailResolver`, `activityForTool`, and the loop all keep reading "a function, or absent" and need no edit for the enforcement half of this change. The alternative — carrying the union onto `Tool` — would push a sentinel check into every one of those readers to buy nothing, since they all treat "declined" and "absent" identically anyway.
+This is the whole reason the enforcement is cheap. `createDetailResolver`, `activityForTool`, and the loop all keep reading "a function, or absent" and need no edit for the enforcement half of this change. `computeDetail` takes a one-line edit, but not to cope with the sentinel: its guard tests for a function so that a non-callable hook on an embedder-contributed tool counts as undescribed. The alternative — carrying the union onto `Tool` — would push a sentinel check into every one of those readers to buy nothing, since they all treat "declined" and "absent" identically anyway.
 
 A string literal rather than `false` or `null` because it is greppable: `describeCall: "none"` across the tree is the roster of tools that have consciously declined, which is exactly the list a future coverage pass wants.
 
@@ -92,6 +92,8 @@ The type change and the sweep are one atomic step — the package does not compi
 3. Timing and the truncation mark, each independently revertable.
 
 Rollback is per-item: the seven hooks, the truncation mark, and the timing change are independent. Only the required-decision change is all-or-nothing, and reverting it is the inverse sweep.
+
+One coupling qualifies that. The `computeDetail` guard ships beside the truncation mark, because both edit `tool-detail.ts`. Thus a revert of the mark takes the guard with it. The guard is defensive and nothing depends on it, so the revert stays safe.
 
 ## Open Questions
 
