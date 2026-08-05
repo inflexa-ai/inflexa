@@ -334,3 +334,137 @@ describe("FilePicker", () => {
         }
     });
 });
+
+describe("FilePicker entry metadata", () => {
+    /** The row line carrying `needle`, or "" — the hint rides the SAME line as the title. */
+    function rowLine(frame: string, needle: string): string {
+        return frame.split("\n").find((l) => l.includes(needle)) ?? "";
+    }
+
+    test("a file row carries its permissions, its size, and an absolute date", async () => {
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        writeFileSync(join(root, "sized.txt"), "x".repeat(2048));
+        try {
+            await settle(setup);
+            const frame = await openPicker(setup);
+            const line = rowLine(frame, "sized.txt");
+            expect(line).toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
+            expect(line).toContain("2.0 KB");
+            // Absolute local time, never a relative age — a record listing reads on the absolute side.
+            expect(line).toMatch(/\d{1,2}\/\d{1,2}\/\d{2,4}/);
+            expect(line).not.toMatch(/\b\d+[dhm]\b/);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a directory row carries a date but no size", async () => {
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        try {
+            await settle(setup);
+            const frame = await openPicker(setup);
+            const line = rowLine(frame, "beta/");
+            expect(line).toMatch(/\d{1,2}\/\d{1,2}\/\d{2,4}/);
+            // Counting members would cost a readdir per row — the budget this listing protects.
+            expect(line).not.toMatch(/\d+(\.\d+)?\s?(B|KB|MB|GB)/);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("an unreadable file paints its row in the theme's warning color", async () => {
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const denied = join(root, "denied.txt");
+        writeFileSync(denied, "x");
+        chmodSync(denied, 0o000);
+        try {
+            await settle(setup);
+            const frame = await openPicker(setup);
+            expect(frame).toContain("denied.txt");
+            // A char frame carries no color, so containment alone would pass on an unpainted row:
+            // the claim here is that the row LOOKS different, which only a resolved span proves.
+            const spans = setup.captureSpans().lines.flatMap((l) => l.spans);
+            const deniedFg = spans.find((s) => s.text.includes("denied.txt"))?.fg;
+            const readableFg = spans.find((s) => s.text.includes("zeta.txt"))?.fg;
+            expect(deniedFg).toBeDefined();
+            expect(readableFg).toBeDefined();
+            expect(deniedFg).not.toEqual(readableFg);
+        } finally {
+            chmodSync(denied, 0o644);
+            setup.renderer.destroy();
+        }
+    });
+
+    test("an unreadable file is still selectable — the mark warns, it does not refuse", async () => {
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const denied = join(root, "denied.txt");
+        writeFileSync(denied, "x");
+        chmodSync(denied, 0o000);
+        let confirmed: string[] = [];
+        try {
+            await settle(setup);
+            // dirs first, then files alphabetically: .. → beta/ → alpha.txt → denied.txt
+            await openPicker(setup, { onConfirm: (paths) => (confirmed = paths) });
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressArrow("down");
+            await setup.mockInput.pressKeys([" "]);
+            await setup.mockInput.pressKeys(["c"]);
+            await settle(setup);
+            expect(confirmed).toEqual([denied]);
+        } finally {
+            chmodSync(denied, 0o644);
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a broken symlink lists with no metadata rather than dropping out", async () => {
+        // The deterministic stand-in for a stat that loses its race with a deletion: statSync
+        // follows the link and throws, which is exactly the path `entryMeta` degrades on.
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        symlinkSync(join(root, "gone.txt"), join(root, "dangling.txt"));
+        try {
+            await settle(setup);
+            const frame = await openPicker(setup);
+            const line = rowLine(frame, "dangling.txt");
+            expect(line).not.toBe("");
+            expect(line).not.toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a folder over the ceiling lists names only and says so in the footer", async () => {
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const big = join(root, "big");
+        mkdirSync(big);
+        for (let i = 0; i < 2001; i++) writeFileSync(join(big, `f${i}.txt`), "x");
+        try {
+            await settle(setup);
+            await openPicker(setup);
+            // dirs sort first, alphabetically: .. → beta/ → big/
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressEnter();
+            const frame = await settle(setup);
+            expect(frame).toContain("details off (large folder)");
+            const line = rowLine(frame, "f0.txt");
+            expect(line).not.toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("the listing sets no description, so no detail line grows under it", async () => {
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        try {
+            await settle(setup);
+            const frame = await openPicker(setup);
+            // The detail line would repeat the cursor row's path on its own row beneath the list.
+            const pathLines = frame.split("\n").filter((l) => l.includes(root));
+            expect(pathLines).toHaveLength(0);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
