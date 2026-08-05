@@ -954,6 +954,32 @@ describe("categoryLabel", () => {
         }
     });
 
+    test("hints form a right-aligned column, whatever the titles measure", async () => {
+        // The point of a hint column is scanning DOWN it. Left-adjacent hints chase each title's
+        // length, which makes two sizes on adjacent rows impossible to compare at a glance.
+        const items: SelectItem<string>[] = [
+            { value: "a", title: "x.txt", hint: "1 B" },
+            { value: "b", title: "a-considerably-longer-name.txt", hint: "2 B" },
+        ];
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={items} emptyText="none" />
+                </Harness>
+            ),
+            { width: 44, height: 10 },
+        );
+        try {
+            const frame = await settle(setup);
+            const lines = frame.split("\n");
+            const col = (needle: string): number => (lines.find((l) => l.includes(needle)) ?? "").indexOf(needle);
+            expect(col("1 B")).toBeGreaterThan(0);
+            expect(col("1 B")).toEqual(col("2 B"));
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
     test("a tone outranks the cursor highlight", async () => {
         // Landing on a row must not erase the mark that is the reason to notice it, so the two rows
         // below stay differently colored even as the cursor moves onto the toned one.

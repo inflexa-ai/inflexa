@@ -396,7 +396,9 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                     </text>
                 </Show>
                 <box width="100%" flexDirection="column" backgroundColor={isCursor() ? theme().bgActive : undefined}>
-                    <box width="100%" flexDirection="row">
+                    {/* The right pad clears the scrollbox's scrollbar, which the scrollbar overlays at the
+                        content's right edge — without it a right-aligned hint reads as one word with the bar. */}
+                    <box width="100%" flexDirection="row" paddingRight={space.sm}>
                         <Show when={mode() === "multi"}>
                             <text fg={isSel() ? theme().success : theme().fgSubtle}>{gutter()}</text>
                         </Show>
@@ -405,9 +407,19 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                             {item().title}
                         </text>
                         {/* An inline hint only when there's no meta line — meta owns the right edge on its
-                            own row, so a same-line hint would double up the trailing metadata. */}
+                            own row, so a same-line hint would double up the trailing metadata.
+
+                            The grown spacer is what makes the hint a right-aligned COLUMN rather than a
+                            ragged tail chasing each title's length: sizes and dates are read by scanning
+                            down, which a left-adjacent hint makes impossible. `flexShrink={0}` keeps the
+                            hint whole and lets the title absorb a narrow panel instead — a truncated name
+                            is still recognizable, a truncated size is a wrong number. */}
                         <Show when={!item().meta && item().hint}>
-                            <text fg={theme().fgMuted}> {item().hint}</text>
+                            <box flexGrow={1} />
+                            <text fg={theme().fgMuted} flexShrink={0}>
+                                {" "}
+                                {item().hint}
+                            </text>
                         </Show>
                     </box>
                     <Show when={item().meta}>
