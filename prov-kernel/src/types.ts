@@ -14,7 +14,17 @@
  * commit when the host has one), so a CLI records itself and a managed service records itself.
  */
 export type ProvActor =
-    | { kind: "user"; email: string }
+    | {
+          kind: "user";
+          /**
+           * The opaque stable identifier of the person; the user-agent QName derives from it.
+           * Documents are immutable and signed, thus the identity-bearing key must never be
+           * personal data that can change or that a writer must withhold.
+           */
+          id: string;
+          /** The person's email, when the host chooses to include personal data as an attribute. */
+          email?: string;
+      }
     | { kind: "anonymous" }
     | {
           kind: "system";

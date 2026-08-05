@@ -5,12 +5,12 @@
     "": {
       "name": "@inflexa-ai/prov-kernel",
       "dependencies": {
-        "@inflexa-ai/tsprov": "^0.5.1",
         "neverthrow": "^8.2.0",
         "zod": "^4.4.3",
       },
       "devDependencies": {
         "@eslint/js": "^10.0.1",
+        "@inflexa-ai/tsprov": "^0.5.1",
         "@types/bun": "latest",
         "@types/node": "^24.13.3",
         "eslint": "^10.7.0",
@@ -19,6 +19,9 @@
         "prettier": "^3.9.5",
         "typescript": "^6.0.3",
         "typescript-eslint": "^8.64.0",
+      },
+      "peerDependencies": {
+        "@inflexa-ai/tsprov": "^0.5.1",
       },
     },
   },

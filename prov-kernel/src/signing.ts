@@ -28,6 +28,10 @@ export type ProvSigningError =
  * (the chain hash at flush time, the payload digest at export time) and returns the hex-encoded
  * Ed25519 signature; `exportPublicKeyJwk` supplies the public half for sidecars and verification,
  * or `null` when no key exists yet.
+ *
+ * `exportPublicKeyJwk` may be called before any `sign` — the sidecar builder exports the public
+ * key first. An implementation backed by a lazily-created keypair must generate the pair on
+ * demand at export time, not fail because no `sign` has run yet.
  */
 export interface ProvSigner {
     sign(digestHex: string): ResultAsync<string, ProvSigningError>;
@@ -80,6 +84,24 @@ export function computePayloadDigest(provJson: string): ResultAsync<string, Prov
         crypto.subtle.digest("SHA-256", new TextEncoder().encode(provJson)).then((buf) => bytesToHex(new Uint8Array(buf))),
         (cause): ProvSigningError => ({ type: "crypto_failed", op: "computePayloadDigest", cause }),
     );
+}
+
+/** Import an Ed25519 private key from its JWK form (a JWK with `d`), ready for {@link signHexDigest}. */
+export function importPrivateKeyJwk(jwk: Record<string, unknown>): ResultAsync<CryptoKey, ProvSigningError> {
+    return ResultAsync.fromPromise(crypto.subtle.importKey("jwk", jwk as JsonWebKey, "Ed25519", false, ["sign"]), (cause): ProvSigningError => ({
+        type: "crypto_failed",
+        op: "importPrivateKeyJwk",
+        cause,
+    }));
+}
+
+/** Import an Ed25519 public key from its JWK form, ready for {@link verifyHexDigest}. */
+export function importPublicKeyJwk(jwk: ProvPublicKeyJwk): ResultAsync<CryptoKey, ProvSigningError> {
+    return ResultAsync.fromPromise(crypto.subtle.importKey("jwk", jwk as JsonWebKey, "Ed25519", true, ["verify"]), (cause): ProvSigningError => ({
+        type: "crypto_failed",
+        op: "importPublicKeyJwk",
+        cause,
+    }));
 }
 
 /** Sign a hex-encoded digest with an Ed25519 private key, returning a hex-encoded 64-byte signature. */

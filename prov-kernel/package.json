@@ -1,6 +1,6 @@
 {
     "name": "@inflexa-ai/prov-kernel",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Inflexa provenance format kernel — the PROV dialect document model, chain-hash + Ed25519 signing, and the signed-sidecar schema.",
     "license": "Apache-2.0",
     "type": "module",
@@ -9,20 +9,25 @@
     "exports": {
         ".": {
             "types": "./dist/index.d.ts",
-            "import": "./dist/index.js"
+            "import": "./dist/index.js",
+            "default": "./dist/index.js"
         },
+        "./package.json": "./package.json",
         "./*.js": {
             "types": "./dist/*.d.ts",
-            "import": "./dist/*.js"
+            "import": "./dist/*.js",
+            "default": "./dist/*.js"
         },
         "./*": {
             "types": "./dist/*.d.ts",
-            "import": "./dist/*.js"
+            "import": "./dist/*.js",
+            "default": "./dist/*.js"
         }
     },
     "files": [
         "dist",
-        "NOTICE"
+        "NOTICE",
+        "SPEC.md"
     ],
     "engines": {
         "node": ">=24"
@@ -40,15 +45,18 @@
         "prepare": "tsc -p tsconfig.json",
         "prepublishOnly": "bun run build && bun run smoke",
         "smoke": "node scripts/smoke.mjs",
-        "typecheck": "tsc --noEmit"
+        "typecheck": "tsc -p tsconfig.eslint.json --noEmit"
     },
     "dependencies": {
-        "@inflexa-ai/tsprov": "^0.5.1",
         "neverthrow": "^8.2.0",
         "zod": "^4.4.3"
     },
+    "peerDependencies": {
+        "@inflexa-ai/tsprov": "^0.5.1"
+    },
     "devDependencies": {
         "@eslint/js": "^10.0.1",
+        "@inflexa-ai/tsprov": "^0.5.1",
         "@types/bun": "latest",
         "@types/node": "^24.13.3",
         "eslint": "^10.7.0",

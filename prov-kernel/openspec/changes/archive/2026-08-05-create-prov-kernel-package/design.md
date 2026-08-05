@@ -1,9 +1,8 @@
 ## Context
 
-The dialect code was written and reviewed inside a harness recorder module. It
-already separates cleanly: `document.ts`, `signing.ts`, and `verify.ts` import
-nothing from the recorder or the bridges — only `types.ts` and the three
-third-party packages. The move extracts that seam into a package.
+The dialect code separates cleanly: `document.ts`, `signing.ts`, and
+`verify.ts` import nothing from any recorder or bridge — only `types.ts` and
+the three third-party packages. That seam is the package boundary.
 
 Three producers must agree on identifiers: the CLI host, the managed host, and
 a planned Go writer in Nexus. The agreement surface is exactly the kernel: the
@@ -54,14 +53,14 @@ of a document's identity. A producer with existing documents must keep its
 historical function or its identifier space forks — re-emission would mint new
 QNames for the same files and `unified()` would keep both. The default
 (SHA-256, first 8 bytes, big-endian, base36) is canonical for new documents;
-the CLI injects its historical `Bun.hash` digest.
+a producer with existing documents injects its historical function.
 
-### The implementation moves verbatim
+### The dialect is byte-compatible across producers
 
-The moved files keep their derivations, ids, unify options, chain rule, and
-sidecar shape byte-compatible with the reviewed originals. Documents already
-written by the historical recorder stay mergeable with documents written
-through the kernel. `SPEC.md` is derived from the code, not designed fresh.
+The derivations, ids, unify options, chain rule, and sidecar shape are one
+fixed wire format. Documents written by an earlier producer stay mergeable
+with documents written through the kernel. `SPEC.md` is derived from the
+code, not designed fresh.
 
 ### Determinism is the contract, so the fixture is the test
 

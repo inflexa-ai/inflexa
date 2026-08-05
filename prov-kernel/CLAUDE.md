@@ -40,7 +40,7 @@ map: `.` goes to `dist/index.js`, and `./*` and `./*.js` go to `dist/*.js`.
 ```bash
 tsc -p tsconfig.json    # Build: emit dist/ from src/ (also `npm run build`)
 bun test                # Unit tests (colocated in src/)
-bun run typecheck       # tsc --noEmit
+bun run typecheck       # tsc -p tsconfig.eslint.json --noEmit (covers the test files)
 bun run lint            # eslint .
 bun run smoke           # load dist/ under Node, one QName + one sign/verify roundtrip
 ```
