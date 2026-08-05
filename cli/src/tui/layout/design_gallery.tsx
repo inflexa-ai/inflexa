@@ -422,17 +422,24 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         because mode bits do not see an ACL or a macOS TCC rule — staging is where a read is
                         actually attempted and refused. Shown on a list rather than in the live picker
                         below, which lists a real cwd where every file happens to be readable. */}
-                    <text fg={theme().fgMuted}>File picker rows — permissions/size/date as a hint, and the unreadable tone:</text>
+                    {/* The `ls -l` reading order: mode, then name, then the facts. The mode rides `prefix`
+                        (never the title — it would rank against the fuzzy filter) in the recessive tier, so a
+                        near-constant column does not compete with the names. The size right-aligns in a field
+                        as wide as the listing needs, and the date is zero-padded to a fixed width; together
+                        those are what land the two columns under each other. A directory's blank size field
+                        spans its separator too, so its date does not slide left. */}
+                    <text fg={theme().fgMuted}>File picker rows — mode as a left prefix, aligned size/date columns, the unreadable tone:</text>
                     <DialogShowcase>
                         <box height={4} width="100%">
                             <FixedList
                                 items={[
-                                    { value: "d", title: "src/", hint: `drwxr-xr-x ${GLYPHS.middot} 8/2/26, 4:05 PM` },
-                                    { value: "f", title: "counts.tsv", hint: `rw-r--r-- ${GLYPHS.middot} 12.4 MB ${GLYPHS.middot} 8/2/26, 4:05 PM` },
+                                    { value: "d", title: "src/", prefix: "rwxr-xr-x", hint: "          08/02/26, 04:05 PM" },
+                                    { value: "f", title: "counts.tsv", prefix: "rw-r--r--", hint: ` 12.4 MB ${GLYPHS.middot} 08/02/26, 04:05 PM` },
                                     {
                                         value: "u",
                                         title: "locked.bam",
-                                        hint: `rw------- ${GLYPHS.middot} 4.2 GB ${GLYPHS.middot} 7/19/26, 6:49 PM`,
+                                        prefix: "rw-------",
+                                        hint: `  4.2 GB ${GLYPHS.middot} 07/19/26, 06:49 PM`,
                                         tone: "warning",
                                     },
                                 ]}
