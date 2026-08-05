@@ -43,10 +43,18 @@ export const DETAIL_MAX_LENGTH = 120;
  * measurement would claim knowledge of the renderer's font metrics that the
  * harness does not have — the host measures columns, because only the host knows
  * how wide its own line is.
+ *
+ * A cut text carries `…` so that a reader can tell a shortened detail from a
+ * complete one. The mark costs one of the `max` code points, thus the cut goes to
+ * `max - 1`: a hard bound that overshoots by the width of its own mark is not a
+ * hard bound. `trimEnd` runs BEFORE the append, because a cut that lands on a
+ * space must give `word…` and not `word …`.
  */
 function capCodePoints(text: string, max: number): string {
     const points = Array.from(text);
-    return points.length <= max ? text : points.slice(0, max).join("").trimEnd();
+    if (points.length <= max) return text;
+    const cut = points.slice(0, max - 1).join("");
+    return `${cut.trimEnd()}…`;
 }
 
 /**
@@ -88,8 +96,12 @@ export function normalizeDetail(raw: unknown): ToolCallDetail | undefined {
  * second time from the repaired value costs more than the case is worth.
  */
 export function computeDetail(tool: Tool, rawInput: unknown, log: Logger): ToolCallDetail | undefined {
+    // The guard tests for a function, not for presence. A packaged tool comes from
+    // an open list — an embedder contributes its own through the host-tools seam —
+    // so a `describeCall` that is not callable is reachable. Such a tool counts as
+    // undescribed, because the alternative is a TypeError on every one of its calls.
     const describeCall = tool.describeCall;
-    if (describeCall === undefined) return undefined;
+    if (typeof describeCall !== "function") return undefined;
 
     try {
         // The parse is INSIDE the guard, not before it. `safeParse` returns an
