@@ -40,15 +40,30 @@ late fill mints the items array again, and the list engine then moves the cursor
 
 ### Requirement: An entry row carries its size, its date, and its permission bits
 
-An entry row MUST carry a `hint` with the permission bits, the size, and the modification
-date. The list engine renders a `hint` inline, after the title, on the same row.
+An entry row MUST carry the permission bits in its `prefix`, LEFT of the name. This is the
+reading order of `ls -l`, and a shell user already has that habit. The triple is always 9
+characters, thus the column aligns with no padding.
 
-A directory row MUST carry no size field. A member count needs one `readdir` for each
-directory row, which breaks the syscall budget above. Measured over 467 directories, that
-pass cost 54.46 ms cold against 1.65 ms for the `stat` pass.
+An entry row MUST carry the size and the modification date in its `hint`, right of the
+name. The list engine renders a `hint` inline, at the right edge of the row.
 
-The size MUST render through `Number.formatBytes`. The date MUST render through the
-native `toLocaleString` in its compact form, and never as a relative age.
+The size MUST render through `Number.formatBytes`, right-aligned in a field as wide as the
+widest size of that listing. The eye compares a magnitude down a column, thus a ragged
+field defeats the purpose of the number.
+
+The date MUST render through the native `toLocaleString`, with `year`, `month`, `day`,
+`hour`, and `minute` each set to `2-digit`. It MUST never render as a relative age.
+
+That form is fixed-width, and the compact `dateStyle` form is not. Measured in en-US, the
+compact form gives 15 to 17 columns and this form gives 18. Thus the date column aligns
+with no padding of its own, and the value stays locale-ordered.
+
+A directory row MUST carry no size. A member count needs one `readdir` for each directory
+row, which breaks the syscall budget above. Measured over 467 directories, that pass cost
+54.46 ms cold against 1.65 ms for the `stat` pass.
+
+The blank size field of a directory row MUST span its separator too. Thus the date of a
+directory row lands in the same column as the date of a file row beside it.
 
 The row MUST use `hint`, and not `meta`, because an entry name is short. Thus a row stays
 one line and the listing keeps its height.
@@ -64,10 +79,22 @@ does not exist there, and Node reports synthetic mode bits.
 - **WHEN** a folder holds two data files of different sizes and ages
 - **THEN** each row shows its own permission bits, its size, and its date
 
+#### Scenario: The mode sits left of the name
+
+- **WHEN** the picker renders a file row
+- **THEN** the permission triple renders before the name, and it never ranks in the filter
+
+#### Scenario: The columns land under each other
+
+- **GIVEN** a folder that holds a 600-byte file and a 140-kilobyte file
+- **WHEN** the picker lists it
+- **THEN** the two separators share one column, and the two dates start in one column
+
 #### Scenario: A directory row carries no size
 
 - **WHEN** the listing holds a directory and a file
 - **THEN** the directory row shows its permission bits and its date, and no size
+- **AND** its date starts in the same column as the date of the file row
 
 #### Scenario: An unreadable entry is marked
 

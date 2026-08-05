@@ -7,8 +7,15 @@ list surfaces. They MUST render no dialog chrome (no `DialogPanel`) and no filte
 They MUST NOT bind esc, because dismissal is the structural concern of the dialog host.
 
 Both MUST consume a row as `SelectItem<T>`: `value`, `title`, and the optional
-`description`, `hint`, `meta`, `category`, `categoryLabel`, `tone`, and `pinned`. Both
-MUST share one internal core (ranking, grouping, cursor, selection, row rendering).
+`description`, `hint`, `meta`, `prefix`, `category`, `categoryLabel`, `tone`, and `pinned`.
+Both MUST share one internal core (ranking, grouping, cursor, selection, row rendering).
+
+`prefix` renders BEFORE the title, in the recessive `fgSubtle` tier, and it MUST NOT rank.
+A fixed-width column that folds into `title` would score against the fuzzy filter. Thus a
+query of `rwx` would match each directory of the file picker.
+
+`prefix` MUST NOT shrink. A short mode string reads as a DIFFERENT mode, and not as a
+short one.
 
 `tone` names a MEANING, and never a color. It MUST stay a closed union, and today it
 holds `"warning"` alone. A row that could name any theme role would let a caller paint
@@ -28,6 +35,12 @@ A single component with a matrix of mode flags and chrome flags MUST NOT come ba
 
 - **WHEN** a caller maps domain data to rows
 - **THEN** it produces `SelectItem<T>` values and handles selection callbacks generically over `T`
+
+#### Scenario: A prefix does not rank
+
+- **GIVEN** rows whose `prefix` holds a permission triple, and a row titled `data`
+- **WHEN** the query is `d`
+- **THEN** the `data` row ranks first, and no row ranks on its prefix
 
 #### Scenario: A tone survives the cursor
 
