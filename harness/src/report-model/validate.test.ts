@@ -7,13 +7,29 @@ import { validateReport, type ReportValidation } from "./validate.js";
 
 const TABLE_A_PATH = "runs/run-1/step-a/output/de.csv";
 const TABLE_B_PATH = "runs/run-1/step-b/output/counts.csv";
+const FLOAT_PATH = "runs/run-1/step-c/output/floats.csv";
+const SPARSE_PATH = "runs/run-1/step-c/output/sparse.csv";
 const FIGURE_PATH = "runs/run-1/step-b/figures/volcano.png";
 const TABLE_A_HASH = `sha256:${"a".repeat(64)}`;
 const TABLE_B_HASH = `sha256:${"b".repeat(64)}`;
+const FLOAT_HASH = `sha256:${"e".repeat(64)}`;
+const SPARSE_HASH = `sha256:${"f".repeat(64)}`;
 const FIGURE_HASH = `sha256:${"d".repeat(64)}`;
 const WRONG_HASH = `sha256:${"c".repeat(64)}`;
 
 const resolver = createFixtureResolver();
+
+/**
+ * A row promises a value for each key that it holds. A real parser gives back an empty cell as an absent
+ * key, as `undefined`, or as `null`, thus the cast is the only way to build the rows that the resolver
+ * must reject.
+ */
+const sparseRows = [
+    { label: "blank", value: "" },
+    { label: "undefined-cell", value: undefined },
+    { label: "null-cell", value: null },
+    { label: "absent-cell" },
+] as unknown as Array<Record<string, string | number>>;
 
 const snapshot: ReportSnapshot = {
     artifacts: {
@@ -33,6 +49,17 @@ const snapshot: ReportSnapshot = {
                 { sample: "S2", value: 0 },
             ],
         },
+        [FLOAT_PATH]: {
+            hash: FLOAT_HASH,
+            // A delta over 0.3 and 0.1 gives 0.19999999999999998, thus it exercises the float noise of
+            // ordinary arithmetic against a rounded authored figure.
+            rows: [
+                { name: "a", value: 0.3 },
+                { name: "b", value: 0.1 },
+                { name: "c", value: 1.05 },
+            ],
+        },
+        [SPARSE_PATH]: { hash: SPARSE_HASH, rows: sparseRows },
         // An image carries a hash and no rows, thus it pins whole and addresses no cell.
         [FIGURE_PATH]: { hash: FIGURE_HASH },
     },
@@ -622,5 +649,191 @@ describe("validateReport — multiple failures", () => {
         const failures = invalid.resolutionFailures ?? [];
         expect(failures).toHaveLength(3);
         expect(failures.map((f) => f.blockId).sort()).toEqual(["citation-c", "claim-a", "metric-b"]);
+    });
+});
+
+describe("validateReport — the hash assert", () => {
+    /** Bind a metric to the first cell of table A, under the given assert. */
+    function metricWithAssert(id: string, assertion: { hash?: string; value?: string | number; tolerance?: number }): Block {
+        return {
+            kind: "metric",
+            id,
+            label: "Pinned",
+            value: {
+                kind: "artifact-value",
+                run: "run-1",
+                path: TABLE_A_PATH,
+                hash: TABLE_A_HASH,
+                locator: { column: "log2FoldChange", row: 0 },
+                assert: assertion,
+            },
+        };
+    }
+
+    it("validates an artifact-value under a hash-only assert that matches", async () => {
+        const result = await validateReport(reportWith(metricWithAssert("metric-hash-ok", { hash: TABLE_A_HASH })), snapshot, resolver);
+        expectValid(result);
+    });
+
+    it("reports assertion-failed for a hash-only assert that differs", async () => {
+        const result = await validateReport(reportWith(metricWithAssert("metric-hash-bad", { hash: WRONG_HASH })), snapshot, resolver);
+        const invalid = expectInvalid(result);
+        const failures = invalid.resolutionFailures ?? [];
+        expect(failures[0].blockId).toBe("metric-hash-bad");
+        expect(failures[0].failure.reason).toBe("assertion-failed");
+    });
+});
+
+describe("validateReport — a value match with no tolerance", () => {
+    /** Bind a metric to the delta of the two float cells, under the given asserted value. */
+    function deltaMetric(id: string, expected: number): Block {
+        return {
+            kind: "metric",
+            id,
+            label: "Delta",
+            value: {
+                kind: "derivation",
+                op: "delta",
+                inputs: [
+                    {
+                        kind: "artifact-value",
+                        run: "run-1",
+                        path: FLOAT_PATH,
+                        hash: FLOAT_HASH,
+                        locator: { column: "value", rowFilter: { column: "name", op: "eq", value: "a" } },
+                    },
+                    {
+                        kind: "artifact-value",
+                        run: "run-1",
+                        path: FLOAT_PATH,
+                        hash: FLOAT_HASH,
+                        locator: { column: "value", rowFilter: { column: "name", op: "eq", value: "b" } },
+                    },
+                ],
+                assert: { value: expected },
+            },
+        };
+    }
+
+    it("validates a rounded authored figure against a value that float arithmetic shifts", async () => {
+        expectValid(await validateReport(reportWith(deltaMetric("metric-delta-ok", 0.2)), snapshot, resolver));
+    });
+
+    it("reports assertion-failed for a real mismatch with no tolerance", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "metric",
+                id: "metric-wrong-value",
+                label: "Wrong",
+                value: {
+                    kind: "artifact-value",
+                    run: "run-1",
+                    path: FLOAT_PATH,
+                    hash: FLOAT_HASH,
+                    locator: { column: "value", rowFilter: { column: "name", op: "eq", value: "c" } },
+                    assert: { value: 1.5 },
+                },
+            }),
+            snapshot,
+            resolver,
+        );
+        const invalid = expectInvalid(result);
+        const failures = invalid.resolutionFailures ?? [];
+        expect(failures[0].blockId).toBe("metric-wrong-value");
+        expect(failures[0].failure.reason).toBe("assertion-failed");
+    });
+});
+
+describe("validateReport — a cell that holds no value", () => {
+    /** Bind a metric to the `value` cell of the sparse row that the given label selects. */
+    function sparseMetric(id: string, label: string): Block {
+        return {
+            kind: "metric",
+            id,
+            label: "Sparse",
+            value: {
+                kind: "artifact-value",
+                run: "run-1",
+                path: SPARSE_PATH,
+                hash: SPARSE_HASH,
+                locator: { column: "value", rowFilter: { column: "label", op: "eq", value: label } },
+            },
+        };
+    }
+
+    it("validates a cell that holds an empty string", async () => {
+        expectValid(await validateReport(reportWith(sparseMetric("metric-blank", "blank")), snapshot, resolver));
+    });
+
+    it("reports locator-out-of-range for a cell that holds undefined", async () => {
+        const invalid = expectInvalid(await validateReport(reportWith(sparseMetric("metric-undefined", "undefined-cell")), snapshot, resolver));
+        const failures = invalid.resolutionFailures ?? [];
+        expect(failures[0].failure.reason).toBe("locator-out-of-range");
+        expect(failures[0].failure.detail).toContain("value");
+    });
+
+    it("reports locator-out-of-range for a cell that holds null", async () => {
+        const invalid = expectInvalid(await validateReport(reportWith(sparseMetric("metric-null", "null-cell")), snapshot, resolver));
+        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+    });
+
+    it("reports locator-out-of-range for a column that the row does not hold", async () => {
+        const invalid = expectInvalid(await validateReport(reportWith(sparseMetric("metric-absent", "absent-cell")), snapshot, resolver));
+        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+    });
+});
+
+describe("validateReport — block id uniqueness", () => {
+    it("rejects a document whose blocks share an id", async () => {
+        const document: ReportDocument = {
+            title: "R",
+            sections: [
+                {
+                    kind: "section",
+                    id: "sec",
+                    title: "S",
+                    blocks: [
+                        { kind: "text", id: "same", content: { prose: "One." } },
+                        { kind: "text", id: "same", content: { prose: "Two." } },
+                        { kind: "text", id: "same", content: { prose: "Three." } },
+                    ],
+                },
+            ],
+        };
+        const invalid = expectInvalid(await validateReport(document, snapshot, resolver));
+        expect(invalid.duplicateIds).toEqual(["same"]);
+    });
+
+    it("names each repeated id one time, in sorted order, across nested sections", async () => {
+        const document: ReportDocument = {
+            title: "R",
+            sections: [
+                {
+                    kind: "section",
+                    id: "sec",
+                    title: "S",
+                    blocks: [
+                        { kind: "text", id: "zebra", content: { prose: "One." } },
+                        { kind: "text", id: "alpha", content: { prose: "Two." } },
+                        {
+                            kind: "section",
+                            id: "sec-inner",
+                            title: "Inner",
+                            blocks: [
+                                { kind: "text", id: "zebra", content: { prose: "Three." } },
+                                { kind: "text", id: "alpha", content: { prose: "Four." } },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+        const invalid = expectInvalid(await validateReport(document, snapshot, resolver));
+        expect(invalid.duplicateIds).toEqual(["alpha", "zebra"]);
+    });
+
+    it("gives no duplicateIds for a document whose ids are unique", async () => {
+        const valid = expectValid(await validateReport(groundedReport(), snapshot, resolver));
+        expect(valid).not.toHaveProperty("duplicateIds");
     });
 });

@@ -204,4 +204,61 @@ describe("parseReference — schema rejection", () => {
     it("rejects a locator on an artifact-file", () => {
         expect(parseReference(encodeUnchecked({ kind: "artifact-file", run: "r", path: "p", hash: HASH, locator: { column: "c", row: 0 } }))).toBeNull();
     });
+
+    it("rejects a derivation with one input", () => {
+        expect(
+            parseReference(
+                encodeUnchecked({
+                    kind: "derivation",
+                    op: "delta",
+                    inputs: [{ kind: "artifact-value", run: "r", path: "p", hash: HASH, locator: { column: "c", row: 0 } }],
+                }),
+            ),
+        ).toBeNull();
+    });
+});
+
+describe("parseReference — the per-kind assert shape", () => {
+    /** Two grounded inputs, so that a rejected derivation is rejected for its assert and nothing else. */
+    const derivationInputs = [
+        { kind: "artifact-value", run: "r", path: "a.csv", hash: HASH, locator: { column: "value", row: 0 } },
+        { kind: "artifact-value", run: "r", path: "b.csv", hash: HASH, locator: { column: "value", row: 0 } },
+    ];
+
+    it("round-trips a hash-only assert on an artifact-value", () => {
+        const reference: Reference = {
+            kind: "artifact-value",
+            run: "run-1",
+            path: "a.csv",
+            hash: HASH,
+            locator: { column: "value", row: 0 },
+            assert: { hash: HASH },
+        };
+        expect(parseReference(serializeReference(reference))).toEqual(reference);
+    });
+
+    it("round-trips a hash-only assert on an artifact-table", () => {
+        const reference: Reference = { kind: "artifact-table", run: "run-1", path: "a.csv", hash: HASH, assert: { hash: HASH } };
+        expect(parseReference(serializeReference(reference))).toEqual(reference);
+    });
+
+    it("rejects an asserted value on an artifact-table", () => {
+        expect(parseReference(encodeUnchecked({ kind: "artifact-table", run: "r", path: "p", hash: HASH, assert: { value: 5 } }))).toBeNull();
+    });
+
+    it("rejects an asserted value on an artifact-file", () => {
+        expect(parseReference(encodeUnchecked({ kind: "artifact-file", run: "r", path: "p", hash: HASH, assert: { value: 5 } }))).toBeNull();
+    });
+
+    it("rejects an asserted hash on a derivation", () => {
+        expect(parseReference(encodeUnchecked({ kind: "derivation", op: "ratio", inputs: derivationInputs, assert: { hash: HASH } }))).toBeNull();
+    });
+
+    it("rejects an asserted hash on a citation", () => {
+        expect(parseReference(encodeUnchecked({ kind: "citation", idKind: "doi", id: "10.1/x", raw: "text", assert: { hash: HASH } }))).toBeNull();
+    });
+
+    it("rejects a tolerance on an artifact-table", () => {
+        expect(parseReference(encodeUnchecked({ kind: "artifact-table", run: "r", path: "p", hash: HASH, assert: { tolerance: 0.1 } }))).toBeNull();
+    });
 });

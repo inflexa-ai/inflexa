@@ -3,9 +3,9 @@
  *
  * The schemas already carry the grammar: a strict object rejects a forbidden field, a binding is present
  * by construction, and a metric value slot admits one scalar reference only. Thus a schema parse failure
- * is the grammar rejection, and the validator does not re-implement it. The validator adds the two
- * checks that a schema cannot make: it resolves each reference against the pinned evidence, and it warns
- * about a free numeral in prose.
+ * is the grammar rejection, and the validator does not re-implement it. The validator adds the three
+ * checks that a schema cannot make: it makes sure that each block id occurs one time only, it resolves
+ * each reference against the pinned evidence, and it warns about a free numeral in prose.
  */
 
 import { ReportDocumentSchema, type Block } from "../contracts/report-blocks.js";
@@ -32,12 +32,19 @@ export interface ReportWarning {
 }
 
 /**
- * The result of validation. `valid` is false only when the schema failed or a reference did not resolve.
- * The warnings ride along in either case.
+ * The result of validation. `valid` is false when the schema failed, a block id repeats, or a reference
+ * did not resolve. `duplicateIds` names each repeated id one time, in sorted order. The warnings ride
+ * along in either case.
  */
 export type ReportValidation =
     | { valid: true; warnings: ReportWarning[] }
-    | { valid: false; schemaIssues?: SchemaIssue[]; resolutionFailures?: ResolutionFailure[]; warnings: ReportWarning[] };
+    | {
+          valid: false;
+          schemaIssues?: SchemaIssue[];
+          duplicateIds?: string[];
+          resolutionFailures?: ResolutionFailure[];
+          warnings: ReportWarning[];
+      };
 
 /**
  * A token that looks like a number, with an optional decimal part and an optional percent sign.
@@ -70,7 +77,18 @@ export async function validateReport(document: unknown, snapshot: ReportSnapshot
     const references: Array<{ blockId: string; reference: Reference }> = [];
     const warnings: ReportWarning[] = [];
 
+    // An id is what makes a block addressable, thus an amend by id is well defined only while each id
+    // belongs to one block. `seenIds` holds each id that the walk met, and `repeatedIds` holds each id
+    // that it met again.
+    const seenIds = new Set<string>();
+    const repeatedIds = new Set<string>();
+
     const walk = (block: Block): void => {
+        if (seenIds.has(block.id)) {
+            repeatedIds.add(block.id);
+        } else {
+            seenIds.add(block.id);
+        }
         switch (block.kind) {
             case "section":
                 for (const child of block.blocks) {
@@ -117,8 +135,14 @@ export async function validateReport(document: unknown, snapshot: ReportSnapshot
         }
     }
 
-    if (resolutionFailures.length > 0) {
-        return { valid: false, resolutionFailures, warnings };
+    const duplicateIds = [...repeatedIds].sort();
+    if (duplicateIds.length > 0 || resolutionFailures.length > 0) {
+        return {
+            valid: false,
+            ...(duplicateIds.length > 0 ? { duplicateIds } : {}),
+            ...(resolutionFailures.length > 0 ? { resolutionFailures } : {}),
+            warnings,
+        };
     }
     return { valid: true, warnings };
 }
