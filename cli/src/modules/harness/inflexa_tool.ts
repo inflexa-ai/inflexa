@@ -31,7 +31,7 @@ import { type AgentPolicy, getAgentPolicy } from "../../cli/agent_policy.ts";
 import { buildProgram } from "../../cli/index.ts";
 import { env } from "../../lib/env.ts";
 import { anchorPathForAnalysisId } from "../analysis/output.ts";
-import { classifyInflexaArgv } from "./inflexa_classify.ts";
+import { classifyInflexaArgv, toEffectiveArgv } from "./inflexa_classify.ts";
 
 /** Combined cap on a run's captured output (stdout and stderr together), so one runaway command cannot overflow the turn's context. */
 const MAX_OUTPUT_CHARS = 60_000;
@@ -430,6 +430,18 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
                         '(e.g. ["--help"] or ["<subcommand>", "--help"]). An empty list runs bare `inflexa`.',
                 ),
         }),
+        // The chip names the argv that WILL run, and not the argv the model sent.
+        // `toEffectiveArgv` is the whole of the classifier's normalization, and
+        // every runnable verdict carries its result unchanged. The hook is
+        // synchronous and `classifyInflexaArgv` is async, thus the hook computes
+        // the same value rather than a call to the verdict.
+        //
+        // Each element goes through `displayArgvElement`, the same encoder that
+        // builds the approval prompt. The standing invariant of this tool is that
+        // what the user approves is exactly what runs, thus one argv must not read
+        // two ways. The leading `inflexa` of the prompt stays off, because the
+        // surface that renders a detail already prints the name of the tool.
+        describeCall: ({ argv }) => toEffectiveArgv(argv).map(displayArgvElement).join(" "),
         execute: async (input, ctx): Promise<Result<RunInflexaResult, ToolError>> => {
             // The classification parses THIS process's commander tree; the spawned
             // child rebuilds its own. The two agree because the dev-command gate

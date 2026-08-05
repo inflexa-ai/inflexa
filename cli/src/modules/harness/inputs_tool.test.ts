@@ -153,3 +153,34 @@ describe("manage_inputs tool", () => {
         expect(result.status).toBe("no_analysis");
     });
 });
+
+describe("manage_inputs — describeCall", () => {
+    const tool = createManageInputsTool();
+
+    /** Read the hook the way the harness emit site reads it. */
+    function describeCall(input: { action: "add" | "remove" | "list"; paths?: string[] }): string {
+        expect(tool.describeCall).toBeDefined();
+        return tool.describeCall!(input);
+    }
+
+    test("a single-path add names the file", () => {
+        expect(describeCall({ action: "add", paths: ["counts.csv"] })).toBe("add counts.csv");
+    });
+
+    test("a multi-path remove reports what it acts on, without an unbounded list", () => {
+        expect(describeCall({ action: "remove", paths: ["a.csv", "b.csv"] })).toBe("remove a.csv, b.csv");
+        expect(describeCall({ action: "remove", paths: ["a.csv", "b.csv", "c.csv"] })).toBe("remove 3 files");
+    });
+
+    test("a list call is described by its action alone", () => {
+        // `list` never carries paths, thus the detail must imply no target.
+        expect(describeCall({ action: "list" })).toBe("list");
+    });
+
+    test("an add whose paths are absent still produces a detail", () => {
+        // The schema permits the omission and `execute` rejects it. The hook
+        // tolerates it rather than an assumption that the field is there.
+        expect(describeCall({ action: "add" })).toBe("add");
+        expect(describeCall({ action: "add", paths: [] })).toBe("add");
+    });
+});

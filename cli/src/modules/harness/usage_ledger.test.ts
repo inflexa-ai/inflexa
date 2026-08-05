@@ -110,6 +110,7 @@ describe("a chat turn's calls land in the local ledger", () => {
             id: "echo",
             description: "Echo the label back.",
             inputSchema: z.object({ label: z.string() }),
+            describeCall: "none",
             execute: async ({ label }) => ok({ label }),
         });
 
@@ -175,6 +176,7 @@ describe("a chat turn's calls land in the local ledger", () => {
             id: "plan",
             description: "Run the planner sub-agent.",
             inputSchema: z.object({}),
+            describeCall: "none",
             execute: async (_input, ctx) => {
                 await runAgent(agent("planner", []), [{ role: "user", content: "plan" }], forSubAgent(ctx.session, "planner"), {
                     provider: subChat,

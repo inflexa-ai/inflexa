@@ -91,3 +91,16 @@ describe("list_launch_dir tool", () => {
         expect(result.status).toBe("no_analysis");
     });
 });
+
+describe("list_launch_dir — describeCall", () => {
+    test("the tool declines, thus it packages no hook", () => {
+        // `"none"` is an authoring-time value. `defineTool` consumes it at
+        // construction, thus a declined tool is observable exactly as a tool with
+        // no hook is, and the sentinel reaches no consumer.
+        const tool = createLaunchDirTool();
+
+        expect(tool.describeCall).toBeUndefined();
+        expect("describeCall" in tool).toBe(false);
+        expect(JSON.stringify(tool)).not.toContain("none");
+    });
+});

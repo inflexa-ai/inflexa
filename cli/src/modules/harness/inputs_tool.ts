@@ -75,6 +75,14 @@ export function createManageInputsTool() {
                 .optional()
                 .describe("Files to add or remove (relative to the launch folder, or absolute). Required for add/remove; ignored for list."),
         }),
+        // `paths` is optional in the schema and necessary only for add and remove,
+        // thus the hook tolerates its absence rather than an assumption of it. A
+        // count replaces the list past two paths, because one line cannot hold an
+        // unbounded enumeration and the cap would cut it mid-path.
+        describeCall: ({ action, paths }) => {
+            if (paths === undefined || paths.length === 0) return action;
+            return paths.length <= 2 ? `${action} ${paths.join(", ")}` : `${action} ${paths.length} files`;
+        },
         execute: async (input, ctx): Promise<Result<ManageInputsResult, ToolError>> => {
             const scoped = scopeResource(ctx.session.scope);
             if (scoped.resourceType !== "analysis") return ok({ status: "no_analysis" as const });

@@ -86,6 +86,12 @@ export function createLaunchDirTool() {
             "input — so this is also how you discover candidate files the user may want added as inputs (offer to add only " +
             "the un-registered ones). Read-only: it registers nothing — use the input-management tool to actually add files.",
         inputSchema: z.object({}),
+        // The schema is empty, thus every call is identical and no detail can tell
+        // one from another. `execute` resolves the folder from the anchor of the
+        // analysis, and the caller supplies nothing. A constant line would restate
+        // the name of the tool beside the name of the tool, and it would imply a
+        // variation that does not exist.
+        describeCall: "none",
         execute: async (_input, ctx): Promise<Result<LaunchDirResult, ToolError>> => {
             const scoped = scopeResource(ctx.session.scope);
             if (scoped.resourceType !== "analysis") return ok({ status: "no_analysis" as const });

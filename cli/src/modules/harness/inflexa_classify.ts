@@ -89,10 +89,15 @@ function tokenizeArgvString(input: string): string[] {
  * spaces — e.g. a filename — and must NOT be re-split).
  *
  * NOT idempotent — tokenizing `['"refs download"']` yields `["refs download"]`,
- * a single element that still carries whitespace and would tokenize again — which
- * is why it stays private: the classifier applies it exactly once and hands the
- * result back in its verdict's `argv`, so no second caller can re-normalize and
- * diverge from what was classified.
+ * a single element that still carries whitespace and tokenizes again. Thus each
+ * caller applies it exactly ONCE, to a raw argv. Never apply it to a value that
+ * already passed through it.
+ *
+ * Two callers obey that rule. The classifier applies it before it builds a
+ * verdict, and every runnable verdict carries the result as its `argv`. The
+ * `describeCall` hook of `run_inflexa` applies it to the raw tool input, because
+ * the hook is synchronous and runs before dispatch. As a result the chip names
+ * the argv that the verdict describes, without a call to the async classifier.
  *
  * Accepted ambiguity: a single element that is one spaced operand (a lone quoted
  * filename) is indistinguishable from a packed command and gets tokenized too.
@@ -100,7 +105,7 @@ function tokenizeArgvString(input: string): string[] {
  * command takes no positional — so the worst case is a malformed verdict handed
  * back to the model, never a wrong spawn.
  */
-function toEffectiveArgv(argv: string[]): string[] {
+export function toEffectiveArgv(argv: string[]): string[] {
     // `argv[0]!` is sound: the `argv.length === 1` guard proves index 0 exists.
     return argv.length === 1 && /\s/.test(argv[0]!) ? tokenizeArgvString(argv[0]!) : argv;
 }
