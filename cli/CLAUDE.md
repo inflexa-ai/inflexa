@@ -418,7 +418,9 @@ layer directories.
   - `anchor/` — the folder-identity markers, and the lazy path reconciliation
   - `harness/` — the harness embedder. It boots the harness runtime (DBOS, the
     sandbox, the providers) and operates the chat turn, the model-free
-    `run --plan` replay engine, the data profiler, and the provenance bridge
+    `run --plan` replay engine, the data profiler, and the provenance bridge.
+    Its `dev/` subdirectory holds the dev-channel command surfaces (`chat`,
+    `run`, `profile`) — refer to [The `dev/` subdirectory](#the-dev-subdirectory)
   - `embedding/` — the embedding-provider resolution from the configuration, plus
     the in-process bge-small local model: the download, the check, and the
     lifecycle
@@ -598,6 +600,27 @@ only, and no barrels, per [Naming conventions](#naming-conventions).
   `tui/`, because the presentation depends on the logic and never the opposite. The
   infrastructure (`lib/`, `db/`) must **never** import a module. If two modules want
   the same code, lift it to a shared layer.
+
+### The `dev/` subdirectory
+
+A module whose commands are not all in the release build puts the dev-channel
+ones under `<module>/dev/`. Today that is `modules/harness/dev/`, which holds
+`chat`, `run`, and `profile`. The `dev-commands` spec is the contract.
+
+The registration gate in `src/cli/index.ts` decides what a release build carries.
+The directory states the same fact in the tree, where a reader meets it first.
+
+- **The dependency runs one way.** A file under `dev/` can import product code,
+  because a dev surface is a consumer of the product. A product file must never
+  import `dev/`. No lint rule enforces this, so it is a review item.
+- **A shared helper stays outside.** If a product surface and a dev surface both
+  call it, the helper belongs in the module that owns its subject, not in `dev/`.
+  `seedProfileLedger` (`profile_trigger.ts`) is the example: the parity trigger is
+  product code, so the shared half must be the one that stays.
+- **Split a mixed file on the channel line.** When one file holds both kinds, the
+  product part stays and the dev part moves. `chat_printer.ts` keeps the event
+  readers that the TUI and the REPL share. The REPL's printer lives in
+  `dev/chat.ts`.
 
 ## Global extensions
 
