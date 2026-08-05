@@ -117,10 +117,11 @@ export function fileTypeHoldsNoCell(fileType: string | null | undefined): boolea
 /**
  * Give back the snapshot entry at `path`, or `undefined` when the map holds no such own key.
  *
- * An agent authors a report reference, thus the path is untrusted text. The `artifacts` map is a plain
- * object, and a bracket lookup with a path such as `constructor` finds an inherited member. Then the
- * refusal reads `hash-mismatch`, but the true answer is `artifact-missing`. The `Object.hasOwn` guard
- * admits an own key only, thus an inherited member reads as absent.
+ * An agent authors a report reference, thus the path is untrusted text. The `artifacts` map can be a
+ * plain object: a fixture literal, or a `JSON.parse` of a stored snapshot. A bracket lookup on a plain
+ * object with a path such as `constructor` finds an inherited member. Then the refusal reads
+ * `hash-mismatch`, but the true answer is `artifact-missing`. The `Object.hasOwn` guard admits an own
+ * key only, thus an inherited member reads as absent.
  *
  * The structural tier and the fixture resolver both read this one lookup. Thus the two tiers can never
  * disagree about membership.
