@@ -46,8 +46,32 @@ export type SelectItem<T> = {
      * line without it, two with it.
      */
     readonly meta?: string;
-    /** Optional group label; rows sharing a category render under one header, surviving filtering. */
+    /** Optional group KEY; rows sharing a category render under one header, surviving filtering. */
     readonly category?: string;
+    /**
+     * Optional header TEXT for this row's group, when the group key is not what the user should read.
+     * Absent, the header is the `category` string itself — which is why it exists: `category` is both
+     * the grouping key and the printed header, so a caller grouping on an OPAQUE identity (the analysis
+     * switcher groups on an anchor id, not on the anchor's folder path — two live anchors can share one
+     * cached path, and keying on the path would merge them into one group) has no way to title the group
+     * readably. Rows of one `category` are expected to agree on this; the first row of the group wins.
+     *
+     * It is also the ranked field: `rankBy` scores what the user can SEE, so filtering by the visible
+     * folder path works where scoring the anchor UUID would match nothing a user would ever type.
+     */
+    readonly categoryLabel?: string;
+    /**
+     * Optional semantic tone for the row's title. A ROLE, never a color: the row says what it means
+     * ("this one is a problem") and the theme decides how that looks, so all ten palettes stay honest.
+     *
+     * Deliberately a one-member union rather than an open `ThemeColors` key — a row that could name
+     * any role would let callers paint decoratively, and the tier vocabulary would drift. Widen it
+     * only when a second MEANING appears, not when a second color is wanted.
+     *
+     * It outranks the cursor's own highlight: landing on a row must not erase the warning that is
+     * the reason to notice it.
+     */
+    readonly tone?: "warning";
     /**
      * Keep this row listed no matter what the query is, instead of ranking its title against it. For an
      * ESCAPE-HATCH row — one whose action is "do something other than pick from these rows" (the model
@@ -162,7 +186,8 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
         if (q === "") return props.items;
         const matched = rankBy(props.items, q, [
             { get: (it) => it.title, weight: 2 },
-            { get: (it) => it.category ?? "", weight: 1 },
+            // The printed header, not the grouping key — see `SelectItem.categoryLabel`.
+            { get: (it) => it.categoryLabel ?? it.category ?? "", weight: 1 },
         ]);
         // Re-append the pinned rows the ranking dropped (see `SelectItem.pinned`). Membership is tested by
         // reference against the matches, which both primitives guarantee: FixedList's items are immutable,
@@ -208,7 +233,9 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
         let prev = "";
         for (const [i, it] of flat().entries()) {
             const cat = it.category ?? "";
-            m.set(it, { index: i, header: cat !== "" && cat !== prev ? cat : null });
+            // Group boundaries are decided by the KEY, the header prints the LABEL: two groups whose
+            // labels coincide must still render as two, or the distinction the key draws is invisible.
+            m.set(it, { index: i, header: cat !== "" && cat !== prev ? (it.categoryLabel ?? cat) : null });
             prev = cat;
         }
         return m;
@@ -373,7 +400,7 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                         <Show when={mode() === "multi"}>
                             <text fg={isSel() ? theme().success : theme().fgSubtle}>{gutter()}</text>
                         </Show>
-                        <text fg={isCursor() ? theme().secondary : theme().fg}>
+                        <text fg={item().tone === "warning" ? theme().warning : isCursor() ? theme().secondary : theme().fg}>
                             {mode() === "single" ? (isCursor() ? `${GLYPHS.chevronRight} ` : "  ") : ""}
                             {item().title}
                         </text>
