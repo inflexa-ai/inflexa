@@ -52,6 +52,15 @@ LOCK_HOLDER="provisioner-checks-lock-$$"
 # the mechanism, thus a small closure keeps each run short.
 PKG_A=packaging
 PKG_B=six
+# A third small distribution for the hard-case checks, kept distinct from PKG_A and
+# PKG_B so it does not disturb the reuse and the reclaim counts above.
+PKG_C=idna
+# One larger distribution. A fresh install of it lasts long enough to interrupt, and
+# long enough for a second run to meet a held store lock. It is one package, with no
+# closure of its own here.
+PKG_BIG=numpy
+# The prefix provision.py gives a farm staging directory (see FARM_STAGING there).
+FARM_STAGING=.staging-
 
 PASSED=0
 FAILED=0
@@ -72,7 +81,7 @@ in_store() { "$CTR" run --rm --network none -v "$STORE_ROOT:/mnt/libs:rw" \
              --entrypoint sh "$PROVISIONER_IMAGE" -c "$1" 2>&1; }
 
 cleanup() {
-    "$CTR" rm -f "$LOCK_HOLDER" >/dev/null 2>&1
+    "$CTR" rm -f "$LOCK_HOLDER" crashrun race1 >/dev/null 2>&1
     if [[ $KEEP -eq 0 ]]; then
         # The store is written as root, thus a host `rm -rf` can fail. Remove the
         # content from a container, then remove the empty root.
@@ -285,6 +294,115 @@ else
         bad "the store check gave exit $rc" "$(tail -3 <<<"$out")"
     fi
 fi
+
+# ---------------------------------------------------------------------------
+head2 "an interrupted provisioning run"
+# A hard kill must never leave a reachable farm with links and no records. The farm
+# is assembled in an unreachable staging directory and swapped in atomically, thus
+# the live farm the harness reads stays complete through the interrupt, and the next
+# run repairs the debris. This is the container form of the defect-1 fix.
+out=$(run_net --farm crashfarm "$PKG_C"); rc=$?
+if [[ $rc -ne 0 ]]; then
+    bad "could not create the farm to interrupt" "$(tail -3 <<<"$out")"
+else
+    ok "a farm to interrupt is in place"
+    was=$(current_target)
+
+    # A re-provision that adds a fresh, larger package lasts long enough to interrupt.
+    # SIGKILL is the same stop as a lost container or an out-of-memory kill.
+    "$CTR" rm -f crashrun >/dev/null 2>&1
+    "$CTR" run -d --name crashrun -v "$STORE_ROOT:/mnt/libs:rw" \
+        "$PROVISIONER_IMAGE" --farm crashfarm "$PKG_BIG" >/dev/null 2>&1
+    sleep 1
+    "$CTR" kill -s KILL crashrun >/dev/null 2>&1
+    "$CTR" rm -f crashrun >/dev/null 2>&1
+
+    # The live farm kept every record and its original content, and current did not move.
+    missing=""
+    for f in lock.json meta.json packages.txt; do
+        [[ -f "$STORE_ROOT/farms/crashfarm/$f" ]] || missing="$missing $f"
+    done
+    present=$(in_store "[ -e /mnt/libs/farms/crashfarm/python/site-packages/$PKG_C ] && echo yes")
+    if [[ -z "$missing" ]] && [[ "$present" == "yes" ]] && [[ "$(current_target)" == "$was" ]]; then
+        ok "the interrupt left the live farm complete, with its records and its content"
+    else
+        bad "the interrupt damaged the live farm" \
+            "missing:$missing content:${present:-none} current:$(current_target)"
+    fi
+
+    # A half-built farm placed at the staging path is unreachable: current never
+    # selects it, and repair removes it without touching the live farm.
+    in_store "mkdir -p /mnt/libs/farms/${FARM_STAGING}crashfarm/python/site-packages && \
+              ln -s /mnt/libs/store/none /mnt/libs/farms/${FARM_STAGING}crashfarm/python/site-packages/x" >/dev/null 2>&1
+    run_off --repair >/dev/null 2>&1
+    if [[ -z "$(in_store "ls -d /mnt/libs/farms/${FARM_STAGING}crashfarm 2>/dev/null")" ]] \
+       && [[ -f "$STORE_ROOT/farms/crashfarm/lock.json" ]]; then
+        ok "repair clears the unreachable half-built farm and keeps the live one"
+    else
+        bad "repair did not clear the half-built staging farm or damaged the live farm"
+    fi
+
+    # The requested set survived, thus the re-run adds to it rather than reporting
+    # nothing to do, and the farm ends complete with both packages.
+    out=$(run_net --farm crashfarm "$PKG_BIG"); rc=$?
+    both=$(in_store "for p in $PKG_C $PKG_BIG; do [ -e /mnt/libs/farms/crashfarm/python/site-packages/\$p ] || echo no; done")
+    if [[ $rc -eq 0 ]] && [[ -z "$both" ]]; then
+        ok "repair and a re-run recover the farm with the full requested set"
+    else
+        bad "the re-run gave exit $rc and the farm is incomplete" "$(tail -2 <<<"$out")"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+head2 "a full disk"
+# The store lives on a small tmpfs that a filler fills to the brim, so the next
+# install has nowhere to write. The run must fail with a clear message and a
+# non-zero exit, never a raw traceback. The tmpfs is private to this container, thus
+# the check never touches the shared store.
+out=$("$CTR" run --rm --tmpfs /mnt/libs:size=6m,mode=1777 \
+      --entrypoint sh "$PROVISIONER_IMAGE" -c \
+      "dd if=/dev/zero of=/mnt/libs/.fill bs=1M 2>/dev/null; exec python3 /usr/local/bin/provision --farm diskfull $PKG_C" 2>&1); rc=$?
+if [[ $rc -ne 0 ]]; then ok "a full disk fails the run, with exit $rc"
+else bad "a full disk did not fail the run"; fi
+if grep -q "Traceback" <<<"$out"; then bad "a full disk prints a traceback" "$(tail -3 <<<"$out")"
+else ok "a full disk prints no traceback"; fi
+if grep -qi "no space left on device" <<<"$out"; then ok "the message names the full disk"
+else bad "the message does not name the full disk" "$(tail -2 <<<"$out")"; fi
+
+# ---------------------------------------------------------------------------
+head2 "two provisioners at once"
+# Two real provisioning runs contend for one store. The per-store lock is
+# non-blocking, thus exactly one runs and the other reports the conflict at once
+# rather than queueing behind a build of unknown length. A private store root keeps
+# the timing deterministic: the larger package is a fresh install for the first run,
+# so it still holds the lock when the second run starts.
+race_root=$(mktemp -d)
+race_log=$(mktemp)
+"$CTR" run --rm --name race1 -v "$race_root:/mnt/libs:rw" \
+    "$PROVISIONER_IMAGE" --farm race1 "$PKG_BIG" >"$race_log" 2>&1 &
+race_bg=$!
+sleep 1.5
+out2=$("$CTR" run --rm -v "$race_root:/mnt/libs:rw" "$PROVISIONER_IMAGE" --farm race2 "$PKG_B" 2>&1); rc2=$?
+wait "$race_bg"; rc1=$?
+if [[ $rc1 -eq 0 && $rc2 -ne 0 ]] && grep -q "store lock" <<<"$out2"; then
+    ok "one run completes and the other reports the store lock (exit $rc1 / $rc2)"
+elif [[ $rc1 -ne 0 && $rc2 -eq 0 ]] && grep -q "store lock" "$race_log"; then
+    ok "one run completes and the other reports the store lock (exit $rc1 / $rc2)"
+else
+    bad "the two runs did not serialize (exit $rc1 / $rc2)" \
+        "$(tail -1 "$race_log"; tail -1 <<<"$out2")"
+fi
+# The winning run left a complete farm: the concurrent refusal did not corrupt the store.
+winner=race1; [[ $rc1 -eq 0 ]] || winner=race2
+wmissing=""
+for f in lock.json meta.json packages.txt; do
+    [[ -f "$race_root/farms/$winner/$f" ]] || wmissing="$wmissing $f"
+done
+if [[ -z "$wmissing" ]]; then ok "the winning run left a complete farm"
+else bad "the winning farm is missing$wmissing"; fi
+"$CTR" run --rm --network none -v "$race_root:/mnt/libs:rw" --entrypoint sh \
+    "$PROVISIONER_IMAGE" -c 'rm -rf /mnt/libs/* /mnt/libs/.[!.]*' >/dev/null 2>&1
+rm -f "$race_log"; rmdir "$race_root" 2>/dev/null
 
 # ---------------------------------------------------------------------------
 printf '\n%s\n' "-----------------------------------------------"
