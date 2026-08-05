@@ -19,10 +19,19 @@ import type { Reference, UnresolvedReference } from "../contracts/report-referen
  * JavaScript type.
  *
  * `rows` is optional because an image is pinned by its hash alone and holds no cells. An empty array in
- * that position would say that the artifact holds zero rows, which is a different and false claim.
+ * that position would say that the artifact holds zero rows, which is a different and false claim. The
+ * mint never populates `rows`. `rows` serves the fixture realization only, and that realization resolves
+ * from the snapshot itself. A production snapshot pins identity, and a value comes from a read of the
+ * artifact.
+ *
+ * `fileType` states a role, and it does not state a data format. `inferArtifactType` in
+ * `src/schemas/artifact-manifest.ts` gives each value that the ledger holds, and the values are
+ * `figure`, `script`, `log`, `notebook`, and `output`. Thus the field can refuse a kind of reference, and
+ * it can never confirm one. An `output` covers a table and an image alike.
  */
 export interface ArtifactSnapshot {
     hash: string;
+    fileType?: string | null;
     rows?: Array<Record<string, string | number>>;
 }
 

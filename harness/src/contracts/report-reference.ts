@@ -185,8 +185,22 @@ export const ReferenceSchema = z.discriminatedUnion("kind", [
  */
 export const ScalarReferenceSchema = z.discriminatedUnion("kind", [ArtifactValueReferenceSchema, DerivationReferenceSchema]);
 
-/** The reason that a reference did not resolve. */
-export const UnresolvedReasonSchema = z.enum(["artifact-missing", "hash-mismatch", "locator-out-of-range", "ambiguous-match", "assertion-failed"]);
+/**
+ * The reason that a reference did not resolve.
+ *
+ * Two of the reasons are easy to confuse. `artifact-missing` means that the snapshot holds no entry for
+ * the path. `unreadable-artifact` means that the entry exists, and that the resolver cannot read the
+ * artifact as a table. Two conditions give the second reason. The file type refuses a read of a cell, or
+ * the bytes are unrecoverable.
+ */
+export const UnresolvedReasonSchema = z.enum([
+    "artifact-missing",
+    "hash-mismatch",
+    "locator-out-of-range",
+    "ambiguous-match",
+    "assertion-failed",
+    "unreadable-artifact",
+]);
 
 /** A reference that resolution could not bind, with the reason and an optional detail. */
 export const UnresolvedReferenceSchema = z.strictObject({
