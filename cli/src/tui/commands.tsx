@@ -1,7 +1,7 @@
 import { createSignal, Show, type JSX } from "solid-js";
 import { randomUUIDv7 } from "bun";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { ResultAsync } from "neverthrow";
 // Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
@@ -35,7 +35,7 @@ import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
-import { mkdirResult, writeFileResult } from "../lib/fs.ts";
+import { mkdirResult, statResult, writeFileResult } from "../lib/fs.ts";
 import { str256, type Str256 } from "../lib/types.ts";
 import {
     createAnalysis,
@@ -62,12 +62,16 @@ import { createProject, deleteAnalysis, deleteProject, updateAnalysisProject } f
 import {
     listProjects,
     listAnalysisInputs,
+    listAnchors,
     countAnalysesByProject,
     listAnalysisUsageByRun,
     listRunUsageByStep,
     listUsageTotalsByAnalysis,
     type LlmUsageTotals,
 } from "../db/primary_query.ts";
+import { contractHome } from "../lib/paths.ts";
+import { writeClipboard } from "../lib/clipboard.ts";
+import { useDialogBindings } from "./components/dialog/dialog_host.tsx";
 import { formatTokenFigure } from "../lib/usage_format.ts";
 import type { Analysis, AnalysisInput } from "../types/analysis.ts";
 import type { Project } from "../types/project.ts";
@@ -641,24 +645,65 @@ function SwitchAnalysisDialog(): JSX.Element {
         () => [],
     );
     const usageByAnalysis = listUsageTotalsByAnalysis(analyses.map((a) => a.id)).unwrapOr(new Map<string, LlmUsageTotals>());
+    // ONE query for every anchor, matching the batched ledger read above — a lookup per drawn row
+    // would put N queries on the open of a picker whose whole point is that it works with the
+    // runtime cold. The CACHED path is used deliberately: this is a read-only display, so it must
+    // not trigger the reconciliation (and its `lastSeen` write) that resolving by id performs.
+    const anchorPaths = listAnchors().match(
+        (as) => new Map(as.map((anchor) => [anchor.id, anchor.cachedPath])),
+        () => new Map<string, string>(),
+    );
     const items = analyses.map((a) => {
         const totals = usageByAnalysis.get(a.id);
+        const folder = anchorPaths.get(a.anchorId);
         return {
             value: a,
             title: a.name,
-            // An analysis with nothing recorded carries NO hint rather than a zeroed one: absent means
+            // Grouped by anchor ID, headed by its folder. Keying on the path instead would MERGE two
+            // live anchors that share a stale cachedPath (delete `.inflexa/id`, re-init in place, and
+            // the old row keeps that path) — mixing a dead anchor's analyses in with the current ones,
+            // which is the exact ambiguity this grouping exists to remove.
+            category: a.anchorId,
+            categoryLabel: folder === undefined ? "(folder unknown)" : contractHome(folder),
+            // An analysis with nothing recorded carries NO figure rather than a zeroed one: absent means
             // not-reported everywhere the ledger is read, and `formatTokenFigure` returns the empty
             // string for exactly that state.
-            hint: totals ? formatTokenFigure(totals) || undefined : undefined,
-            description: a.slug,
+            hint: [absTimeShort(new Date(a.createdAt).toISOString()), totals ? formatTokenFigure(totals) || undefined : undefined]
+                .filter(Boolean)
+                .join(` ${GLYPHS.middot} `),
+            // The one place a row's unambiguous handle lives: the name repeats across anchors and the
+            // slug repeats within them, so neither identifies a row on its own.
+            description: `${a.id} ${GLYPHS.middot} ${a.slug} ${GLYPHS.middot} created ${absTime(new Date(a.createdAt).toISOString())}`,
         };
     });
+    // Mirrored from the list so the copy binding below can act on the highlighted row: the list owns
+    // the cursor, and `onCursorChange` is the sanctioned way for a host to read it.
+    const [cursor, setCursor] = createSignal<Analysis | undefined>(items[0]?.value);
+    // ctrl+y, NOT a bare `y`: this picker's filter input holds focus for its whole life (single mode
+    // has no NORMAL state to fall back to), so a bare printable would be swallowed as typed text.
+    // Ctrl, never Alt — terminals deliver Alt/Option unreliably and macOS composes it into a glyph.
+    useDialogBindings(() => ({
+        bindings: [
+            {
+                chord: { key: "y", ctrl: true },
+                run: () => {
+                    const a = cursor();
+                    if (!a) return;
+                    void writeClipboard(a.id); // best-effort, never rejects → notify optimistically
+                    notify({ kind: "info", text: `Copied analysis id ${a.id}` });
+                },
+                desc: "Copy analysis id",
+                group: "Analysis",
+            },
+        ],
+    }));
     return (
         <SelectDialog
             title="Switch analysis"
             placeholder={`Search analyses${GLYPHS.ellipsis}`}
             items={items}
             emptyText="No analyses yet — use ctrl+k → New analysis to create one"
+            onCursorChange={setCursor}
             onCancel={() => ws.closeDialog()}
             onSelect={(a: Analysis) => {
                 ws.closeDialog();
@@ -1306,7 +1351,37 @@ function AddInputDialog(): JSX.Element {
     );
 }
 
-function RemoveInputDialog(): JSX.Element {
+/**
+ * One input row's muted second line: what kind of thing it is, how big, and when it last changed.
+ *
+ * A directory contributes no size for the same reason the picker's rows do not — measuring it means
+ * walking it. The two degraded phrasings are deliberately different facts: an input whose anchor no
+ * longer resolves is one we cannot LOCATE, while a resolved path that fails to stat is one we can
+ * locate and cannot FIND. Both stay removable either way, so neither is an error.
+ */
+function inputMetaLine(input: AnalysisInput, abs: string | null): string {
+    const kind = input.isDir ? "directory" : "file";
+    if (abs === null) return `${kind} ${GLYPHS.middot} location unknown`;
+    return statResult(abs, "removeInputs:stat").match(
+        (s) =>
+            [kind, input.isDir ? undefined : s.size.formatBytes(), absTimeShort(new Date(s.mtimeMs).toISOString())].filter(Boolean).join(` ${GLYPHS.middot} `),
+        () => `${kind} ${GLYPHS.middot} not on disk`,
+    );
+}
+
+/**
+ * The flat view of every registered input, with multi-select removal.
+ *
+ * It stays a SEPARATE surface from "Manage inputs" rather than folding into that picker, because an
+ * analysis may span any number of folders (its anchor is a default root, not a fence). The picker
+ * seeds a far-away input into its selection but renders no row for it until the user browses to that
+ * folder — so this list is the only place the whole input set is visible at once, and the only way
+ * to drop an input without navigating to wherever it lives.
+ *
+ * Rows are titled by ABSOLUTE path, not the stored `path`: the stored form is anchor-relative, which
+ * renders two inputs from different anchors as the same string.
+ */
+function RemoveInputsDialog(): JSX.Element {
     const ws = useWorkspace();
     const a = ws.analysis;
     const inputs = a
@@ -1315,25 +1390,39 @@ function RemoveInputDialog(): JSX.Element {
               () => [],
           )
         : [];
-    const items = inputs.map((input: AnalysisInput) => ({
-        value: input,
-        title: input.path,
-        description: input.isDir ? "directory" : "file",
-    }));
+    const items = inputs.map((input: AnalysisInput) => {
+        const abs = resolveInputPath(input).unwrapOr(null);
+        const shown = abs ?? input.path;
+        return {
+            value: input,
+            // The trailing separator is the type marker the picker rows already use.
+            title: input.isDir ? `${shown}${sep}` : shown,
+            meta: inputMetaLine(input, abs),
+        };
+    });
     return (
         <SelectDialog
-            title="Remove input"
+            title="Remove inputs"
             placeholder={`Search inputs${GLYPHS.ellipsis}`}
             items={items}
             emptyText="No inputs to remove"
+            mode="multi"
             onCancel={() => ws.closeDialog()}
-            onSelect={(input: AnalysisInput) => {
+            onConfirm={(chosen: AnalysisInput[]) => {
                 ws.closeDialog();
-                if (!a) return;
-                removeInput(input).match(
-                    () => notify({ kind: "info", text: `Removed input: ${input.path}` }),
-                    (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
-                );
+                if (!a || chosen.length === 0) return;
+                // Each removal is independent, so one failure must not strand the rest — collect and
+                // report rather than short-circuit (the same reasoning as `applyInputsDiff`'s removals).
+                const failed: string[] = [];
+                for (const input of chosen) {
+                    removeInput(input).match(
+                        () => {},
+                        (e) => failed.push(`${input.path} (${e.type})`),
+                    );
+                }
+                const removed = chosen.length - failed.length;
+                if (failed.length > 0) notify({ kind: "error", text: `Removed ${removed} of ${chosen.length} — failed: ${failed.join(", ")}` });
+                else notify({ kind: "info", text: `Removed ${removed} input${removed === 1 ? "" : "s"}` });
             }}
         />
     );
@@ -2094,12 +2183,14 @@ export const commands: Command[] = [
         run: (ctx) => ctx.openDialog(() => <AddInputDialog />),
     },
     {
+        // The id stays `remove-input` though the surface now takes a batch: it is the key a user's
+        // `config.keybinds` entry can already be bound to, and renaming it would silently orphan that.
         id: "analysis.remove-input",
-        title: "Remove input",
-        description: "Remove an input from this analysis",
+        title: "Remove inputs",
+        description: "Remove one or more inputs from this analysis",
         category: "Analysis",
         enabled: (ctx) => ctx.analysis !== null,
-        run: (ctx) => ctx.openDialog(() => <RemoveInputDialog />),
+        run: (ctx) => ctx.openDialog(() => <RemoveInputsDialog />),
     },
     {
         id: "analysis.reprofile",

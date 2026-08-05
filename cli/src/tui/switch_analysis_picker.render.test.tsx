@@ -6,6 +6,8 @@ import { testRender } from "@opentui/solid";
 import type { JSX } from "solid-js";
 
 import { freshDb } from "../test_support/db.ts";
+import { __setClipboardWriterForTest } from "../lib/clipboard.ts";
+import { contractHome } from "../lib/paths.ts";
 import { str256 } from "../lib/types.ts";
 import { createAnalysis } from "../modules/analysis/analysis.ts";
 import { upsertLlmUsage, type LlmUsageEntry } from "../db/primary_mutation.ts";
@@ -121,9 +123,11 @@ describe("Switch analysis picker figures", () => {
             expect(untouchedRow).toBeDefined();
 
             expect(spentRow).toContain("↑767.6k ↓33.1k");
-            // Never a zero, and never the other analysis's number: absence is absence.
+            // Never a zero, and never the other analysis's number: absence is absence. The arrows ARE
+            // the figure — asserting on bare digits would catch the row's creation date instead, which
+            // every row carries and which says nothing about usage.
             expect(untouchedRow).not.toContain("↑");
-            expect(untouchedRow).not.toContain("0");
+            expect(untouchedRow).not.toContain("↓");
             expect(frame).not.toContain("999.0k");
             // 800.7k is the two arms added — a figure no surface may invent.
             expect(frame).not.toContain("800.7k");
@@ -165,6 +169,115 @@ describe("Switch analysis picker figures", () => {
             await settle(setup);
             expect(chosen).not.toBeNull();
         } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
+// A full run of this file emits one `Anchor is the same as the node <id> being inserted, skipping
+// insertBefore` from opentui. It appears only with grouping on, and only across a multi-test run —
+// no single test or pair reproduces it. It is NOT the row-drop of HORRIBLE_BUG_FIXES entry 1: that
+// one is the `Anchor with id <id> does not exist` branch, which skips a node not yet in the tree.
+// This branch is `renderable === anchor`, i.e. inserting a node before ITSELF, where skipping is
+// what the operation already means. Every row and header asserted below renders, and the
+// for_scrollbox sentinel (which covers grouped tuples) stays green.
+describe("Switch analysis picker identity", () => {
+    test("two analyses of one name are told apart by their anchor headers", async () => {
+        // The reason this grouping exists: a slug is unique only WITHIN an anchor, so the same name
+        // in two folders produces two rows that are identical down to the character.
+        const inA = analysisIn(dirA, "A1");
+        const inB = analysisIn(dirB, "A1");
+
+        const workspace = ws();
+        const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
+        try {
+            await settle(setup);
+            openSwitchPicker(workspace);
+            const frame = await settle(setup);
+
+            const lines = frame.split("\n");
+            expect(lines.filter((l) => l.includes("A1") && !l.includes(dirA) && !l.includes(dirB))).toHaveLength(2);
+            const headers = lines.filter((l) => l.includes(dirA) || l.includes(dirB));
+            expect(headers).toHaveLength(2);
+            expect(headers.join("\n")).toContain(contractHome(dirA));
+            expect(headers.join("\n")).toContain(contractHome(dirB));
+            // The group KEY is the anchor id, and a header must print the folder instead. (The id is
+            // on screen — the cursor row's detail line carries it deliberately — so this asks the
+            // narrower question the grouping actually owns.)
+            expect(headers.join("\n")).not.toContain(inA.anchorId);
+            expect(headers.join("\n")).not.toContain(inB.anchorId);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("the row date is absolute, and the cursor row gives the id and the slug", async () => {
+        const only = analysisIn(dirA, "rna-seq");
+
+        const workspace = ws();
+        const setup = await testRender(harnessNode(workspace), { width: 110, height: 24 });
+        try {
+            await settle(setup);
+            openSwitchPicker(workspace);
+            const frame = await settle(setup);
+
+            const row = frame.split("\n").find((l) => l.includes("rna-seq")) ?? "";
+            expect(row).toMatch(/\d{1,2}\/\d{1,2}\/\d{2,4}/);
+            // A record listing reads on the absolute side of the time convention.
+            expect(row).not.toMatch(/\b\d+[dhm] ago\b/);
+
+            // The detail line of the cursor row is the one unambiguous handle for a row.
+            expect(frame).toContain(only.id);
+            expect(frame).toContain(only.slug);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("ctrl+y copies the cursor row's analysis id", async () => {
+        const only = analysisIn(dirA, "rna-seq");
+        const copied: string[] = [];
+        const restore = __setClipboardWriterForTest(async (text) => {
+            copied.push(text);
+        });
+
+        const workspace = ws();
+        const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
+        try {
+            await settle(setup);
+            openSwitchPicker(workspace);
+            await settle(setup);
+
+            await setup.mockInput.pressKeys(["\x19"]); // ctrl+y
+            await settle(setup);
+            expect(copied).toEqual([only.id]);
+        } finally {
+            restore();
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a typed y filters instead of copying — the chord needs ctrl", async () => {
+        analysisIn(dirA, "rna-seq");
+        analysisIn(dirB, "yeast");
+        const copied: string[] = [];
+        const restore = __setClipboardWriterForTest(async (text) => {
+            copied.push(text);
+        });
+
+        const workspace = ws();
+        const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
+        try {
+            await settle(setup);
+            openSwitchPicker(workspace);
+            await settle(setup);
+
+            await setup.mockInput.pressKeys(["y"]);
+            const frame = await settle(setup);
+            expect(copied).toEqual([]);
+            expect(frame).toContain("yeast");
+        } finally {
+            restore();
             setup.renderer.destroy();
         }
     });
