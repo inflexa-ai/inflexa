@@ -2,8 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { AskRejectedError, UnavailableAsk, type AgentSession, type AskApproval, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
-import { normalizeDetail } from "@inflexa-ai/harness/loop/tool-detail.js";
+import { AskRejectedError, UnavailableAsk, normalizeDetail, type AgentSession, type AskApproval, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
 import { describe, expect, test } from "bun:test";
 
 import type { AgentPolicy } from "../../cli/agent_policy.ts";

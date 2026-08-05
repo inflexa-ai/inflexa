@@ -4,8 +4,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { AgentSession, AskApproval, AskRequest, ToolContext } from "@inflexa-ai/harness";
-import { DETAIL_MAX_LENGTH } from "@inflexa-ai/harness/loop/tool-detail.js";
+import { DETAIL_MAX_LENGTH, type AgentSession, type AskApproval, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
 
 import { Bus } from "../../lib/bus.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";

@@ -68,6 +68,16 @@ export type { WorkflowPurger } from "./execution/workflow-purger.js";
 export { defineTool, isToolError } from "./tools/define-tool.js";
 export type { Tool, ToolDefinition, ToolContext, ToolError } from "./tools/define-tool.js";
 
+// Tool-call-detail authoring aids for an embedder that contributes a host tool.
+// A `describeCall` hook that pre-empts truncation — a count in place of a
+// mid-value cut that would name a file that does not exist — must gate on the
+// SAME bound the harness enforces at the emit site. Thus `DETAIL_MAX_LENGTH`
+// rides the curated surface, so a host reads the one number rather than copying
+// it and drifting when the harness retunes the cap. `normalizeDetail` is that
+// emit-site transform, exported so a host can assert a hook's output against
+// exactly what the harness will render.
+export { normalizeDetail, DETAIL_MAX_LENGTH } from "./loop/tool-detail.js";
+
 // Host-agnostic citation verification service and its public contracts.
 export { createCitationResolver } from "./citations/resolve.js";
 export type { CitationResolverConfig, CitationResolverDependencies, CitationResolverSourceConfig } from "./citations/resolve.js";
