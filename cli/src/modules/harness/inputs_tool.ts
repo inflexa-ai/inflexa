@@ -15,10 +15,7 @@
 
 import { existsSync } from "node:fs";
 
-import { defineTool, scopeResource, type AskRequest, type ToolError } from "@inflexa-ai/harness";
-// A deep subpath: the cap is not on the barrel. The alternative is a copy of the
-// number here, which drifts the moment the harness retunes its own cap.
-import { DETAIL_MAX_LENGTH } from "@inflexa-ai/harness/loop/tool-detail.js";
+import { defineTool, scopeResource, DETAIL_MAX_LENGTH, type AskRequest, type ToolError } from "@inflexa-ai/harness";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
