@@ -196,6 +196,33 @@ export async function queryStepArtifactPaths(pool: Querier, resourceId: string, 
     return result.rows.map((r) => ({ path: r.path, fileType: r.file_type ?? null }));
 }
 
+/** One registered artifact of an analysis, as a reader of the full artifact set names it. */
+export interface AnalysisArtifactRef {
+    /** Workspace-root-relative path (`runs/{runId}/{stepId}/output/de.csv`). */
+    path: string;
+    hash: string;
+    fileType: string | null;
+}
+
+/**
+ * Every artifact of one analysis, ordered by path so the same call gives the same rows.
+ *
+ * The query applies no filter. An input row is a member, the same as a step output. A row that carries
+ * `unrecoverable_at` is a member too, because the artifact existed at the moment of this read. If the
+ * query drops such a row, a later refusal says that the artifact never existed, and that reason is
+ * false.
+ */
+export async function queryAnalysisArtifacts(pool: Querier, analysisId: string): Promise<AnalysisArtifactRef[]> {
+    const result = await pool.query<{ path: string; hash: string; file_type: string | null }>({
+        text: `SELECT path, hash, file_type
+          FROM cortex_artifacts
+          WHERE analysis_id = $1
+          ORDER BY path`,
+        values: [analysisId],
+    });
+    return result.rows.map((r) => ({ path: r.path, hash: r.hash, fileType: r.file_type ?? null }));
+}
+
 /** Count step-output artifacts produced by a run — for the run-completed card. */
 export async function countArtifactsForRun(pool: Querier, analysisId: string, runId: string): Promise<number> {
     const result = await pool.query<{ n: string }>({
