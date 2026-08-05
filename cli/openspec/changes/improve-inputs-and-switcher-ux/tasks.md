@@ -72,3 +72,13 @@
 - [x] 9.4 Mount a multi-select dialog in NORMAL, as the file picker does
 - [x] 9.5 Name the copy chord in the footer of the switcher
 - [x] 9.6 Grow the `lg` preset to 108 by 28, and derive its tests from the preset
+
+## 10. The `ls` layout pass
+
+- [x] 10.1 Add the `prefix` field to `SelectItem`, in the recessive tier, that never ranks
+- [x] 10.2 Move the permission triple to the prefix, left of the name
+- [x] 10.3 Render the date with the 2-digit fields, which are fixed-width
+- [x] 10.4 Right-align the size in a field as wide as the listing needs
+- [x] 10.5 Span the separator in the blank size field of a directory row
+- [x] 10.6 Cover the column alignment and the rank of a prefix
+- [x] 10.7 Show the layout in the design gallery
