@@ -49,6 +49,8 @@ When the cap actually shortens a detail, the emitted string SHALL carry a trunca
 
 A tool author is therefore free to return whatever reads best. A leak or a runaway string is one auditable line's responsibility, not thirty authors'.
 
+The bound and the emit-site transform SHALL be reachable from the package barrel (`DETAIL_MAX_LENGTH`, `normalizeDetail`). An embedder contributes its own tool through the host-tools seam, thus its hook pre-empts the same cap the loop enforces. It SHALL read the one number, and not a copy that drifts when the harness retunes the cap.
+
 #### Scenario: A multi-line detail becomes one line
 
 - **GIVEN** a `describeCall` that returns a string containing newlines
@@ -110,3 +112,39 @@ A detail that names something other than what the call did is worse than no deta
 - **GIVEN** a tool that ships a hook
 - **WHEN** the test suite runs
 - **THEN** at least one assertion covers the exact string that hook produces for a representative call
+
+### Requirement: A hook marks a field that narrows, and joins two facts with words
+
+A required field is the subject of the call, because the tool cannot run without it. A hook SHALL name the value of that field directly.
+
+An optional field that narrows a result is a filter. The tool returns that result with the field or without it. A hook SHALL mark such a field. An unmarked value reads as the thing the call acted on, and that statement is false.
+
+A free-form text needle SHALL ride behind `matching "<needle>"`. An enumerated restriction SHALL ride as a qualifier in parentheses at the end, or as a noun phrase when it names the whole call.
+
+A hook SHALL bound a free-form needle at 32 code points. A hook SHALL also bound each part of a detail that carries two parts. The emit-site cap cuts the tail. Thus a hook that leaves the bound to the emit site loses the mark that closes the needle. It also loses a filter behind a target that runs long.
+
+A detail SHALL carry nothing from the visual vocabulary of a host. A host owns its separators, its glyphs, and the width of its own line. A hook that states two facts SHALL join them with a word.
+
+#### Scenario: A bare needle does not read as a target
+
+- **GIVEN** a tool whose optional needle filters a store it browses, and a call that supplies the needle alone
+- **WHEN** the hook describes that call
+- **THEN** the detail marks the needle, and it does not render the needle bare
+
+#### Scenario: A long needle keeps the mark that closes it
+
+- **GIVEN** a call whose needle is longer than the needle bound
+- **WHEN** the hook describes that call
+- **THEN** the needle carries a truncation mark inside the marked form, and the marked form is closed
+
+#### Scenario: A long target does not swallow the filter
+
+- **GIVEN** a call that supplies a needle and a target longer than the cap
+- **WHEN** the hook describes that call
+- **THEN** the detail names both parts within the cap, and the emit site shortens nothing
+
+#### Scenario: A detail joins two facts without a host separator
+
+- **GIVEN** a hook that states a target and a filter in one detail
+- **WHEN** the hook describes that call
+- **THEN** the two parts join with a word, and the detail carries no separator glyph

@@ -204,8 +204,13 @@ persistence functions with their types (`prepareChatTurn`, the thread store/hist
 factories, `StoredMessage`), the history display readers (`contentToCortexMessages`,
 `createCardResolver`), the streaming-chat provider wrapper (`createStreamingChat`) and
 `AgentChat`, the pass-through run step (`passthroughStep`), the ephemeral pre-launch
-sweep (`sweepEphemeralWorkflows`), the unavailable preview publisher, and the
-`contracts/` chat-event and chat-part types.
+sweep (`sweepEphemeralWorkflows`), the unavailable preview publisher, the
+`contracts/` chat-event and chat-part types, and the tool-call-detail authoring
+aids (`DETAIL_MAX_LENGTH`, `normalizeDetail`).
+
+A cli `describeCall` hook that pre-empts truncation SHALL gate on `DETAIL_MAX_LENGTH`
+from the barrel. A copy of the number in cli code drifts when the harness retunes
+its own cap. The hook then states a bound the emit site does not enforce.
 
 #### Scenario: No deep imports in cli code
 
