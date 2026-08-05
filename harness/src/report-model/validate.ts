@@ -123,15 +123,15 @@ export async function validateReport(document: unknown, snapshot: ReportSnapshot
     }
 
     const resolved = await Promise.all(
-        references.map(({ blockId, reference }) => resolver.resolve(reference, snapshot).then((outcome) => ({ blockId, outcome }))),
+        references.map(({ blockId, reference }) => resolver.resolve(reference, snapshot).then((result) => ({ blockId, result }))),
     );
 
     // Collect every failure. A reviewer must see each block that broke, thus the walk does not stop at
-    // the first unresolved reference.
+    // the first unresolved reference. The `Err` channel carries the unresolved reference itself.
     const resolutionFailures: ResolutionFailure[] = [];
-    for (const { blockId, outcome } of resolved) {
-        if (!outcome.ok) {
-            resolutionFailures.push({ blockId, failure: outcome.failure });
+    for (const { blockId, result } of resolved) {
+        if (result.isErr()) {
+            resolutionFailures.push({ blockId, failure: result.error });
         }
     }
 

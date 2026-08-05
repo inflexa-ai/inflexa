@@ -9,13 +9,16 @@
  * the resolver matches the fresh read against it.
  */
 
+import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 /**
- * The shape of a content hash, as `algorithm:hex`, for example `sha256:9f86d0...`. The resolver
- * compares this text against a fresh read, thus the exact string must survive a round trip.
+ * The shape of a content hash, as lowercase `algorithm:hex`, for example `sha256:9f86d0...`. The
+ * resolver compares this text against a fresh read with exact string equality, and the producer emits
+ * lowercase only. Thus the pattern rejects an uppercase hex digit, which would pass a case-insensitive
+ * match here but never resolve against the lowercase producer.
  */
-const HASH_PATTERN = /^[a-z0-9]+:[0-9a-f]+$/i;
+const HASH_PATTERN = /^[a-z0-9]+:[0-9a-f]+$/;
 
 /**
  * The pin that ties an artifact reference to one immutable file. It names the run that made the file,
@@ -243,22 +246,40 @@ export function serializeReference(reference: Reference): string {
 }
 
 /**
- * Parse a reference URI. A malformed prefix, malformed JSON, or a value that the schema rejects gives
- * `null`. This function never throws, thus a caller treats absence as a normal condition.
+ * The reason that a reference URI did not parse. Each of the four modes is distinct: a wrong prefix, a
+ * base64url payload that does not decode, JSON that does not parse, and a value that the schema rejects.
+ * A caller reads the `kind` to tell them apart. `detail` carries no secret, thus a schema mismatch
+ * gives the kind alone.
  */
-export function parseReference(uri: string): Reference | null {
+export type ParseReferenceError = {
+    kind: "bad-prefix" | "invalid-payload" | "invalid-json" | "schema-mismatch";
+    detail?: string;
+};
+
+/**
+ * Parse a reference URI. Each failure mode gives its own `Err` `kind`, thus a caller tells a wrong
+ * prefix from malformed bytes, malformed JSON, and a schema mismatch. This function never throws, thus a
+ * caller treats a failed parse as a normal condition.
+ */
+export function parseReference(uri: string): Result<Reference, ParseReferenceError> {
     if (!uri.startsWith(REFERENCE_URI_PREFIX)) {
-        return null;
+        return err({ kind: "bad-prefix" });
     }
     const payload = uri.slice(REFERENCE_URI_PREFIX.length);
-    const json = Buffer.from(payload, "base64url").toString("utf8");
+    let json: string;
+    try {
+        json = Buffer.from(payload, "base64url").toString("utf8");
+    } catch {
+        // A base64url decode of external bytes is the boundary. A throw here becomes an `Err`.
+        return err({ kind: "invalid-payload" });
+    }
     let candidate: unknown;
     try {
         candidate = JSON.parse(json);
     } catch {
-        // `JSON.parse` throws on malformed input. The domain contract returns `null` instead of a throw.
-        return null;
+        // `JSON.parse` throws on malformed input. The boundary turns the throw into an `Err`.
+        return err({ kind: "invalid-json" });
     }
     const result = ReferenceSchema.safeParse(candidate);
-    return result.success ? result.data : null;
+    return result.success ? ok(result.data) : err({ kind: "schema-mismatch" });
 }

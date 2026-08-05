@@ -4,6 +4,8 @@
  * assertion rules without a host.
  */
 
+import { err, ok, type Result } from "neverthrow";
+
 import type {
     ArtifactFileReference,
     ArtifactTableReference,
@@ -15,7 +17,7 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
-import type { ReferenceResolver, ReportSnapshot, ResolveOutcome, ResolvedValue } from "./reference-resolver.js";
+import type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "./reference-resolver.js";
 
 /**
  * The relative epsilon of a value match with no authored tolerance.
@@ -26,10 +28,10 @@ import type { ReferenceResolver, ReportSnapshot, ResolveOutcome, ResolvedValue }
  */
 const RELATIVE_EPSILON = 1e-9;
 
-/** Build a failure outcome. The `detail` key is present only when there is a detail to carry. */
-function fail(reference: Reference, reason: UnresolvedReason, detail?: string): ResolveOutcome {
+/** Build an `Err` that carries the unresolved reference. The `detail` key is present only when there is a detail to carry. */
+function fail(reference: Reference, reason: UnresolvedReason, detail?: string): Result<ResolvedValue, UnresolvedReference> {
     const failure: UnresolvedReference = detail !== undefined ? { reference, reason, detail } : { reference, reason };
-    return { ok: false, failure };
+    return err(failure);
 }
 
 /** A short account of a derivation input, for a detail that names which input broke the arithmetic. */
@@ -92,7 +94,7 @@ function checkCitationAssertion(reference: Reference, expected: string | number 
     return { reference, reason: "assertion-failed", detail: `expected ${String(expected)} but resolved citation ${resolved}` };
 }
 
-function resolveArtifactValue(reference: ArtifactValueReference, snapshot: ReportSnapshot): ResolveOutcome {
+function resolveArtifactValue(reference: ArtifactValueReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
     const artifact = snapshot.artifacts[reference.path];
     if (artifact === undefined) {
         return fail(reference, "artifact-missing", `no artifact at ${reference.path}`);
@@ -138,16 +140,16 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
 
     const hashFailure = checkHashAssertion(reference, reference.assert?.hash, artifact.hash);
     if (hashFailure !== undefined) {
-        return { ok: false, failure: hashFailure };
+        return err(hashFailure);
     }
     const valueFailure = checkValueAssertion(reference, reference.assert?.value, reference.assert?.tolerance, cell);
     if (valueFailure !== undefined) {
-        return { ok: false, failure: valueFailure };
+        return err(valueFailure);
     }
-    return { ok: true, value: { type: "scalar", value: cell } };
+    return ok({ type: "scalar", value: cell });
 }
 
-function resolveArtifactTable(reference: ArtifactTableReference, snapshot: ReportSnapshot): ResolveOutcome {
+function resolveArtifactTable(reference: ArtifactTableReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
     const artifact = snapshot.artifacts[reference.path];
     if (artifact === undefined) {
         return fail(reference, "artifact-missing", `no artifact at ${reference.path}`);
@@ -177,10 +179,10 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
     }
 
     const hashFailure = checkHashAssertion(reference, reference.assert?.hash, artifact.hash);
-    return hashFailure !== undefined ? { ok: false, failure: hashFailure } : { ok: true, value };
+    return hashFailure !== undefined ? err(hashFailure) : ok(value);
 }
 
-function resolveArtifactFile(reference: ArtifactFileReference, snapshot: ReportSnapshot): ResolveOutcome {
+function resolveArtifactFile(reference: ArtifactFileReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
     const artifact = snapshot.artifacts[reference.path];
     if (artifact === undefined) {
         return fail(reference, "artifact-missing", `no artifact at ${reference.path}`);
@@ -191,19 +193,19 @@ function resolveArtifactFile(reference: ArtifactFileReference, snapshot: ReportS
 
     const value: ResolvedValue = { type: "file", path: reference.path, hash: artifact.hash };
     const hashFailure = checkHashAssertion(reference, reference.assert?.hash, artifact.hash);
-    return hashFailure !== undefined ? { ok: false, failure: hashFailure } : { ok: true, value };
+    return hashFailure !== undefined ? err(hashFailure) : ok(value);
 }
 
-async function resolveDerivation(reference: DerivationReference, snapshot: ReportSnapshot): Promise<ResolveOutcome> {
+async function resolveDerivation(reference: DerivationReference, snapshot: ReportSnapshot): Promise<Result<ResolvedValue, UnresolvedReference>> {
     const numbers: number[] = [];
     for (const input of reference.inputs) {
-        const outcome = await resolve(input, snapshot);
-        if (!outcome.ok) {
+        const inputResult = await resolve(input, snapshot);
+        if (inputResult.isErr()) {
             // Keep the inner reason so a reviewer sees the real cause, for example a missing artifact under
             // the derivation. The derivation itself did not fail on its own terms.
-            return fail(reference, outcome.failure.reason, outcome.failure.detail);
+            return fail(reference, inputResult.error.reason, inputResult.error.detail);
         }
-        const resolved = outcome.value;
+        const resolved = inputResult.value;
         if (resolved.type !== "scalar" || typeof resolved.value !== "number" || !Number.isFinite(resolved.value)) {
             // The arithmetic needs a finite number. A table, a citation, or a non-numeric cell does not
             // address a usable scalar, thus the closest reason is that the coordinate is out of range.
@@ -231,20 +233,20 @@ async function resolveDerivation(reference: DerivationReference, snapshot: Repor
     }
 
     const valueFailure = checkValueAssertion(reference, reference.assert?.value, reference.assert?.tolerance, result);
-    return valueFailure !== undefined ? { ok: false, failure: valueFailure } : { ok: true, value: { type: "scalar", value: result } };
+    return valueFailure !== undefined ? err(valueFailure) : ok({ type: "scalar", value: result });
 }
 
-function resolveCitation(reference: CitationReference, snapshot: ReportSnapshot): ResolveOutcome {
+function resolveCitation(reference: CitationReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
     const key = `${reference.idKind}:${reference.id}`;
     if (snapshot.citations === undefined || !snapshot.citations.includes(key)) {
         return fail(reference, "artifact-missing", `the citation ${key} is not in the pinned evidence`);
     }
     const value: ResolvedValue = { type: "citation", id: key };
     const citationFailure = checkCitationAssertion(reference, reference.assert?.value, key);
-    return citationFailure !== undefined ? { ok: false, failure: citationFailure } : { ok: true, value };
+    return citationFailure !== undefined ? err(citationFailure) : ok(value);
 }
 
-async function resolve(reference: Reference, snapshot: ReportSnapshot): Promise<ResolveOutcome> {
+async function resolve(reference: Reference, snapshot: ReportSnapshot): Promise<Result<ResolvedValue, UnresolvedReference>> {
     switch (reference.kind) {
         case "artifact-value":
             return resolveArtifactValue(reference, snapshot);
