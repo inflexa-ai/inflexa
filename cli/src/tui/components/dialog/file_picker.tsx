@@ -8,7 +8,7 @@ import type { InputRenderable } from "@opentui/core";
 import { GLYPHS, space } from "../../../lib/design_system.ts";
 import { theme } from "../../theme.ts";
 import { KEYS, chordLabel, type Chord } from "../../keymap.ts";
-import { statResult } from "../../../lib/fs.ts";
+import { statResult, isReadableBy, processIdentity, type ProcessIdentity } from "../../../lib/fs.ts";
 import { canonicalPath } from "../../../modules/anchor/marker.ts";
 import { openExternal } from "../../../lib/open_external.ts";
 import { notify } from "../../hooks/notice.ts";
@@ -59,8 +59,25 @@ const PICKER_KEYS = {
     confirm: { key: "c" },
 } as const satisfies Record<string, Chord>;
 
-/** A disk row. `..` is synthesized upstream of these so it never collides with a real entry. */
-type Row = { name: string; isDir: boolean; abs: string };
+/**
+ * How many entries a directory may hold before the listing stops resolving metadata for it.
+ *
+ * The backstop for the pathological folder, not a tuning knob for the common one: a `stat` per
+ * entry measured 0.69ms warm / 48.89ms cold over 468 entries, so a few hundred is invisible and
+ * only a listing an order of magnitude larger can stall a frame. Above it the rows carry names
+ * alone and the footer says so — a stated absence, never a silent one.
+ */
+const METADATA_ENTRY_CEILING = 2000;
+
+/**
+ * A disk row. `..` is synthesized upstream of these so it never collides with a real entry.
+ *
+ * `meta` is absent when the entry's `stat` failed (a file deleted between the readdir and the
+ * stat) or when the listing exceeded {@link METADATA_ENTRY_CEILING} — a row always renders, with
+ * or without its facts. `readable` is `null` where the platform has no POSIX ids to decide it.
+ */
+type Row = { name: string; isDir: boolean; abs: string; meta?: RowMeta };
+type RowMeta = { size: number; mtimeMs: number; mode: number; readable: boolean | null };
 
 /** Props for {@link FilePicker}. All paths are absolute; the caller owns the browse root. */
 export type FilePickerProps = {
@@ -87,13 +104,16 @@ export type FilePickerProps = {
  * channel is the human-readable message (permission, broken mount): the caller renders it as the
  * list's error line and the user ascends — a single unreadable folder must not abort the picker.
  */
-function listDir(dir: string, hideHidden: boolean): Result<Row[], string> {
+function listDir(dir: string, hideHidden: boolean, identity: ProcessIdentity | null): Result<Row[], string> {
     let entries: Dirent[];
     try {
         entries = readdirSync(dir, { withFileTypes: true });
     } catch (cause) {
         return err(cause instanceof Error ? cause.message : String(cause));
     }
+    // Decided from the RAW entry count, not the filtered row count: hiding dot-entries must not be
+    // what brings a 50k-entry folder under the ceiling, or `a` would silently start a huge stat pass.
+    const withMetadata = entries.length <= METADATA_ENTRY_CEILING;
     const rows: Row[] = [];
     for (const e of entries) {
         if (hideHidden && e.name.startsWith(".")) continue;
@@ -106,10 +126,27 @@ function listDir(dir: string, hideHidden: boolean): Result<Row[], string> {
         const raw = resolve(dir, e.name);
         const abs = e.isSymbolicLink() ? canonicalPath(raw) : raw;
         const isDir = e.isDirectory() || (e.isSymbolicLink() && safeSymlinkIsDir(abs));
-        rows.push({ name: e.name, isDir, abs });
+        rows.push({ name: e.name, isDir, abs, meta: withMetadata ? entryMeta(abs, identity) : undefined });
     }
     rows.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) : a.isDir ? -1 : 1));
     return ok(rows);
+}
+
+/**
+ * One `stat` for one row's facts — size, mtime, mode bits, and whether this process can read it.
+ *
+ * Readability rides on the SAME stat rather than an `accessSync(R_OK)` pass: measured over a
+ * 468-entry directory, `access` cost 2.5–4.7ms against `stat`'s 0.69ms, for an answer the mode
+ * bits plus the owning ids already give (see `isReadableBy`, which documents what that misses).
+ *
+ * A failed stat yields `undefined`, never a row-dropping error: an entry that vanished between the
+ * readdir and this call is still a real listing the user is browsing, just one fact poorer.
+ */
+function entryMeta(abs: string, identity: ProcessIdentity | null): RowMeta | undefined {
+    return statResult(abs, "filePicker:entryMeta").match(
+        (s): RowMeta => ({ size: s.size, mtimeMs: s.mtimeMs, mode: s.mode, readable: identity ? isReadableBy(s, identity) : null }),
+        () => undefined,
+    );
 }
 
 // Best-effort: a broken symlink (target gone) must not crash the listing — it degrades to a file
@@ -119,6 +156,40 @@ function safeSymlinkIsDir(abs: string): boolean {
         (s) => s.isDirectory(),
         () => false,
     );
+}
+
+/**
+ * The permission bits as the `rwxr-xr-x` triple every shell user already reads, or `undefined`
+ * where they mean nothing.
+ *
+ * Windows is the `undefined` case: Node synthesizes a mode there that describes no real ACL, so
+ * printing it would be a confident lie. The type marker is the row's trailing `/`, so the leading
+ * `d` a full `ls -l` mode carries would be a second, redundant one — the triple starts at the bits.
+ */
+function modeTriple(mode: number, identity: ProcessIdentity | null): string | undefined {
+    if (identity === null) return undefined;
+    const rwx = (bits: number): string => `${bits & 4 ? "r" : "-"}${bits & 2 ? "w" : "-"}${bits & 1 ? "x" : "-"}`;
+    return `${rwx((mode >> 6) & 7)}${rwx((mode >> 3) & 7)}${rwx(mode & 7)}`;
+}
+
+/**
+ * The row's right-aligned facts: permissions, size, date. A directory contributes no size —
+ * counting its members costs one `readdir` per row (54.46ms cold over 467 directories, against
+ * 1.65ms for the whole stat pass), which is the budget this listing exists to protect.
+ *
+ * The date is absolute, never a relative age: this listing is a record of what is on disk, which
+ * the time convention puts on the absolute side, and a fixed-width local timestamp also stays
+ * comparable down a column in a way "3d" does not.
+ */
+function entryHint(row: Row, identity: ProcessIdentity | null): string | undefined {
+    const meta = row.meta;
+    if (!meta) return undefined;
+    const parts = [
+        modeTriple(meta.mode, identity),
+        row.isDir ? undefined : meta.size.formatBytes(),
+        new Date(meta.mtimeMs).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }),
+    ].filter((p): p is string => p !== undefined);
+    return parts.join(` ${GLYPHS.middot} `);
 }
 
 /** The cwd tail, segment-collapsed when deep — head + tail always shown, mid-segments ellipsized. */
@@ -149,7 +220,11 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
     const [cursorAbs, setCursorAbs] = createSignal<string | undefined>(undefined);
     let inputRef: InputRenderable | null = null;
 
-    const listed = createMemo(() => listDir(cwd(), hideHidden()));
+    // Read ONCE for the picker's life, not per listing or per row: a process cannot change its own
+    // uid/gid mid-render, so re-reading would be three syscalls bought for a value already known.
+    const identity = processIdentity();
+
+    const listed = createMemo(() => listDir(cwd(), hideHidden(), identity));
     const rows = (): Row[] => listed().unwrapOr([]);
     const listError = (): string | null =>
         listed().match(
@@ -165,7 +240,16 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
     const items = createMemo<SelectItem<string>[]>(() => {
         const out: SelectItem<string>[] = [];
         if (query().trim() === "" && listError() === null) out.push({ value: parentAbs(), title: ".." });
-        for (const r of rows()) out.push({ value: r.abs, title: r.isDir ? `${r.name}/` : r.name });
+        for (const r of rows()) {
+            out.push({
+                value: r.abs,
+                title: r.isDir ? `${r.name}/` : r.name,
+                hint: entryHint(r, identity),
+                // Advisory only — the row stays selectable. Mode bits do not see an ACL or a macOS
+                // TCC rule, so this warns; staging is where a read is actually attempted and refused.
+                tone: r.meta?.readable === false ? "warning" : undefined,
+            });
+        }
         return out;
     });
 
@@ -279,6 +363,10 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
         ],
     }));
 
+    // A listing over the ceiling carries names only. Say so where the user is already looking:
+    // silence would read as "these files have no size", which is a different and false claim.
+    const metadataSuppressed = (): boolean => rows().length > 0 && rows().every((r) => r.meta === undefined);
+
     function footer(): string {
         const sep = ` ${GLYPHS.middot} `;
         const sel = selected().size;
@@ -295,6 +383,7 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
             `${chordLabel(PICKER_KEYS.explorer)} explorer`,
             `${chordLabel(PICKER_KEYS.filter)} filter`,
             `${chordLabel(KEYS.escape)} cancel`,
+            ...(metadataSuppressed() ? ["details off (large folder)"] : []),
             count,
         ].join(sep);
     }
