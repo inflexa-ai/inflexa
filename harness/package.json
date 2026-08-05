@@ -71,6 +71,7 @@
         "neverthrow": "^8.2.0",
         "nunjucks": "^3.2.4",
         "openai": "^4.104.0",
+        "p-queue": "^9.3.3",
         "pdf-parse": "^2.4.5",
         "pg": "^8.22.0",
         "puppeteer-core": "^23.11.1",

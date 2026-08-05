@@ -1,7 +1,5 @@
 import { describe, expect, it } from "bun:test";
 
-import { createFixtureResolver } from "../report-model/fixture-resolver.js";
-import type { ReportSnapshot } from "../report-model/reference-resolver.js";
 import { parseReference, serializeReference, type ParseReferenceError, type Reference } from "./report-reference.js";
 
 const HASH = `sha256:${"a".repeat(64)}`;
@@ -91,38 +89,6 @@ describe("serializeReference/parseReference — round trip", () => {
     });
 });
 
-describe("parseReference — cross-session resolution", () => {
-    it("resolves a parsed reference to the same value as the original", async () => {
-        const snapshot: ReportSnapshot = {
-            artifacts: {
-                "runs/run-1/step-a/output/de.csv": {
-                    hash: HASH,
-                    rows: [{ gene: "TP53", log2FoldChange: 6 }],
-                },
-            },
-        };
-        const reference: Reference = {
-            kind: "artifact-value",
-            run: "run-1",
-            path: "runs/run-1/step-a/output/de.csv",
-            hash: HASH,
-            locator: { column: "log2FoldChange", rowFilter: { column: "gene", op: "eq", value: "TP53" } },
-        };
-        const parsed = parseReference(serializeReference(reference));
-        if (parsed.isErr()) {
-            throw new Error("expected the serialized reference to parse");
-        }
-
-        const resolver = createFixtureResolver();
-        const fromOriginal = await resolver.resolve(reference, snapshot);
-        const fromParsed = await resolver.resolve(parsed.value, snapshot);
-
-        expect(fromParsed.isOk()).toBe(fromOriginal.isOk());
-        expect(fromParsed._unsafeUnwrap()).toEqual(fromOriginal._unsafeUnwrap());
-        expect(fromParsed._unsafeUnwrap()).toEqual({ type: "scalar", value: 6 });
-    });
-});
-
 describe("serializeReference — determinism", () => {
     it("gives the identical string on two calls", () => {
         const reference: Reference = {
@@ -169,6 +135,17 @@ describe("parseReference — error outcomes", () => {
 
     it("gives a schema-mismatch error for valid JSON that fails the schema", () => {
         expectParseError(encodeUnchecked({ foo: "bar" }), "schema-mismatch");
+    });
+
+    it("gives an invalid-payload error for a character outside the base64url alphabet", () => {
+        // `Buffer.from` drops such a character and decodes what is left, thus without an explicit check
+        // this payload would report as malformed JSON and name the wrong failure.
+        expectParseError("inflexa-ref:v1:not base64!!", "invalid-payload");
+        expectParseError("inflexa-ref:v1:eyJraW5kIjoiY2l0YXRpb24ifQ==", "invalid-payload");
+    });
+
+    it("gives an invalid-payload error for an empty payload", () => {
+        expectParseError("inflexa-ref:v1:", "invalid-payload");
     });
 });
 
@@ -249,28 +226,33 @@ describe("parseReference — the per-kind assert shape", () => {
         { kind: "artifact-value", run: "r", path: "b.csv", hash: HASH, locator: { column: "value", row: 0 } },
     ];
 
-    it("round-trips a hash-only assert on an artifact-value", () => {
+    it("round-trips a value assert with a tolerance on an artifact-value", () => {
         const reference: Reference = {
             kind: "artifact-value",
             run: "run-1",
             path: "a.csv",
             hash: HASH,
             locator: { column: "value", row: 0 },
-            assert: { hash: HASH },
+            assert: { value: 5, tolerance: 0.01 },
         };
         expectRoundTrip(reference);
     });
 
-    it("round-trips a hash-only assert on an artifact-table", () => {
-        const reference: Reference = { kind: "artifact-table", run: "run-1", path: "a.csv", hash: HASH, assert: { hash: HASH } };
-        expectRoundTrip(reference);
+    it("rejects an asserted hash on an artifact-value, because the pin already carries it", () => {
+        expectParseError(
+            encodeUnchecked({ kind: "artifact-value", run: "r", path: "p", hash: HASH, locator: { column: "c", row: 0 }, assert: { hash: HASH } }),
+            "schema-mismatch",
+        );
     });
 
-    it("rejects an asserted value on an artifact-table", () => {
+    it("rejects any assert on an artifact-table", () => {
+        expectParseError(encodeUnchecked({ kind: "artifact-table", run: "r", path: "p", hash: HASH, assert: { hash: HASH } }), "schema-mismatch");
         expectParseError(encodeUnchecked({ kind: "artifact-table", run: "r", path: "p", hash: HASH, assert: { value: 5 } }), "schema-mismatch");
+        expectParseError(encodeUnchecked({ kind: "artifact-table", run: "r", path: "p", hash: HASH, assert: { tolerance: 0.1 } }), "schema-mismatch");
     });
 
-    it("rejects an asserted value on an artifact-file", () => {
+    it("rejects any assert on an artifact-file", () => {
+        expectParseError(encodeUnchecked({ kind: "artifact-file", run: "r", path: "p", hash: HASH, assert: { hash: HASH } }), "schema-mismatch");
         expectParseError(encodeUnchecked({ kind: "artifact-file", run: "r", path: "p", hash: HASH, assert: { value: 5 } }), "schema-mismatch");
     });
 
@@ -282,7 +264,30 @@ describe("parseReference — the per-kind assert shape", () => {
         expectParseError(encodeUnchecked({ kind: "citation", idKind: "doi", id: "10.1/x", raw: "text", assert: { hash: HASH } }), "schema-mismatch");
     });
 
-    it("rejects a tolerance on an artifact-table", () => {
-        expectParseError(encodeUnchecked({ kind: "artifact-table", run: "r", path: "p", hash: HASH, assert: { tolerance: 0.1 } }), "schema-mismatch");
+    it("rejects a tolerance with no asserted value", () => {
+        expectParseError(
+            encodeUnchecked({ kind: "artifact-value", run: "r", path: "p", hash: HASH, locator: { column: "c", row: 0 }, assert: { tolerance: 0.1 } }),
+            "schema-mismatch",
+        );
+        expectParseError(encodeUnchecked({ kind: "derivation", op: "ratio", inputs: derivationInputs, assert: { tolerance: 0.1 } }), "schema-mismatch");
+    });
+
+    it("rejects an empty assert", () => {
+        expectParseError(
+            encodeUnchecked({ kind: "artifact-value", run: "r", path: "p", hash: HASH, locator: { column: "c", row: 0 }, assert: {} }),
+            "schema-mismatch",
+        );
+        expectParseError(encodeUnchecked({ kind: "citation", idKind: "doi", id: "10.1/x", raw: "text", assert: {} }), "schema-mismatch");
+    });
+});
+
+describe("parseReference — the optional run", () => {
+    it("round-trips a staged input artifact that no run produced", () => {
+        const reference: Reference = { kind: "artifact-table", path: "data/inputs/file-1/counts.csv", hash: HASH };
+        expectRoundTrip(reference);
+    });
+
+    it("rejects an empty-string run", () => {
+        expectParseError(encodeUnchecked({ kind: "artifact-table", run: "", path: "p", hash: HASH }), "schema-mismatch");
     });
 });

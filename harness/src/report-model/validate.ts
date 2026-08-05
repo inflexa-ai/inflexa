@@ -10,7 +10,16 @@
 
 import { ReportDocumentSchema, type Block } from "../contracts/report-blocks.js";
 import type { Reference, UnresolvedReference } from "../contracts/report-reference.js";
-import type { ReferenceResolver, ReportSnapshot } from "./reference-resolver.js";
+import { allWithConcurrency } from "../lib/async-utils.js";
+import { columnsHeldByNoRow, type ReferenceResolver, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
+
+/**
+ * The cap on how many references resolve at the same time.
+ *
+ * A production resolver reads storage for each reference, and a large report holds hundreds of them. An
+ * unbounded fan-out would open one read for each reference at the same moment.
+ */
+const RESOLUTION_CONCURRENCY = 8;
 
 /** One schema conformance problem, reduced to a path and a message. */
 export interface SchemaIssue {
@@ -47,13 +56,18 @@ export type ReportValidation =
       };
 
 /**
- * A token that looks like a number, with an optional decimal part and an optional percent sign.
+ * A free-standing token that looks like a number, with an optional decimal part and an optional percent
+ * sign.
+ *
+ * The left boundary keeps the digits of a name out of the warnings. The domain prose is dense with a
+ * symbol such as `TP53`, `CD8`, or `IL6`, and without the boundary each one warns for its digits and
+ * buries the real free figures.
  *
  * The check is advisory only. A natural-language numeral is brittle to police, because a numeral in
  * prose can be a real free-standing figure or a harmless part of a name. Thus a hit warns, and it never
  * fails the report.
  */
-const NUMERAL_PATTERN = /-?\d+(?:\.\d+)?%?/g;
+const NUMERAL_PATTERN = /(?<![A-Za-z0-9])-?\d+(?:\.\d+)?%?/g;
 
 function numeralWarnings(blockId: string, prose: string): ReportWarning[] {
     const warnings: ReportWarning[] = [];
@@ -61,6 +75,45 @@ function numeralWarnings(blockId: string, prose: string): ReportWarning[] {
         warnings.push({ blockId, kind: "free-numeral", detail: match[0] });
     }
     return warnings;
+}
+
+/**
+ * One reference that the walk met, tied to the block that carries it.
+ *
+ * `encodingColumns` is present for a `chart` only. A chart names its axes as free strings, thus the
+ * names must be matched against the table that the binding resolves to. Nothing else can catch a chart
+ * that plots a column which does not exist.
+ */
+interface CollectedReference {
+    blockId: string;
+    reference: Reference;
+    encodingColumns?: string[];
+}
+
+/**
+ * Match each column that a chart encoding names against the table that its binding resolved to.
+ *
+ * The binding schema admits a table reference only, thus a resolved value of another type means that the
+ * bound resolver broke its own contract. That is reported and never ignored, because a chart with no
+ * table behind it renders nothing and a silent skip would pass it as grounded.
+ */
+function checkChartEncoding(entry: CollectedReference, value: ResolvedValue): UnresolvedReference | undefined {
+    const encodingColumns = entry.encodingColumns;
+    if (encodingColumns === undefined || encodingColumns.length === 0) {
+        return undefined;
+    }
+    if (value.type !== "table") {
+        return { reference: entry.reference, reason: "locator-out-of-range", detail: `the chart binding resolved to a ${value.type} and not to a table` };
+    }
+    const absent = columnsHeldByNoRow(value.rows, encodingColumns);
+    if (absent.length === 0) {
+        return undefined;
+    }
+    return {
+        reference: entry.reference,
+        reason: "locator-out-of-range",
+        detail: `the encoding names column ${absent.join(", ")}, which the bound table does not hold`,
+    };
 }
 
 /** Resolve each reference, collect the schema conformance and the resolution outcomes, and warn on prose. */
@@ -74,7 +127,7 @@ export async function validateReport(document: unknown, snapshot: ReportSnapshot
         return { valid: false, schemaIssues, warnings: [] };
     }
 
-    const references: Array<{ blockId: string; reference: Reference }> = [];
+    const references: CollectedReference[] = [];
     const warnings: ReportWarning[] = [];
 
     // An id is what makes a block addressable, thus an amend by id is well defined only while each id
@@ -107,8 +160,13 @@ export async function validateReport(document: unknown, snapshot: ReportSnapshot
             case "metric":
                 references.push({ blockId: block.id, reference: block.value });
                 return;
+            case "chart": {
+                const encoding = block.encoding;
+                const encodingColumns = [encoding.x, encoding.y, encoding.group, encoding.value].filter((column) => column !== undefined);
+                references.push({ blockId: block.id, reference: block.binding, encodingColumns });
+                return;
+            }
             case "table":
-            case "chart":
             case "figure":
                 references.push({ blockId: block.id, reference: block.binding });
                 return;
@@ -122,16 +180,22 @@ export async function validateReport(document: unknown, snapshot: ReportSnapshot
         walk(section);
     }
 
-    const resolved = await Promise.all(
-        references.map(({ blockId, reference }) => resolver.resolve(reference, snapshot).then((result) => ({ blockId, result }))),
+    const resolved = await allWithConcurrency(
+        references.map((entry) => () => resolver.resolve(entry.reference, snapshot).then((result) => ({ entry, result }))),
+        RESOLUTION_CONCURRENCY,
     );
 
     // Collect every failure. A reviewer must see each block that broke, thus the walk does not stop at
     // the first unresolved reference. The `Err` channel carries the unresolved reference itself.
     const resolutionFailures: ResolutionFailure[] = [];
-    for (const { blockId, result } of resolved) {
+    for (const { entry, result } of resolved) {
         if (result.isErr()) {
-            resolutionFailures.push({ blockId, failure: result.error });
+            resolutionFailures.push({ blockId: entry.blockId, failure: result.error });
+            continue;
+        }
+        const encodingFailure = checkChartEncoding(entry, result.value);
+        if (encodingFailure !== undefined) {
+            resolutionFailures.push({ blockId: entry.blockId, failure: encodingFailure });
         }
     }
 

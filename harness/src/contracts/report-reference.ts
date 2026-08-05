@@ -21,13 +21,17 @@ import { z } from "zod";
 const HASH_PATTERN = /^[a-z0-9]+:[0-9a-f]+$/;
 
 /**
- * The pin that ties an artifact reference to one immutable file. It names the run that made the file,
- * the run-relative path, and the content hash. The optional `snapshot` names a point-in-time copy when
- * a host keeps one.
+ * The pin that ties an artifact reference to one immutable file. It names the analysis-relative path and
+ * the content hash, and it can name the run that made the file. The optional `snapshot` names a
+ * point-in-time copy when a host keeps one.
+ *
+ * `path` is the key of `cortex_artifacts`, whose primary key is `(analysis_id, path)`. Thus the path
+ * spans the whole analysis and it already holds the run segment for a run output, for example
+ * `runs/{runId}/{stepId}/output/de.csv`.
  */
 const artifactPinShape = {
-    run: z.string().min(1).describe("The analysis run id that produced the artifact."),
-    path: z.string().min(1).describe("The run-relative path of the artifact."),
+    run: z.string().min(1).optional().describe("The analysis run id that produced the artifact. It is absent for a staged input file, which no run produced."),
+    path: z.string().min(1).describe("The analysis-relative path of the artifact, the key of `cortex_artifacts.path`."),
     hash: z.string().regex(HASH_PATTERN).describe("The content hash as `algorithm:hex`, for example `sha256:...`."),
     snapshot: z.string().optional().describe("An optional point-in-time snapshot id."),
 };
@@ -36,19 +40,17 @@ const artifactPinShape = {
  * The authored belief about the one value that a reference resolves to. `tolerance` gives the permitted
  * numeric difference.
  *
- * Each kind carries only the assert fields that mean something for it. A shared assert would let an
- * author write a belief that the resolver has no way to match, and silence there defeats the one
- * mechanism that catches a wrong number.
+ * `value` is mandatory, thus an assert that asserts nothing is unrepresentable. A `tolerance` alone has
+ * nothing to compare against, and an empty assert reads as a belief that the resolver silently ignores.
+ *
+ * There is no hash field here. An artifact reference already pins `hash`, and resolution compares that
+ * pin against the fresh read and gives `hash-mismatch`. A second hash in the assert would compare the
+ * reference against itself, thus it adds no evidence.
  */
-const assertValueShape = {
-    value: z.union([z.string(), z.number()]).optional().describe("The value the author expects at resolution time."),
+const AssertValueSchema = z.strictObject({
+    value: z.union([z.string(), z.number()]).describe("The value the author expects at resolution time."),
     tolerance: z.number().optional().describe("The permitted absolute difference for a numeric match."),
-};
-
-/** The authored belief about the bytes behind a reference. It pins the content hash of the artifact. */
-const assertHashShape = {
-    hash: z.string().optional().describe("An optional content hash that the resolved artifact must match."),
-};
+});
 
 /**
  * The display hints that every reference kind can carry. `unit` and `format` tell a renderer how to show
@@ -82,47 +84,38 @@ const LocatorSchema = z
     });
 
 /**
- * A reference to one scalar value inside an artifact, addressed by a locator. It resolves to a scalar
- * and it is artifact-backed, thus its assert carries both the value fields and the hash field.
+ * A reference to one scalar value inside an artifact, addressed by a locator. It resolves to a scalar,
+ * thus it carries the value assert.
  */
 export const ArtifactValueReferenceSchema = z.strictObject({
     kind: z.literal("artifact-value"),
     ...artifactPinShape,
     locator: LocatorSchema.describe("The address of the one value that this reference binds."),
-    assert: z
-        .strictObject({ ...assertValueShape, ...assertHashShape })
-        .optional()
-        .describe("The authored belief that resolution matches against."),
+    assert: AssertValueSchema.optional().describe("The authored belief that resolution matches against."),
     ...displayShape,
 });
 
 /**
- * A reference to a whole table artifact. It carries no locator, because it binds every row. A table is
- * not one value, thus its assert pins the content hash only.
+ * A reference to a whole table artifact. It carries no locator, because it binds every row.
+ *
+ * It carries no assert. A table is not one value, thus the only belief that an author can hold about it
+ * is its bytes, and the pinned `hash` already carries that belief.
  */
 export const ArtifactTableReferenceSchema = z.strictObject({
     kind: z.literal("artifact-table"),
     ...artifactPinShape,
     columns: z.array(z.string()).optional().describe("An optional column subset to render. Omit to bind every column."),
-    assert: z
-        .strictObject({ ...assertHashShape })
-        .optional()
-        .describe("The authored belief about the bytes of the table."),
     ...displayShape,
 });
 
 /**
  * A reference to a whole artifact file, for example an image. It carries no locator and no columns,
- * because a file is pinned whole and has no addressable cell inside it. Thus its assert pins the content
- * hash only.
+ * because a file is pinned whole and has no addressable cell inside it. It carries no assert, for the
+ * same reason as a table reference.
  */
 export const ArtifactFileReferenceSchema = z.strictObject({
     kind: z.literal("artifact-file"),
     ...artifactPinShape,
-    assert: z
-        .strictObject({ ...assertHashShape })
-        .optional()
-        .describe("The authored belief about the bytes of the file."),
     ...displayShape,
 });
 
@@ -139,7 +132,6 @@ export const CitationReferenceSchema = z.strictObject({
         .strictObject({
             value: z
                 .union([z.string(), z.number()])
-                .optional()
                 .describe("The expected citation key in the prefixed `idKind:id` form, for example `pmid:12345`, and not the bare id."),
         })
         .optional()
@@ -165,12 +157,13 @@ export const NonDerivationReferenceSchema = z.discriminatedUnion("kind", [
  */
 export const DerivationReferenceSchema = z.strictObject({
     kind: z.literal("derivation"),
-    op: z.enum(["ratio", "delta", "pctChange"]).describe("The operation over the inputs."),
+    op: z
+        .enum(["ratio", "delta", "pctChange"])
+        .describe(
+            "The operation over the two inputs `a` and `b`: `ratio` gives `a / b`, `delta` gives `a - b`, and `pctChange` gives `(a - b) / b` as a fraction and not as a percent. A change of one half resolves to 0.5, thus an `assert.value` states the fraction and a `unit` of `%` is a display hint only.",
+        ),
     inputs: z.array(NonDerivationReferenceSchema).length(2).describe("The two input references. Each operation takes exactly two."),
-    assert: z
-        .strictObject({ ...assertValueShape })
-        .optional()
-        .describe("The authored belief that resolution matches against."),
+    assert: AssertValueSchema.optional().describe("The authored belief that resolution matches against."),
     ...displayShape,
 });
 
@@ -214,6 +207,14 @@ export type UnresolvedReference = z.infer<typeof UnresolvedReferenceSchema>;
 const REFERENCE_URI_PREFIX = "inflexa-ref:v1:";
 
 /**
+ * The alphabet of a non-empty base64url payload. The check is explicit because `Buffer.from(text,
+ * "base64url")` never throws: it drops each character outside the alphabet and decodes what is left.
+ * Thus a corrupt payload would otherwise decode to mojibake and report as malformed JSON, which names
+ * the wrong failure.
+ */
+const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+/**
  * Sort the keys of every object so that serialization is deterministic. An array keeps its order,
  * because the order of a derivation's inputs carries meaning.
  */
@@ -247,9 +248,9 @@ export function serializeReference(reference: Reference): string {
 
 /**
  * The reason that a reference URI did not parse. Each of the four modes is distinct: a wrong prefix, a
- * base64url payload that does not decode, JSON that does not parse, and a value that the schema rejects.
- * A caller reads the `kind` to tell them apart. `detail` carries no secret, thus a schema mismatch
- * gives the kind alone.
+ * payload that is empty or holds a character outside the base64url alphabet, JSON that does not parse,
+ * and a value that the schema rejects. A caller reads the `kind` to tell them apart. `detail` carries no
+ * secret, thus a schema mismatch gives the kind alone.
  */
 export type ParseReferenceError = {
     kind: "bad-prefix" | "invalid-payload" | "invalid-json" | "schema-mismatch";
@@ -266,13 +267,10 @@ export function parseReference(uri: string): Result<Reference, ParseReferenceErr
         return err({ kind: "bad-prefix" });
     }
     const payload = uri.slice(REFERENCE_URI_PREFIX.length);
-    let json: string;
-    try {
-        json = Buffer.from(payload, "base64url").toString("utf8");
-    } catch {
-        // A base64url decode of external bytes is the boundary. A throw here becomes an `Err`.
+    if (!BASE64URL_PATTERN.test(payload)) {
         return err({ kind: "invalid-payload" });
     }
+    const json = Buffer.from(payload, "base64url").toString("utf8");
     let candidate: unknown;
     try {
         candidate = JSON.parse(json);
