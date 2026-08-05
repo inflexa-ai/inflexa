@@ -1,7 +1,7 @@
 import { Show } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { dialogSize, stroke, type DialogSize } from "../../../lib/design_system.ts";
+import { dialogSize, space, stroke, type DialogSize } from "../../../lib/design_system.ts";
 import { theme } from "../../theme.ts";
 import { dialogPanelMouseDown, dialogPanelMouseUp } from "./dialog_host.tsx";
 
@@ -57,8 +57,13 @@ export function DialogPanel(props: {
             onMouseUp={dialogPanelMouseUp}
         >
             {props.children}
+            {/* The breathing row above the hint line lives INSIDE this painted box, never as a
+                transparent gap above it: a fixed chrome row directly under a `flexGrow` scrollbox sits one
+                cell inside that scrollbox's last row (the yoga overlap quirk), so an unpainted pad would
+                let scrolled content bleed through it. Painted, the pad reclaims the cell AND separates the
+                keys from the content — the same construction as the list's detail line. */}
             <Show when={props.footer}>
-                <box width="100%" flexShrink={0} backgroundColor={theme().bgRaised}>
+                <box width="100%" flexShrink={0} paddingTop={space.sm} backgroundColor={theme().bgRaised}>
                     <text fg={theme().fgMuted}>{props.footer}</text>
                 </box>
             </Show>
