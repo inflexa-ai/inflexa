@@ -1,43 +1,51 @@
 /**
- * LLM step wrapper for the target-assessment DBOS workflow body.
+ * LLM step wrapper shared by every DBOS workflow that makes a model call.
  *
- * Each Phase-2 decision and Phase-5 synthesis LLM call goes through
- * `runLlmStep` — it wraps `DBOS.runStep({name})` around the chat provider
- * call and classifies caught errors:
+ * Each call goes through `runLlmStep` — it wraps `DBOS.runStep({name})` around
+ * the chat provider call and classifies caught errors:
  *
  *   - `isBudgetExceeded(err) === true` (billing-gateway 402): self-send a
  *     `BUDGET_EXCEEDED_TOPIC` marker addressed to this workflow's own
  *     id, then return a sentinel marker. The wrapper does NOT call
- *     `DBOS.cancelWorkflow` itself — the workflow body's terminal block
+ *     `DBOS.cancelWorkflow` itself — the workflow's own terminal block
  *     reads the marker, writes `status = "suspended_insufficient_funds"`
- *     via `DBOS.runStep({name: "ta-terminal-suspended"})`, then issues
- *     `DBOS.cancelWorkflow` + a trailing `runStep` to materialise the
- *     CANCELLED terminal state. Deferring the cancel keeps the terminal
- *     handler's DB writes inside DBOS step boundaries (replay-cached).
- *   - anything else: rethrow so the caller wraps the failure as
- *     `coverage: "queried_no_data"` with `error.kind: "synthesis-unavailable"`
- *     (or `"queried_no_data"` for decisions).
+ *     in its own named `DBOS.runStep`, then issues `DBOS.cancelWorkflow` +
+ *     a trailing `runStep` to materialise the CANCELLED terminal state.
+ *     Deferring the cancel keeps the terminal handler's DB writes inside
+ *     DBOS step boundaries (replay-cached).
+ *   - anything else: rethrow, so the caller decides whether the failure is a
+ *     coverage envelope or a hard error.
  *
  * The step name is attempt-numbered by the caller — e.g.
  * `"ta-synth:liability-bullets:0"`. On 402 + top-up + `DBOS.resumeWorkflow`
  * the caller bumps the attempt counter so the resumed call lands a fresh
- * DBOS cache slot rather than replaying the cancelled prior attempt.
+ * DBOS cache slot rather than replaying the cancelled prior attempt. Because
+ * the name comes from the caller, relocating this module cannot move an
+ * existing step's cache slot.
  */
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import { createNoopLogger } from "../../../lib/console-logger.js";
-import type { Logger } from "../../../lib/logger.js";
-import { unwrapOrThrow } from "../../../lib/result.js";
-import { isBudgetExceeded } from "../../../loop/budget-exceeded.js";
-import type { AgentChat, ChatRequest, ChatResponse } from "../../../providers/types.js";
-import type { AgentSession } from "../../../auth/types.js";
+import { createNoopLogger } from "../../lib/console-logger.js";
+import type { Logger } from "../../lib/logger.js";
+import { unwrapOrThrow } from "../../lib/result.js";
+import { isBudgetExceeded } from "../../loop/budget-exceeded.js";
+import type { AgentChat, ChatRequest, ChatResponse } from "../../providers/types.js";
+import type { AgentSession } from "../../auth/types.js";
 
 /**
  * DBOS message topic the LLM step uses to mark the workflow as
  * self-cancelled on a billing-gateway 402. The terminal handler drains the topic
- * to dispatch to `markAssessmentSuspended` rather than the generic
- * operator-cancel handler.
+ * to dispatch to its suspend path rather than the generic operator-cancel
+ * handler.
+ *
+ * The `ta-` spelling outlives the move: a topic is persisted with the message in
+ * DBOS's notification table, so renaming it would strand a marker sent by a
+ * workflow that was already in flight. The topic is scoped to the receiving
+ * workflow id, so one name serves every workflow.
+ *
+ * Distinct from `sandbox-step.ts`'s `"child-budget-exceeded"`, which carries a
+ * child step's exhaustion to its parent. This one a workflow sends to itself.
  */
 export const BUDGET_EXCEEDED_TOPIC = "ta-budget-exceeded";
 
@@ -65,7 +73,11 @@ export interface RunLlmStepOptions {
  * workflow. The next `DBOS.runStep` after this point raises
  * `DBOSWorkflowCancelledError`, so call sites only see this value on the
  * synchronous return path before the cancel materialises. Callers MUST NOT
- * wrap this as `coverage: "queried_no_data"` — the workflow is unwinding.
+ * wrap this as a coverage envelope — the workflow is unwinding.
+ *
+ * A registry symbol, so identity holds across module realms. Its `ta.` key is
+ * kept for the same reason the topic's is: it is an identity other code already
+ * pins, not a description of who may use it.
  */
 export const BUDGET_EXCEEDED_SENTINEL = Symbol.for("ta.budget-exceeded");
 
@@ -115,7 +127,7 @@ export async function runLlmStep(opts: RunLlmStepOptions): Promise<RunLlmStepRes
         try {
             await DBOS.runStep(() => DBOS.send(workflowId, marker, BUDGET_EXCEEDED_TOPIC), { name: `${stepName}:notify-budget-exceeded` });
         } catch (sendErr) {
-            const logger = (opts.logger ?? createNoopLogger()).named("ta-llm-step");
+            const logger = (opts.logger ?? createNoopLogger()).named("llm-step");
             logger.warn("notify-budget-exceeded send failed (non-fatal)", { stepName, ...logger.errorFields(sendErr) });
         }
 

@@ -1,28 +1,28 @@
 /**
- * Structured-output LLM helper for the target-assessment DBOS workflow.
+ * Structured-output LLM helper shared by every DBOS workflow that needs a
+ * schema-validated single-shot model call.
  *
- * Uses a tool-choice forcing pattern: a single Anthropic tool named `submit`
- * carries the Zod schema as its `input_schema`, and
- * `tool_choice: { type: "tool", name: "submit" }` forces the model to fill
- * it. The tool's `input` IS the structured output.
+ * Uses a tool-choice forcing pattern: a single tool named `submit` carries the
+ * Zod schema as its `input_schema`, and `tool_choice: { type: "tool", name:
+ * "submit" }` forces the model to fill it. The tool's `input` IS the structured
+ * output.
  *
- * This intentionally does NOT pull in the harness `runAgent` loop — Phase-2
- * decisions are zero-tool single-shot calls. Phase-5 syntheses today use
- * regulatory-guidance + approval-precedent retrieval tools; the harness
- * port drops those grounding tools (PR #4 ships single-shot synthesis; a
- * follow-up may reintroduce the retrieval tools through the agent loop).
+ * This intentionally does NOT pull in the harness `runAgent` loop: these are
+ * zero-tool single-shot calls, so the loop's message array, tool dispatch, and
+ * termination rules would all be dead weight. A phase that needs tools belongs
+ * in the loop instead.
  *
  * Calls are routed through `runLlmStep`, so each LLM call lives in its own
- * `DBOS.runStep({name})` cache slot and a billing-gateway 402 self-cancels the
+ * `DBOS.runStep({name})` cache slot and a billing-gateway 402 suspends the
  * workflow rather than returning a coverage envelope.
  */
 
 import { jsonSchema, tool as aiTool, type ToolCallPart } from "ai";
 import { z } from "zod";
 
-import type { AgentSession } from "../../../auth/types.js";
-import type { Logger } from "../../../lib/logger.js";
-import type { AgentChat, ChatRequest } from "../../../providers/types.js";
+import type { AgentSession } from "../../auth/types.js";
+import type { Logger } from "../../lib/logger.js";
+import type { AgentChat, ChatRequest } from "../../providers/types.js";
 
 import { BUDGET_EXCEEDED_SENTINEL, runLlmStep, type RunLlmStepResult } from "./llm-step.js";
 

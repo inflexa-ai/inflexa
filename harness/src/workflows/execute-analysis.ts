@@ -51,10 +51,17 @@
  *  5. `synthesizeFindings` (single sequential block, no sandbox)
  *  6. `collectAndComplete` (terminal — runs on ALL paths)
  *     - determine final status from completed/cancelled/failed counts
+ *     - hand that status to the shared `finaliseRun` sequence
+ *       (`lib/finalise-run.ts`), which owns the ORDER of what follows —
+ *       terminal provenance before the status write, the sweep-vs-suspend
+ *       split keyed on the branch rather than the written status, and exactly
+ *       one terminal part last
  *     - update `cortex_runs.status` + `error`
  *     - close running charge with matching reason
  *     - revoke run authorization via the injected `runAuthorizer` seam
  *     - emit terminal stream part
+ *     - what stays here: the status derivation, the synthesis-outcome note,
+ *       and building the terminal part (whose artifact count is its own step)
  *     - WRITES NOTHING to the conversation thread (results are pull-only
  *       via `inspectRun`)
  */
@@ -67,7 +74,7 @@ import type { Pool } from "pg";
 import type { MachineBudget, ResourceSpec } from "../config/resource-limits.js";
 import { forStep } from "../auth/types.js";
 import type { RunSession } from "../auth/types.js";
-import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
+import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -82,9 +89,6 @@ import {
     queryStepArtifactPaths,
     seedStepExecutions,
     setRunSynthesisOutcome,
-    suspendAnalysis as suspendAnalysisQuery,
-    sweepPendingStepExecutions,
-    updateRunStatus,
     updateStepExecution,
 } from "../state/index.js";
 import type { SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
@@ -102,6 +106,7 @@ import { SYNTHESIS_STEP_ID, runDir, runStepDir, stepSubdir, stepWritePrefix, toS
 import { isChatDataPart } from "../sandbox/sandbox-step-translate.js";
 import { synthesizeRun } from "../app/synthesize-run.js";
 import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag } from "./execute-analysis-scheduler.js";
+import { finaliseRun } from "./lib/finalise-run.js";
 import { recordCancelledChild } from "./metrics.js";
 import { BUDGET_EXCEEDED_TOPIC, type BudgetExceededNotification, type SandboxStepInput, type SandboxStepResult } from "./sandbox-step.js";
 
@@ -1436,163 +1441,103 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
               budgetExceeded,
           });
 
-    const chargeReason =
-        status === "completed" || status === "partial" ? "ok" : status === "failed" ? "error" : budgetExceeded ? "budget_exceeded" : "canceled";
-    const revokeReason =
-        status === "completed" || status === "partial"
-            ? "workflow-completed"
-            : status === "failed"
-              ? "workflow-failed"
-              : budgetExceeded
-                ? "workflow-suspended"
-                : "workflow-canceled";
-
-    // Terminal clock read + run-completion provenance, emitted BEFORE the `cortex_runs`
-    // status write below — and thus before any of the terminal cleanup steps. The CLI
-    // watches the run by POLLING that row (`run.ts` `waitForRunTerminal`) and shuts down
-    // the instant it leaves `running`, flushing provenance and then `process.exit()`ing;
-    // emitting the record only after the status write races that shutdown and can drop
-    // the run's terminal provenance entirely. Emitting first makes the record dirty
-    // (synchronously, via the bus) before the row can be observed terminal, so the CLI's
-    // flush always captures it. Not step-wrapped — a DBOS recovery replay must re-fire it;
-    // `DBOS.now()` is checkpointed, so the span stays replay-stable (see `RunProvenanceEvent`).
-    // The duration measures from the `run_started` read threaded in as `startedAtMs`.
-    const terminalAtMs = await DBOS.now();
-    emitProvenanceGuarded(deps, {
-        type: "run_completed",
-        analysisId: input.analysisId,
-        runId,
-        status,
-        atMs: terminalAtMs,
-        durationMs: terminalAtMs - startedAtMs,
-    });
-
-    try {
-        await DBOS.runStep(
-            async () => {
-                unwrapOrThrow(
-                    await updateRunStatus(deps.pool, runId, status, failureReason ?? (status === "canceled" && !budgetExceeded ? "external_cancel" : null)),
-                );
-            },
-            { name: "persist-final-status" },
-        );
-    } catch (err) {
-        logger.error("persist-final-status failed", { status, ...logger.errorFields(err) });
-    }
-
-    // Record the run's synthesis outcome AFTER the status write — a reader that
-    // sees a terminal status then also sees whether (and why) synthesis ran. A
-    // null outcome means synthesis never ran; leave the columns NULL ("unknown").
-    // Log-don't-rollback, like the sibling terminal steps: a failed ledger note
-    // must not undo an otherwise-complete run.
-    const outcome = args.synthesisOutcome;
-    if (outcome !== null) {
-        try {
-            await DBOS.runStep(
-                async () => {
-                    unwrapOrThrow(await setRunSynthesisOutcome(deps.pool, runId, outcome.status, outcome.reason));
-                },
-                { name: "persist-synthesis-outcome" },
-            );
-        } catch (err) {
-            logger.error("persist-synthesis-outcome failed", { synthesisStatus: outcome.status, ...logger.errorFields(err) });
-        }
-    }
-
-    // Sweep never-started steps to `skipped` — but ONLY on genuinely-terminal
-    // paths. The gate is the BRANCH, not the written run status: the resumable
-    // 402 pause below also writes "canceled", yet its pending rows must survive
-    // for the resumed workflow to execute. Log-don't-rollback, like every other
-    // finalisation step here.
-    if (!(budgetExceeded && !forceFailed)) {
-        try {
-            await DBOS.runStep(
-                async () => {
-                    unwrapOrThrow(await sweepPendingStepExecutions(deps.pool, runId));
-                },
-                { name: "sweep-pending-steps" },
-            );
-        } catch (err) {
-            logger.error("sweep-pending-steps failed", logger.errorFields(err));
-        }
-    }
-
     // A forced failure (synthesis threw) is terminal, not a resumable budget
-    // pause — never suspend it, even when the budget was also exceeded.
-    if (budgetExceeded && !forceFailed) {
-        try {
-            await DBOS.runStep(
-                async () => {
-                    unwrapOrThrow(await suspendAnalysisQuery(deps.pool, input.analysisId));
-                },
-                { name: "suspend-analysis" },
-            );
-        } catch (err) {
-            logger.error("suspend-analysis failed", logger.errorFields(err));
-        }
-    }
+    // pause — never suspend it, even when the budget was also exceeded. This
+    // branch, not the written status, is what the finaliser splits its
+    // sweep-vs-suspend decision on: the pause also writes "canceled".
+    const pausedByBudget = budgetExceeded && !forceFailed;
 
-    try {
-        await DBOS.runStep(
-            () =>
-                deps.runCharge.close({
-                    analysisId: input.analysisId,
+    const outcome = args.synthesisOutcome;
+
+    await finaliseRun({
+        logger,
+        pool: deps.pool,
+        runCharge: deps.runCharge,
+        runAuthorizer: deps.runAuthorizer,
+        runId,
+        analysisId: input.analysisId,
+        status,
+        failureReason,
+        pausedByBudget,
+        session: input.runSession,
+        // Ownership defaults to true for inputs persisted before the field
+        // existed (a workflow recovered across that deploy) — those were always
+        // Cortex-owned.
+        authorization: {
+            runSession: input.runSession,
+            ownsMandate: input.ownsMandate ?? true, // oss-core-managed-ok
+        },
+        // The run-completion provenance record, emitted before the status write
+        // so a host polling `cortex_runs` cannot shut down between the two and
+        // lose it. The duration measures from the `run_started` read threaded in
+        // as `startedAtMs`; both ends are `DBOS.now()` reads, so a recovery
+        // replay re-emits the identical span (see `RunProvenanceEvent`).
+        onTerminalClock: (terminalAtMs) => {
+            emitProvenanceGuarded(deps, {
+                type: "run_completed",
+                analysisId: input.analysisId,
+                runId,
+                status,
+                atMs: terminalAtMs,
+                durationMs: terminalAtMs - startedAtMs,
+            });
+        },
+        // Record the run's synthesis outcome AFTER the status write — a reader
+        // that sees a terminal status then also sees whether (and why) synthesis
+        // ran. A null outcome means synthesis never ran; leave the columns NULL
+        // ("unknown"). Log-don't-rollback, like every sibling terminal step: a
+        // failed ledger note must not undo an otherwise-complete run.
+        ...(outcome !== null
+            ? {
+                  afterStatusWrite: async () => {
+                      try {
+                          await DBOS.runStep(
+                              async () => {
+                                  unwrapOrThrow(await setRunSynthesisOutcome(deps.pool, runId, outcome.status, outcome.reason));
+                              },
+                              { name: "persist-synthesis-outcome" },
+                          );
+                      } catch (err) {
+                          logger.error("persist-synthesis-outcome failed", { synthesisStatus: outcome.status, ...logger.errorFields(err) });
+                      }
+                  },
+              }
+            : {}),
+        // Only the UI stream part differs by outcome — the provenance record
+        // above does not. Artifact counting is a durable step of its own, which
+        // is why the part is built here rather than handed over as a value.
+        buildTerminalPart: async () => {
+            if (status === "completed" || status === "partial") {
+                const artifactCount = await DBOS.runStep(() => countArtifactsForRun(deps.pool, input.analysisId, runId), { name: "count-run-artifacts" }).catch(
+                    () => 0,
+                );
+                return {
+                    type: "data-run-completed",
                     runId,
-                    reason: chargeReason,
-                    session: input.runSession,
-                }),
-            { name: "close-running-charge" },
-        );
-    } catch (err) {
-        logger.error("closeRunningCharge failed", { chargeReason, ...logger.errorFields(err) });
-    }
-
-    // Revoke the run authorization for the terminal run state. Ownership
-    // defaults to true for inputs persisted before the field existed (a
-    // workflow recovered across this deploy) — those were always Cortex-owned.
-    const authorization: RunAuthorization = {
-        runSession: input.runSession,
-        ownsMandate: input.ownsMandate ?? true, // oss-core-managed-ok
-    };
-    try {
-        await DBOS.runStep(() => deps.runAuthorizer.revoke(authorization, revokeReason), { name: "revoke-run-auth" });
-    } catch (err) {
-        logger.error("revokeRunAuthorization failed", { revokeReason, ...logger.errorFields(err) });
-    }
-
-    // The `run_completed` provenance was already emitted above (before the status write, to
-    // beat the CLI's poll-and-shutdown). These branches only fan out the UI stream part, whose
-    // completed/failed shapes genuinely differ — the provenance record does not.
-    if (status === "completed" || status === "partial") {
-        const artifactCount = await DBOS.runStep(() => countArtifactsForRun(deps.pool, input.analysisId, runId), { name: "count-run-artifacts" }).catch(
-            () => 0,
-        );
-        await emitStreamPart({
-            type: "data-run-completed",
-            runId,
-            status,
-            completedSteps: completed.size,
-            totalSteps: input.steps.length,
-            artifactCount,
-            findings: args.findings.map((f) => ({
-                title: f.title,
-                confidence: f.confidence,
-            })),
-            ...(status === "partial"
-                ? {
-                      note: `${completed.size} of ${input.steps.length} steps completed; results are partial.`,
-                  }
-                : {}),
-            ...(args.usage ? { usage: args.usage } : {}),
-        });
-    } else {
-        await emitStreamPart({
-            type: "data-run-failed",
-            runId,
-            error: failureReason ?? (budgetExceeded ? "Run paused: insufficient budget" : "Run canceled before completion"),
-            ...(budgetExceeded ? { reason: "budget_exceeded" } : {}),
-        });
-    }
+                    status,
+                    completedSteps: completed.size,
+                    totalSteps: input.steps.length,
+                    artifactCount,
+                    findings: args.findings.map((f) => ({
+                        title: f.title,
+                        confidence: f.confidence,
+                    })),
+                    ...(status === "partial"
+                        ? {
+                              note: `${completed.size} of ${input.steps.length} steps completed; results are partial.`,
+                          }
+                        : {}),
+                    ...(args.usage ? { usage: args.usage } : {}),
+                };
+            }
+            return {
+                type: "data-run-failed",
+                runId,
+                error: failureReason ?? (budgetExceeded ? "Run paused: insufficient budget" : "Run canceled before completion"),
+                ...(budgetExceeded ? { reason: "budget_exceeded" } : {}),
+            };
+        },
+    });
 
     return {
         runId,

@@ -33,8 +33,8 @@ import { probeLiabilityBullets, probeRecommendation, probeSafetyFlags, probeTran
 import type { AgentSession } from "../../../auth/types.js";
 import type { AgentChat } from "../../../providers/types.js";
 
-import { BUDGET_EXCEEDED_SENTINEL } from "../lib/llm-step.js";
-import { structuredLlmCall } from "../lib/structured-llm.js";
+import { BUDGET_EXCEEDED_SENTINEL } from "../../lib/llm-step.js";
+import { structuredLlmCall } from "../../lib/structured-llm.js";
 
 // ── Output schemas ────────────────────────────────────────────────────
 

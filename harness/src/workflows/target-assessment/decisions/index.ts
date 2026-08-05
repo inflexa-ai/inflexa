@@ -22,8 +22,8 @@ import type { AgentSession } from "../../../auth/types.js";
 import type { AgentChat } from "../../../providers/types.js";
 import type { Phase1Bundle } from "../schemas.js";
 
-import { BUDGET_EXCEEDED_SENTINEL, type RunLlmStepResult } from "../lib/llm-step.js";
-import { structuredLlmCall } from "../lib/structured-llm.js";
+import { BUDGET_EXCEEDED_SENTINEL, type RunLlmStepResult } from "../../lib/llm-step.js";
+import { structuredLlmCall } from "../../lib/structured-llm.js";
 
 // ── Output schemas ────────────────────────────────────────────────────
 
