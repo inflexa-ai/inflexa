@@ -2,10 +2,9 @@
  * Pure async client functions for the Monarch Initiative association API.
  *
  * Monarch curates human gene→phenotype annotations (HPO, from HPOA/OMIM/
- * Orphanet) and causal gene→disease assertions (MONDO). Both are *human*
- * loss-of-function evidence: what is observed in people carrying variation in
- * the gene, as opposed to a mouse knockout's phenotype or an aggregate
- * gene-disease association score.
+ * Orphanet): *human* loss-of-function evidence, meaning what is observed in
+ * people carrying variation in the gene, as opposed to a mouse knockout's
+ * phenotype or an aggregate gene-disease association score.
  *
  * Each phenotype association carries its HPO ancestor closure, which is what
  * lets a consumer resolve the phenotype onto an organ system by identifier
@@ -37,23 +36,18 @@ const HPO_NAMESPACE = "HP";
  * treats a missing field as absent rather than trusting the wire.
  */
 const MonarchAssociationSchema = z.object({
-    predicate: z.string().optional(),
-    subject: z.string().optional(),
     subject_taxon: z.string().nullish(),
     object: z.string().optional(),
     object_label: z.string().nullish(),
-    object_namespace: z.string().nullish(),
     object_closure: z.array(z.string()).nullish(),
     publications: z.array(z.string()).nullish(),
     primary_knowledge_source: z.string().nullish(),
     disease_context_qualifier: z.string().nullish(),
     has_percentage: z.number().nullish(),
-    evidence_count: z.number().nullish(),
 });
 type MonarchAssociation = z.infer<typeof MonarchAssociationSchema>;
 
 const MonarchAssociationPageSchema = z.object({
-    total: z.number().optional(),
     items: z.array(MonarchAssociationSchema).optional(),
 });
 
@@ -73,28 +67,13 @@ export interface MonarchPhenotypeAssociation {
     readonly primaryKnowledgeSource: string | null;
 }
 
-/** A disease the gene is asserted to cause. */
-export interface MonarchDiseaseAssociation {
-    /** MONDO term id, e.g. `MONDO:0007265`. */
-    readonly mondoId: string;
-    readonly label: string;
-    readonly predicate: string;
-    readonly primaryKnowledgeSource: string | null;
-    readonly publications: string[];
-}
-
 export interface MonarchGeneProfile {
     /** The curie the gene was queried by, e.g. `HGNC:1097`. */
     readonly geneCurie: string;
     readonly phenotypes: MonarchPhenotypeAssociation[];
-    readonly phenotypeTotal: number;
-    readonly phenotypesTruncated: boolean;
-    readonly diseases: MonarchDiseaseAssociation[];
-    readonly diseaseTotal: number;
-    readonly diseasesTruncated: boolean;
 }
 
-async function fetchAssociations(geneCurie: string, category: string): Promise<{ items: MonarchAssociation[]; total: number }> {
+async function fetchAssociations(geneCurie: string, category: string): Promise<MonarchAssociation[]> {
     const params = new URLSearchParams({
         subject: geneCurie,
         category,
@@ -108,10 +87,9 @@ async function fetchAssociations(geneCurie: string, category: string): Promise<{
         // "not found", returned as an empty page. Anything else is a real
         // failure and surfaces.
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
-        return { items: [], total: 0 };
+        return [];
     }
-    const items = res.value.items ?? [];
-    return { items, total: res.value.total ?? items.length };
+    return res.value.items ?? [];
 }
 
 /**
@@ -135,49 +113,21 @@ function toPhenotype(row: MonarchAssociation): MonarchPhenotypeAssociation | nul
     };
 }
 
-function toDisease(row: MonarchAssociation): MonarchDiseaseAssociation | null {
-    if (!row.object || !row.object.startsWith("MONDO:")) return null;
-    return {
-        mondoId: row.object,
-        label: row.object_label ?? "",
-        predicate: row.predicate ?? "biolink:causes",
-        primaryKnowledgeSource: row.primary_knowledge_source ?? null,
-        publications: row.publications ?? [],
-    };
-}
-
 /**
- * Curated human phenotype and causal-disease associations for one gene.
+ * Curated human phenotype associations for one gene.
  *
  * `geneCurie` is a prefixed identifier Monarch resolves — an HGNC id
  * (`HGNC:1097`) or an NCBI gene id (`NCBIGene:673`). A gene Monarch does not
  * hold returns an empty profile rather than an error.
  */
 export async function getGenePhenotypeProfile(geneCurie: string): Promise<MonarchGeneProfile> {
-    const [phenoPage, diseasePage] = await Promise.all([
-        fetchAssociations(geneCurie, "biolink:GeneToPhenotypicFeatureAssociation"),
-        fetchAssociations(geneCurie, "biolink:CausalGeneToDiseaseAssociation"),
-    ]);
+    const rows = await fetchAssociations(geneCurie, "biolink:GeneToPhenotypicFeatureAssociation");
 
     const phenotypes: MonarchPhenotypeAssociation[] = [];
-    for (const row of phenoPage.items) {
+    for (const row of rows) {
         const p = toPhenotype(row);
         if (p) phenotypes.push(p);
     }
 
-    const diseases: MonarchDiseaseAssociation[] = [];
-    for (const row of diseasePage.items) {
-        const d = toDisease(row);
-        if (d) diseases.push(d);
-    }
-
-    return {
-        geneCurie,
-        phenotypes,
-        phenotypeTotal: phenoPage.total,
-        phenotypesTruncated: phenoPage.total > phenoPage.items.length,
-        diseases,
-        diseaseTotal: diseasePage.total,
-        diseasesTruncated: diseasePage.total > diseasePage.items.length,
-    };
+    return { geneCurie, phenotypes };
 }

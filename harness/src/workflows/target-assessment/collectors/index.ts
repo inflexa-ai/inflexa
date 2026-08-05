@@ -385,11 +385,11 @@ export async function collectMonarch(input: ResolvedTarget): Promise<CoverageEnv
     }
     try {
         const profile = await withHost("monarch", () => getGenePhenotypeProfile(geneCurie));
-        if (profile.phenotypes.length === 0 && profile.diseases.length === 0) {
+        if (profile.phenotypes.length === 0) {
             return {
                 coverage: "queried_no_data",
                 error: {
-                    message: `Monarch holds no human phenotype or causal-disease associations for ${geneCurie}`,
+                    message: `Monarch holds no human phenotype associations for ${geneCurie}`,
                 },
             };
         }
@@ -406,17 +406,6 @@ export async function collectMonarch(input: ResolvedTarget): Promise<CoverageEnv
                     frequencyPercent: p.frequencyPercent,
                     primaryKnowledgeSource: p.primaryKnowledgeSource,
                 })),
-                phenotypeTotal: profile.phenotypeTotal,
-                phenotypesTruncated: profile.phenotypesTruncated,
-                diseases: profile.diseases.map((d) => ({
-                    mondoId: d.mondoId,
-                    label: d.label,
-                    predicate: d.predicate,
-                    primaryKnowledgeSource: d.primaryKnowledgeSource,
-                    publications: d.publications,
-                })),
-                diseaseTotal: profile.diseaseTotal,
-                diseasesTruncated: profile.diseasesTruncated,
             },
         };
     } catch (err) {

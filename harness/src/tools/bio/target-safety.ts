@@ -3,11 +3,9 @@
  * sources that carry it: the curated secondary-pharmacology panel that ships
  * with the harness, and Open Targets' curated liabilities.
  *
- * These were `check_safety_panel` and `opentargets({action:'safety'})`, and the
- * panel tool's own description instructed calling them together — a pairing
- * every caller had to remember, expressed in prose that had already gone stale
- * (it named two tools that no longer exist). Both are keyed on the same target
- * and answer the same question, so the pairing belongs in the tool.
+ * Both sources are keyed on the same target and answer the same question, so
+ * the pairing belongs in the tool rather than in prose a caller has to
+ * remember: one call consults both and merges what they carry.
  *
  * Identifier resolution is the tool's job, not the caller's: Open Targets
  * accepts ONLY an Ensembl gene id, and it is taken from the panel entry when

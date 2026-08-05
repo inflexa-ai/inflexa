@@ -1,6 +1,7 @@
-import type { ClinicalTrialAttribution, EvidenceItem } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { ClinicalTrialAttribution, DiscoveryTrials, EvidenceItem } from "@inflexa-ai/harness/contracts/target-dossier.js";
 import type { Phase2Bundle } from "../steps/phase2-aggregate.js";
 import type { Phase3Bundle } from "../steps/phase3-aggregate.js";
+import { coverageFromFilteredRows } from "../coverage.js";
 import { classifyTrialAttribution } from "../lib/target-identity-filter.js";
 import { HIGH_EXPRESSION_TPM_THRESHOLD } from "../lib/expression-constants.js";
 export { HIGH_EXPRESSION_TPM_THRESHOLD };
@@ -800,15 +801,6 @@ export type AttributionContext = {
 };
 
 /**
- * Map from UniProt accession to HGNC gene symbol for related-receptor labeling.
- * Extend as new receptor families gain assessment support.
- */
-const UNIPROT_TO_SYMBOL: Record<string, string> = {
-    P30988: "CALCR",
-    P32241: "CALCRL",
-};
-
-/**
  * Partition a list of trials into primary (on-target or unresolved) and
  * related (off-target via a related family receptor). Each trial's
  * `match_confidence` is derived from ChEMBL mechanism resolution via
@@ -829,11 +821,9 @@ export async function partitionTrialsByAttribution<
 ): Promise<{
     primary: Array<T & { match_confidence: "high" | "medium" | "low" }>;
     related: Array<T & { match_confidence: "off_target" }>;
-    related_receptor: string | undefined;
 }> {
     const primary: Array<T & { match_confidence: "high" | "medium" | "low" }> = [];
     const related: Array<T & { match_confidence: "off_target" }> = [];
-    const relatedAccs = new Set<string>();
 
     for (const trial of trials) {
         // Normalize interventions: ctgov bundle has string[], typed input may use objects.
@@ -851,21 +841,12 @@ export async function partitionTrialsByAttribution<
 
         if (result.match_confidence === "off_target") {
             related.push({ ...trial, match_confidence: "off_target" as const });
-            for (const a of result.related_target_uniprots) relatedAccs.add(a);
         } else {
             primary.push({ ...trial, match_confidence: result.match_confidence });
         }
     }
 
-    const related_receptor =
-        relatedAccs.size > 0
-            ? [...relatedAccs]
-                  .map((a) => UNIPROT_TO_SYMBOL[a] ?? a)
-                  .sort()
-                  .join("/")
-            : undefined;
-
-    return { primary, related, related_receptor };
+    return { primary, related };
 }
 
 // ── §4.x analytics — discovery trials, evidence timeline, translational chain ──
@@ -960,15 +941,22 @@ export function classifyClinicalTrialConfidence(
     return "low";
 }
 
+/** Rows the section carries; a candidate set beyond it is reported as truncated. */
+const DISCOVERY_TRIAL_CAP = 100;
+
+/** What emptied the discovery-trials section when nothing survived. */
+const DISCOVERY_TRIALS_FILTER =
+    "trial already carried by clinical_development.trials, attributed to a related family receptor, matched only by a generic condition string at low confidence, or attribution not eligible for toxicology aggregation";
+
 export async function assembleDiscoveryTrials(
     phase2: Phase2Bundle,
     symbol: string,
     attrCtx: AttributionContext,
     knownClassDrugNames: Set<string>,
     attachAttribution: <T extends { nct_id: string }>(row: T) => T & { attribution: ClinicalTrialAttribution; eligible_for_toxicology_aggregation: boolean },
-) {
+): Promise<DiscoveryTrials> {
     const ctgov = phase2.phase1.collectors.ctgov;
-    if (ctgov.coverage !== "available") return null;
+    if (ctgov.coverage !== "available") return { coverage: "queried_no_data", error: { message: "ClinicalTrials.gov unavailable" } };
     const symU = symbol.toUpperCase();
 
     // Build a case-insensitive title-keyword regex from the target symbol and
@@ -985,9 +973,7 @@ export async function assembleDiscoveryTrials(
         return !(inInterventions || inTitle);
     });
 
-    if (candidates.length === 0) return null;
-
-    const partitioned = await partitionTrialsByAttribution(candidates, attrCtx);
+    const partitioned = candidates.length > 0 ? await partitionTrialsByAttribution(candidates, attrCtx) : { primary: [], related: [] };
 
     // Classify each primary candidate's relevance basis and drop low-confidence
     // condition-only matches — these are wrong-class contaminants (e.g., an
@@ -1015,15 +1001,25 @@ export async function assembleDiscoveryTrials(
             return !(row.match_confidence === "low" && row.relevance_basis.kind === "condition_match");
         });
 
-    if (primaryRows.length === 0) return null;
-
     // Trials attributed to a related receptor rather than the assessed target
     // are not discovery candidates at all, so they are not carried here.
-    const attributed = primaryRows.slice(0, 100).map(attachAttribution);
-    return {
-        rows: attributed.filter((r) => r.eligible_for_toxicology_aggregation),
-        excluded_rows: attributed.filter((r) => !r.eligible_for_toxicology_aggregation),
-    };
+    const carried = primaryRows.slice(0, DISCOVERY_TRIAL_CAP);
+    const truncatedAway = primaryRows.length - carried.length;
+    const attributed = carried.map(attachAttribution);
+    const rows = attributed.filter((r) => r.eligible_for_toxicology_aggregation);
+    const section = coverageFromFilteredRows({
+        data: {
+            rows,
+            excluded_rows: attributed.filter((r) => !r.eligible_for_toxicology_aggregation),
+        },
+        retainedCount: rows.length,
+        // The cap is a carrying limit, not a judgement about a row, so it is
+        // reported as truncation rather than counted as a drop.
+        droppedCount: candidates.length - rows.length - truncatedAway,
+        filter: DISCOVERY_TRIALS_FILTER,
+        emptyReason: "every ClinicalTrials.gov record for the target is already carried by clinical_development.trials",
+    });
+    return truncatedAway > 0 && section.coverage === "available" ? { ...section, truncated: true } : section;
 }
 
 export function assembleEvidenceTimeline(phase2: Phase2Bundle) {

@@ -15,13 +15,12 @@ const TIMEOUT_MS = 120_000;
 
 describe("monarch-client", () => {
     it(
-        "returns human phenotype and causal-disease associations for a well-annotated gene",
+        "returns human phenotype associations for a well-annotated gene",
         async () => {
             const profile = await getGenePhenotypeProfile("HGNC:1097");
 
             expect(profile.geneCurie).toBe("HGNC:1097");
             expect(profile.phenotypes.length).toBeGreaterThan(0);
-            expect(profile.phenotypeTotal).toBeGreaterThanOrEqual(profile.phenotypes.length);
 
             const phenotype = profile.phenotypes[0]!;
             expect(phenotype.hpoId).toStartWith("HP:");
@@ -33,9 +32,6 @@ describe("monarch-client", () => {
             // resolution possible; without it the consumer would be reduced to
             // matching prose.
             expect(profile.phenotypes.some((p) => p.ancestorIds.length > 0)).toBe(true);
-
-            expect(profile.diseases.length).toBeGreaterThan(0);
-            expect(profile.diseases[0]!.mondoId).toStartWith("MONDO:");
         },
         TIMEOUT_MS,
     );
@@ -46,8 +42,6 @@ describe("monarch-client", () => {
             const profile = await getGenePhenotypeProfile("HGNC:99999999");
 
             expect(profile.phenotypes).toEqual([]);
-            expect(profile.diseases).toEqual([]);
-            expect(profile.phenotypesTruncated).toBe(false);
         },
         TIMEOUT_MS,
     );

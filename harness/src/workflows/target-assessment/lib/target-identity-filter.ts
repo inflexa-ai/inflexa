@@ -1,12 +1,10 @@
 /**
  * Trial-attribution classifier + UniProt-backed identity resolvers.
  *
- * `resolveOnTargetChemblIds` and `resolveFamilySiblingUniprots` replace the
- * hand-curated ALTERNATE_CHEMBL_IDS and RELATED_FAMILY_UNIPROTS maps that
- * previously lived here. Both fetch from authoritative sources at assembly
- * time (UniProt for ChEMBL cross-references; IUPHAR Guide to Pharmacology
- * for receptor-family siblings) so no per-target editing is needed when a
- * new HGNC target is assessed.
+ * `resolveOnTargetChemblIds` and `resolveFamilySiblingUniprots` fetch from
+ * authoritative sources at assembly time — UniProt for ChEMBL cross-references,
+ * IUPHAR Guide to Pharmacology for receptor-family siblings — so assessing a
+ * new HGNC target needs no per-target curation here.
  *
  * The actual loop-level checks (`isOnTargetChemblId` etc.) take the
  * resolved arrays as plain inputs so the per-row assembly path stays

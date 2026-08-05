@@ -71,6 +71,8 @@ export interface ChemblPolypharmHit {
     moleculeChemblId: string;
     targetChemblId: string;
     targetName: string | null;
+    /** The assay the reported activity was measured in, when ChEMBL names one. */
+    assayChemblId: string | null;
     standardType: string | null;
     standardValue: number | null;
     standardUnits: string | null;
@@ -529,6 +531,7 @@ export async function getModulatorPolypharmacology(
                 moleculeChemblId,
                 targetChemblId: tid,
                 targetName: null,
+                assayChemblId: raw.assay_chembl_id ?? null,
                 standardType: raw.standard_type ?? null,
                 standardValue: parseNumeric(raw.standard_value),
                 standardUnits: raw.standard_units ?? null,

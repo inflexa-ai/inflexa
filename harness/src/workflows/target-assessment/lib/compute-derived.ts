@@ -253,7 +253,7 @@ function countHighExpressionTissues(body: DossierBodyView): number {
  *
  * Pure function: no I/O, no LLM calls, no side effects. Defensive against
  * missing/partial bodies — always returns a best-effort result and never throws.
- * Schema validation happens at the persist boundary (Task 11), not here.
+ * Schema validation happens at the persist boundary, not here.
  */
 export function computeDerivedFields(bodyInput: unknown): Derived {
     const body = bodyInput as DossierBodyView;

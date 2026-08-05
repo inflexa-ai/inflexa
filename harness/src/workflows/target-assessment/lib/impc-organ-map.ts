@@ -5,6 +5,12 @@
  * craniofacial) are absent: a phenotype is reported under the organ it affects
  * or not at all, never under an approximate neighbour. The map's values are the
  * canonical tokens, so it declares no enumeration of its own.
+ *
+ * The endocrine bucket is absent for the same reason: IMPC's
+ * "endocrine/exocrine gland phenotype" spans every endocrine organ and the
+ * exocrine glands besides, while the only endocrine token names the thyroid.
+ * A knockout in that bucket names no canonical organ, so it is dropped and
+ * counted rather than read as a thyroid finding.
  */
 
 import type { OrganSystem } from "../../../contracts/organ-system.js";
@@ -12,7 +18,6 @@ import type { OrganSystem } from "../../../contracts/organ-system.js";
 const IMPC_ORGAN_SYSTEMS: Record<string, OrganSystem> = {
     cardiovascular: "cardiac",
     gastrointestinal: "gi",
-    endocrine: "endocrine_thyroid",
     hematologic: "hematologic",
     metabolic: "metabolic",
     immune: "immune",

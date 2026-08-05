@@ -20,7 +20,7 @@ import type {
     ExcludedOffTargetRowSchema,
 } from "@inflexa-ai/harness/contracts/target-dossier.js";
 import { ORGAN_RESOLUTION_FILTER, type OrganSignalProjection } from "../lib/fda-label-safety.js";
-import type { OrganSystem } from "../../../contracts/organ-system.js";
+import { ORGAN_SYSTEMS, type OrganSystem } from "../../../contracts/organ-system.js";
 import { expectedOrgansFromBody } from "../lib/compute-derived.js";
 import type { Phase2Bundle } from "../steps/phase2-aggregate.js";
 import type { Phase3Bundle } from "../steps/phase3-aggregate.js";
@@ -33,7 +33,7 @@ import { makeHeterodimerOfAssessmentFilter } from "../lib/heterodimer-filter.js"
 import { buildFamilyComplexSupplement } from "../lib/family-complex-supplement.js";
 import type { FamilyComplexesBundle } from "../schemas.js";
 import { computeSelectivity } from "../lib/compute-selectivity.js";
-import { classifyOrgan, classifyPolypharmOrgan, classifyTrialAe, type CanonicalOrgan } from "../lib/meddra-organ-map.js";
+import { classifyOrgan, classifyPolypharmOrgan, classifyTrialAe } from "../lib/meddra-organ-map.js";
 import { HIGH_EXPRESSION_TPM_THRESHOLD, CNS_REGION_TPM_FLOOR, MUSCULOSKELETAL_TPM_FLOOR } from "../lib/expression-constants.js";
 export { HIGH_EXPRESSION_TPM_THRESHOLD };
 import type { ChemblModulator } from "../../../tools/lib/chembl-client.js";
@@ -235,23 +235,6 @@ export function meetsTpmFloor(tissue: string, value: number): boolean {
     return value > DEFAULT_TPM_FLOOR;
 }
 
-const CANONICAL_ORGANS: CanonicalOrgan[] = [
-    "cardiac",
-    "hepatic",
-    "cns",
-    "renal",
-    "gi",
-    "pancreas",
-    "endocrine_thyroid",
-    "metabolic",
-    "hematologic",
-    "immune",
-    "respiratory",
-    "reproductive",
-    "dermatologic",
-    "musculoskeletal",
-];
-
 // ── Liability summary ───────────────────────────────────────────────
 
 export function assembleLiabilitySummary(
@@ -302,7 +285,7 @@ export function aggregateFaersAcrossModulators(fanout: FanoutResults | undefined
     let congenital = 0;
     let otherSerious = 0;
     const reactionMap = new Map<string, number>();
-    const reactionOrgan = new Map<string, CanonicalOrgan | null>();
+    const reactionOrgan = new Map<string, OrganSystem | null>();
     const perModulator: Array<{
         modulator: string;
         modulator_id: string | null;
@@ -692,7 +675,9 @@ export function aggregateOffTargetPanel(
         pchembl: number;
         // primaryPchembl of the modulator that contributes the best off-target hit.
         modulatorPrimaryPchembl: number | null;
-        modulators: Set<string>;
+        // Modulator → the ChEMBL assay whose activity row measured that
+        // modulator against this off-target, or null when ChEMBL named none.
+        assayByModulator: Map<string, string | null>;
     };
     const byTarget = new Map<string, Agg>();
     for (const item of polypharm) {
@@ -707,10 +692,10 @@ export function aggregateOffTargetPanel(
                     name: hit.targetName ?? hit.targetChemblId,
                     pchembl: pch,
                     modulatorPrimaryPchembl: primaryPchemblByModulator.get(item.data.moleculeChemblId) ?? null,
-                    modulators: cur?.modulators ?? new Set(),
+                    assayByModulator: cur?.assayByModulator ?? new Map(),
                 });
             }
-            byTarget.get(hit.targetChemblId)!.modulators.add(item.data.moleculeChemblId);
+            byTarget.get(hit.targetChemblId)!.assayByModulator.set(item.data.moleculeChemblId, hit.assayChemblId);
         }
     }
 
@@ -740,10 +725,15 @@ export function aggregateOffTargetPanel(
                 clinical_consequence: safetyHit?.clinical_consequence ?? null,
                 selectivity: { log_units: 0, fold: 1 },
                 selectivity_window_below_threshold: false,
-                modulators: [...v.modulators],
-                evidence: [...v.modulators].map<EvidenceItem>((m) => ({
+                modulators: [...v.assayByModulator.keys()],
+                // The locator is the assay the binding was measured in — the
+                // record a reader can open to check the asserted activity. The
+                // off-target's own ChEMBL id names the protein, not the
+                // measurement, so an activity ChEMBL did not attribute to an
+                // assay carries no locator and the claim states it has none.
+                evidence: [...v.assayByModulator].map<EvidenceItem>(([m, assayChemblId]) => ({
                     source: "chembl:polypharm",
-                    accession: v.chemblId,
+                    ...(assayChemblId ? { accession: assayChemblId } : {}),
                     predicate: "binds",
                     score: v.pchembl,
                     metadata: { off_target_id: v.chemblId, modulator: m },
@@ -968,7 +958,7 @@ export function aggregateClassPrecedent(phase2: Phase2Bundle, fanout: FanoutResu
         dedupKeysWithSignal: Set<string>;
         aes: Map<string, number>;
     };
-    const organMap = new Map<CanonicalOrgan, OrganAgg>();
+    const organMap = new Map<OrganSystem, OrganAgg>();
     const totalDedupKeys = new Set<string>();
     for (const item of items) {
         if (item.coverage !== "available") continue;
@@ -1051,12 +1041,16 @@ export function buildOrganRollup(
     regulatoryActions?: RegulatoryActionRow[] | null,
 ) {
     if (!faers && !trialAes && !offTarget && !classP && !regulatoryActions?.length) return null;
-    const rows = CANONICAL_ORGANS.map((organ) => {
-        // off_target_panel.organ_system is the curated safety-panel canonical
-        // string (`cardiac` | `hepatic` | `cns` | `renal` | `gi` |
-        // `hematologic` | `immune` | `metabolic` | `respiratory`). Use direct
-        // string equality first; `classifyOrgan` falls back if a future
-        // collector emits a non-canonical string.
+    // The rollup walks the canonical vocabulary itself, so the organs it can
+    // emit, the organs `expectedOrgansFromBody` can expect, and the organs a
+    // producer can attribute are one set. A row with no signal is dropped
+    // below, so widening the vocabulary widens the rollup rather than opening
+    // a gap between expected and present organs.
+    const rows = ORGAN_SYSTEMS.map((organ) => {
+        // off_target_panel.organ_system carries a canonical token from the
+        // curated safety panel. Use direct string equality first;
+        // `classifyOrgan` falls back if a future collector emits a
+        // non-canonical string.
         const polypharmHits = (offTarget ?? []).filter((r) => classifyPolypharmOrgan(r.organ_system) === organ);
         const polypharmCount = polypharmHits.length;
 
@@ -1136,7 +1130,7 @@ export function buildOrganRollup(
     // Drop rows with no signals, then guarantee every expected organ has a row.
     const filtered = rows.filter((r) => r.signal_type_count > 0);
     const presentOrgans = new Set(filtered.map((r) => r.organ));
-    const expected = expectedOrgansFromBody(syntheticBodyForExpectedOrgans(faers, trialAes, offTarget)) as CanonicalOrgan[];
+    const expected = expectedOrgansFromBody(syntheticBodyForExpectedOrgans(faers, trialAes, offTarget));
     for (const organ of expected) {
         if (presentOrgans.has(organ)) continue;
         const matchingFaers = (faers?.top_signals ?? []).filter((s) => classifyOrgan(s.meddra_term) === organ);
@@ -1174,7 +1168,7 @@ export function buildOrganRollup(
 
     // Oncology synthesis: when regulatory_actions carries malignancy-keyword
     // findings, emit an oncology rollup row. This is ADDITIVE — it does not
-    // replace any row produced by the main CANONICAL_ORGANS loop above.
+    // replace any row produced by the vocabulary loop above.
     if (!presentOrgans.has("oncology") && regulatoryActions?.length) {
         const malignancyRows = regulatoryActions.filter((r) => MALIGNANCY_RE.test(r.finding));
         if (malignancyRows.length > 0) {

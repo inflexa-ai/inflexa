@@ -26,8 +26,9 @@ export interface BioToolKeys {
  * The NCBI-backed literature tool, built from the shared key slice.
  *
  * `pubmed` is the consolidated literature tool (search / details / fulltext
- * behind one `action`). ClinVar is no longer its own tool — it is one of the
- * corpora behind `gene_disease_evidence`, which also needs the NCBI key.
+ * behind one `action`). ClinVar reaches a caller through
+ * `gene_disease_evidence`, as one of the corpora behind it, and it needs the
+ * same NCBI key.
  */
 export function createNcbiTools(keys: BioToolKeys): {
     pubmed: Tool;

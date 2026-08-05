@@ -12,7 +12,7 @@
  * extract the additional context.
  */
 
-import type { RegulatoryActionRow as RegulatoryActionRow } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { RegulatoryActionRow } from "@inflexa-ai/harness/contracts/target-dossier.js";
 import { withHost } from "../../../lib/host-concurrency.js";
 import { getReferralsByDrug, type EmaReferral } from "../../../tools/lib/ema-client.js";
 import { getDrugLabelActions, type DrugLabelAction } from "../../../tools/lib/openfda-client.js";

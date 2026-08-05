@@ -2,11 +2,19 @@
  * Phase-4 deterministic assemblers.
  *
  * Each assembler maps Phase-1 / Phase-2 / Phase-3 outputs onto the
- * corresponding dossier section schema. Coverage is honored end-to-end:
- * when an upstream came back `queried_no_data` or the derived row set is
- * empty, the section is marked `queried_no_data` / `not_loaded` rather
- * than fabricated. Aggregate rows preserve their contributing evidence
- * under `evidence: [...]` arrays.
+ * corresponding dossier section schema. Coverage is honored end-to-end: an
+ * upstream that came back empty or was never consulted yields
+ * `queried_no_data` / `not_loaded` rather than a fabricated section.
+ *
+ * Where a section applies a threshold of its own, the decision runs through
+ * `coverageFromFilteredRows` over both counts — what survived and what the
+ * threshold discarded — so a section our own filter emptied reports
+ * `filtered` rather than an `available` section holding nothing. Deciding
+ * coverage first and filtering the payload afterwards is the shape that loses
+ * that distinction.
+ *
+ * Aggregate rows preserve their contributing evidence under `evidence: [...]`
+ * arrays.
  */
 
 import type { ClaimSupport, DossierBody, Entity, EvidenceItem, TractabilitySection } from "@inflexa-ai/harness/contracts/target-dossier.js";
@@ -26,7 +34,7 @@ import { getDrugPrimaryTargetUniprots } from "../../../tools/lib/chembl-client.j
 import type { Pool } from "pg";
 import { annotateOffTargetPanel } from "../lib/clinical-consequence-annotator.js";
 import type { ClinicalConsequenceAnnotatorDeps } from "../lib/clinical-consequence-annotator.js";
-import { coverageFromRows } from "../coverage.js";
+import { coverageFromFilteredRows, coverageFromRows } from "../coverage.js";
 import { toOrganSystems } from "../lib/impc-organ-map.js";
 import { fetchRegulatoryActions } from "../lib/regulatory-actions.js";
 import { HIGH_EXPRESSION_TPM_THRESHOLD } from "../lib/expression-constants.js";
@@ -73,6 +81,16 @@ import { buildFailureCategoryDiscriminated } from "./literature.js";
 import type { AttributionContext } from "./literature.js";
 
 const NOT_LOADED_PHASE5 = "Phase 5 synthesis not yet implemented";
+
+/** What emptied `clinical_development.trials` when nothing survived. */
+const ACTIVE_TRIALS_FILTER =
+    "text match confidence below medium, attribution not eligible for toxicology aggregation, or attributed to a related family receptor";
+
+/** What emptied the two failed-trial sections when nothing survived. */
+const FAILED_TRIALS_FILTER = "attribution not eligible for toxicology aggregation, or attributed to a related family receptor";
+
+/** What emptied the two association sections when nothing survived. */
+const INDICATIONS_FILTER = "association restates the target itself, names a clinical measurement rather than a disease, or carries no scored evidence source";
 
 /** Sections the workflow body stamps between assembly and synthesis. */
 const NOT_LOADED_POST_ASSEMBLY = "assembled after Phase 4, from the segmented regulatory label signals";
@@ -421,7 +439,7 @@ export async function assembleDossier(
         };
     };
 
-    const discoveryTrialData = await assembleDiscoveryTrials(phase2, phase2.phase1.resolved.geneSymbol, attrCtx, knownClassDrugNames, attachTrialAttribution);
+    const discoveryTrials = await assembleDiscoveryTrials(phase2, phase2.phase1.resolved.geneSymbol, attrCtx, knownClassDrugNames, attachTrialAttribution);
 
     const indicationsRaw = ot.coverage === "available" ? ot.data.associations : [];
     const filteredIndications = indicationsRaw.filter(
@@ -518,6 +536,10 @@ export async function assembleDossier(
     // cannot fire and all trials land in primary — off-target detection activates
     // only when ChEMBL IDs are available downstream.
     const activeTrialsPartitioned = ctgov.coverage === "available" ? await partitionTrialsByAttribution(ctgov.data.active, attrCtx) : null;
+
+    // Everything CT.gov offered before any threshold of ours ran — the baseline
+    // the trials section measures its own drops against.
+    const activeTrialCandidateCount = (activeTrialsPartitioned?.primary.length ?? 0) + (activeTrialsPartitioned?.related.length ?? 0);
 
     // Map ctgov active trials to clinical-trial row shape with text-based confidence,
     // then remove rows identified as off-target by the attribution filter.
@@ -616,6 +638,12 @@ export async function assembleDossier(
     const attributedFailedRows = failedTrialRows.map(attachTrialAttribution);
     const attributedFailedRelatedRows = failedRelatedRows.map(attachTrialAttribution);
 
+    // The same partition the clinical-development section reports, shared with the
+    // safety lens: a related-receptor failure is context for both, and it must be
+    // told apart from a target-attributed one in both.
+    const eligibleFailedRows = attributedFailedRows.filter((r) => r.eligible_for_toxicology_aggregation);
+    const excludedFailedRows = [...attributedFailedRows.filter((r) => !r.eligible_for_toxicology_aggregation), ...attributedFailedRelatedRows];
+
     // Typed explicitly so literal string coverage values narrow correctly.
     // Phase-5 persist attaches the derived sub-tree after synthesis is stamped.
     const dossierBody: DossierBody = {
@@ -625,8 +653,7 @@ export async function assembleDossier(
         tractability: tractabilitySection,
         indications:
             ot.coverage === "available"
-                ? {
-                      coverage: "available" as const,
+                ? coverageFromFilteredRows({
                       data: {
                           rows: indicationRows,
                           excluded_unsupported_count: unsupportedCandidates.length,
@@ -639,7 +666,13 @@ export async function assembleDossier(
                                 }
                               : {}),
                       },
-                  }
+                      retainedCount: indicationRows.length,
+                      // The head cap is a carrying limit rather than a judgement, so
+                      // only the two content filters count against completeness.
+                      droppedCount: indicationsRaw.length - filteredIndications.length + unsupportedCandidates.length,
+                      filter: INDICATIONS_FILTER,
+                      emptyReason: "Open Targets returned no disease associations for the target",
+                  })
                 : {
                       coverage: "queried_no_data" as const,
                       error: {
@@ -654,9 +687,7 @@ export async function assembleDossier(
                 clinicalTrialRows === null
                     ? { coverage: "queried_no_data" as const, error: { message: "ClinicalTrials.gov unavailable" } }
                     : (() => {
-                          const base = coverageFromRows(clinicalTrialRows, { reason: "no trials matched the assessment target with confidence ≥ medium" });
-                          if (base.coverage !== "available") return base;
-                          const attributed = base.data.rows.map(attachTrialAttribution);
+                          const attributed = clinicalTrialRows.map(attachTrialAttribution);
                           const relatedTargetTrials = (activeTrialsPartitioned?.related ?? []).map((t) =>
                               attachTrialAttribution({
                                   nct_id: t.nctId,
@@ -669,10 +700,10 @@ export async function assembleDossier(
                                   match_confidence: "off_target" as const,
                               }),
                           );
-                          return {
-                              coverage: "available" as const,
+                          const rows = attributed.filter((r) => r.eligible_for_toxicology_aggregation);
+                          return coverageFromFilteredRows({
                               data: {
-                                  rows: attributed.filter((r) => r.eligible_for_toxicology_aggregation),
+                                  rows,
                                   excluded_rows: [...attributed.filter((r) => !r.eligible_for_toxicology_aggregation), ...relatedTargetTrials],
                                   selection_criteria: {
                                       derived_from: "analytics.discovery_trials" as const,
@@ -680,7 +711,14 @@ export async function assembleDossier(
                                       excluded_off_target_count: activeTrialsPartitioned?.related.length ?? 0,
                                   },
                               },
-                          };
+                              retainedCount: rows.length,
+                              // Everything CT.gov returned for the target, against what survived:
+                              // the low-confidence cut, the attribution cut, and the related-receptor
+                              // partition are all filters of ours.
+                              droppedCount: activeTrialCandidateCount - rows.length,
+                              filter: ACTIVE_TRIALS_FILTER,
+                              emptyReason: "ClinicalTrials.gov returned no trials for the assessment target",
+                          });
                       })(),
             outcomes: trialOutcomesRows
                 ? { coverage: "available", data: { rows: trialOutcomesRows.map(attachTrialAttribution) } }
@@ -689,13 +727,16 @@ export async function assembleDossier(
                   : { coverage: "not_loaded", reason: "Phase-3 fan-out not run" },
             failed_trials:
                 ctgov.coverage === "available"
-                    ? {
-                          coverage: "available" as const,
+                    ? coverageFromFilteredRows({
                           data: {
-                              rows: attributedFailedRows.filter((r) => r.eligible_for_toxicology_aggregation),
-                              excluded_rows: [...attributedFailedRows.filter((r) => !r.eligible_for_toxicology_aggregation), ...attributedFailedRelatedRows],
+                              rows: eligibleFailedRows,
+                              excluded_rows: excludedFailedRows,
                           },
-                      }
+                          retainedCount: eligibleFailedRows.length,
+                          droppedCount: excludedFailedRows.length,
+                          filter: FAILED_TRIALS_FILTER,
+                          emptyReason: "ClinicalTrials.gov returned no terminated or withdrawn trials for the assessment target",
+                      })
                     : { coverage: "queried_no_data" as const },
             benchmarks: {
                 therapeutic_area: benchmarks.therapeutic_area,
@@ -734,15 +775,23 @@ export async function assembleDossier(
                 : phase3
                   ? { coverage: "queried_no_data", error: { message: "no off-target data" } }
                   : { coverage: "not_loaded", reason: "Phase-3 fan-out not run" },
+            // The safety lens carries the same two buckets as
+            // `clinical_development.failed_trials`. Merging them would put a
+            // related-receptor termination in the same list as a target-attributed
+            // one, and the reader has no other way to tell them apart.
             failed_trials_safety_lens:
-                ctgov.coverage === "available" && failedTrialRows.length > 0
-                    ? {
-                          coverage: "available" as const,
-                          data: { rows: [...attributedFailedRows, ...attributedFailedRelatedRows] },
-                      }
-                    : ctgov.coverage === "available"
-                      ? { coverage: "queried_no_data" as const, error: { message: "no failed trials" } }
-                      : { coverage: "queried_no_data" as const, error: { message: "ClinicalTrials.gov unavailable" } },
+                ctgov.coverage === "available"
+                    ? coverageFromFilteredRows({
+                          data: {
+                              rows: eligibleFailedRows,
+                              excluded_rows: excludedFailedRows,
+                          },
+                          retainedCount: eligibleFailedRows.length,
+                          droppedCount: excludedFailedRows.length,
+                          filter: FAILED_TRIALS_FILTER,
+                          emptyReason: "no failed trials",
+                      })
+                    : { coverage: "queried_no_data" as const, error: { message: "ClinicalTrials.gov unavailable" } },
             class_precedent: classP
                 ? { coverage: "available", data: classP }
                 : phase3
@@ -769,8 +818,7 @@ export async function assembleDossier(
         reference_biology: {
             therapeutic_area_associations:
                 ot.coverage === "available"
-                    ? {
-                          coverage: "available",
+                    ? coverageFromFilteredRows({
                           data: {
                               rows: filteredIndications.slice(0, 200).map((a) => {
                                   const evidence = makeAssociationEvidence(a);
@@ -798,7 +846,11 @@ export async function assembleDossier(
                                   };
                               }),
                           },
-                      }
+                          retainedCount: Math.min(filteredIndications.length, 200),
+                          droppedCount: indicationsRaw.length - filteredIndications.length,
+                          filter: INDICATIONS_FILTER,
+                          emptyReason: "Open Targets returned no disease associations for the target",
+                      })
                     : { coverage: "queried_no_data" },
             molecular_interactions: (() => {
                 const rows = assembleMolecularInteractions(phase2, fanout);
@@ -982,9 +1034,7 @@ export async function assembleDossier(
                 const data = assembleAdditionalEvidence(phase2);
                 return data ? { coverage: "available" as const, data } : { coverage: "queried_no_data" as const };
             })(),
-            discovery_trials: discoveryTrialData
-                ? { coverage: "available" as const, data: discoveryTrialData }
-                : { coverage: "queried_no_data" as const, error: { message: "no medium/low-confidence trials" } },
+            discovery_trials: discoveryTrials,
             // Stamped by Phase 5 after synthesis agents run; not available at assembly time.
             synthesis_diagnostics: { coverage: "not_loaded", reason: "Phase-5 synthesis not yet run" },
             quality_gates: { coverage: "not_loaded", reason: "Phase-5 synthesis not yet run" },

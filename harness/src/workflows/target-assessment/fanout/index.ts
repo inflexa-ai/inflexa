@@ -122,6 +122,7 @@ export async function polypharmForOneModulator(item: PolypharmInputItem): Promis
                 hits: hits.map((h) => ({
                     targetChemblId: h.targetChemblId,
                     targetName: h.targetName,
+                    assayChemblId: h.assayChemblId,
                     pchemblValue: h.pchemblValue,
                     standardType: h.standardType,
                     standardValue: h.standardValue,

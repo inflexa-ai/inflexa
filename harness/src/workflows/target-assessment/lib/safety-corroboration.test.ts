@@ -96,11 +96,6 @@ function monarchAvailable(phenotypes: Array<{ hpoId: string; label: string; ance
                 frequencyPercent: null,
                 primaryKnowledgeSource: "infores:hpo-annotations",
             })),
-            phenotypeTotal: phenotypes.length,
-            phenotypesTruncated: false,
-            diseases: [],
-            diseaseTotal: 0,
-            diseasesTruncated: false,
         },
     };
 }
@@ -130,7 +125,24 @@ describe("resolveHpoOrgan", () => {
     });
 
     it("resolves a term by its own id", () => {
-        expect(resolveHpoOrgan("HP:0002664", [])).toBe("oncology");
+        expect(resolveHpoOrgan("HP:0001392", [])).toBe("hepatic");
+    });
+
+    it("resolves a neoplasm through the organ root it sits under", () => {
+        // Lung neoplasm: malignant, and respiratory wherever it is filed, so it
+        // can corroborate a respiratory finding from another source.
+        expect(resolveHpoOrgan("HP:0100526", ["HP:0002664", "HP:0002086", "HP:0000118"])).toBe("respiratory");
+        expect(resolveHpoOrgan("HP:0002896", ["HP:0002664", "HP:0001392", "HP:0000118"])).toBe("hepatic");
+    });
+
+    it("returns null for a neoplasm that names no organ", () => {
+        expect(resolveHpoOrgan("HP:0002664", [])).toBeNull();
+    });
+
+    it("resolves the thyroid root but not the endocrine root above it", () => {
+        expect(resolveHpoOrgan("HP:0000821", ["HP:0000820", "HP:0000818"])).toBe("endocrine_thyroid");
+        // Adrenal insufficiency is endocrine, and no canonical token names it.
+        expect(resolveHpoOrgan("HP:0000846", ["HP:0000818", "HP:0000118"])).toBeNull();
     });
 });
 
@@ -219,6 +231,18 @@ describe("assembleSafetyCorroboration", () => {
         expect(section.filter).toBe(CORROBORATION_FILTER);
     });
 
+    it("never reports an emptied fold as no data — a signal that arrived is either kept or counted", () => {
+        // Every one of these leaves the fold with no row: an organ that does not
+        // resolve, a source standing alone, both at once. None may come back as
+        // "the sources held nothing", because in each case they held something.
+        for (const impcOrgans of [["hepatic"], ["hearing"], ["hepatic", "renal"], ["hearing", "vision"]]) {
+            const section = run({ phase1: phase1({ impc: impcAvailable(impcOrgans) }) });
+            expect({ impcOrgans, coverage: section.coverage }).toEqual({ impcOrgans, coverage: "filtered" });
+            if (section.coverage !== "filtered") continue;
+            expect(section.dropped_count).toBeGreaterThan(0);
+        }
+    });
+
     it("drops a signal whose organ does not resolve", () => {
         const section = run({
             phase1: phase1({
@@ -231,6 +255,36 @@ describe("assembleSafetyCorroboration", () => {
         if (section.coverage !== "available") return;
         expect(section.data.rows.map((r) => r.organ)).toEqual(["hepatic"]);
         expect(section.dropped_count).toBe(1);
+    });
+
+    it("does not corroborate an organ neither source named", () => {
+        // A mouse endocrine/exocrine gland knockout and a human adrenal
+        // phenotype are both endocrine and neither is thyroid, so nothing here
+        // reaches the one endocrine token.
+        const section = run({
+            phase1: phase1({
+                impc: impcAvailable(["endocrine"]),
+                monarch: monarchAvailable([{ hpoId: "HP:0000846", label: "Adrenal insufficiency", ancestorIds: ["HP:0000818", "HP:0000118"] }]),
+            }),
+        });
+
+        expect(section.coverage).toBe("filtered");
+        if (section.coverage !== "filtered") return;
+        expect(section.dropped_count).toBe(2);
+    });
+
+    it("corroborates a respiratory neoplasm against a respiratory label warning", () => {
+        const section = run({
+            phase1: phase1({
+                monarch: monarchAvailable([{ hpoId: "HP:0100526", label: "Neoplasm of the lung", ancestorIds: ["HP:0002664", "HP:0002086"] }]),
+            }),
+            regulatoryOrganSignals: labelSignals([{ organ: "respiratory", excerpt: "Pulmonary toxicity has been reported." }]),
+        });
+
+        expect(section.coverage).toBe("available");
+        if (section.coverage !== "available") return;
+        expect(section.data.rows.map((r) => r.organ)).toEqual(["respiratory"]);
+        expect(section.data.rows[0]!.independent_source_count).toBe(2);
     });
 
     it("drops a signal whose source produced no locator", () => {
