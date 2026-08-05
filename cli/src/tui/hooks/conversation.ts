@@ -18,7 +18,7 @@ import { describeCause, findAuthCause } from "../../lib/cause.ts";
 import { getLogger } from "../../lib/log.ts";
 import { resolveModelConnection } from "../../modules/harness/config.ts";
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
-import { eventDepth, isSubAgentEvent, readAskPart, readPlanCard, readRunCard, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
+import { isSubAgentEvent, readAskPart, readPlanCard, readRunCard, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "../../modules/harness/artifact_open.ts";
 import {
     buildChatSession,
@@ -353,6 +353,24 @@ function updateToolPart(toolUseId: string, name: string, status: "ok" | "error" 
  * A no-op when no tool is open: such an event has nothing to be subordinate to, and putting it at
  * the transcript root is exactly the burial the routing rule exists to prevent.
  */
+/**
+ * How deep in the agent call chain `event` was emitted — 1 for the top-level chat agent, higher for a
+ * sub-agent, and 0 for an event that carries no source (a stream delta).
+ *
+ * The depth selects the INNERMOST sub-agent when several nest: the deepest one is the agent that does
+ * the work right now, while each of its callers only waits on it.
+ *
+ * Private to this file. {@link applySubAgentActivity} is the one caller, and the REPL printer — which
+ * shares this file's other event readers — never asks the question.
+ */
+function eventDepth(event: EmitEventArg): number {
+    // `source` is required on loop orchestration events, optional on data parts, and absent on stream
+    // events, so `in` is the honest presence read across the union. `callPath` is loop-owned and
+    // untrusted, hence the `Array.isArray` guard: a malformed source reads as top-level, not a throw.
+    const src = "source" in event && event.source ? event.source : undefined;
+    return src !== undefined && Array.isArray(src.callPath) ? src.callPath.length : 0;
+}
+
 function applySubAgentActivity(event: EmitEventArg): void {
     const id = currentAssistantId;
     if (!id || openTools.size === 0) return;
