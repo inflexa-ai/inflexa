@@ -16,7 +16,7 @@ There is also a contradiction to settle. `harness/openspec/specs/lib-store/spec.
 - **The store and the baked image coexist.** With no store configured the image's baked store is used exactly as now. With one configured, the mount takes precedence. **BREAKING** for nothing: the default path is unchanged.
 - **The container-runtime abstraction gains one caller.** Provisioning runs through the same `docker`/`podman` wrapper the image pull already uses, so engine selection and socket resolution are not duplicated.
 
-Out of scope: the agent-facing install tool, which would let an agent request a package rather than a user. That needs the approval flow designed against the conversation agent and belongs in its own change. Also out of scope: the R, conda, and Node tracks, matching the harness change's Python-only scope. Also out of scope: the download of the CI-built store, which arrives from GHCR as an OCI artifact (decided 2026-08-05). That download, its receipt, and the gate that holds sandbox creation until the store is complete belong to their own change. This change consumes whatever store the configured root holds.
+Out of scope: the agent-facing install tool, which would let an agent request a package rather than a user. That needs the approval flow designed against the conversation agent and belongs in its own change. Also out of scope: the R, conda, and Node tracks. The cli surface starts with Python. The harness provisions R too, and the R surface joins in a later change. Also out of scope: the download of the CI-built store, which arrives from GHCR as an OCI artifact (decided 2026-08-05). That download, its receipt, and the gate that holds sandbox creation until the store is complete belong to their own change. This change consumes whatever store the configured root holds.
 
 ## Capabilities
 
@@ -37,3 +37,4 @@ Out of scope: the agent-facing install tool, which would let an agent request a 
 - `src/lib/env.ts`: a store root distinct from `libsDir`, which is the image-inventory cache and whose own comment states it is not a library store.
 - `openspec/specs/lib-store-provisioning/spec.md`: delta spec.
 - Depends on `harness`'s `content-addressed-lib-store` for the provisioner image and the store format. Until a released harness carries it, CI for this subsystem fails on the unreleased dependency, which is the documented shape of a cross-subsystem change.
+- The source of the provisioner image on a user machine is an open decision (`BLOCKED`). No workflow publishes that image today. Until the decision, the provisioning command takes an explicit image reference from the configuration, with no default.

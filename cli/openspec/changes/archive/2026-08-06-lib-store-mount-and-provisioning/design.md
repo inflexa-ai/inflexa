@@ -36,6 +36,10 @@ Two host-side precedents already exist and should be followed rather than reinve
 
 **Give provisioning the `approval` policy.** It starts a container with network access and writes to disk. `inflexa sandbox pull` sets the precedent for exactly this shape. Reclaiming disk deletes data and takes the same policy. Listing is read-only and stays `auto` — following `sandbox status`, which deliberately avoids writing config so a passive diagnostic stays passive.
 
+**The provisioning command extends the active farm.** The store is per-installation, thus one farm is active. The harness resolves the union of the earlier requests and the new request, thus an add is additive by design. A named farm is an explicit option, not the default.
+
+**The provisioner image comes from explicit configuration, with no default.** No workflow publishes the provisioner image for a user machine today, and the image source is an open decision (`BLOCKED`): a GHCR publish, or another route. The command requires a configured image reference, and it fails with clear guidance when the value is unset. Thus nothing guesses a registry path that does not exist.
+
 **Adopt the reference-store installer's crash semantics.** Stage, rename, then record. A run killed between the rename and the record reads back as incomplete and the next run repairs it. This is proven in this codebase and needs no invention.
 
 ## Risks / Trade-offs
