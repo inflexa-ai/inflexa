@@ -19,6 +19,7 @@
  * digest lands in a new directory and a stale inventory is never served.
  */
 
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -97,4 +98,24 @@ export async function cachePackageInventory(rt: ContainerRuntime, image: string)
 export async function resolvePackagesFile(rt: ContainerRuntime, image: string): Promise<string | null> {
     const cached = await cachePackageInventory(rt, image);
     return cached.isOk() ? cached.value : null;
+}
+
+/**
+ * The active farm's package inventory inside a configured store, or null when it is not readable.
+ *
+ * The store keeps its active version behind `current`, a symlink the harness swaps on activation; the
+ * inventory the sandbox mounts is `current/packages.txt`. This reports only whether that one file is
+ * present — the shallow shape that decides whether the CLI supplies the store inventory or falls back to
+ * the image label cache. It is NOT the harness's own mount-usability check, which also validates
+ * `meta.json` and the symlink target. The harness re-checks at each sandbox create and drops the mount
+ * when the store is incomplete; the inventory must then follow the mount back to the image label, which
+ * the caller does on a null here.
+ *
+ * `existsSync` follows the `current` symlink, so a missing or dangling pointer and an absent inventory
+ * file all resolve to null. It never throws, so a broken store degrades to the fallback rather than
+ * failing the boot.
+ */
+export function storePackagesFile(storePath: string): string | null {
+    const candidate = join(storePath, "current", "packages.txt");
+    return existsSync(candidate) ? candidate : null;
 }
