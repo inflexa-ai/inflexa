@@ -2,9 +2,9 @@
  * opentargets — one tool over the Open Targets Platform: target-disease
  * association evidence, read from a gene or from a disease.
  *
- * The curated safety liabilities this tool used to serve now belong to
- * `target_safety`, which pairs them with the local secondary-pharmacology panel
- * and resolves the Ensembl id they need.
+ * Curated safety liabilities are not served here: `target_safety` owns them,
+ * because it pairs them with the local secondary-pharmacology panel and
+ * resolves the Ensembl id they need.
  *
  * The input is a flat object with an `action` discriminator — not a
  * `z.discriminatedUnion`, which `defineTool` rejects (model tool calling needs

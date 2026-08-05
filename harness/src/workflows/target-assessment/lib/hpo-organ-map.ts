@@ -14,6 +14,14 @@
  * prenatal) are absent — a phenotype is reported under the organ it affects or
  * not at all.
  *
+ * A root broader than any single token is absent for that same reason, even
+ * where a token's name is close to it: the endocrine-system root spans every
+ * endocrine organ while the only endocrine token names the thyroid, so an
+ * adrenal phenotype resolves through no root and is dropped. The neoplasm root
+ * says a phenotype is malignant, not where it sits, so a neoplasm resolves
+ * through the organ root it also carries — a lung neoplasm is respiratory, and
+ * a neoplasm with no organ root at all resolves to nothing.
+ *
  * The values are the canonical tokens, so this module declares no organ
  * enumeration of its own.
  */
@@ -33,10 +41,8 @@ const HPO_ORGAN_ANCESTORS: ReadonlyArray<readonly [string, OrganSystem]> = [
     ["HP:0000759", "pns"], // Abnormal peripheral nervous system morphology
     ["HP:0012639", "cns"], // Abnormal nervous system morphology
     ["HP:0000707", "cns"], // Abnormality of the nervous system
-    ["HP:0002664", "oncology"], // Neoplasm
     ["HP:0002715", "immune"], // Abnormality of the immune system
     ["HP:0001871", "hematologic"], // Abnormality of blood and blood-forming tissues
-    ["HP:0000818", "endocrine_thyroid"], // Abnormality of the endocrine system
     ["HP:0001939", "metabolic"], // Abnormality of metabolism/homeostasis
     ["HP:0002086", "respiratory"], // Abnormality of the respiratory system
     ["HP:0025031", "gi"], // Abnormality of the digestive system

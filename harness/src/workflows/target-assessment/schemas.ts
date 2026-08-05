@@ -356,19 +356,6 @@ export const MonarchBundleSchema = z.object({
             primaryKnowledgeSource: z.string().nullable(),
         }),
     ),
-    phenotypeTotal: z.number(),
-    phenotypesTruncated: z.boolean(),
-    diseases: z.array(
-        z.object({
-            mondoId: z.string(),
-            label: z.string(),
-            predicate: z.string(),
-            primaryKnowledgeSource: z.string().nullable(),
-            publications: z.array(z.string()),
-        }),
-    ),
-    diseaseTotal: z.number(),
-    diseasesTruncated: z.boolean(),
 });
 export type MonarchBundle = z.infer<typeof MonarchBundleSchema>;
 

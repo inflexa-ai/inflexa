@@ -5,14 +5,14 @@
  * demotion, recommendation quality gates), computes derived fields, and
  * validates against `DossierSchema`.
  *
- * The DB write (`setDossier` / `markFailed`) lives in the workflow's terminal
- * handler in §6. This module returns the validated dossier instead of writing it.
+ * The DB write (`setDossier` / `markFailed`) belongs to the workflow's terminal
+ * handler; this module returns the validated dossier instead of writing it.
  * Typed throws (`DossierSchemaViolationError`, `DossierDerivedInvariantError`)
- * let the terminal handler dispatch to `markFailed` with the matching `error.kind`.
+ * let that handler dispatch to `markFailed` with the matching `error.kind`.
  *
- * The direction-of-effect audit (`auditCitationDirections`) is NOT called here —
- * it requires an LLM and is not on the PR #4 critical path. Follow-up tracked
- * in §17 if a harness-native audit pipeline is wired.
+ * Every pass here is deterministic. The direction-of-effect audit
+ * (`auditCitationDirections`) is not among them because it needs an LLM call,
+ * and this module runs after synthesis has closed.
  */
 
 import { z } from "zod";

@@ -7,10 +7,13 @@
  *
  * Coverage discipline: every section that depends on enrichment data
  * carries a `coverage` discriminator (`available | queried_no_data |
- * not_loaded`). Sections that fall back to inference also carry an
- * `inference_path`. Aggregate rows preserve their contributing evidence
- * under `evidence: [...]` arrays; rows that assert a liability carry it
- * under `support`.
+ * not_loaded | filtered`), taken from the shared envelope rather than
+ * declared per section. `filtered` says a threshold of ours emptied the
+ * section and carries the filter and the count it discarded; a partially
+ * filtered `available` section carries `dropped_count`. Sections that fall
+ * back to inference also carry an `inference_path`. Aggregate rows preserve
+ * their contributing evidence under `evidence: [...]` arrays; rows that
+ * assert a liability carry it under `support`.
  *
  * See `TARGET_DOSSIER.md` for the full editorial specification.
  */
@@ -783,7 +786,12 @@ export const SafetyProfileSchema = z.object({
     faers: withCoverage(FaersSummarySchema),
     trial_aes: withCoverage(TrialAesSchema),
     off_target_panel: withCoverage(OffTargetPanelSchema),
-    failed_trials_safety_lens: withCoverage(z.object({ rows: z.array(FailedTrialRowSchema) })),
+    failed_trials_safety_lens: withCoverage(
+        z.object({
+            rows: z.array(FailedTrialRowSchema),
+            excluded_rows: z.array(FailedTrialRowSchema).default([]),
+        }),
+    ),
     class_precedent: withCoverage(ClassPrecedentSchema),
     target_organ_liabilities: withCoverage(z.object({ rows: z.array(SafetyFlagSchema) })),
     regulatory_actions: withCoverage(z.object({ rows: z.array(RegulatoryActionRowSchema) })).optional(),

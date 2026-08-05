@@ -306,13 +306,11 @@ export function assembleSafetyCorroboration(input: CorroborationInput): SafetyCo
 
     rows.sort((a, b) => b.independent_source_count - a.independent_source_count || a.organ.localeCompare(b.organ));
 
+    // Reaching here means at least one source emitted a signal — that is what put
+    // it in `sourcesConsidered` — and every emitted signal was either admitted or
+    // counted as dropped. So no record left standing means the fold's own
+    // thresholds took them all, and `dropped` is necessarily positive.
     if (rows.length === 0) {
-        if (dropped === 0) {
-            return {
-                coverage: "queried_no_data",
-                error: { message: "no source produced an organ-bearing safety signal" },
-            };
-        }
         return { coverage: "filtered", filter: CORROBORATION_FILTER, dropped_count: dropped };
     }
 

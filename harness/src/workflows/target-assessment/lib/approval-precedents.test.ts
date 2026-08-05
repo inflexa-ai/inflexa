@@ -227,6 +227,37 @@ describe("fetchApprovalPrecedents", () => {
         expect(precedents[0]!.safety_sections.map((s) => s.section)).toEqual(["warnings_and_precautions"]);
     });
 
+    it("serves a repeat lookup from the cache instead of asking openFDA again", async () => {
+        __resetApprovalPrecedentCacheForTest();
+        let calls = 0;
+        stubFetch(() => {
+            calls += 1;
+            return json({ results: [{ openfda: { application_number: ["NDA000222"] }, boxed_warning: ["Hepatotoxicity."] }] });
+        });
+
+        const first = await fetchApprovalPrecedents({ indication: "melanoma" });
+        const second = await fetchApprovalPrecedents({ indication: "MELANOMA" });
+        expect(calls).toBe(1);
+        expect(second).toEqual(first);
+
+        __resetApprovalPrecedentCacheForTest();
+        await fetchApprovalPrecedents({ indication: "melanoma" });
+        expect(calls).toBe(2);
+    });
+
+    it("keeps a zero-match answer out of the cache so a later query is not masked", async () => {
+        __resetApprovalPrecedentCacheForTest();
+        let calls = 0;
+        stubFetch(() => {
+            calls += 1;
+            return new Response("not found", { status: 404 });
+        });
+
+        await fetchApprovalPrecedents({ indication: "no-such-disease" });
+        await fetchApprovalPrecedents({ indication: "no-such-disease" });
+        expect(calls).toBe(2);
+    });
+
     it("treats a 404 as an empty precedent set", async () => {
         __resetApprovalPrecedentCacheForTest();
         stubFetch(() => new Response("not found", { status: 404 }));

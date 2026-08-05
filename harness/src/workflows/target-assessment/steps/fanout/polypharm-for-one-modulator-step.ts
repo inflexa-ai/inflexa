@@ -24,6 +24,8 @@ export const PerModulatorPolypharmItemSchema = z.object({
         z.object({
             targetChemblId: z.string(),
             targetName: z.string().nullable(),
+            /** The ChEMBL assay record the binding was measured in, when there is one. */
+            assayChemblId: z.string().nullable(),
             pchemblValue: z.number().nullable(),
             standardType: z.string().nullable(),
             standardValue: z.number().nullable(),

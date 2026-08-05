@@ -11,9 +11,14 @@
  * sections as `LabelSafetyText`. The markdown block is a projection of that
  * form, not a replacement for it — the same sections also project onto
  * per-organ regulatory signals via `segmentLabelSafety`.
+ *
+ * The lookup is cached in-process through the shared `BoundedTtlCache`: two
+ * assessments in the same therapeutic area ask openFDA the same question, and
+ * the answer moves on the scale of a label revision, not a run.
  */
 
 import type { DossierBody } from "../../../contracts/target-dossier.js";
+import { BoundedTtlCache } from "../../../lib/cache.js";
 import { LABEL_SAFETY_SECTIONS, type FdaLabelSafety, type LabelSafetySection, type LabelSafetyText } from "./fda-label-safety.js";
 
 export type PrecedentModality = "small_molecule" | "biologic" | "gene_therapy" | "cell_therapy";
@@ -72,8 +77,16 @@ function ingestSafetySections(r: OpenFdaLabelResult): LabelSafetyText[] {
     return sections;
 }
 
-const cache = new Map<string, { ts: number; value: { precedents: Precedent[] } }>();
 const TTL_MS = 60 * 60 * 1000;
+
+/**
+ * One entry per (indication, modality, mechanism) an assessment resolves, and a
+ * host serves many assessments from one process — hence a bound, not a Map that
+ * only ever grows.
+ */
+const CACHE_MAXIMUM = 64;
+
+let cache = new BoundedTtlCache<{ precedents: Precedent[] }>(CACHE_MAXIMUM);
 
 /**
  * Query openFDA for prior approvals in a given indication. Returns
@@ -93,7 +106,7 @@ export async function fetchApprovalPrecedents(input: FetchApprovalPrecedentsInpu
         mechanism,
     });
     const cached = cache.get(key);
-    if (cached && Date.now() - cached.ts < TTL_MS) return cached.value;
+    if (cached) return cached;
 
     const term = indication.replace(/"/g, "");
     const url = new URL("https://api.fda.gov/drug/label.json");
@@ -116,13 +129,13 @@ export async function fetchApprovalPrecedents(input: FetchApprovalPrecedentsInpu
     }));
 
     const value = { precedents };
-    cache.set(key, { ts: Date.now(), value });
+    cache.set(key, value, TTL_MS);
     return value;
 }
 
-/** Test-only — clears the in-memory cache to avoid cross-test bleed. */
+/** Test-only — drops the in-memory cache to avoid cross-test bleed. */
 export function __resetApprovalPrecedentCacheForTest(): void {
-    cache.clear();
+    cache = new BoundedTtlCache<{ precedents: Precedent[] }>(CACHE_MAXIMUM);
 }
 
 /**
