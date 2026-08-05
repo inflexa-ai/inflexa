@@ -142,6 +142,48 @@ describe("send() drives the adapter + engine", () => {
         expect(messages[1]?.parts.filter((p) => p.type === "tool-call").length).toBe(1);
     });
 
+    test("each chip reports its own event's duration, not a shared round figure", async () => {
+        // The adapter's own bracket measures the ROUND, because the harness emits
+        // every start before it dispatches and every finish after the round
+        // settles. Only the harness figure separates the two calls.
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            const source = { agentId: "tui-chat", callPath: ["tui-chat"] };
+            void emit({ type: "tool-started", source, toolUseId: "slow", name: "read_file", input: {} });
+            void emit({ type: "tool-started", source, toolUseId: "fast", name: "list_files", input: {} });
+            void emit({ type: "tool-finished", source, toolUseId: "slow", name: "read_file", outcome: "ok", durationMs: 480 });
+            void emit({ type: "tool-finished", source, toolUseId: "fast", name: "list_files", outcome: "ok", durationMs: 3 });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        const chips = messages[1]!.parts.filter((p): p is ToolCallPart => p.type === "tool-call");
+        expect(chips.map((c) => c.durationMs)).toEqual([480, 3]);
+    });
+
+    test("an event without a duration falls back to the observed elapsed time", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            const source = { agentId: "tui-chat", callPath: ["tui-chat"] };
+            void emit({ type: "tool-started", source, toolUseId: "t1", name: "read_file", input: {} });
+            void emit({ type: "tool-finished", source, toolUseId: "t1", name: "read_file", outcome: "ok" });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        expect(typeof tool?.durationMs).toBe("number");
+    });
+
+    test("an unpaired finished event still renders, and carries the event's duration", async () => {
+        // No start arrived, thus the adapter has no stamp of its own to bracket.
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            const source = { agentId: "tui-chat", callPath: ["tui-chat"] };
+            void emit({ type: "tool-finished", source, toolUseId: "orphan", name: "grep", outcome: "ok", durationMs: 17 });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        expect(tool?.name).toBe("grep");
+        expect(tool?.durationMs).toBe(17);
+    });
+
     test("tool error outcome is honored", async () => {
         const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
             void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t9", name: "write_file", input: {} });

@@ -657,3 +657,36 @@ describe("run_inflexa — the child's working directory", () => {
         expect(result.status).toBe("ran");
     });
 });
+
+describe("run_inflexa — describeCall", () => {
+    /** Read the hook the way the harness emit site reads it. */
+    function describeCall(argv: string[]): string {
+        const tool = makeTool(recordingSubprocess().fn);
+        expect(tool.describeCall).toBeDefined();
+        return tool.describeCall!({ argv });
+    }
+
+    test("a word argv describes those words", () => {
+        expect(describeCall(["refs", "list"])).toBe("refs list");
+        expect(describeCall(["--help"])).toBe("--help");
+    });
+
+    test("a single packed command string describes the words that will run", () => {
+        // The normalizer tokenizes this before the spawn, thus the chip must name
+        // the two words and never the one submitted element.
+        expect(describeCall(["analysis list"])).toBe("analysis list");
+    });
+
+    test("an element with embedded whitespace is encoded as the approval prompt encodes it", () => {
+        // A word argv is never re-split, thus the element survives and the chip
+        // quotes it exactly as the dialog does. One argv must not read two ways.
+        expect(describeCall(["run", "--file", "my file.csv"])).toBe('run --file "my file.csv"');
+        expect(describeCall(["run", "--file", `it's.csv`])).toBe(`run --file "it's.csv"`);
+    });
+
+    test("a malformed argv is still described", () => {
+        // The detail is computed before dispatch, thus it never depends on the verdict.
+        expect(describeCall(["not-a-command", "--nope"])).toBe("not-a-command --nope");
+        expect(describeCall([])).toBe("");
+    });
+});

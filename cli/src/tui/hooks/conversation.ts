@@ -529,7 +529,16 @@ export function applyEmitEvent(event: EmitEventArg): void {
             const detail = event.detail;
             const startedAt = openTools.get(toolUseId);
             openTools.delete(toolUseId);
-            const durationMs = startedAt !== undefined ? Date.now() - startedAt : undefined;
+            // The harness measures each call around its own dispatch, thus its
+            // figure is the only accurate one. This bracket cannot measure a call:
+            // the loop emits every start of a round before it dispatches anything,
+            // and every finish after the round settles. Thus the interval between
+            // the two events is the round, and each call of a multi-call round
+            // observes one identical figure.
+            //
+            // The bracket stays as the fallback for a harness that sends no
+            // duration, and it still pairs an unmatched finished event to its part.
+            const durationMs = event.durationMs ?? (startedAt !== undefined ? Date.now() - startedAt : undefined);
             updateToolPart(toolUseId, name, outcome, durationMs, detail);
             return;
         }
