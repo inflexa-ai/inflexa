@@ -27,7 +27,6 @@ exclusive. A `category` groups rows under a header, and the header survives the 
 **Non-Goals:**
 
 - A detail dialog for a filesystem entry. Refer to Decision 3.
-- A change to the `dialogSize` presets.
 - A change to the input model, the staging path, or the provenance events.
 
 ## Decisions
@@ -118,11 +117,16 @@ about 16 columns. The cursor detail line uses the full form.
 ### Decision 7: the analysis id copies through the existing clipboard writer
 
 `writeClipboard` emits an OSC 52 escape AND runs the native tool, thus it reaches a
-terminal over SSH and a GUI clipboard. The switcher binds `y` to copy the cursor row's
-analysis id, and it reports the copy with a notice, as the chat surface does.
+terminal over SSH and a GUI clipboard. The switcher binds `ctrl+y` to copy the cursor
+row's analysis id, and it reports the copy with a notice, as the chat surface does.
 
-The filter input of `SelectDialog` can hold the focus. Thus `y` needs the bare-printable
-gate that the list engine documents, or it types into the filter.
+The chord carries the control key. A bare `y` cannot work: the switcher is a single-mode
+picker, thus its filter input holds the focus for the whole life of the dialog. Ctrl, and
+never Alt: a terminal delivers Alt unreliably, and macOS composes Option into a character.
+
+The footer of the dialog names the chord, through a `footerHint` prop. `SelectDialog` owns
+its footer and stays domain-agnostic. Thus a key that the HOST binds had no way to
+advertise itself, and only the WhichKey overlay could find it.
 
 ### Decision 8: the anchor paths come from ONE query
 
@@ -130,6 +134,37 @@ The Switch analysis picker already reads its token totals in one batched query o
 listed ids, and never one query for each drawn row. The anchor paths obey the same rule:
 one `listAnchors()` call builds a map from anchor id to cached path. A missing anchor
 degrades to the wording that `prov.ts` uses for an unknown folder.
+
+### Decision 9: the `lg` preset grows, rather than a fourth tier
+
+Issue #26 asks for a bigger dialog. Three shapes answer it: grow `lg`, add a tier between
+`lg` and `xl`, or move these three dialogs to `xl`.
+
+`lg` grows to 108 columns by 28 rows. Each consumer of `lg` is a list, and each one gains
+together: the picker, the select dialog, the results dialog, the usage dialog, and the run
+detail dialog. The vocabulary stays at three tiers.
+
+A fourth tier is rejected. It buys one more decision at each new dialog, for a role that
+`lg` already names: "pickers, lists, results".
+
+`xl` is rejected. Its role is a full showcase and a gallery, thus a file picker that fills
+the terminal is a different feel from a modal.
+
+The width follows the row. An entry spends about 35 columns on its permissions, its size,
+and its date. The height leaves about 20 rows for the list after the chrome of the panel.
+
+### Decision 10: a footer names only the keys of its own surface
+
+The movement vocabulary is app-wide, and each navigable surface carries the same set. The
+WhichKey overlay documents it live. Thus a footer that restates it spends the width of the
+row on what the user knows, and it reads as though this one list moves differently.
+
+`↑/↓ move` leaves each footer. The mode word stays, because the same keystroke does
+different things in each state and nothing else on the screen says which state is live.
+
+The breathing row above a footer belongs to `DialogPanel`, thus each dialog gets it at one
+time. The pad sits inside the painted box, because a transparent gap under a `flexGrow`
+scrollbox lets the scrolled content bleed through it.
 
 ## Risks / Trade-offs
 

@@ -21,10 +21,13 @@ the third came from the same review.
 - The flat inputs list becomes multi-select, and it removes each selected input in one
   pass. Its row title becomes the absolute path, with the kind, the size, and the date
   on a meta line below.
+- The `lg` size preset grows from 88 by 20 to 108 by 28. This is issue #26, point 4.
+- A dialog footer takes a painted row of padding above it, and it names no cursor key.
+  A list row takes one column of right padding, thus a hint clears the scrollbar.
 - The Switch analysis picker groups its rows by anchor, under a header that shows the
   anchor folder. The row carries an absolute local date, not a relative age. The cursor
-  detail line carries the analysis id, the slug, and the full creation date. A `y` key
-  copies the analysis id to the clipboard.
+  detail line carries the analysis id, the slug, and the full creation date. A `ctrl+y`
+  chord copies the analysis id to the clipboard, and the footer names that chord.
 - `SelectItem` gets an optional field that separates the group key from the group header
   text. Today the category string is both, thus a group cannot be keyed on an anchor id
   and titled with a path.
@@ -45,6 +48,10 @@ None. Each change modifies an existing capability.
   list that shows absolute paths.
 - `command-palette`: the Switch analysis picker groups by anchor, renders absolute dates,
   carries a cursor detail line, and copies the analysis id.
+- `tui-design-tokens`: the `lg` preset grows to 108 columns by 28 rows. A row that carries
+  facts beside its name wants the width, and a list wants the rows.
+- `dialog-system`: a footer takes a painted breathing row above it, a footer names no
+  cursor key, and a list row clears the scrollbar.
 
 ## Impact
 

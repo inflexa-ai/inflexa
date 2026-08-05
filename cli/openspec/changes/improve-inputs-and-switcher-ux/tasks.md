@@ -63,3 +63,12 @@
 - [x] 8.1 Run `bun run format:file` on each changed file under `src/`
 - [x] 8.2 Run `bun run typecheck` and `bun run lint`
 - [x] 8.3 Run `bun run test`
+
+## 9. The review pass
+
+- [x] 9.1 Right-align the hint column, and clear the scrollbar with a right pad
+- [x] 9.2 Add a painted breathing row above each dialog footer
+- [x] 9.3 Drop each cursor key from each footer, and keep the mode word
+- [x] 9.4 Mount a multi-select dialog in NORMAL, as the file picker does
+- [x] 9.5 Name the copy chord in the footer of the switcher
+- [x] 9.6 Grow the `lg` preset to 108 by 28, and derive its tests from the preset
