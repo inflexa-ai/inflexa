@@ -4,8 +4,7 @@ import { createRoot } from "solid-js";
 import type { ChatProvider } from "@inflexa-ai/harness";
 
 import type { ResolvedHarnessConfig } from "../../modules/harness/config.ts";
-import type { HarnessRuntime, HarnessBootError } from "../../modules/harness/runtime.ts";
-import { describeBootError } from "../../modules/harness/profile.ts";
+import { describeBootError, type HarnessRuntime, type HarnessBootError } from "../../modules/harness/runtime.ts";
 import {
     __resetGaugeForTest,
     clearAgentSwitch,

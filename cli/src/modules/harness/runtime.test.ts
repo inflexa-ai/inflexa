@@ -18,7 +18,7 @@ import { env } from "../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../lib/credential.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { bootHarnessRuntime, buildAuthInjectingFetch, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
+import { bootHarnessRuntime, buildAuthInjectingFetch, describeBootError, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
 import { agentProviderInner } from "./agent_switch.ts";
 import type { ResolvedHarnessConfig, ResolvedModelConnection } from "./config.ts";
 import type { ExecIngress } from "./ingress.ts";
@@ -1010,5 +1010,23 @@ describe("buildAuthInjectingFetch", () => {
             forceRefresh: () => Promise.resolve(err<Credential, CredentialError>({ type: "env_var_unset", var: "MISSING" })),
         };
         await expect(buildAuthInjectingFetch(source, underlying)("https://x/messages", {})).rejects.toThrow(/MISSING/);
+    });
+});
+
+// The sandbox_engine_unresolved arm carries a message already built against the
+// pinned runtime AND host platform at resolution time, so it must be surfaced
+// verbatim rather than re-wrapped.
+describe("describeBootError", () => {
+    test("sandbox_engine_unresolved surfaces the resolution message verbatim", () => {
+        const message =
+            "Could not resolve the Podman sandbox-engine socket — the Podman machine is not running.\n  Start it with `podman machine start`, then re-run.";
+        expect(describeBootError({ type: "sandbox_engine_unresolved", message })).toBe(message);
+    });
+
+    // A `cooling_down` cause must read as the self-recovering all-credential block it is, NOT as the
+    // generic "proxy is unreachable" the other `model_unresolved` causes render — otherwise the user
+    // chases a container that is fine.
+    test("model_unresolved cooling_down explains the proxy recovers on its own", () => {
+        expect(describeBootError({ type: "model_unresolved", cause: { type: "cooling_down" } })).toContain("recovers on its own");
     });
 });

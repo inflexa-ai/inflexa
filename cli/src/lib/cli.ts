@@ -1,4 +1,11 @@
-import { confirm as clackConfirm, isCancel, password as clackPassword, select as clackSelect, text as clackText } from "@clack/prompts";
+import {
+    confirm as clackConfirm,
+    isCancel,
+    password as clackPassword,
+    select as clackSelect,
+    spinner as clackSpinner,
+    text as clackText,
+} from "@clack/prompts";
 
 import { shutdown } from "./shutdown.ts";
 
@@ -7,6 +14,19 @@ import { shutdown } from "./shutdown.ts";
 // rather than src/cli/ (the command registry) and stay decoupled from any domain — `dieOn`
 // is typed structurally so it never has to import `DbError`. The prompts here serve the
 // line-based text commands only; the opentui TUI owns the terminal separately (see below).
+
+/**
+ * A live clack spinner, as the type a function takes when a caller hands its spinner down.
+ *
+ * `@clack/prompts` exports the `spinner` factory but no name for what it returns, so a caller that
+ * narrates a long wait inside a helper has to spell the `ReturnType` out. That name belongs here,
+ * beside the other prompt helpers, because this file is the one place the repository speaks to
+ * `@clack/prompts` for the text commands — a second spelling elsewhere is the same type wearing a
+ * different name, and nothing keeps the two agreeing.
+ *
+ * A module that builds a spinner and keeps it inside one function needs nothing from here.
+ */
+export type Spinner = ReturnType<typeof clackSpinner>;
 
 /** Print `message` (with an optional cause) to stderr and exit non-zero — a fatal CLI bail-out. */
 export function fail(message: string, cause?: unknown): never {

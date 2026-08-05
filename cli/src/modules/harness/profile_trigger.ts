@@ -2,19 +2,22 @@ import { err, ok, ResultAsync, type Result } from "neverthrow";
 import {
     clearDataProfile,
     loadDataProfileStatus,
+    makeLocalAuth,
     reconcileOrphanedDataProfile,
     runDataProfile,
     triggerDataProfile,
     tryRetryDataProfile,
+    upsertAnalysis,
     type DataProfileStatus,
     type DataProfileTriggerParams,
+    type DbError,
+    type Pool,
 } from "@inflexa-ai/harness";
 
 import { getLogger } from "../../lib/log.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { workspaceDataDir } from "../analysis/output.ts";
 import { enumerateInputSignatures, inputSignature, isInputSetMaterialized, stageInputs, type StagedInput } from "../staging/staging.ts";
-import { seedProfileLedger } from "./profile.ts";
 import { noteDataProfileState } from "./agent_switch.ts";
 import type { HarnessRuntime } from "./runtime.ts";
 
@@ -23,7 +26,7 @@ import type { HarnessRuntime } from "./runtime.ts";
 // notice: `ensureProfileAtParity` is the managed auto-check the TUI fires when a chat opens on `ready`
 // (and after an analysis swap); `forceReprofile` is the deliberate re-profile the palette/dialog action
 // drives. Both own the DECISION — enumerate → (drift/status branch) → materialize → seed → trigger — and
-// share the materialize → seed core with `inflexa profile` (`seedProfileLedger` in profile.ts), so the
+// share the materialize → seed core with `inflexa profile` (`seedProfileLedger` below), so the
 // ledger contract stays single-sourced. The cheap `enumerateInputSignatures` runs FIRST so the drift
 // check costs only stat/readdir.
 //
@@ -31,6 +34,30 @@ import type { HarnessRuntime } from "./runtime.ts";
 // ladder, so every early return above it (a `failed` row above all) silently withheld the user's files
 // from the workspace tree while the database happily recorded them. A live `running` profile is the one
 // state that still suppresses it, because staging reconcile-deletes a tree that run's sandbox is reading.
+
+/**
+ * Seed the harness ledger row and build the {@link DataProfileTriggerParams} for `staged` — the ONE
+ * construction its two callers share: the parity auto-trigger below, and the dev `inflexa profile`
+ * command. The field mapping IS the ledger contract, so it lives in exactly one place, and drift
+ * between the two callers would corrupt the ledger.
+ *
+ * That one place is here rather than beside the command, because the dependency runs one way: a
+ * product file must never import the dev directory, so of the pair it is the product caller that
+ * must hold the shared half.
+ *
+ * `context` and `billingContext` stay null — neither caller has goal text at profile time, and a
+ * fabricated one would pollute the agent prompt. `inputFileIds` is the staged manifest's file ids,
+ * the auth is the local OSS value, and the manifest rides into the trigger params verbatim.
+ */
+export function seedProfileLedger(pool: Pool, analysisId: string, staged: readonly StagedInput[]): ResultAsync<DataProfileTriggerParams, DbError> {
+    return upsertAnalysis(
+        pool,
+        analysisId,
+        null,
+        null,
+        staged.map((f) => f.fileId),
+    ).map(() => ({ auth: makeLocalAuth(), analysisId, stagedInputs: staged }));
+}
 
 /**
  * The outcome of a parity (or force) check, as a discriminated union the caller maps to UI feedback:

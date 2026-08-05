@@ -1,8 +1,7 @@
 import { createEffect, createSignal, onCleanup } from "solid-js";
 
 import type { ModelConnectionIdentity, ResolvedHarnessConfig } from "../../modules/harness/config.ts";
-import { bootHarnessRuntime, type HarnessRuntime } from "../../modules/harness/runtime.ts";
-import { describeBootError } from "../../modules/harness/profile.ts";
+import { bootHarnessRuntime, describeBootError, type HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { currentAgentModels, onAgentStateChange, pendingAgentSelections, type AgentName } from "../../modules/harness/agent_switch.ts";
 
 // The embedded harness runtime's boot lifecycle as seen by the chat UI, held here (not inside

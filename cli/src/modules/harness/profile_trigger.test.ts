@@ -2,9 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { err, errAsync, ok, okAsync } from "neverthrow";
 import { makeLocalAuth, type DataProfileInputFile, type DataProfileStatus, type DataProfileTriggerParams } from "@inflexa-ai/harness";
 
-import { ensureProfileAtParity, forceReprofile, type ProfileParitySeams } from "./profile_trigger.ts";
+import { ensureProfileAtParity, forceReprofile, seedProfileLedger, type ProfileParitySeams } from "./profile_trigger.ts";
 import { __resetGaugeForTest } from "./agent_switch.ts";
-import { seedProfileLedger } from "./profile.ts";
 import type { HarnessRuntime } from "./runtime.ts";
 import { inputSignature, type StagedInput } from "../staging/staging.ts";
 import type { Analysis } from "../../types/analysis.ts";
