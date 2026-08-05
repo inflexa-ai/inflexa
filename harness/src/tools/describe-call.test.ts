@@ -165,15 +165,38 @@ describe("describeCall — conversation roster", () => {
         // `execute` resolves `path ?? category`, thus the path wins over the category.
         expect(describeCall(tool, { path: "managed/collectri", category: "msigdb" })).toBe("managed/collectri");
         // `query` narrows the named subtree; the detail names both halves, so the
-        // filter no longer hides behind the target.
-        expect(describeCall(tool, { category: "msigdb", query: "hallmark" })).toBe('msigdb · matching "hallmark"');
-        expect(describeCall(tool, { path: "human", query: "kinase" })).toBe('human · matching "kinase"');
+        // filter no longer hides behind the target. A word joins them, because a
+        // separator glyph is the vocabulary of a host.
+        expect(describeCall(tool, { category: "msigdb", query: "hallmark" })).toBe('msigdb matching "hallmark"');
+        expect(describeCall(tool, { path: "human", query: "kinase" })).toBe('human matching "kinase"');
         // A blank value is no filter and no target inside `execute`, thus the
         // detail names the browse that actually happens.
         expect(describeCall(tool, { query: "   " })).toBe("full reference store");
         expect(describeCall(tool, { path: "" })).toBe("full reference store");
         // A blank path still suppresses the category, exactly as `execute` does.
         expect(describeCall(tool, { path: "", category: "msigdb" })).toBe("full reference store");
+    });
+
+    // The emit-site cap cuts the tail. Left to it, a runaway needle loses the quote
+    // that closes its own mark, and a runaway path (the schema admits 4096 bytes)
+    // takes the whole line and drops the filter with no trace. Both halves are
+    // bounded here instead, thus each one reaches a reader and each marks its cut.
+    it("list_available_refs bounds each half, so the cap severs neither the mark nor the filter", () => {
+        const tool = createListAvailableRefsTool(unused);
+
+        const longNeedle = describeCall(tool, { query: "k".repeat(40) });
+        expect(longNeedle).toBe(`matching "${"k".repeat(31)}…"`);
+        expect(normalizeDetail(longNeedle)).toBe(longNeedle);
+
+        const longTarget = describeCall(tool, { path: "p".repeat(200), query: "kinase" });
+        expect(longTarget).toBe(`${"p".repeat(101)}… matching "kinase"`);
+        expect(normalizeDetail(longTarget)).toBe(longTarget);
+
+        // Both halves at once — the worst case, and still one code point inside the cap.
+        const both = describeCall(tool, { path: "p".repeat(200), query: "k".repeat(40) });
+        expect(both).toBe(`${"p".repeat(75)}… matching "${"k".repeat(31)}…"`);
+        expect(Array.from(both)).toHaveLength(120);
+        expect(normalizeDetail(both)).toBe(both);
     });
 
     it("list_available_packages names the presence check before any filter", () => {
@@ -193,6 +216,17 @@ describe("describeCall — conversation roster", () => {
         // blank, thus a blank query never names the call.
         expect(describeCall(tool, { query: "  ", language: "r" })).toBe("r packages");
         expect(describeCall(tool, { query: "" })).toBe("full package list");
+    });
+
+    // A needle the cap cuts loses the quote that closes its mark. The bound is the
+    // hook's, thus the marked form is always whole and the qualifier keeps its place.
+    it("list_available_packages bounds the needle, so the mark always closes", () => {
+        const tool = createListAvailablePackagesTool(unused);
+
+        const detail = describeCall(tool, { query: "s".repeat(40), language: "r" });
+
+        expect(detail).toBe(`matching "${"s".repeat(31)}…" (r)`);
+        expect(normalizeDetail(detail)).toBe(detail);
     });
 
     it("show_plan names the plan", () => {

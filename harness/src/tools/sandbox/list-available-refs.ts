@@ -31,6 +31,7 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
+import { capCodePoints, DETAIL_MAX_LENGTH, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
 import { parseReferenceInstallReceipt } from "../../reference-data/receipt.js";
 import { defineTool } from "../define-tool.js";
@@ -592,18 +593,32 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
         // filter rides beside it.
         //
         // A needle rides behind `matching "…"`: a bare needle reads as a path, and
-        // a filtered subtree must name both halves, not the target alone. A blank
-        // value counts as absent, because `execute` treats it that way: it browses
-        // the store root for a blank target, and it applies no filter for a blank
-        // needle. The precedence stays `??` and never `||`, thus a blank `path`
-        // still suppresses `category` exactly as `execute` does.
+        // a filtered subtree must name both halves, not the target alone. The two
+        // halves join with a space and a word, as `grep` joins its own two halves.
+        // A separator glyph belongs to a host, which owns its line and its own
+        // vocabulary; the harness renders nothing and thus borrows nothing.
+        //
+        // Each half carries its own bound. The emit-site cap cuts the TAIL, and
+        // `path` admits 4096 bytes, thus one long target would swallow the very
+        // filter this detail exists to state. The needle takes a fixed budget, and
+        // the target takes what the bounded filter leaves. Then both halves reach
+        // a reader, and each one marks its own cut.
+        //
+        // A blank value counts as absent, because `execute` treats it that way: it
+        // browses the store root for a blank target, and it applies no filter for a
+        // blank needle. The precedence stays `??` and never `||`, thus a blank
+        // `path` still suppresses `category` exactly as `execute` does.
         describeCall: ({ path, category, query }) => {
             const target = path ?? category;
             const named = target !== undefined && target.trim() !== "" ? target : undefined;
             const needle = query?.trim();
-            const filter = needle === undefined || needle === "" ? undefined : `matching "${needle}"`;
-            if (named !== undefined) return filter === undefined ? named : `${named} · ${filter}`;
-            return filter ?? "full reference store";
+            const filter = needle === undefined || needle === "" ? undefined : `matching "${capCodePoints(needle, DETAIL_NEEDLE_MAX_LENGTH)}"`;
+            if (named === undefined) return filter ?? "full reference store";
+            if (filter === undefined) return named;
+            // The budget comes off the rendered filter, never off a count of its
+            // parts, thus it cannot drift from the template above. One code point
+            // pays for the joining space.
+            return `${capCodePoints(named, DETAIL_MAX_LENGTH - [...filter].length - 1)} ${filter}`;
         },
         execute: async ({ path, category, query, limit }) => {
             // `category` is shorthand for a top-level path; an explicit `path` wins.

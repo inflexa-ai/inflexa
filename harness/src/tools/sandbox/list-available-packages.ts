@@ -30,6 +30,7 @@ import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
+import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 
 /**
  * Where the list lives when the host mounts the library store at the same path
@@ -240,12 +241,16 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
         // trims the needle and applies no filter when nothing is left.
         //
         // A needle rides behind `matching "…"`, because a bare needle reads as a
-        // package name. `language` stays a trailing qualifier, exactly as `execute`
-        // treats it.
+        // package name. The needle takes its own bound, thus the emit-site cap
+        // cannot cut inside the mark and leave the quote open. `language` stays a
+        // trailing qualifier, exactly as `execute` treats it.
         describeCall: ({ names, query, language }) => {
             if (names !== undefined && names.length > 0) return names.join(", ");
             const needle = query?.trim();
-            if (needle !== undefined && needle !== "") return language === undefined ? `matching "${needle}"` : `matching "${needle}" (${language})`;
+            if (needle !== undefined && needle !== "") {
+                const marked = `matching "${capCodePoints(needle, DETAIL_NEEDLE_MAX_LENGTH)}"`;
+                return language === undefined ? marked : `${marked} (${language})`;
+            }
             if (language !== undefined) return `${language} packages`;
             return "full package list";
         },

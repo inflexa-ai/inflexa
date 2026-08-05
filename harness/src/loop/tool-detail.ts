@@ -31,7 +31,27 @@ export type { ToolCallDetail };
 export const DETAIL_MAX_LENGTH = 120;
 
 /**
+ * The bound a hook gives a free-form needle that it marks inside a detail.
+ *
+ * A needle is model-authored text of no fixed length, thus it is the one part of
+ * a detail that can run away. Left to {@link DETAIL_MAX_LENGTH}, a long needle
+ * takes the whole line, and the cut lands inside the mark that names it: the
+ * closing quote goes, and a second fact behind it goes with no trace. A hook
+ * bounds the needle first. Then the mark always closes, and the rest of the
+ * detail keeps its room.
+ *
+ * 32 code points shows the shape of a search — enough to recognize the needle a
+ * caller typed, and short enough that a target beside it survives whole.
+ */
+export const DETAIL_NEEDLE_MAX_LENGTH = 32;
+
+/**
  * Cap `text` at `max` CODE POINTS, not UTF-16 units.
+ *
+ * A hook calls this to pre-empt the emit-site cap: that cap cuts the TAIL, so a
+ * detail with two parts loses the second one when the first runs long. One
+ * implementation serves both sites, thus a hook's own bound cuts and marks
+ * exactly as {@link normalizeDetail} does.
  *
  * `String.prototype.slice` cuts at a fixed unit index, which can land between the
  * two halves of a surrogate pair and emit a lone surrogate — a terminal paints
@@ -50,7 +70,7 @@ export const DETAIL_MAX_LENGTH = 120;
  * hard bound. `trimEnd` runs BEFORE the append, because a cut that lands on a
  * space must give `word…` and not `word …`.
  */
-function capCodePoints(text: string, max: number): string {
+export function capCodePoints(text: string, max: number): string {
     const points = Array.from(text);
     if (points.length <= max) return text;
     const cut = points.slice(0, max - 1).join("");
