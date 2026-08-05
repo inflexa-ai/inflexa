@@ -94,6 +94,51 @@ export async function inherit(rt: ContainerRuntime, args: string[]): Promise<num
 }
 
 /**
+ * Run a container command, delivering each output line to `onLine` as it lands while it also captures
+ * the full output. This is the third stdio mode beside {@link capture} (buffered) and {@link inherit}
+ * (streamed to the terminal, discarded): a long run — the provisioner, which resolves and compiles
+ * packages over minutes — needs BOTH live progress and a record. The record is what lets a caller tell
+ * one non-zero exit from another after the fact: the provisioner reports a store-lock conflict on stderr
+ * with a message that reads differently from a build failure, and only the captured text separates them.
+ *
+ * `onLine` is a notification, never a control channel. A caller that must not let a failing observer
+ * abort a run in flight wraps it before it reaches here (the reference-store installer's `reportProgress`
+ * pattern); this function does not guard the callback itself.
+ */
+export async function stream(rt: ContainerRuntime, args: string[], onLine: (line: string) => void): Promise<CaptureResult> {
+    const proc = Bun.spawn({ cmd: [rt.bin, ...args], stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const captured = { stdout: "", stderr: "" };
+    // Read a piped stream to end, splitting on newlines so the observer sees whole lines. `stream: true`
+    // decoding keeps a multi-byte character that straddles two chunks intact.
+    const pump = async (readable: ReadableStream<Uint8Array>, key: "stdout" | "stderr"): Promise<void> => {
+        const reader = readable.getReader();
+        const decoder = new TextDecoder();
+        let pending = "";
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            pending += decoder.decode(value, { stream: true });
+            let newline = pending.indexOf("\n");
+            while (newline !== -1) {
+                const line = pending.slice(0, newline);
+                pending = pending.slice(newline + 1);
+                captured[key] += `${line}\n`;
+                onLine(line);
+                newline = pending.indexOf("\n");
+            }
+        }
+        // A final line with no trailing newline still counts.
+        if (pending !== "") {
+            captured[key] += pending;
+            onLine(pending);
+        }
+    };
+    await Promise.all([pump(proc.stdout, "stdout"), pump(proc.stderr, "stderr")]);
+    const code = await proc.exited;
+    return { code, stdout: captured.stdout, stderr: captured.stderr };
+}
+
+/**
  * Verify the runtime is installed and usable before issuing commands. Returns
  * a {@link ContainerRuntimeError} on the error channel with runtime-specific
  * guidance: `notFoundHint` when the binary is absent, `notReadyHint` when
