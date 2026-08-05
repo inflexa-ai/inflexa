@@ -479,6 +479,31 @@ describe("FilePicker entry metadata", () => {
             const line = rowLine(frame, "dangling.txt");
             expect(line).not.toBe("");
             expect(line.slice(0, line.indexOf("dangling.txt"))).not.toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
+            // And it holds the column as blanks: a name that starts where the mode starts reads as a
+            // mode string, and it breaks the alignment every other row of the listing depends on.
+            expect(line.indexOf("dangling.txt")).toBe(rowLine(frame, "alpha.txt").indexOf("alpha.txt"));
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a listing whose every stat fails is not reported as a large folder", async () => {
+        // The footer states a CAUSE. Inferring "no row has metadata" from the rows cannot tell the
+        // ceiling from a folder holding one broken symlink, and it names the wrong one.
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const onlyBroken = join(root, "broken");
+        mkdirSync(onlyBroken);
+        symlinkSync(join(onlyBroken, "gone.txt"), join(onlyBroken, "dangling.txt"));
+        try {
+            await settle(setup);
+            await openPicker(setup);
+            // dirs sort first, alphabetically: .. → beta/ → broken/
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressEnter();
+            const frame = await settle(setup);
+            expect(frame).toContain("dangling.txt");
+            expect(frame).not.toContain("details off (large folder)");
         } finally {
             setup.renderer.destroy();
         }

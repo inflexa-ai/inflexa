@@ -97,9 +97,14 @@ export function processIdentity(): ProcessIdentity | null {
  * `Stats` object already implies.
  *
  * ACCEPTED IMPRECISION: mode bits are not the whole access story. A POSIX ACL, a macOS TCC rule, or
- * a file flag can deny a read this reports as permitted. The result is therefore advisory — it
- * colors a row, and never refuses a selection. The authoritative refusal stays where the file is
- * actually opened (staging), which already reports a failure the user can act on.
+ * a file flag can deny a read this reports as permitted. A directory is a second such case, and one
+ * this deliberately does not model: `r` lists its names but `x` is what reaches the entries inside,
+ * so a directory with `r` and no `x` reports readable and still refuses every path through it. Both
+ * bits would answer "can I browse it", which is a different question from the one asked here.
+ *
+ * The result is therefore advisory — it colors a row, and never refuses a selection. The
+ * authoritative refusal stays where the file is actually opened (staging), which already reports a
+ * failure the user can act on.
  */
 export function isReadableBy(stats: Stats, identity: ProcessIdentity): boolean {
     // Root bypasses the permission bits for reads, so the mode check below would report false for a
