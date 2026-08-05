@@ -88,3 +88,21 @@ export function columnsHeldByNoRow(rows: Array<Record<string, string | number>>,
     }
     return columns.filter((column) => !rows.some((row) => column in row));
 }
+
+/** The file type of an entry that holds no cell for a reference to address. */
+const FILE_TYPES_WITH_NO_CELL: ReadonlySet<string> = new Set(["figure", "script", "log", "notebook"]);
+
+/**
+ * Give back `true` for a file type that holds no cell for a reference to address.
+ *
+ * The file type states a role, and it does not state a data format. Thus the rule runs one way only. It
+ * refuses a kind, and it never confirms one. An `output` gives back `false`, because it covers a table and
+ * an image alike. Only a read of the artifact settles which one it is. An absent file type gives back
+ * `false` for the same reason.
+ *
+ * The structural tier and a resolver both read this one predicate. Thus the two tiers can never disagree
+ * about one reference.
+ */
+export function fileTypeHoldsNoCell(fileType: string | null | undefined): boolean {
+    return fileType !== undefined && fileType !== null && FILE_TYPES_WITH_NO_CELL.has(fileType);
+}

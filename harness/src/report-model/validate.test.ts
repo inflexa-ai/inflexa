@@ -13,6 +13,12 @@ const SPARSE_PATH = "runs/run-1/step-c/output/sparse.csv";
 // A text-backed artifact. A CSV holds every cell as a string, thus a numeric column arrives as text.
 const TEXT_PATH = "runs/run-1/step-d/output/text.csv";
 const FIGURE_PATH = "runs/run-1/step-b/figures/volcano.png";
+// A figure entry that carries rows. A caller supplies the rows of a fixture, thus the file type must
+// refuse the read even when the rows would resolve.
+const FIGURE_ROWS_PATH = "runs/run-1/step-e/figures/heatmap.png";
+const LOG_PATH = "runs/run-1/step-e/logs/run.log";
+// An `output` covers a table and an image alike, thus it refuses nothing.
+const OUTPUT_PATH = "runs/run-1/step-e/output/typed.csv";
 // A staged input file, which no run produced. Its reference carries no `run`.
 const INPUT_PATH = "data/inputs/file-1/cohort.csv";
 const TABLE_A_HASH = `sha256:${"a".repeat(64)}`;
@@ -21,6 +27,9 @@ const FLOAT_HASH = `sha256:${"e".repeat(64)}`;
 const SPARSE_HASH = `sha256:${"f".repeat(64)}`;
 const TEXT_HASH = `sha256:${"9".repeat(64)}`;
 const FIGURE_HASH = `sha256:${"d".repeat(64)}`;
+const FIGURE_ROWS_HASH = `sha256:${"2".repeat(64)}`;
+const LOG_HASH = `sha256:${"3".repeat(64)}`;
+const OUTPUT_HASH = `sha256:${"4".repeat(64)}`;
 const INPUT_HASH = `sha256:${"1".repeat(64)}`;
 const WRONG_HASH = `sha256:${"c".repeat(64)}`;
 
@@ -79,6 +88,9 @@ const snapshot: ReportSnapshot = {
         [INPUT_PATH]: { hash: INPUT_HASH, rows: [{ samples: 24 }] },
         // An image carries a hash and no rows, thus it pins whole and addresses no cell.
         [FIGURE_PATH]: { hash: FIGURE_HASH },
+        [FIGURE_ROWS_PATH]: { hash: FIGURE_ROWS_HASH, fileType: "figure", rows: [{ gene: "TP53", value: 6 }] },
+        [LOG_PATH]: { hash: LOG_HASH, fileType: "log", rows: [{ gene: "TP53", value: 6 }] },
+        [OUTPUT_PATH]: { hash: OUTPUT_HASH, fileType: "output", rows: [{ gene: "TP53", value: 6 }] },
     },
     citations: ["pmid:12345"],
 };
@@ -1326,5 +1338,67 @@ describe("validateReport — the remaining resolution outcomes", () => {
         );
         const invalid = expectInvalid(result);
         expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("artifact-missing");
+    });
+});
+
+describe("validateReport — the file type of the pinned entry", () => {
+    it("reports unreadable-artifact for a value bound to a figure that carries rows", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "metric",
+                id: "metric-figure-cell",
+                label: "Figure cell",
+                value: { kind: "artifact-value", run: "run-1", path: FIGURE_ROWS_PATH, hash: FIGURE_ROWS_HASH, locator: { column: "value", row: 0 } },
+            }),
+            snapshot,
+            resolver,
+        );
+        const invalid = expectInvalid(result);
+        const failures = invalid.resolutionFailures ?? [];
+        expect(failures).toHaveLength(1);
+        expect(failures[0].blockId).toBe("metric-figure-cell");
+        expect(failures[0].failure.reason).toBe("unreadable-artifact");
+    });
+
+    it("reports unreadable-artifact for a table bound to a log", async () => {
+        const result = await validateReport(
+            reportWith({ kind: "table", id: "table-log", binding: { kind: "artifact-table", run: "run-1", path: LOG_PATH, hash: LOG_HASH } }),
+            snapshot,
+            resolver,
+        );
+        const invalid = expectInvalid(result);
+        const failures = invalid.resolutionFailures ?? [];
+        expect(failures).toHaveLength(1);
+        expect(failures[0].blockId).toBe("table-log");
+        expect(failures[0].failure.reason).toBe("unreadable-artifact");
+    });
+
+    it("validates a figure bound to an artifact-file whose entry is a figure", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "figure",
+                id: "figure-typed",
+                binding: { kind: "artifact-file", run: "run-1", path: FIGURE_ROWS_PATH, hash: FIGURE_ROWS_HASH },
+            }),
+            snapshot,
+            resolver,
+        );
+        const valid = expectValid(result);
+        expect(valid.warnings).toEqual([]);
+    });
+
+    it("validates a value bound to an output, because an output can hold a table", async () => {
+        const result = await validateReport(
+            reportWith({
+                kind: "metric",
+                id: "metric-output-cell",
+                label: "Output cell",
+                value: { kind: "artifact-value", run: "run-1", path: OUTPUT_PATH, hash: OUTPUT_HASH, locator: { column: "value", row: 0 } },
+            }),
+            snapshot,
+            resolver,
+        );
+        const valid = expectValid(result);
+        expect(valid.warnings).toEqual([]);
     });
 });
