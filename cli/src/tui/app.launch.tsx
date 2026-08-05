@@ -45,7 +45,8 @@ async function renderChat(target: ChatTarget): Promise<void> {
     // render() takes the terminal — never inside the alternate screen.
     const cfg = resolveHarnessConfig();
     if (cfg.configError) fail(describeBootError({ type: "harness_config_invalid", issues: cfg.configError.issues }));
-    await ensureSandboxImage(cfg.sandboxImage);
+    const sandboxImage = await ensureSandboxImage(cfg.sandboxImage);
+    const bootConfig = sandboxImage === cfg.sandboxImage ? cfg : { ...cfg, sandboxImage };
 
     // Claim the analysis before the alternate screen takes over, so a conflict surfaces as a plain
     // stderr line and a clean exit — no flash of TUI. Acquiring here (not in the headless resolvers)
@@ -82,7 +83,7 @@ async function renderChat(target: ChatTarget): Promise<void> {
     // so it runs async behind the boot animation with the input gated — hooks/boot.ts drives the
     // boot-state store the App reads. Reached ONLY from renderChat: the passive
     // bare-`inflexa`-resolves-to-nothing path returns before renderChat and boots nothing (no-litter).
-    void startHarnessBoot(cfg);
+    void startHarnessBoot(bootConfig);
 }
 
 /** `inflexa new [name] [paths...]` — create an analysis (anchor = cwd) and open its chat. */

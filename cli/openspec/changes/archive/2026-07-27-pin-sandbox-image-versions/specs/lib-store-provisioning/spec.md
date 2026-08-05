@@ -1,46 +1,48 @@
-# lib-store-provisioning Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change add-lib-store-pull. Update Purpose after archive.
-## Requirements
-### Requirement: The setup flow provisions the store through the same pull handler
+### Requirement: Published sandbox images expose their immutable version identity
 
-`inflexa setup` SHALL hand off to the same image-pull handler that
-`inflexa sandbox pull` uses — it SHALL NOT implement a separate download path —
-which prompts the variant, confirms the pull, and runs inside a `spinner()`.
-Declining the pull SHALL skip the image step and continue setup, never abort it.
-On a non-interactive terminal the setup flow SHALL NOT auto-pull; it SHALL print a
-hint to run `inflexa sandbox pull <variant> --yes` and continue setup
-successfully.
+Each published selectable sandbox platform image SHALL carry `org.opencontainers.image.version` equal to the multi-arch image's published `<YYYYMMDD>-<7-hex-revision>` tag and `org.opencontainers.image.revision` equal to its source revision. The CLI SHALL accept a discovered version only when it matches `^[0-9]{8}-[0-9a-f]{7}$` and SHALL construct the pinned reference from the selected first-party repository rather than treating label content as a repository or command argument.
 
-#### Scenario: Setup reuses the pull handler
+#### Scenario: Published image identifies its version
 
-- **WHEN** setup reaches the sandbox-image step interactively
-- **THEN** provisioning calls the same handler as `inflexa sandbox pull`, which prompts the variant and runs inside a spinner
+- **WHEN** the CLI pulls a selectable sandbox variant through its `latest` channel
+- **THEN** the resolved platform image exposes the same version value as the published multi-arch version tag
 
-#### Scenario: Declining the pull skips the image
+#### Scenario: Invalid publication metadata cannot change config
 
-- **WHEN** the user declines the pull during `inflexa setup`
-- **THEN** the image step is skipped and setup continues to completion rather than aborting
+- **WHEN** a pulled image has a missing or malformed version label
+- **THEN** the pull operation fails without changing `harness.sandboxImage` or removing the previously configured image
 
-#### Scenario: Non-interactive setup does not auto-pull
+### Requirement: Superseded sandbox versions are cleaned within a bounded ownership scope
 
-- **WHEN** `inflexa setup` runs on a non-interactive terminal
-- **THEN** no image is pulled; the CLI prints a hint to run `inflexa sandbox pull <variant> --yes` and setup continues
+After a versioned sandbox reference has been successfully written to config, the CLI SHALL enumerate only local tagged references in that selected Inflexa sandbox variant repository and SHALL attempt to remove every other tag matching the published-version grammar. When migrating a configured `latest` reference, the CLI SHALL additionally attempt to remove the exact prior image ID it captured before the channel moved. Removal SHALL use the exact tag or captured ID without force. Cleanup failure SHALL retain the affected image and SHALL NOT turn the successful pull and config transition into a failure. The CLI SHALL NOT remove `latest`, another sandbox variant, a custom image, a non-version tag, an image from another repository, a container, a volume, a network, or build cache, and SHALL NOT invoke daemon-wide image or system pruning.
 
-### Requirement: A missing store is offered, never fatal
+#### Scenario: Superseded same-variant version is reclaimed
 
-The CLI SHALL, before launching a sandbox when the configured sandbox image is
-not present, surface a one-line, actionable offer to run `inflexa sandbox pull`
-and SHALL allow continuing. A missing image SHALL NOT silently dead-end: the offer
-SHALL name the variant and the pull command, and when an image is genuinely
-required to launch the CLI SHALL pull it (or prompt to) rather than failing out.
+- **GIVEN** two unused published version tags exist locally for the selected variant
+- **WHEN** the newer version is successfully configured
+- **THEN** the CLI removes the older exact version tag and the runtime may reclaim layers no longer referenced elsewhere
 
-#### Scenario: Missing image surfaces an offer
+#### Scenario: Version used by a container is retained
 
-- **GIVEN** the configured sandbox image is not present locally
-- **WHEN** a sandbox is about to launch
-- **THEN** the CLI prints an offer to run `inflexa sandbox pull` (naming the variant) before proceeding to obtain it
+- **GIVEN** a superseded same-variant version is still referenced by a container
+- **WHEN** post-pull cleanup attempts non-forced removal
+- **THEN** the CLI retains and reports that version while the newly configured version remains successful
+
+#### Scenario: First legacy refresh reclaims the former channel image
+
+- **GIVEN** a configured `latest` reference points to an old image with no version tag
+- **WHEN** a successful pull moves the channel and commits the new version
+- **THEN** the CLI attempts non-forced removal of the exact prior image ID captured before the pull
+
+#### Scenario: Other resources remain untouched
+
+- **GIVEN** another sandbox variant, custom images, unrelated dangling images, containers, volumes, networks, or build cache exist
+- **WHEN** post-pull cleanup runs
+- **THEN** none of those resources are selected for removal
+
+## MODIFIED Requirements
 
 ### Requirement: `inflexa sandbox pull` selects and pulls a sandbox image variant
 
@@ -69,26 +71,6 @@ The CLI SHALL provide `inflexa sandbox pull` (the command noun is `sandbox`, not
 - **AND** pulling moves that local alias before a later transition step fails
 - **WHEN** the operation rolls back
 - **THEN** the CLI restores the local `latest` alias to its prior image ID so the unchanged config retains its prior local meaning
-
-### Requirement: The user chooses the image variant; architecture is automatic
-
-The CLI SHALL let the user choose the image variant — `python` (Python libraries
-plus the bioconda CLI tools) or `python-r` (that plus the R libraries). The CLI
-SHALL NOT ask for or force an architecture: the published images are multi-arch
-manifests, so `docker pull` resolves the host architecture automatically. On a
-host with no arm64 R image content, the CLI SHALL surface any variant
-unavailability as an informational note rather than an error.
-
-#### Scenario: The variant is chosen, the arch is not
-
-- **WHEN** `inflexa sandbox pull` runs interactively
-- **THEN** the user is prompted for `python` vs `python-r` and is never asked for an architecture
-
-#### Scenario: Multi-arch pull resolves the host arch
-
-- **GIVEN** the host is arm64
-- **WHEN** the chosen variant image is pulled
-- **THEN** docker resolves the arm64 image from the multi-arch manifest with no explicit platform flag
 
 ### Requirement: The pulled image is configured as the sandbox image
 
@@ -155,45 +137,3 @@ The CLI SHALL provide `inflexa sandbox status` reporting the configured sandbox 
 - **GIVEN** the configured image is absent locally
 - **WHEN** `inflexa sandbox status` runs
 - **THEN** it reports the image is not installed and points the user at `inflexa sandbox pull`
-
-### Requirement: Published sandbox images expose their immutable version identity
-
-Each published selectable sandbox platform image SHALL carry `org.opencontainers.image.version` equal to the multi-arch image's published `<YYYYMMDD>-<7-hex-revision>` tag and `org.opencontainers.image.revision` equal to its source revision. The CLI SHALL accept a discovered version only when it matches `^[0-9]{8}-[0-9a-f]{7}$` and SHALL construct the pinned reference from the selected first-party repository rather than treating label content as a repository or command argument.
-
-#### Scenario: Published image identifies its version
-
-- **WHEN** the CLI pulls a selectable sandbox variant through its `latest` channel
-- **THEN** the resolved platform image exposes the same version value as the published multi-arch version tag
-
-#### Scenario: Invalid publication metadata cannot change config
-
-- **WHEN** a pulled image has a missing or malformed version label
-- **THEN** the pull operation fails without changing `harness.sandboxImage` or removing the previously configured image
-
-### Requirement: Superseded sandbox versions are cleaned within a bounded ownership scope
-
-After a versioned sandbox reference has been successfully written to config, the CLI SHALL enumerate only local tagged references in that selected Inflexa sandbox variant repository and SHALL attempt to remove every other tag matching the published-version grammar. When migrating a configured `latest` reference, the CLI SHALL additionally attempt to remove the exact prior image ID it captured before the channel moved. Removal SHALL use the exact tag or captured ID without force. Cleanup failure SHALL retain the affected image and SHALL NOT turn the successful pull and config transition into a failure. The CLI SHALL NOT remove `latest`, another sandbox variant, a custom image, a non-version tag, an image from another repository, a container, a volume, a network, or build cache, and SHALL NOT invoke daemon-wide image or system pruning.
-
-#### Scenario: Superseded same-variant version is reclaimed
-
-- **GIVEN** two unused published version tags exist locally for the selected variant
-- **WHEN** the newer version is successfully configured
-- **THEN** the CLI removes the older exact version tag and the runtime may reclaim layers no longer referenced elsewhere
-
-#### Scenario: Version used by a container is retained
-
-- **GIVEN** a superseded same-variant version is still referenced by a container
-- **WHEN** post-pull cleanup attempts non-forced removal
-- **THEN** the CLI retains and reports that version while the newly configured version remains successful
-
-#### Scenario: First legacy refresh reclaims the former channel image
-
-- **GIVEN** a configured `latest` reference points to an old image with no version tag
-- **WHEN** a successful pull moves the channel and commits the new version
-- **THEN** the CLI attempts non-forced removal of the exact prior image ID captured before the pull
-
-#### Scenario: Other resources remain untouched
-
-- **GIVEN** another sandbox variant, custom images, unrelated dangling images, containers, volumes, networks, or build cache exist
-- **WHEN** post-pull cleanup runs
-- **THEN** none of those resources are selected for removal

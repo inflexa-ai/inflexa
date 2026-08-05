@@ -29,8 +29,9 @@ machinery. Read it before changing anything under `sandbox-base/`.
 
 ## Getting an image
 
-Through the CLI, which also records the pulled tag in `config.json` so sandboxes
-use it:
+Through the CLI, which checks the moving `latest` channel and records the
+resolved `<date>-<sha>` tag in `config.json` so later sandboxes use that exact
+environment:
 
 ```sh
 inflexa sandbox pull python-r     # or: python
@@ -53,7 +54,10 @@ The store is baked and the resolver env is baked in, so a plain `docker run` —
 `list_available_packages` (it reads `/mnt/libs/current/packages.txt`).
 
 Images publish to `ghcr.io/inflexa-ai/sandbox-{base,python,python-r}`, tagged
-`latest` and `<date>-<sha>`.
+`latest` and `<date>-<sha>`. Each selectable platform image carries the same
+release identity in `org.opencontainers.image.version` and the full source
+revision in `org.opencontainers.image.revision`; the CLI reads those labels
+after a multi-arch pull instead of enumerating registry tags.
 
 ## Extending an image (`FROM`)
 

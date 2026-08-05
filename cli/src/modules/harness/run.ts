@@ -377,7 +377,8 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
         (e) => fail(describePlanIntakeError(e)),
     );
 
-    await ensureSandboxImage(cfg.sandboxImage);
+    const sandboxImage = await ensureSandboxImage(cfg.sandboxImage);
+    const bootConfig = sandboxImage === cfg.sandboxImage ? cfg : { ...cfg, sandboxImage };
 
     // Claim the per-analysis instance lock before boot, so this analysis stays
     // single-process for the whole run — the interim two-recorder fix of #37, the
@@ -390,7 +391,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
 
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");
-    const bootResult = await bootHarnessRuntime({ config: cfg });
+    const bootResult = await bootHarnessRuntime({ config: bootConfig });
     const runtime = bootResult.match(
         (r) => r,
         (e) => {
