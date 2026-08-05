@@ -14,7 +14,7 @@
  *  Progress  `emitProgress("assembling")`
  *  Phase 4   `phase4Assemble`              — aggregation + cached annotator
  *  Phase 4a  `ta-approval-precedents`      — one openFDA lookup, two projections
- *  Phase 4b  `ta-safety-corroboration`     — pure fold over collected signals
+ *  Phase 4b  `assembleSafetyCorroboration` — pure fold, no step of its own
  *  Phase 4c  `investigateClaims`           — propose / critique / re-verify / converge
  *  Progress  `emitProgress("synthesizing")`
  *  Phase 5a  3 per-section syntheses in parallel
@@ -512,20 +512,15 @@ export async function runExecuteTargetAssessmentBody(
         );
         const approvalPrecedents = precedentGrounding.block;
 
-        // (§5.8-pre) The corroboration fold. Pure over signals the run already
-        // holds, but it reads the label signals segmented above, so it runs here
-        // rather than at assembly — and here rather than at persist, because the
-        // claim investigation below is its consumer.
-        const corroboration = await DBOS.runStep(
-            () =>
-                Promise.resolve(
-                    assembleSafetyCorroboration({
-                        phase1,
-                        regulatoryOrganSignals: precedentGrounding.organSignals,
-                    }),
-                ),
-            { name: "ta-safety-corroboration" },
-        );
+        // (§5.8-pre) The corroboration fold. It reads the label signals segmented
+        // above, so it runs here rather than at assembly — and here rather than at
+        // persist, because the claim investigation below is its consumer. The fold
+        // is pure over two cached step outputs, so it needs no step of its own: a
+        // replay recomputes the same record without a durable write.
+        const corroboration = assembleSafetyCorroboration({
+            phase1,
+            regulatoryOrganSignals: precedentGrounding.organSignals,
+        });
 
         // (§5.8-pre) The claim investigation — propose a mechanism, argue
         // against it, re-verify, converge. Runs before synthesis so the

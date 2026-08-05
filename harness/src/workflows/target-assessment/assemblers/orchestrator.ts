@@ -644,6 +644,23 @@ export async function assembleDossier(
     const eligibleFailedRows = attributedFailedRows.filter((r) => r.eligible_for_toxicology_aggregation);
     const excludedFailedRows = [...attributedFailedRows.filter((r) => !r.eligible_for_toxicology_aggregation), ...attributedFailedRelatedRows];
 
+    // `clinical_development.failed_trials` and `safety_profile.failed_trials_safety_lens`
+    // report the same partition under two headings, so the section is decided once.
+    // Two constructions of it would let the same condition report two coverages.
+    const failedTrialsSection =
+        ctgov.coverage === "available"
+            ? coverageFromFilteredRows({
+                  data: {
+                      rows: eligibleFailedRows,
+                      excluded_rows: excludedFailedRows,
+                  },
+                  retainedCount: eligibleFailedRows.length,
+                  droppedCount: excludedFailedRows.length,
+                  filter: FAILED_TRIALS_FILTER,
+                  emptyReason: "ClinicalTrials.gov returned no terminated or withdrawn trials for the assessment target",
+              })
+            : { coverage: "queried_no_data" as const, error: { message: "ClinicalTrials.gov unavailable" } };
+
     // Typed explicitly so literal string coverage values narrow correctly.
     // Phase-5 persist attaches the derived sub-tree after synthesis is stamped.
     const dossierBody: DossierBody = {
@@ -725,19 +742,7 @@ export async function assembleDossier(
                 : phase3
                   ? { coverage: "queried_no_data", error: { message: "no per-trial outcomes available" } }
                   : { coverage: "not_loaded", reason: "Phase-3 fan-out not run" },
-            failed_trials:
-                ctgov.coverage === "available"
-                    ? coverageFromFilteredRows({
-                          data: {
-                              rows: eligibleFailedRows,
-                              excluded_rows: excludedFailedRows,
-                          },
-                          retainedCount: eligibleFailedRows.length,
-                          droppedCount: excludedFailedRows.length,
-                          filter: FAILED_TRIALS_FILTER,
-                          emptyReason: "ClinicalTrials.gov returned no terminated or withdrawn trials for the assessment target",
-                      })
-                    : { coverage: "queried_no_data" as const },
+            failed_trials: failedTrialsSection,
             benchmarks: {
                 therapeutic_area: benchmarks.therapeutic_area,
                 fallback_to_all_areas: benchmarks.source === "fallback",
@@ -779,19 +784,7 @@ export async function assembleDossier(
             // `clinical_development.failed_trials`. Merging them would put a
             // related-receptor termination in the same list as a target-attributed
             // one, and the reader has no other way to tell them apart.
-            failed_trials_safety_lens:
-                ctgov.coverage === "available"
-                    ? coverageFromFilteredRows({
-                          data: {
-                              rows: eligibleFailedRows,
-                              excluded_rows: excludedFailedRows,
-                          },
-                          retainedCount: eligibleFailedRows.length,
-                          droppedCount: excludedFailedRows.length,
-                          filter: FAILED_TRIALS_FILTER,
-                          emptyReason: "no failed trials",
-                      })
-                    : { coverage: "queried_no_data" as const, error: { message: "ClinicalTrials.gov unavailable" } },
+            failed_trials_safety_lens: failedTrialsSection,
             class_precedent: classP
                 ? { coverage: "available", data: classP }
                 : phase3

@@ -26,11 +26,6 @@ const StubOffTargetCuratorSchema = z.object({
     notes: z.string().default(""),
 });
 
-export const Phase2AggregateInputSchema = z.object({
-    "decision-modulator-triage": withCoverage(ModulatorTriageOutputSchema),
-    "decision-drugs-in-class": withCoverage(DrugsInClassOutputSchema),
-});
-
 export const Phase2BundleSchema = z.object({
     phase1: Phase1BundleSchema,
     decisions: z.object({

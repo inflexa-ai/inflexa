@@ -12,13 +12,6 @@ import {
     PerClassDrugAEsResultsSchema,
 } from "../sub-workflows/index.js";
 
-export const Phase3AggregateInputSchema = z.object({
-    "per-modulator-faers": PerModulatorFaersResultsSchema,
-    "per-trial-aes": PerTrialAEsResultsSchema,
-    "per-modulator-polypharm": PerModulatorPolypharmResultsSchema,
-    "per-class-drug-aes": PerClassDrugAEsResultsSchema,
-});
-
 export const Phase3BundleSchema = z.object({
     phase2: Phase2BundleSchema,
     fanout: z.object({

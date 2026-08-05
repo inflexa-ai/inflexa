@@ -262,7 +262,7 @@ export function assembleSafetyCorroboration(input: CorroborationInput): SafetyCo
                 dropped += 1;
                 continue;
             }
-            const key = `${raw.organ} ${raw.signal}`;
+            const key = `${raw.organ}\u0000${raw.signal}`;
             if (seen.has(key)) continue;
             seen.add(key);
             admitted.push({

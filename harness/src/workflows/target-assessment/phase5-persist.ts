@@ -15,8 +15,6 @@
  * and this module runs after synthesis has closed.
  */
 
-import { z } from "zod";
-
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
 
@@ -90,12 +88,6 @@ export interface Phase5PersistInput {
         readonly recommendation: DossierRecommendationStepOutput;
     };
 }
-
-export const Phase5PersistResultSchema = z.object({
-    assessmentId: z.string(),
-    dossier: z.record(z.string(), z.unknown()),
-    bytes: z.number(),
-});
 
 export interface Phase5PersistResult {
     readonly assessmentId: string;

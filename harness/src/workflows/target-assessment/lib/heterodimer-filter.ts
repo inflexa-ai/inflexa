@@ -49,14 +49,3 @@ export function makeHeterodimerOfAssessmentFilter(input: HeterodimerFilterInput)
         return m[1]!.toUpperCase() === target;
     };
 }
-
-/**
- * One-shot helper for callers that already have an accessory list in hand.
- * Equivalent to `makeHeterodimerOfAssessmentFilter(input)(offTargetName)`.
- */
-export function isHeterodimerOfAssessment(input: { assessmentGeneSymbol: string; accessoryProteinNames: string[]; offTargetName: string }): boolean {
-    return makeHeterodimerOfAssessmentFilter({
-        assessmentGeneSymbol: input.assessmentGeneSymbol,
-        accessoryProteinNames: input.accessoryProteinNames,
-    })(input.offTargetName);
-}

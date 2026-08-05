@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { ORGAN_SYSTEMS, type OrganSystem } from "../../../contracts/organ-system.js";
-import { classifyOrgan, classifyPolypharmOrgan, classifyTrialAe } from "./meddra-organ-map.js";
+import { classifyOrgan, classifyTrialAe } from "./meddra-organ-map.js";
 
 /** One MedDRA-style term per canonical token, used to prove each is reachable. */
 const TERM_PER_ORGAN: Record<OrganSystem, string> = {
@@ -99,19 +99,5 @@ describe("classifyTrialAe", () => {
     it("resolves nothing when neither the class nor the term names an organ", () => {
         expect(classifyTrialAe({ organ: "Endocrine disorders", term: "Adrenal insufficiency" })).toBeNull();
         expect(classifyTrialAe({ organ: "General disorders and administration site conditions", term: "Fatigue" })).toBeNull();
-    });
-});
-
-describe("classifyPolypharmOrgan", () => {
-    it("passes a canonical token through by equality", () => {
-        for (const organ of ORGAN_SYSTEMS) {
-            expect(classifyPolypharmOrgan(organ)).toBe(organ);
-        }
-    });
-
-    it("classifies a non-canonical string by its term", () => {
-        expect(classifyPolypharmOrgan("Cardiotoxicity")).toBe("cardiac");
-        expect(classifyPolypharmOrgan(null)).toBeNull();
-        expect(classifyPolypharmOrgan("something else entirely")).toBeNull();
     });
 });

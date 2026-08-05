@@ -1,4 +1,4 @@
-import type { ClinicalTrialAttribution, ClinicalTrialRow, ResolvedTrialIntervention } from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { ClinicalTrialAttribution, ResolvedTrialIntervention } from "@inflexa-ai/harness/contracts/target-dossier.js";
 
 type TrialLike = {
     nctId: string;
@@ -245,12 +245,4 @@ export function classifyClinicalEvidenceTrial(trial: TrialLike, ctx: ClinicalEvi
         "ctgov",
         details.map((i) => toResolvedIntervention(i, "ctgov")),
     );
-}
-
-export function attachClinicalEvidenceAttribution<T extends TrialLike>(
-    trial: T,
-    ctx: ClinicalEvidenceAttributionContext,
-): T & Pick<ClinicalTrialRow, "attribution" | "eligible_for_toxicology_aggregation"> {
-    const result = classifyClinicalEvidenceTrial(trial, ctx);
-    return { ...trial, ...result };
 }
