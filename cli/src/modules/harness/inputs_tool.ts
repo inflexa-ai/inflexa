@@ -16,6 +16,9 @@
 import { existsSync } from "node:fs";
 
 import { defineTool, scopeResource, type AskRequest, type ToolError } from "@inflexa-ai/harness";
+// A deep subpath: the cap is not on the barrel. The alternative is a copy of the
+// number here, which drifts the moment the harness retunes its own cap.
+import { DETAIL_MAX_LENGTH } from "@inflexa-ai/harness/loop/tool-detail.js";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -76,12 +79,19 @@ export function createManageInputsTool() {
                 .describe("Files to add or remove (relative to the launch folder, or absolute). Required for add/remove; ignored for list."),
         }),
         // `paths` is optional in the schema and necessary only for add and remove,
-        // thus the hook tolerates its absence rather than an assumption of it. A
-        // count replaces the list past two paths, because one line cannot hold an
-        // unbounded enumeration and the cap would cut it mid-path.
+        // thus the hook tolerates its absence rather than an assumption of it.
+        //
+        // The gate is the rendered length and not a path count, because a count
+        // cannot predict it: two absolute paths overrun the cap while five short
+        // names fit. Past the cap the harness cuts mid-path and appends its mark,
+        // which names a file that does not exist. A count states the same fact and
+        // states it truthfully.
         describeCall: ({ action, paths }) => {
             if (paths === undefined || paths.length === 0) return action;
-            return paths.length <= 2 ? `${action} ${paths.join(", ")}` : `${action} ${paths.length} files`;
+            const listed = `${action} ${paths.join(", ")}`;
+            // Code points, which is the unit the harness caps in.
+            if ([...listed].length <= DETAIL_MAX_LENGTH) return listed;
+            return `${action} ${paths.length} path${paths.length === 1 ? "" : "s"}`;
         },
         execute: async (input, ctx): Promise<Result<ManageInputsResult, ToolError>> => {
             const scoped = scopeResource(ctx.session.scope);

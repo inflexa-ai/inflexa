@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AskRejectedError, UnavailableAsk, type AgentSession, type AskApproval, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
+import { normalizeDetail } from "@inflexa-ai/harness/loop/tool-detail.js";
 import { describe, expect, test } from "bun:test";
 
 import type { AgentPolicy } from "../../cli/agent_policy.ts";
@@ -687,6 +688,29 @@ describe("run_inflexa — describeCall", () => {
     test("a malformed argv is still described", () => {
         // The detail is computed before dispatch, thus it never depends on the verdict.
         expect(describeCall(["not-a-command", "--nope"])).toBe("not-a-command --nope");
+    });
+
+    test("a bare argv names nothing, and the harness drops an empty detail", () => {
+        // `[]` runs bare `inflexa`, which prints help. It classifies as
+        // introspection and not as malformed. There is no word to name, thus the
+        // hook returns an empty string and the emit site of the harness drops it.
         expect(describeCall([])).toBe("");
+        expect(normalizeDetail("")).toBeUndefined();
+    });
+
+    test("the chip and the approval prompt encode one argv identically", async () => {
+        // The joint property of the two surfaces. Asserting each against its own
+        // hardcoded string would stay green if one surface changed its encoder or
+        // read a different argv, thus this compares them against each other.
+        const argv = ["refs", "download", "my file"];
+        const sub = recordingSubprocess();
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        await tool.execute({ argv }, makeCtx(ask.fn));
+
+        const prompt = ask.calls[0]!.command;
+        expect(prompt.startsWith("inflexa ")).toBe(true);
+        expect(tool.describeCall!({ argv })).toBe(prompt.slice("inflexa ".length));
     });
 });

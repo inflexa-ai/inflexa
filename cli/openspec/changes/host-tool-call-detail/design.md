@@ -22,7 +22,9 @@ The one genuine obstacle is specific to `run_inflexa`. The hook is synchronous a
 
 ### `run_inflexa` reuses the classifier's pure normalizer rather than reaching for the verdict
 
-`toEffectiveArgv` (`inflexa_classify.ts:103`) is the whole of the classifier's argv normalization: a single element containing whitespace is tokenized quote-awarely back into words, and anything else passes through. `classifyInflexaArgv` calls it once and every runnable verdict — `action`, `introspection`, and the malformed fallback — returns that same value as its `argv`. It is synchronous and pure.
+`toEffectiveArgv` (`inflexa_classify.ts:108`) is the whole of the classifier's argv normalization: a single element containing whitespace is tokenized quote-awarely back into words, and anything else passes through. `classifyInflexaArgv` calls it once, and the two runnable verdicts — `action` and `introspection` — carry that value as their `argv`. It is synchronous and pure.
+
+The `malformed` verdict carries a message and no `argv` at all. Thus a rejected call has no verdict argv for the chip to read. That is a second reason the hook computes the value itself.
 
 So the hook computes exactly what the verdict will carry, without needing the verdict: export `toEffectiveArgv` and call it. This is why the constraint above is not a blocker — the async part of classification decides *whether* the argv runs and under what policy, not *what* the argv is.
 
