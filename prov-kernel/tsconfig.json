@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "declaration": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node"],
+    "paths": {
+      "@inflexa-ai/prov-kernel": ["./src/index.ts"],
+      "@inflexa-ai/prov-kernel/*": ["./src/*"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "src/**/*.test.ts", "src/**/__tests__", "src/**/__fixtures__"]
+}

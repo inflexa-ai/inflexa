@@ -1,7 +1,8 @@
 name: Lint
 
 # Lints/typechecks the independent subsystems. `cli/` has ESLint + a tsc
-# typecheck; `harness/` has no ESLint config, so its lint is the tsc typecheck.
+# typecheck; `harness/` has no ESLint config, so its lint is the tsc typecheck;
+# `prov-kernel/` mirrors the harness job.
 on:
   push:
     branches: [main]
@@ -72,6 +73,29 @@ jobs:
     defaults:
       run:
         working-directory: harness
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # Every job installs the Bun that .bun-version names, so CI and developer
+      # machines cannot drift apart unnoticed and a bump is one reviewable edit
+      # rather than seven. The path resolves against the repo root
+      # (GITHUB_WORKSPACE) — `uses:` steps ignore the job's working-directory.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bunx tsc -p tsconfig.json --noEmit
+
+  prov-kernel:
+    name: lint (prov-kernel)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: prov-kernel
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
