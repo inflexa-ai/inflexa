@@ -1,8 +1,8 @@
 ## 1. The draft grammar
 
-- [ ] 1.1 Export the seven atom schemas from `src/contracts/report-blocks.ts`. The export is additive, and no schema changes.
-- [ ] 1.2 Make the draft grammar in `src/report-model/draft.ts`: a relaxed section schema, a recursive draft block union, and the draft document type. The atoms come from the contract exports.
-- [ ] 1.3 Write the tests of the draft grammar: an empty draft parses, an empty section parses, a strict atom still refuses an extra field, and a nested empty section parses.
+- [x] 1.1 Export the seven atom schemas from `src/contracts/report-blocks.ts`. The export is additive, and no schema changes.
+- [x] 1.2 Make the draft grammar in `src/report-model/draft.ts`: a relaxed section schema, a recursive draft block union, and the draft document type. The atoms come from the contract exports.
+- [x] 1.3 Write the tests of the draft grammar: an empty draft parses, an empty section parses, a strict atom still refuses an extra field, and a nested empty section parses.
 
 ## 2. The pure operations
 

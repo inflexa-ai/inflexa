@@ -35,14 +35,14 @@ const ChartEncodingSchema = z.strictObject({
 });
 
 /** Prose with no binding. The absence of a binding field is the rule for this kind. */
-const TextBlockSchema = z.strictObject({
+export const TextBlockSchema = z.strictObject({
     kind: z.literal("text"),
     id: z.string().min(1).describe("The stable identity of the block."),
     content: z.strictObject({ prose: z.string() }),
 });
 
 /** Prose with at least one reference that justifies it. */
-const ClaimBlockSchema = z.strictObject({
+export const ClaimBlockSchema = z.strictObject({
     kind: z.literal("claim"),
     id: z.string().min(1).describe("The stable identity of the block."),
     content: z.strictObject({ prose: z.string() }),
@@ -50,7 +50,7 @@ const ClaimBlockSchema = z.strictObject({
 });
 
 /** A labeled number whose value comes from one scalar reference. */
-const MetricBlockSchema = z.strictObject({
+export const MetricBlockSchema = z.strictObject({
     kind: z.literal("metric"),
     id: z.string().min(1).describe("The stable identity of the block."),
     label: z.string(),
@@ -58,7 +58,7 @@ const MetricBlockSchema = z.strictObject({
 });
 
 /** A whole-table artifact rendered as a table. */
-const TableBlockSchema = z.strictObject({
+export const TableBlockSchema = z.strictObject({
     kind: z.literal("table"),
     id: z.string().min(1).describe("The stable identity of the block."),
     title: z.string().optional(),
@@ -67,7 +67,7 @@ const TableBlockSchema = z.strictObject({
 });
 
 /** A whole-table artifact rendered as a chart, with the plot form and the channel mapping. */
-const ChartBlockSchema = z.strictObject({
+export const ChartBlockSchema = z.strictObject({
     kind: z.literal("chart"),
     id: z.string().min(1).describe("The stable identity of the block."),
     title: z.string().optional(),
@@ -78,7 +78,7 @@ const ChartBlockSchema = z.strictObject({
 });
 
 /** A static image artifact. An image has no per-cell address, thus it is pinned whole-file. */
-const FigureBlockSchema = z.strictObject({
+export const FigureBlockSchema = z.strictObject({
     kind: z.literal("figure"),
     id: z.string().min(1).describe("The stable identity of the block."),
     binding: ArtifactFileReferenceSchema.describe("The image artifact, pinned whole-file by path and hash."),
@@ -86,7 +86,7 @@ const FigureBlockSchema = z.strictObject({
 });
 
 /** An external source, rendered from a citation reference. */
-const CitationBlockSchema = z.strictObject({
+export const CitationBlockSchema = z.strictObject({
     kind: z.literal("citation"),
     id: z.string().min(1).describe("The stable identity of the block."),
     binding: CitationReferenceSchema,
