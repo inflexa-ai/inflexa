@@ -117,6 +117,19 @@ describe("addBlock", () => {
         expect(draft).toEqual(before);
     });
 
+    it("lands an atom at the end of a section that already holds children", () => {
+        const draft = baseDraft();
+        const before = structuredClone(draft);
+        const landed = addBlock(
+            draft,
+            { block: { kind: "text", id: "text-2", content: { prose: "Tail." } }, destination: { parentId: "sec-1" } },
+            snapshot,
+        )._unsafeUnwrap();
+
+        expect(landed.sections[0].blocks.map((block) => block.id)).toEqual(["text-1", "metric-1", "text-2"]);
+        expect(draft).toEqual(before);
+    });
+
     it("lands a section that carries children, and covers each child", () => {
         const draft = baseDraft();
         const before = structuredClone(draft);
@@ -311,6 +324,20 @@ describe("changeBlock", () => {
         expect(draft).toEqual(before);
     });
 
+    it("keeps the target id when the atom payload carries a different id", () => {
+        const draft = baseDraft();
+        const before = structuredClone(draft);
+        const landed = changeBlock(
+            draft,
+            { targetId: "metric-1", block: { kind: "metric", id: "other-id", label: "count", value: valueReference() } },
+            snapshot,
+        )._unsafeUnwrap();
+
+        expect(findById(landed, "metric-1")?.kind).toBe("metric");
+        expect(findById(landed, "other-id")).toBeUndefined();
+        expect(draft).toEqual(before);
+    });
+
     it("lands a section retitle, and keeps the children", () => {
         const draft = baseDraft();
         const before = structuredClone(draft);
@@ -422,6 +449,26 @@ describe("moveBlock", () => {
         const second = findById(landed, "sec-2");
         expect(outer?.kind === "section" && outer.blocks.map((block) => block.id)).toEqual(["inner"]);
         expect(second?.kind === "section" && second.blocks.map((block) => block.id)).toEqual(["metric-1"]);
+        expect(draft).toEqual(before);
+    });
+
+    it("lands a same-section move after an anchor that sits later", () => {
+        const draft = chartDraft();
+        const before = structuredClone(draft);
+        const landed = moveBlock(draft, { targetId: "table-1", destination: { place: { after: "chart-1" } } }, snapshot)._unsafeUnwrap();
+
+        const section = findById(landed, "sec-1");
+        expect(section?.kind === "section" && section.blocks.map((block) => block.id)).toEqual(["chart-1", "table-1", "metric-1"]);
+        expect(draft).toEqual(before);
+    });
+
+    it("lands a same-section move before the first child", () => {
+        const draft = chartDraft();
+        const before = structuredClone(draft);
+        const landed = moveBlock(draft, { targetId: "metric-1", destination: { place: { before: "table-1" } } }, snapshot)._unsafeUnwrap();
+
+        const section = findById(landed, "sec-1");
+        expect(section?.kind === "section" && section.blocks.map((block) => block.id)).toEqual(["metric-1", "table-1", "chart-1"]);
         expect(draft).toEqual(before);
     });
 

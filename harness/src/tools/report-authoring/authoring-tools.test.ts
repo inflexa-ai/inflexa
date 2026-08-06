@@ -101,6 +101,67 @@ describe("change_block", () => {
     });
 });
 
+describe("remove_block", () => {
+    it("lands a removal, and the outline drops the id", async () => {
+        const draft: DraftDocument = {
+            title: "",
+            sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "x" } }] }],
+        };
+        const tools = createReportAuthoringTools({ snapshot, initialDraft: draft });
+        const { ctx } = makeToolContext();
+
+        const result = await tools.remove_block.execute({ targetId: "t1" }, ctx);
+
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(true);
+        if (value.applied) {
+            expect(value.outline.map((entry) => entry.id)).toEqual(["s1"]);
+        }
+    });
+});
+
+describe("move_block", () => {
+    it("lands a move with a flat anchor, and the outline shows the new order", async () => {
+        const draft: DraftDocument = {
+            title: "",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Intro",
+                    blocks: [
+                        { kind: "text", id: "t1", content: { prose: "a" } },
+                        { kind: "text", id: "t2", content: { prose: "b" } },
+                    ],
+                },
+            ],
+        };
+        const tools = createReportAuthoringTools({ snapshot, initialDraft: draft });
+        const { ctx } = makeToolContext();
+
+        const result = await tools.move_block.execute({ targetId: "t1", after: "t2" }, ctx);
+
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(true);
+        if (value.applied) {
+            expect(value.outline.map((entry) => entry.id)).toEqual(["s1", "t2", "t1"]);
+        }
+    });
+
+    it("refuses `before` and `after` together with unknown-target", async () => {
+        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
+        const { ctx } = makeToolContext();
+
+        const result = await tools.move_block.execute({ targetId: "s1", before: "a", after: "b" }, ctx);
+
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(false);
+        if (!value.applied) {
+            expect(value.refusal.reason).toBe("unknown-target");
+        }
+    });
+});
+
 describe("read_block", () => {
     it("gives `found: false` for an unknown id", async () => {
         const tools = createReportAuthoringTools({ snapshot });
