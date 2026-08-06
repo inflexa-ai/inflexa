@@ -26,13 +26,13 @@ Today the app blocks at open: `src/tui/app.launch.tsx:48` and `src/modules/harne
 
 **Do not change `downloadToFile`.** The bearer token rides the injectable `fetch` seam (`options.fetch`), because the utility itself sends no headers. GHCR answers a blob GET with an https redirect to a GitHub CDN host, and the `insecure_redirect` check accepts an https redirect. The returned sha256 compares against the descriptor digest, thus the caller owns the verification, as the utility documents.
 
-**Resolve the tag one time, then pin the digest in the receipt.** A `latest` tag can move during a download. The client resolves the tag to a manifest digest at the start, and every later fetch uses digests only. The receipt records the manifest digest, thus a check against the receipt is exact.
+**Resolve the tag one time, then pin the digest in the receipt.** The client resolves `latest-<arch>` to a manifest digest at the start. A tag can move during a download, thus every later fetch uses digests only. The receipt records the manifest digest, thus a check against the receipt is exact. The artifact shape comes from the publisher: the tag `<version>-<arch>`, one layer for each track, and a base layer with the farms and the `current` pointer. The client extracts every layer into the staged root, and it keeps the symlinks.
 
 **Adopt the receipt pattern of the reference store.** Stage, rename, then write the receipt. A crash reads back as incomplete, and the next run repairs it. This is proven in `refs/store.ts`, and it wants no invention.
 
 **Gate the sandbox actions, not the app.** Chat, the workspace read surface, and the planner use no sandbox, thus they must start at once. Each action that makes a sandbox waits on the receipt, with a visible state. The same gate covers the image pull, which removes the app-open block at `app.launch.tsx:48` and `chat.ts:96`. The alternative — block the app — is what makes the current pull painful, and a second download would double it.
 
-**Ask consent before the first multi-gigabyte download.** `inflexa sandbox pull` sets the precedent: a large, network-touching action confirms its size on first use. The first store download asks one time. A later update of an installed store runs in the background without a new prompt.
+**Ask consent before the first multi-gigabyte download.** `inflexa sandbox pull` sets the precedent: a large, network-touching action confirms its size on first use. The first store download asks one time. The consent renders inside the TUI, and the download starts only after the yes. The app itself never blocks on the prompt. An update never downloads silently: the receipt reports `update_available`, and the CLI asks.
 
 **Default the download off.** With no store root configured, nothing downloads and nothing changes. The sibling change owns the store-root key. A rollback clears it.
 

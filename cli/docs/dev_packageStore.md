@@ -77,3 +77,17 @@ measured 1.18 s. The cause is virtiofs on the bind mount, not the design.
 macOS is the primary local development platform, thus a developer meets this cost
 exactly where the store is opt-in. As a result, the image path stays the default.
 Before you recommend the store as the default, re-measure the number on Linux.
+
+## The store download and the sandbox gate
+
+The CI-built store arrives from GHCR as an OCI artifact, one for each
+architecture. The CLI pulls it anonymously, over https, with each layer checked
+against its digest. The receipt on disk records the manifest digest.
+
+The first download asks one time, inside the TUI, with the size. An update never
+downloads silently. The receipt reports `update_available`, and the CLI asks.
+
+The app never waits for the store or for the image. Each action that makes a
+sandbox holds at the gate until the receipt reports a complete store. The gate
+reports its state through the notice toast, and a failed download offers a
+retry. With no store root configured, only the image half of the gate applies.

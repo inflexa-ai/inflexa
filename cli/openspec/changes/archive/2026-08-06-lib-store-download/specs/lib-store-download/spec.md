@@ -21,11 +21,15 @@ container engine.
 
 ### Requirement: The download runs in the background with a receipt
 
-The download SHALL start at app open, in the background, when a store root is
-configured and the receipt is absent or stale. It SHALL obey the receipt pattern
-of the reference store: stage, rename, then write the receipt. An interrupted
-download SHALL read back as incomplete, and the next run SHALL repair it. When no
-store root is configured, the CLI SHALL NOT download.
+The download SHALL start at app open, in the background. It SHALL start only
+when a store root is configured, the receipt is absent, and the user gave the
+consent. When the receipt reports `update_available`, the CLI SHALL report it
+and SHALL wait for the ask. It SHALL obey the receipt pattern of the reference
+store: stage, rename, then write the receipt. The client SHALL extract every
+layer into the staged root, and it SHALL keep the symlinks. The reassembled
+root SHALL equal the store exactly, so the harness check accepts it. An
+interrupted download SHALL read back as incomplete, and the next run SHALL
+repair it. When no store root is configured, the CLI SHALL NOT download.
 
 #### Scenario: The app is usable during the download
 
