@@ -1,6 +1,6 @@
 {
     "name": "@inflexa-ai/prov-kernel",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "Inflexa provenance format kernel — the PROV dialect document model, chain-hash + Ed25519 signing, and the signed-sidecar schema.",
     "license": "Apache-2.0",
     "type": "module",

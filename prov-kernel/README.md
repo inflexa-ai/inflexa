@@ -12,12 +12,16 @@ The package is a kernel, not a recorder. The three-layer rule divides the work:
 - **The harness observes.** It reports facts: a run started, a command ran, a
   file appeared.
 - **The kernel represents.** It turns each fact into PROV statements with
-  deterministic identifiers, and it signs and verifies the result.
-- **Hosts decide.** Each host owns its event vocabulary, its recorder
-  lifecycle, its storage, and its key custody.
+  deterministic identifiers, and it signs and verifies the result. The core
+  event union (`ProvEvent`) and its apply function (`applyProvEvent`) live
+  here: the event-to-statements mapping determines the document bytes, thus it
+  is format.
+- **Hosts decide.** Each host owns its recorder lifecycle, its emission
+  policy, its storage, and its key custody. A host maps its own extension
+  events onto the exported builders.
 
-Thus the package deliberately does NOT contain an event union, an event
-reducer, or a recorder (sink, flush, queue). Those are host-owned.
+Thus the package deliberately does NOT contain a recorder (sink, flush,
+queue, CAS) or signer wiring. Those are host-owned.
 
 ## Use
 
