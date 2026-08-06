@@ -219,10 +219,6 @@ export interface ExecuteAnalysisResult {
  *
  * `run_completed` fires at BOTH terminal boundaries (success and failure); the
  * `status` field distinguishes them.
- *
- * `data_profile_completed` is the data-profile workflow's terminal observation
- * (`tasks/data-profile.ts`). No started arm — `durationMs` carries the span; no
- * `runId` — a profile's identity is its `analysisId`.
  */
 export type RunProvenanceEvent =
     | { type: "run_started"; analysisId: string; runId: string; planSummary: string; stepCount: number; atMs: number }
@@ -250,14 +246,6 @@ export type RunProvenanceEvent =
           status: Exclude<ExecuteAnalysisFinalStatus, "running">;
           atMs: number;
           /** `atMs − run_started.atMs`: the workflow-observed run span in ms. */
-          durationMs: number;
-      }
-    | {
-          type: "data_profile_completed";
-          analysisId: string;
-          status: "completed" | "failed";
-          atMs: number;
-          /** `atMs` minus the body-start clock read: the workflow-observed profile span in ms. */
           durationMs: number;
       };
 
@@ -401,12 +389,7 @@ function emitProvenanceGuarded(deps: ExecuteAnalysisDeps, event: RunProvenanceEv
     try {
         deps.emitProvenance(event, session);
     } catch (err) {
-        logger.error("emitProvenance threw", {
-            ...("runId" in event ? { runId: event.runId } : {}),
-            analysisId: event.analysisId,
-            event: event.type,
-            ...logger.errorFields(err),
-        });
+        logger.error("emitProvenance threw", { runId: event.runId, event: event.type, ...logger.errorFields(err) });
     }
 }
 
