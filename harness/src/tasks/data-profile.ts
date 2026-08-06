@@ -60,6 +60,7 @@ import {
     type DataProfileInputFile,
     type DataProfileResult,
 } from "../state/index.js";
+import type { RunProvenanceEvent } from "../workflows/execute-analysis.js";
 import { createProfileActivityEmitter, type ProfileActivityEmitter } from "./data-profile-activity.js";
 import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
 // The run literal is declared in `contracts/` — a consumer reads it back off recorded usage, and this
@@ -98,6 +99,23 @@ export interface DataProfileDeps extends EnvironmentStorePaths {
     readonly skillsDir: string;
     /** LLM usage-accounting seam for the profiler agent loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /**
+     * Optional, fire-and-forget provenance observation of the profile lifecycle
+     * — the same seam `ExecuteAnalysisDeps.emitProvenance` declares, with the
+     * same contract. The body invokes it directly (never inside `DBOS.runStep`)
+     * so body re-execution on DBOS recovery re-fires it, and every call site is
+     * guarded so a throwing observer never fails the profile.
+     *
+     * The event arrives together with the profile's `RunSession` from the
+     * durable workflow input. A realization that persists the observation to an
+     * external store makes an authenticated wire call, and that call requires
+     * authority (the run credential), scope (the organization and the
+     * resource), and the acting identity — the session is the vehicle for all
+     * three. The narrow run-scoped type is deliberate: the seam exists only
+     * inside workflow bodies, and a durable body carries only a `RunSession`.
+     * An implementation can ignore the parameter.
+     */
+    readonly emitProvenance?: (event: RunProvenanceEvent, session: RunSession) => void;
 }
 
 /**
@@ -127,6 +145,22 @@ export interface DataProfileWorkflowInput {
      * absent → true, matching the prior Cortex-owned behavior.
      */
     readonly ownsMandate?: boolean; // oss-core-managed-ok
+}
+
+/**
+ * Fire the optional profile provenance observer, isolating a throwing host
+ * observer from the workflow — the sibling of `emitProvenanceGuarded` in
+ * `workflows/execute-analysis.ts`, deliberately not shared with it: the two
+ * bodies must stay independently removable, and one shared guard would have to
+ * pick a single logger namespace, which would lie about one of the two.
+ */
+function emitProfileProvenanceGuarded(deps: DataProfileDeps, event: RunProvenanceEvent, session: RunSession, logger: Logger): void {
+    if (!deps.emitProvenance) return;
+    try {
+        deps.emitProvenance(event, session);
+    } catch (err) {
+        logger.error("emitProvenance threw", { event: event.type, ...logger.errorFields(err) });
+    }
 }
 
 /** Build the canonical artifact path for a staged input file. */
@@ -239,6 +273,11 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         logger,
     );
 
+    // One checkpointed clock read stamps the profile's start; each terminal read
+    // below subtracts it for `data_profile_completed.durationMs`. Checkpointed →
+    // replay-stable (see `RunProvenanceEvent`).
+    const startedAtMs = await DBOS.now();
+
     try {
         // Record which workflow owns this profile before anything else, so a consumer that resolves
         // the id from the ledger can subscribe from the earliest possible moment. Guarded on a real
@@ -267,6 +306,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             logger.warn("no input files staged");
             if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId))) logTerminalNoop(logger, analysisId, "completion");
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
+            const emptyAtMs = await DBOS.now();
+            emitProfileProvenanceGuarded(
+                deps,
+                { type: "data_profile_completed", analysisId, status: "completed", atMs: emptyAtMs, durationMs: emptyAtMs - startedAtMs },
+                runSession,
+                logger,
+            );
             // This is a terminal completion like any other, so it reports one — a consumer watching
             // an empty-manifest profile sees it settle rather than seeing the stream simply stop.
             await activity.complete();
@@ -517,6 +563,16 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 logTerminalNoop(logger, analysisId, "completion");
             }
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
+            // Terminal provenance sits in the same tail, after every operation that can throw —
+            // the ledger write, the revoke — so a failure on the way here reaches the catch having
+            // emitted nothing and reports `failed` alone. The emit itself is guarded and cannot throw.
+            const completedAtMs = await DBOS.now();
+            emitProfileProvenanceGuarded(
+                deps,
+                { type: "data_profile_completed", analysisId, status: "completed", atMs: completedAtMs, durationMs: completedAtMs - startedAtMs },
+                runSession,
+                logger,
+            );
             // LAST statement of the success path, and that placement is the guarantee that exactly
             // one terminal activity is ever emitted. Everything that could still throw — the ledger
             // write above, the revoke — is already behind us, so any failure on the way here reaches
@@ -536,6 +592,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         const reason = profileFailureReason(err);
         if (!unwrapOrThrow(await failDataProfile(deps.pool, analysisId, reason))) logTerminalNoop(logger, analysisId, "failure");
         await deps.runAuthorizer.revoke(authorization, "data-profile-failed");
+        const failedAtMs = await DBOS.now();
+        emitProfileProvenanceGuarded(
+            deps,
+            { type: "data_profile_completed", analysisId, status: "failed", atMs: failedAtMs, durationMs: failedAtMs - startedAtMs },
+            runSession,
+            logger,
+        );
         // The same bounded, user-safe line the ledger receives — never the raw error, whose paths and
         // stack frames stay in the log record above. This is the only other terminal emission, so
         // reaching it means the success path did not emit one.

@@ -219,6 +219,15 @@ export interface ExecuteAnalysisResult {
  *
  * `run_completed` fires at BOTH terminal boundaries (success and failure); the
  * `status` field distinguishes them.
+ *
+ * `data_profile_completed` is the data-profile workflow's terminal observation,
+ * delivered through the same seam (`tasks/data-profile.ts`). The profile has no
+ * started arm: completion is the observation that matters — the profile's
+ * durable products (the ledger row, the vector index) exist only at its
+ * terminal boundary, and its `durationMs` (a terminal `DBOS.now()` read minus a
+ * body-start read) already carries the span a started arm would add. It carries
+ * no `runId` because a profile runs under the constant synthetic frame, which
+ * identifies nothing; `analysisId` is its identity.
  */
 export type RunProvenanceEvent =
     | { type: "run_started"; analysisId: string; runId: string; planSummary: string; stepCount: number; atMs: number }
@@ -246,6 +255,15 @@ export type RunProvenanceEvent =
           status: Exclude<ExecuteAnalysisFinalStatus, "running">;
           atMs: number;
           /** `atMs − run_started.atMs`: the workflow-observed run span in ms. */
+          durationMs: number;
+      }
+    | {
+          type: "data_profile_completed";
+          analysisId: string;
+          /** The profile's terminal ledger status (`DataProfileStatus["status"]` minus the non-terminal members). */
+          status: "completed" | "failed";
+          atMs: number;
+          /** `atMs` minus the body-start `DBOS.now()` read: the workflow-observed profile span in ms. */
           durationMs: number;
       };
 
@@ -340,8 +358,19 @@ export interface ExecuteAnalysisDeps {
      * point. Idempotency is the consumer's job, achieved via the deterministic
      * identifiers the events carry, not via step caching. Every call site is
      * guarded so a throwing observer never fails the run.
+     *
+     * Each event arrives together with the run's `RunSession` from the durable
+     * workflow input. A realization that persists an observation to an external
+     * store makes an authenticated wire call, and that call requires authority
+     * (the run credential), scope (the organization and the resource), and the
+     * acting identity — the session is the vehicle for all three, exactly as it
+     * is for every other seam whose realization makes such a call
+     * (`ChatProvider`, `EmbeddingProvider`, `ArtifactRegistry.register`). The
+     * narrow run-scoped type is deliberate: the seam exists only inside
+     * workflow bodies, and a durable body carries only a `RunSession`. An
+     * implementation can ignore the parameter.
      */
-    readonly emitProvenance?: (event: RunProvenanceEvent) => void;
+    readonly emitProvenance?: (event: RunProvenanceEvent, session: RunSession) => void;
 
     /**
      * Optional, fire-and-forget observation of the run's live shape, for a host driving a UI.
@@ -379,13 +408,18 @@ function emitStreamPart(part: unknown): Promise<void> {
  * swallowed, never corrupt run state — integrity enforcement lives at the
  * host's own ledger, not here.
  */
-function emitProvenanceGuarded(deps: ExecuteAnalysisDeps, event: RunProvenanceEvent): void {
+function emitProvenanceGuarded(deps: ExecuteAnalysisDeps, event: RunProvenanceEvent, session: RunSession): void {
     const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis");
     if (!deps.emitProvenance) return;
     try {
-        deps.emitProvenance(event);
+        deps.emitProvenance(event, session);
     } catch (err) {
-        logger.error("emitProvenance threw", { runId: event.runId, event: event.type, ...logger.errorFields(err) });
+        logger.error("emitProvenance threw", {
+            ...("runId" in event ? { runId: event.runId } : {}),
+            analysisId: event.analysisId,
+            event: event.type,
+            ...logger.errorFields(err),
+        });
     }
 }
 
@@ -780,14 +814,18 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         planSummary: input.planSummary,
         stepCount: input.steps.length,
     });
-    emitProvenanceGuarded(deps, {
-        type: "run_started",
-        analysisId: input.analysisId,
-        runId,
-        planSummary: input.planSummary,
-        stepCount: input.steps.length,
-        atMs: startedAtMs,
-    });
+    emitProvenanceGuarded(
+        deps,
+        {
+            type: "run_started",
+            analysisId: input.analysisId,
+            runId,
+            planSummary: input.planSummary,
+            stepCount: input.steps.length,
+            atMs: startedAtMs,
+        },
+        input.runSession,
+    );
     // Opening snapshot: every step pending. The scheduler's own map does not exist yet, and an
     // empty one yields exactly that — so a host has the run's full shape before the first dispatch
     // rather than learning the step list from whichever transition happens to land first.
@@ -1345,15 +1383,19 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         // timestamp replay-stable. Never-dispatched steps reach no settlement, so
         // they emit nothing by design.
         const settledAtMs = await DBOS.now();
-        emitProvenanceGuarded(deps, {
-            type: "step_completed",
-            analysisId: input.analysisId,
-            runId,
-            stepId: settled.stepId,
-            status: stepStatus,
-            ...(stepDurationMs !== undefined ? { durationMs: stepDurationMs } : {}),
-            atMs: settledAtMs,
-        });
+        emitProvenanceGuarded(
+            deps,
+            {
+                type: "step_completed",
+                analysisId: input.analysisId,
+                runId,
+                stepId: settled.stepId,
+                status: stepStatus,
+                ...(stepDurationMs !== undefined ? { durationMs: stepDurationMs } : {}),
+                atMs: settledAtMs,
+            },
+            input.runSession,
+        );
     }
 
     await drainBudgetExceededNotifications(budgetExceededChildIds);
@@ -1458,14 +1500,18 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     // `DBOS.now()` is checkpointed, so the span stays replay-stable (see `RunProvenanceEvent`).
     // The duration measures from the `run_started` read threaded in as `startedAtMs`.
     const terminalAtMs = await DBOS.now();
-    emitProvenanceGuarded(deps, {
-        type: "run_completed",
-        analysisId: input.analysisId,
-        runId,
-        status,
-        atMs: terminalAtMs,
-        durationMs: terminalAtMs - startedAtMs,
-    });
+    emitProvenanceGuarded(
+        deps,
+        {
+            type: "run_completed",
+            analysisId: input.analysisId,
+            runId,
+            status,
+            atMs: terminalAtMs,
+            durationMs: terminalAtMs - startedAtMs,
+        },
+        input.runSession,
+    );
 
     try {
         await DBOS.runStep(

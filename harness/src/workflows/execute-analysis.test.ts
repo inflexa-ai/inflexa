@@ -32,6 +32,7 @@ import type { Pool } from "pg";
 import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
+import type { RunSession } from "../auth/types.js";
 
 import { runExecuteAnalysisBody, synthesisRowUpdate } from "./execute-analysis.js";
 import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunObservation, RunProvenanceEvent } from "./execute-analysis.js";
@@ -258,7 +259,7 @@ interface FakeDepsRecord {
 function makeDeps(opts: {
     childResults: Map<string, SandboxStepResult | Error>;
     pool: FakePool;
-    emitProvenance?: (event: RunProvenanceEvent) => void;
+    emitProvenance?: (event: RunProvenanceEvent, session: RunSession) => void;
     observeRun?: (observation: RunObservation) => void;
 }): {
     deps: ExecuteAnalysisDeps;
@@ -1482,6 +1483,33 @@ describe("executeAnalysis body", () => {
         expect(events).toEqual(firstRun);
         // The two run boundaries and both step settlements all carry stub times.
         for (const e of events) expect(e.atMs).toBeGreaterThanOrEqual(FAKE_CLOCK_BASE_MS);
+    });
+
+    it("every emit site delivers the workflow input's runSession alongside the event", async () => {
+        const pool = makeFakePool();
+        const events: RunProvenanceEvent[] = [];
+        const sessions: RunSession[] = [];
+        const { deps } = makeDeps({
+            pool,
+            emitProvenance: (e, s) => {
+                events.push(e);
+                sessions.push(s);
+            },
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "failed", durationMs: 2, finishReason: null, error: "boom" }],
+            ]),
+        });
+
+        const inp = input([{ id: "A" }, { id: "B" }], undefined, false);
+        await runExecuteAnalysisBody(inp, deps);
+
+        // Every arm — the run start, both step settlements, the terminal — rides
+        // with a session, and each captured session is the exact durable-input
+        // bundle: the same object, never a copy and never a re-mint.
+        expect(events.map((e) => e.type)).toEqual(["run_started", "step_completed", "step_completed", "run_completed"]);
+        expect(sessions).toHaveLength(events.length);
+        for (const s of sessions) expect(s).toBe(inp.runSession);
     });
 
     it("a throwing emitProvenance observer does not fail the run", async () => {
