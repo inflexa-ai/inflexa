@@ -220,14 +220,9 @@ export interface ExecuteAnalysisResult {
  * `run_completed` fires at BOTH terminal boundaries (success and failure); the
  * `status` field distinguishes them.
  *
- * `data_profile_completed` is the data-profile workflow's terminal observation,
- * delivered through the same seam (`tasks/data-profile.ts`). The profile has no
- * started arm: completion is the observation that matters — the profile's
- * durable products (the ledger row, the vector index) exist only at its
- * terminal boundary, and its `durationMs` (a terminal `DBOS.now()` read minus a
- * body-start read) already carries the span a started arm would add. It carries
- * no `runId` because a profile runs under the constant synthetic frame, which
- * identifies nothing; `analysisId` is its identity.
+ * `data_profile_completed` is the data-profile workflow's terminal observation
+ * (`tasks/data-profile.ts`). No started arm — `durationMs` carries the span; no
+ * `runId` — a profile's identity is its `analysisId`.
  */
 export type RunProvenanceEvent =
     | { type: "run_started"; analysisId: string; runId: string; planSummary: string; stepCount: number; atMs: number }
@@ -260,10 +255,9 @@ export type RunProvenanceEvent =
     | {
           type: "data_profile_completed";
           analysisId: string;
-          /** The profile's terminal ledger status (`DataProfileStatus["status"]` minus the non-terminal members). */
           status: "completed" | "failed";
           atMs: number;
-          /** `atMs` minus the body-start `DBOS.now()` read: the workflow-observed profile span in ms. */
+          /** `atMs` minus the body-start clock read: the workflow-observed profile span in ms. */
           durationMs: number;
       };
 
@@ -359,16 +353,9 @@ export interface ExecuteAnalysisDeps {
      * identifiers the events carry, not via step caching. Every call site is
      * guarded so a throwing observer never fails the run.
      *
-     * Each event arrives together with the run's `RunSession` from the durable
-     * workflow input. A realization that persists an observation to an external
-     * store makes an authenticated wire call, and that call requires authority
-     * (the run credential), scope (the organization and the resource), and the
-     * acting identity — the session is the vehicle for all three, exactly as it
-     * is for every other seam whose realization makes such a call
-     * (`ChatProvider`, `EmbeddingProvider`, `ArtifactRegistry.register`). The
-     * narrow run-scoped type is deliberate: the seam exists only inside
-     * workflow bodies, and a durable body carries only a `RunSession`. An
-     * implementation can ignore the parameter.
+     * Events arrive with the run's `RunSession` from durable workflow input — a
+     * persisting realization needs its credential, scope, and identity.
+     * Implementations may ignore the parameter.
      */
     readonly emitProvenance?: (event: RunProvenanceEvent, session: RunSession) => void;
 

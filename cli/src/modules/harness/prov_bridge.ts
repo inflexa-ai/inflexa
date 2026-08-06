@@ -347,6 +347,9 @@ export function createRunProvenanceEmitter(model: ProvModelId): (event: RunProve
                     outcome: { runId: event.runId, status: event.status, completedAtMs: event.atMs, durationMs: event.durationMs },
                 });
                 return;
+            case "data_profile_completed":
+                // Not mapped into the CLI's provenance vocabulary.
+                return;
             default: {
                 // Exhaustiveness: a new RunProvenanceEvent variant must add its mapping here.
                 const never: never = event;
