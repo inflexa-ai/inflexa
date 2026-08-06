@@ -1,11 +1,13 @@
 /**
  * `@inflexa-ai/prov-kernel` — the Inflexa provenance format kernel. The public surface is the Inflexa
  * PROV dialect: the document model (QName derivation, tsprov statement builders, unify options,
- * injectable digest), the chain-hash and Ed25519 sign/verify primitives, the signed-sidecar
- * schema, and the actor/ref value types the builders accept.
+ * injectable digest), the core event union and its apply function, the chain-hash and Ed25519
+ * sign/verify primitives, the signed-sidecar schema, and the actor/ref value types the builders
+ * accept.
  *
- * Deliberately absent: any event vocabulary, event reducer, or recorder lifecycle. Each host owns
- * its own event set and recorder; the kernel owns only the representation and its integrity.
+ * Deliberately absent: any recorder lifecycle (sink, flush, queue, CAS), signer wiring, or
+ * harness dependency. Each host owns its own recorder and emission policy; the kernel owns the
+ * representation and its integrity.
  */
 
 export type {
@@ -25,8 +27,12 @@ export type {
     VerifyResult,
 } from "./types.js";
 
+// The builders and `appendLifecycleAction` stay exported: they are the mechanism a host uses to record extension events the core union does not carry.
 export { createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS } from "./document.js";
 export type { ProvDigest, ProvDocumentModel, ProvDocumentModelOptions } from "./document.js";
+
+export { applyProvEvent } from "./events.js";
+export type { ProvEvent } from "./events.js";
 
 export {
     computeChainHash,

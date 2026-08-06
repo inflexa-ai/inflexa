@@ -10,16 +10,20 @@ Inflexa PROV dialect, and nothing else:
 
 - the document model (`src/document.ts`): QName derivation, tsprov statement
   builders, `PROV_UNIFY_OPTIONS`, and the injectable digest
+- the core event union and its apply function (`src/events.ts`): the nine
+  `ProvEvent` variants and `applyProvEvent` — the event-to-statements mapping
+  determines the document bytes, thus it is format
 - the signing primitives (`src/signing.ts`): the chain hash, Ed25519
   sign/verify, and the `ProvSigner` seam
 - verification and the signed sidecar (`src/verify.ts`)
 - the actor and ref value types the builders accept (`src/types.ts`)
 
 The kernel obeys the three-layer rule: the harness observes, the kernel
-represents, hosts decide. Thus the package must NOT contain an event union, an
-event reducer, a recorder lifecycle (sink, flush, queue, CAS), or a harness
-bridge. Each host owns those. The package has no dependency on
-`@inflexa-ai/harness`, and it must keep none.
+represents, hosts decide. Thus the package must NOT contain a recorder
+lifecycle (sink, flush, queue, CAS), signer wiring, or a harness bridge. Each
+host owns those, and each host maps its own extension events onto the exported
+builders. The package has no dependency on `@inflexa-ai/harness`, and it must
+keep none.
 
 [`SPEC.md`](SPEC.md) is the wire-format contract. It is derived from the code.
 If you change a derivation, an identifier scheme, the chain rule, or the

@@ -221,6 +221,152 @@ creation `wasGeneratedBy(analysis, action, time)`, the input-add
 `wasInvalidatedBy(input, action, time)`. The lifecycle `wasAttributedTo` and
 `wasDerivedFrom` relations carry **no** time.
 
+## Events
+
+The kernel owns the core event union `ProvEvent` and the apply function
+`applyProvEvent(model, doc, event)`. The mapping from an event to its
+statements determines the serialized document bytes — the same bytes that the
+chain hash signs — thus the mapping is format. A conforming producer must
+append the statements below, in the given order, for each event. A host maps
+its own extension events onto the exported builders; an extension event is not
+part of this union.
+
+Each event carries the owning `analysisId` and the responsible actor. Each
+event except `run_completed` first declares (re-declares) the actor agent per
+the agent table, before its own statements. Re-declaration is harmless:
+`unified()` collapses same-QName records.
+
+A model-driven event (`step_completed`, `command_executed`) also appends the
+model-agent statements, after the actor association of its activity:
+
+1. the agent `inflexa:agent-model-{digest(model)}`
+2. `actedOnBehalfOf(model, actor)`, id
+   `inflexa:delegation-{digest(modelQn)}-{digest(actorQn)}`
+3. `wasAssociatedWith(activity, model)`, id `{assocIdBase}-{digest(modelQn)}`
+
+### analysis_created
+
+No payload beyond the common fields.
+
+1. the action activity `inflexa:action-{mintActionId()}`, `prov:type`
+   `inflexa:CreateAnalysis`, start = end = the model clock
+2. `wasAssociatedWith(action, actor)` — anonymous
+3. `wasGeneratedBy(analysis, action, time)` — anonymous, timed
+4. `wasAttributedTo(analysis, actor)` — anonymous
+
+### input_added
+
+Payload: the input ref, and a nullable `derivedFromAnalysisId`.
+
+1. the action activity `inflexa:action-{mintActionId()}`, `prov:type`
+   `inflexa:AddInput`, start = end = the model clock
+2. `wasAssociatedWith(action, actor)` — anonymous
+3. the staged-input entity `inflexa:input-{digest("{anchorId}|{path}")}`,
+   `prov:type` `inflexa:Input`, `inflexa:path`, `inflexa:isDir`
+4. `used(action, input, time)` — anonymous, timed
+5. `wasAttributedTo(input, actor)` — anonymous
+6. `wasDerivedFrom(analysis, input)` — anonymous
+7. only when `derivedFromAnalysisId` is not null:
+   `wasDerivedFrom(input, inflexa:analysis-{derivedFromAnalysisId})` —
+   anonymous
+
+### input_removed
+
+Payload: the input ref.
+
+1. the action activity `inflexa:action-{mintActionId()}`, `prov:type`
+   `inflexa:RemoveInput`, start = end = the model clock
+2. `wasAssociatedWith(action, actor)` — anonymous
+3. the staged-input entity, re-declared
+4. `wasInvalidatedBy(input, action, time)` — anonymous, timed
+
+### run_started
+
+Payload: `runId`, optional `planSummary`, `startedAtMs`.
+
+1. the run activity `inflexa:run-{runId}`, `prov:startTime` from
+   `startedAtMs` under the first-wins guard, `prov:type` `inflexa:Run`,
+   `inflexa:runId`, optional `inflexa:planSummary`
+2. `wasAssociatedWith(run, actor)`, id `inflexa:assoc-run-{runId}-{aDigest}`
+3. `used(run, analysis)`, id `inflexa:used-run-{runId}`
+
+The event does not generate the analysis again. `analysis_created` writes the
+single generation of the analysis entity.
+
+### run_completed
+
+Payload: `runId`, `status`, `completedAtMs`, optional `durationMs`.
+
+Re-declares the run activity `inflexa:run-{runId}` with `prov:endTime` from
+`completedAtMs`, `inflexa:status`, and optional `inflexa:durationMs`. The
+event declares no agent and appends no relation. The terminal values write
+directly and resolve last-wins at unify.
+
+### step_completed
+
+Payload: `runId`, `stepId`, `status`, `completedAtMs`, optional `durationMs`,
+and the model id.
+
+1. the step activity `inflexa:step-{runId}-{stepId}`, `prov:endTime` from
+   `completedAtMs`, `prov:type` `inflexa:Step`, `inflexa:runId`,
+   `inflexa:stepId`, `inflexa:status`, optional `inflexa:durationMs`
+2. `wasInformedBy(step, run)`, id `inflexa:informed-{runId}-{stepId}`
+3. `wasAssociatedWith(step, actor)`, id
+   `inflexa:assoc-step-{runId}-{stepId}-{aDigest}`
+4. the model-agent statements, with
+   `assocIdBase = inflexa:assoc-step-{runId}-{stepId}`
+
+### command_executed
+
+Payload: the step ref, the command ref (a `command` or a `file_tool` group),
+and the model id.
+
+1. the command activity `inflexa:cmd-{runId}-{stepId}-{groupDigest}` with the
+   per-kind attributes and no formal time
+2. `wasInformedBy(command, step)`, id
+   `inflexa:informed-cmd-{runId}-{stepId}-{groupDigest}`
+3. `wasAssociatedWith(command, actor)`, id
+   `inflexa:assoc-cmd-{runId}-{stepId}-{groupDigest}-{aDigest}`
+4. the model-agent statements, with
+   `assocIdBase = inflexa:assoc-cmd-{runId}-{stepId}-{groupDigest}`
+5. per output: `wasGeneratedBy(file, command)`, id
+   `inflexa:gen-{fileDigest}`
+6. for the `command` kind only, per input: `used(command, file)`, id
+   `inflexa:used-cmd-{runId}-{stepId}-{groupDigest}-{fileDigest}`, then the
+   resolved script edge per the script-resolution rules
+
+The event references each file entity by QName only. The entity declaration
+comes from the `file_written` or `input_used` event for the same
+`(path, hash)` key.
+
+### file_written
+
+Payload: the file ref, the step ref, and the generation authority (`command`
+or `step`).
+
+1. the file entity `inflexa:file-{fileDigest}`, `prov:type` `inflexa:File`,
+   `inflexa:path`, `inflexa:hash`, `inflexa:size`, `inflexa:producer`
+2. only when the authority is `step`: `wasGeneratedBy(file, step)`, id
+   `inflexa:gen-{fileDigest}`
+3. `wasAttributedTo(file, actor)`, id `inflexa:attr-{fileDigest}-{aDigest}`
+4. `wasDerivedFrom(file, analysis)`, id `inflexa:deriv-{fileDigest}`
+
+When the authority is `command`, the generation edge comes from the
+`command_executed` event under the same id. Thus exactly one generation edge
+exists per file entity.
+
+### input_used
+
+Payload: the step ref and the used-input ref.
+
+1. the read-input file entity `inflexa:file-{fileDigest}`, `inflexa:path`,
+   `inflexa:hash`, `inflexa:source`, optional `inflexa:fileId`, no
+   `prov:type`
+2. `used(step, file)`, id `inflexa:used-input-{runId}-{stepId}-{fileDigest}`
+
+The event declares the actor agent too, although its own statements carry no
+agent reference.
+
 ## The chain rule
 
 A persisted document snapshot participates in a hash chain:
