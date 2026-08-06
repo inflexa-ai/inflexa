@@ -23,13 +23,13 @@
 
 ## 4. The tool layer
 
-- [ ] 4.1 Make the draft holder and the factory in `src/tools/report-authoring/`. The factory closes over the holder and the snapshot, and it swaps the holder only on a landed operation.
-- [ ] 4.2 Make the tools with `defineTool`: `add_block`, `change_block`, `remove_block`, `move_block`, `read_outline`, `read_block`, and `finish_draft`. A refusal returns in the ok channel as `{ applied: false, refusal }`, and a landed operation returns `{ applied: true, outline }`. Each tool gives a `describeCall` hook or the literal `"none"`.
-- [ ] 4.3 Write the tests of the tool layer: the ok-channel refusal envelope, the outline in a landed result, and the isolation of two factories with two drafts.
+- [x] 4.1 Make the draft holder and the factory in `src/tools/report-authoring/`. The factory closes over the holder and the snapshot, and it swaps the holder only on a landed operation.
+- [x] 4.2 Make the tools with `defineTool`: `add_block`, `change_block`, `remove_block`, `move_block`, `read_outline`, `read_block`, and `finish_draft`. A refusal returns in the ok channel as `{ applied: false, refusal }`, and a landed operation returns `{ applied: true, outline }`. Each tool gives a `describeCall` hook or the literal `"none"`.
+- [x] 4.3 Write the tests of the tool layer: the ok-channel refusal envelope, the outline in a landed result, and the isolation of two factories with two drafts.
 
 ## 5. The gates
 
-- [ ] 5.1 Run `bun run format:file` on each changed source file.
-- [ ] 5.2 Run `tsc -p tsconfig.json`, and repair each finding.
-- [ ] 5.3 Run the lint of the harness on the changed files, and repair each finding.
-- [ ] 5.4 Run the tests of the changed areas only: `src/report-model/` and `src/tools/report-authoring/`. Do not run the full suite.
+- [x] 5.1 Run `bun run format:file` on each changed source file.
+- [x] 5.2 Run `tsc -p tsconfig.json`, and repair each finding.
+- [x] 5.3 Run the lint of the harness on the changed files, and repair each finding.
+- [x] 5.4 Run the tests of the changed areas only: `src/report-model/` and `src/tools/report-authoring/`. Do not run the full suite.
