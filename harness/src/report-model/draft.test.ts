@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { ReportDocumentSchema } from "../contracts/report-blocks.js";
+import { ATOM_BLOCK_SCHEMAS, ReportDocumentSchema } from "../contracts/report-blocks.js";
 import { DraftBlockSchema, DraftDocumentSchema, DraftSectionBlockSchema } from "./draft.js";
 
 // A document that `ReportDocumentSchema` accepts. Each section holds at least one child, thus the
@@ -45,5 +45,14 @@ describe("the draft grammar", () => {
     it("parses a full document that the contract accepts", () => {
         expect(ReportDocumentSchema.safeParse(fullDocument).success).toBe(true);
         expect(DraftDocumentSchema.safeParse(fullDocument).success).toBe(true);
+    });
+
+    it("admits every atom kind that the contract declares", () => {
+        // The draft spreads the same atom tuple as the contract union. A ninth kind that lands in the
+        // contract and not here would be unauthorable, and nothing in the build would say so.
+        const contractKinds = ATOM_BLOCK_SCHEMAS.map((schema) => schema.shape.kind.value);
+        const draftKinds = DraftBlockSchema.options.map((option) => option.shape.kind.value);
+
+        expect(draftKinds.sort()).toEqual([...contractKinds, "section"].sort());
     });
 });

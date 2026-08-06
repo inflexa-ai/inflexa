@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ArtifactTableReference, ArtifactValueReference } from "../contracts/report-reference.js";
-import { addBlock, changeBlock, moveBlock, removeBlock } from "./draft-operations.js";
+import { addBlock, changeBlock, moveBlock, removeBlock, setTitle } from "./draft-operations.js";
 import type { DraftBlock, DraftDocument } from "./draft.js";
 import type { ReportSnapshot } from "./reference-resolver.js";
 
@@ -514,6 +514,93 @@ describe("moveBlock", () => {
         const failure = moveBlock(draft, { targetId: "metric-1", destination: {} }, snapshot)._unsafeUnwrapErr();
 
         expect(failure.reason).toBe("atom-at-root");
+        expect(draft).toEqual(before);
+    });
+});
+
+describe("the duplicate-id scan", () => {
+    /** A draft that already carries the id `text-1` two times, in two different sections. */
+    function duplicatedDraft(): DraftDocument {
+        return {
+            title: "Report",
+            sections: [
+                { kind: "section", id: "sec-1", title: "First", blocks: [{ kind: "text", id: "text-1", content: { prose: "One." } }] },
+                {
+                    kind: "section",
+                    id: "sec-2",
+                    title: "Second",
+                    blocks: [
+                        { kind: "text", id: "text-1", content: { prose: "Two." } },
+                        { kind: "text", id: "text-9", content: { prose: "Three." } },
+                    ],
+                },
+            ],
+        };
+    }
+
+    it("refuses an add whose payload repeats an id that the draft holds", () => {
+        const draft = baseDraft();
+        const failure = addBlock(
+            draft,
+            { block: { kind: "text", id: "text-1", content: { prose: "Again." } }, destination: { parentId: "sec-2" } },
+            snapshot,
+        )._unsafeUnwrapErr();
+
+        expect(failure.reason).toBe("duplicate-id");
+        expect(failure.detail).toContain("text-1");
+    });
+
+    it("refuses an add whose own payload repeats an id inside itself", () => {
+        const draft = baseDraft();
+        const subtree: DraftBlock = {
+            kind: "section",
+            id: "sec-9",
+            title: "New",
+            blocks: [
+                { kind: "text", id: "twin", content: { prose: "One." } },
+                { kind: "text", id: "twin", content: { prose: "Two." } },
+            ],
+        };
+        const failure = addBlock(draft, { block: subtree, destination: {} }, snapshot)._unsafeUnwrapErr();
+
+        expect(failure.reason).toBe("duplicate-id");
+        expect(failure.detail).toContain("twin");
+    });
+
+    it("lands an operation that touches neither side of a duplicate the draft already carries", () => {
+        // A whole-draft scan would refuse here, and the refusal would name an id the operation never
+        // touched, with no operation that clears it.
+        const draft = duplicatedDraft();
+
+        expect(removeBlock(draft, { targetId: "text-9" }, snapshot).isOk()).toBe(true);
+        expect(changeBlock(draft, { targetId: "sec-1", title: "Renamed" }, snapshot).isOk()).toBe(true);
+        expect(moveBlock(draft, { targetId: "text-9", destination: { parentId: "sec-1" } }, snapshot).isOk()).toBe(true);
+        expect(addBlock(draft, { block: { kind: "text", id: "fresh", content: { prose: "New." } }, destination: { parentId: "sec-1" } }, snapshot).isOk()).toBe(
+            true,
+        );
+    });
+
+    it("still refuses an add that would make a third copy of an already duplicated id", () => {
+        const draft = duplicatedDraft();
+        const failure = addBlock(
+            draft,
+            { block: { kind: "text", id: "text-1", content: { prose: "Third." } }, destination: { parentId: "sec-1" } },
+            snapshot,
+        )._unsafeUnwrapErr();
+
+        expect(failure.reason).toBe("duplicate-id");
+    });
+});
+
+describe("setTitle", () => {
+    it("sets the title, and it changes nothing else", () => {
+        const draft = baseDraft();
+        const before = structuredClone(draft);
+
+        const next = setTitle(draft, "Differential expression");
+
+        expect(next.title).toBe("Differential expression");
+        expect(next.sections).toEqual(before.sections);
         expect(draft).toEqual(before);
     });
 });

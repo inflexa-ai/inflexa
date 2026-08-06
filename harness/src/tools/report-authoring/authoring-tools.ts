@@ -1,7 +1,7 @@
 /**
  * The authoring tool surface over the draft operations.
  *
- * The factory closes over a private draft holder and the pinned snapshot. It gives seven tools and a
+ * The factory closes over a private draft holder and the pinned snapshot. It gives eight tools and a
  * read of the current draft. The tools read no ambient state, thus two factories hold two independent
  * drafts.
  *
@@ -21,38 +21,60 @@ import {
     changeBlock,
     moveBlock,
     removeBlock,
+    setTitle,
     type ChangeOperation,
     type DraftDestination,
     type DraftPlace,
     type DraftRefusal,
 } from "../../report-model/draft-operations.js";
-import { buildOutline, readBlock, type OutlineEntry } from "../../report-model/draft-read.js";
+import { buildOutline, readBlock, type OutlineEntry, type ReadableBlock } from "../../report-model/draft-read.js";
 import { finishDraft, type FinishResult } from "../../report-model/draft-finish.js";
-import type { DraftBlock, DraftDocument } from "../../report-model/draft.js";
+import { DraftBlockSchema, type DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 /**
- * The block payload is untyped JSON from the model. The core parses it with the draft grammar, and it
- * refuses `malformed-block`. Thus the input schema keeps the payload loose, and the grammar keeps one
- * definition.
+ * The block payload.
+ *
+ * The published JSON Schema carries the whole draft grammar, because a tool is self-describing at attach
+ * time and the schema is the only place where the model learns the shape of the eight block kinds. A bare
+ * `z.unknown()` emits the empty schema, which tells the model nothing and leaves it to discover each
+ * required field through one refusal at a time.
+ *
+ * The `z.unknown()` member keeps the runtime parse permissive. Thus a malformed payload still reaches the
+ * core, which parses it with the same grammar and refuses `malformed-block` as typed data in the ok
+ * channel. A strict input schema would turn that designed refusal into a hard input-validation error from
+ * the loop.
  */
-const blockPayload = z.unknown();
+const blockPayload = z.union([DraftBlockSchema, z.unknown()]);
+
+/**
+ * A flat field that the model can leave out.
+ *
+ * Nullish, and not optional. A model that must choose one of four destination fields routinely sends
+ * `null` for the three it does not use, and strict function calling requires every declared key to be
+ * present. Under `.optional()` each of those nulls fails the input parse, and the block never lands.
+ */
+const absentable = <T extends z.ZodType>(schema: T): z.ZodOptional<z.ZodNullable<T>> => schema.nullish();
 
 /** The flat destination fields. An anchor is `before` or `after`, and a place is `start` or `end`. */
 const addBlockInput = z.object({
     block: blockPayload,
-    parentId: z.string().optional(),
-    place: z.enum(["start", "end"]).optional(),
-    before: z.string().optional(),
-    after: z.string().optional(),
+    parentId: absentable(z.string()),
+    place: absentable(z.enum(["start", "end"])),
+    before: absentable(z.string()),
+    after: absentable(z.string()),
 });
 
-/** The change payload is a title for a section target, or a block for an atom target, and exactly one of the two. */
+/**
+ * The change payload is a title for a section target, or a block for an atom target, and exactly one of
+ * the two. Both fields are absentable, because a section retitle names no block. Zod 4 treats a bare
+ * `z.unknown()` as a required key, thus an optional marker is what makes the retitle call representable.
+ */
 const changeBlockInput = z.object({
     targetId: z.string(),
-    title: z.string().optional(),
-    block: blockPayload,
+    title: absentable(z.string()),
+    block: blockPayload.optional(),
 });
 
 const removeBlockInput = z.object({
@@ -61,16 +83,21 @@ const removeBlockInput = z.object({
 
 const moveBlockInput = z.object({
     targetId: z.string(),
-    parentId: z.string().optional(),
-    place: z.enum(["start", "end"]).optional(),
-    before: z.string().optional(),
-    after: z.string().optional(),
+    parentId: absentable(z.string()),
+    place: absentable(z.enum(["start", "end"])),
+    before: absentable(z.string()),
+    after: absentable(z.string()),
 });
 
 const readOutlineInput = z.object({});
 
+/** The read names its target with the same field name as each mutation, thus one id key serves them all. */
 const readBlockInput = z.object({
-    id: z.string(),
+    targetId: z.string(),
+});
+
+const setTitleInput = z.object({
+    title: z.string().min(1),
 });
 
 const finishDraftInput = z.object({});
@@ -81,6 +108,7 @@ export type RemoveBlockInput = z.infer<typeof removeBlockInput>;
 export type MoveBlockInput = z.infer<typeof moveBlockInput>;
 export type ReadOutlineInput = z.infer<typeof readOutlineInput>;
 export type ReadBlockInput = z.infer<typeof readBlockInput>;
+export type SetTitleInput = z.infer<typeof setTitleInput>;
 export type FinishDraftInput = z.infer<typeof finishDraftInput>;
 
 /** The result of a mutation tool. A landing carries the fresh outline. A refusal carries the typed reason. */
@@ -92,7 +120,7 @@ export interface OutlineResult {
 }
 
 /** The result of `read_block`. An absent block is an expected outcome, thus it stays in the ok channel. */
-export type ReadBlockResult = { found: true; block: DraftBlock } | { found: false };
+export type ReadBlockResult = { found: true; block: ReadableBlock } | { found: false };
 
 /** The state that the factory closes over. */
 export interface ReportAuthoringState {
@@ -101,12 +129,13 @@ export interface ReportAuthoringState {
     readonly initialDraft?: DraftDocument;
 }
 
-/** The seven authoring tools, plus a read of the current draft. */
+/** The eight authoring tools, plus a read of the current draft. */
 export interface ReportAuthoringTools {
     readonly add_block: Tool<AddBlockInput, MutationResult>;
     readonly change_block: Tool<ChangeBlockInput, MutationResult>;
     readonly remove_block: Tool<RemoveBlockInput, MutationResult>;
     readonly move_block: Tool<MoveBlockInput, MutationResult>;
+    readonly set_title: Tool<SetTitleInput, MutationResult>;
     readonly read_outline: Tool<ReadOutlineInput, OutlineResult>;
     readonly read_block: Tool<ReadBlockInput, ReadBlockResult>;
     readonly finish_draft: Tool<FinishDraftInput, FinishResult>;
@@ -115,27 +144,40 @@ export interface ReportAuthoringTools {
 
 /** The flat fields that name a destination. Both `add_block` and `move_block` carry them. */
 interface DestinationInput {
-    parentId?: string;
-    place?: "start" | "end";
-    before?: string;
-    after?: string;
+    parentId?: string | null;
+    place?: "start" | "end" | null;
+    before?: string | null;
+    after?: string | null;
+}
+
+/** Read an absentable field. An explicit `null` and an omitted key both mean that the model gave no value. */
+function given<T>(value: T | null | undefined): T | undefined {
+    return value ?? undefined;
 }
 
 /**
  * Map the flat destination fields onto the core destination.
  *
  * Two anchors, or an anchor beside a place, name two places at one time. Thus the map refuses with
- * `unknown-target`, and the detail names the conflict. An anchor implies its own parent, thus a place
- * beside an anchor is a contradiction and not a refinement.
+ * `conflicting-destination`, and the detail names the conflict. An anchor implies its own parent, thus a
+ * place beside an anchor is a contradiction and not a refinement.
+ *
+ * The reason is not `unknown-target`, which means that no block holds a named id. A conflict is a fault in
+ * the shape of the call, and the repair is to drop one field. An agent that reads `unknown-target` instead
+ * goes back to the outline for a better id, finds the ids were already correct, and sends the same
+ * conflicting pair again.
  */
 function toDestination(input: DestinationInput): Result<DraftDestination, DraftRefusal> {
-    const { parentId, place, before, after } = input;
+    const parentId = given(input.parentId);
+    const place = given(input.place);
+    const before = given(input.before);
+    const after = given(input.after);
     if (before !== undefined && after !== undefined) {
-        return err({ reason: "unknown-target", detail: "a destination names `before` or `after`, not both" });
+        return err({ reason: "conflicting-destination", detail: "a destination names `before` or `after`, not both" });
     }
     const hasAnchor = before !== undefined || after !== undefined;
     if (hasAnchor && place !== undefined) {
-        return err({ reason: "unknown-target", detail: "a destination names an anchor or a `place`, not both" });
+        return err({ reason: "conflicting-destination", detail: "a destination names an anchor or a `place`, not both" });
     }
     let resolvedPlace: DraftPlace | undefined;
     if (before !== undefined) {
@@ -155,16 +197,37 @@ function toDestination(input: DestinationInput): Result<DraftDestination, DraftR
  * an ambiguous change. Thus the map refuses with `payload-kind-mismatch`.
  */
 function toChangeOperation(input: ChangeBlockInput): Result<ChangeOperation, DraftRefusal> {
-    if (input.title !== undefined && input.block !== undefined) {
+    const title = given(input.title);
+    const block = given(input.block);
+    if (title !== undefined && block !== undefined) {
         return err({ reason: "payload-kind-mismatch", detail: "a change names a `title` or a `block`, not both" });
     }
-    if (input.title !== undefined) {
-        return ok({ targetId: input.targetId, title: input.title });
+    if (title !== undefined) {
+        return ok({ targetId: input.targetId, title });
     }
-    if (input.block !== undefined) {
-        return ok({ targetId: input.targetId, block: input.block });
+    if (block !== undefined) {
+        return ok({ targetId: input.targetId, block: decodeBlockPayload(block) });
     }
     return err({ reason: "payload-kind-mismatch", detail: "a change names a `title` or a `block`" });
+}
+
+/**
+ * Give the block payload as the core expects it, and decode a double-encoded one.
+ *
+ * A model routinely sends a nested object as a `JSON.stringify` string. The loop repairs that at its own
+ * input boundary, but only for a schema that rejects the string, and this payload accepts any value so
+ * that a malformed block can come back as a typed refusal. Thus the decode happens here. A string that is
+ * not JSON passes through as it is, and the core refuses it as a malformed block.
+ */
+function decodeBlockPayload(block: unknown): unknown {
+    if (typeof block !== "string") {
+        return block;
+    }
+    try {
+        return JSON.parse(block);
+    } catch {
+        return block;
+    }
 }
 
 /** Read the `kind` of an untyped block payload, or `undefined` when the payload names none. */
@@ -179,7 +242,18 @@ function readKind(block: unknown): string | undefined {
 }
 
 /**
- * Make the seven authoring tools over one draft.
+ * Every tool of this surface runs inline.
+ *
+ * The draft is closure memory with no durable backing. A step-mode tool goes through `DBOS.runStep`, which
+ * caches the result of a step and replays it without running the body. A replay after a host restart would
+ * hand the agent the cached `applied: true` outline of each landed operation while the rebuilt closure
+ * holds an empty draft, and the finish would then report an empty document for a report that the
+ * transcript shows as complete. Inline mode keeps the tool result and the draft in one lifetime.
+ */
+const AUTHORING_EXECUTION_MODE = "inline" as const;
+
+/**
+ * Make the eight authoring tools over one draft.
  *
  * The holder is a private `let`. Each tool reads the holder at call time, thus a landing through one tool
  * shows in the next call of every tool. The holder swaps only inside `land`, thus a refused operation
@@ -203,11 +277,14 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
     const add_block = defineTool({
         id: "add_block",
         description:
-            "Add one block to the draft. Name the destination with `parentId` and one of `place`, `before`, or `after`. " +
+            "Add one block to the draft. The `block` schema gives the eight kinds and the fields of each one. " +
+            "You choose the `id` of the block, and it must be unique in the draft. " +
+            "Name the destination with `parentId` and one of `place`, `before`, or `after`. " +
             "The root admits a section only, and an atom needs a section as its parent.",
         inputSchema: addBlockInput,
+        executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => {
-            const kind = readKind(input.block);
+            const kind = readKind(decodeBlockPayload(input.block));
             return kind !== undefined ? `add ${kind}` : "add a block";
         },
         execute: async (input): Promise<Result<MutationResult, ToolError>> => {
@@ -215,16 +292,17 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
             if (destination.isErr()) {
                 return ok(refuse(destination.error));
             }
-            return ok(land(addBlock(draft, { block: input.block, destination: destination.value }, snapshot)));
+            return ok(land(addBlock(draft, { block: decodeBlockPayload(input.block), destination: destination.value }, snapshot)));
         },
     });
 
     const change_block = defineTool({
         id: "change_block",
         description:
-            "Change one block by its id. Give a `title` to retitle a section, or a `block` to replace an atom. " +
-            "The change keeps the id of the target, and a kind change is permitted.",
+            "Change one block by its id. Give a `title` to retitle a section, or a `block` to replace an atom, and never both. " +
+            "The change keeps the id of the target, thus the `id` of the payload does not matter. A kind change is permitted.",
         inputSchema: changeBlockInput,
+        executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `change ${input.targetId}`,
         execute: async (input): Promise<Result<MutationResult, ToolError>> => {
             const operation = toChangeOperation(input);
@@ -239,6 +317,7 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         id: "remove_block",
         description: "Remove one block by its id. A removed section takes its whole subtree with it, and the id is free for a later add.",
         inputSchema: removeBlockInput,
+        executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `remove ${input.targetId}`,
         execute: async (input): Promise<Result<MutationResult, ToolError>> => ok(land(removeBlock(draft, { targetId: input.targetId }, snapshot))),
     });
@@ -249,6 +328,7 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
             "Move one block by its id to a new destination. Name the destination with `parentId` and one of `place`, `before`, or `after`. " +
             "A section cannot move into its own subtree.",
         inputSchema: moveBlockInput,
+        executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `move ${input.targetId}`,
         execute: async (input): Promise<Result<MutationResult, ToolError>> => {
             const destination = toDestination(input);
@@ -259,12 +339,25 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         },
     });
 
+    const set_title = defineTool({
+        id: "set_title",
+        description:
+            "Set the title of the report document. A draft starts with no title, and a document needs one. " +
+            "The title names the whole report, and it is not the title of a section.",
+        inputSchema: setTitleInput,
+        executionMode: AUTHORING_EXECUTION_MODE,
+        describeCall: (input): string => `title the report ${input.title}`,
+        execute: async (input): Promise<Result<MutationResult, ToolError>> => ok(land(ok(setTitle(draft, input.title)))),
+    });
+
     const read_outline = defineTool({
         id: "read_outline",
         description:
             "Read the outline of the draft. Each entry gives the id, the kind, the nesting depth, and a short label. " +
-            "Use the outline as the working view of the draft, and read one block when the label is not enough.",
+            "A label that ends with the character … is clipped. Use the outline as the primary view of the draft, " +
+            "and read one block when the label is not enough.",
         inputSchema: readOutlineInput,
+        executionMode: AUTHORING_EXECUTION_MODE,
         // The input carries no field, thus a hook can only restate the name of the tool.
         describeCall: "none",
         execute: async (): Promise<Result<OutlineResult, ToolError>> => ok({ outline: buildOutline(draft) }),
@@ -272,11 +365,14 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
 
     const read_block = defineTool({
         id: "read_block",
-        description: "Read one block by its id. The result gives the full block with its bindings. Use it when the outline label is not enough.",
+        description:
+            "Read one block by its id. An atom gives the full block with its bindings. A section gives its title and the id of each child, " +
+            "because the outline already names every block under it. Use it when the outline label is not enough.",
         inputSchema: readBlockInput,
-        describeCall: (input): string => `read ${input.id}`,
+        executionMode: AUTHORING_EXECUTION_MODE,
+        describeCall: (input): string => `read ${input.targetId}`,
         execute: async (input): Promise<Result<ReadBlockResult, ToolError>> => {
-            const block = readBlock(draft, input.id);
+            const block = readBlock(draft, input.targetId);
             const result: ReadBlockResult = block !== undefined ? { found: true, block } : { found: false };
             return ok(result);
         },
@@ -285,9 +381,10 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
     const finish_draft = defineTool({
         id: "finish_draft",
         description:
-            "Finish the draft. The result gives each completeness gap, or the valid report document. " +
-            "Use it to check that the draft passes the whole document schema, the id rule, and the structural tier.",
+            "Finish the draft. The result gives each completeness gap, or the valid report document, and each advisory warning. " +
+            "Use it to make sure that the draft passes the whole document schema, the id rule, and the structural tier.",
         inputSchema: finishDraftInput,
+        executionMode: AUTHORING_EXECUTION_MODE,
         // The input carries no field, thus a hook can only restate the name of the tool.
         describeCall: "none",
         execute: async (): Promise<Result<FinishResult, ToolError>> => ok(finishDraft(draft, snapshot)),
@@ -298,6 +395,7 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         change_block,
         remove_block,
         move_block,
+        set_title,
         read_outline,
         read_block,
         finish_draft,

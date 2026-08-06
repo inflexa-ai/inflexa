@@ -8,10 +8,13 @@
  * each reference against the pinned evidence, and it warns about a free numeral in prose.
  */
 
-import { ReportDocumentSchema, type Block } from "../contracts/report-blocks.js";
-import type { Reference, UnresolvedReference } from "../contracts/report-reference.js";
+import { ReportDocumentSchema } from "../contracts/report-blocks.js";
+import type { UnresolvedReference } from "../contracts/report-reference.js";
 import { allWithConcurrency } from "../lib/async-utils.js";
+import { walkBlocks, type CollectedReference, type ReportWarning } from "./block-walk.js";
 import { columnsHeldByNoRow, type ReferenceResolver, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
+
+export type { ReportWarning };
 
 /**
  * The cap on how many references resolve at the same time.
@@ -33,13 +36,6 @@ export interface ResolutionFailure {
     failure: UnresolvedReference;
 }
 
-/** An advisory warning about the content of one block. A warning never makes a report invalid. */
-export interface ReportWarning {
-    blockId: string;
-    kind: "free-numeral";
-    detail: string;
-}
-
 /**
  * The result of validation. `valid` is false when the schema failed, a block id repeats, or a reference
  * did not resolve. `duplicateIds` names each repeated id one time, in sorted order. The warnings ride
@@ -54,41 +50,6 @@ export type ReportValidation =
           resolutionFailures?: ResolutionFailure[];
           warnings: ReportWarning[];
       };
-
-/**
- * A free-standing token that looks like a number, with an optional decimal part and an optional percent
- * sign.
- *
- * The left boundary keeps the digits of a name out of the warnings. The domain prose is dense with a
- * symbol such as `TP53`, `CD8`, or `IL6`, and without the boundary each one warns for its digits and
- * buries the real free figures.
- *
- * The check is advisory only. A natural-language numeral is brittle to police, because a numeral in
- * prose can be a real free-standing figure or a harmless part of a name. Thus a hit warns, and it never
- * fails the report.
- */
-const NUMERAL_PATTERN = /(?<![A-Za-z0-9])-?\d+(?:\.\d+)?%?/g;
-
-function numeralWarnings(blockId: string, prose: string): ReportWarning[] {
-    const warnings: ReportWarning[] = [];
-    for (const match of prose.matchAll(NUMERAL_PATTERN)) {
-        warnings.push({ blockId, kind: "free-numeral", detail: match[0] });
-    }
-    return warnings;
-}
-
-/**
- * One reference that the walk met, tied to the block that carries it.
- *
- * `encodingColumns` is present for a `chart` only. A chart names its axes as free strings, thus the
- * names must be matched against the table that the binding resolves to. Nothing else can catch a chart
- * that plots a column which does not exist.
- */
-interface CollectedReference {
-    blockId: string;
-    reference: Reference;
-    encodingColumns?: string[];
-}
 
 /**
  * Match each column that a chart encoding names against the table that its binding resolved to.
@@ -127,58 +88,7 @@ export async function validateReport(document: unknown, snapshot: ReportSnapshot
         return { valid: false, schemaIssues, warnings: [] };
     }
 
-    const references: CollectedReference[] = [];
-    const warnings: ReportWarning[] = [];
-
-    // An id is what makes a block addressable, thus an amend by id is well defined only while each id
-    // belongs to one block. `seenIds` holds each id that the walk met, and `repeatedIds` holds each id
-    // that it met again.
-    const seenIds = new Set<string>();
-    const repeatedIds = new Set<string>();
-
-    const walk = (block: Block): void => {
-        if (seenIds.has(block.id)) {
-            repeatedIds.add(block.id);
-        } else {
-            seenIds.add(block.id);
-        }
-        switch (block.kind) {
-            case "section":
-                for (const child of block.blocks) {
-                    walk(child);
-                }
-                return;
-            case "text":
-                warnings.push(...numeralWarnings(block.id, block.content.prose));
-                return;
-            case "claim":
-                warnings.push(...numeralWarnings(block.id, block.content.prose));
-                for (const binding of block.bindings) {
-                    references.push({ blockId: block.id, reference: binding });
-                }
-                return;
-            case "metric":
-                references.push({ blockId: block.id, reference: block.value });
-                return;
-            case "chart": {
-                const encoding = block.encoding;
-                const encodingColumns = [encoding.x, encoding.y, encoding.group, encoding.value].filter((column) => column !== undefined);
-                references.push({ blockId: block.id, reference: block.binding, encodingColumns });
-                return;
-            }
-            case "table":
-            case "figure":
-                references.push({ blockId: block.id, reference: block.binding });
-                return;
-            case "citation":
-                references.push({ blockId: block.id, reference: block.binding });
-                return;
-        }
-    };
-
-    for (const section of parsed.data.sections) {
-        walk(section);
-    }
+    const { references, repeatedIds, warnings } = walkBlocks(parsed.data.sections);
 
     const resolved = await allWithConcurrency(
         references.map((entry) => () => resolver.resolve(entry.reference, snapshot).then((result) => ({ entry, result }))),
@@ -199,11 +109,10 @@ export async function validateReport(document: unknown, snapshot: ReportSnapshot
         }
     }
 
-    const duplicateIds = [...repeatedIds].sort();
-    if (duplicateIds.length > 0 || resolutionFailures.length > 0) {
+    if (repeatedIds.length > 0 || resolutionFailures.length > 0) {
         return {
             valid: false,
-            ...(duplicateIds.length > 0 ? { duplicateIds } : {}),
+            ...(repeatedIds.length > 0 ? { duplicateIds: repeatedIds } : {}),
             ...(resolutionFailures.length > 0 ? { resolutionFailures } : {}),
             warnings,
         };

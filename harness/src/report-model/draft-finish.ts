@@ -5,15 +5,22 @@
  * draft one time: the full document schema, the unique ids, and the structural tier over every reference.
  *
  * The finish opens no file, and it reads the snapshot alone. Thus it runs the structural tier only, and
- * the value tier stays in the gate of the report pipeline.
+ * the value tier stays in the gate of the report pipeline. The chart encoding-column match needs the rows
+ * behind a binding, thus it stays with the value tier.
+ *
+ * The free-numeral scan needs no file, thus the finish runs it and reports each hit as a warning. A
+ * warning never makes a draft invalid, and it rides beside the outcome in either case. Without the
+ * channel a caller could not read the one signal that catches a figure typed into prose with no metric
+ * block behind it.
  *
  * The result is plain data. A gap is an expected outcome, not an error, thus the finish never throws. On
  * a pass the finish gives the valid document, and it does not change the draft.
  */
 
 import { ReportDocumentSchema, type ReportDocument } from "../contracts/report-blocks.js";
-import type { Reference, UnresolvedReference } from "../contracts/report-reference.js";
-import type { DraftBlock, DraftDocument } from "./draft.js";
+import type { UnresolvedReference } from "../contracts/report-reference.js";
+import { walkBlocks, type ReportWarning } from "./block-walk.js";
+import type { DraftDocument } from "./draft.js";
 import type { ReportSnapshot } from "./reference-resolver.js";
 import { validateReferenceStructure } from "./structural-validation.js";
 
@@ -40,18 +47,16 @@ export interface UnresolvedReferenceGap {
 /** One completeness gap of a draft. The kind set is closed. */
 export type FinishGap = SchemaGap | DuplicateIdGap | UnresolvedReferenceGap;
 
-/** The finish result. On a pass it gives the valid document. On a fail it gives each gap. */
-export type FinishResult = { valid: true; document: ReportDocument } | { valid: false; gaps: FinishGap[] };
-
-/** One reference that the walk met, tied to the block that carries it. */
-interface CollectedReference {
-    blockId: string;
-    reference: Reference;
-}
+/**
+ * The finish result. On a pass it gives the valid document. On a fail it gives each gap. The warnings
+ * ride along in either case, because a warning is advisory and it never decides the outcome.
+ */
+export type FinishResult =
+    { valid: true; document: ReportDocument; warnings: ReportWarning[] } | { valid: false; gaps: FinishGap[]; warnings: ReportWarning[] };
 
 /**
  * Finish a draft. The finish validates the schema, the unique ids, and the structural resolution of each
- * reference, and it reports each gap as data.
+ * reference, and it reports each gap as data. It warns about each free numeral in prose.
  */
 export function finishDraft(draft: DraftDocument, snapshot: ReportSnapshot): FinishResult {
     const gaps: FinishGap[] = [];
@@ -67,48 +72,11 @@ export function finishDraft(draft: DraftDocument, snapshot: ReportSnapshot): Fin
         }
     }
 
-    // The id scan and the reference walk read the draft tree. The draft is already typed, thus the walk
-    // stays well-defined even when the schema parse fails.
-    const seenIds = new Set<string>();
-    const repeatedIds = new Set<string>();
-    const references: CollectedReference[] = [];
+    // The walk reads the draft tree, not the parse result. The draft is already typed, thus the walk stays
+    // well-defined even when the schema parse fails, and a caller still gets the id and reference gaps.
+    const { references, repeatedIds, warnings } = walkBlocks(draft.sections);
 
-    const walk = (block: DraftBlock): void => {
-        if (seenIds.has(block.id)) {
-            repeatedIds.add(block.id);
-        } else {
-            seenIds.add(block.id);
-        }
-        switch (block.kind) {
-            case "section":
-                for (const child of block.blocks) {
-                    walk(child);
-                }
-                return;
-            case "text":
-                return;
-            case "claim":
-                for (const binding of block.bindings) {
-                    references.push({ blockId: block.id, reference: binding });
-                }
-                return;
-            case "metric":
-                references.push({ blockId: block.id, reference: block.value });
-                return;
-            case "chart":
-            case "table":
-            case "figure":
-            case "citation":
-                references.push({ blockId: block.id, reference: block.binding });
-                return;
-        }
-    };
-
-    for (const section of draft.sections) {
-        walk(section);
-    }
-
-    for (const id of [...repeatedIds].sort()) {
+    for (const id of repeatedIds) {
         gaps.push({ kind: "duplicate-id", id });
     }
 
@@ -122,7 +90,7 @@ export function finishDraft(draft: DraftDocument, snapshot: ReportSnapshot): Fin
     // A schema failure always pushes a gap. Thus an empty gap list means the parse passed. The
     // `parsed.success` test also narrows the type for the document return.
     if (!parsed.success || gaps.length > 0) {
-        return { valid: false, gaps };
+        return { valid: false, gaps, warnings };
     }
-    return { valid: true, document: parsed.data };
+    return { valid: true, document: parsed.data, warnings };
 }
