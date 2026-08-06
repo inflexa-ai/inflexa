@@ -6,20 +6,20 @@
 
 ## 2. The pure operations
 
-- [ ] 2.1 Make the operation types and the `DraftRefusal` type in `src/report-model/draft-operations.ts`. The reason set is closed: `malformed-block`, `duplicate-id`, `unknown-target`, `unresolved-reference`, `cycle`, `atom-at-root`, `not-a-section`, and `payload-kind-mismatch`.
-- [ ] 2.2 Make the shared validation pipeline of one operation: parse the payload, apply to a candidate tree, scan the ids, and run the structural tier over each incoming reference. A refusal returns on the `Result` err channel of the pure core, and the draft value stays untouched.
-- [ ] 2.3 Make the add operation with the anchor destination: parent id or root, and `start`, `end`, `before`, or `after`. The root admits a section only. An anchor implies its parent, and a parent that disagrees with the anchor refuses. A section payload can carry children.
-- [ ] 2.4 Make the change operation: a full atom payload with the target id stamped on it, or a section title. A kind change on an atom is permitted.
-- [ ] 2.5 Make the remove operation: one block by id, and a removed section takes its subtree.
-- [ ] 2.6 Make the move operation with the same destination shape, the cycle guard for a section, and the refusal of a self-anchor.
-- [ ] 2.7 Write the tests of each operation: one landing case and each refusal reason, with the draft unchanged after a refusal.
+- [x] 2.1 Make the operation types and the `DraftRefusal` type in `src/report-model/draft-operations.ts`. The reason set is closed: `malformed-block`, `duplicate-id`, `unknown-target`, `unresolved-reference`, `cycle`, `atom-at-root`, `not-a-section`, and `payload-kind-mismatch`.
+- [x] 2.2 Make the shared validation pipeline of one operation: parse the payload, apply to a candidate tree, scan the ids, and run the structural tier over each incoming reference. A refusal returns on the `Result` err channel of the pure core, and the draft value stays untouched.
+- [x] 2.3 Make the add operation with the anchor destination: parent id or root, and `start`, `end`, `before`, or `after`. The root admits a section only. An anchor implies its parent, and a parent that disagrees with the anchor refuses. A section payload can carry children.
+- [x] 2.4 Make the change operation: a full atom payload with the target id stamped on it, or a section title. A kind change on an atom is permitted.
+- [x] 2.5 Make the remove operation: one block by id, and a removed section takes its subtree.
+- [x] 2.6 Make the move operation with the same destination shape, the cycle guard for a section, and the refusal of a self-anchor.
+- [x] 2.7 Write the tests of each operation: one landing case and each refusal reason, with the draft unchanged after a refusal.
 
 ## 3. The read surface and the finish
 
-- [ ] 3.1 Make the outline builder: for each block the id, the kind, the nesting, and a clipped label. No binding and no full prose.
-- [ ] 3.2 Make the read of one block by id. The result carries the full block.
-- [ ] 3.3 Make the finish operation: the full document schema, the id rule, and the structural tier over every reference. It reports each gap as data, it gives the `ReportDocument` value on a pass, and it changes nothing.
-- [ ] 3.4 Write the tests of the outline, the single-block read, and the finish: the empty-section gap, and the passing draft.
+- [x] 3.1 Make the outline builder: for each block the id, the kind, the nesting, and a clipped label. No binding and no full prose.
+- [x] 3.2 Make the read of one block by id. The result carries the full block.
+- [x] 3.3 Make the finish operation: the full document schema, the id rule, and the structural tier over every reference. It reports each gap as data, it gives the `ReportDocument` value on a pass, and it changes nothing.
+- [x] 3.4 Write the tests of the outline, the single-block read, and the finish: the empty-section gap, and the passing draft.
 
 ## 4. The tool layer
 
