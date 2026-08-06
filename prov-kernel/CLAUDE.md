@@ -8,8 +8,8 @@ Guidance for Claude Code that works with the **prov-kernel** package
 `@inflexa-ai/prov-kernel` is the Inflexa provenance format kernel. It carries the
 Inflexa PROV dialect, and nothing else:
 
-- the document model (`src/document.ts`): QName derivation, tsprov statement
-  builders, `PROV_UNIFY_OPTIONS`, and the injectable digest
+- the document model (`src/document.ts`): QName derivation, the in-package
+  tsprov statement builders, `PROV_UNIFY_OPTIONS`, and the injectable digest
 - the core event union and its apply function (`src/events.ts`): the nine
   `ProvEvent` variants and `applyProvEvent` — the event-to-statements mapping
   determines the document bytes, thus it is format
@@ -21,9 +21,10 @@ Inflexa PROV dialect, and nothing else:
 The kernel obeys the three-layer rule: the harness observes, the kernel
 represents, hosts decide. Thus the package must NOT contain a recorder
 lifecycle (sink, flush, queue, CAS), signer wiring, or a harness bridge. Each
-host owns those, and each host maps its own extension events onto the exported
-builders. The package has no dependency on `@inflexa-ai/harness`, and it must
-keep none.
+host owns those. Core statements are produced only through `applyProvEvent`;
+each host maps its own extension events onto `appendLifecycleAction`, the
+QName derivations, and tsprov interop. The package has no dependency on
+`@inflexa-ai/harness`, and it must keep none.
 
 [`SPEC.md`](SPEC.md) is the wire-format contract. It is derived from the code.
 If you change a derivation, an identifier scheme, the chain rule, or the

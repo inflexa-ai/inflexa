@@ -1,11 +1,11 @@
 # @inflexa-ai/prov-kernel
 
 `@inflexa-ai/prov-kernel` is the Inflexa provenance format kernel. It carries the
-Inflexa PROV dialect: the document model (QName derivation, tsprov statement
-builders, unify options, and an injectable digest), the chain-hash and Ed25519
-sign/verify primitives, the signed-sidecar schema, and the actor and ref value
-types that the builders accept. [`SPEC.md`](SPEC.md) gives the exact wire
-format, sufficient for an independent implementation.
+Inflexa PROV dialect: the document model (QName derivation, unify options, an
+injectable digest, and the `appendLifecycleAction` extension primitive), the
+chain-hash and Ed25519 sign/verify primitives, the signed-sidecar schema, and
+the actor and ref value types that the events carry. [`SPEC.md`](SPEC.md) gives
+the exact wire format, sufficient for an independent implementation.
 
 The package is a kernel, not a recorder. The three-layer rule divides the work:
 
@@ -17,8 +17,9 @@ The package is a kernel, not a recorder. The three-layer rule divides the work:
   here: the event-to-statements mapping determines the document bytes, thus it
   is format.
 - **Hosts decide.** Each host owns its recorder lifecycle, its emission
-  policy, its storage, and its key custody. A host maps its own extension
-  events onto the exported builders.
+  policy, its storage, and its key custody. Core statements are produced only
+  through `applyProvEvent`; a host maps its own extension events onto
+  `appendLifecycleAction`, the QName derivations, and tsprov interop.
 
 Thus the package deliberately does NOT contain a recorder (sink, flush,
 queue, CAS) or signer wiring. Those are host-owned.
@@ -33,11 +34,11 @@ bun test        # run the test suite (Node is the runtime; bun runs tests only)
 ```
 
 ```ts
-import { createProvDocumentModel, PROV_UNIFY_OPTIONS, createKeypairSigner, buildSidecar, verifySidecar } from "@inflexa-ai/prov-kernel";
+import { createProvDocumentModel, applyProvEvent, PROV_UNIFY_OPTIONS, createKeypairSigner, buildSidecar, verifySidecar } from "@inflexa-ai/prov-kernel";
 
 const model = createProvDocumentModel(); // or inject a historical digest
 const doc = model.freshDocument({ analysisId: "a1" });
-model.appendRunStarted(doc, "a1", actor, { runId: "r1", startedAtMs });
+applyProvEvent(model, doc, { type: "run_started", analysisId: "a1", actor, run: { runId: "r1", startedAtMs } });
 const json = doc.unified(PROV_UNIFY_OPTIONS).serialize("json");
 ```
 

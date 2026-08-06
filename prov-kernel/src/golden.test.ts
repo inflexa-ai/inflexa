@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ProvDocument } from "@inflexa-ai/tsprov";
-import { createProvDocumentModel, PROV_UNIFY_OPTIONS, type ProvDocumentModel } from "./document.js";
+import { buildDocumentModel, PROV_UNIFY_OPTIONS, type ProvDocumentModelInternal } from "./document.js";
 import type { ProvActor, ProvModelId } from "./types.js";
 
 /**
@@ -22,15 +22,15 @@ const user: ProvActor = { kind: "user", id: "u-42", email: "golden@example.com" 
 const system: ProvActor = { kind: "system", label: "golden-host", version: "1.0.0", commit: "deadbeef" };
 const model: ProvModelId = "anthropic/golden-model";
 
-function makeModel(): ProvDocumentModel {
+function makeModel(): ProvDocumentModelInternal {
     let actionN = 0;
-    return createProvDocumentModel({
+    return buildDocumentModel({
         now: () => new Date(1_699_999_999_500),
         mintActionId: () => `golden-${++actionN}`,
     });
 }
 
-export function buildGoldenDocument(m: ProvDocumentModel): ProvDocument {
+export function buildGoldenDocument(m: ProvDocumentModelInternal): ProvDocument {
     const doc = m.freshDocument({ analysisId: "a-golden", name: "Golden Analysis", slug: "golden-analysis" });
     const step = { runId: "r1", stepId: "s1" };
     m.appendCreation(doc, "a-golden", user);

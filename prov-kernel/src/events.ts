@@ -1,5 +1,5 @@
 import type { ProvDocument } from "@inflexa-ai/tsprov";
-import type { ProvDocumentModel } from "./document.js";
+import type { ProvDocumentModel, ProvDocumentModelInternal } from "./document.js";
 import type {
     ProvActor,
     ProvCommandRef,
@@ -17,7 +17,8 @@ import type {
  * The core provenance event union — the nine facts every Inflexa producer records. Each event
  * carries the owning `analysisId` and the responsible {@link ProvActor}; a model-driven execution
  * event also carries the {@link ProvModelId} that reasoned about it. A host records its own
- * extension event kinds through the exported builders, outside this union.
+ * extension event kinds through `appendLifecycleAction` and the QName derivations, outside this
+ * union.
  */
 export type ProvEvent =
     | { type: "analysis_created"; analysisId: string; actor: ProvActor }
@@ -57,39 +58,43 @@ export type ProvEvent =
     | { type: "input_used"; analysisId: string; actor: ProvActor; step: ProvStepRef; input: ProvUsedInputRef };
 
 /**
- * Apply one core event to `doc` through the model's builders. The event-to-statements mapping
- * determines the serialized document bytes — the same bytes the chain hash signs — thus the
- * mapping is format and lives in the kernel. Hosts map extension events onto the exported
- * builders themselves.
+ * Apply one core event to `doc` through the model's builders — the sole supported producer of
+ * core statements. The event-to-statements mapping determines the serialized document bytes — the
+ * same bytes the chain hash signs — thus the mapping is format and lives in the kernel. Hosts map
+ * extension events onto `appendLifecycleAction`, the QName derivations, and tsprov interop
+ * themselves.
  */
 export function applyProvEvent(model: ProvDocumentModel, doc: ProvDocument, event: ProvEvent): void {
+    // Every model comes from `createProvDocumentModel`, so the builders exist at runtime; the
+    // public type omits them to keep this switch the only core-statement producer.
+    const m = model as ProvDocumentModelInternal;
     switch (event.type) {
         case "analysis_created":
-            model.appendCreation(doc, event.analysisId, event.actor);
+            m.appendCreation(doc, event.analysisId, event.actor);
             return;
         case "input_added":
-            model.appendInputAdded(doc, event.analysisId, event.actor, event.input, event.derivedFromAnalysisId);
+            m.appendInputAdded(doc, event.analysisId, event.actor, event.input, event.derivedFromAnalysisId);
             return;
         case "input_removed":
-            model.appendInputRemoved(doc, event.analysisId, event.actor, event.input);
+            m.appendInputRemoved(doc, event.analysisId, event.actor, event.input);
             return;
         case "run_started":
-            model.appendRunStarted(doc, event.analysisId, event.actor, event.run);
+            m.appendRunStarted(doc, event.analysisId, event.actor, event.run);
             return;
         case "run_completed":
-            model.appendRunCompleted(doc, event.analysisId, event.actor, event.outcome);
+            m.appendRunCompleted(doc, event.analysisId, event.actor, event.outcome);
             return;
         case "step_completed":
-            model.appendStepCompleted(doc, event.analysisId, event.actor, event.outcome, event.model);
+            m.appendStepCompleted(doc, event.analysisId, event.actor, event.outcome, event.model);
             return;
         case "command_executed":
-            model.appendCommandExecuted(doc, event.analysisId, event.actor, event.step, event.command, event.model);
+            m.appendCommandExecuted(doc, event.analysisId, event.actor, event.step, event.command, event.model);
             return;
         case "file_written":
-            model.appendFileWritten(doc, event.analysisId, event.actor, event.file, event.step, event.generation);
+            m.appendFileWritten(doc, event.analysisId, event.actor, event.file, event.step, event.generation);
             return;
         case "input_used":
-            model.appendInputUsed(doc, event.analysisId, event.actor, event.step, event.input);
+            m.appendInputUsed(doc, event.analysisId, event.actor, event.step, event.input);
             return;
         default: {
             const never: never = event;

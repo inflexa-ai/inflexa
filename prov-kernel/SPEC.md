@@ -227,9 +227,11 @@ The kernel owns the core event union `ProvEvent` and the apply function
 `applyProvEvent(model, doc, event)`. The mapping from an event to its
 statements determines the serialized document bytes — the same bytes that the
 chain hash signs — thus the mapping is format. A conforming producer must
-append the statements below, in the given order, for each event. A host maps
-its own extension events onto the exported builders; an extension event is not
-part of this union.
+append the statements below, in the given order, for each event.
+`applyProvEvent` is the sole supported producer of core statements; the
+per-core-event statement builders are package-internal. A host maps its own
+extension events onto `appendLifecycleAction`, the QName derivations, and
+tsprov interop; an extension event is not part of this union.
 
 Each event carries the owning `analysisId` and the responsible actor. Each
 event except `run_completed` first declares (re-declares) the actor agent per
