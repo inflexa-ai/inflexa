@@ -26,7 +26,7 @@ import { refreshOpenThread, resolveThreadId } from "./hooks/thread.ts";
 import { latestPlanCard, sessionOpenables, type SessionOpenable } from "./hooks/conversation.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
 import { resolveEntryPath } from "../modules/harness/artifact_open.ts";
-import { driveForceReprofile, profileWorkInFlight } from "./hooks/profile_parity.ts";
+import { gatedForceReprofile, profileWorkInFlight } from "./hooks/profile_parity.ts";
 import { absTime, absTimeShort, idTail, shortRunName } from "./hooks/sidebar_live.ts";
 import { restoreActivityPanel } from "./hooks/activity_panel.ts";
 import { chatStatus } from "./hooks/status.ts";
@@ -2119,7 +2119,9 @@ export const commands: Command[] = [
                 notify({ kind: "info", text: `Harness is still booting${GLYPHS.ellipsis}` });
                 return;
             }
-            void driveForceReprofile(runtime, a, () => ctx.analysis?.id ?? null);
+            // Behind the sandbox gate: a re-profile makes a sandbox, so it waits on the store and the
+            // image before it runs.
+            gatedForceReprofile(runtime, a, () => ctx.analysis?.id ?? null);
         },
     },
     {

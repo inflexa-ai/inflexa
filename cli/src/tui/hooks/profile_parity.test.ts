@@ -19,8 +19,11 @@ import {
     __resetProfileParityForTest,
     driveForceReprofile,
     driveProfileParity,
+    gatedForceReprofile,
+    gatedProfileParity,
     watchProfileParity,
     type ForceDriverSeams,
+    type GatedDriveSeams,
     type ParityDriverSeams,
     type ParityWatchSeams,
 } from "./profile_parity.ts";
@@ -594,5 +597,59 @@ describe("profile drives serialize", () => {
         await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, second.seams);
 
         expect(trace).toEqual(["enter first", "exit first", "enter second", "exit second"]);
+    });
+});
+
+// The sandbox gate mediates a sandbox-making drive: a profile makes a sandbox, so the drive waits until
+// the store and the image are ready. `gate`/`drive` are injected, so the gating decision is exercised
+// without the real gate or the real drive.
+describe("gatedProfileParity / gatedForceReprofile — the gate mediates the drive", () => {
+    function tick(): Promise<void> {
+        return new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    test("a ready gate runs the drive", async () => {
+        const driven: string[] = [];
+        const seams: GatedDriveSeams = { gate: async () => "ready", drive: (_r, a) => void driven.push(a.id) };
+        gatedProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
+        await tick();
+        expect(driven).toEqual([ANALYSIS.id]);
+    });
+
+    test("a blocked gate runs no drive, so no sandbox starts against an empty store", async () => {
+        const driven: string[] = [];
+        const seams: GatedDriveSeams = { gate: async () => "blocked", drive: (_r, a) => void driven.push(a.id) };
+        gatedProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
+        await tick();
+        expect(driven).toEqual([]);
+    });
+
+    test("a held gate defers the drive until it resolves", async () => {
+        let release!: (verdict: "ready" | "blocked") => void;
+        const held = new Promise<"ready" | "blocked">((resolve) => {
+            release = resolve;
+        });
+        const driven: string[] = [];
+        const seams: GatedDriveSeams = { gate: () => held, drive: (_r, a) => void driven.push(a.id) };
+        gatedProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, seams);
+        await tick();
+        expect(driven).toEqual([]); // the drive holds while the gate is unresolved
+
+        release("ready");
+        await tick();
+        expect(driven).toEqual([ANALYSIS.id]);
+    });
+
+    test("the force twin gates the deliberate re-profile the same way", async () => {
+        const driven: string[] = [];
+        const readySeams: GatedDriveSeams = { gate: async () => "ready", drive: (_r, a) => void driven.push(a.id) };
+        gatedForceReprofile(RUNTIME, ANALYSIS, () => ANALYSIS.id, readySeams);
+        await tick();
+        expect(driven).toEqual([ANALYSIS.id]);
+
+        const blockedSeams: GatedDriveSeams = { gate: async () => "blocked", drive: (_r, a) => void driven.push(a.id) };
+        gatedForceReprofile(RUNTIME, ANALYSIS, () => ANALYSIS.id, blockedSeams);
+        await tick();
+        expect(driven).toEqual([ANALYSIS.id]); // unchanged: the blocked gate ran no drive
     });
 });
