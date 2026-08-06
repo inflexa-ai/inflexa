@@ -94,6 +94,26 @@ export const CitationBlockSchema = z.strictObject({
 });
 
 /**
+ * The seven atoms, as one tuple.
+ *
+ * A section is the only kind whose rules differ between a finished report and a draft. Thus the atoms are
+ * the shared part, and every union of block kinds spreads this tuple beside its own section member. A
+ * ninth kind lands here one time, and each union gets it.
+ */
+export const ATOM_BLOCK_SCHEMAS = [
+    TextBlockSchema,
+    ClaimBlockSchema,
+    MetricBlockSchema,
+    TableBlockSchema,
+    ChartBlockSchema,
+    FigureBlockSchema,
+    CitationBlockSchema,
+] as const;
+
+/** One block of any kind except a section. */
+export type AtomBlock = z.infer<(typeof ATOM_BLOCK_SCHEMAS)[number]>;
+
+/**
  * The section shape as a plain type. TypeScript cannot infer the block tree through the union cycle,
  * thus the recursive members carry an explicit type. `SectionBlock` and `Block` break the cycle.
  */
@@ -105,15 +125,7 @@ export interface SectionBlock {
 }
 
 /** One block of any of the eight kinds. An unknown kind fails validation by construction. */
-export type Block =
-    | z.infer<typeof TextBlockSchema>
-    | z.infer<typeof ClaimBlockSchema>
-    | z.infer<typeof MetricBlockSchema>
-    | z.infer<typeof TableBlockSchema>
-    | z.infer<typeof ChartBlockSchema>
-    | z.infer<typeof FigureBlockSchema>
-    | z.infer<typeof CitationBlockSchema>
-    | SectionBlock;
+export type Block = AtomBlock | SectionBlock;
 
 /**
  * A section holds at least one child block, thus an empty section is invalid. The `blocks` field is a
@@ -128,20 +140,16 @@ export const SectionBlockSchema = z.strictObject({
 });
 
 /** The block union. A `z.ZodType<Block>` annotation gives the recursive members a stable type. */
-export const BlockSchema: z.ZodType<Block> = z.discriminatedUnion("kind", [
-    SectionBlockSchema,
-    TextBlockSchema,
-    ClaimBlockSchema,
-    MetricBlockSchema,
-    TableBlockSchema,
-    ChartBlockSchema,
-    FigureBlockSchema,
-    CitationBlockSchema,
-]);
+export const BlockSchema: z.ZodType<Block> = z.discriminatedUnion("kind", [SectionBlockSchema, ...ATOM_BLOCK_SCHEMAS]);
 
-/** The root of a report. It holds at least one section, thus an empty report is invalid. */
+/**
+ * The root of a report. It holds at least one section, thus an empty report is invalid.
+ *
+ * The title carries `min(1)`, because an untitled report is incomplete in the same way that an empty
+ * section is. A draft relaxes it, and this schema gates it one time, at the finish.
+ */
 export const ReportDocumentSchema = z.strictObject({
-    title: z.string(),
+    title: z.string().min(1),
     sections: z.array(SectionBlockSchema).min(1).describe("The top-level sections, each with at least one block."),
 });
 

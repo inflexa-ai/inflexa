@@ -5,8 +5,8 @@
  * typed refusal in the error channel. It mutates nothing. Thus a refused operation leaves the input draft
  * as it was.
  *
- * An operation validates the delta only. It parses the new payload with the draft grammar. It scans each
- * id of the candidate for a duplicate. It resolves each new reference against the snapshot with the
+ * An operation validates the delta only. It parses the new payload with the draft grammar. It scans the
+ * ids that the payload brings, and it resolves each new reference against the snapshot with the
  * structural tier. The completeness rules gate one time, at the finish.
  *
  * The candidate shares each untouched branch with the input draft. An operation rebuilds only the path to
@@ -19,14 +19,30 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import type { Reference, UnresolvedReference } from "../contracts/report-reference.js";
+import type { UnresolvedReference } from "../contracts/report-reference.js";
+import { walkBlocks } from "./block-walk.js";
 import { DraftBlockSchema, type DraftBlock, type DraftDocument, type DraftSectionBlock } from "./draft.js";
 import type { ReportSnapshot } from "./reference-resolver.js";
 import { validateReferenceStructure } from "./structural-validation.js";
 
-/** The closed set of refusal reasons. Each operation gives a subset of these. */
+/**
+ * The closed set of refusal reasons. Each operation gives a subset of these.
+ *
+ * `unknown-target` means that no block holds an id that the operation named. `conflicting-destination`
+ * means that the destination named two places at one time. The two are separate because the repair
+ * differs: the first sends the agent to the outline for a correct id, and the second tells it to drop one
+ * of the fields it gave.
+ */
 export type DraftRefusalReason =
-    "malformed-block" | "duplicate-id" | "unknown-target" | "unresolved-reference" | "cycle" | "atom-at-root" | "not-a-section" | "payload-kind-mismatch";
+    | "malformed-block"
+    | "duplicate-id"
+    | "unknown-target"
+    | "conflicting-destination"
+    | "unresolved-reference"
+    | "cycle"
+    | "atom-at-root"
+    | "not-a-section"
+    | "payload-kind-mismatch";
 
 /**
  * A typed refusal. It carries the reason and a prose detail. The `unresolved-reference` reason also
@@ -71,6 +87,16 @@ export interface MoveOperation {
 }
 
 /**
+ * Set the title of the document.
+ *
+ * A title carries no id and no reference, thus it needs none of the shared checks and it cannot refuse.
+ * The document schema requires a non-empty title, and the finish reports an empty one as a gap.
+ */
+export function setTitle(draft: DraftDocument, title: string): DraftDocument {
+    return { ...draft, title };
+}
+
+/**
  * Add a block at a destination.
  *
  * The root admits a section only, thus an atom at the root refuses. The validation covers the payload and
@@ -87,7 +113,7 @@ export function addBlock(draft: DraftDocument, operation: AddOperation, snapshot
             return err({ reason: "atom-at-root", detail: `a ${block.kind} block cannot sit at the root` });
         }
         const candidate = insertAt(draft, destination.containerPath, destination.index, block);
-        return commit(candidate, collectReferences(block), snapshot);
+        return commit(candidate, block, snapshot);
     });
 }
 
@@ -110,7 +136,7 @@ export function changeBlock(draft: DraftDocument, operation: ChangeOperation, sn
             return err({ reason: "payload-kind-mismatch", detail: `the section ${operation.targetId} takes a title, not a block payload` });
         }
         const retitled: DraftSectionBlock = { ...target.block, title: operation.title };
-        return commit(replaceAt(draft, containerPath, index, retitled), [], snapshot);
+        return commit(replaceAt(draft, containerPath, index, retitled), undefined, snapshot);
     }
 
     if ("title" in operation) {
@@ -130,7 +156,7 @@ export function changeBlock(draft: DraftDocument, operation: ChangeOperation, sn
     if (parsed.data.kind === "section") {
         return err({ reason: "payload-kind-mismatch", detail: `the block ${operation.targetId} is an atom, and it cannot take a section payload` });
     }
-    return commit(replaceAt(draft, containerPath, index, parsed.data), collectReferences(parsed.data), snapshot);
+    return commit(replaceAt(draft, containerPath, index, parsed.data), parsed.data, snapshot);
 }
 
 /**
@@ -145,7 +171,7 @@ export function removeBlock(draft: DraftDocument, operation: RemoveOperation, sn
     }
     const containerPath = target.path.slice(0, -1);
     const index = target.path[target.path.length - 1];
-    return commit(removeAt(draft, containerPath, index), [], snapshot);
+    return commit(removeAt(draft, containerPath, index), undefined, snapshot);
 }
 
 /**
@@ -184,13 +210,13 @@ export function moveBlock(draft: DraftDocument, operation: MoveOperation, snapsh
         // against the reduced tree, and the fresh path and index address the correct place.
         return resolveDestination(afterRemove, operation.destination).andThen((landing): Result<DraftDocument, DraftRefusal> => {
             const candidate = insertAt(afterRemove, landing.containerPath, landing.index, movedBlock);
-            return commit(candidate, [], snapshot);
+            return commit(candidate, undefined, snapshot);
         });
     });
 }
 
 /** One block, and the path of child indices from the root to the block. */
-interface Located {
+export interface Located {
     block: DraftBlock;
     path: number[];
 }
@@ -247,17 +273,32 @@ function resolveDestination(document: DraftDocument, destination: DraftDestinati
 /**
  * Run the shared checks over a candidate, and give the candidate or a refusal.
  *
- * The id scan runs over the whole candidate, thus a duplicate anywhere refuses. The reference check runs
- * over the new references only, because each earlier reference passed on its own landing.
+ * `added` is the block that the operation puts into the candidate, or `undefined` when the operation
+ * brings no block. Both checks read the delta, because each block that was already in the draft passed
+ * them on its own landing.
+ *
+ * The id scan counts the ids of `added` inside the candidate, and it refuses when one of them occurs more
+ * than one time. A whole-draft scan would be wrong here: one duplicate that the draft already carries
+ * would then refuse every later operation, including an operation on an untouched branch, and the agent
+ * would read a refusal that names an id it never touched.
  */
-function commit(candidate: DraftDocument, references: Reference[], snapshot: ReportSnapshot): Result<DraftDocument, DraftRefusal> {
-    const duplicate = firstDuplicateId(candidate);
-    if (duplicate !== undefined) {
-        return err({ reason: "duplicate-id", detail: `the id ${duplicate} occurs more than one time in the draft` });
+function commit(candidate: DraftDocument, added: DraftBlock | undefined, snapshot: ReportSnapshot): Result<DraftDocument, DraftRefusal> {
+    if (added === undefined) {
+        return ok(candidate);
     }
+
+    const addedIds: string[] = [];
+    collectIds([added], addedIds);
+    const counts = idCounts(candidate);
+    for (const id of addedIds) {
+        if ((counts.get(id) ?? 0) > 1) {
+            return err({ reason: "duplicate-id", detail: `the id ${id} occurs more than one time in the draft` });
+        }
+    }
+
     const unresolved: UnresolvedReference[] = [];
-    for (const reference of references) {
-        validateReferenceStructure(reference, snapshot).match(
+    for (const entry of walkBlocks([added]).references) {
+        validateReferenceStructure(entry.reference, snapshot).match(
             () => {},
             (failure) => {
                 unresolved.push(failure);
@@ -270,8 +311,12 @@ function commit(candidate: DraftDocument, references: Reference[], snapshot: Rep
     return ok(candidate);
 }
 
-/** Find a block by its id, with the path from the root. The search visits each block one time. */
-function locate(document: DraftDocument, id: string): Located | undefined {
+/**
+ * Find a block by its id, with the path from the root. The search visits each block one time.
+ *
+ * The read surface needs the same search, thus this is the one find-by-id in the draft model.
+ */
+export function locate(document: DraftDocument, id: string): Located | undefined {
     return locateInBlocks(document.sections, id, []);
 }
 
@@ -366,65 +411,23 @@ function replaceAt(document: DraftDocument, containerPath: number[], index: numb
     return setChildren(document, containerPath, next);
 }
 
-/** Give the first id that the candidate holds two times, or `undefined` when each id is unique. */
-function firstDuplicateId(document: DraftDocument): string | undefined {
+/** Count how many blocks of the document hold each id. */
+function idCounts(document: DraftDocument): Map<string, number> {
     const ids: string[] = [];
     collectIds(document.sections, ids);
-    const seen = new Set<string>();
+    const counts = new Map<string, number>();
     for (const id of ids) {
-        if (seen.has(id)) {
-            return id;
-        }
-        seen.add(id);
+        counts.set(id, (counts.get(id) ?? 0) + 1);
     }
-    return undefined;
+    return counts;
 }
 
-function collectIds(blocks: DraftBlock[], into: string[]): void {
+function collectIds(blocks: readonly DraftBlock[], into: string[]): void {
     for (const block of blocks) {
         into.push(block.id);
         if (block.kind === "section") {
             collectIds(block.blocks, into);
         }
-    }
-}
-
-/**
- * Collect each reference that a block carries, and each reference of its descendants.
- *
- * The walk mirrors the block grammar: a claim carries its bindings, a metric carries its value, and a
- * chart, a table, a figure, and a citation carry one binding each. The chart encoding-column match is a
- * value-tier concern, thus this walk does not do it.
- */
-function collectReferences(block: DraftBlock): Reference[] {
-    const references: Reference[] = [];
-    collectReferencesInto(block, references);
-    return references;
-}
-
-function collectReferencesInto(block: DraftBlock, into: Reference[]): void {
-    switch (block.kind) {
-        case "section":
-            for (const child of block.blocks) {
-                collectReferencesInto(child, into);
-            }
-            return;
-        case "claim":
-            for (const binding of block.bindings) {
-                into.push(binding);
-            }
-            return;
-        case "metric":
-            into.push(block.value);
-            return;
-        case "chart":
-        case "table":
-        case "figure":
-        case "citation":
-            into.push(block.binding);
-            return;
-        case "text":
-            return;
     }
 }
 

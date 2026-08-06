@@ -123,3 +123,59 @@ describe("finishDraft", () => {
         expect(draft).toEqual(original);
     });
 });
+
+describe("the finish warnings", () => {
+    it("warns about a free numeral in prose, and the draft still finishes", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Intro",
+                    blocks: [{ kind: "text", id: "t1", content: { prose: "Expression rose 3.4 fold in TP53." } }],
+                },
+            ],
+        };
+        const result = finishDraft(draft, snapshot);
+
+        // The numeral has no metric block behind it, and nothing else in the finish catches that.
+        expect(result.warnings).toEqual([{ blockId: "t1", kind: "free-numeral", detail: "3.4" }]);
+        expect(result.valid).toBe(true);
+    });
+
+    it("keeps the digits of a gene symbol out of the warnings", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "TP53 and CD8 and IL6." } }] }],
+        };
+        expect(finishDraft(draft, snapshot).warnings).toEqual([]);
+    });
+
+    it("carries the warnings beside the gaps of a draft that does not finish", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                { kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "A rise of 12 percent." } }] },
+                { kind: "section", id: "s2", title: "Empty", blocks: [] },
+            ],
+        };
+        const result = finishDraft(draft, snapshot);
+
+        expect(result.valid).toBe(false);
+        expect(result.warnings).toEqual([{ blockId: "t1", kind: "free-numeral", detail: "12" }]);
+    });
+
+    it("reports an empty title as a schema gap", () => {
+        const draft: DraftDocument = {
+            title: "",
+            sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "Body." } }] }],
+        };
+        const result = finishDraft(draft, snapshot);
+
+        expect(result.valid).toBe(false);
+        if (!result.valid) {
+            expect(result.gaps.some((gap) => gap.kind === "schema" && gap.path === "title")).toBe(true);
+        }
+    });
+});

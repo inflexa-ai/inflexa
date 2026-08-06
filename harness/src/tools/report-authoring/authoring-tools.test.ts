@@ -66,14 +66,71 @@ describe("add_block", () => {
         const value = result._unsafeUnwrap();
         expect(value.applied).toBe(false);
         if (!value.applied) {
-            expect(value.refusal.reason).toBe("unknown-target");
+            expect(value.refusal.reason).toBe("conflicting-destination");
             expect(value.refusal.detail).toContain("before");
         }
         expect(tools.currentDraft().sections).toEqual([]);
     });
+
+    it("publishes the block grammar in its JSON schema", () => {
+        const tools = createReportAuthoringTools({ snapshot });
+        const schema = JSON.stringify(tools.add_block.jsonSchema);
+
+        // The model learns the payload shape from the schema alone, thus the eight kinds must be in it.
+        for (const kind of ["section", "text", "claim", "metric", "table", "chart", "figure", "citation"]) {
+            expect(schema).toContain(`"const":"${kind}"`);
+        }
+    });
+
+    it("accepts an explicit null in each destination field that the call does not use", async () => {
+        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
+        const { ctx } = makeToolContext();
+        const input = { block: { kind: "text", id: "t1", content: { prose: "x" } }, parentId: "s1", place: null, before: null, after: null };
+
+        // Strict function calling requires every declared key, thus the unused anchors arrive as null.
+        expect(tools.add_block.inputSchema.safeParse(input).success).toBe(true);
+
+        const value = (await tools.add_block.execute(input, ctx))._unsafeUnwrap();
+        expect(value.applied).toBe(true);
+    });
+
+    it("decodes a block payload that arrives as a JSON string", async () => {
+        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
+        const { ctx } = makeToolContext();
+        const encoded = JSON.stringify({ kind: "text", id: "t1", content: { prose: "x" } });
+
+        const value = (await tools.add_block.execute({ block: encoded, parentId: "s1" }, ctx))._unsafeUnwrap();
+
+        expect(value.applied).toBe(true);
+        expect(tools.currentDraft().sections[0]!.blocks.map((block) => block.id)).toEqual(["t1"]);
+    });
 });
 
 describe("change_block", () => {
+    it("retitles a section from a call that names no block", async () => {
+        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
+        const { ctx } = makeToolContext();
+        // The loop validates against `inputSchema` before it runs `execute`, thus the retitle call must
+        // pass the schema with the `block` key absent.
+        const input = JSON.parse('{"targetId":"s1","title":"Results"}') as Record<string, unknown>;
+        expect(tools.change_block.inputSchema.safeParse(input).success).toBe(true);
+
+        const value = (await tools.change_block.execute(input, ctx))._unsafeUnwrap();
+
+        expect(value.applied).toBe(true);
+        expect(tools.currentDraft().sections[0]!.title).toBe("Results");
+    });
+
+    it("retitles a section when the unused block field arrives as null", async () => {
+        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
+        const { ctx } = makeToolContext();
+
+        const value = (await tools.change_block.execute({ targetId: "s1", title: "Results", block: null }, ctx))._unsafeUnwrap();
+
+        expect(value.applied).toBe(true);
+        expect(tools.currentDraft().sections[0]!.title).toBe("Results");
+    });
+
     it("refuses a change that names neither a title nor a block", async () => {
         const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
         const { ctx } = makeToolContext();
@@ -148,7 +205,7 @@ describe("move_block", () => {
         }
     });
 
-    it("refuses `before` and `after` together with unknown-target", async () => {
+    it("refuses `before` and `after` together with conflicting-destination", async () => {
         const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
         const { ctx } = makeToolContext();
 
@@ -157,8 +214,76 @@ describe("move_block", () => {
         const value = result._unsafeUnwrap();
         expect(value.applied).toBe(false);
         if (!value.applied) {
-            expect(value.refusal.reason).toBe("unknown-target");
+            expect(value.refusal.reason).toBe("conflicting-destination");
         }
+    });
+});
+
+describe("set_title", () => {
+    it("sets the document title, and the finish then gives the document", async () => {
+        const tools = createReportAuthoringTools({ snapshot });
+        const { ctx } = makeToolContext();
+        await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Intro", blocks: [] } }, ctx);
+        await tools.add_block.execute({ block: { kind: "text", id: "t1", content: { prose: "x" } }, parentId: "s1" }, ctx);
+
+        const untitled = (await tools.finish_draft.execute({}, ctx))._unsafeUnwrap();
+        expect(untitled.valid).toBe(false);
+        if (!untitled.valid) {
+            expect(untitled.gaps).toContainEqual({ kind: "schema", path: "title", message: expect.stringContaining(">=1") });
+        }
+
+        const set = (await tools.set_title.execute({ title: "Differential expression" }, ctx))._unsafeUnwrap();
+        expect(set.applied).toBe(true);
+
+        const titled = (await tools.finish_draft.execute({}, ctx))._unsafeUnwrap();
+        expect(titled.valid).toBe(true);
+        if (titled.valid) {
+            expect(titled.document.title).toBe("Differential expression");
+        }
+    });
+});
+
+describe("read_block", () => {
+    it("names its target with the same field as each mutation tool", async () => {
+        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
+        const { ctx } = makeToolContext();
+
+        const value = (await tools.read_block.execute({ targetId: "s1" }, ctx))._unsafeUnwrap();
+
+        expect(value.found).toBe(true);
+        expect(tools.read_block.inputSchema.safeParse({ id: "s1" }).success).toBe(false);
+    });
+
+    it("gives a section without its subtree", async () => {
+        const draft: DraftDocument = {
+            title: "",
+            sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "a long body" } }] }],
+        };
+        const tools = createReportAuthoringTools({ snapshot, initialDraft: draft });
+        const { ctx } = makeToolContext();
+
+        const value = (await tools.read_block.execute({ targetId: "s1" }, ctx))._unsafeUnwrap();
+
+        expect(value).toEqual({ found: true, block: { kind: "section", id: "s1", title: "Intro", childIds: ["t1"] } });
+    });
+});
+
+describe("the tool surface", () => {
+    it("runs every tool inline, because the draft is closure memory with no durable backing", () => {
+        const tools = createReportAuthoringTools({ snapshot });
+        const packaged = [
+            tools.add_block,
+            tools.change_block,
+            tools.remove_block,
+            tools.move_block,
+            tools.set_title,
+            tools.read_outline,
+            tools.read_block,
+            tools.finish_draft,
+        ];
+
+        // A step-mode tool replays its cached result over a rebuilt, empty draft.
+        expect(packaged.map((tool) => tool.executionMode)).toEqual(Array(8).fill("inline"));
     });
 });
 
