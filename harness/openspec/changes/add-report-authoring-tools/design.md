@@ -43,11 +43,15 @@ The export is additive. It changes no requirement of the block model.
 
 ### D4. A destination is an anchor, not an index.
 
-Add and move take a destination: a parent (`parentId`, or the root when absent), and a place (`start`, `end`, `before: id`, or `after: id`). The default place is `end`. An index breaks when the tree changes under the agent, but an anchor id stays stable. The root holds sections only, thus an atom at the root refuses on grammar. A move of a section into its own subtree refuses as a cycle.
+Add and move take a destination: a parent (`parentId`, or the root when absent), and a place (`start`, `end`, `before: id`, or `after: id`). The default place is `end`. An index breaks when the tree changes under the agent, but an anchor id stays stable.
+
+A `before` or `after` anchor implies its parent. A named parent that disagrees with the anchor refuses, and a self-anchor refuses. The root holds sections only, thus an atom at the root refuses on grammar. A move of a section into its own subtree refuses as a cycle.
 
 ### D5. A change replaces an atom, and it retitles a section.
 
-A change on an atom takes a full atom payload and keeps the id. A kind change is permitted, because the payload validates as a whole. Thus "turn this table into a chart" is one change. A change on a section takes a title only. The children of a section change through their own ids. Thus a section payload never carries a child tree, and the agent does not send a subtree that it does not hold.
+A change on an atom takes a full atom payload without an id. The operation stamps the target id on the payload, thus an id mismatch is unrepresentable. A kind change is permitted, because the payload validates as a whole. Thus "turn this table into a chart" is one change.
+
+A change on a section takes a title only. The children of a section change through their own ids. Thus a section payload never carries a child tree, and the agent does not send a subtree that it does not hold.
 
 ### D6. Per-operation validation covers the delta. The finish covers the whole.
 
@@ -74,4 +78,4 @@ The work is additive and dormant. No roster changes, and `src/index.ts` exports 
 
 ## Open Questions
 
-- None. The tool ids and the exact outline label lengths are implementation details for the tasks phase.
+- None. The exact outline label length is an implementation detail. The tool ids are in task 4.2.

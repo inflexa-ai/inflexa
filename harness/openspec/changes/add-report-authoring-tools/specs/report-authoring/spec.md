@@ -14,6 +14,12 @@ The draft model MUST let a report document grow from an empty draft, one operati
 ### Requirement: Block addition with an anchor destination
 The add operation MUST put a new block at a destination that names a parent and a place. The parent is a section id, or the root when the id is absent. The place is `start`, `end`, `before` an id, or `after` an id. The default place is `end`. The root MUST admit a section only.
 
+An add payload can be a section that carries children, and the validation MUST cover each block of the payload. An anchor implies its parent, and a named parent that disagrees with the anchor MUST refuse with `unknown-target`.
+
+#### Scenario: A section subtree lands in one operation
+- **WHEN** the agent adds a section that carries two child blocks
+- **THEN** the operation lands, and the validation covers the section and each child
+
 #### Scenario: An atom lands in a section
 - **WHEN** the agent adds a metric block with a section id as the parent
 - **THEN** the metric lands at the end of that section
@@ -65,7 +71,7 @@ The remove operation MUST remove one block, named by its id. A removed section t
 - **THEN** the operation refuses with the reason `unknown-target`
 
 ### Requirement: Block movement with an anchor destination
-The move operation MUST move one block, named by its id, to a destination with the same shape as the add destination. A section MUST NOT move into its own subtree.
+The move operation MUST move one block, named by its id, to a destination with the same shape as the add destination. A section MUST NOT move into its own subtree. A move with the moved block as its own anchor MUST refuse with `unknown-target`.
 
 #### Scenario: A block moves between sections
 - **WHEN** the agent moves a figure block from one section to the end of a different section
@@ -113,7 +119,7 @@ The read surface MUST give an outline of the draft, and one block by its id. An 
 - **THEN** the tool result carries `applied: true` and the fresh outline
 
 ### Requirement: The finish operation
-The finish operation MUST validate the whole draft against the full document schema, the id rule, and the structural tier. It MUST report each gap as data. When the draft passes, it MUST give the valid `ReportDocument` value. The finish MUST NOT open a file, and it MUST NOT change the draft.
+The finish operation MUST validate the whole draft against the full document schema, the id rule, and the structural tier. It MUST report each gap as data. When the draft passes, it MUST give the valid `ReportDocument` value. The finish MUST NOT open a file, and it MUST NOT change the draft. The finish runs the structural tier only, and the value-tier gate of the report pipeline is a different capability.
 
 #### Scenario: An empty section is a gap at the finish
 - **WHEN** the agent finishes a draft that holds one empty section

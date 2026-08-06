@@ -8,10 +8,10 @@
 
 - [ ] 2.1 Make the operation types and the `DraftRefusal` type in `src/report-model/draft-operations.ts`. The reason set is closed: `malformed-block`, `duplicate-id`, `unknown-target`, `unresolved-reference`, `cycle`, `atom-at-root`, `not-a-section`, and `payload-kind-mismatch`.
 - [ ] 2.2 Make the shared validation pipeline of one operation: parse the payload, apply to a candidate tree, scan the ids, and run the structural tier over each incoming reference. A refusal returns on the `Result` err channel of the pure core, and the draft value stays untouched.
-- [ ] 2.3 Make the add operation with the anchor destination: parent id or root, and `start`, `end`, `before`, or `after`. The root admits a section only.
+- [ ] 2.3 Make the add operation with the anchor destination: parent id or root, and `start`, `end`, `before`, or `after`. The root admits a section only. An anchor implies its parent, and a parent that disagrees with the anchor refuses. A section payload can carry children.
 - [ ] 2.4 Make the change operation: a full atom payload with the target id stamped on it, or a section title. A kind change on an atom is permitted.
 - [ ] 2.5 Make the remove operation: one block by id, and a removed section takes its subtree.
-- [ ] 2.6 Make the move operation with the same destination shape, and the cycle guard for a section.
+- [ ] 2.6 Make the move operation with the same destination shape, the cycle guard for a section, and the refusal of a self-anchor.
 - [ ] 2.7 Write the tests of each operation: one landing case and each refusal reason, with the draft unchanged after a refusal.
 
 ## 3. The read surface and the finish
@@ -24,7 +24,7 @@
 ## 4. The tool layer
 
 - [ ] 4.1 Make the draft holder and the factory in `src/tools/report-authoring/`. The factory closes over the holder and the snapshot, and it swaps the holder only on a landed operation.
-- [ ] 4.2 Make the tools with `defineTool`: add, change, remove, move, the outline read, the block read, and the finish. A refusal returns in the ok channel as `{ applied: false, refusal }`, and a landed operation returns `{ applied: true, outline }`. Each tool gives a `describeCall` hook or the literal `"none"`.
+- [ ] 4.2 Make the tools with `defineTool`: `add_block`, `change_block`, `remove_block`, `move_block`, `read_outline`, `read_block`, and `finish_draft`. A refusal returns in the ok channel as `{ applied: false, refusal }`, and a landed operation returns `{ applied: true, outline }`. Each tool gives a `describeCall` hook or the literal `"none"`.
 - [ ] 4.3 Write the tests of the tool layer: the ok-channel refusal envelope, the outline in a landed result, and the isolation of two factories with two drafts.
 
 ## 5. The gates
