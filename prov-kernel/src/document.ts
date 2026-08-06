@@ -17,8 +17,9 @@ import type {
 } from "./types.js";
 
 // The tsprov-facing layer: seeding, appending to, and serializing an analysis's PROV document.
-// The `@inflexa-ai/tsprov` dependency is confined to this file — host recorders drive provenance
-// through these functions, so a tsprov fault is contained to provenance.
+// The `@inflexa-ai/tsprov` dependency is confined to this file — hosts drive core provenance
+// through `applyProvEvent` and extension events through `appendLifecycleAction`, so a tsprov
+// fault is contained to provenance.
 //
 // The document is built INCREMENTALLY (one append per recorded action) rather than projected in a
 // batch: it lives in memory while an analysis is open and is reloaded from its serialized form on
@@ -70,8 +71,36 @@ export interface ProvDocumentModelOptions {
     readonly now?: () => Date;
 }
 
-/** The document model — QName derivations plus append builders, all sharing one digest. */
-export type ProvDocumentModel = ReturnType<typeof createProvDocumentModel>;
+/**
+ * The in-package model shape: {@link ProvDocumentModel} plus the per-core-event statement builders
+ * `applyProvEvent` dispatches. Off the supported surface — a direct-builder producer could drift
+ * from the switch's statement choice and order, forking the signed bytes.
+ */
+export type ProvDocumentModelInternal = ReturnType<typeof buildDocumentModel>;
+
+/**
+ * The document model a host holds — the QName derivations, document seed/load, and the
+ * `appendLifecycleAction` extension primitive, all sharing one digest. Core statements are
+ * produced only through `applyProvEvent`.
+ */
+export type ProvDocumentModel = Pick<
+    ProvDocumentModelInternal,
+    | "analysisQName"
+    | "inputQName"
+    | "runQName"
+    | "stepQName"
+    | "fileQName"
+    | "commandQName"
+    | "modelAgentQName"
+    | "freshDocument"
+    | "loadDocument"
+    | "appendLifecycleAction"
+>;
+
+/** The host constructor: the full model, typed to the supported {@link ProvDocumentModel} surface. */
+export function createProvDocumentModel(options: ProvDocumentModelOptions = {}): ProvDocumentModel {
+    return buildDocumentModel(options);
+}
 
 /** Replace every character a PROV qualified-name localpart disallows, so any string can seed an identifier. */
 function qnameSafe(s: string): string {
@@ -79,9 +108,11 @@ function qnameSafe(s: string): string {
 }
 
 /**
- * Build the document model over one digest derivation. Every QName and relation-id derivation
- * lives here so the file QName a host returns as an artifact `externalId`, the QNames the builders
- * append under, and the relation ids that make re-emission dedupe can never drift apart.
+ * Build the full model over one digest derivation — the in-package constructor `applyProvEvent`
+ * and the kernel's own tests build against; hosts construct through
+ * {@link createProvDocumentModel}. Every QName and relation-id derivation lives here so the file
+ * QName a host returns as an artifact `externalId`, the QNames the builders append under, and the
+ * relation ids that make re-emission dedupe can never drift apart.
  *
  * The execution builders use content-deterministic QNames (not random per-event ids) so a run
  * completing on a later boot's durable recovery re-emits identical records, and `unified()`
@@ -97,7 +128,7 @@ function qnameSafe(s: string): string {
  * `time` argument is omitted from every identified relation: two same-id relations with differing
  * formal times throw on merge, and the occurrence times already live on the run/step activities.
  */
-export function createProvDocumentModel(options: ProvDocumentModelOptions = {}) {
+export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
     const digest = options.digest ?? defaultProvDigest;
     const mintActionId = options.mintActionId ?? randomUUID;
     const now = options.now ?? ((): Date => new Date());

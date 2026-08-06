@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ProvDocument } from "@inflexa-ai/tsprov";
-import { createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS, type ProvDocumentModel } from "./document.js";
+import { buildDocumentModel, createProvDocumentModel, defaultProvDigest, PROV_UNIFY_OPTIONS, type ProvDocumentModelInternal } from "./document.js";
 import type { ProvActor, ProvStepRef } from "./types.js";
 
 const actor: ProvActor = { kind: "system", label: "test-host", version: "0.0.0", commit: "abc123" };
@@ -10,7 +10,7 @@ const outputKey = { path: "runs/r1/s1/output/result.csv", hash: "sha256:bbb" };
 const inputKey = { path: "data/inputs/counts.csv", hash: "sha256:aaa" };
 
 /** Append one full run's statements — the exact sequence a host recorder would drive. */
-function appendRun(model: ProvDocumentModel, doc: ProvDocument, analysisId: string): void {
+function appendRun(model: ProvDocumentModelInternal, doc: ProvDocument, analysisId: string): void {
     model.appendRunStarted(doc, analysisId, actor, { runId: "r1", planSummary: "test plan", startedAtMs: 1_700_000_000_000 });
     model.appendCommandExecuted(
         doc,
@@ -80,7 +80,7 @@ describe("QName derivation", () => {
 
 describe("document builders", () => {
     test("one run's statements produce the expected activity/entity/agent/relation keys", () => {
-        const model = createProvDocumentModel();
+        const model = buildDocumentModel();
         const doc = model.freshDocument({ analysisId: "a1", name: "Test Analysis" });
         appendRun(model, doc, "a1");
         const json = serializeUnified(doc);
@@ -98,7 +98,7 @@ describe("document builders", () => {
     });
 
     test("re-building the same statements twice dedupes under unified()", () => {
-        const model = createProvDocumentModel();
+        const model = buildDocumentModel();
         const doc = model.freshDocument({ analysisId: "a1" });
         appendRun(model, doc, "a1");
         appendRun(model, doc, "a1");
@@ -113,7 +113,7 @@ describe("document builders", () => {
     });
 
     test("no anonymous blank-node relations across the identified relation kinds", () => {
-        const model = createProvDocumentModel();
+        const model = buildDocumentModel();
         const doc = model.freshDocument({ analysisId: "a1" });
         appendRun(model, doc, "a1");
         const json = serializeUnified(doc);
@@ -124,7 +124,7 @@ describe("document builders", () => {
     });
 
     test("loadDocument round-trips a serialized document and rejects corrupt bytes", () => {
-        const model = createProvDocumentModel();
+        const model = buildDocumentModel();
         const doc = model.freshDocument({ analysisId: "a1" });
         appendRun(model, doc, "a1");
         const json = doc.unified(PROV_UNIFY_OPTIONS).serialize("json");
