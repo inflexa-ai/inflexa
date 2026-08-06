@@ -25,6 +25,7 @@ The block contract and its validator landed with no producer. A valid report is 
 ## Impact
 
 - New code under `harness/src/report-model/` for the draft and the operations, and under `harness/src/tools/report-authoring/` for the tool layer.
+- `src/contracts/report-blocks.ts` gains named exports for the seven atom schemas. No schema changes.
 - The work is additive and dormant. No agent roster changes, and `src/index.ts` exports none of it. The old report path stays live and untouched.
 - Reads the structural tier (`validateReferenceStructure`) and the snapshot model from #306. The value tier stays a seam, and no operation reads a file.
 - No new dependency.
