@@ -521,14 +521,30 @@ subsystems.
 recipe schema. The recipe schema is retired, not deferred. DEP becomes one git entry
 in the bulk lock. GitHub does not join the lock; it stays incremental, as it is now.
 
+## 6a. What the overnight loop did (2026-08-06)
+
+The loop took the three changes through `/opsx:explore`, the artifact audit,
+`/opsx:apply`, `/opsx:verify`, `/opsx:sync`, and `/opsx:archive`. Opus workers
+wrote the code, and each diff passed a judgment before its tasks marked. The archives are:
+
+- `harness/openspec/changes/archive/2026-08-06-content-addressed-lib-store`
+- `cli/openspec/changes/archive/2026-08-06-lib-store-mount-and-provisioning`
+- `cli/openspec/changes/archive/2026-08-06-lib-store-download`
+
+CI-only work stays: the store-against-image compare, the 500-package scale test,
+the amd64 run, the Linux import timing, the full R build, and the first store
+publish (a manual dispatch of the new workflow). Blocked decisions stay: the
+provisioner-image source for a user machine, and the disk retention across store
+versions. The harness version bump is release-gated.
+
 ## 7. What is proven, designed, and open
 
 | Area | Status |
 |-|-|
 | Package relocation, dedup, symlink farm, cache prep | proven |
-| Store format, Provisioner, CLI mount | designed (0 of 98 tasks done) |
+| Store format, Provisioner, CLI mount | built and archived (2026-08-06). The four CI-marked runs stay |
 | Supply-chain pinning, per-store lock, staging repair | built and checked in a container, not shipped |
-| Delivery of the store to a machine (a GHCR artifact, the ORAS push, the CLI pull, the gate) | decided in shape (2026-08-05), not built |
+| Delivery of the store to a machine (a GHCR artifact, the ORAS push, the CLI pull, the gate) | built and archived (2026-08-06). The first publish waits for a dispatch |
 | Lock the R track (pak) | bulk CRAN+Bioc+DEP resolves (719 pkgs); GitHub stays incremental; ready to wire |
 | R system-library gap (r2u installs these; P3M does not) | measured; pak auto-installs via apt, no manual list |
 | Recipe schema (`manifest-package-recipes`, 21 tasks) | retired; the pak lock is the recipe |
