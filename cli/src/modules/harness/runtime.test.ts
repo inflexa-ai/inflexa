@@ -56,6 +56,8 @@ function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHar
         adminPort: 8433,
         skillsDir,
         templatesDir,
+        libStorePath: null,
+        provisionerImage: null,
         ...overrides,
     };
 }
@@ -66,6 +68,21 @@ function fakeEmbedding(): EmbeddingProvider {
         dimensions: 1536,
         embed: (texts) => okAsync(texts.map(() => new Array(1536).fill(0))),
     };
+}
+
+/**
+ * A host package store root under tmpdir. The store keeps its active version behind `current`; its
+ * inventory is `current/packages.txt`. `withInventory` seeds that one file — the shallow shape the CLI
+ * reads to decide the inventory source — so an "incomplete" root (no `current`) exercises the fallback.
+ */
+function makeLibStoreRoot(withInventory: boolean): string {
+    const root = join(tmpdir(), `harness-libstore-test-${randomUUIDv7()}`);
+    mkdirSync(root, { recursive: true });
+    if (withInventory) {
+        mkdirSync(join(root, "current"), { recursive: true });
+        writeFileSync(join(root, "current", "packages.txt"), "numpy==1.26.4\npandas==2.2.2\n");
+    }
+    return root;
 }
 
 function fakeIngress(calls: string[]): ExecIngress {
@@ -834,6 +851,108 @@ describe("bootHarnessRuntime", () => {
         expect(calls).not.toContain("postgres");
         expect(calls).not.toContain("boot");
         expect(calls).not.toContain("ingress");
+    });
+
+    test("passes the configured store path to the sandbox client even when the store is incomplete", async () => {
+        const calls: string[] = [];
+        const captured: { config: CreateSandboxClientConfig | null } = { config: null };
+        // Incomplete: the root exists but has no `current`, so the harness will refuse the mount. The CLI
+        // must pass the path regardless and leave the usability check to the harness, which runs it at
+        // create time — the CLI never re-implements it.
+        const storeRoot = makeLibStoreRoot(false);
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            createSandbox: (cfg) => {
+                captured.config = cfg;
+                return createSandboxClient(cfg);
+            },
+        };
+        try {
+            const result = await bootHarnessRuntime({ seams, config: testConfig({ libStorePath: storeRoot }) });
+            expect(result.isOk()).toBe(true);
+            expect(captured.config?.libStorePath).toBe(storeRoot);
+        } finally {
+            rmSync(storeRoot, { recursive: true, force: true });
+        }
+    });
+
+    test("passes no libStorePath key when no store is configured, so no /mnt/libs bind is requested", async () => {
+        const calls: string[] = [];
+        const captured: { config: CreateSandboxClientConfig | null } = { config: null };
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            createSandbox: (cfg) => {
+                captured.config = cfg;
+                return createSandboxClient(cfg);
+            },
+        };
+        const result = await bootHarnessRuntime({ seams, config: testConfig() });
+
+        expect(result.isOk()).toBe(true);
+        // The key must be ABSENT, not present-and-undefined, so the harness creates no bind mount — the
+        // same shape the docker-pin test asserts for engineSocketPath.
+        expect(captured.config !== null && "libStorePath" in captured.config).toBe(false);
+    });
+
+    test("the inventory follows the mount: a configured, usable store supplies its active-farm packages, and the image probe never runs", async () => {
+        const calls: string[] = [];
+        const storeRoot = makeLibStoreRoot(true);
+        try {
+            const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig({ libStorePath: storeRoot }) }))._unsafeUnwrap();
+            expect(runtime).toBeDefined();
+            // The store answers the inventory question, so the image label probe is never spawned.
+            expect(lastCore?.conversation.packagesFile).toBe(join(storeRoot, "current", "packages.txt"));
+            expect(calls).not.toContain("resolvePackages");
+        } finally {
+            rmSync(storeRoot, { recursive: true, force: true });
+        }
+    });
+
+    test("with no store configured the boot is identical to before: no /mnt/libs bind is requested AND the inventory is the image label cache", async () => {
+        const calls: string[] = [];
+        const captured: { config: CreateSandboxClientConfig | null } = { config: null };
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            resolvePackages: async () => {
+                calls.push("resolvePackages");
+                return "/cache/img/packages.txt";
+            },
+            createSandbox: (cfg) => {
+                captured.config = cfg;
+                return createSandboxClient(cfg);
+            },
+        };
+        const runtime = (await bootHarnessRuntime({ seams, config: testConfig() }))._unsafeUnwrap();
+
+        expect(runtime).toBeDefined();
+        // No store ⇒ no `/mnt/libs` bind: the key must be ABSENT, not present-and-undefined, so the harness
+        // creates no bind mount — bit-for-bit the pre-store sandbox config.
+        expect(captured.config !== null && "libStorePath" in captured.config).toBe(false);
+        // No store ⇒ the sandbox mounts the baked image, so the inventory is the image label cache.
+        expect(lastCore?.conversation.packagesFile).toBe("/cache/img/packages.txt");
+        expect(calls).toContain("resolvePackages");
+    });
+
+    test("a configured but unusable store falls back to the image label cache, never describing a store the sandbox will not mount", async () => {
+        const calls: string[] = [];
+        // Configured, but the active farm has no readable `packages.txt`, so the harness will drop the mount
+        // and run the baked image. The inventory must follow the mount back to the image label cache.
+        const storeRoot = makeLibStoreRoot(false);
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            resolvePackages: async () => {
+                calls.push("resolvePackages");
+                return "/cache/img/packages.txt";
+            },
+        };
+        try {
+            const runtime = (await bootHarnessRuntime({ seams, config: testConfig({ libStorePath: storeRoot }) }))._unsafeUnwrap();
+            expect(runtime).toBeDefined();
+            expect(lastCore?.conversation.packagesFile).toBe("/cache/img/packages.txt");
+            expect(calls).toContain("resolvePackages");
+        } finally {
+            rmSync(storeRoot, { recursive: true, force: true });
+        }
     });
 });
 

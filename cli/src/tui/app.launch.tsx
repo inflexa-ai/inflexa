@@ -11,8 +11,9 @@ import { readConfig } from "../lib/config.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import type { IdOrName } from "../lib/types.ts";
 import { resolveHarnessConfig, resolveModelConnection } from "../modules/harness/config.ts";
-import { describeBootError, ensureSandboxImage } from "../modules/harness/profile.ts";
+import { describeBootError } from "../modules/harness/profile.ts";
 import { startHarnessBoot } from "./hooks/boot.ts";
+import { startLibStoreDownload } from "./hooks/sandbox_gate.tsx";
 import { App } from "./app.tsx";
 import { setTheme } from "./theme.ts";
 
@@ -36,16 +37,15 @@ async function renderChat(target: ChatTarget): Promise<void> {
     if (connection.configError) fail(describeBootError({ type: "model_connection_invalid", issues: connection.configError.issues }));
     await ensureProxyReadyOrExit(connection.mode);
 
-    // Harness pre-flight gates that need normal stdio — resolved once here and reused by the
-    // post-render boot below, so the model/image/policy are computed a single time. The config gate
+    // Harness pre-flight gate that needs normal stdio — resolved once here and reused by the
+    // post-render boot below, so the model/policy are computed a single time. The config gate
     // mirrors `inflexa profile`: a bad `harness` field must surface as its real problem, not a
     // misleading downstream boot error (resolveHarnessConfig collapses every field to a default on a
-    // config error, so a later image check would inspect the wrong tag). `ensureSandboxImage` is
-    // INTERACTIVE (confirm/pull a multi-GB image), so its prompt has to run on normal stdio, before
-    // render() takes the terminal — never inside the alternate screen.
+    // config error). The sandbox-image wait and the package-store wait do NOT run here: they belong to
+    // the sandbox gate (`hooks/sandbox_gate.tsx`), which holds the first action that makes a sandbox
+    // inside the TUI, so app launch never blocks on a multi-gigabyte download.
     const cfg = resolveHarnessConfig();
     if (cfg.configError) fail(describeBootError({ type: "harness_config_invalid", issues: cfg.configError.issues }));
-    await ensureSandboxImage(cfg.sandboxImage);
 
     // Claim the analysis before the alternate screen takes over, so a conflict surfaces as a plain
     // stderr line and a clean exit — no flash of TUI. Acquiring here (not in the headless resolvers)
@@ -83,6 +83,11 @@ async function renderChat(target: ChatTarget): Promise<void> {
     // boot-state store the App reads. Reached ONLY from renderChat: the passive
     // bare-`inflexa`-resolves-to-nothing path returns before renderChat and boots nothing (no-litter).
     void startHarnessBoot(cfg);
+
+    // Start the package-store download in the background AFTER render() has the terminal, so the consent
+    // prompt and the transfer both live inside the TUI and the app never blocks on them. It is a clean
+    // no-op when no store is configured, and it asks before it applies a moved-tag update.
+    void startLibStoreDownload();
 }
 
 /** `inflexa new [name] [paths...]` — create an analysis (anchor = cwd) and open its chat. */

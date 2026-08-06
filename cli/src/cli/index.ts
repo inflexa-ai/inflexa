@@ -785,6 +785,55 @@ export function buildProgram(): Command {
         },
     );
 
+    // The host package store: provision packages into a farm, inspect it, remove a farm, and reclaim disk.
+    // The store is bind-mounted read-only at /mnt/libs in sandboxes when it is configured. `add`, `reclaim`,
+    // and `remove-farm` mutate it through the network-enabled provisioner container, so each is
+    // approval-gated like `sandbox pull`; `ls` only reads the store on the host, so it stays auto.
+    const store = cli.command("store").description("Manage the host package store mounted read-only in sandboxes at /mnt/libs");
+
+    // Stays `approval` (not `auto`): `add` starts the network-enabled provisioner container and writes to disk.
+    registerAction(
+        store
+            .command("add")
+            .description("Provision Python packages into the store's active farm, extending its closure")
+            .argument("<packages...>", "Python package specs to add (for example scanpy or 'numpy==1.26.4')")
+            .option("--farm <name>", "Provision into a named farm instead of the active one"),
+        { kind: "approval" },
+        async (packages: string[], options: { farm?: string }) => {
+            const { runStoreAdd } = await import("../modules/libs/store.ts");
+            await runStoreAdd(packages, { farm: options.farm });
+        },
+    );
+
+    // Read-only: walks the store directory on the host and reports it (store.ts `inspectStore`); writes no config.
+    registerAction(store.command("ls").description("List the store's packages, farms, and disk use"), { kind: "auto", safeFlags: [] }, async () => {
+        const { runStoreLs } = await import("../modules/libs/store.ts");
+        await runStoreLs();
+    });
+
+    // Stays `approval` (not `auto`): `remove-farm` deletes a farm from the store.
+    registerAction(
+        store
+            .command("remove-farm")
+            .description("Remove a farm from the store (its packages stay until reclaim runs)")
+            .argument("<farm>", "Name of the farm to remove"),
+        { kind: "approval" },
+        async (farm: string) => {
+            const { runStoreRemoveFarm } = await import("../modules/libs/store.ts");
+            await runStoreRemoveFarm(farm);
+        },
+    );
+
+    // Stays `approval` (not `auto`): `reclaim` deletes unreferenced store content after reporting it.
+    registerAction(
+        store.command("reclaim").description("Remove store packages that no farm references, after reporting them"),
+        { kind: "approval" },
+        async () => {
+            const { runStoreReclaim } = await import("../modules/libs/store.ts");
+            await runStoreReclaim();
+        },
+    );
+
     cli.addHelpText("after", renderEnvHelp);
 
     return cli;

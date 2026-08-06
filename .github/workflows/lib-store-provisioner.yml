@@ -1,0 +1,441 @@
+name: Emit content-addressed lib store (Provisioner)
+
+# Emits the CONTENT-ADDRESSED package store as an ADDITIVE CI artifact, built by
+# the Provisioner container (images/sandbox-provisioner) — the second of the two
+# forms the design calls for, beside the per-track tarballs.
+#
+# Why a separate workflow instead of a step in lib-store.yml:
+#   * The store-vs-tarball guarantee is "emitting the store does not change the
+#     tarballs" (the lib-store-build spec:
+#     "Emitting the content-addressed form does not change the tarballs"). NOT
+#     touching lib-store.yml is what makes that guarantee structural rather than a
+#     promise — the tarball pipeline's inputs, digests, and steps are byte-for-byte
+#     unchanged because this build never runs beside it.
+#   * The decided shape is a new, dedicated workflow, not a step in lib-store.yml
+#     (2026-08-05). It is the honest test: the store is assembled BY the Provisioner
+#     (uv resolve + compile, pak for R), not carved out of the baked image tree, so
+#     it exercises the product code path.
+#
+# Scope of this workflow:
+#   * Build the Provisioner image and run it to emit a store as a CI artifact.
+#   * Publish the store to GHCR as an OCI artifact, through an ORAS push, one
+#     artifact for each architecture. This publish is IN SCOPE, decided 2026-08-05.
+#   * OUT OF SCOPE still: the S3 publish, and store-vs-image verification (same
+#     manifest both ways, versions + imports must agree). This workflow proves the
+#     store BUILDS, uploads, and publishes; it does not yet assert it equals the
+#     baked image.
+#
+# Conventions mirror lib-store.yml (do not edit that file): same self-hosted EC2
+# builders (a full R + Bioconductor + Python compile does not fit a GitHub-hosted
+# runner), same arch matrix (amd64 primary, arm64 best-effort), same pinned action
+# digests, same version stamp, workflow_dispatch only. The builders must be started
+# first (`just build-start [arch]`), exactly as for lib-store.yml.
+#
+# Assumptions / gaps left for a later unit (see the summary that shipped with this
+# change):
+#   * The Provisioner's R GitHub track authenticates with the workflow GITHUB_TOKEN
+#     via the GITHUB_PAT env var remotes reads — the run-time analogue of
+#     lib-store.yml's `--secret id=github_token`; the R GitHub installs stay
+#     best-effort (provision.py warns and keeps what installed), matching the image.
+#   * The store is uploaded as a symlink-preserving tar: a farm bakes absolute
+#     /mnt/libs/... symlink targets, which upload-artifact would dereference (and
+#     which do not resolve on the runner filesystem), so a raw directory upload
+#     would corrupt the farm. The tar keeps them verbatim for a consumer that
+#     extracts at /mnt/libs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      r_ncpus:
+        description: "Cap on parallel R source compiles (empty = auto/detectCores). Set e.g. 4 if the R build OOMs, mirroring sandbox-python-r's R_NCPUS arg."
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MANIFEST: images/lib-store-manifest.yaml
+
+jobs:
+  # A single coherent version + the manifest's declared base image, shared by both
+  # arches — the same shape lib-store.yml's `prepare` job uses.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      base_image: ${{ steps.meta.outputs.base_image }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Compute version + parse base image
+        id: meta
+        run: |
+          BASE_IMAGE=$(grep '^base_image:' "$MANIFEST" | awk '{print $2}' | tr -d '"')
+          VERSION=$(date +%Y%m%d)-$(echo "${{ github.sha }}" | head -c 7)
+          {
+            echo "version=$VERSION"
+            echo "base_image=$BASE_IMAGE"
+          } >> "$GITHUB_OUTPUT"
+
+  provision-store:
+    needs: prepare
+    permissions:
+      contents: read
+      # The ORAS push writes the store artifact to GHCR under this repository owner.
+      packages: write
+    strategy:
+      fail-fast: false
+      # Keep the arch list + runner labels in lock-step with lib-store.yml's build
+      # matrix. amd64 is the primary target; arm64 is best-effort (best_effort=true
+      # makes the whole leg continue-on-error, the job-level analogue of
+      # lib-store.yml making its native-arm64 R build step continue-on-error).
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: '["self-hosted", "inflexa-builder"]'
+            best_effort: false
+          - arch: arm64
+            platform: linux/arm64
+            runner: '["self-hosted", "inflexa-builder-arm64"]'
+            best_effort: true
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    continue-on-error: ${{ matrix.best_effort }}
+    env:
+      PLATFORM: ${{ matrix.platform }}
+      ARCH: ${{ matrix.arch }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BASE_IMAGE: ${{ needs.prepare.outputs.base_image }}
+      PROVISIONER_IMAGE: sandbox-provisioner-local
+      STORE_VOLUME: lib-store-${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+      STORE_IMAGE: ghcr.io/${{ github.repository_owner }}/lib-store
+      R_NCPUS: ${{ inputs.r_ncpus }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Set up Docker Buildx
+        # docker daemon's built-in builder, matching lib-store.yml: its BuildKit
+        # cache lives on the persistent EBS volume, so warm layers survive stop/start.
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver: docker
+
+      - name: Ensure zstd
+        # The store is streamed out of the volume and compressed with zstd (the
+        # packing convention lib-store-pack.sh uses). The runner user has no sudo on
+        # the self-hosted builders, so fail loudly rather than try to install.
+        run: command -v zstd >/dev/null || { echo "::error::zstd not found on the builder"; exit 1; }
+
+      - name: Log in to GHCR
+        # The ORAS push and the ORAS manifest resolve both read the docker credential
+        # store, so this one login authenticates ORAS as well. No second ORAS login is
+        # necessary. This mirrors lib-store.yml's GHCR login.
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install ORAS
+        # Pin the version and the per-arch checksum, the same supply-chain rule the
+        # pinned action digests obey. The runner user has no sudo, so extract the
+        # binary into a temporary directory and add that directory to PATH.
+        run: |
+          set -euo pipefail
+          ORAS_VERSION=1.2.3
+          case "$ARCH" in
+            amd64) ORAS_SHA256=b4efc97a91f471f323f193ea4b4d63d8ff443ca3aab514151a30751330852827 ;;
+            arm64) ORAS_SHA256=90e24e234dc6dffe73365533db66fd14449d2c9ae77381081596bf92f40f6b82 ;;
+            *) echo "::error::no pinned ORAS checksum for $ARCH"; exit 1 ;;
+          esac
+          dir="$RUNNER_TEMP/oras"
+          mkdir -p "$dir"
+          curl -fsSL -o "$dir/oras.tar.gz" \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_${ARCH}.tar.gz"
+          echo "${ORAS_SHA256}  $dir/oras.tar.gz" | sha256sum -c -
+          tar -C "$dir" -xzf "$dir/oras.tar.gz" oras
+          echo "$dir" >> "$GITHUB_PATH"
+          "$dir/oras" version
+
+      - name: Build the Provisioner image
+        # Build context is the repo root: the Dockerfile COPYs images/* (toolchain,
+        # gen-r-lock.R, the packages.txt producer, provision.py) and asserts its base
+        # digest equals the manifest's base_image. Pass BASE_IMAGE from the manifest
+        # (as lib-store.yml does) so a manifest bump cannot drift past a stale
+        # Dockerfile default. `--load` puts the image in the local daemon so the run
+        # below can `docker run` it. The provisioner image is a local build tool and
+        # is NOT pushed; the store it emits is the artifact this workflow publishes.
+        run: |
+          docker buildx build --load \
+            -f images/sandbox-provisioner/Dockerfile \
+            --platform "$PLATFORM" \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            -t "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+            .
+
+      - name: Emit the content-addressed store
+        # NETWORK ON (the Provisioner resolves + compiles). The store is a named
+        # volume mounted READ-WRITE at /mnt/libs — the SAME path the sandbox later
+        # reads it read-only, which is load-bearing: a farm's symlinks bake
+        # /mnt/libs/... as an absolute target. GITHUB_PAT (from the workflow token)
+        # is the run-time analogue of lib-store.yml's github_token BuildKit secret;
+        # the manifest is bind-mounted because the image deletes its build-time copy
+        # after the base-digest assertion.
+        env:
+          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The Python pip specs for this arch: common + <arch>, exactly the shape
+          # scripts/lib-store-coverage.py's want_for() reads, but RAW — the
+          # Provisioner resolves them, so keep every version pin / extra verbatim.
+          mapfile -t PY_SPECS < <(python3 - "$MANIFEST" "$ARCH" <<'PY'
+          import sys, yaml
+          manifest = yaml.safe_load(open(sys.argv[1])) or {}
+          arch = sys.argv[2]
+          pip = (manifest.get("python", {}) or {}).get("pip", {}) or {}
+          for s in (pip.get("common", []) or []) + (pip.get(arch, []) or []):
+              print(s)
+          PY
+          )
+          if [ "${#PY_SPECS[@]}" -eq 0 ]; then
+            echo "::error::no Python pip specs parsed from $MANIFEST for $ARCH"; exit 1
+          fi
+          echo "Python specs (${#PY_SPECS[@]}): ${PY_SPECS[*]}"
+
+          # Fresh volume per run (the store dedups, so a reused volume would carry a
+          # prior build's packages into this artifact).
+          docker volume rm "$STORE_VOLUME" 2>/dev/null || true
+          docker volume create "$STORE_VOLUME"
+
+          docker run --rm \
+            -v "${STORE_VOLUME}:/mnt/libs:rw" \
+            -v "${GITHUB_WORKSPACE}/${MANIFEST}:/manifest.yaml:ro" \
+            -e GITHUB_PAT \
+            -e R_NCPUS \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+            --farm catalog \
+            --r-manifest /manifest.yaml \
+            "${PY_SPECS[@]}"
+
+      - name: Export the store as a symlink-preserving tarball
+        # Stream the store OUT of the volume as a tar (symlinks kept as symlinks,
+        # including the absolute /mnt/libs targets) and compress on the host.
+        # Redirecting to a host file makes the tarball runner-owned, so the
+        # root-written store never becomes a sudo-less cleanup problem, and the farm
+        # is preserved faithfully for a consumer that extracts it at /mnt/libs.
+        run: |
+          mkdir -p dist
+          docker run --rm \
+            -v "${STORE_VOLUME}:/mnt/libs:ro" \
+            --entrypoint tar \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+            -cf - -C /mnt/libs . \
+            | zstd -q -3 -o "dist/lib-store-linux-${ARCH}.tar.zst"
+          ls -lh "dist/lib-store-linux-${ARCH}.tar.zst"
+
+      - name: Upload the content-addressed store artifact
+        # Named per arch and distinct from lib-store.yml's `lib-store-candidate-*`
+        # artifact — this sits BESIDE the tarball pipeline's outputs, not over them.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lib-store-content-addressed-${{ matrix.arch }}
+          path: dist/lib-store-linux-${{ matrix.arch }}.tar.zst
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Pack the store into per-track OCI layers
+        # The OCI artifact partitions the store into one layer for each track plus one
+        # base layer. A track layer holds only the content-addressed store directories
+        # of that track, which the farm links reveal. The base layer holds the farms,
+        # the `current` pointer, and the empty mount points. Extraction of every layer
+        # reassembles the store root, so the store directory a farm links to always
+        # arrives with the farm that needs it.
+        #
+        # The tars keep symlinks verbatim (no dereference): a farm link bakes an
+        # absolute /mnt/libs/store/... target, and the base layer's `current` is a
+        # symlink too. Names are sorted for a stable member order. The store is
+        # world-readable, so a non-root container reads it and writes the list files as
+        # the runner user, thus no root-owned file remains for cleanup.
+        run: |
+          set -euo pipefail
+          mkdir -p dist/oci dist/layer-lists
+
+          # Resolve which store directory belongs to which track from the farm links,
+          # then write one member list for each track and one for the base layer.
+          docker run --rm -i \
+            --user "$(id -u):$(id -g)" \
+            -v "${STORE_VOLUME}:/mnt/libs:ro" \
+            -v "${GITHUB_WORKSPACE}/dist/layer-lists:/work:rw" \
+            --entrypoint python3 \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          LIBS = Path("/mnt/libs")
+          STORE = LIBS / "store"
+          FARMS = LIBS / "farms"
+          OUT = Path("/work")
+
+          # The farm subtree a link sits under names its track. A python link lives
+          # under python/, an R link under r/<sub>/, a node link under node/. conda is
+          # never farmed, thus it owns no store directory.
+          def track_of(parts):
+              if parts[0] == "python":
+                  return "python"
+              if parts[0] == "r" and len(parts) >= 2:
+                  return parts[1]
+              if parts[0] == "node":
+                  return "node"
+              return None
+
+          order = ["cran", "bioconductor", "github", "python", "conda", "node"]
+          seen = {t: set() for t in order}
+          if FARMS.is_dir():
+              for farm in sorted(FARMS.iterdir()):
+                  if not farm.is_dir() or farm.name.startswith("."):
+                      continue
+                  # os.walk does not follow a symlink, thus it reads the farm's own
+                  # links without descending into the store the links point at.
+                  for dirpath, dirnames, filenames in os.walk(farm):
+                      for name in dirnames + filenames:
+                          p = Path(dirpath) / name
+                          if not p.is_symlink():
+                              continue
+                          tgt = os.readlink(p)
+                          if "/store/" not in tgt:
+                              continue
+                          store_dir = tgt.split("/store/", 1)[1].split("/", 1)[0]
+                          track = track_of(p.relative_to(farm).parts)
+                          if track is not None:
+                              seen[track].add(store_dir)
+
+          # Assign each store directory to exactly one track. The first track in the
+          # canonical order wins, thus a directory never lands in two layers.
+          assigned = {}
+          for track in order:
+              for store_dir in sorted(seen[track]):
+                  assigned.setdefault(store_dir, track)
+
+          on_disk = set()
+          if STORE.is_dir():
+              for d in STORE.iterdir():
+                  if d.is_dir() and not d.name.startswith("."):
+                      on_disk.add(d.name)
+
+          tracks = []
+          for track in order:
+              members = sorted(f"store/{d}" for d, tr in assigned.items() if tr == track)
+              if members:
+                  (OUT / f"layer.{track}.list").write_text("\n".join(members) + "\n")
+                  tracks.append(track)
+
+          # A store directory that no farm references still travels, in the base layer,
+          # thus extraction reassembles the root exactly. Every root entry except the
+          # store content goes to the base layer as well.
+          leftover = sorted(f"store/{d}" for d in on_disk if d not in assigned)
+          base = [p.name for p in sorted(LIBS.iterdir(), key=lambda p: p.name)
+                  if p.name != "store"]
+          base += leftover
+          (OUT / "layer.base.list").write_text("\n".join(base) + "\n")
+          (OUT / "layers.json").write_text(
+              json.dumps({"tracks": tracks, "leftover": leftover}, indent=2) + "\n")
+          print("track layers:", tracks)
+          if leftover:
+              print("note: unreferenced store dirs go to the base layer:", len(leftover))
+          PY
+
+          # Tar and compress each layer. tar reads its member list on stdin and writes
+          # the archive on stdout, which host zstd compresses into a runner-owned file.
+          # zstd level 3 matches the packing convention lib-store-pack.sh uses.
+          for list in dist/layer-lists/layer.*.list; do
+            name=$(basename "$list" .list); name="${name#layer.}"
+            docker run --rm -i \
+              -v "${STORE_VOLUME}:/mnt/libs:ro" \
+              --entrypoint tar \
+              "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+              -C /mnt/libs --sort=name -cf - -T - \
+              < "$list" \
+              | zstd -q -3 -o "dist/oci/${name}.tar.zst"
+            sha256sum "dist/oci/${name}.tar.zst" | awk '{print $1}' > "dist/oci/${name}.tar.zst.sha256"
+            echo "layer ${name}: $(du -h "dist/oci/${name}.tar.zst" | cut -f1), sha256 $(cut -c1-12 "dist/oci/${name}.tar.zst.sha256")…"
+          done
+
+      - name: Publish the store to GHCR as an OCI artifact
+        # A version tag is immutable in content. Resolve the tag first: when it is
+        # absent, push; when it is present with the same layer digests, skip; when it
+        # is present with different digests, refuse and stop. A layer digest is the
+        # sha256 of its blob, and the pack step recorded each one, thus the comparison
+        # reads the remote manifest only and downloads no blob.
+        run: |
+          set -euo pipefail
+          REF="${STORE_IMAGE}:${VERSION}-${ARCH}"
+          MT_TRACK="application/vnd.inflexa.lib-store.track.v1.tar+zstd"
+          MT_BASE="application/vnd.inflexa.lib-store.base.v1.tar+zstd"
+          ARTIFACT_TYPE="application/vnd.inflexa.lib-store.manifest.v1+json"
+
+          # Resolve the tag. A genuine "not found" means a first publish. Any other
+          # error (network or auth) must stop the build rather than push blindly.
+          decision=push
+          if oras manifest fetch "$REF" > dist/remote-manifest.json 2> dist/fetch.err; then
+            set +e
+            python3 - <<'PY'
+          import glob, json, sys
+          remote = sorted(l["digest"] for l in json.load(open("dist/remote-manifest.json")).get("layers", []))
+          local = sorted("sha256:" + open(f).read().strip() for f in glob.glob("dist/oci/*.tar.zst.sha256"))
+          sys.exit(0 if remote == local else 3)
+          PY
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ]; then decision=skip
+            elif [ "$rc" -eq 3 ]; then decision=refuse
+            else echo "::error::could not compare $REF layer digests"; exit "$rc"; fi
+          else
+            if grep -qiE "not found|404|NAME_UNKNOWN|MANIFEST_UNKNOWN|no such|does not exist" dist/fetch.err; then
+              decision=push
+            else
+              echo "::error::could not resolve $REF in GHCR"; cat dist/fetch.err; exit 1
+            fi
+          fi
+
+          case "$decision" in
+            refuse)
+              echo "::error::$REF already exists in GHCR with different content. A version tag is immutable in content; cut a new version rather than republish $REF."
+              exit 1
+              ;;
+            skip)
+              echo "::notice::$REF already exists in GHCR with identical layer digests; the push is skipped."
+              ;;
+            push)
+              # Each file becomes one layer, with its track or base media type. oras
+              # takes the digest from the file bytes, so it matches the recorded sha256.
+              refs=()
+              for f in $(ls dist/oci/*.tar.zst | sort); do
+                b=$(basename "$f")
+                if [ "$b" = "base.tar.zst" ]; then refs+=("$b:$MT_BASE"); else refs+=("$b:$MT_TRACK"); fi
+              done
+              ( cd dist/oci && oras push "$REF" \
+                  --artifact-type "$ARTIFACT_TYPE" \
+                  --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+                  "${refs[@]}" )
+              echo "::notice::pushed $REF (${#refs[@]} layers)."
+              # Move the `latest-<arch>` pointer to this manifest. This is a tag move
+              # only; it re-uploads no blob. Only the push path moves it. A skip means
+              # the version already published, and `latest` can already point at a
+              # newer version, thus a skip must not move it backward.
+              oras tag "$REF" "latest-${ARCH}"
+              echo "::notice::moved ${STORE_IMAGE}:latest-${ARCH} to $REF."
+              ;;
+          esac
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rmi "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" 2>/dev/null || true
+          docker volume rm "$STORE_VOLUME" 2>/dev/null || true
+          rm -rf dist
+          docker image prune -f 2>/dev/null || true
+          docker container prune -f 2>/dev/null || true

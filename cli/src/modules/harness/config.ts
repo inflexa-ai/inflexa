@@ -42,6 +42,14 @@ const harnessConfigSchema = z.object({
     adminPort: z.number().int().positive().optional(),
     skillsDir: z.string().optional(),
     templatesDir: z.string().optional(),
+    // Absent by default, so an existing installation is untouched: no store is passed to the
+    // harness and the sandbox resolves imports from the store the image bakes. Set, it names a
+    // host package store root the harness bind-mounts read-only at `/mnt/libs`.
+    libStorePath: z.string().optional(),
+    // The provisioner image the store-management commands run to add, reclaim, or remove content.
+    // No default: the source of the provisioner image for a user machine is still an open decision, so
+    // nothing here may guess a registry path. Unset, the store commands fail with guidance to set it.
+    provisionerImage: z.string().optional(),
 });
 
 /**
@@ -76,6 +84,19 @@ export type ResolvedHarnessConfig = {
     readonly skillsDir: string | null;
     /** Root templates tree for in-process report rendering; `null` outside a dev checkout without the config key. */
     readonly templatesDir: string | null;
+    /**
+     * Host package store root, or `null` when no store is configured. `null` is the opt-out default:
+     * the sandbox then uses the store the image bakes and no `/mnt/libs` bind mount is created. A path
+     * opts in; {@link resolveLibStore} projects this field so no call site infers the state from a path check.
+     */
+    readonly libStorePath: string | null;
+    /**
+     * The provisioner image the store-management commands run, or `null` when none is configured. There is
+     * no default source for a user machine yet, so this never falls back to a guessed reference;
+     * {@link resolveProvisionerImage} projects the field, and a store command that provisions or deletes
+     * fails with guidance when it is `null`.
+     */
+    readonly provisionerImage: string | null;
     /**
      * Set when the `harness` config key was present but failed validation (e.g. a field of the wrong
      * type). Carries the offending field paths so boot can report the real problem instead of a
@@ -178,8 +199,46 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         adminPort: cfg?.adminPort ?? env.adminPort,
         skillsDir: cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : releaseContentDir("skills")),
         templatesDir: cfg?.templatesDir ?? (env.isDevelopment ? devTemplatesDir : releaseContentDir("templates")),
+        // No default location: an absent key means "no store", not "the store at the default path".
+        // The default store location lives in env.libStoreDir for the store-management commands that
+        // create it; boot never falls back to it, so a cleared key is a clean opt-out.
+        libStorePath: cfg?.libStorePath ?? null,
+        provisionerImage: cfg?.provisionerImage ?? null,
         configError,
     };
+}
+
+/**
+ * Whether a host package store is configured, and where it is. A discriminated union so a caller cannot
+ * read a path without first proving the store is configured.
+ */
+export type LibStoreLocation = { readonly configured: true; readonly path: string } | { readonly configured: false };
+
+/**
+ * Report whether a host package store is configured, and its root when it is. This is the single reader
+ * of the resolved {@link ResolvedHarnessConfig.libStorePath}: the mount decision (pass the root to the
+ * harness) and the inventory decision (read the store's active farm) both consult it, so neither infers
+ * the store's presence from an ad-hoc path check that could drift from the other.
+ */
+export function resolveLibStore(cfg: ResolvedHarnessConfig): LibStoreLocation {
+    return cfg.libStorePath === null ? { configured: false } : { configured: true, path: cfg.libStorePath };
+}
+
+/**
+ * Whether a provisioner image is configured, and its reference. A discriminated union so a caller cannot
+ * read the reference without first proving one is set.
+ */
+export type ProvisionerImageLocation = { readonly configured: true; readonly image: string } | { readonly configured: false };
+
+/**
+ * Report whether a provisioner image is configured, and its reference when it is. An empty or
+ * whitespace-only value counts as unset, because it would otherwise reach the container engine as a blank
+ * image argument. The store-management commands consult this: with no reference they stop with guidance to
+ * set the config key, because there is no default source to guess.
+ */
+export function resolveProvisionerImage(cfg: ResolvedHarnessConfig): ProvisionerImageLocation {
+    const image = cfg.provisionerImage;
+    return image === null || image.trim() === "" ? { configured: false } : { configured: true, image };
 }
 
 /**

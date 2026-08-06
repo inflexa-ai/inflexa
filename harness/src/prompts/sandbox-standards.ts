@@ -91,14 +91,17 @@ Data that has already been processed can still be **read**: \`samtools\`,
 inspect, subset, and convert existing BAM/CRAM, VCF and BED. Reading evidence at
 sites you already have is in scope; producing the calls is not.
 
-## Environment — No Network, No Installs
+## Environment — No Network, No Runtime Installs
 
 **There is no egress from this sandbox.** Outbound connections are blocked at the
 firewall, not merely discouraged: every download, API call, package install, and
 \`ExperimentHub\`/\`AnnotationHub\`/\`models.download_*\` style fetch fails outright.
 There is no proxy, no mirror, and no retry that succeeds. Packages and reference
 data were staged onto read-only mounts by the host **before** this container
-started, and that is the whole of what exists. Work that genuinely requires the
+started, and that is the whole of what this sandbox has. You cannot install a
+package yourself — adding one is a host action, done outside the sandbox and
+applied to a later run — so report a package you need but cannot find, rather
+than trying to install it. Work that genuinely requires the
 internet — fetching a dataset, querying an external API, literature lookup — is
 done **outside** the sandbox through the host's tools, not from your scripts.
 

@@ -75,7 +75,11 @@ def want_for(manifest: dict, arch: str) -> dict[str, list[str]]:
 
     return {
         "cran": list(r.get("cran", []) or []),
-        "bioconductor": list(r.get("bioconductor", []) or []),
+        # git packages install into r/bioconductor and load-check as bioconductor
+        # (gen-r-lock.R places anything outside the CRAN-ref closure there), so their
+        # names count as bioconductor wants — this is where DEP lives.
+        "bioconductor": list(r.get("bioconductor", []) or [])
+        + [g["name"] for g in (r.get("git", []) or [])],
         # github wants are owner/repo[@ref] strings; loaded names are the R
         # package dir names, so per-name missing is approximate for this track.
         "github": [g.split("/")[-1].split("@")[0] for g in (r.get("github", []) or [])],

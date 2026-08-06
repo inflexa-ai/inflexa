@@ -267,6 +267,17 @@ export const env = Object.freeze({
      */
     libsDir: join(dataDir(), "inflexa", "libs"),
     /**
+     * Default host package store root: `<dataDir>/inflexa/lib-store`. When a store is configured
+     * (harness.libStorePath), the harness bind-mounts its root read-only at the sandbox's `/mnt/libs`,
+     * which shadows the store the image bakes. This is the DEFAULT location the store-management commands
+     * create the store at; a configured path can point elsewhere.
+     *
+     * Deliberately DISTINCT from `libsDir`: `libsDir` caches per-image package inventories and is pruned
+     * by image identity, so a real store placed inside it would be deleted as stale cache. Keeping the two
+     * apart keeps content out of a cache.
+     */
+    libStoreDir: join(dataDir(), "inflexa", "lib-store"),
+    /**
      * Materialized skills/templates content: `<dataDir>/inflexa/content/<contentHash>/{skills,templates}`.
      * A peer of `refsDir`/`modelDir` — a runtime asset tree, not config — but sourced from the binary's
      * OWN embedded archive rather than a network download (see modules/harness/content.ts). The
@@ -493,6 +504,12 @@ export const envDoc: Readonly<
         kind: "path",
         label: "package inventories",
         description: "per-image package lists extracted from the sandbox image's inventory label",
+        baseVar: dataVar,
+    },
+    libStoreDir: {
+        kind: "path",
+        label: "package store",
+        description: "default host package store, mounted read-only in sandboxes at /mnt/libs when configured",
         baseVar: dataVar,
     },
     contentDir: {

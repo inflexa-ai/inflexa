@@ -46,13 +46,14 @@ import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
 import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
-import { resolvePackagesFile } from "../libs/packages.ts";
+import { resolvePackagesFile, storePackagesFile } from "../libs/packages.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
 import { modelMatchesProvider, readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
 import {
     resolveHarnessConfig,
+    resolveLibStore,
     resolveModelConnection,
     AGENT_NAMES,
     type ResolvedHarnessConfig,
@@ -641,18 +642,38 @@ async function bootHarnessRuntimeOnce(
     if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
     const conn = pgResult.value;
 
-    // Extract the image's package inventory onto the host. The cli never bind-mounts the
-    // library store — it is baked into the image — so this cached copy is the ONLY thing
-    // `list_available_packages` can read; without it every agent is told the installed set
-    // is unknown. `ensureSandboxImage` has already pulled through this same pin, so the
-    // image is present.
+    // Resolve the package inventory `list_available_packages` reads. The rule is that the inventory
+    // describes whatever the sandbox will actually mount, because an agent told a package exists when the
+    // mount does not carry it writes code that fails at import.
     //
-    // Deliberately AFTER the prereq gates: it spawns a container-runtime probe, and a boot
-    // that is about to fail on Postgres must not pay for it. A null result is non-fatal —
-    // the inventory is an enrichment, never a prerequisite.
-    const packagesFile = await seams.resolvePackages(pinnedRuntime, cfg.sandboxImage);
-    if (packagesFile === null) {
-        logger.warn("no sandbox package inventory — agents will be told the installed package set is unknown", { image: cfg.sandboxImage });
+    // With a store configured and its active farm readable, the sandbox mounts the store, so the inventory
+    // is the store's own `current/packages.txt` — read directly, never the image probe. With no store — or
+    // a store the harness will refuse and drop the mount for, running the sandbox on the baked image — the
+    // inventory follows the mount back to the image label cache. `storePackagesFile` is only the shallow
+    // shape that decides this fallback, not the harness's own mount-usability check.
+    //
+    // The image probe is deliberately AFTER the prereq gates: it spawns a container-runtime probe, and a
+    // boot about to fail on Postgres must not pay for it. `ensureSandboxImage` has already pulled through
+    // this same pin, so the image is present. A null inventory is non-fatal — it is an enrichment, and the
+    // harness reports the installed set as unknown.
+    const libStore = resolveLibStore(cfg);
+    const storeInventory = libStore.configured ? storePackagesFile(libStore.path) : null;
+    let packagesFile: string | null;
+    if (storeInventory !== null) {
+        packagesFile = storeInventory;
+    } else {
+        if (libStore.configured) {
+            logger.warn(
+                "lib store configured but its active-farm inventory is not readable — reading the image label cache, which follows the mount the harness will drop to",
+                {
+                    libStorePath: libStore.path,
+                },
+            );
+        }
+        packagesFile = await seams.resolvePackages(pinnedRuntime, cfg.sandboxImage);
+        if (packagesFile === null) {
+            logger.warn("no sandbox package inventory — agents will be told the installed package set is unknown", { image: cfg.sandboxImage });
+        }
     }
 
     // The local CLI is a POLL-mode embedder: the host polls the sandbox for
@@ -800,12 +821,17 @@ async function bootHarnessRuntimeOnce(
             // Empty in poll mode (the no-op ingress advertises no URL); the sandbox
             // never dials out, so the harness ignores it.
             cortexBaseUrl: ingress.cortexBaseUrl,
-            // The sandbox image bakes the library store at /mnt/libs/current, so
-            // the local path creates no `/mnt/libs` bind mount and forces no
-            // container platform (the multi-arch image resolves the host arch at
-            // pull time). Managed still mounts the tarballs via its PVC — that
-            // lives in infra/harness config, not here.
             image: cfg.sandboxImage,
+            // Mount the host package store only when one is configured. Unset, no `libStorePath` key is
+            // passed, the harness creates no `/mnt/libs` bind mount, and the sandbox resolves imports from
+            // the store the image bakes at `/mnt/libs/current` — bit-for-bit today's behavior. Configured,
+            // the harness bind-mounts the root read-only at `/mnt/libs`; it re-checks the store at every
+            // sandbox creation and drops the mount when it is incomplete, so the CLI passes the path and
+            // never duplicates that usability check — the shallow store check above governs only the
+            // inventory source, not the mount. The multi-arch image resolves the host arch at pull time, so
+            // no container platform is forced either way. Managed mounts the store through its PVC — that
+            // lives in infra/harness config, not here.
+            ...(libStore.configured ? { libStorePath: libStore.path } : {}),
             // Pass the configured store location unconditionally: the sandbox backend
             // re-checks this path's existence at every sandbox creation and mounts it
             // only when it is a real directory then. So a store installed mid-session

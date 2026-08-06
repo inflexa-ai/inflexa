@@ -45,7 +45,7 @@ import { ActivityPanel } from "./layout/activity_panel.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
-import { watchProfileParity, driveForceReprofile } from "./hooks/profile_parity.ts";
+import { watchProfileParity, gatedForceReprofile } from "./hooks/profile_parity.ts";
 import { listAnalysisInputs } from "../db/primary_query.ts";
 import type { Analysis } from "../types/analysis.ts";
 
@@ -502,7 +502,9 @@ export function App(props: AppProps) {
                               label: "re-profile",
                               enabled: canReprofile,
                               onAction: () => {
-                                  void driveForceReprofile(runtime, analysis, () => workspace.analysis?.id ?? null);
+                                  // Behind the sandbox gate: a re-profile makes a sandbox, so it waits on the
+                                  // store and the image before it runs.
+                                  gatedForceReprofile(runtime, analysis, () => workspace.analysis?.id ?? null);
                                   dialogClose();
                               },
                           }

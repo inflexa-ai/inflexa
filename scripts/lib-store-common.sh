@@ -129,5 +129,5 @@ lib_store_pack_track() {
 # The two-line header prepended to every assembled packages.txt.
 lib_store_packages_header() {
   printf '# Available packages in the sandbox environment.\n'
-  printf '# Do NOT attempt to install packages — there is no network access and no build toolchain.\n'
+  printf '# You cannot install packages from inside the sandbox (no network, read-only store); adding one is a host action, applied to a later sandbox.\n'
 }

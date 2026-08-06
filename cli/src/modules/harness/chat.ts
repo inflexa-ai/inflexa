@@ -24,7 +24,7 @@ import { shutdown } from "../../lib/shutdown.ts";
 import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
 import { resolveHarnessConfig } from "./config.ts";
 import { createChatPrinter, type ChatSink } from "./chat_printer.ts";
-import { describeBootError, ensureSandboxImage } from "./profile.ts";
+import { describeBootError } from "./profile.ts";
 import { bootHarnessRuntime, type HarnessRuntime } from "./runtime.ts";
 import { buildChatSession, runChatTurn } from "./turn.ts";
 
@@ -93,7 +93,9 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
     // misleadingly (same guard `inflexa profile`/`inflexa run` open with).
     if (cfg.configError) fail(describeBootError({ type: "harness_config_invalid", issues: cfg.configError.issues }));
 
-    await ensureSandboxImage(cfg.sandboxImage);
+    // No image pre-flight here: the sandbox-image and package-store waits moved to the TUI sandbox gate
+    // (`tui/hooks/sandbox_gate.tsx`), which the dev REPL does not render. A sandbox that this REPL's agent
+    // dispatches obtains its image through `inflexa sandbox pull` beforehand.
 
     // Claim the per-analysis lock before boot, so this analysis stays
     // single-process for the whole chat — a coarse guard so only one provenance
