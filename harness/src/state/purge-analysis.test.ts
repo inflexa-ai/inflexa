@@ -178,16 +178,16 @@ describe("createAnalysisPurge", () => {
             }
         }
 
-        // Two recorded report versions on the first thread — the second reuses
-        // the first as its parent. A version outlives its thread and leaves the
-        // store only in the analysis purge.
+        // One recorded report version sits on each thread. The second reuses the
+        // first as its parent. A thread holds at most one version. A version
+        // outlives its thread, and only the analysis purge removes it from the store.
         const reportVersionIds = [`rv-1-${analysisId}`, `rv-2-${analysisId}`];
         for (const [index, versionId] of reportVersionIds.entries()) {
             await rig.pool.query({
                 text: `INSERT INTO cortex_report_versions
-                         (version_id, analysis_id, thread_id, version_number, parent_version_id, document, snapshot)
-                       VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, '{}'::jsonb)`,
-                values: [versionId, analysisId, threadIds[0], index + 1, index === 0 ? null : reportVersionIds[0]],
+                         (version_id, analysis_id, thread_id, parent_version_id, document, snapshot)
+                       VALUES ($1, $2, $3, $4, '{}'::jsonb, '{}'::jsonb)`,
+                values: [versionId, analysisId, threadIds[index], index === 0 ? null : reportVersionIds[0]],
             });
         }
 

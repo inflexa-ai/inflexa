@@ -135,8 +135,10 @@ CREATE INDEX IF NOT EXISTS idx_cortex_plans_analysis
   ON cortex_plans(analysis_id, created_at DESC);
 
 -- Report versions — one immutable row for each recorded report version. A row
--- holds the block document, the pinned snapshot, and the anchor. The row
--- outlives its thread. Thus the table has no foreign key to
+-- holds the block document, the pinned snapshot, and the anchor. A thread holds
+-- at most one version. The named unique constraint on thread_id enforces the
+-- rule, because the report policy binds one version to each report session. The
+-- row outlives its thread. Thus the table has no foreign key to
 -- cortex_analysis_threads, and the row carries the anchor columns (thread_id,
 -- parent_thread_id, parent_seq) directly. A purge of the analysis removes the row
 -- through the analysis_id cascade. The table is append-only, and a correction is
@@ -151,17 +153,14 @@ CREATE TABLE IF NOT EXISTS cortex_report_versions (
   -- parent thread carries no parent_seq either.
   parent_thread_id  TEXT,
   parent_seq        BIGINT,
-  version_number    INTEGER NOT NULL,
   parent_version_id TEXT
                       REFERENCES cortex_report_versions(version_id)
                       ON DELETE SET NULL,
   document          JSONB NOT NULL,
   snapshot          JSONB NOT NULL,
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT cortex_report_versions_one_per_thread UNIQUE (thread_id)
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_cortex_report_versions_thread_version
-  ON cortex_report_versions(thread_id, version_number);
 
 CREATE INDEX IF NOT EXISTS idx_cortex_report_versions_analysis
   ON cortex_report_versions(analysis_id);
