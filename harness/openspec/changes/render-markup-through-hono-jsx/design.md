@@ -27,7 +27,7 @@ The spike also found the limits. An intrinsic element accepts an unknown attribu
 
 ### D2. The runtime owns the escaping, and the sinks keep the rule
 
-The JSX runtime escapes each child and each attribute value over the same five entities as the retired helpers. A raw insertion is legal only at the two JSON script sinks, through `raw()`, and each serialized JSON replaces every `<` with `\u003c` first. The spike proved that `raw()` adds no protection of its own, thus the rule stays beside the sinks with its invariant comment.
+The JSX runtime escapes each child and each attribute value over the same five entities as the retired helpers. A raw insertion of serialized document data is legal only at the two JSON script sinks, through `raw()`. Each serialized JSON replaces every `<` with `\u003c` first. The spike proved that `raw()` adds no protection of its own, thus the rule stays beside the sinks with its invariant comment. A raw insertion is otherwise legal for a trusted page constant, and for sibling markup that the runtime escaped already.
 
 ### D3. `class` is the convention, and `className` is banned
 

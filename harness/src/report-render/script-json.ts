@@ -6,8 +6,8 @@
  * helper is the sole guard of the two JSON sinks.
  *
  * A `</script` sequence inside a data cell can close the element too soon. The helper serializes the value,
- * then it replaces every `<` with `<`. The replacement makes a `</script` sequence unrepresentable,
- * and the JSON value stays identical, because the browser reads `<` as `<`.
+ * then it replaces every `<` with `\u003c`. The replacement makes a `</script` sequence unrepresentable,
+ * and the JSON value stays identical, because the JSON parser reads `\u003c` as `<`.
  */
 
 /** Serialize a value to JSON that is safe inside a `<script>` element. */
