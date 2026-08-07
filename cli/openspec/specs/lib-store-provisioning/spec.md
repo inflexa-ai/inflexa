@@ -106,20 +106,27 @@ SHALL be set to the pulled variant reference by `inflexa sandbox pull`. When a
 sandbox launches, the harness-runtime composition SHALL create containers from
 `harness.sandboxImage`.
 
-When no host package store is configured, the image bakes the library store at
-`/mnt/libs/current` (with the resolver env and `packages.txt`), and the CLI SHALL
-NOT create any `/mnt/libs` bind mount and SHALL NOT force a container platform for
-the local path.
+When the host package store is off, the image bakes the library store at
+`/mnt/libs/current`, with the resolver env and `packages.txt`. The CLI SHALL NOT
+create any `/mnt/libs` bind mount. It SHALL NOT force a container platform for the
+local path.
 
-When a host package store IS configured, the CLI SHALL pass its root to the
-harness as `libStorePath`, so the harness bind-mounts it read-only at `/mnt/libs`.
-The CLI SHALL NOT re-implement the harness's own usability check on that store;
-the harness validates it at each sandbox create and drops the mount if it is
-incomplete.
+When the host package store is ON, the CLI SHALL pass the store root to the
+harness as `libStorePath`. The harness then bind-mounts that root read-only at
+`/mnt/libs`. The root SHALL be the fixed CLI-owned path, never a value the
+configuration names, exactly as the reference store root is.
+
+The CLI SHALL NOT re-implement the usability check of the harness on that store.
+The harness validates the store at each sandbox create, and it drops the mount
+when the store is incomplete.
+
+The CLI SHALL pass the root only while the store is on. It SHALL NOT pass the root
+unconditionally. The store content survives the switch going off, thus an
+unconditional pass would mount that content again.
 
 #### Scenario: Sandboxes launch on the configured image
 
-- **GIVEN** `harness.sandboxImage` set to a pulled `sandbox-python-r` reference and no store configured
+- **GIVEN** `harness.sandboxImage` set to a pulled `sandbox-python-r` reference and the store off
 - **WHEN** a sandbox launches
 - **THEN** the container is created from that image with no `/mnt/libs` bind mount and no forced platform
 
@@ -129,17 +136,23 @@ incomplete.
 - **WHEN** `list_available_packages` runs
 - **THEN** it reads the image's baked `/mnt/libs/current/packages.txt`
 
-#### Scenario: A configured store is mounted over the baked one
+#### Scenario: A store that is on is mounted over the baked one
 
-- **GIVEN** a configured, usable host package store
+- **GIVEN** a usable host package store, and the store turned on
 - **WHEN** a sandbox launches
-- **THEN** the CLI passes the store root as `libStorePath` and the sandbox resolves imports from the mounted store
+- **THEN** the CLI passes the CLI-owned store root as `libStorePath` and the sandbox resolves imports from the mounted store
+
+#### Scenario: Store content alone does not mount
+
+- **GIVEN** a populated store on disk, and the store turned off
+- **WHEN** a sandbox launches
+- **THEN** the CLI passes no `libStorePath` and no `/mnt/libs` bind mount exists
 
 #### Scenario: The CLI does not duplicate the store validity check
 
-- **GIVEN** a configured store that is incomplete
+- **GIVEN** the store turned on and its content incomplete
 - **WHEN** a sandbox launches
-- **THEN** the CLI still passes the path, and the harness is what refuses the mount
+- **THEN** the CLI still passes the root, and the harness is what refuses the mount
 
 ### Requirement: `ensureSandboxImage` pulls the image from GHCR when missing
 

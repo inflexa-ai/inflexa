@@ -10,26 +10,40 @@ itself is the harness contract. This capability is the cli surface over it.
 
 ### Requirement: A local package store is optional and opt-in
 
-The CLI SHALL support an optional configuration value naming a host package store root. It SHALL default to unset. When it is unset, the CLI SHALL behave exactly as it does without this capability: no store is passed to the harness, no `/mnt/libs` bind mount is requested, and the sandbox image's baked store is used.
+The CLI SHALL support a boolean configuration value that turns the host package store on. It SHALL default to off. When it is off, the CLI SHALL behave exactly as it does without this capability: no store is passed to the harness, no `/mnt/libs` bind mount is requested, no store is downloaded, and the sandbox image's baked store is used.
+
+The store root SHALL be a fixed path the CLI owns. No configuration value SHALL name it or move it. The store-management commands, the store download, and the sandbox mount SHALL all resolve that one path. Thus a store the user populates is the store a sandbox mounts.
 
 The store root SHALL be distinct from the per-image package-inventory cache, which is a cache keyed by image identity and not a store.
 
 #### Scenario: An existing installation is unaffected
 
-- **GIVEN** no store is configured
+- **GIVEN** the store is off
 - **WHEN** a sandbox launches
 - **THEN** no store path is passed to the harness and the sandbox resolves imports from the image's baked store
 
-#### Scenario: Opting in requires only configuration
+#### Scenario: Opting in requires only the switch
 
 - **GIVEN** a populated store on disk
-- **WHEN** the user sets the store configuration value
-- **THEN** subsequent sandboxes mount that store, with no other change required
+- **WHEN** the user turns the store on
+- **THEN** subsequent sandboxes mount the store at the CLI-owned root, with no other change required
+
+#### Scenario: Turning the store off is a full rollback
+
+- **GIVEN** a populated store on disk and the store turned on
+- **WHEN** the user turns the store off
+- **THEN** no store path is passed to the harness, although the store content stays on disk
+
+#### Scenario: No configuration value moves the store root
+
+- **GIVEN** a configuration file that names a store location
+- **WHEN** a sandbox launches
+- **THEN** the mounted root is the CLI-owned path, and the named location has no effect
 
 #### Scenario: The store does not live in the inventory cache
 
-- **WHEN** a store is created at its default location
-- **THEN** its root is not the directory used to cache per-image package inventories
+- **WHEN** the store is created at its CLI-owned root
+- **THEN** that root is not the directory used to cache per-image package inventories
 
 ### Requirement: Provisioning is an explicit, consented action
 

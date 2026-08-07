@@ -21,12 +21,13 @@ import { ConfirmDialog } from "../components/dialog/confirm_dialog.tsx";
 
 // The sandbox prerequisite gate, held here (not inside `app.tsx`) so the holder of the state is
 // decoupled from its callers. It has two jobs. The app-open trigger (`startLibStoreDownload`) starts the
-// package-store download in the background when a store is configured, after a one-time consent, and it
+// package-store download in the background when the store opt-in is on, after a one-time consent, and it
 // asks before it applies a moved-tag update. The gate (`awaitSandboxReady`) holds each sandbox-making
 // action until the store is complete and the sandbox image is present, and it reports the wait through
 // the notice channel. The store download and the image pull each ask for their multi-gigabyte consent
-// inside the TUI, so app launch never blocks on either. The store half is a clean no-op when no store is
-// configured, so a cleared config key is a full rollback.
+// inside the TUI, so app launch never blocks on either. The store half is a clean no-op when the store is
+// off, so a cleared config key is a full rollback — and the off default is exactly what keeps a user who
+// never wanted a store away from the consent.
 //
 // Every effect is an injectable seam so the flow runs offline in a test with stubs, mirroring the seam
 // bundles of `profile_parity.ts` and `boot.ts`. One chat screen is mounted at a time, so a module
@@ -34,8 +35,8 @@ import { ConfirmDialog } from "../components/dialog/confirm_dialog.tsx";
 
 /**
  * The live state of the package-store download, surfaced for the status surface.
- * - `unconfigured` — no store root; the gate passes on the store and only the image applies;
- * - `idle` — configured, not yet checked;
+ * - `disabled` — the store opt-in is off; the gate passes on the store and only the image applies;
+ * - `idle` — the store is on, not yet checked;
  * - `consent` — the first-download consent is open;
  * - `declined` — the user declined the first download; the gate re-offers at the next sandbox action;
  * - `downloading` — a first download runs, carrying a running byte total;
@@ -43,7 +44,7 @@ import { ConfirmDialog } from "../components/dialog/confirm_dialog.tsx";
  * - `failed` — a download could not complete, carrying the actionable message the gate reports.
  */
 export type LibStoreGateState =
-    | { readonly phase: "unconfigured" }
+    | { readonly phase: "disabled" }
     | { readonly phase: "idle" }
     | { readonly phase: "consent" }
     | { readonly phase: "declined" }
@@ -70,7 +71,7 @@ export type ImageReadiness =
 
 /** The effects the gate operates. Production passes {@link realSandboxGateSeams}; a test injects stubs. */
 export type SandboxGateSeams = {
-    /** Report whether a store is configured, and its root. Real: {@link resolveLibStore}. */
+    /** Report whether the store is on, and its CLI-owned root. Real: {@link resolveLibStore}. */
     readonly resolveLocation: () => LibStoreLocation;
     /** The cheap local state of the download, read without the network. Real: {@link inspectLibStoreDownload}. */
     readonly inspect: (root: string) => Promise<LibStoreDownloadState>;
@@ -96,6 +97,12 @@ export type SandboxGateSeams = {
 const STORE_SIZE_HINT = "about 9 GB";
 const STORE_CONSENT_TITLE = "Download the package store?";
 const STORE_CONSENT_MESSAGE = `The analysis sandbox needs the package store. This is a one-time download of ${STORE_SIZE_HINT}. Download it now?`;
+/**
+ * The consent for a store the user built with `inflexa store add`. That store holds real content, so the
+ * text must say what the download does to it: the download merges, and it keeps each local package and
+ * each local farm.
+ */
+const STORE_MERGE_CONSENT_MESSAGE = `The analysis sandbox needs the published package store. The download adds to the store you have, and it keeps every package and farm that is already there. This is a one-time download of ${STORE_SIZE_HINT}. Download it now?`;
 const STORE_UPDATE_TITLE = "Update the package store?";
 const STORE_UPDATE_MESSAGE = `A newer package store is available. Download the update now? (${STORE_SIZE_HINT})`;
 const STORE_RETRY_TITLE = "Retry the package store download?";
@@ -183,14 +190,14 @@ async function performDownload(location: LibStoreLocation, force: boolean, seams
         return "blocked";
     }
     // Every ok outcome leaves a usable store: `downloaded` and `up_to_date` both pin the manifest, and
-    // `not_configured` cannot arise here because the caller proved the store configured.
+    // `disabled` cannot arise here because the caller proved the store is on.
     setState({ phase: "installed" });
     if (result.value.type === "downloaded") seams.notify({ kind: "info", text: "The package store is ready." });
     return "ready";
 }
 
 /** The store flow behind the shared in-flight guard: retry a failure, or consent then download. */
-async function runStoreFlow(location: { readonly configured: true; readonly path: string }, seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
+async function runStoreFlow(location: Extract<LibStoreLocation, { enabled: true }>, seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
     const previous = state();
     if (previous.phase === "failed") {
         // Report the failure again with its remedy, and offer a retry, so the gate never holds without end.
@@ -199,14 +206,16 @@ async function runStoreFlow(location: { readonly configured: true; readonly path
         if (!retry) return "blocked";
         return performDownload(location, false, seams);
     }
-    const local = await seams.inspect(location.path);
+    const local = await seams.inspect(location.root);
     if (local === "installed") {
         setState({ phase: "installed" });
         return "ready";
     }
-    // The receipt is absent, or the store is incomplete: ask consent one time, then download.
+    // The receipt is absent, or the store is incomplete: ask consent one time, then download. A `local`
+    // store was built by `inflexa store add` and holds packages the user provisioned, so the ask names the
+    // merge instead of offering a plain install over content that is already there.
     setState({ phase: "consent" });
-    const yes = await seams.confirm({ title: STORE_CONSENT_TITLE, message: STORE_CONSENT_MESSAGE });
+    const yes = await seams.confirm({ title: STORE_CONSENT_TITLE, message: local === "local" ? STORE_MERGE_CONSENT_MESSAGE : STORE_CONSENT_MESSAGE });
     if (!yes) {
         setState({ phase: "declined" });
         return "blocked";
@@ -214,12 +223,12 @@ async function runStoreFlow(location: { readonly configured: true; readonly path
     return performDownload(location, false, seams);
 }
 
-/** Hold the caller until the store is complete. A missing store passes silently; a blocked flow refuses. */
+/** Hold the caller until the store is complete. A store that is off passes silently; a blocked flow refuses. */
 async function ensureLibStore(seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
     const location = seams.resolveLocation();
-    if (!location.configured) {
-        // No store configured: the gate passes on the store, and only the image half applies.
-        setState({ phase: "unconfigured" });
+    if (!location.enabled) {
+        // The store is off: the gate passes on the store, and only the image half applies.
+        setState({ phase: "disabled" });
         return "ready";
     }
     if (state().phase === "installed") return "ready";
@@ -284,19 +293,20 @@ export async function awaitSandboxReady(seams: SandboxGateSeams = realSandboxGat
 }
 
 /**
- * The app-open trigger for the background download. With no store configured it is a clean no-op. With
- * the receipt absent it runs the first-download flow (consent, then the background download), sharing the
- * gate's in-flight guard so consent is asked one time. With the store installed it resolves the tag: a
- * moved `latest` reports `update_available`, and the CLI asks before it applies the update — `force` is
- * passed only after the yes, so no update downloads silently. The app never blocks on any of this.
+ * The app-open trigger for the background download. With the store off it is a clean no-op, so the consent
+ * never opens on an installation that did not ask for a store. With the receipt absent it runs the
+ * first-download flow (consent, then the background download), sharing the gate's in-flight guard so
+ * consent is asked one time. With the store installed it resolves the tag: a moved `latest` reports
+ * `update_available`, and the CLI asks before it applies the update — `force` is passed only after the yes,
+ * so no update downloads silently. The app never blocks on any of this.
  */
 export async function startLibStoreDownload(seams: SandboxGateSeams = realSandboxGateSeams): Promise<void> {
     const location = seams.resolveLocation();
-    if (!location.configured) {
-        setState({ phase: "unconfigured" });
+    if (!location.enabled) {
+        setState({ phase: "disabled" });
         return;
     }
-    const local = await seams.inspect(location.path);
+    const local = await seams.inspect(location.root);
     if (local !== "installed") {
         await ensureLibStore(seams);
         return;

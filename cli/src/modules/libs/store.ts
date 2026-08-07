@@ -1,7 +1,11 @@
 /**
  * The `inflexa store` command actions — add, ls, remove-farm, reclaim — over the host package store.
  *
- * The store is a host directory the harness bind-mounts read-only at `/mnt/libs` when it is configured.
+ * The store is a host directory the harness bind-mounts read-only at `/mnt/libs` when the user opts in.
+ * Its root is `env.libStoreDir`, a CLI-owned path: these commands write exactly where boot reads, and no
+ * config value moves either side. The opt-in switch (`harness.libStore`) governs the MOUNT, never the
+ * location, so a user can populate the store before turning it on.
+ *
  * Three of the four commands MUTATE it, and they mutate it the same way the design intends: through the
  * provisioner container. The provisioner is the one container with network access and a compiler; it turns
  * a package spec into content-addressed files, assembles a per-analysis symlink farm, and flips the
@@ -26,7 +30,7 @@ import { err, ok, type Result } from "neverthrow";
 import { ensureRuntime } from "../../lib/config.ts";
 import { stream, type CaptureResult } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
-import { resolveHarnessConfig, resolveLibStore, resolveProvisionerImage, type ResolvedHarnessConfig } from "../harness/config.ts";
+import { resolveHarnessConfig, resolveProvisionerImage, type ResolvedHarnessConfig } from "../harness/config.ts";
 
 /** The path the store is mounted at in both the provisioner (read-write) and the sandbox (read-only). */
 const LIB_MOUNT = "/mnt/libs";
@@ -125,8 +129,7 @@ function reportProgress(deps: ProvisionDeps, event: ProvisionProgress): void {
 function imageUnconfigured(): ProvisionError {
     return {
         type: "image_unconfigured",
-        message:
-            "No provisioner image is configured. Set `harness.provisionerImage` in your config to the provisioner image reference, then run this command again.",
+        message: `No provisioner image is configured. Set \`harness.provisionerImage\` in ${env.configPath} to the provisioner image reference, then run this command again.`,
     };
 }
 
@@ -407,16 +410,6 @@ function errorText(cause: unknown): string {
 
 // --- command actions ---------------------------------------------------------
 
-/**
- * The store root the commands operate on: the configured `harness.libStorePath` when set, else the default
- * `env.libStoreDir`. The default lets a user create and populate a store before opting in by setting the
- * config; boot never falls back to it, so a cleared config key is still a clean opt-out.
- */
-function resolveStoreRoot(cfg: ResolvedHarnessConfig): string {
-    const location = resolveLibStore(cfg);
-    return location.configured ? location.path : env.libStoreDir;
-}
-
 /** The configured provisioner image reference, or `null` when none is set. */
 function resolveImage(cfg: ResolvedHarnessConfig): string | null {
     const location = resolveProvisionerImage(cfg);
@@ -432,10 +425,17 @@ function reportError(error: ProvisionError): void {
 /** `inflexa store add` — provision packages into the active farm. */
 export async function runStoreAdd(specs: string[], options: { farm?: string }): Promise<void> {
     const cfg = resolveHarnessConfig();
-    const storeRoot = resolveStoreRoot(cfg);
+    const storeRoot = env.libStoreDir;
+    const image = resolveImage(cfg);
+    // Announce the work only after the preconditions hold. An announcement that a refusal follows
+    // reads as a run that died part-way, and it hides which condition actually stopped the command.
+    if (image === null) {
+        reportError(imageUnconfigured());
+        return;
+    }
     const farm = resolveActiveFarm(storeRoot, options.farm);
     console.log(`Provisioning into farm "${farm}" (network on). This can take some minutes.`);
-    const result = await provisionPackages({ storeRoot, image: resolveImage(cfg), farm, specs }, { onProgress: (event) => console.log(event.line) });
+    const result = await provisionPackages({ storeRoot, image, farm, specs }, { onProgress: (event) => console.log(event.line) });
     result.match(
         (outcome) => console.log(`Farm "${outcome.farm}" is ready.`),
         (error) => reportError(error),
@@ -444,8 +444,7 @@ export async function runStoreAdd(specs: string[], options: { farm?: string }): 
 
 /** `inflexa store ls` — report the store's packages, farms, and disk use. */
 export async function runStoreLs(): Promise<void> {
-    const cfg = resolveHarnessConfig();
-    const result = await inspectStore(resolveStoreRoot(cfg));
+    const result = await inspectStore(env.libStoreDir);
     result.match(
         (inspection) => printInspection(inspection),
         (error) => reportError(error),
@@ -455,7 +454,7 @@ export async function runStoreLs(): Promise<void> {
 /** `inflexa store remove-farm` — remove a farm's symlinks. */
 export async function runStoreRemoveFarm(farm: string): Promise<void> {
     const cfg = resolveHarnessConfig();
-    const result = await removeFarm({ storeRoot: resolveStoreRoot(cfg), image: resolveImage(cfg), farm }, { onProgress: (event) => console.log(event.line) });
+    const result = await removeFarm({ storeRoot: env.libStoreDir, image: resolveImage(cfg), farm }, { onProgress: (event) => console.log(event.line) });
     result.match(
         () => console.log(`Removed farm "${farm}". Run \`inflexa store reclaim\` to drop the packages it alone referenced.`),
         (error) => reportError(error),
@@ -465,7 +464,7 @@ export async function runStoreRemoveFarm(farm: string): Promise<void> {
 /** `inflexa store reclaim` — report, then remove, store content no farm references. */
 export async function runStoreReclaim(): Promise<void> {
     const cfg = resolveHarnessConfig();
-    const storeRoot = resolveStoreRoot(cfg);
+    const storeRoot = env.libStoreDir;
     const preview = await reclaimPreview(storeRoot);
     if (preview.isErr()) return reportError(preview.error);
     const candidates = preview.value;

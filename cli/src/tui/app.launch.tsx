@@ -86,7 +86,7 @@ async function renderChat(target: ChatTarget): Promise<void> {
 
     // Start the package-store download in the background AFTER render() has the terminal, so the consent
     // prompt and the transfer both live inside the TUI and the app never blocks on them. It is a clean
-    // no-op when no store is configured, and it asks before it applies a moved-tag update.
+    // no-op when the store opt-in is off, and it asks before it applies a moved-tag update.
     void startLibStoreDownload();
 }
 

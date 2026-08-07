@@ -3,8 +3,18 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import type { Result } from "neverthrow";
+
 import type { FetchLike } from "../../lib/download.ts";
-import { downloadLibStore, inspectLibStoreDownload, libStoreDownloadPaths, maybeDownloadLibStore, resolveStoreArch } from "./store_download.ts";
+import {
+    downloadLibStore,
+    inspectLibStoreDownload,
+    libStoreDownloadPaths,
+    maybeDownloadLibStore,
+    resolveStoreArch,
+    type LibStoreDownloadError,
+    type LibStoreDownloadOutcome,
+} from "./store_download.ts";
 
 const TRACK_MEDIA_TYPE = "application/vnd.inflexa.lib-store.track.v1.tar+zstd";
 const BASE_MEDIA_TYPE = "application/vnd.inflexa.lib-store.base.v1.tar+zstd";
@@ -104,18 +114,55 @@ function makeStub(options: StubOptions): FetchLike {
     };
 }
 
-/** The two-layer store the publisher emits: a base layer (farms + `current`) and one track layer. */
-function storeLayers(): { readonly base: BuiltLayer; readonly track: BuiltLayer } {
+/**
+ * The two-layer store the publisher emits: a base layer (farms + `current`) and one track layer. The farm
+ * name is a parameter, because the publisher ships `catalog` while a local farm carries the name the user
+ * chose, and the merge tests need both.
+ */
+function storeLayers(farm = "default"): { readonly base: BuiltLayer; readonly track: BuiltLayer } {
     const base = buildLayer(
         [
-            { path: "current", symlink: "farms/default" },
-            { path: "farms/default/packages.txt", content: "foo==1.0\n" },
-            { path: "farms/default/meta.json", content: "{}\n" },
+            { path: "current", symlink: `farms/${farm}` },
+            { path: `farms/${farm}/packages.txt`, content: "foo==1.0\n" },
+            { path: `farms/${farm}/meta.json`, content: "{}\n" },
         ],
         BASE_MEDIA_TYPE,
     );
     const track = buildLayer([{ path: "store/foo-1.0-abc/data.txt", content: "hello store\n" }], TRACK_MEDIA_TYPE);
     return { base, track };
+}
+
+/**
+ * Build the store a user provisioned with `inflexa store add`: one content-addressed package, a farm that
+ * links to it, and the `current` pointer at that farm. It carries no receipt, because no download made it.
+ */
+function makeLocalStore(storeRoot: string, options: { readonly farm: string; readonly current: boolean }): void {
+    const pkgDir = join(storeRoot, "store", "six-1.16-local");
+    mkdirSync(pkgDir, { recursive: true });
+    writeFileSync(join(pkgDir, "data.txt"), "local six\n");
+    const farmDir = join(storeRoot, "farms", options.farm);
+    mkdirSync(farmDir, { recursive: true });
+    writeFileSync(join(farmDir, "local.txt"), "mine\n");
+    symlinkSync(join(storeRoot, "store", "six-1.16-local"), join(farmDir, "six"));
+    if (options.current) symlinkSync(`farms/${options.farm}`, join(storeRoot, "current"));
+}
+
+/** Run one complete download against a stub registry that serves the given layers. */
+async function downloadStore(
+    storeRoot: string,
+    layers: { readonly base: BuiltLayer; readonly track: BuiltLayer },
+): Promise<Result<LibStoreDownloadOutcome, LibStoreDownloadError>> {
+    const log: StubLog = { tokenCalls: 0, authHeaders: [] };
+    const stub = makeStub({
+        token: "T",
+        manifest: manifestBytes([layers.base, layers.track]),
+        blobs: new Map([
+            [layers.base.digest, layers.base.bytes],
+            [layers.track.digest, layers.track.bytes],
+        ]),
+        log,
+    });
+    return downloadLibStore({ storeRoot, arch: "amd64", fetch: stub, retry: NO_RETRY });
 }
 
 describe("resolveStoreArch", () => {
@@ -284,14 +331,94 @@ describe("downloadLibStore — the GHCR pull", () => {
     });
 });
 
-describe("maybeDownloadLibStore — the not-configured gate", () => {
-    test("no store root configured means no download and no receipt", async () => {
+describe("downloadLibStore — the merge into a shared store root", () => {
+    test("keeps a locally added package, its farm, and the active-farm pointer", async () => {
+        const storeRoot = join(work, "store-root");
+        makeLocalStore(storeRoot, { farm: "default", current: true });
+
+        const result = await downloadStore(storeRoot, storeLayers("catalog"));
+
+        const outcome = result._unsafeUnwrap();
+        expect(outcome.type).toBe("downloaded");
+        if (outcome.type !== "downloaded") throw new Error("the download did not complete");
+
+        // The local content survives: the package, the farm file, and the farm symlink into the store.
+        expect(readFileSync(join(storeRoot, "store", "six-1.16-local", "data.txt"), "utf8")).toBe("local six\n");
+        expect(readFileSync(join(storeRoot, "farms", "default", "local.txt"), "utf8")).toBe("mine\n");
+        expect(lstatSync(join(storeRoot, "farms", "default", "six")).isSymbolicLink()).toBe(true);
+
+        // The published content landed beside it.
+        expect(readFileSync(join(storeRoot, "store", "foo-1.0-abc", "data.txt"), "utf8")).toBe("hello store\n");
+        expect(readFileSync(join(storeRoot, "farms", "catalog", "packages.txt"), "utf8")).toBe("foo==1.0\n");
+
+        // The active farm of the user did not move.
+        expect(readlinkSync(join(storeRoot, "current"))).toBe("farms/default");
+
+        expect(outcome.merge.storeDirsAdded).toEqual(["foo-1.0-abc"]);
+        expect(outcome.merge.farmsAdded).toEqual(["catalog"]);
+        expect(outcome.merge.farmsKept).toEqual([]);
+        expect(outcome.merge.currentSet).toBe(false);
+        expect(await inspectLibStoreDownload(storeRoot)).toBe("installed");
+    });
+
+    test("a farm name collision keeps the local farm and reports the name", async () => {
+        const storeRoot = join(work, "store-root");
+        // The user named a farm exactly as the publisher names its own.
+        makeLocalStore(storeRoot, { farm: "catalog", current: true });
+
+        const result = await downloadStore(storeRoot, storeLayers("catalog"));
+
+        const outcome = result._unsafeUnwrap();
+        if (outcome.type !== "downloaded") throw new Error("the download did not complete");
+
+        // The local farm is untouched, and the published farm did not merge into it.
+        expect(readFileSync(join(storeRoot, "farms", "catalog", "local.txt"), "utf8")).toBe("mine\n");
+        expect(existsSync(join(storeRoot, "farms", "catalog", "packages.txt"))).toBe(false);
+        // The packages of the published farm still landed, because `store/` merges either way.
+        expect(existsSync(join(storeRoot, "store", "foo-1.0-abc"))).toBe(true);
+
+        expect(outcome.merge.farmsKept).toEqual(["catalog"]);
+        expect(outcome.merge.farmsAdded).toEqual([]);
+    });
+
+    test("sets `current` when the store root carries no pointer", async () => {
+        const storeRoot = join(work, "store-root");
+        makeLocalStore(storeRoot, { farm: "default", current: false });
+
+        const result = await downloadStore(storeRoot, storeLayers("catalog"));
+
+        const outcome = result._unsafeUnwrap();
+        if (outcome.type !== "downloaded") throw new Error("the download did not complete");
+
+        expect(readlinkSync(join(storeRoot, "current"))).toBe("farms/catalog");
+        expect(outcome.merge.currentSet).toBe(true);
+    });
+});
+
+describe("inspectLibStoreDownload — a locally built store is not a missing one", () => {
+    test("separates an absent root, an empty root, and a store the user built", async () => {
+        expect(await inspectLibStoreDownload(join(work, "no-such-root"))).toBe("missing");
+
+        const empty = join(work, "empty-root");
+        mkdirSync(empty, { recursive: true });
+        expect(await inspectLibStoreDownload(empty)).toBe("missing");
+
+        // Content with no receipt is the store `inflexa store add` built, never a missing one.
+        const local = join(work, "local-root");
+        makeLocalStore(local, { farm: "default", current: true });
+        expect(await inspectLibStoreDownload(local)).toBe("local");
+        expect(existsSync(libStoreDownloadPaths(local).receipt)).toBe(false);
+    });
+});
+
+describe("maybeDownloadLibStore — the opt-in gate", () => {
+    test("a store that is off means no download and no receipt", async () => {
         const log: StubLog = { tokenCalls: 0, authHeaders: [] };
         const stub = makeStub({ token: "T", manifest: manifestBytes([]), blobs: new Map(), log });
 
-        const result = await maybeDownloadLibStore({ configured: false }, { fetch: stub, retry: NO_RETRY });
+        const result = await maybeDownloadLibStore({ enabled: false }, { fetch: stub, retry: NO_RETRY });
 
-        expect(result._unsafeUnwrap().type).toBe("not_configured");
+        expect(result._unsafeUnwrap().type).toBe("disabled");
         // The network was never touched, and nothing was written to disk.
         expect(log.tokenCalls).toBe(0);
         expect(log.authHeaders.length).toBe(0);

@@ -42,10 +42,13 @@ const harnessConfigSchema = z.object({
     adminPort: z.number().int().positive().optional(),
     skillsDir: z.string().optional(),
     templatesDir: z.string().optional(),
-    // Absent by default, so an existing installation is untouched: no store is passed to the
-    // harness and the sandbox resolves imports from the store the image bakes. Set, it names a
-    // host package store root the harness bind-mounts read-only at `/mnt/libs`.
-    libStorePath: z.string().optional(),
+    // The opt-in switch for the host package store, off by default, so an existing installation is
+    // untouched: no store is passed to the harness, no store downloads, and the sandbox resolves imports
+    // from the store the image bakes. `true` opts in. This is a BOOLEAN, not a path: the store root is a
+    // CLI-owned constant (`env.libStoreDir`), like every other path the CLI hands the harness, so no config
+    // value can move the store. A switch is still necessary, because with no switch at all a user who never
+    // wanted a store would meet the multi-gigabyte download consent at the first app open.
+    libStore: z.boolean().optional(),
     // The provisioner image the store-management commands run to add, reclaim, or remove content.
     // No default: the source of the provisioner image for a user machine is still an open decision, so
     // nothing here may guess a registry path. Unset, the store commands fail with guidance to set it.
@@ -85,11 +88,13 @@ export type ResolvedHarnessConfig = {
     /** Root templates tree for in-process report rendering; `null` outside a dev checkout without the config key. */
     readonly templatesDir: string | null;
     /**
-     * Host package store root, or `null` when no store is configured. `null` is the opt-out default:
-     * the sandbox then uses the store the image bakes and no `/mnt/libs` bind mount is created. A path
-     * opts in; {@link resolveLibStore} projects this field so no call site infers the state from a path check.
+     * True when the user opted into the host package store. `false` is the opt-out default: the sandbox
+     * then uses the store the image bakes, no `/mnt/libs` bind mount is created, and no store downloads.
+     * The store ROOT is not part of this config — it is always `env.libStoreDir` — so no config value can
+     * move the store. {@link resolveLibStore} projects this field together with that root, so no call site
+     * infers the state from a path check.
      */
-    readonly libStorePath: string | null;
+    readonly libStore: boolean;
     /**
      * The provisioner image the store-management commands run, or `null` when none is configured. There is
      * no default source for a user machine yet, so this never falls back to a guessed reference;
@@ -199,29 +204,33 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         adminPort: cfg?.adminPort ?? env.adminPort,
         skillsDir: cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : releaseContentDir("skills")),
         templatesDir: cfg?.templatesDir ?? (env.isDevelopment ? devTemplatesDir : releaseContentDir("templates")),
-        // No default location: an absent key means "no store", not "the store at the default path".
-        // The default store location lives in env.libStoreDir for the store-management commands that
-        // create it; boot never falls back to it, so a cleared key is a clean opt-out.
-        libStorePath: cfg?.libStorePath ?? null,
+        // Off by default: an absent key means "no store", so an existing installation keeps the image-baked
+        // store. A cleared key is a full rollback, because boot then passes no store root at all — although
+        // the store content, at the fixed env.libStoreDir, stays on disk for a later opt-in.
+        libStore: cfg?.libStore ?? false,
         provisionerImage: cfg?.provisionerImage ?? null,
         configError,
     };
 }
 
 /**
- * Whether a host package store is configured, and where it is. A discriminated union so a caller cannot
- * read a path without first proving the store is configured.
+ * Whether the host package store is on, and the CLI-owned root it lives at when it is. A discriminated
+ * union so a caller cannot read the root without first proving the store is on. The root rides on the
+ * `enabled: true` arm, not beside it: each caller reads the two facts together, and a store that is off
+ * must hand no caller a path that the caller could mount or download into.
  */
-export type LibStoreLocation = { readonly configured: true; readonly path: string } | { readonly configured: false };
+export type LibStoreLocation = { readonly enabled: true; readonly root: string } | { readonly enabled: false };
 
 /**
- * Report whether a host package store is configured, and its root when it is. This is the single reader
- * of the resolved {@link ResolvedHarnessConfig.libStorePath}: the mount decision (pass the root to the
- * harness) and the inventory decision (read the store's active farm) both consult it, so neither infers
- * the store's presence from an ad-hoc path check that could drift from the other.
+ * Report whether the host package store is on, and its fixed root when it is. This is the single reader of
+ * the resolved {@link ResolvedHarnessConfig.libStore}: the mount decision (pass the root to the harness),
+ * the inventory decision (read the store's active farm), and the download decision all consult it, so none
+ * of them infers the state from an ad-hoc path check that could drift from the others. The root is
+ * `env.libStoreDir` always — a CLI-owned path, exactly like `env.refsDir` — so opting in cannot relocate
+ * the store and the store-management commands write where boot reads.
  */
 export function resolveLibStore(cfg: ResolvedHarnessConfig): LibStoreLocation {
-    return cfg.libStorePath === null ? { configured: false } : { configured: true, path: cfg.libStorePath };
+    return cfg.libStore ? { enabled: true, root: env.libStoreDir } : { enabled: false };
 }
 
 /**

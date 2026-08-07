@@ -30,14 +30,31 @@ container engine.
 ### Requirement: The download runs in the background with a receipt
 
 The download SHALL start at app open, in the background. It SHALL start only
-when a store root is configured, the receipt is absent, and the user gave the
+when the store is on, the receipt is absent, and the user gave the
 consent. When the receipt reports `update_available`, the CLI SHALL report it
 and SHALL wait for the ask. It SHALL obey the receipt pattern of the reference
 store: stage, rename, then write the receipt. The client SHALL extract every
-layer into the staged root, and it SHALL keep the symlinks. The reassembled
-root SHALL equal the store exactly, so the harness check accepts it. An
-interrupted download SHALL read back as incomplete, and the next run SHALL
-repair it. When no store root is configured, the CLI SHALL NOT download.
+layer into the staged root, and it SHALL keep the symlinks. An interrupted
+download SHALL read back as incomplete, and the next run SHALL repair it. When
+the store is off, the CLI SHALL NOT download.
+
+The store root is shared with `inflexa store add`, which provisions into the
+same `store/` pool and writes its own farms. Thus the CLI SHALL MERGE the staged
+tree into the store root, and it SHALL NOT remove locally provisioned content.
+
+The merge obeys these rules:
+
+- It SHALL move in only a child that the store root does not have. It SHALL
+  leave an existing `store/` child and `farms/` child as it is. A store directory
+  name carries the hash of its content, thus a skip is correct.
+- On a farm name collision, it SHALL keep the local farm.
+- When the store root has no `current`, it SHALL point `current` at the farm the
+  download brought. When `current` is there, it SHALL leave it, because a
+  download SHALL NOT switch the active farm of the user.
+
+The merged root SHALL hold the published tree, so the harness check accepts it.
+The download SHALL report what the merge did: the store directories added, the
+farms added, the farms kept, and whether `current` moved.
 
 #### Scenario: The app is usable during the download
 
@@ -48,6 +65,11 @@ repair it. When no store root is configured, the CLI SHALL NOT download.
 
 - **WHEN** the process dies during a download
 - **THEN** the next open reports the store incomplete and continues the work, and no half-written file is visible at the final path
+
+#### Scenario: A download over a locally provisioned store
+
+- **WHEN** the user provisioned packages into a farm and then a download completes
+- **THEN** each local package and each local farm is still there, the published content sits beside it, and the active farm did not change
 
 ### Requirement: Sandbox creation waits on a complete store
 

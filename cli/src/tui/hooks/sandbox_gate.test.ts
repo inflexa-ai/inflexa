@@ -20,14 +20,21 @@ import {
 
 afterEach(() => __resetSandboxGateForTest());
 
-const CONFIGURED: LibStoreLocation = { configured: true, path: "/tmp/store" };
-const DOWNLOADED: LibStoreDownloadOutcome = { type: "downloaded", manifestDigest: "sha256:a", bytes: 100 };
+const ENABLED: LibStoreLocation = { enabled: true, root: "/tmp/store" };
+const DOWNLOADED: LibStoreDownloadOutcome = {
+    type: "downloaded",
+    manifestDigest: "sha256:a",
+    bytes: 100,
+    merge: { storeDirsAdded: [], farmsAdded: [], farmsKept: [], currentSet: false },
+};
 const UPDATE_AVAILABLE: LibStoreDownloadOutcome = { type: "update_available", installedDigest: "sha256:a", latestDigest: "sha256:b" };
 const DOWNLOAD_ERROR: LibStoreDownloadError = { type: "download_failed", message: "the layer did not arrive." };
 
 /** A recording of what the stubbed seams saw, for the flow assertions. */
 type Recorder = {
     readonly confirms: string[];
+    /** The body of each ask, so a test reads the wording the user meets. */
+    readonly confirmMessages: string[];
     readonly downloads: { force: boolean }[];
     readonly notices: Notice[];
     imageChecks: number;
@@ -48,10 +55,10 @@ type SeamOverrides = {
 };
 
 function makeSeams(over: SeamOverrides = {}): { seams: SandboxGateSeams; rec: Recorder } {
-    const rec: Recorder = { confirms: [], downloads: [], notices: [], imageChecks: 0, pulls: 0 };
+    const rec: Recorder = { confirms: [], confirmMessages: [], downloads: [], notices: [], imageChecks: 0, pulls: 0 };
     const answers = [...(over.confirmAnswers ?? [])];
     const seams: SandboxGateSeams = {
-        resolveLocation: () => over.location ?? CONFIGURED,
+        resolveLocation: () => over.location ?? ENABLED,
         inspect: async () => over.inspect ?? "missing",
         download: async (_location, force) => {
             rec.downloads.push({ force });
@@ -69,6 +76,7 @@ function makeSeams(over: SeamOverrides = {}): { seams: SandboxGateSeams; rec: Re
         },
         confirm: async (opts) => {
             rec.confirms.push(opts.title);
+            rec.confirmMessages.push(opts.message);
             return answers.shift() ?? true;
         },
         notify: (notice) => void rec.notices.push(notice),
@@ -81,14 +89,14 @@ function tick(): Promise<void> {
 }
 
 describe("awaitSandboxReady — the store half of the gate", () => {
-    test("no store configured: the gate passes the store silently and only the image applies", async () => {
-        const { seams, rec } = makeSeams({ location: { configured: false } });
+    test("the store is off: the gate passes the store silently and only the image applies", async () => {
+        const { seams, rec } = makeSeams({ location: { enabled: false } });
         expect(await awaitSandboxReady(seams)).toBe("ready");
         // The network and the consent were never touched; the image was still checked.
         expect(rec.downloads).toEqual([]);
         expect(rec.confirms).toEqual([]);
         expect(rec.imageChecks).toBe(1);
-        expect(libStoreGateState().phase).toBe("unconfigured");
+        expect(libStoreGateState().phase).toBe("disabled");
     });
 
     test("a sandbox action holds during the download with a visible state, then proceeds", async () => {
@@ -123,6 +131,21 @@ describe("awaitSandboxReady — the store half of the gate", () => {
         expect(libStoreGateState().phase).toBe("declined");
     });
 
+    test("a locally built store gets the merge consent, not the plain install offer", async () => {
+        const { seams, rec } = makeSeams({ inspect: "local" });
+        expect(await awaitSandboxReady(seams)).toBe("ready");
+        // The ask names the merge, so a user with provisioned packages is not offered a plain install.
+        expect(rec.confirmMessages[0]).toContain("adds to the store you have");
+        expect(rec.confirmMessages[0]).toContain("keeps every package and farm");
+    });
+
+    test("an empty store gets the plain install consent", async () => {
+        const { seams, rec } = makeSeams({ inspect: "missing" });
+        expect(await awaitSandboxReady(seams)).toBe("ready");
+        expect(rec.confirmMessages[0]).toContain("one-time download");
+        expect(rec.confirmMessages[0]).not.toContain("adds to the store you have");
+    });
+
     test("an installed store passes at once, with no network and no consent", async () => {
         const { seams, rec } = makeSeams({ inspect: "installed" });
         expect(await awaitSandboxReady(seams)).toBe("ready");
@@ -154,33 +177,33 @@ describe("awaitSandboxReady — the store half of the gate", () => {
 
 describe("awaitSandboxReady — the image half of the gate", () => {
     test("a pullable image is pulled after consent, then the gate is ready", async () => {
-        const { seams, rec } = makeSeams({ location: { configured: false }, image: { kind: "pullable", variant: "python-r" } });
+        const { seams, rec } = makeSeams({ location: { enabled: false }, image: { kind: "pullable", variant: "python-r" } });
         expect(await awaitSandboxReady(seams)).toBe("ready");
         expect(rec.pulls).toBe(1);
     });
 
     test("a declined image pull blocks and pulls nothing", async () => {
-        const { seams, rec } = makeSeams({ location: { configured: false }, image: { kind: "pullable", variant: "python" }, confirmAnswers: [false] });
+        const { seams, rec } = makeSeams({ location: { enabled: false }, image: { kind: "pullable", variant: "python" }, confirmAnswers: [false] });
         expect(await awaitSandboxReady(seams)).toBe("blocked");
         expect(rec.pulls).toBe(0);
         expect(rec.notices.some((n) => n.kind === "warn")).toBe(true);
     });
 
     test("an engine error blocks and names the fault", async () => {
-        const { seams, rec } = makeSeams({ location: { configured: false }, image: { kind: "engine_error", message: "the Podman machine is not running." } });
+        const { seams, rec } = makeSeams({ location: { enabled: false }, image: { kind: "engine_error", message: "the Podman machine is not running." } });
         expect(await awaitSandboxReady(seams)).toBe("blocked");
         expect(rec.notices.some((n) => n.kind === "error" && n.text.includes("Podman"))).toBe(true);
     });
 });
 
 describe("startLibStoreDownload — the app-open trigger", () => {
-    test("no store configured: a clean no-op that touches no network and no image", async () => {
-        const { seams, rec } = makeSeams({ location: { configured: false } });
+    test("the store is off: a clean no-op that touches no network and no image", async () => {
+        const { seams, rec } = makeSeams({ location: { enabled: false } });
         await startLibStoreDownload(seams);
         expect(rec.downloads).toEqual([]);
         expect(rec.confirms).toEqual([]);
         expect(rec.imageChecks).toBe(0);
-        expect(libStoreGateState().phase).toBe("unconfigured");
+        expect(libStoreGateState().phase).toBe("disabled");
     });
 
     test("app open never pulls the image, so chat is usable while the image is absent", async () => {

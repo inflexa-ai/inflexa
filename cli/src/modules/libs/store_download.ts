@@ -15,9 +15,13 @@
  * then write the receipt last. Thus a crash before the receipt reads back as incomplete, and the next
  * run repairs it.
  *
+ * The activation MERGES the staged tree into the store root, and it removes nothing. The root is shared
+ * with `inflexa store add`, which provisions into the same `store/` pool and writes its own farms beside
+ * the published ones ({@link mergeStagedRoot}).
+ *
  * The gate that holds sandbox creation, the app-open trigger, the first-download consent, and the
  * update ask are the caller's wiring. This module gives the mechanisms they operate: the download, the
- * local state read ({@link inspectLibStoreDownload}), and the not-configured no-op
+ * local state read ({@link inspectLibStoreDownload}), and the store-is-off no-op
  * ({@link maybeDownloadLibStore}).
  */
 
@@ -96,8 +100,13 @@ export type LibStoreReceipt = {
     readonly layers: readonly LibStoreLayer[];
 };
 
-/** The cheap local state of the store download, read without the network. */
-export type LibStoreDownloadState = "missing" | "incomplete" | "installed" | "invalid_receipt";
+/**
+ * The cheap local state of the store download, read without the network.
+ *
+ * `local` is a store the user built with `inflexa store add`: it holds real content and it carries no
+ * receipt, because no download made it. It is never `missing`, and a download over it is a merge.
+ */
+export type LibStoreDownloadState = "missing" | "local" | "incomplete" | "installed" | "invalid_receipt";
 
 /** Why a store download could not complete. Each variant names one stage. */
 export type LibStoreDownloadError =
@@ -109,16 +118,29 @@ export type LibStoreDownloadError =
     | { readonly type: "extract_failed"; readonly message: string; readonly cause?: unknown }
     | { readonly type: "io_failed"; readonly message: string; readonly cause?: unknown };
 
+/** What one activation merge did to the store root, so the caller can report the outcome of the merge. */
+export type LibStoreMergeReport = {
+    /** The `store/` directory names the download moved in. A name that was already there is not here. */
+    readonly storeDirsAdded: readonly string[];
+    /** The farm names the download moved in. */
+    readonly farmsAdded: readonly string[];
+    /** The farm names the download left alone, because the store root already holds a farm of each name. */
+    readonly farmsKept: readonly string[];
+    /** True when the merge set `current`, because the store root carried no active-farm pointer. */
+    readonly currentSet: boolean;
+};
+
 /**
- * What a download attempt produced. `not_configured` is the rollback state (no store root). `up_to_date`
- * means the receipt already pins the resolved manifest. `update_available` reports a moved tag WITHOUT
- * applying it, so the caller can ask before it downloads. `downloaded` is a completed, activated store.
+ * What a download attempt produced. `disabled` is the rollback state (the store opt-in is off).
+ * `up_to_date` means the receipt already pins the resolved manifest. `update_available` reports a moved tag
+ * WITHOUT applying it, so the caller can ask before it downloads. `downloaded` is a completed, activated
+ * store, with the report of what the merge into the store root changed.
  */
 export type LibStoreDownloadOutcome =
-    | { readonly type: "not_configured" }
+    | { readonly type: "disabled" }
     | { readonly type: "up_to_date"; readonly manifestDigest: string }
     | { readonly type: "update_available"; readonly installedDigest: string; readonly latestDigest: string }
-    | { readonly type: "downloaded"; readonly manifestDigest: string; readonly bytes: number };
+    | { readonly type: "downloaded"; readonly manifestDigest: string; readonly bytes: number; readonly merge: LibStoreMergeReport };
 
 /**
  * A fire-and-forget progress notification for one store download. A layer event carries its digest,
@@ -133,7 +155,7 @@ export type LibStoreDownloadProgress =
 
 /** The seams the CLI composition edge supplies. Production passes only `storeRoot`; a test injects the rest. */
 export type LibStoreDownloadDeps = {
-    /** The store root from `resolveLibStore`; this module never re-derives it. */
+    /** The CLI-owned store root from `resolveLibStore`; this module never re-derives it. */
     readonly storeRoot: string;
     /** The architecture to pull; defaults to the host architecture. */
     readonly arch?: StoreArch;
@@ -402,16 +424,61 @@ async function extractLayer(blobPath: string, stageRoot: string): Promise<Result
     }
 }
 
+/** Report whether a path is there. `lstat` reads the entry itself, so a dangling symlink counts as present. */
+async function entryExists(path: string): Promise<boolean> {
+    try {
+        await lstat(path);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 /**
- * Move each staged top-level entry into the store root, replacing what is there.
+ * Merge the children of one staged directory into its counterpart under the store root.
  *
- * The whole `/mnt/libs` tree lives directly at the store root — the harness reads `<root>/current` — so
- * the store cannot be swapped by one rename. Each entry is renamed individually, which is atomic on the
- * same filesystem, and `current` lands last: until it is in place a concurrent reader sees an obviously
- * incomplete store, never a `current` that points past absent content. The installer metadata directory
- * is never a staged entry, so it is left untouched.
+ * A name that both sides hold stays as it is. Under `store/` a skip costs nothing and it is always
+ * correct, because the store is content-addressed and write-once: the directory name carries the hash of
+ * the content, so the same name is the same bytes. Under `farms/` the skip is the whole point. A farm is
+ * the curated closure of the user, and the packages of that farm survive in `store/`, because this merge
+ * adds and never removes.
  */
-async function activateStagedRoot(stageRoot: string, storeRoot: string, metadataName: string): Promise<Result<void, LibStoreDownloadError>> {
+async function mergeChildren(stagedDir: string, targetDir: string): Promise<{ readonly added: readonly string[]; readonly kept: readonly string[] }> {
+    const added: string[] = [];
+    const kept: string[] = [];
+    await mkdir(targetDir, { recursive: true });
+    for (const child of await readdir(stagedDir)) {
+        const to = join(targetDir, child);
+        if (await entryExists(to)) {
+            kept.push(child);
+            continue;
+        }
+        await rename(join(stagedDir, child), to);
+        added.push(child);
+    }
+    return { added, kept };
+}
+
+/**
+ * Merge each staged top-level entry into the store root, and remove nothing.
+ *
+ * The whole `/mnt/libs` tree lives directly at the store root — the harness reads `<root>/current` — and
+ * the root is shared. `inflexa store add` provisions into the same `store/` pool and writes its own farms
+ * beside the published ones. A replacement would destroy that work, so the download moves in only what the
+ * root does not have. `store/` and `farms/` merge one level deeper, because both owners write into them.
+ * Any other top-level entry, for example an empty mount point, moves in only when it is absent.
+ *
+ * `current` is the active-farm pointer, and it lands last. An absent pointer takes the farm the download
+ * brought, so a fresh install is usable at once. A pointer that is already there stays, because a download
+ * must never move the user onto a different environment without a word. The last position also keeps a
+ * concurrent reader from seeing a `current` that points past content which is still on its way.
+ *
+ * The merge keeps the crash safety of the receipt pattern. Each move is a `rename` inside one filesystem,
+ * thus a child is complete or absent and never half-written. A crash part-way leaves the receipt unwritten,
+ * so the store reads back as incomplete and the next run merges again — where each child that already
+ * landed is simply skipped.
+ */
+async function mergeStagedRoot(stageRoot: string, storeRoot: string, metadataName: string): Promise<Result<LibStoreMergeReport, LibStoreDownloadError>> {
     let entries: readonly string[];
     try {
         entries = (await readdir(stageRoot)).filter((name) => name !== metadataName);
@@ -419,25 +486,40 @@ async function activateStagedRoot(stageRoot: string, storeRoot: string, metadata
         return err({ type: "io_failed", message: `Could not read the staged store at ${stageRoot}.`, cause });
     }
     const ordered = [...entries].sort((a, b) => (a === "current" ? 1 : b === "current" ? -1 : a.localeCompare(b)));
+    const storeDirsAdded: string[] = [];
+    const farmsAdded: string[] = [];
+    const farmsKept: string[] = [];
+    let currentSet = false;
     try {
         for (const name of ordered) {
             const to = join(storeRoot, name);
-            await rm(to, { recursive: true, force: true });
+            if (name === "store") {
+                storeDirsAdded.push(...(await mergeChildren(join(stageRoot, name), to)).added);
+                continue;
+            }
+            if (name === "farms") {
+                const merged = await mergeChildren(join(stageRoot, name), to);
+                farmsAdded.push(...merged.added);
+                farmsKept.push(...merged.kept);
+                continue;
+            }
+            if (await entryExists(to)) continue;
             await rename(join(stageRoot, name), to);
+            if (name === "current") currentSet = true;
         }
-        return ok(undefined);
+        return ok({ storeDirsAdded, farmsAdded, farmsKept, currentSet });
     } catch (cause) {
-        return err({ type: "io_failed", message: `Could not activate the staged store into ${storeRoot}.`, cause });
+        return err({ type: "io_failed", message: `Could not merge the staged store into ${storeRoot}.`, cause });
     }
 }
 
-/** Extract every layer into a fresh staging root, then activate it into the store root. */
-async function stageAndActivate(
+/** Extract every layer into a fresh staging root, then merge it into the store root. */
+async function stageAndMerge(
     storeRoot: string,
     paths: LibStoreDownloadPaths,
     layers: readonly LibStoreLayer[],
     attemptId: string,
-): Promise<Result<void, LibStoreDownloadError>> {
+): Promise<Result<LibStoreMergeReport, LibStoreDownloadError>> {
     const attemptRoot = join(paths.staging, attemptId);
     try {
         await rm(attemptRoot, { recursive: true, force: true });
@@ -446,12 +528,12 @@ async function stageAndActivate(
             const extracted = await extractLayer(join(paths.blobs, blobFileName(layer.digest)), attemptRoot);
             if (extracted.isErr()) return err(extracted.error);
         }
-        return await activateStagedRoot(attemptRoot, storeRoot, paths.metadataName);
+        return await mergeStagedRoot(attemptRoot, storeRoot, paths.metadataName);
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not stage the package store under ${storeRoot}.`, cause });
     } finally {
-        // The activation rename moves the staged entries out, leaving the attempt dir behind; every attempt
-        // gets a fresh id, so without this they accumulate.
+        // The merge renames the staged entries out, leaving the attempt dir behind; every attempt gets a
+        // fresh id, so without this they accumulate. A skipped child stays here, and this drops it.
         await rm(attemptRoot, { recursive: true, force: true }).catch(() => undefined);
     }
 }
@@ -519,9 +601,14 @@ async function writeLibStoreReceipt(receiptPath: string, receipt: LibStoreReceip
  *
  * The receipt is written last, so its presence attests the content landed. But the content is a
  * directory on the user machine and can be removed, so a vanished `current` degrades to incomplete
- * rather than a false `installed`. With no receipt, a bare store root is a first run and leftover
- * content or a staging directory is an interrupted one — which reads back as incomplete, and the next
- * run repairs it.
+ * rather than a false `installed`.
+ *
+ * With no receipt there are three states, and only content separates them. A staging directory is the
+ * fingerprint of a download that started, thus the store is an interrupted one that the next run repairs.
+ * Without that fingerprint, content in the root is the store the user built with `inflexa store add`,
+ * which is a complete store of its own and never a missing one. An empty root is the genuine first run.
+ * The staging check comes first, because a crash part-way through a merge leaves both marks and a repair
+ * is what that store wants.
  */
 export async function inspectLibStoreDownload(storeRoot: string): Promise<LibStoreDownloadState> {
     if (!existsSync(storeRoot)) return "missing";
@@ -529,8 +616,9 @@ export async function inspectLibStoreDownload(storeRoot: string): Promise<LibSto
     const receiptRead = await readLibStoreReceipt(paths.receipt);
     if (receiptRead.exists && receiptRead.receipt === undefined) return "invalid_receipt";
     if (receiptRead.receipt !== undefined) return existsSync(join(storeRoot, "current")) ? "installed" : "incomplete";
-    if (existsSync(join(storeRoot, "store")) || existsSync(join(storeRoot, "current")) || existsSync(paths.staging)) return "incomplete";
-    return "missing";
+    if (existsSync(paths.staging)) return "incomplete";
+    const hasContent = existsSync(join(storeRoot, "store")) || existsSync(join(storeRoot, "farms")) || existsSync(join(storeRoot, "current"));
+    return hasContent ? "local" : "missing";
 }
 
 /** Prepare the store root and the installer-owned directories the download writes into. */
@@ -552,7 +640,8 @@ async function prepareDownloadDirs(storeRoot: string, paths: LibStoreDownloadPat
  * moved `latest` cannot mix two versions in one store. When a receipt already pins the resolved manifest,
  * the pull is a no-op (`up_to_date`); when it pins a different one, the pull reports `update_available`
  * and downloads nothing, unless `deps.force` says the user agreed to the update. Otherwise it downloads
- * and verifies each layer, stages, activates, and writes the receipt last.
+ * and verifies each layer, stages, merges into the store root, and writes the receipt last. The merge
+ * keeps every locally provisioned package and farm — refer to {@link mergeStagedRoot}.
  */
 export async function downloadLibStore(deps: LibStoreDownloadDeps): Promise<Result<LibStoreDownloadOutcome, LibStoreDownloadError>> {
     const archResult = deps.arch !== undefined ? ok<StoreArch, LibStoreDownloadError>(deps.arch) : resolveStoreArch(process.arch);
@@ -590,7 +679,7 @@ export async function downloadLibStore(deps: LibStoreDownloadDeps): Promise<Resu
 
     reportProgress(deps.onProgress, { type: "staging" });
     const attemptId = deps.attemptId?.() ?? randomUUIDv7();
-    const staged = await stageAndActivate(deps.storeRoot, paths, manifest.value.layers, attemptId);
+    const staged = await stageAndMerge(deps.storeRoot, paths, manifest.value.layers, attemptId);
     if (staged.isErr()) return err(staged.error);
 
     const receipt: LibStoreReceipt = {
@@ -607,19 +696,19 @@ export async function downloadLibStore(deps: LibStoreDownloadDeps): Promise<Resu
     // The blobs are consumed once staged, and the receipt is now durable, so dropping them frees a second
     // copy of the whole store. Nothing resumes from them after this point.
     await rm(paths.blobs, { recursive: true, force: true }).catch(() => undefined);
-    return ok({ type: "downloaded", manifestDigest: manifest.value.manifestDigest, bytes });
+    return ok({ type: "downloaded", manifestDigest: manifest.value.manifestDigest, bytes, merge: staged.value });
 }
 
 /**
- * Download the store only when a store root is configured. This is the mechanism the app-open trigger
- * operates: with no store configured there is nothing to download and nothing to record, so the rollback
- * of a cleared config key is a clean no-op. The store root is the single value `resolveLibStore` gives —
- * never re-derived here.
+ * Download the store only when the store opt-in is on. This is the mechanism the app-open trigger
+ * operates: with the store off there is nothing to download and nothing to record, so the rollback of a
+ * cleared config key is a clean no-op — and a user who never wanted a store never meets the multi-gigabyte
+ * consent. The store root is the single value `resolveLibStore` gives — never re-derived here.
  */
 export async function maybeDownloadLibStore(
     location: LibStoreLocation,
     deps: Omit<LibStoreDownloadDeps, "storeRoot"> = {},
 ): Promise<Result<LibStoreDownloadOutcome, LibStoreDownloadError>> {
-    if (!location.configured) return ok({ type: "not_configured" });
-    return downloadLibStore({ storeRoot: location.path, ...deps });
+    if (!location.enabled) return ok({ type: "disabled" });
+    return downloadLibStore({ storeRoot: location.root, ...deps });
 }

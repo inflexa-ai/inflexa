@@ -56,6 +56,7 @@ import {
     resolveLibStore,
     resolveModelConnection,
     AGENT_NAMES,
+    type LibStoreLocation,
     type ResolvedHarnessConfig,
     type ResolvedModelConnection,
     type AgentName,
@@ -481,6 +482,24 @@ export function buildAuthInjectingFetch(source: CredentialSource, underlying: In
 }
 
 /**
+ * The root of a package store that is ON but BROKEN, or `null` when there is nothing to report.
+ *
+ * A store is broken when its root exists and yet carries no readable active-farm inventory. The sandbox
+ * then falls back to the image without saying so, thus this is the one store condition boot records.
+ *
+ * The two silent conditions are deliberate, and both are ordinary rather than faults. A store that is OFF
+ * is the default of each installation. A store that is ON with NO root is the state between the opt-in and
+ * the first download, which the download gate completes on its own — a warning there would fire for each
+ * user who opts in, before anything can be wrong. The root is a fixed CLI-owned path, thus its absence
+ * carries no user intent at all and cannot mean a mistyped location.
+ */
+export function partialLibStoreRoot(location: LibStoreLocation): string | null {
+    if (!location.enabled) return null;
+    if (!existsSync(location.root)) return null;
+    return storePackagesFile(location.root) === null ? location.root : null;
+}
+
+/**
  * One boot attempt, run under the {@link bootHarnessRuntime} in-flight guard.
  * This root resolves the host-specific inputs — prerequisites → Postgres
  * readiness → callback ingress → providers/models → instance lock → pool — then
@@ -646,28 +665,27 @@ async function bootHarnessRuntimeOnce(
     // describes whatever the sandbox will actually mount, because an agent told a package exists when the
     // mount does not carry it writes code that fails at import.
     //
-    // With a store configured and its active farm readable, the sandbox mounts the store, so the inventory
-    // is the store's own `current/packages.txt` — read directly, never the image probe. With no store — or
-    // a store the harness will refuse and drop the mount for, running the sandbox on the baked image — the
-    // inventory follows the mount back to the image label cache. `storePackagesFile` is only the shallow
-    // shape that decides this fallback, not the harness's own mount-usability check.
+    // With the store on and its active farm readable, the sandbox mounts the store, so the inventory
+    // is the store's own `current/packages.txt` — read directly, never the image probe. With the store off —
+    // or with a store the harness will refuse and drop the mount for, running the sandbox on the baked image
+    // — the inventory follows the mount back to the image label cache. `storePackagesFile` is only the
+    // shallow shape that decides this fallback, not the harness's own mount-usability check.
     //
     // The image probe is deliberately AFTER the prereq gates: it spawns a container-runtime probe, and a
     // boot about to fail on Postgres must not pay for it. `ensureSandboxImage` has already pulled through
     // this same pin, so the image is present. A null inventory is non-fatal — it is an enrichment, and the
     // harness reports the installed set as unknown.
     const libStore = resolveLibStore(cfg);
-    const storeInventory = libStore.configured ? storePackagesFile(libStore.path) : null;
+    const storeInventory = libStore.enabled ? storePackagesFile(libStore.root) : null;
     let packagesFile: string | null;
     if (storeInventory !== null) {
         packagesFile = storeInventory;
     } else {
-        if (libStore.configured) {
+        const partialRoot = partialLibStoreRoot(libStore);
+        if (partialRoot !== null) {
             logger.warn(
-                "lib store configured but its active-farm inventory is not readable — reading the image label cache, which follows the mount the harness will drop to",
-                {
-                    libStorePath: libStore.path,
-                },
+                "the package store exists but its active-farm inventory is not readable — reading the image label cache, which follows the mount the harness will drop to",
+                { libStorePath: partialRoot },
             );
         }
         packagesFile = await seams.resolvePackages(pinnedRuntime, cfg.sandboxImage);
@@ -822,16 +840,24 @@ async function bootHarnessRuntimeOnce(
             // never dials out, so the harness ignores it.
             cortexBaseUrl: ingress.cortexBaseUrl,
             image: cfg.sandboxImage,
-            // Mount the host package store only when one is configured. Unset, no `libStorePath` key is
+            // Mount the host package store only when the user opted in. Off, no `libStorePath` key is
             // passed, the harness creates no `/mnt/libs` bind mount, and the sandbox resolves imports from
-            // the store the image bakes at `/mnt/libs/current` — bit-for-bit today's behavior. Configured,
-            // the harness bind-mounts the root read-only at `/mnt/libs`; it re-checks the store at every
-            // sandbox creation and drops the mount when it is incomplete, so the CLI passes the path and
-            // never duplicates that usability check — the shallow store check above governs only the
-            // inventory source, not the mount. The multi-arch image resolves the host arch at pull time, so
-            // no container platform is forced either way. Managed mounts the store through its PVC — that
-            // lives in infra/harness config, not here.
-            ...(libStore.configured ? { libStorePath: libStore.path } : {}),
+            // the store the image bakes at `/mnt/libs/current` — bit-for-bit today's behavior. On, the
+            // harness bind-mounts the root read-only at `/mnt/libs`; it re-checks the store at every sandbox
+            // creation and drops the mount when it is incomplete, so the CLI passes the root and never
+            // duplicates that usability check — the shallow store check above governs only the inventory
+            // source, not the mount. The multi-arch image resolves the host arch at pull time, so no
+            // container platform is forced either way. Managed mounts the store through its PVC — that lives
+            // in infra/harness config, not here.
+            //
+            // The alternative passes `env.libStoreDir` unconditionally, the shape `refStorePath` below
+            // uses. Two consequences of a fixed CLI-owned root rule it out. First, the store content
+            // SURVIVES a cleared flag, thus an unconditional pass mounts that leftover content again and a
+            // cleared flag stops being a full rollback. Second, the harness records a store warning at each
+            // sandbox creation for a root it cannot use, thus the off-by-default state raises a false alarm
+            // on each sandbox. `refStorePath` meets neither problem, because reference data has no opt-out
+            // flag to contradict.
+            ...(libStore.enabled ? { libStorePath: libStore.root } : {}),
             // Pass the configured store location unconditionally: the sandbox backend
             // re-checks this path's existence at every sandbox creation and mounts it
             // only when it is a real directory then. So a store installed mid-session

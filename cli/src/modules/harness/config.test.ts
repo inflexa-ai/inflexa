@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { env } from "../../lib/env.ts";
 import { readConfig, writeConfig } from "../../lib/config.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { resolveHarnessConfig, resolveModelConnection, writeAgentModel } from "./config.ts";
+import { resolveHarnessConfig, resolveLibStore, resolveModelConnection, writeAgentModel } from "./config.ts";
 
 // Drives resolveModelConnection through the real readConfig() surface against the sandboxed
 // env.configPath (set by the test preload), exercising the fail-closed + protocol-implication paths
@@ -47,6 +47,48 @@ describe("resolveHarnessConfig — adminPort default", () => {
     test("an explicit harness.adminPort still wins over the channel-aware default", () => {
         writeConfigWithHarness({ adminPort: 9999 });
         expect(resolveHarnessConfig().adminPort).toBe(9999);
+    });
+});
+
+// The package store is opt-in through a BOOLEAN, and its root is a CLI-owned constant. These two facts
+// together are what make a cleared key a full rollback while the store content stays where the store
+// commands wrote it.
+describe("resolveLibStore — a boolean opt-in over a fixed root", () => {
+    function writeConfigWithHarness(harness: unknown): void {
+        mkdirSync(dirname(env.configPath), { recursive: true });
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, ...(harness === undefined ? {} : { harness }) }));
+    }
+
+    test("an absent harness block leaves the store off", () => {
+        writeConfigWithHarness(undefined);
+        expect(resolveLibStore(resolveHarnessConfig())).toEqual({ enabled: false });
+    });
+
+    test("`libStore: false` leaves the store off, and hands out no root at all", () => {
+        writeConfigWithHarness({ libStore: false });
+        expect(resolveLibStore(resolveHarnessConfig())).toEqual({ enabled: false });
+    });
+
+    test("`libStore: true` turns the store on at env.libStoreDir", () => {
+        writeConfigWithHarness({ libStore: true });
+        expect(resolveLibStore(resolveHarnessConfig())).toEqual({ enabled: true, root: env.libStoreDir });
+    });
+
+    test("no config value moves the root: a string key is refused, and the store stays off", () => {
+        // The old opt-in named a path. A file that still carries one fails the boolean schema, so the whole
+        // block resolves to defaults with a configError that names the field — the store never silently
+        // mounts a location the user believes they chose.
+        writeConfigWithHarness({ libStore: "/somewhere/else" });
+        const cfg = resolveHarnessConfig();
+        expect(cfg.configError?.issues).toContain("harness.libStore");
+        expect(resolveLibStore(cfg)).toEqual({ enabled: false });
+    });
+
+    test("a store root path under any other harness key is inert", () => {
+        // An unknown key is not part of the contract, so it cannot reach the mount. The root stays the
+        // CLI-owned path for the enabled case.
+        writeConfigWithHarness({ libStore: true, libStorePath: "/somewhere/else" });
+        expect(resolveLibStore(resolveHarnessConfig())).toEqual({ enabled: true, root: env.libStoreDir });
     });
 });
 
