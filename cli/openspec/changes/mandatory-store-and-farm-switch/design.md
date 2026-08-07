@@ -53,21 +53,21 @@ is mandatory, thus the first analysis meets a multi-gigabyte download and it has
 no fall back. That wait is the primary cost of this change, and the user meets it
 on day one.
 
-The order is fixed, and `src/tui/hooks/sandbox_gate.tsx` already carries each
-state that it names:
+`detached-store-download-lifecycle` owns the trigger and the lifecycle of that
+download. It moves the start from app open to `inflexa setup`, and it makes the
+download a detached process with a row in the database. Read that change for the
+order of the first run.
 
-1. The app opens at once. Chat, the workspace read surface, and the planner
-   answer while no store is there.
-2. At app open the background trigger reads the store. With no receipt it opens
-   the consent one time (`consent`), and the consent names the size.
-3. A yes starts the background download (`downloading`), which carries a running
-   byte total. A no records `declined`, and the gate offers the consent again at
-   the first sandbox action.
-4. The first action that makes a sandbox holds. The gate reports which state it
-   is in: `consent`, `downloading` with its byte total, or `failed` with its
-   message.
-5. A complete store records `installed`. The gate then makes sure of the sandbox
-   image, which asks its own consent. Then the action runs.
+This change owns the gate. The app opens at once, and chat, the workspace read
+surface, and the planner answer while no store is there. The first action that
+makes a sandbox holds, and the gate reports which state it is in. The states are:
+
+- `pending` — the user consented, and no transfer started yet
+- `running` — a transfer is live, with a running byte total
+- `installed` — the store is complete, thus the gate makes sure of the sandbox
+  image, which asks its own consent
+- `failed` — the transfer stopped, and the message names the fault and the remedy
+- `declined` — the user answered no at setup
 
 A failed download leaves a usable app and a refused sandbox action. The gate
 reports the message, and it offers a retry at the next action. It must not hold

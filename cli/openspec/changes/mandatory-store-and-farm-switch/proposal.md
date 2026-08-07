@@ -50,10 +50,11 @@ moves `current` by design.
 - **The gate makes sure of a store, and it no longer waits only when one is
   configured.** The `disabled` phase leaves the gate. An unusable store is a hard
   failure with a remedy, not a silent degradation.
-- **The first run has a stated shape.** The app opens at once, and the consent
-  opens one time. The first action that makes a sandbox holds, and the gate reports
-  which state it is in. A failed download leaves a usable app, a refused sandbox
-  action, and a retry.
+- **The first run has a stated shape.** The app opens at once. The first action
+  that makes a sandbox holds, and the gate reports which state it is in. A failed
+  download leaves a usable app, a refused sandbox action, and a retry.
+  `detached-store-download-lifecycle` owns the trigger and the consent, and it
+  moves both into `inflexa setup`.
 - **The inventory has one source.** It comes from the active farm of the store.
   When it is unreadable, the CLI reports the store as the fault and names the
   remedy. It does not read the image label cache.
