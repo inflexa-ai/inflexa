@@ -4,6 +4,18 @@
     "pr": ""
   },
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/ste-check.ts\"",
+            "timeout": 10,
+            "statusMessage": "Reply contract"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
@@ -20,6 +32,18 @@
     "PostToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/ste-check.ts\"",
+            "timeout": 15,
+            "statusMessage": "STE check"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
         "hooks": [
           {
             "type": "command",

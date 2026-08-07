@@ -14,9 +14,12 @@
  * A gate that denies on a guess teaches people to route around it, so the blocking
  * set is deliberately the narrow one and grows only if a rule proves deterministic.
  *
- * Two entry points share one checker. As a hook it reads the tool call on stdin and
- * answers with the hook protocol. As `ste-check.ts --file <path>` it prints a plain
- * report and exits 1 on a hard finding, so a person and a CI job get the same verdict.
+ * Two entry points share one checker. As a hook it reads the event on stdin and
+ * answers with the hook protocol: a tool event gates the payload of the call,
+ * `UserPromptSubmit` injects the reply contract out of CLAUDE.md, and `Stop` gates
+ * the reply itself against the contract budget. As `ste-check.ts --file <path>` it
+ * prints a plain report and exits 1 on a hard finding, so a person and a CI job
+ * get the same verdict.
  */
 
 type Severity = "hard" | "soft";
@@ -36,6 +39,16 @@ const MAX_WORDS_PROCEDURAL = 20;
 const MAX_WORDS_DESCRIPTIVE = 25;
 /** Rule 6.6. */
 const MAX_SENTENCES_PER_PARAGRAPH = 6;
+
+/**
+ * The document budgets of the shape sections in CLAUDE.md. An author who obeys
+ * every sentence cap can still write 775 words. A sentence rule cannot force
+ * selection, and only a total budget does that. The numbers are repository
+ * policy, not STE.
+ */
+const MAX_WORDS_REPLY = 300;
+const MAX_WORDS_GH_PROSE = 300;
+const MAX_WORDS_COMMIT_BODY = 300;
 
 /**
  * A word trap whose left cell carries a parenthetical qualifier — `check (verb)`,
@@ -91,6 +104,58 @@ async function loadTraps(): Promise<Trap[]> {
   }
   if (traps.length === 0) throw new Error(`empty word-trap table in ${path}`);
   return traps;
+}
+
+/** Reads one `## <title>` section of CLAUDE.md, so the contract text lives in one place. */
+async function claudeMdSection(title: string): Promise<string> {
+  const path = `${projectDir()}/CLAUDE.md`;
+  const text = await Bun.file(path).text();
+  const section = text.split(new RegExp(`^## ${title}$`, "m"))[1];
+  if (!section) throw new Error(`no "## ${title}" section in ${path}`);
+  return `## ${title}\n${(section.split(/\n## /)[0] ?? "").trim()}`;
+}
+
+/** A checkbox line comes from the pull request template, and the author does not write it. */
+const CHECKBOX = /^[-*+]\s+\[[ xX]\]/;
+
+/**
+ * The total budget of one document surface. The blocks come from `markdownProse`,
+ * thus code, tables, and headings are already out of the count.
+ */
+function budgetFinding(where: string, blocks: string[], cap: number, hint: string): Finding | null {
+  const words = blocks.reduce((n, b) => n + countWords(b), 0);
+  if (words <= cap) return null;
+  return { rule: "document-budget", severity: "hard", where, quote: `${words} words`, hint };
+}
+
+/**
+ * The last text of the assistant in the transcript is the reply that `Stop`
+ * examines. A sidechain entry comes from a subagent, and its text is not the
+ * reply, thus the scan skips it. The transcript is external JSON with no schema
+ * of ours, so each line is read as an unknown shape and only the narrow fields
+ * are touched.
+ */
+async function lastReplyText(path: string): Promise<string> {
+  if (!path) return "";
+  let last = "";
+  for (const line of (await Bun.file(path).text()).split("\n")) {
+    if (!line.trim()) continue;
+    let entry: any;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry?.type !== "assistant" || entry?.isSidechain) continue;
+    const content = entry?.message?.content;
+    if (!Array.isArray(content)) continue;
+    const text = content
+      .filter((c: any) => c?.type === "text" && typeof c.text === "string")
+      .map((c: any) => c.text)
+      .join("\n\n");
+    if (text.trim()) last = text;
+  }
+  return last;
 }
 
 const CONTRACTIONS =
@@ -474,7 +539,46 @@ async function main() {
   const input = JSON.parse((await Bun.stdin.text()) || "{}");
   const tool: string = input.tool_name ?? "";
   const event: string = input.hook_event_name ?? (input.tool_response ? "PostToolUse" : "PreToolUse");
+
+  if (event === "UserPromptSubmit") {
+    // The contract beside the prompt is the near instruction, and the model obeys
+    // the near instruction before the far rule at the top of the context.
+    console.log(
+      JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit",
+          additionalContext: await claudeMdSection("The shape of a reply"),
+        },
+      }),
+    );
+    process.exit(0);
+  }
+
   const traps = await loadTraps();
+
+  if (event === "Stop") {
+    // One correction for each turn. When the model already continues because of
+    // this hook, a second block can make a loop with no end.
+    if (input.stop_hook_active) process.exit(0);
+    const blocks = markdownProse(await lastReplyText(input.transcript_path ?? ""));
+    const findings = checkText("the reply", traps, MAX_WORDS_DESCRIPTIVE, blocks);
+    const budget = budgetFinding(
+      "the reply",
+      blocks,
+      MAX_WORDS_REPLY,
+      `Write a maximum of ${MAX_WORDS_REPLY} words (CLAUDE.md, "The shape of a reply")`,
+    );
+    if (budget) findings.push(budget);
+    const hard = findings.filter((f) => f.severity === "hard");
+    if (hard.length === 0) process.exit(0);
+    console.log(
+      JSON.stringify({
+        decision: "block",
+        reason: `${report(hard, "the reply")}\n\nWrite the reply again. Obey "The shape of a reply" in CLAUDE.md.`,
+      }),
+    );
+    process.exit(0);
+  }
 
   let findings: Finding[] = [];
   let subject = "";
@@ -491,6 +595,15 @@ async function main() {
       // The sign-off is still visible in the command, so that check runs either way.
       if (message) {
         findings = checkText(subject, traps, MAX_WORDS_PROCEDURAL, markdownProse(message));
+        // The subject line carries the Conventional Commits form, thus only the
+        // body takes the budget.
+        const body = budgetFinding(
+          subject,
+          markdownProse(message.split("\n").slice(1).join("\n")),
+          MAX_WORDS_COMMIT_BODY,
+          `Write a maximum of ${MAX_WORDS_COMMIT_BODY} words in the body (CLAUDE.md, Commits)`,
+        );
+        if (body) findings.push(body);
       }
       if (!hasSignoff(command, message)) {
         findings.push({
@@ -510,7 +623,16 @@ async function main() {
         blocking = true;
         const { texts, unreadable } = await ghPayload(command);
         if (texts.length > 0) {
-          findings = checkText(subject, traps, MAX_WORDS_DESCRIPTIVE, markdownProse(texts.join("\n\n")));
+          const blocks = markdownProse(texts.join("\n\n"));
+          findings = checkText(subject, traps, MAX_WORDS_DESCRIPTIVE, blocks);
+          // A checkbox line belongs to the template, thus it stays out of the budget.
+          const budget = budgetFinding(
+            subject,
+            blocks.filter((b) => !CHECKBOX.test(b)),
+            MAX_WORDS_GH_PROSE,
+            `Write a maximum of ${MAX_WORDS_GH_PROSE} words (CLAUDE.md, "The shape of a pull request description")`,
+          );
+          if (budget) findings.push(budget);
         }
         for (const reason of unreadable) {
           findings.push({
