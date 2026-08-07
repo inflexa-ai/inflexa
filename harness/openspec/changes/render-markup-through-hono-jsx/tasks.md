@@ -1,6 +1,6 @@
 ## 1. The toolchain
 
-- [ ] 1.1 Apply the spike diffs: `"jsx": "react-jsx"` and `"jsxImportSource": "hono/jsx"` in `tsconfig.json`, the `src/**/*.test.tsx` exclude, and `tsx` in the two eslint globs.
+- [ ] 1.1 Apply the spike diffs: `"jsx": "react-jsx"` and `"jsxImportSource": "hono/jsx"` in `tsconfig.json`, the `src/**/*.test.tsx` exclude, and `tsx` in the two eslint globs. Add the `no-restricted-syntax` rule that refuses the `className` JSX attribute.
 - [ ] 1.2 Prove the toolchain in-tree: one minimal `.tsx` component compiles with `tsc`, its test runs under bun, and the lint rules fire on it. Then fold the file into the first conversion, and leave no scratch.
 
 ## 2. The markup conversion
@@ -13,7 +13,7 @@
 ## 3. The tests and the validity gate
 
 - [ ] 3.1 Re-pin the markup tests to the compact JSX output. Prefer a semantic assertion where one serves, and keep the byte-identical double render.
-- [ ] 3.2 Add the dev dependencies `html-validate` and `csstree-validator`, and write the gate test: the rendered every-kind page passes the offline HTML validation, and the inline style rules pass the property-syntax validation.
+- [ ] 3.2 Add the dev dependencies `html-validate` and `csstree-validator`, and write the gate test: the rendered every-kind page passes the offline HTML validation with the recommended preset, and the inline style rules pass the property-syntax validation. Record each disabled rule with its reason in the test.
 - [ ] 3.3 Write the raw-sink test: a `</script>` sequence in a chart cell reaches the inline JSON in the replaced form, and the page parses whole.
 
 ## 4. The gates
