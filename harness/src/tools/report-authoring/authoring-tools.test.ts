@@ -269,6 +269,15 @@ describe("read_block", () => {
 
         expect(value).toEqual({ found: true, block: { kind: "section", id: "s1", title: "Intro", childIds: ["t1"] } });
     });
+
+    it("gives `found: false` for an unknown id", async () => {
+        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
+        const { ctx } = makeToolContext();
+
+        const result = await tools.read_block.execute({ targetId: "nope" }, ctx);
+
+        expect(result._unsafeUnwrap()).toEqual({ found: false });
+    });
 });
 
 describe("the tool surface", () => {
@@ -287,17 +296,6 @@ describe("the tool surface", () => {
 
         // A step-mode tool replays its cached result over a rebuilt, empty draft.
         expect(packaged.map((tool) => tool.executionMode)).toEqual(Array(8).fill("inline"));
-    });
-});
-
-describe("read_block", () => {
-    it("gives `found: false` for an unknown id", async () => {
-        const tools = createReportAuthoringTools({ snapshot });
-        const { ctx } = makeToolContext();
-
-        const result = await tools.read_block.execute({ id: "nope" }, ctx);
-
-        expect(result._unsafeUnwrap()).toEqual({ found: false });
     });
 });
 
