@@ -12,7 +12,7 @@
 
 ## 3. The gates
 
-- [ ] 3.1 Run `bun run format:file` on each changed source file.
-- [ ] 3.2 Run `tsc -p tsconfig.json`, and repair each finding.
-- [ ] 3.3 Run the lint on the changed files, and repair each finding.
-- [ ] 3.4 Run the tests of the changed areas only: the new test files, plus `src/memory/thread-history.test.ts` and `src/memory/thread-store.test.ts`. Do not run the full suite.
+- [x] 3.1 Run `bun run format:file` on each changed source file.
+- [x] 3.2 Run `tsc -p tsconfig.json`, and repair each finding.
+- [x] 3.3 Run the lint on the changed files, and repair each finding.
+- [x] 3.4 Run the tests of the changed areas only: the new test files, plus `src/memory/thread-history.test.ts` and `src/memory/thread-store.test.ts`. Do not run the full suite.
