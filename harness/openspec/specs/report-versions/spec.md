@@ -17,6 +17,12 @@ A thread is a scaffold, and a version is a deliverable. Thus a version outlives
 its thread, and it dies only in the purge of its analysis. The `analysis-purge`
 capability lists the version table in the purged footprint.
 
+A publish is a boundary crossing, and it is not a reference. A version dies
+with its analysis, and the workspace files can leave first. Thus a consumer that
+publishes a version renders the page at publish time. It copies the bytes and
+the metadata into its own store, and it owns them. A published entity that points
+into the workspace, or at the version row, becomes an orphan.
+
 ## Requirements
 
 ### Requirement: A version is one immutable row
