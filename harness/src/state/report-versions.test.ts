@@ -218,6 +218,26 @@ describe("createReportVersionStore", () => {
         expect(versions).toEqual([]);
     });
 
+    it("refuses a malformed snapshot with no row", async () => {
+        const analysisId = "analysis-malformed-snapshot";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-malformed-snapshot";
+
+        // The cast is the deliberate simulation of a caller bug. A bad value
+        // reaches the record where the compile-time type promises a good one.
+        const badSnapshot = { artifacts: "nope" } as unknown as ReportSnapshot;
+        const failure = (
+            await store.record({ document: validDocument, snapshot: badSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null })
+        )._unsafeUnwrapErr();
+        expect(failure.type).toBe("malformed_snapshot");
+        if (failure.type === "malformed_snapshot") {
+            expect(failure.issues.length).toBeGreaterThan(0);
+        }
+
+        const versions = (await store.listVersions(threadId))._unsafeUnwrap();
+        expect(versions).toEqual([]);
+    });
+
     it("keeps the stored snapshot after a later ledger write", async () => {
         const analysisId = "analysis-snapshot-frozen";
         await seedAnalysis(analysisId);

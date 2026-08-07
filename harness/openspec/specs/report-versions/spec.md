@@ -53,10 +53,16 @@ A version can name a parent version with its stable id. The link is optional, be
 - **THEN** the record returns a typed refusal, and the store holds no new row
 
 ### Requirement: The record operation validates the document
-The record operation MUST parse the document against the full document schema before the insert. A malformed document MUST refuse as typed data on the error channel, and no row lands. The operation MUST NOT run the reference validation, and it MUST NOT mint a snapshot. The caller gives the snapshot value, and the store stores it as given. The store stores the anchor as given, and the caller owns its truth.
+The record operation MUST parse the document against the full document schema before the insert. It MUST parse the snapshot against the snapshot schema in the same way. A malformed document or a malformed snapshot MUST refuse as typed data on the error channel, and no row lands. The shape parse changes no value.
+
+The operation MUST NOT run the reference validation, and it MUST NOT mint a snapshot. The caller gives the snapshot value, and the store stores it as given. The store stores the anchor as given, and the caller owns its truth.
 
 #### Scenario: A malformed document refuses
 - **WHEN** the caller records a value that the document schema refuses
+- **THEN** the record returns a typed refusal, and the store holds no new row
+
+#### Scenario: A malformed snapshot refuses
+- **WHEN** the caller records a version whose snapshot fails the snapshot schema
 - **THEN** the record returns a typed refusal, and the store holds no new row
 
 #### Scenario: The stored snapshot is the given snapshot
@@ -64,7 +70,7 @@ The record operation MUST parse the document against the full document schema be
 - **THEN** the read of the version gives the snapshot as it was at the record
 
 ### Requirement: The reads of a thread
-The store MUST give one version by its id, the latest version of a thread, and the version list of a thread. The list is in ordinal order. A read parses the stored document and snapshot with the existing schemas. A row that fails the parse MUST read as a typed error, and an absent row reads as a normal absence. For a thread with no versions, the latest read gives an absence, and the list gives an empty list.
+The store MUST give one version by its id, the latest version of a thread, and the version list of a thread. The list is in ordinal order. A read parses the stored document and snapshot with the existing schemas. A row that fails the parse MUST read as a typed error, and an absent row reads as a normal absence. A corrupt row MUST fail the whole list read, thus a partial history never presents as complete. For a thread with no versions, the latest read gives an absence, and the list gives an empty list.
 
 #### Scenario: The latest version of a thread
 - **WHEN** a thread holds the ordinals 1, 2, and 3

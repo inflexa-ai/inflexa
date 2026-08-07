@@ -101,13 +101,22 @@ export interface RecordedVersionRef {
  * A record the store refuses as data, before or in place of a row. Distinct from
  * `DbError`: the request describes a version that the store will not write.
  *
- * A `parentThreadId` naming no row is not one of these -- the self foreign key
+ * The store parses the document and the snapshot before any row. The store
+ * refuses a malformed document or a malformed snapshot here as typed data, and
+ * no row lands.
+ *
+ * A `parentVersionId` naming no row is not one of these -- the self foreign key
  * refuses an unknown parent id, and `tryMutation` classifies that refusal as the
  * `constraint_violation` variant of `DbError`.
  */
 export type RecordVersionError =
     | {
           readonly type: "malformed_document";
+          readonly op: string;
+          readonly issues: readonly SchemaIssue[];
+      }
+    | {
+          readonly type: "malformed_snapshot";
           readonly op: string;
           readonly issues: readonly SchemaIssue[];
       }
@@ -265,6 +274,13 @@ export function createReportVersionStore({ pool, logger: injected }: ReportVersi
             return errAsync({ type: "malformed_document", op: "report-versions.record", issues: reduceIssues(parsed.error) });
         }
         const document = parsed.data;
+
+        // The parse guards the row against a caller bug through a cast. The store
+        // stores the given value, thus the parse changes no value.
+        const parsedSnapshot = ReportSnapshotSchema.safeParse(input.snapshot);
+        if (!parsedSnapshot.success) {
+            return errAsync({ type: "malformed_snapshot", op: "report-versions.record", issues: reduceIssues(parsedSnapshot.error) });
+        }
 
         const insertOnce = (): ResultAsync<RecordedVersionRef, DbError> => {
             const versionId = randomUUID();
