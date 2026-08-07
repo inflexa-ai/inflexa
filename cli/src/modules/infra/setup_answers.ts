@@ -4,7 +4,6 @@ import { z } from "zod";
 
 import { runtimeIds } from "../../lib/container.ts";
 import { EMBEDDING_API_KEY_VAR, isReservedPostgresPort, reservedPostgresPorts, resolveEmbeddingApiKey } from "../../lib/env.ts";
-import { SANDBOX_VARIANTS } from "../libs/images.ts";
 import { type ConnectionMode } from "./compose.ts";
 
 // The setup ANSWERS layer: one schema for every interactive decision point of `inflexa setup`, two
@@ -95,6 +94,15 @@ const authSchemeSchema = z.enum(["x-api-key", "bearer"]);
 function trimmedAnswer(error: string): z.ZodString {
     return z.string().trim().min(1, { error });
 }
+
+/**
+ * The sandbox image variants this CLI retired, refused by name in the one up-front validation pass.
+ *
+ * They are literals here rather than an import, because nothing in the CLI publishes or resolves them any
+ * more. Their only remaining role is this refusal, which exists so a file or a flag written against the
+ * old surface names the reason it stopped working instead of provisioning something else.
+ */
+const RETIRED_SANDBOX_VARIANTS = ["python", "python-r"] as const;
 
 /**
  * A URL answer: a {@link trimmedAnswer} that must also parse AS a URL — which is to say WITH a scheme,
@@ -221,8 +229,20 @@ export const setupAnswersSchema = z.strictObject({
             }),
         )
         .optional(),
-    /** The sandbox image variant to pull. The answer IS the multi-GB consent. */
-    sandbox: z.enum(SANDBOX_VARIANTS).optional(),
+    /**
+     * Whether setup pulls the container images. The answer IS the multi-GB consent, and its PRESENCE is
+     * the whole of it: one runtime image is published and the provisioner has no variant, so the answer
+     * selects nothing and no consumer reads its value.
+     *
+     * A retired variant name is refused rather than ignored. A user upgrading from the variant surface
+     * writes `--sandbox python-r` out of habit, and silently reading that as "pull the one image" would
+     * hide from them that the image they asked for no longer exists.
+     */
+    sandbox: trimmedAnswer("must not be empty")
+        .refine((value) => !(RETIRED_SANDBOX_VARIANTS as readonly string[]).includes(value), {
+            error: "names a retired image variant. One sandbox image is published, so the answer takes no image name — the package set comes from the store, which `inflexa store add` extends",
+        })
+        .optional(),
     /** Pins the container runtime as a hard gate — given-but-dead is an error, never a silent fallback. */
     runtime: z.enum(runtimeIds).optional(),
 });
@@ -814,7 +834,7 @@ export type SetupAnswerFlags = {
     readonly embeddingsGguf?: string;
     /** `--refs recommended|all|<id,…>`. */
     readonly refs?: string;
-    /** `--sandbox python|python-r`. */
+    /** `--sandbox <answer>`: the consent that pulls the container images. It names no image variant. */
     readonly sandbox?: string;
     /** `--runtime docker|podman`. */
     readonly runtime?: string;

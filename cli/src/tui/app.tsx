@@ -35,7 +35,8 @@ import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
 import { UsageDialog, readSessionUsage } from "./components/dialog/usage_dialog.tsx";
 import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
 import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, interruptHintLabel, leaderSeq, KEYS, type LayerConfig } from "./keymap.ts";
-import { StatusBar } from "./layout/status_bar.tsx";
+import { StatusBar, type StatusTone } from "./layout/status_bar.tsx";
+import { libStoreGateState } from "./hooks/sandbox_gate.tsx";
 import { Chat } from "./components/chat.tsx";
 import { BootIndicator } from "./components/boot_indicator.tsx";
 import { AskPrompt } from "./components/ask_prompt.tsx";
@@ -389,6 +390,38 @@ export function turnSubmitAction(opts: { busy: boolean; ready: boolean; analysis
     if (opts.analysisId === null) return { kind: "no-analysis" };
     if (opts.sessionId === null) return { kind: "unbound" };
     return { kind: "send", sessionId: opts.sessionId, analysisId: opts.analysisId };
+}
+
+/**
+ * The widest a store-gate failure may render inside the one-row status bar. The bar is a flex row whose
+ * spacer pushes the affordance hints to the right edge, so an unbounded message would squeeze that spacer
+ * to nothing and drive the hints off screen. The full text always rides the notice channel too.
+ */
+const STORE_STATUS_MESSAGE_WIDTH = 48;
+
+/**
+ * The package-store gate as a status-bar segment, or `undefined` when the store asks nothing of the user.
+ *
+ * The three reported phases are exactly the ones in which the gate holds a sandbox action: the open
+ * consent, the running download with its byte total, and the failure with its message. `idle`,
+ * `declined`, and `installed` report nothing, because none of them is a wait the user is inside — a
+ * declined consent re-opens at the next sandbox action, which moves the phase again.
+ */
+function storeGateSegment(): { text: string; tone: StatusTone } | undefined {
+    const gate = libStoreGateState();
+    switch (gate.phase) {
+        case "consent":
+            return { text: `${GLYPHS.circleHalf} store download consent`, tone: "warn" };
+        case "downloading":
+            return { text: `${GLYPHS.circleHalf} store ${gate.bytes.formatBytes()}`, tone: "warn" };
+        case "failed": {
+            const message = gate.message.split("\n", 1)[0] ?? gate.message;
+            const clipped = message.length > STORE_STATUS_MESSAGE_WIDTH ? `${message.slice(0, STORE_STATUS_MESSAGE_WIDTH)}${GLYPHS.ellipsis}` : message;
+            return { text: `${GLYPHS.cross} store: ${clipped}`, tone: "error" };
+        }
+        default:
+            return undefined;
+    }
 }
 
 export function App(props: AppProps) {
@@ -974,6 +1007,11 @@ export function App(props: AppProps) {
     const statusState = (): { text: string; tone: "success" | "warn" | "error" } => {
         const boot = bootState();
         if (boot.phase === "failed") return { text: `${GLYPHS.cross} boot failed`, tone: "error" };
+        // The package store is a prerequisite of every sandbox, and its download is measured in gigabytes.
+        // While the gate wants something from the user — an open consent, a running transfer, a failure —
+        // that fact outranks the boot and turn states, because it is the one the user must act on.
+        const store = storeGateSegment();
+        if (store !== undefined) return store;
         // Until the runtime is ready (idle before the boot fires, or booting), no turn can run — show
         // the boot state rather than a misleading "ready". Once ready, the turn-scoped status wins.
         if (boot.phase !== "ready") return { text: `${GLYPHS.circleHalf} booting${GLYPHS.ellipsis}`, tone: "warn" };

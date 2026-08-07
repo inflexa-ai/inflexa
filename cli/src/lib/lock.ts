@@ -23,6 +23,17 @@ const heldKeys = new Set<string>();
 /** Outcome of an acquire attempt. `acquired:false` is an expected, non-error branch (the resource is live elsewhere) — not a thrown failure — so it is a plain union, not a neverthrow `Result`. */
 export type LockOutcome = { acquired: true } | { acquired: false; holderPid: number };
 
+/**
+ * Advisory-lock key for the embedded harness runtime. A fixed sentinel — not an analysis id — because
+ * the lock guards the single per-machine DBOS engine (executor "local"), not any one analysis. It never
+ * collides with an analysis lock, because analysis ids are UUIDv7.
+ *
+ * It lives here rather than beside the runtime because a live runtime is a fact other commands must read.
+ * `inflexa store use` refuses to move the active-farm pointer while the lock is held, and it must not
+ * import the harness runtime module to learn the key.
+ */
+export const HARNESS_RUNTIME_LOCK_KEY = "harness-runtime";
+
 /** Absolute path of a lock file for `key`. Exported for the unit test, which seeds and inspects it directly. */
 export function instanceLockPath(key: string): string {
     return join(env.locksDir, `${key}.lock`);

@@ -622,8 +622,9 @@ export function buildProgram(): Command {
             .option("--embeddings-gguf <path>", "Local embeddings only: path to your own GGUF model file instead of the built-in one")
             .option("--refs <ids>", "Reference data to download: recommended|all|<comma-separated dataset ids>. The value is the download consent")
             .option(
-                "--sandbox <variant>",
-                "Sandbox image variant to pull: python|python-r. The value is the multi-GB download consent; nothing is pulled without it",
+                "--sandbox <answer>",
+                "Pull the container images (the sandbox image and the package provisioner). The answer is the multi-GB download consent; " +
+                    "nothing is pulled without it. It names no image variant — one sandbox image is published, and the package set comes from the store",
             )
             .option(
                 "--runtime <runtime>",
@@ -738,29 +739,37 @@ export function buildProgram(): Command {
         runRefsPath();
     });
 
-    // The sandbox image: pull a variant (python | python-r) and inspect it. The
-    // pulled image bakes the R/Python/conda/node packages at `/mnt/libs/current`, so
-    // sandboxes launch on it with no local store and no `/mnt/libs` bind mount.
-    // Nested subcommands (à la `project`), each lazy-importing the handler.
-    const sandbox = cli.command("sandbox").description("Manage the sandbox image (R/Python/conda/node packages baked in)");
+    // The sandbox image: pull the one published runtime image and inspect it. That
+    // image carries the interpreters, the conda tools, and the Node packages; the R
+    // and Python libraries come from the host package store, which the harness
+    // bind-mounts at /mnt/libs. Nested subcommands (à la `project`), each
+    // lazy-importing the handler.
+    const sandbox = cli.command("sandbox").description("Manage the sandbox image (interpreters, conda tools, and Node packages)");
 
     // Stays `approval` (not `auto`): `pull` downloads an image and writes the sandbox config.
     registerAction(
         sandbox
             .command("pull")
-            .description("Pull a sandbox image (python | python-r) from GitHub Packages and configure sandboxes to use it")
-            .argument("[variant]", "Image variant: python or python-r (prompted when omitted)")
+            .description("Pull the sandbox image from GitHub Packages and configure sandboxes to use it. It takes no image argument")
+            // The excess argument reaches the handler instead of commander's generic "too many arguments",
+            // so the refusal below can say WHAT the argument was and why nothing selects an image any more.
+            // A user upgrading from the variant surface types `sandbox pull python-r` out of habit, and
+            // that is exactly the person the message is for.
+            .allowExcessArguments(true)
             .option("--yes", "Skip the download confirmation"),
         { kind: "approval" },
-        async (variant: string | undefined, options: { yes?: boolean }) => {
-            const { sandboxPull } = await import("../modules/libs/pull.ts");
-            const { parseVariant } = await import("../modules/libs/images.ts");
-            if (variant !== undefined && parseVariant(variant) === null) {
-                console.error(`\n  Unknown variant "${variant}". Choose one of: python, python-r.\n`);
+        async (options: { yes?: boolean }, command: Command) => {
+            const extra = command.args;
+            if (extra.length > 0) {
+                console.error(
+                    `\n  \`inflexa sandbox pull\` takes no image argument (got "${extra[0]}"). One sandbox image is published, so there is nothing to select.\n` +
+                        "  The package set comes from the store — run `inflexa store add <packages...>` to change it.\n",
+                );
                 process.exitCode = 1;
                 return;
             }
-            const result = await sandboxPull({ variant: parseVariant(variant) ?? undefined, yes: options.yes });
+            const { sandboxPull } = await import("../modules/libs/pull.ts");
+            const result = await sandboxPull({ yes: options.yes });
             result.match(
                 (outcome) => {
                     if (outcome.type === "up_to_date") console.log(`Sandbox image up to date (${outcome.image}).`);
@@ -777,7 +786,7 @@ export function buildProgram(): Command {
 
     // Read-only diagnostic: must not write config (pull.ts); runtime `image inspect` is a query subprocess.
     registerAction(
-        sandbox.command("status").description("Show the configured sandbox image variant, its GHCR reference, and whether it is present locally"),
+        sandbox.command("status").description("Show the sandbox image and the provisioner image, their GHCR references, and whether each is present locally"),
         { kind: "auto", safeFlags: [] },
         async () => {
             const { sandboxStatus } = await import("../modules/libs/pull.ts");
@@ -785,10 +794,11 @@ export function buildProgram(): Command {
         },
     );
 
-    // The host package store: provision packages into a farm, inspect it, remove a farm, and reclaim disk.
-    // The store is bind-mounted read-only at /mnt/libs in sandboxes when it is configured. `add`, `reclaim`,
-    // and `remove-farm` mutate it through the network-enabled provisioner container, so each is
-    // approval-gated like `sandbox pull`; `ls` only reads the store on the host, so it stays auto.
+    // The host package store: provision packages into a farm, inspect it, switch the active farm, remove a
+    // farm, and reclaim disk. The store is bind-mounted read-only at /mnt/libs in every sandbox. `add`,
+    // `reclaim`, and `remove-farm` mutate it through the provisioner container and `use` writes the
+    // active-farm pointer, so each is approval-gated like `sandbox pull`; `ls` only reads the store on the
+    // host, so it stays auto.
     const store = cli.command("store").description("Manage the host package store mounted read-only in sandboxes at /mnt/libs");
 
     // Stays `approval` (not `auto`): `add` starts the network-enabled provisioner container and writes to disk.
@@ -805,11 +815,34 @@ export function buildProgram(): Command {
         },
     );
 
-    // Read-only: walks the store directory on the host and reports it (store.ts `inspectStore`); writes no config.
-    registerAction(store.command("ls").description("List the store's packages, farms, and disk use"), { kind: "auto", safeFlags: [] }, async () => {
-        const { runStoreLs } = await import("../modules/libs/store.ts");
-        await runStoreLs();
-    });
+    // Read-only: walks the store directory on the host and reports it (store.ts `inspectStore`); writes no
+    // config and starts no container. It gains NO option, because a passive diagnostic stays passive.
+    registerAction(
+        store.command("ls").description("List the store's active farm, packages, farms with their tracks, and disk use"),
+        { kind: "auto", safeFlags: [] },
+        async () => {
+            const { runStoreLs } = await import("../modules/libs/store.ts");
+            await runStoreLs();
+        },
+    );
+
+    // Stays `approval` (not `auto`): `use` writes the active-farm pointer, which changes what every later
+    // sandbox mounts.
+    registerAction(
+        store
+            .command("use")
+            .description("Switch the active farm the sandboxes mount. It writes the pointer on the host and starts no container")
+            .argument("<farm>", "Name of the farm to make active")
+            .option(
+                "--force",
+                "Switch although the harness runtime holds the machine-wide lock. It covers a stale runtime lock only, and it bypasses no other refusal",
+            ),
+        { kind: "approval" },
+        async (farm: string, options: { force?: boolean }) => {
+            const { runStoreUse } = await import("../modules/libs/store.ts");
+            await runStoreUse(farm, { force: options.force ?? false });
+        },
+    );
 
     // Stays `approval` (not `auto`): `remove-farm` deletes a farm from the store.
     registerAction(

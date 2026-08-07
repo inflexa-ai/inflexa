@@ -5,7 +5,8 @@ import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/
 import { type Result } from "neverthrow";
 import { modelsConfigSchema, readConfig, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
-import { DEFAULT_SANDBOX_IMAGE } from "../libs/images.ts";
+import { getLogger } from "../../lib/log.ts";
+import { SANDBOX_IMAGE } from "../libs/images.ts";
 
 /**
  * Shape of the `harness` config key. Lives here (not in lib/config.ts) so the harness feature owns
@@ -42,18 +43,40 @@ const harnessConfigSchema = z.object({
     adminPort: z.number().int().positive().optional(),
     skillsDir: z.string().optional(),
     templatesDir: z.string().optional(),
-    // The opt-in switch for the host package store, off by default, so an existing installation is
-    // untouched: no store is passed to the harness, no store downloads, and the sandbox resolves imports
-    // from the store the image bakes. `true` opts in. This is a BOOLEAN, not a path: the store root is a
-    // CLI-owned constant (`env.libStoreDir`), like every other path the CLI hands the harness, so no config
-    // value can move the store. A switch is still necessary, because with no switch at all a user who never
-    // wanted a store would meet the multi-gigabyte download consent at the first app open.
-    libStore: z.boolean().optional(),
-    // The provisioner image the store-management commands run to add, reclaim, or remove content.
-    // No default: the source of the provisioner image for a user machine is still an open decision, so
-    // nothing here may guess a registry path. Unset, the store commands fail with guidance to set it.
-    provisionerImage: z.string().optional(),
 });
+
+/**
+ * The `harness` keys this CLI no longer reads, each with the reason to name when a
+ * configuration file still carries it.
+ *
+ * The schema is not strict, so an unknown key is inert and it breaks nothing. But a
+ * user who set one believes it still governs something, thus {@link reportRemovedHarnessKeys}
+ * names it one time and says why it is dead.
+ */
+const REMOVED_HARNESS_KEYS: Readonly<Record<string, string>> = {
+    libStore: "the package store is mandatory now, and the CLI mounts it for every sandbox",
+    provisionerImage: "the provisioner image reference is a constant in the CLI, and nothing can move it",
+};
+
+// resolveHarnessConfig runs on nearly every boot path and is called repeatedly within one; latch so the
+// removed-key notice is emitted at most once per process rather than on each resolve.
+let reportedRemovedHarnessKeys = false;
+
+/**
+ * Log (once) that a `harness` key the CLI removed is still in the configuration file.
+ * Routed through the pino sink ({@link getLogger}) — NEVER raw stdout/stderr — because the TUI owns the
+ * terminal in alternate-screen mode and a stray write would corrupt the opentui frame.
+ */
+function reportRemovedHarnessKeys(raw: unknown): void {
+    if (reportedRemovedHarnessKeys || typeof raw !== "object" || raw === null) return;
+    const present = Object.keys(REMOVED_HARNESS_KEYS).filter((key) => Object.hasOwn(raw, key));
+    if (present.length === 0) return;
+    reportedRemovedHarnessKeys = true;
+    getLogger("config").warn(
+        `${env.configPath} still carries ${present.map((key) => `harness.${key}`).join(" and ")}, which this version ignores: ` +
+            `${present.map((key) => REMOVED_HARNESS_KEYS[key]).join("; ")}. Remove the key from the file.`,
+    );
+}
 
 /**
  * The `harness` config key resolved to concrete values. The embedder is NOT
@@ -87,21 +110,6 @@ export type ResolvedHarnessConfig = {
     readonly skillsDir: string | null;
     /** Root templates tree for in-process report rendering; `null` outside a dev checkout without the config key. */
     readonly templatesDir: string | null;
-    /**
-     * True when the user opted into the host package store. `false` is the opt-out default: the sandbox
-     * then uses the store the image bakes, no `/mnt/libs` bind mount is created, and no store downloads.
-     * The store ROOT is not part of this config — it is always `env.libStoreDir` — so no config value can
-     * move the store. {@link resolveLibStore} projects this field together with that root, so no call site
-     * infers the state from a path check.
-     */
-    readonly libStore: boolean;
-    /**
-     * The provisioner image the store-management commands run, or `null` when none is configured. There is
-     * no default source for a user machine yet, so this never falls back to a guessed reference;
-     * {@link resolveProvisionerImage} projects the field, and a store command that provisions or deletes
-     * fails with guidance when it is `null`.
-     */
-    readonly provisionerImage: string | null;
     /**
      * Set when the `harness` config key was present but failed validation (e.g. a field of the wrong
      * type). Carries the offending field paths so boot can report the real problem instead of a
@@ -195,7 +203,7 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
             github: cfg?.bioKeys?.github,
             semanticScholar: cfg?.bioKeys?.semanticScholar,
         },
-        sandboxImage: cfg?.sandboxImage ?? DEFAULT_SANDBOX_IMAGE,
+        sandboxImage: cfg?.sandboxImage ?? SANDBOX_IMAGE,
         resourcePolicy,
         // The default is channel-aware (env.adminPort, from stackPorts) so a dev harness runtime and an
         // installed prod harness runtime resolve to different admin ports and never contend for the admin
@@ -204,50 +212,8 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         adminPort: cfg?.adminPort ?? env.adminPort,
         skillsDir: cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : releaseContentDir("skills")),
         templatesDir: cfg?.templatesDir ?? (env.isDevelopment ? devTemplatesDir : releaseContentDir("templates")),
-        // Off by default: an absent key means "no store", so an existing installation keeps the image-baked
-        // store. A cleared key is a full rollback, because boot then passes no store root at all — although
-        // the store content, at the fixed env.libStoreDir, stays on disk for a later opt-in.
-        libStore: cfg?.libStore ?? false,
-        provisionerImage: cfg?.provisionerImage ?? null,
         configError,
     };
-}
-
-/**
- * Whether the host package store is on, and the CLI-owned root it lives at when it is. A discriminated
- * union so a caller cannot read the root without first proving the store is on. The root rides on the
- * `enabled: true` arm, not beside it: each caller reads the two facts together, and a store that is off
- * must hand no caller a path that the caller could mount or download into.
- */
-export type LibStoreLocation = { readonly enabled: true; readonly root: string } | { readonly enabled: false };
-
-/**
- * Report whether the host package store is on, and its fixed root when it is. This is the single reader of
- * the resolved {@link ResolvedHarnessConfig.libStore}: the mount decision (pass the root to the harness),
- * the inventory decision (read the store's active farm), and the download decision all consult it, so none
- * of them infers the state from an ad-hoc path check that could drift from the others. The root is
- * `env.libStoreDir` always — a CLI-owned path, exactly like `env.refsDir` — so opting in cannot relocate
- * the store and the store-management commands write where boot reads.
- */
-export function resolveLibStore(cfg: ResolvedHarnessConfig): LibStoreLocation {
-    return cfg.libStore ? { enabled: true, root: env.libStoreDir } : { enabled: false };
-}
-
-/**
- * Whether a provisioner image is configured, and its reference. A discriminated union so a caller cannot
- * read the reference without first proving one is set.
- */
-export type ProvisionerImageLocation = { readonly configured: true; readonly image: string } | { readonly configured: false };
-
-/**
- * Report whether a provisioner image is configured, and its reference when it is. An empty or
- * whitespace-only value counts as unset, because it would otherwise reach the container engine as a blank
- * image argument. The store-management commands consult this: with no reference they stop with guidance to
- * set the config key, because there is no default source to guess.
- */
-export function resolveProvisionerImage(cfg: ResolvedHarnessConfig): ProvisionerImageLocation {
-    const image = cfg.provisionerImage;
-    return image === null || image.trim() === "" ? { configured: false } : { configured: true, image };
 }
 
 /**
@@ -260,6 +226,7 @@ export function resolveProvisionerImage(cfg: ResolvedHarnessConfig): Provisioner
 export function resolveHarnessConfig(): ResolvedHarnessConfig {
     const raw = readConfig().harness;
     if (raw === undefined) return defaultsWith(undefined);
+    reportRemovedHarnessKeys(raw);
     const parsed = harnessConfigSchema.safeParse(raw);
     if (parsed.success) return defaultsWith(parsed.data);
     const issues = parsed.error.issues.map((i) => `harness.${i.path.join(".")}: ${i.message}`).join("; ");

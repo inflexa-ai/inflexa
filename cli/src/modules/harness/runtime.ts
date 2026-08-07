@@ -42,21 +42,19 @@ import { ensureRuntime, readConfig } from "../../lib/config.ts";
 import { resolveEngineSocket, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
 import { env, providerApiKeyVar, resolveModelApiKey } from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialSource } from "../../lib/credential.ts";
-import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
+import { acquireInstanceLock, releaseInstanceLock, HARNESS_RUNTIME_LOCK_KEY } from "../../lib/lock.ts";
 import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
-import { resolvePackagesFile, storePackagesFile } from "../libs/packages.ts";
+import { storePackagesFile } from "../libs/packages.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
 import { modelMatchesProvider, readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
 import {
     resolveHarnessConfig,
-    resolveLibStore,
     resolveModelConnection,
     AGENT_NAMES,
-    type LibStoreLocation,
     type ResolvedHarnessConfig,
     type ResolvedModelConnection,
     type AgentName,
@@ -195,6 +193,7 @@ export type HarnessBootError =
     | { type: "model_provider_mismatch"; provider: string; model: string }
     | { type: "model_required"; agents: readonly AgentName[] }
     | { type: "sandbox_engine_unresolved"; message: string }
+    | { type: "lib_store_unusable"; root: string }
     | { type: "postgres_unavailable"; cause: PostgresError }
     | { type: "ingress_failed"; cause: IngressError }
     | { type: "runtime_already_active"; holderPid: number }
@@ -289,13 +288,11 @@ export type BootSeams = {
      */
     readonly resolveSandboxEngine: () => Promise<Result<ResolvedSandboxEngine, ContainerRuntimeError>>;
     /**
-     * Extract the sandbox image's package inventory onto the host, returning its cached
-     * path or null when none can be read. Effectful (it shells out to the container
-     * runtime), so it is a seam: the sequencing test must stay offline, and a host with
-     * no runtime binary on PATH must boot regardless — the inventory is an enrichment,
-     * never a prerequisite.
+     * The active farm's package inventory inside the store, or null when the store
+     * carries none. A seam so the sequencing test drives both branches without a store
+     * on disk. Real: {@link storePackagesFile}.
      */
-    readonly resolvePackages: (rt: ContainerRuntime, image: string) => Promise<string | null>;
+    readonly resolveStorePackages: (storeRoot: string) => string | null;
     readonly ensurePostgres: () => Promise<Result<PostgresConnection, PostgresError>>;
     /** Construct the sandbox client — a seam so boot tests can inspect the engine config it is wired with. */
     readonly createSandbox: typeof createSandboxClient;
@@ -344,7 +341,7 @@ export type BootSeams = {
 
 const realSeams: BootSeams = {
     resolveSandboxEngine: resolveSandboxEngineOnce,
-    resolvePackages: resolvePackagesFile,
+    resolveStorePackages: storePackagesFile,
     ensurePostgres: ensurePostgresReady,
     createSandbox: createSandboxClient,
     startIngress: () => startExecIngress(),
@@ -360,14 +357,6 @@ const realSeams: BootSeams = {
     registerNotificationSweep,
     probeEmbedding: probeEmbeddingProvider,
 };
-
-/**
- * Advisory-lock key for the embedded runtime (see `lib/lock.ts`). A fixed
- * sentinel — not an analysis id — because the lock guards the single per-machine
- * DBOS engine (executor "local"), not any one analysis. Never collides with an
- * analysis lock: analysis ids are UUIDv7.
- */
-const RUNTIME_LOCK_KEY = "harness-runtime";
 
 /**
  * Result transport for local sandboxes. The CLI is a poll-mode embedder: the
@@ -479,24 +468,6 @@ export function buildAuthInjectingFetch(source: CredentialSource, underlying: In
         if (refreshed.isErr()) return response;
         return attempt(input, init, refreshed.value);
     };
-}
-
-/**
- * The root of a package store that is ON but BROKEN, or `null` when there is nothing to report.
- *
- * A store is broken when its root exists and yet carries no readable active-farm inventory. The sandbox
- * then falls back to the image without saying so, thus this is the one store condition boot records.
- *
- * The two silent conditions are deliberate, and both are ordinary rather than faults. A store that is OFF
- * is the default of each installation. A store that is ON with NO root is the state between the opt-in and
- * the first download, which the download gate completes on its own — a warning there would fire for each
- * user who opts in, before anything can be wrong. The root is a fixed CLI-owned path, thus its absence
- * carries no user intent at all and cannot mean a mistyped location.
- */
-export function partialLibStoreRoot(location: LibStoreLocation): string | null {
-    if (!location.enabled) return null;
-    if (!existsSync(location.root)) return null;
-    return storePackagesFile(location.root) === null ? location.root : null;
 }
 
 /**
@@ -665,34 +636,13 @@ async function bootHarnessRuntimeOnce(
     // describes whatever the sandbox will actually mount, because an agent told a package exists when the
     // mount does not carry it writes code that fails at import.
     //
-    // With the store on and its active farm readable, the sandbox mounts the store, so the inventory
-    // is the store's own `current/packages.txt` — read directly, never the image probe. With the store off —
-    // or with a store the harness will refuse and drop the mount for, running the sandbox on the baked image
-    // — the inventory follows the mount back to the image label cache. `storePackagesFile` is only the
-    // shallow shape that decides this fallback, not the harness's own mount-usability check.
-    //
-    // The image probe is deliberately AFTER the prereq gates: it spawns a container-runtime probe, and a
-    // boot about to fail on Postgres must not pay for it. `ensureSandboxImage` has already pulled through
-    // this same pin, so the image is present. A null inventory is non-fatal — it is an enrichment, and the
-    // harness reports the installed set as unknown.
-    const libStore = resolveLibStore(cfg);
-    const storeInventory = libStore.enabled ? storePackagesFile(libStore.root) : null;
-    let packagesFile: string | null;
-    if (storeInventory !== null) {
-        packagesFile = storeInventory;
-    } else {
-        const partialRoot = partialLibStoreRoot(libStore);
-        if (partialRoot !== null) {
-            logger.warn(
-                "the package store exists but its active-farm inventory is not readable — reading the image label cache, which follows the mount the harness will drop to",
-                { libStorePath: partialRoot },
-            );
-        }
-        packagesFile = await seams.resolvePackages(pinnedRuntime, cfg.sandboxImage);
-        if (packagesFile === null) {
-            logger.warn("no sandbox package inventory — agents will be told the installed package set is unknown", { image: cfg.sandboxImage });
-        }
-    }
+    // There is ONE source: the active farm of the store, which is the one store a sandbox mounts. The
+    // runtime image bakes no R library and no Python library, thus a per-image label cache would describe
+    // an empty set and there is nothing to fall back to. An unreadable inventory is therefore a boot
+    // failure that names the store and the remedy, never a silent degradation onto an empty image — a
+    // sandbox that starts against it can import nothing at all.
+    const packagesFile = seams.resolveStorePackages(env.libStoreDir);
+    if (packagesFile === null) return err({ type: "lib_store_unusable", root: env.libStoreDir });
 
     // The local CLI is a POLL-mode embedder: the host polls the sandbox for
     // results, the sandbox initiates nothing, and there is no callback listener to
@@ -713,7 +663,7 @@ async function bootHarnessRuntimeOnce(
     // crash recovery (a killed run resumes on the next boot), so we exclude
     // concurrent runtimes with an advisory lock rather than randomizing the id; a
     // hard-killed prior holder's lock is reclaimed by pid, so it never wedges boot.
-    const lock = acquireInstanceLock(RUNTIME_LOCK_KEY);
+    const lock = acquireInstanceLock(HARNESS_RUNTIME_LOCK_KEY);
     if (!lock.acquired) {
         ingress.stop();
         return err({ type: "runtime_already_active", holderPid: lock.holderPid });
@@ -840,24 +790,19 @@ async function bootHarnessRuntimeOnce(
             // never dials out, so the harness ignores it.
             cortexBaseUrl: ingress.cortexBaseUrl,
             image: cfg.sandboxImage,
-            // Mount the host package store only when the user opted in. Off, no `libStorePath` key is
-            // passed, the harness creates no `/mnt/libs` bind mount, and the sandbox resolves imports from
-            // the store the image bakes at `/mnt/libs/current` — bit-for-bit today's behavior. On, the
-            // harness bind-mounts the root read-only at `/mnt/libs`; it re-checks the store at every sandbox
-            // creation and drops the mount when it is incomplete, so the CLI passes the root and never
-            // duplicates that usability check — the shallow store check above governs only the inventory
-            // source, not the mount. The multi-arch image resolves the host arch at pull time, so no
-            // container platform is forced either way. Managed mounts the store through its PVC — that lives
-            // in infra/harness config, not here.
+            // The store root passes for EVERY sandbox, exactly as `refStorePath` below does. No
+            // configuration value suppresses it: the runtime image bakes no R library and no Python
+            // library, thus a sandbox with no store mounted can import nothing and there is no state in
+            // which withholding the root is correct. The root is the fixed CLI-owned `env.libStoreDir`, so
+            // the store-management commands write where boot reads.
             //
-            // The alternative passes `env.libStoreDir` unconditionally, the shape `refStorePath` below
-            // uses. Two consequences of a fixed CLI-owned root rule it out. First, the store content
-            // SURVIVES a cleared flag, thus an unconditional pass mounts that leftover content again and a
-            // cleared flag stops being a full rollback. Second, the harness records a store warning at each
-            // sandbox creation for a root it cannot use, thus the off-by-default state raises a false alarm
-            // on each sandbox. `refStorePath` meets neither problem, because reference data has no opt-out
-            // flag to contradict.
-            ...(libStore.enabled ? { libStorePath: libStore.root } : {}),
+            // The harness bind-mounts it read-only at `/mnt/libs`, and it re-checks the store at every
+            // sandbox creation and drops the mount when the store is incomplete. The CLI does NOT duplicate
+            // that usability check: the boot inventory gate above already refuses the boot when the active
+            // farm carries no inventory, and the sandbox gate refuses the action. The multi-arch image
+            // resolves the host arch at pull time, so no container platform is forced. Managed mounts the
+            // store through its PVC — that lives in infra/harness config, not here.
+            libStorePath: env.libStoreDir,
             // Pass the configured store location unconditionally: the sandbox backend
             // re-checks this path's existence at every sandbox creation and mounts it
             // only when it is a real directory then. So a store installed mid-session
@@ -1145,7 +1090,7 @@ async function bootHarnessRuntimeOnce(
             // controller (its bus subscription + gauge) and release the machine-wide
             // runtime lock so the next boot can acquire it.
             clearAgentSwitch();
-            releaseInstanceLock(RUNTIME_LOCK_KEY);
+            releaseInstanceLock(HARNESS_RUNTIME_LOCK_KEY);
             active = null;
         });
 
@@ -1160,7 +1105,7 @@ async function bootHarnessRuntimeOnce(
         // `installAgentSwitch` may have run before the throw (it precedes `launch`); detach it so a failed
         // boot leaves no dangling bus subscription behind.
         clearAgentSwitch();
-        releaseInstanceLock(RUNTIME_LOCK_KEY);
+        releaseInstanceLock(HARNESS_RUNTIME_LOCK_KEY);
         return err({ type: "runtime_boot_failed", cause });
     }
 }

@@ -18,7 +18,7 @@ import { confirm, fail } from "../../lib/cli.ts";
 import { ensureRuntime, resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { capture, inherit } from "../../lib/container.ts";
-import { variantOfImage } from "../libs/images.ts";
+import { isPublishedSandboxImage } from "../libs/images.ts";
 import { getLogger } from "../../lib/log.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
@@ -100,6 +100,11 @@ export function describeBootError(e: HarnessBootError): string {
             // on Linux; or the container-runtime remediation when no runtime resolved),
             // so it already names the exact command to run — surface it verbatim.
             return e.message;
+        case "lib_store_unusable":
+            return [
+                `The package store at ${e.root} carries no readable package inventory for its active farm, so a sandbox launched now could import nothing.`,
+                "Open `inflexa` to download the store, or run `inflexa store ls` to see which farm the active-farm pointer selects and `inflexa store use <farm>` to select a complete one.",
+            ].join("\n");
         case "postgres_unavailable":
             return e.cause.message;
         case "ingress_failed":
@@ -121,9 +126,9 @@ export function describeBootError(e: HarnessBootError): string {
 
 /**
  * Pre-flight: the configured sandbox image must be present before staging — after
- * staging it is too late to find out. A missing PUBLISHED variant image is pulled
- * from GHCR (offered + confirmed on a TTY, pulled directly otherwise); a missing
- * CUSTOM local tag can't be pulled, so we hint the build. Never a silent dead-end.
+ * staging it is too late to find out. A missing PUBLISHED image is pulled from
+ * GHCR (offered + confirmed on a TTY, pulled directly otherwise); a missing CUSTOM
+ * local tag can't be pulled, so we hint the build. Never a silent dead-end.
  * Exported so `inflexa run` reuses profile's identical image check.
  */
 export async function ensureSandboxImage(image: string): Promise<void> {
@@ -132,26 +137,25 @@ export async function ensureSandboxImage(image: string): Promise<void> {
     const rt = rtResult.value;
     if ((await capture(rt, ["image", "inspect", image])).code === 0) return;
 
-    const variant = variantOfImage(image);
-    if (variant === null) {
+    if (!isPublishedSandboxImage(image)) {
         // A custom local tag (a user's `FROM` image) — we cannot pull it.
         fail(
             [
                 `Sandbox image "${image}" not found in ${rt.id}.`,
-                `Build it locally (e.g. \`${rt.bin} build -f images/sandbox-python-r/Dockerfile -t ${image} .\`),`,
-                "or set `harness.sandboxImage` to a published `ghcr.io/inflexa-ai/sandbox-*` tag and run `inflexa sandbox pull`.",
+                `Build it locally (e.g. \`${rt.bin} build -f images/sandbox-base/Dockerfile -t ${image} .\`),`,
+                "or set `harness.sandboxImage` to the published `ghcr.io/inflexa-ai/sandbox-base` tag and run `inflexa sandbox pull`.",
             ].join("\n"),
         );
     }
 
-    // Published variant: offer + pull. The image is genuinely required to launch a
+    // The published image: offer + pull. The image is genuinely required to launch a
     // sandbox, so a decline is an actionable stop, not a silent dead-end.
     if (process.stdin.isTTY) {
-        console.log(`\n  Sandbox image "${image}" (${variant}) is not installed.`);
+        console.log(`\n  Sandbox image "${image}" is not installed.`);
         const proceed = await confirm("Pull it from GitHub Packages now? (may be a multi-GB download)");
         if (!proceed) fail("A sandbox image is required to run a profile. Run `inflexa sandbox pull` and retry.");
     } else {
-        console.log(`  Sandbox image "${image}" not present — pulling ${variant} from GitHub Packages…`);
+        console.log(`  Sandbox image "${image}" not present — pulling it from GitHub Packages…`);
     }
     const code = await inherit(rt, ["pull", image]);
     if (code !== 0) fail(`Failed to pull ${image} (\`${rt.bin} pull\` exited ${code}). Check your network and that ghcr.io is reachable.`);

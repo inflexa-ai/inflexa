@@ -1,36 +1,48 @@
 /**
- * The `inflexa store` command actions — add, ls, remove-farm, reclaim — over the host package store.
+ * The `inflexa store` command actions — add, ls, use, remove-farm, reclaim — over the host package store.
  *
- * The store is a host directory the harness bind-mounts read-only at `/mnt/libs` when the user opts in.
- * Its root is `env.libStoreDir`, a CLI-owned path: these commands write exactly where boot reads, and no
- * config value moves either side. The opt-in switch (`harness.libStore`) governs the MOUNT, never the
- * location, so a user can populate the store before turning it on.
+ * The store is a host directory the harness bind-mounts read-only at `/mnt/libs` for EVERY sandbox. Its
+ * root is `env.libStoreDir`, a CLI-owned path: these commands write exactly where boot reads, and no
+ * config value moves either side. The store is not optional. The runtime image bakes no R library and no
+ * Python library, so a sandbox with no store mounted can import nothing.
  *
- * Three of the four commands MUTATE it, and they mutate it the same way the design intends: through the
- * provisioner container. The provisioner is the one container with network access and a compiler; it turns
- * a package spec into content-addressed files, assembles a per-analysis symlink farm, and flips the
- * `current` pointer. So `add`, `reclaim`, and `remove-farm` start it through `lib/container.ts` — the same
- * engine wrapper the image pull uses, so engine selection and socket resolution are not duplicated — and
- * each is approval-gated in the registry, like `sandbox pull`.
+ * The store holds one content-addressed `store/` pool, per-farm symlink trees under `farms/`, and the
+ * `current` symlink that selects the active farm. A sandbox mounts whatever `current` resolves to.
  *
- * `ls` is the exception: it only reads. It walks the store on the host filesystem directly, exactly as
- * `refs list` reads the reference store, so a passive inspection needs no container and writes no config.
+ * The provisioner container starts ONLY for an operation that installs packages or mutates the store
+ * under the store lock. It is the one container with network access and a compiler, and it owns the
+ * per-store lock, so `add`, `reclaim`, and `remove-farm` start it through `lib/container.ts` — the same
+ * engine wrapper the image pull uses, so engine selection and socket resolution are not duplicated.
  *
- * The provisioner image has NO default. Its source for a user machine is an open decision, so a command
- * that must run the container reads an explicit `harness.provisionerImage` and stops with guidance when it
- * is unset, rather than guessing a registry path that may not exist.
+ * The other operations are host filesystem work and start NO container: the read of the active farm, the
+ * list of what the store holds, the reclaim preview, and the switch of the active farm. The provisioner
+ * image is measured in gigabytes, so a container start is a real cost that a read or a pointer move must
+ * not pay.
+ *
+ * The provisioner image reference is the {@link PROVISIONER_IMAGE} constant. No configuration value names
+ * it and none can move it: the provisioner offers no variant, so a user chooses nothing. A command that
+ * must start the container obtains the image when the machine does not hold it, rather than refusing.
+ *
+ * `store use` SWITCHES the active farm and it never merges two farms. A link-level union is unsafe: the
+ * provisioner keeps the first link on a collision, so a union of two farms that pin different versions of
+ * one distribution would give an environment that no resolver validated, and a lock file that describes
+ * neither input. There is deliberately no merge option.
  */
 
-import { existsSync, mkdirSync, readlinkSync } from "node:fs";
-import { lstat, readFile, readdir, readlink } from "node:fs/promises";
+import { existsSync, mkdirSync, readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs";
+import { lstat, readFile, readdir, readlink, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 
+import { randomUUIDv7 } from "bun";
 import { err, ok, type Result } from "neverthrow";
 
 import { ensureRuntime } from "../../lib/config.ts";
 import { stream, type CaptureResult } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
-import { resolveHarnessConfig, resolveProvisionerImage, type ResolvedHarnessConfig } from "../harness/config.ts";
+import { acquireInstanceLock, releaseInstanceLock, HARNESS_RUNTIME_LOCK_KEY } from "../../lib/lock.ts";
+import { PROVISIONER_IMAGE } from "./images.ts";
+import { ensureProvisionerImage } from "./pull.ts";
+import { inspectLibStoreDownload } from "./store_download.ts";
 
 /** The path the store is mounted at in both the provisioner (read-write) and the sandbox (read-only). */
 const LIB_MOUNT = "/mnt/libs";
@@ -45,6 +57,12 @@ const DEFAULT_FARM = "default";
 /** The pin marker the provisioner writes inside each store directory, recording its `name==version`. */
 const PIN_MARKER = ".inflexa-pin";
 
+/** The package inventory a complete farm carries. The harness mount check requires it, and so does `store use`. */
+const FARM_INVENTORY = "packages.txt";
+
+/** The store metadata a complete farm carries, recording its version, its architecture, and its tracks. */
+const FARM_METADATA = "meta.json";
+
 /**
  * The message the provisioner prints when a second run finds the store lock held. Matched so the CLI turns
  * a normal condition — two terminals — into an actionable message instead of a bare non-zero exit.
@@ -53,8 +71,8 @@ const STORE_LOCK_PATTERN = /holds the store lock/;
 
 /** Why a store-management action could not complete. Each variant maps to one actionable user message. */
 export type ProvisionError =
-    | { readonly type: "image_unconfigured"; readonly message: string }
     | { readonly type: "runtime_unavailable"; readonly message: string }
+    | { readonly type: "image_unavailable"; readonly message: string }
     | { readonly type: "store_locked"; readonly message: string }
     | { readonly type: "farm_not_found"; readonly farm: string; readonly message: string }
     | { readonly type: "provisioner_failed"; readonly code: number; readonly message: string }
@@ -65,12 +83,14 @@ export type ProvisionProgress = { readonly type: "log"; readonly line: string };
 
 /**
  * Caller-supplied hooks for a store-management action. `run` is the container seam — injected so a test
- * exercises the argument building and exit-code classification without a real engine. `onProgress` is a
- * notification channel over the provisioner's live output; it CANNOT fail the action, because a readout is
- * decoration over work that is otherwise succeeding (the reference-store installer's observer contract).
+ * exercises the argument building and exit-code classification without a real engine. `ensureImage` is
+ * the image seam, for the same reason. `onProgress` is a notification channel over the provisioner's live
+ * output; it CANNOT fail the action, because a readout is decoration over work that is otherwise
+ * succeeding (the reference-store installer's observer contract).
  */
 export type ProvisionDeps = {
     readonly run?: ProvisionerRunner;
+    readonly ensureImage?: () => Promise<Result<void, ProvisionError>>;
     readonly onProgress?: (event: ProvisionProgress) => void;
 };
 
@@ -103,13 +123,34 @@ export type ReclaimOutcome = { readonly reclaimed: readonly string[] };
 /** One stored distribution, by its store directory name and the pin it records (`name==version`, or `null` when the marker is absent). */
 export type StorePackage = { readonly dir: string; readonly pin: string | null };
 
-/** One farm, its name, whether `current` selects it, and how many symlinks it holds. */
-export type StoreFarm = { readonly name: string; readonly active: boolean; readonly links: number };
+/** One farm: its name, whether `current` selects it, how many symlinks it holds, and the tracks it carries. */
+export type StoreFarm = {
+    readonly name: string;
+    readonly active: boolean;
+    readonly links: number;
+    /**
+     * The track names the farm's `meta.json` records, for example `python` and `r`. Empty when the file
+     * records none or cannot be read. A farm with fewer tracks than another is the reason an import fails
+     * after a switch, so the inspection reports it.
+     */
+    readonly tracks: readonly string[];
+};
+
+/**
+ * The state of the active-farm pointer, which decides what every sandbox mounts.
+ *
+ * `dangling` is its own state and not an absence: the pointer names a farm, and the farm is gone. It
+ * makes every sandbox unusable, and the user cannot see it from the farm list alone.
+ */
+export type ActiveFarmPointer =
+    { readonly state: "absent" } | { readonly state: "dangling"; readonly farm: string } | { readonly state: "resolved"; readonly farm: string };
 
 /** A passive inspection of the store, read from the host filesystem. */
 export type StoreInspection = {
     readonly root: string;
     readonly exists: boolean;
+    /** What the active-farm pointer selects. */
+    readonly active: ActiveFarmPointer;
     readonly packages: readonly StorePackage[];
     readonly farms: readonly StoreFarm[];
     /** Bytes the deduplicated store content occupies (`store/` only — the farms are symlinks). */
@@ -125,13 +166,17 @@ function reportProgress(deps: ProvisionDeps, event: ProvisionProgress): void {
     }
 }
 
-/** The error a command raises when it must run the provisioner but no image is configured. */
-function imageUnconfigured(): ProvisionError {
-    return {
-        type: "image_unconfigured",
-        message: `No provisioner image is configured. Set \`harness.provisionerImage\` in ${env.configPath} to the provisioner image reference, then run this command again.`,
-    };
-}
+/**
+ * The default image seam: obtain the provisioner image when the machine does not hold it.
+ *
+ * The command that reaches this is already approval-gated and the user asked for it, so the pull needs no
+ * second consent. An absent image is never reported as an unconfigured one, because nothing configures it.
+ */
+const defaultEnsureImage = async (): Promise<Result<void, ProvisionError>> => {
+    const rtResult = await ensureRuntime();
+    if (rtResult.isErr()) return err({ type: "runtime_unavailable", message: rtResult.error.message });
+    return (await ensureProvisionerImage(rtResult.value)).mapErr((e) => ({ type: "image_unavailable", message: e.message }));
+};
 
 /** The default runner: resolve and pin a container runtime, then stream the provisioner through `lib/container.ts`. */
 const defaultRunner: ProvisionerRunner = async (invocation, onLine) => {
@@ -193,23 +238,32 @@ function readCurrentTarget(storeRoot: string): string | null {
     }
 }
 
+/** What the active-farm pointer selects: nothing, a farm that is gone, or a farm that is there. */
+function readActiveFarmPointer(storeRoot: string): ActiveFarmPointer {
+    const farm = readCurrentTarget(storeRoot);
+    if (farm === null) return { state: "absent" };
+    return existsSync(join(storeRoot, "farms", farm)) ? { state: "resolved", farm } : { state: "dangling", farm };
+}
+
 /**
  * Provision packages into a farm, extending its closure. The provisioner unions the new specs with the
  * farm's earlier requests, so this passes only the new specs and the harness re-resolves the whole set —
- * an add is additive by design. Fails before touching the engine when no provisioner image is configured.
+ * an add is additive by design.
  */
 export async function provisionPackages(
-    params: { readonly storeRoot: string; readonly image: string | null; readonly farm: string; readonly specs: readonly string[] },
+    params: { readonly storeRoot: string; readonly farm: string; readonly specs: readonly string[] },
     deps: ProvisionDeps = {},
 ): Promise<Result<ProvisionOutcome, ProvisionError>> {
-    if (params.image === null) return err(imageUnconfigured());
     // The bind-mount source must exist before the engine mounts it; a missing source would be
     // auto-created as a root-owned directory the user cannot manage.
     const ensured = ensureStoreRootExists(params.storeRoot);
     if (ensured.isErr()) return err(ensured.error);
+    const image = await (deps.ensureImage ?? defaultEnsureImage)();
+    if (image.isErr()) return err(image.error);
     const run = deps.run ?? defaultRunner;
-    const ran = await run({ image: params.image, storeRoot: params.storeRoot, network: "online", args: ["--farm", params.farm, ...params.specs] }, (line) =>
-        reportProgress(deps, { type: "log", line }),
+    const ran = await run(
+        { image: PROVISIONER_IMAGE, storeRoot: params.storeRoot, network: "online", args: ["--farm", params.farm, ...params.specs] },
+        (line) => reportProgress(deps, { type: "log", line }),
     );
     if (ran.isErr()) return err(ran.error);
     return classifyRun(ran.value).map(() => ({ farm: params.farm, specs: params.specs }));
@@ -217,12 +271,13 @@ export async function provisionPackages(
 
 /** Remove a farm's symlinks. The store directories it referenced stay until reclaim runs. */
 export async function removeFarm(
-    params: { readonly storeRoot: string; readonly image: string | null; readonly farm: string },
+    params: { readonly storeRoot: string; readonly farm: string },
     deps: ProvisionDeps = {},
 ): Promise<Result<void, ProvisionError>> {
-    if (params.image === null) return err(imageUnconfigured());
+    const image = await (deps.ensureImage ?? defaultEnsureImage)();
+    if (image.isErr()) return err(image.error);
     const run = deps.run ?? defaultRunner;
-    const ran = await run({ image: params.image, storeRoot: params.storeRoot, network: "offline", args: ["--remove-farm", params.farm] }, (line) =>
+    const ran = await run({ image: PROVISIONER_IMAGE, storeRoot: params.storeRoot, network: "offline", args: ["--remove-farm", params.farm] }, (line) =>
         reportProgress(deps, { type: "log", line }),
     );
     if (ran.isErr()) return err(ran.error);
@@ -259,17 +314,15 @@ export async function reclaimPreview(storeRoot: string): Promise<Result<readonly
  * costs no engine start. The caller reports {@link reclaimPreview} before this runs, so the removal is
  * never a surprise.
  */
-export async function reclaimStore(
-    params: { readonly storeRoot: string; readonly image: string | null },
-    deps: ProvisionDeps = {},
-): Promise<Result<ReclaimOutcome, ProvisionError>> {
+export async function reclaimStore(params: { readonly storeRoot: string }, deps: ProvisionDeps = {}): Promise<Result<ReclaimOutcome, ProvisionError>> {
     const preview = await reclaimPreview(params.storeRoot);
     if (preview.isErr()) return err(preview.error);
     const candidates = preview.value;
     if (candidates.length === 0) return ok({ reclaimed: [] });
-    if (params.image === null) return err(imageUnconfigured());
+    const image = await (deps.ensureImage ?? defaultEnsureImage)();
+    if (image.isErr()) return err(image.error);
     const run = deps.run ?? defaultRunner;
-    const ran = await run({ image: params.image, storeRoot: params.storeRoot, network: "offline", args: ["--reclaim"] }, (line) =>
+    const ran = await run({ image: PROVISIONER_IMAGE, storeRoot: params.storeRoot, network: "offline", args: ["--reclaim"] }, (line) =>
         reportProgress(deps, { type: "log", line }),
     );
     if (ran.isErr()) return err(ran.error);
@@ -277,21 +330,154 @@ export async function reclaimStore(
 }
 
 /**
- * Inspect the store from the host filesystem: its packages, its farms, and the disk the content occupies.
- * Read-only by construction — it takes no container seam, so no command routed through it can remove
- * content. An absent root is a normal state, reported as `exists: false`, not an error.
+ * Inspect the store from the host filesystem: the active-farm pointer, its packages, its farms with their
+ * tracks, and the disk the content occupies. Read-only by construction — it takes no container seam, so no
+ * command routed through it can remove content. An absent root is a normal state, reported as
+ * `exists: false`, not an error.
  */
 export async function inspectStore(storeRoot: string): Promise<Result<StoreInspection, ProvisionError>> {
     try {
-        if (!existsSync(storeRoot)) return ok({ root: storeRoot, exists: false, packages: [], farms: [], storeBytes: 0 });
+        if (!existsSync(storeRoot)) return ok({ root: storeRoot, exists: false, active: { state: "absent" }, packages: [], farms: [], storeBytes: 0 });
+        const active = readActiveFarmPointer(storeRoot);
         const packages = await readStorePackages(storeRoot);
-        const farms = await readFarms(storeRoot);
+        const farms = await readFarms(storeRoot, active);
         const storeBytes = await dirBytes(join(storeRoot, "store"));
-        return ok({ root: storeRoot, exists: true, packages, farms, storeBytes });
+        return ok({ root: storeRoot, exists: true, active, packages, farms, storeBytes });
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not inspect the package store at ${storeRoot}.`, cause });
     }
 }
+
+// --- the active-farm switch ---------------------------------------------------
+
+/** Why `inflexa store use` refused. Each variant maps to one actionable user message. */
+export type StoreUseError =
+    | { readonly type: "runtime_live"; readonly holderPid: number; readonly message: string }
+    | { readonly type: "download_in_flight"; readonly message: string }
+    | { readonly type: "farm_not_found"; readonly farm: string; readonly message: string }
+    | { readonly type: "farm_incomplete"; readonly farm: string; readonly missing: readonly string[]; readonly message: string }
+    | { readonly type: "reserved_name"; readonly farm: string; readonly message: string }
+    | { readonly type: "io_failed"; readonly message: string; readonly cause: unknown };
+
+/** A completed switch: the farm now active, and the one it replaced (`null` when there was no pointer). */
+export type StoreUseOutcome = { readonly farm: string; readonly previous: string | null };
+
+/** Caller-supplied hooks for {@link storeUse}. */
+export type StoreUseDeps = {
+    /** Report one line to the user. The forced switch names its risk through this, BEFORE the write. */
+    readonly onNotice?: (line: string) => void;
+};
+
+/** The risk a forced switch takes, named before the pointer moves. */
+const FORCE_RISK_NOTICE =
+    "A live sandbox keeps its own resolved mount of /mnt/libs/current. This switch re-points it, and that sandbox then reads nothing from the store.";
+
+/**
+ * Switch the active farm of the store, atomically and with no container.
+ *
+ * The write makes the new link at a temporary name in the store root, then renames that name over
+ * `current`. A rename over an existing name is atomic within one filesystem, and the store root is one
+ * filesystem. The pointer therefore resolves at every moment: it names the old farm, then the new one, and
+ * it is never absent. That matters because the harness refuses a store whose `current` does not resolve
+ * and then drops the mount with a warning only, so a sandbox created inside an unlink-then-relink window
+ * would hold no package and report nothing.
+ *
+ * It refuses, and leaves the pointer untouched, in five cases. `force` bypasses the live-runtime refusal
+ * and NOTHING else: the other four protect the pointer itself, and a forced pointer that no sandbox can
+ * mount would trade a clear refusal for a store the harness rejects at every later sandbox.
+ */
+export async function storeUse(
+    params: { readonly storeRoot: string; readonly farm: string; readonly force?: boolean },
+    deps: StoreUseDeps = {},
+): Promise<Result<StoreUseOutcome, StoreUseError>> {
+    const farm = params.farm.trim();
+    // A dot name marks staging debris or a farm a swap superseded, never a farm to select. Checked first
+    // because it is a fact about the name alone, so it costs no disk read.
+    if (farm.startsWith(".")) {
+        return err({
+            type: "reserved_name",
+            farm,
+            message: `"${farm}" is a dot-prefixed name, which marks staging or superseded debris rather than a farm. Run \`inflexa store ls\` to see the farms.`,
+        });
+    }
+
+    const farmPath = join(params.storeRoot, "farms", farm);
+    let missing: readonly string[];
+    try {
+        if (!existsSync(farmPath) || !(await stat(farmPath)).isDirectory()) {
+            return err({
+                type: "farm_not_found",
+                farm,
+                message: `No farm named "${farm}" under ${join(params.storeRoot, "farms")}. Run \`inflexa store ls\` to see the farms.`,
+            });
+        }
+        // The shape the harness mount check requires. The CLI applies it HERE, and nowhere else, because
+        // the refusal is the point of this command: a refusal before the write beats a broken pointer.
+        missing = [FARM_INVENTORY, FARM_METADATA].filter((name) => !existsSync(join(farmPath, name)));
+    } catch (cause) {
+        return err({ type: "io_failed", message: `Could not read the farm at ${farmPath}.`, cause });
+    }
+    if (missing.length > 0) {
+        return err({
+            type: "farm_incomplete",
+            farm,
+            missing,
+            message: `The farm "${farm}" carries no ${missing.join(" and no ")}, so the harness would refuse to mount it. Run \`inflexa store add\` to build it, or select a complete farm.`,
+        });
+    }
+
+    // A download merges its staged tree into the store root, so it can add a farm while this switch runs.
+    // The two must not overlap.
+    if ((await inspectLibStoreDownload(params.storeRoot)) === "incomplete") {
+        return err({
+            type: "download_in_flight",
+            message:
+                "A package-store download is in flight or was interrupted. Wait for it to finish, or open `inflexa` to repair it, then run this command again.",
+        });
+    }
+
+    // A sandbox can exist only under a live harness runtime, and that runtime holds the machine-wide
+    // instance lock for its whole life. The held lock is therefore a sound "a sandbox may be live" guard,
+    // and it needs no per-sandbox lease. `acquireInstanceLock` reclaims a lock whose holder pid is dead,
+    // so `force` covers only the case that survives that check.
+    const lock = acquireInstanceLock(HARNESS_RUNTIME_LOCK_KEY);
+    if (!lock.acquired && params.force !== true) {
+        return err({
+            type: "runtime_live",
+            holderPid: lock.holderPid,
+            message: `Another \`inflexa\` process (pid ${lock.holderPid}) is running the harness runtime, and a switch re-points the store under any sandbox it holds. Stop that process, or pass \`--force\` to switch anyway.`,
+        });
+    }
+    // Naming the risk is what `--force` buys the user: they asked to bypass the guard, so say what the
+    // guard protects before the pointer moves, not after.
+    if (params.force === true) deps.onNotice?.(FORCE_RISK_NOTICE);
+
+    try {
+        const previous = readCurrentTarget(params.storeRoot);
+        const link = join(params.storeRoot, "current");
+        // A dot name for the temporary link, so a concurrent walk of the store root skips it exactly as it
+        // skips staging debris. The uuid keeps two switches from choosing the same name.
+        const temp = join(params.storeRoot, `.current-${randomUUIDv7()}`);
+        // Relative, matching what the provisioner writes: the link is read inside the container at
+        // /mnt/libs/current, where an absolute host path would resolve to nothing.
+        symlinkSync(`farms/${farm}`, temp);
+        try {
+            renameSync(temp, link);
+        } catch (cause) {
+            rmSync(temp, { force: true });
+            throw cause;
+        }
+        return ok({ farm, previous });
+    } catch (cause) {
+        return err({ type: "io_failed", message: `Could not point the active farm at "${farm}" in ${params.storeRoot}.`, cause });
+    } finally {
+        // Release only a lock this call took. `releaseInstanceLock` checks the holder pid, so a lock a
+        // foreign live process holds — the `--force` path — is left exactly as it was.
+        if (lock.acquired) releaseInstanceLock(HARNESS_RUNTIME_LOCK_KEY);
+    }
+}
+
+// --- host reads ---------------------------------------------------------------
 
 /** Store directory names any farm currently links to. Mirrors the provisioner's reclaim referenced-set scan. */
 async function referencedStoreDirs(storeRoot: string): Promise<Set<string>> {
@@ -342,15 +528,36 @@ async function readPin(dir: string): Promise<string | null> {
     }
 }
 
-/** The farms with their link counts, marking the one `current` selects. */
-async function readFarms(storeRoot: string): Promise<StoreFarm[]> {
+/**
+ * The track names a farm records in its `meta.json`, or an empty list when the file is absent, malformed,
+ * or records no track. An unreadable file is not an error here: the inspection describes what is there,
+ * and a farm with no readable metadata is one `store use` refuses anyway.
+ */
+async function readTracks(farmDir: string): Promise<readonly string[]> {
+    try {
+        const raw: unknown = JSON.parse(await readFile(join(farmDir, FARM_METADATA), "utf8"));
+        if (typeof raw !== "object" || raw === null) return [];
+        const tracks = (raw as Record<string, unknown>).tracks;
+        return Array.isArray(tracks) ? tracks.filter((track): track is string => typeof track === "string") : [];
+    } catch {
+        return [];
+    }
+}
+
+/** The farms with their link counts and their tracks, marking the one the pointer resolves to. */
+async function readFarms(storeRoot: string, active: ActiveFarmPointer): Promise<StoreFarm[]> {
     const farmsDir = join(storeRoot, "farms");
     if (!existsSync(farmsDir)) return [];
-    const active = readCurrentTarget(storeRoot);
     const farms: StoreFarm[] = [];
     for (const entry of await readdir(farmsDir, { withFileTypes: true })) {
         if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-        farms.push({ name: entry.name, active: entry.name === active, links: await countSymlinks(join(farmsDir, entry.name)) });
+        const dir = join(farmsDir, entry.name);
+        farms.push({
+            name: entry.name,
+            active: active.state === "resolved" && active.farm === entry.name,
+            links: await countSymlinks(dir),
+            tracks: await readTracks(dir),
+        });
     }
     return farms.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -410,39 +617,25 @@ function errorText(cause: unknown): string {
 
 // --- command actions ---------------------------------------------------------
 
-/** The configured provisioner image reference, or `null` when none is set. */
-function resolveImage(cfg: ResolvedHarnessConfig): string | null {
-    const location = resolveProvisionerImage(cfg);
-    return location.configured ? location.image : null;
-}
-
 /** Print an error and mark the process failed. */
-function reportError(error: ProvisionError): void {
+function reportError(error: { readonly message: string }): void {
     console.error(`\n  ${error.message}\n`);
     process.exitCode = 1;
 }
 
 /** `inflexa store add` — provision packages into the active farm. */
 export async function runStoreAdd(specs: string[], options: { farm?: string }): Promise<void> {
-    const cfg = resolveHarnessConfig();
     const storeRoot = env.libStoreDir;
-    const image = resolveImage(cfg);
-    // Announce the work only after the preconditions hold. An announcement that a refusal follows
-    // reads as a run that died part-way, and it hides which condition actually stopped the command.
-    if (image === null) {
-        reportError(imageUnconfigured());
-        return;
-    }
     const farm = resolveActiveFarm(storeRoot, options.farm);
     console.log(`Provisioning into farm "${farm}" (network on). This can take some minutes.`);
-    const result = await provisionPackages({ storeRoot, image, farm, specs }, { onProgress: (event) => console.log(event.line) });
+    const result = await provisionPackages({ storeRoot, farm, specs }, { onProgress: (event) => console.log(event.line) });
     result.match(
         (outcome) => console.log(`Farm "${outcome.farm}" is ready.`),
         (error) => reportError(error),
     );
 }
 
-/** `inflexa store ls` — report the store's packages, farms, and disk use. */
+/** `inflexa store ls` — report the store's active farm, packages, farms, and disk use. */
 export async function runStoreLs(): Promise<void> {
     const result = await inspectStore(env.libStoreDir);
     result.match(
@@ -451,10 +644,23 @@ export async function runStoreLs(): Promise<void> {
     );
 }
 
+/** `inflexa store use` — switch the active farm on the host. */
+export async function runStoreUse(farm: string, options: { force?: boolean }): Promise<void> {
+    const result = await storeUse({ storeRoot: env.libStoreDir, farm, force: options.force ?? false }, { onNotice: (line) => console.log(`  ${line}`) });
+    result.match(
+        (outcome) =>
+            console.log(
+                outcome.previous === null || outcome.previous === outcome.farm
+                    ? `The active farm is "${outcome.farm}".`
+                    : `The active farm is "${outcome.farm}" (it was "${outcome.previous}").`,
+            ),
+        (error) => reportError(error),
+    );
+}
+
 /** `inflexa store remove-farm` — remove a farm's symlinks. */
 export async function runStoreRemoveFarm(farm: string): Promise<void> {
-    const cfg = resolveHarnessConfig();
-    const result = await removeFarm({ storeRoot: env.libStoreDir, image: resolveImage(cfg), farm }, { onProgress: (event) => console.log(event.line) });
+    const result = await removeFarm({ storeRoot: env.libStoreDir, farm }, { onProgress: (event) => console.log(event.line) });
     result.match(
         () => console.log(`Removed farm "${farm}". Run \`inflexa store reclaim\` to drop the packages it alone referenced.`),
         (error) => reportError(error),
@@ -463,7 +669,6 @@ export async function runStoreRemoveFarm(farm: string): Promise<void> {
 
 /** `inflexa store reclaim` — report, then remove, store content no farm references. */
 export async function runStoreReclaim(): Promise<void> {
-    const cfg = resolveHarnessConfig();
     const storeRoot = env.libStoreDir;
     const preview = await reclaimPreview(storeRoot);
     if (preview.isErr()) return reportError(preview.error);
@@ -474,11 +679,27 @@ export async function runStoreReclaim(): Promise<void> {
     }
     console.log("These store packages have no farm and will be removed:");
     for (const name of candidates) console.log(`  ${name}`);
-    const result = await reclaimStore({ storeRoot, image: resolveImage(cfg) }, { onProgress: (event) => console.log(event.line) });
+    const result = await reclaimStore({ storeRoot }, { onProgress: (event) => console.log(event.line) });
     result.match(
         (outcome) => console.log(`Reclaimed ${outcome.reclaimed.length} package(s).`),
         (error) => reportError(error),
     );
+}
+
+/** Render the active-farm pointer as its one report line. */
+function describeActive(active: ActiveFarmPointer): string {
+    switch (active.state) {
+        case "resolved":
+            return active.farm;
+        case "dangling":
+            return `none — the pointer names "${active.farm}", which is not there. Run \`inflexa store use <farm>\` to select one.`;
+        case "absent":
+            return "none — run `inflexa store use <farm>` to select one.";
+        default: {
+            const exhaustive: never = active;
+            throw new Error(`unhandled active-farm pointer: ${JSON.stringify(exhaustive)}`);
+        }
+    }
 }
 
 /** Print a store inspection as an aligned report. */
@@ -488,10 +709,14 @@ function printInspection(inspection: StoreInspection): void {
         console.log("  Present  no — run `inflexa store add <packages...>` to create it.");
         return;
     }
+    console.log(`  Active   ${describeActive(inspection.active)}`);
     console.log(`  Packages ${inspection.packages.length}`);
     for (const pkg of inspection.packages) console.log(`    ${pkg.pin ?? pkg.dir}`);
     console.log(`  Farms    ${inspection.farms.length}`);
-    for (const farm of inspection.farms) console.log(`    ${farm.name}${farm.active ? " (active)" : ""}  ${farm.links} link(s)`);
+    for (const farm of inspection.farms) {
+        const tracks = farm.tracks.length === 0 ? "no tracks recorded" : `tracks: ${farm.tracks.join(", ")}`;
+        console.log(`    ${farm.name}${farm.active ? " (active)" : ""}  ${farm.links} link(s)  ${tracks}`);
+    }
     console.log(`  Disk     ${formatBytes(inspection.storeBytes)}`);
 }
 

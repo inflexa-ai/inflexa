@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { err, ok, type Result } from "neverthrow";
 
-import type { LibStoreLocation } from "../../modules/harness/config.ts";
 import type { LibStoreDownloadError, LibStoreDownloadOutcome, LibStoreDownloadState } from "../../modules/libs/store_download.ts";
 import type { Notice } from "../theme.ts";
 import {
@@ -14,13 +13,15 @@ import {
 } from "./sandbox_gate.tsx";
 
 // The gate flow runs offline: the store reads, the engine image checks, the consent dialog, and the
-// notice channel are all injected as stubs. The two facts under test are the gate holding a sandbox
-// action until the store is complete (with a visible state), and no sandbox proceeding against an empty
-// store — plus the app-open trigger asking before it applies a moved-tag update.
+// notice channel are all injected as stubs. The facts under test are the gate holding a sandbox action
+// until the store is complete (with a visible state), NO state in which it passes without a store, an
+// unusable store refusing the action with its remedy, and the app-open trigger asking before it applies a
+// moved-tag update.
 
 afterEach(() => __resetSandboxGateForTest());
 
-const ENABLED: LibStoreLocation = { enabled: true, root: "/tmp/store" };
+const STORE_ROOT = "/tmp/store";
+const INVENTORY = `${STORE_ROOT}/current/packages.txt`;
 const DOWNLOADED: LibStoreDownloadOutcome = {
     type: "downloaded",
     manifestDigest: "sha256:a",
@@ -42,8 +43,9 @@ type Recorder = {
 };
 
 type SeamOverrides = {
-    readonly location?: LibStoreLocation;
     readonly inspect?: LibStoreDownloadState;
+    /** The active farm's inventory path, or `null` for a store no sandbox could mount. */
+    readonly inventory?: string | null;
     /** Answered in order; a shortfall defaults to `true`. */
     readonly confirmAnswers?: boolean[];
     /** Produce the download result for one call, keyed on `force`. */
@@ -58,14 +60,15 @@ function makeSeams(over: SeamOverrides = {}): { seams: SandboxGateSeams; rec: Re
     const rec: Recorder = { confirms: [], confirmMessages: [], downloads: [], notices: [], imageChecks: 0, pulls: 0 };
     const answers = [...(over.confirmAnswers ?? [])];
     const seams: SandboxGateSeams = {
-        resolveLocation: () => over.location ?? ENABLED,
+        storeRoot: () => STORE_ROOT,
         inspect: async () => over.inspect ?? "missing",
-        download: async (_location, force) => {
+        download: async (_root, force) => {
             rec.downloads.push({ force });
             if (over.onDownload) await over.onDownload();
             return over.download ? over.download(force) : ok(DOWNLOADED);
         },
-        sandboxImage: () => "ghcr.io/inflexa-ai/sandbox-python-r:latest",
+        storeInventory: () => (over.inventory === undefined ? INVENTORY : over.inventory),
+        sandboxImage: () => "ghcr.io/inflexa-ai/sandbox-base:latest",
         imageReadiness: async () => {
             rec.imageChecks += 1;
             return over.image ?? { kind: "present" };
@@ -89,14 +92,17 @@ function tick(): Promise<void> {
 }
 
 describe("awaitSandboxReady — the store half of the gate", () => {
-    test("the store is off: the gate passes the store silently and only the image applies", async () => {
-        const { seams, rec } = makeSeams({ location: { enabled: false } });
-        expect(await awaitSandboxReady(seams)).toBe("ready");
-        // The network and the consent were never touched; the image was still checked.
-        expect(rec.downloads).toEqual([]);
-        expect(rec.confirms).toEqual([]);
-        expect(rec.imageChecks).toBe(1);
-        expect(libStoreGateState().phase).toBe("disabled");
+    // The whole point of removing the opt-in: there is no configuration, and no phase, that lets a
+    // sandbox action through while the store is absent. Every state a store with no content can be in
+    // ends in `blocked`.
+    test("the gate has no state that passes without a store", async () => {
+        for (const inspect of ["missing", "incomplete", "invalid_receipt"] as const) {
+            __resetSandboxGateForTest();
+            const { seams, rec } = makeSeams({ inspect, confirmAnswers: [false] });
+            expect(await awaitSandboxReady(seams)).toBe("blocked");
+            // Refused before the image half, so nothing downstream can start a sandbox either.
+            expect(rec.imageChecks).toBe(0);
+        }
     });
 
     test("a sandbox action holds during the download with a visible state, then proceeds", async () => {
@@ -131,6 +137,23 @@ describe("awaitSandboxReady — the store half of the gate", () => {
         expect(libStoreGateState().phase).toBe("declined");
     });
 
+    test("an unreadable inventory refuses the action, names the remedy, and starts no sandbox", async () => {
+        // The bytes are all there — the receipt says installed — but the active farm carries no inventory,
+        // so a sandbox launched now could import nothing. There is no second source to degrade onto.
+        const { seams, rec } = makeSeams({ inspect: "installed", inventory: null });
+        expect(await awaitSandboxReady(seams)).toBe("blocked");
+        expect(libStoreGateState().phase).toBe("failed");
+        expect(rec.imageChecks).toBe(0);
+        const failure = rec.notices.find((n) => n.kind === "error");
+        expect(failure?.text).toContain("inflexa store use");
+    });
+
+    test("a completed download whose farm is unusable still refuses", async () => {
+        const { seams } = makeSeams({ inspect: "missing", inventory: null });
+        expect(await awaitSandboxReady(seams)).toBe("blocked");
+        expect(libStoreGateState().phase).toBe("failed");
+    });
+
     test("a locally built store gets the merge consent, not the plain install offer", async () => {
         const { seams, rec } = makeSeams({ inspect: "local" });
         expect(await awaitSandboxReady(seams)).toBe("ready");
@@ -153,7 +176,7 @@ describe("awaitSandboxReady — the store half of the gate", () => {
         expect(rec.confirms).toEqual([]);
     });
 
-    test("a failed download reports at the gate with a retry, and never holds without end", async () => {
+    test("a failed download leaves chat usable, offers a retry at the next action, and starts no sandbox", async () => {
         // First arrival: consent accepted, but the download fails, so the gate blocks and records the state.
         let downloadCalls = 0;
         const { seams, rec } = makeSeams({
@@ -167,43 +190,88 @@ describe("awaitSandboxReady — the store half of the gate", () => {
         expect(await awaitSandboxReady(seams)).toBe("blocked");
         expect(libStoreGateState().phase).toBe("failed");
         expect(rec.notices.some((n) => n.kind === "error")).toBe(true);
+        // The failure stopped at the store half: no image was checked and no sandbox could follow.
+        expect(rec.imageChecks).toBe(0);
 
         // Second arrival: the failure is reported again and a retry is offered; the retry succeeds.
         expect(await awaitSandboxReady(seams)).toBe("ready");
         expect(rec.confirms).toEqual(["Download the package store?", "Retry the package store download?"]);
         expect(libStoreGateState().phase).toBe("installed");
     });
+
+    test("a download that adds a farm without moving the pointer names the switch command", async () => {
+        const { seams, rec } = makeSeams({
+            inspect: "missing",
+            download: () => ok({ ...DOWNLOADED, merge: { storeDirsAdded: [], farmsAdded: ["catalog"], farmsKept: ["default"], currentSet: false } }),
+        });
+        expect(await awaitSandboxReady(seams)).toBe("ready");
+        expect(rec.notices.some((n) => n.text.includes("inflexa store use catalog"))).toBe(true);
+    });
+
+    test("a download that set the pointer itself suggests no switch", async () => {
+        const { seams, rec } = makeSeams({
+            inspect: "missing",
+            download: () => ok({ ...DOWNLOADED, merge: { storeDirsAdded: [], farmsAdded: ["catalog"], farmsKept: [], currentSet: true } }),
+        });
+        expect(await awaitSandboxReady(seams)).toBe("ready");
+        expect(rec.notices.some((n) => n.text.includes("inflexa store use"))).toBe(false);
+    });
 });
 
 describe("awaitSandboxReady — the image half of the gate", () => {
     test("a pullable image is pulled after consent, then the gate is ready", async () => {
-        const { seams, rec } = makeSeams({ location: { enabled: false }, image: { kind: "pullable", variant: "python-r" } });
+        const { seams, rec } = makeSeams({ inspect: "installed", image: { kind: "pullable" } });
         expect(await awaitSandboxReady(seams)).toBe("ready");
         expect(rec.pulls).toBe(1);
     });
 
     test("a declined image pull blocks and pulls nothing", async () => {
-        const { seams, rec } = makeSeams({ location: { enabled: false }, image: { kind: "pullable", variant: "python" }, confirmAnswers: [false] });
+        const { seams, rec } = makeSeams({ inspect: "installed", image: { kind: "pullable" }, confirmAnswers: [false] });
         expect(await awaitSandboxReady(seams)).toBe("blocked");
         expect(rec.pulls).toBe(0);
         expect(rec.notices.some((n) => n.kind === "warn")).toBe(true);
     });
 
     test("an engine error blocks and names the fault", async () => {
-        const { seams, rec } = makeSeams({ location: { enabled: false }, image: { kind: "engine_error", message: "the Podman machine is not running." } });
+        const { seams, rec } = makeSeams({ inspect: "installed", image: { kind: "engine_error", message: "the Podman machine is not running." } });
         expect(await awaitSandboxReady(seams)).toBe("blocked");
         expect(rec.notices.some((n) => n.kind === "error" && n.text.includes("Podman"))).toBe(true);
     });
 });
 
 describe("startLibStoreDownload — the app-open trigger", () => {
-    test("the store is off: a clean no-op that touches no network and no image", async () => {
-        const { seams, rec } = makeSeams({ location: { enabled: false } });
-        await startLibStoreDownload(seams);
-        expect(rec.downloads).toEqual([]);
-        expect(rec.confirms).toEqual([]);
-        expect(rec.imageChecks).toBe(0);
-        expect(libStoreGateState().phase).toBe("disabled");
+    // The first run: a machine with no store and no receipt. The app opens at once (the trigger never
+    // blocks anything), the consent opens ONE time, and the first sandbox action holds on the same flow.
+    test("the first run opens the consent once, and the first sandbox action holds on that same download", async () => {
+        let release!: () => void;
+        const gate = new Promise<void>((r) => {
+            release = r;
+        });
+        const { seams, rec } = makeSeams({ inspect: "missing", onDownload: () => gate });
+
+        const opening = startLibStoreDownload(seams);
+        await tick();
+        expect(rec.confirms).toEqual(["Download the package store?"]);
+        expect(libStoreGateState().phase).toBe("downloading");
+
+        // The sandbox action arrives while that download runs: it holds, and it asks nothing again.
+        const action = awaitSandboxReady(seams);
+        let settled: "ready" | "blocked" | undefined;
+        void action.then((v) => {
+            settled = v;
+        });
+        await tick();
+        expect(settled).toBeUndefined();
+        expect(rec.confirms).toEqual(["Download the package store?"]);
+        expect(rec.downloads).toEqual([{ force: false }]);
+        // The byte total is what the status surface reports while the hold lasts.
+        const phase = libStoreGateState();
+        expect(phase.phase).toBe("downloading");
+        if (phase.phase === "downloading") expect(phase.bytes).toBe(0);
+
+        release();
+        await opening;
+        expect(await action).toBe("ready");
     });
 
     test("app open never pulls the image, so chat is usable while the image is absent", async () => {

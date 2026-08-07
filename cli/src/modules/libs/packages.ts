@@ -1,119 +1,31 @@
 /**
- * The sandbox image's package inventory, cached on the host.
+ * The package inventory `list_available_packages` reads, resolved on the host.
  *
- * `list_available_packages` reads `packages.txt` from the HOST filesystem. That works
- * when the host mounts the library store at the sandbox's own path — a managed
- * deployment does. The cli does not: the store is baked into the pulled image and no
- * `/mnt/libs` bind mount is ever created (see modules/libs/images.ts), so the file
- * exists only inside the image and a host-side read finds nothing. Agents were then
- * told the inventory was unknown on every call.
+ * There is ONE source, and it is the store the sandbox mounts. The rule is that the
+ * inventory describes whatever the sandbox will actually mount, because an agent
+ * told a package exists when the mount does not carry it writes code that fails at
+ * import.
  *
- * The image build stamps its own load-tested inventory onto the image as an OCI label
- * (scripts/lib-store-label-packages.sh). Reading it is `docker image inspect` — pure
- * metadata on an already-pulled image, so no container is created and no registry
- * client is needed. It is per-arch for free: the pulled image IS the host's arch, so
- * its label is the right list by construction (amd64 carries packages arm64 has no
- * build for, and R may be absent from arm64 entirely).
- *
- * The cache is keyed by image ID, so a refreshed `:latest` that resolves to a new
- * digest lands in a new directory and a stale inventory is never served.
+ * The runtime image bakes no R library and no Python library, so a per-image label
+ * cache would describe an empty set. There is thus nothing to fall back to, and an
+ * inventory the CLI cannot read is a reported failure rather than a silent
+ * degradation — refer to `modules/harness/runtime.ts`.
  */
 
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { err, ok, type Result } from "neverthrow";
-
-import { capture, type ContainerRuntime } from "../../lib/container.ts";
-import { env } from "../../lib/env.ts";
-
-/** The label the library-store build stamps the inventory into. */
-const PACKAGES_LABEL = "ai.inflexa.lib-store.packages";
-
-/** Why an inventory could not be resolved. Every case is non-fatal — the tool degrades to "unknown". */
-export type PackageInventoryError =
-    | { readonly type: "image_absent"; readonly image: string }
-    | { readonly type: "label_missing"; readonly image: string }
-    | { readonly type: "cache_write_failed"; readonly path: string; readonly cause: unknown };
-
 /**
- * Host path the inventory for `imageId` is cached at. Keyed by image ID rather than
- * tag: `:latest` moves, and serving the previous image's package list would be worse
- * than serving none, since the agent has no way to tell it is stale.
- */
-export function packagesCachePath(imageId: string): string {
-    // Image IDs arrive as `sha256:<hex>`; the algorithm prefix is not a path segment.
-    const key = imageId.replace(/^sha256:/, "").replace(/[^a-f0-9]/gi, "");
-    return join(env.libsDir, key, "packages.txt");
-}
-
-/**
- * Read the inventory label out of an already-pulled image and cache it, returning the
- * cached path. Re-reads the label on every call — it is a local metadata lookup, and
- * the write is idempotent, so this costs nothing over checking the cache first while
- * staying correct when the cache directory is wiped.
- */
-export async function cachePackageInventory(rt: ContainerRuntime, image: string): Promise<Result<string, PackageInventoryError>> {
-    // `capture` THROWS when the runtime binary is not on PATH (ENOENT from spawn) — it
-    // does not return a non-zero code. An absent container runtime is an ordinary state
-    // for a host that has not provisioned one yet, and the inventory is an enrichment,
-    // so the throw is bridged here rather than allowed to escape into the boot sequence.
-    const probe = async (args: string[]): Promise<{ code: number; stdout: string } | null> => {
-        try {
-            return await capture(rt, args);
-        } catch {
-            return null;
-        }
-    };
-
-    const idProbe = await probe(["image", "inspect", "--format", "{{.Id}}", image]);
-    if (idProbe === null || idProbe.code !== 0) return err({ type: "image_absent", image });
-    const imageId = idProbe.stdout.trim();
-
-    // `index` (not `.Config.Labels.<key>`) because the key contains dots, which Go
-    // templates would otherwise parse as field traversal.
-    const labelProbe = await probe(["image", "inspect", "--format", `{{index .Config.Labels "${PACKAGES_LABEL}"}}`, image]);
-    const inventory = labelProbe !== null && labelProbe.code === 0 ? labelProbe.stdout : "";
-    // A missing label prints the Go zero value rather than failing the command.
-    if (inventory.trim() === "" || inventory.trim() === "<no value>") return err({ type: "label_missing", image });
-
-    const path = packagesCachePath(imageId);
-    try {
-        await mkdir(join(path, ".."), { recursive: true });
-        await writeFile(path, inventory, "utf-8");
-    } catch (cause) {
-        return err({ type: "cache_write_failed", path, cause });
-    }
-    return ok(path);
-}
-
-/**
- * The cached inventory path for the configured image, or null when there is none.
+ * The active farm's package inventory inside the store, or null when it is not readable.
  *
- * Null is a normal state — no image pulled yet, an image built before the label
- * existed, an unreadable cache dir — and the harness tool reports the package set as
- * unknown rather than guessing. Never throws: a broken inventory must not stop a run.
- */
-export async function resolvePackagesFile(rt: ContainerRuntime, image: string): Promise<string | null> {
-    const cached = await cachePackageInventory(rt, image);
-    return cached.isOk() ? cached.value : null;
-}
-
-/**
- * The active farm's package inventory inside a configured store, or null when it is not readable.
- *
- * The store keeps its active version behind `current`, a symlink the harness swaps on activation; the
- * inventory the sandbox mounts is `current/packages.txt`. This reports only whether that one file is
- * present — the shallow shape that decides whether the CLI supplies the store inventory or falls back to
- * the image label cache. It is NOT the harness's own mount-usability check, which also validates
- * `meta.json` and the symlink target. The harness re-checks at each sandbox create and drops the mount
- * when the store is incomplete; the inventory must then follow the mount back to the image label, which
- * the caller does on a null here.
+ * The store keeps its active farm behind `current`, a symlink `inflexa store use` swaps; the inventory the
+ * sandbox mounts is `current/packages.txt`. This reports only whether that one file is present — the
+ * shallow shape the CLI reads to build the inventory. It is NOT the harness's own mount-usability check,
+ * which also validates `meta.json` and the symlink target. The harness re-checks at each sandbox create.
  *
  * `existsSync` follows the `current` symlink, so a missing or dangling pointer and an absent inventory
- * file all resolve to null. It never throws, so a broken store degrades to the fallback rather than
- * failing the boot.
+ * file all resolve to null. It never throws, so a broken store surfaces as the reported store failure
+ * rather than an exception out of the boot sequence.
  */
 export function storePackagesFile(storePath: string): string | null {
     const candidate = join(storePath, "current", "packages.txt");

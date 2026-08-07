@@ -18,7 +18,7 @@ import { env } from "../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../lib/credential.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { bootHarnessRuntime, buildAuthInjectingFetch, partialLibStoreRoot, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
+import { bootHarnessRuntime, buildAuthInjectingFetch, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
 import { agentProviderInner } from "./agent_switch.ts";
 import type { ResolvedHarnessConfig, ResolvedModelConnection } from "./config.ts";
 import type { ExecIngress } from "./ingress.ts";
@@ -51,13 +51,11 @@ function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHar
     return {
         model: "claude-test-model",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        sandboxImage: "ghcr.io/inflexa-ai/sandbox-python-r:latest",
+        sandboxImage: "ghcr.io/inflexa-ai/sandbox-base:latest",
         resourcePolicy: { perStep: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 }, budget: { cpu: 1, memoryGb: 1 } },
         adminPort: 8433,
         skillsDir,
         templatesDir,
-        libStore: false,
-        provisionerImage: null,
         ...overrides,
     };
 }
@@ -111,12 +109,12 @@ function fakeIngress(calls: string[]): ExecIngress {
 // path runs fully offline.
 function recordingSeams(calls: string[]): BootSeams {
     return {
-        // Offline stub: the real seam shells out to the container runtime to read the
-        // image's inventory label. Null is the honest offline answer — the harness then
-        // reports the installed package set as unknown rather than guessing.
-        resolvePackages: async () => {
-            calls.push("resolvePackages");
-            return null;
+        // Offline stub: the real seam reads the active farm's inventory off disk. A path is the
+        // ordinary answer, because a boot with no readable inventory refuses — a test that wants that
+        // refusal overrides this seam with `() => null`.
+        resolveStorePackages: (root: string) => {
+            calls.push("resolveStorePackages");
+            return join(root, "current", "packages.txt");
         },
         resolveSandboxEngine: async () => {
             calls.push("resolveSandboxEngine");
@@ -302,9 +300,9 @@ describe("bootHarnessRuntime", () => {
             "probeEmbedding",
             "resolveSandboxEngine",
             "postgres",
-            // The package-inventory probe spawns a container-runtime command, so it sits
-            // AFTER the prereq gates: a boot about to fail on Postgres never pays for it.
-            "resolvePackages",
+            // The store inventory read sits AFTER the prereq gates: a boot about to fail on
+            // Postgres never pays for it.
+            "resolveStorePackages",
             "boot",
             "sweepEphemeral",
             "sweepAsks",
@@ -864,13 +862,10 @@ describe("bootHarnessRuntime", () => {
         expect(calls).not.toContain("ingress");
     });
 
-    test("passes the CLI-owned store root to the sandbox client even when the store is incomplete", async () => {
+    test("passes the CLI-owned store root for EVERY sandbox, from a config that carries no store key", async () => {
         const calls: string[] = [];
         const captured: { config: CreateSandboxClientConfig | null } = { config: null };
-        // Incomplete: the root exists but has no `current`, so the harness will refuse the mount. The CLI
-        // must pass the root regardless and leave the usability check to the harness, which runs it at
-        // create time — the CLI never re-implements it.
-        const storeRoot = seedLibStoreRoot(false);
+        const storeRoot = seedLibStoreRoot(true);
         const seams: BootSeams = {
             ...recordingSeams(calls),
             createSandbox: (cfg) => {
@@ -879,9 +874,35 @@ describe("bootHarnessRuntime", () => {
             },
         };
         try {
-            const result = await bootHarnessRuntime({ seams, config: testConfig({ libStore: true }) });
+            // `testConfig()` carries no store key of any kind — there is none left to carry. The pass is
+            // unconditional, so the sandbox always gets its `/mnt/libs` bind.
+            const result = await bootHarnessRuntime({ seams, config: testConfig() });
             expect(result.isOk()).toBe(true);
             expect(captured.config?.libStorePath).toBe(storeRoot);
+            expect(captured.config?.libStorePath).toBe(env.libStoreDir);
+        } finally {
+            clearLibStoreRoot();
+        }
+    });
+
+    test("the CLI does not re-do the usability check: an incomplete store still gets the root passed", async () => {
+        const calls: string[] = [];
+        const captured: { config: CreateSandboxClientConfig | null } = { config: null };
+        // The root exists but its active farm carries no inventory. The harness owns the mount check and
+        // drops the mount at create time, so the CLI passes the root and never re-implements that check.
+        // The boot itself refuses on the INVENTORY, which is a different question — hence the seam here.
+        seedLibStoreRoot(false);
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            createSandbox: (cfg) => {
+                captured.config = cfg;
+                return createSandboxClient(cfg);
+            },
+        };
+        try {
+            const result = await bootHarnessRuntime({ seams, config: testConfig() });
+            expect(result.isOk()).toBe(true);
+            expect(captured.config?.libStorePath).toBe(env.libStoreDir);
         } finally {
             clearLibStoreRoot();
         }
@@ -899,11 +920,11 @@ describe("bootHarnessRuntime", () => {
             },
         };
         try {
-            // `libStore` is the whole store surface of the config, and it is a boolean. There is no key that
-            // states a root, so the mount can only ever be the CLI-owned path — the same guarantee
-            // `refStorePath: env.refsDir` gives. A config that carried a root would break the store commands,
-            // which write env.libStoreDir unconditionally.
-            const result = await bootHarnessRuntime({ seams, config: testConfig({ libStore: true }) });
+            // The config has no store surface at all now: no switch, and no key that states a root. The
+            // mount can only ever be the CLI-owned path — the same guarantee `refStorePath: env.refsDir`
+            // gives. A config that carried a root would break the store commands, which write
+            // env.libStoreDir unconditionally. An unknown key cannot reach the mount either.
+            const result = await bootHarnessRuntime({ seams, config: testConfig() });
             expect(result.isOk()).toBe(true);
             expect(captured.config?.libStorePath).toBe(env.libStoreDir);
         } finally {
@@ -911,134 +932,42 @@ describe("bootHarnessRuntime", () => {
         }
     });
 
-    test("passes no libStorePath key when the store is off, so no /mnt/libs bind is requested", async () => {
-        const calls: string[] = [];
-        const captured: { config: CreateSandboxClientConfig | null } = { config: null };
-        // The store content is present on disk, and the opt-in is off. The key must still be absent: a
-        // cleared flag is a full rollback, and leftover content never re-mounts itself.
-        seedLibStoreRoot(true);
-        const seams: BootSeams = {
-            ...recordingSeams(calls),
-            createSandbox: (cfg) => {
-                captured.config = cfg;
-                return createSandboxClient(cfg);
-            },
-        };
-        try {
-            const result = await bootHarnessRuntime({ seams, config: testConfig() });
-            expect(result.isOk()).toBe(true);
-            // The key must be ABSENT, not present-and-undefined, so the harness creates no bind mount — the
-            // same shape the docker-pin test asserts for engineSocketPath.
-            expect(captured.config !== null && "libStorePath" in captured.config).toBe(false);
-        } finally {
-            clearLibStoreRoot();
-        }
-    });
-
-    test("the inventory follows the mount: a usable store supplies its active-farm packages, and the image probe never runs", async () => {
+    test("the inventory comes from the store's active farm, which is the one store a sandbox mounts", async () => {
         const calls: string[] = [];
         const storeRoot = seedLibStoreRoot(true);
         try {
-            const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig({ libStore: true }) }))._unsafeUnwrap();
+            const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }))._unsafeUnwrap();
             expect(runtime).toBeDefined();
-            // The store answers the inventory question, so the image label probe is never spawned.
             expect(lastCore?.conversation.packagesFile).toBe(join(storeRoot, "current", "packages.txt"));
-            expect(calls).not.toContain("resolvePackages");
         } finally {
             clearLibStoreRoot();
         }
     });
 
-    test("with the store off the boot is identical to before: no /mnt/libs bind is requested AND the inventory is the image label cache", async () => {
+    test("an unreadable inventory fails the boot, naming the store — it never reads an image label cache", async () => {
         const calls: string[] = [];
-        const captured: { config: CreateSandboxClientConfig | null } = { config: null };
-        const seams: BootSeams = {
-            ...recordingSeams(calls),
-            resolvePackages: async () => {
-                calls.push("resolvePackages");
-                return "/cache/img/packages.txt";
-            },
-            createSandbox: (cfg) => {
-                captured.config = cfg;
-                return createSandboxClient(cfg);
-            },
-        };
-        const runtime = (await bootHarnessRuntime({ seams, config: testConfig() }))._unsafeUnwrap();
-
-        expect(runtime).toBeDefined();
-        // Store off ⇒ no `/mnt/libs` bind: the key must be ABSENT, not present-and-undefined, so the harness
-        // creates no bind mount — bit-for-bit the pre-store sandbox config.
-        expect(captured.config !== null && "libStorePath" in captured.config).toBe(false);
-        // Store off ⇒ the sandbox mounts the baked image, so the inventory is the image label cache.
-        expect(lastCore?.conversation.packagesFile).toBe("/cache/img/packages.txt");
-        expect(calls).toContain("resolvePackages");
-    });
-
-    test("an unusable store falls back to the image label cache, never describing a store the sandbox will not mount", async () => {
-        const calls: string[] = [];
-        // On, but the active farm has no readable `packages.txt`, so the harness will drop the mount and run
-        // the baked image. The inventory must follow the mount back to the image label cache.
+        // The active farm carries no `packages.txt`. The runtime image bakes no library, so there is no
+        // second inventory source to degrade onto: the boot refuses and the remedy names the store.
         seedLibStoreRoot(false);
-        const seams: BootSeams = {
-            ...recordingSeams(calls),
-            resolvePackages: async () => {
-                calls.push("resolvePackages");
-                return "/cache/img/packages.txt";
-            },
-        };
+        const seams: BootSeams = { ...recordingSeams(calls), resolveStorePackages: () => null };
         try {
-            const runtime = (await bootHarnessRuntime({ seams, config: testConfig({ libStore: true }) }))._unsafeUnwrap();
-            expect(runtime).toBeDefined();
-            expect(lastCore?.conversation.packagesFile).toBe("/cache/img/packages.txt");
-            expect(calls).toContain("resolvePackages");
+            const result = await bootHarnessRuntime({ seams, config: testConfig() });
+            const error = result._unsafeUnwrapErr();
+            expect(error.type).toBe("lib_store_unusable");
+            if (error.type === "lib_store_unusable") expect(error.root).toBe(env.libStoreDir);
+            // The refusal lands before the DBOS-owning section, so a failed boot binds nothing.
+            expect(calls).not.toContain("boot");
         } finally {
             clearLibStoreRoot();
         }
     });
 
-    test("the store is on but absent: the inventory falls back to the image label cache", async () => {
+    test("a store that is absent altogether fails the same way, rather than booting onto an empty image", async () => {
         const calls: string[] = [];
-        // No root at all — the ordinary state between the opt-in and the first download, which the download
-        // gate completes on its own. The boot must still reach the image label cache.
         clearLibStoreRoot();
-        const seams: BootSeams = {
-            ...recordingSeams(calls),
-            resolvePackages: async () => {
-                calls.push("resolvePackages");
-                return "/cache/img/packages.txt";
-            },
-        };
-        const runtime = (await bootHarnessRuntime({ seams, config: testConfig({ libStore: true }) }))._unsafeUnwrap();
-
-        expect(runtime).toBeDefined();
-        expect(lastCore?.conversation.packagesFile).toBe("/cache/img/packages.txt");
-    });
-});
-
-// The one store condition boot records. The rule is narrow on purpose: with the store root a fixed
-// CLI-owned path, "the root is not there" carries no user intent and is the normal pre-download state, so
-// warning on it would fire for every user who opts in.
-describe("partialLibStoreRoot — which store state is worth a record", () => {
-    afterEach(() => clearLibStoreRoot());
-
-    test("a store that is off is never partial, whatever is on disk", () => {
-        seedLibStoreRoot(false);
-        expect(partialLibStoreRoot({ enabled: false })).toBeNull();
-    });
-
-    test("a store that is on with no root is not partial — that is the state before the first download", () => {
-        clearLibStoreRoot();
-        expect(partialLibStoreRoot({ enabled: true, root: env.libStoreDir })).toBeNull();
-    });
-
-    test("a store that is on with a root but no readable active-farm inventory is partial", () => {
-        const root = seedLibStoreRoot(false);
-        expect(partialLibStoreRoot({ enabled: true, root })).toBe(root);
-    });
-
-    test("a store that is on and complete is not partial", () => {
-        const root = seedLibStoreRoot(true);
-        expect(partialLibStoreRoot({ enabled: true, root })).toBeNull();
+        const seams: BootSeams = { ...recordingSeams(calls), resolveStorePackages: () => null };
+        const result = await bootHarnessRuntime({ seams, config: testConfig() });
+        expect(result._unsafeUnwrapErr().type).toBe("lib_store_unusable");
     });
 });
 

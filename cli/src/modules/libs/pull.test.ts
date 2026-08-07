@@ -46,19 +46,19 @@ describe("sandboxStatus — read-only, never pins", () => {
 
 describe("isMovingTag — decides when a present image must still be re-pulled", () => {
     test("`:latest` and untagged refs are moving (re-pull to refresh the digest)", () => {
-        expect(isMovingTag("ghcr.io/inflexa-ai/sandbox-python-r:latest")).toBe(true);
+        expect(isMovingTag("ghcr.io/inflexa-ai/sandbox-base:latest")).toBe(true);
         // No tag → the runtime defaults to :latest, so it is moving too.
-        expect(isMovingTag("ghcr.io/inflexa-ai/sandbox-python-r")).toBe(true);
+        expect(isMovingTag("ghcr.io/inflexa-ai/sandbox-base")).toBe(true);
     });
 
     test("pinned version tags and digest refs are immutable (present is authoritative)", () => {
-        expect(isMovingTag("ghcr.io/inflexa-ai/sandbox-python-r:20260706-034b897")).toBe(false);
-        expect(isMovingTag("ghcr.io/inflexa-ai/sandbox-python-r@sha256:" + "a".repeat(64))).toBe(false);
+        expect(isMovingTag("ghcr.io/inflexa-ai/sandbox-base:20260706-034b897")).toBe(false);
+        expect(isMovingTag("ghcr.io/inflexa-ai/sandbox-base@sha256:" + "a".repeat(64))).toBe(false);
     });
 
     test("a registry host:port prefix is not mistaken for the tag", () => {
         // The ':5000' is the registry port, and there is no image tag → moving.
-        expect(isMovingTag("localhost:5000/sandbox-python")).toBe(true);
-        expect(isMovingTag("localhost:5000/sandbox-python:v1")).toBe(false);
+        expect(isMovingTag("localhost:5000/sandbox-base")).toBe(true);
+        expect(isMovingTag("localhost:5000/sandbox-base:v1")).toBe(false);
     });
 });

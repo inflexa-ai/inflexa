@@ -637,11 +637,12 @@ export async function setup(options: SetupOptions): Promise<void> {
             return;
         }
 
-        // --- sandbox image ---
-        // Provision the sandbox image through the SAME handler as
-        // `inflexa sandbox pull` (design: one dogfooded path). A pull failure warns
-        // and continues — the image is an offer here, not a hard prerequisite
-        // (`inflexa profile` pulls it on demand if still missing).
+        // --- container images ---
+        // Provision the sandbox image and the provisioner image through the SAME
+        // handlers as `inflexa sandbox pull` (design: one dogfooded path). A pull
+        // failure warns and continues — an image is an offer here, not a hard
+        // prerequisite (`inflexa profile` and `inflexa store add` each obtain the one
+        // they need on demand).
         await runSandboxImageSetup(answers.sandbox, canPrompt);
 
         // Re-read rather than tracking "did THIS run configure embeddings": the closing hint is about the
@@ -657,45 +658,56 @@ export async function setup(options: SetupOptions): Promise<void> {
 }
 
 /**
- * Provision the sandbox image as part of `inflexa setup`. Reuses the `sandboxPull`
- * handler (never a second fetch path); a variant (`python` / `python-r`) selects the
- * image and `docker pull` resolves the host arch from the multi-arch manifest. The
- * image can be multiple GB, so pulling is gated on explicit consent — which the
+ * Provision the container images as part of `inflexa setup`. Reuses the `sandboxPull`
+ * and `provisionerPull` handlers (never a second fetch path); `docker pull` resolves
+ * the host arch from each multi-arch manifest. Setup asks WHETHER to pull, and never
+ * WHICH image: one runtime image is published, and the provisioner has no variant.
+ *
+ * BOTH images are prerequisites of a working store, so one answer obtains both. The
+ * runtime image runs the analysis, and the provisioner is what extends the store that
+ * the analysis mounts.
+ *
+ * An image can be multiple GB, so pulling is gated on explicit consent — which the
  * three branches obtain three ways:
- *   - Answered variant: the ANSWER IS the consent (`--sandbox python` names a
- *     multi-GB download in as many words), so the pull runs with `yes: true` and no
- *     size confirmation — there is no terminal to confirm on in the run that
- *     motivates the answer, and re-asking a question already answered is how a
- *     batch provision hangs.
- *   - Unanswered on a run that may prompt: hand off to `sandboxPull` so it prompts
- *     the variant, confirms before the transfer, and streams progress.
+ *   - Answered: the ANSWER IS the consent (`--sandbox` names a multi-GB download in
+ *     as many words), so each pull runs with `yes: true` and no size confirmation —
+ *     there is no terminal to confirm on in the run that motivates the answer, and
+ *     re-asking a question already answered is how a batch provision hangs.
+ *   - Unanswered on a run that may prompt: hand off to the pull handlers so each
+ *     confirms before its transfer and streams progress.
  *   - Unanswered with no prompt available: do NOT auto-download — a headless run
  *     must never silently pull GBs. Print a hint to the explicit command and continue.
- * Every branch is non-fatal (decline, failure): the image is an offer here, not a
- * prerequisite — `inflexa profile` pulls it on demand if still missing.
+ * Every branch is non-fatal (decline, failure): the images are an offer here, not a
+ * prerequisite — `inflexa profile` pulls the runtime image on demand if still
+ * missing, and a store command obtains the provisioner on demand.
  */
 async function runSandboxImageSetup(answered: SetupAnswers["sandbox"], canPrompt: boolean): Promise<void> {
-    const variant = answerOf(answered);
-    if (!variant.answered && !canPrompt) {
-        note(
-            "Skipping the sandbox image — no variant was requested.\nRun `inflexa sandbox pull <python|python-r> --yes` to install it later.",
-            "Sandbox image",
-        );
+    const answer = answerOf(answered);
+    if (!answer.answered && !canPrompt) {
+        note("Skipping the container images — no pull was requested.\nRun `inflexa sandbox pull --yes` to install them later.", "Container images");
         return;
     }
 
-    // sandboxPull owns the variant prompt + size confirmation when left interactive.
-    const { sandboxPull } = await import("../libs/pull.ts");
-    (await sandboxPull(variant.answered ? { variant: variant.value, yes: true } : {})).match(
+    const opts = answer.answered ? { yes: true } : {};
+    const { provisionerPull, sandboxPull } = await import("../libs/pull.ts");
+    (await sandboxPull(opts)).match(
         (outcome) => {
             if (outcome.type === "up_to_date") log.success(`Sandbox image already installed (${outcome.image}).`);
             else if (outcome.type === "pulled") log.success(`Sandbox image installed (${outcome.image}).`);
             else if (outcome.type === "declined") log.info("Sandbox image skipped. Run `inflexa sandbox pull` later to install it.");
         },
-        (error) =>
-            error.type === "no_variant"
-                ? log.info(error.message)
-                : log.warn(`Sandbox image install failed: ${error.message}\n  You can retry later with \`inflexa sandbox pull\`.`),
+        (error) => log.warn(`Sandbox image install failed: ${error.message}\n  You can retry later with \`inflexa sandbox pull\`.`),
+    );
+
+    // The provisioner rides the same answer and the same runtime. A failure here is a warning too: a store
+    // command obtains the image on demand, so a setup that could not reach GHCR is not a dead installation.
+    (await provisionerPull(opts)).match(
+        (outcome) => {
+            if (outcome.type === "up_to_date") log.success(`Provisioner image already installed (${outcome.image}).`);
+            else if (outcome.type === "pulled") log.success(`Provisioner image installed (${outcome.image}).`);
+            else if (outcome.type === "declined") log.info("Provisioner image skipped. `inflexa store add` obtains it when it needs it.");
+        },
+        (error) => log.warn(`Provisioner image install failed: ${error.message}\n  \`inflexa store add\` obtains it when it needs it.`),
     );
 }
 

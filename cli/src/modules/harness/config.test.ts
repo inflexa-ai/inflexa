@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { env } from "../../lib/env.ts";
 import { readConfig, writeConfig } from "../../lib/config.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { resolveHarnessConfig, resolveLibStore, resolveModelConnection, writeAgentModel } from "./config.ts";
+import { resolveHarnessConfig, resolveModelConnection, writeAgentModel } from "./config.ts";
 
 // Drives resolveModelConnection through the real readConfig() surface against the sandboxed
 // env.configPath (set by the test preload), exercising the fail-closed + protocol-implication paths
@@ -50,45 +50,41 @@ describe("resolveHarnessConfig — adminPort default", () => {
     });
 });
 
-// The package store is opt-in through a BOOLEAN, and its root is a CLI-owned constant. These two facts
-// together are what make a cleared key a full rollback while the store content stays where the store
-// commands wrote it.
-describe("resolveLibStore — a boolean opt-in over a fixed root", () => {
+// The store opt-in and the provisioner-image key are gone. Neither can move anything any more, and a
+// file that still carries one must keep working — the key is inert, and the reader names it one time so
+// the user can clean the file.
+describe("resolveHarnessConfig — the removed store keys are inert", () => {
     function writeConfigWithHarness(harness: unknown): void {
         mkdirSync(dirname(env.configPath), { recursive: true });
         writeFileSync(env.configPath, JSON.stringify({ telemetry: false, ...(harness === undefined ? {} : { harness }) }));
     }
 
-    test("an absent harness block leaves the store off", () => {
-        writeConfigWithHarness(undefined);
-        expect(resolveLibStore(resolveHarnessConfig())).toEqual({ enabled: false });
-    });
-
-    test("`libStore: false` leaves the store off, and hands out no root at all", () => {
-        writeConfigWithHarness({ libStore: false });
-        expect(resolveLibStore(resolveHarnessConfig())).toEqual({ enabled: false });
-    });
-
-    test("`libStore: true` turns the store on at env.libStoreDir", () => {
-        writeConfigWithHarness({ libStore: true });
-        expect(resolveLibStore(resolveHarnessConfig())).toEqual({ enabled: true, root: env.libStoreDir });
-    });
-
-    test("no config value moves the root: a string key is refused, and the store stays off", () => {
-        // The old opt-in named a path. A file that still carries one fails the boolean schema, so the whole
-        // block resolves to defaults with a configError that names the field — the store never silently
-        // mounts a location the user believes they chose.
-        writeConfigWithHarness({ libStore: "/somewhere/else" });
+    test("a file that still carries `libStore` resolves cleanly, with no config error", () => {
+        writeConfigWithHarness({ libStore: false, adminPort: 9999 });
         const cfg = resolveHarnessConfig();
-        expect(cfg.configError?.issues).toContain("harness.libStore");
-        expect(resolveLibStore(cfg)).toEqual({ enabled: false });
+        expect(cfg.configError).toBeUndefined();
+        // The sibling keys still resolve, so the dead key costs the user nothing.
+        expect(cfg.adminPort).toBe(9999);
     });
 
-    test("a store root path under any other harness key is inert", () => {
-        // An unknown key is not part of the contract, so it cannot reach the mount. The root stays the
-        // CLI-owned path for the enabled case.
-        writeConfigWithHarness({ libStore: true, libStorePath: "/somewhere/else" });
-        expect(resolveLibStore(resolveHarnessConfig())).toEqual({ enabled: true, root: env.libStoreDir });
+    test("a `libStore` of the wrong type is inert too, because nothing reads it", () => {
+        // It named a boolean, and before that a path. Neither shape can fail a schema that no longer
+        // declares the key, so an old file never blocks a boot on a value that decides nothing.
+        writeConfigWithHarness({ libStore: "/somewhere/else" });
+        expect(resolveHarnessConfig().configError).toBeUndefined();
+    });
+
+    test("a file that still carries `provisionerImage` cannot move the provisioner", () => {
+        writeConfigWithHarness({ provisionerImage: "my-registry/my-provisioner:v1" });
+        const cfg = resolveHarnessConfig();
+        expect(cfg.configError).toBeUndefined();
+        // The resolved config has no field to carry it, so no call site can read one.
+        expect(Object.hasOwn(cfg, "provisionerImage")).toBe(false);
+    });
+
+    test("the sandbox image defaults to the one published runtime image", () => {
+        writeConfigWithHarness(undefined);
+        expect(resolveHarnessConfig().sandboxImage).toBe("ghcr.io/inflexa-ai/sandbox-base:latest");
     });
 });
 

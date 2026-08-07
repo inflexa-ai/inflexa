@@ -1,51 +1,35 @@
 import { describe, expect, test } from "bun:test";
 
-import { DEFAULT_SANDBOX_IMAGE, SANDBOX_VARIANTS, parseVariant, variantImage, variantOfImage } from "./images.ts";
+import { PROVISIONER_IMAGE, SANDBOX_IMAGE, isPublishedSandboxImage } from "./images.ts";
 
-describe("variantImage", () => {
-    test("builds the GHCR reference for each variant", () => {
-        expect(variantImage("python")).toBe("ghcr.io/inflexa-ai/sandbox-python:latest");
-        expect(variantImage("python-r")).toBe("ghcr.io/inflexa-ai/sandbox-python-r:latest");
+describe("the published image constants", () => {
+    test("the sandbox image is the one runtime image, at its moving tag", () => {
+        expect(SANDBOX_IMAGE).toBe("ghcr.io/inflexa-ai/sandbox-base:latest");
     });
 
-    test("DEFAULT_SANDBOX_IMAGE is the full python-r stack", () => {
-        expect(DEFAULT_SANDBOX_IMAGE).toBe(variantImage("python-r"));
-    });
-});
-
-describe("parseVariant", () => {
-    test("accepts the known variants", () => {
-        expect(parseVariant("python")).toBe("python");
-        expect(parseVariant("python-r")).toBe("python-r");
-    });
-
-    test("rejects unknown or absent values", () => {
-        expect(parseVariant("r")).toBeNull();
-        expect(parseVariant("PYTHON")).toBeNull();
-        expect(parseVariant(undefined)).toBeNull();
-    });
-
-    test("every SANDBOX_VARIANTS entry round-trips", () => {
-        for (const v of SANDBOX_VARIANTS) expect(parseVariant(v)).toBe(v);
+    test("the provisioner image is a constant beside it, and no variant name is left", () => {
+        expect(PROVISIONER_IMAGE).toBe("ghcr.io/inflexa-ai/sandbox-provisioner:latest");
+        expect(SANDBOX_IMAGE).not.toContain("sandbox-python");
     });
 });
 
-describe("variantOfImage", () => {
-    test("recognizes the published variant tags", () => {
-        expect(variantOfImage("ghcr.io/inflexa-ai/sandbox-python:latest")).toBe("python");
-        expect(variantOfImage("ghcr.io/inflexa-ai/sandbox-python-r:latest")).toBe("python-r");
+describe("isPublishedSandboxImage", () => {
+    test("accepts the published repository at any tag or digest", () => {
+        expect(isPublishedSandboxImage(SANDBOX_IMAGE)).toBe(true);
+        expect(isPublishedSandboxImage("ghcr.io/inflexa-ai/sandbox-base")).toBe(true);
+        expect(isPublishedSandboxImage("ghcr.io/inflexa-ai/sandbox-base:20260706-abc")).toBe(true);
+        expect(isPublishedSandboxImage(`ghcr.io/inflexa-ai/sandbox-base@sha256:${"a".repeat(64)}`)).toBe(true);
     });
 
-    test("does not misread sandbox-python-r as sandbox-python (longest match first)", () => {
-        expect(variantOfImage("ghcr.io/inflexa-ai/sandbox-python-r:20260706-abc")).toBe("python-r");
+    test("refuses a retired variant repository, so no pull is offered for an image that is gone", () => {
+        expect(isPublishedSandboxImage("ghcr.io/inflexa-ai/sandbox-python:latest")).toBe(false);
+        expect(isPublishedSandboxImage("ghcr.io/inflexa-ai/sandbox-python-r:latest")).toBe(false);
     });
 
-    test("matches a digest-pinned reference", () => {
-        expect(variantOfImage("ghcr.io/inflexa-ai/sandbox-python@sha256:deadbeef")).toBe("python");
-    });
-
-    test("returns null for a custom / non-published image", () => {
-        expect(variantOfImage("sandbox-base:latest")).toBeNull();
-        expect(variantOfImage("my-registry/my-sandbox:latest")).toBeNull();
+    test("refuses a custom image, which no registry can supply", () => {
+        expect(isPublishedSandboxImage("sandbox-base:latest")).toBe(false);
+        expect(isPublishedSandboxImage("my-registry/my-sandbox:latest")).toBe(false);
+        // A repository whose name merely STARTS with the published one is a different repository.
+        expect(isPublishedSandboxImage("ghcr.io/inflexa-ai/sandbox-base-custom:latest")).toBe(false);
     });
 });

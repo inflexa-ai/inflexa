@@ -20,9 +20,9 @@
  * the published ones ({@link mergeStagedRoot}).
  *
  * The gate that holds sandbox creation, the app-open trigger, the first-download consent, and the
- * update ask are the caller's wiring. This module gives the mechanisms they operate: the download, the
- * local state read ({@link inspectLibStoreDownload}), and the store-is-off no-op
- * ({@link maybeDownloadLibStore}).
+ * update ask are the caller's wiring. This module gives the two mechanisms they operate: the download
+ * ({@link downloadLibStore}) and the local state read ({@link inspectLibStoreDownload}). No
+ * configuration value suppresses either, because the runtime image bakes no library.
  */
 
 import { createReadStream, existsSync } from "node:fs";
@@ -36,7 +36,6 @@ import { err, ok, type Result } from "neverthrow";
 
 import { downloadToFile, type DownloadError, type DownloadProgress, type DownloadRetry, type FetchLike } from "../../lib/download.ts";
 import { sha256File } from "../../lib/hash.ts";
-import type { LibStoreLocation } from "../harness/config.ts";
 
 /** The registry host the store publishes to. */
 const STORE_REGISTRY = "ghcr.io";
@@ -131,13 +130,12 @@ export type LibStoreMergeReport = {
 };
 
 /**
- * What a download attempt produced. `disabled` is the rollback state (the store opt-in is off).
- * `up_to_date` means the receipt already pins the resolved manifest. `update_available` reports a moved tag
- * WITHOUT applying it, so the caller can ask before it downloads. `downloaded` is a completed, activated
- * store, with the report of what the merge into the store root changed.
+ * What a download attempt produced. `up_to_date` means the receipt already pins the resolved manifest.
+ * `update_available` reports a moved tag WITHOUT applying it, so the caller can ask before it downloads.
+ * `downloaded` is a completed, activated store, with the report of what the merge into the store root
+ * changed.
  */
 export type LibStoreDownloadOutcome =
-    | { readonly type: "disabled" }
     | { readonly type: "up_to_date"; readonly manifestDigest: string }
     | { readonly type: "update_available"; readonly installedDigest: string; readonly latestDigest: string }
     | { readonly type: "downloaded"; readonly manifestDigest: string; readonly bytes: number; readonly merge: LibStoreMergeReport };
@@ -155,7 +153,7 @@ export type LibStoreDownloadProgress =
 
 /** The seams the CLI composition edge supplies. Production passes only `storeRoot`; a test injects the rest. */
 export type LibStoreDownloadDeps = {
-    /** The CLI-owned store root from `resolveLibStore`; this module never re-derives it. */
+    /** The CLI-owned store root (`env.libStoreDir`), supplied by the caller; this module never re-derives it. */
     readonly storeRoot: string;
     /** The architecture to pull; defaults to the host architecture. */
     readonly arch?: StoreArch;
@@ -697,18 +695,4 @@ export async function downloadLibStore(deps: LibStoreDownloadDeps): Promise<Resu
     // copy of the whole store. Nothing resumes from them after this point.
     await rm(paths.blobs, { recursive: true, force: true }).catch(() => undefined);
     return ok({ type: "downloaded", manifestDigest: manifest.value.manifestDigest, bytes, merge: staged.value });
-}
-
-/**
- * Download the store only when the store opt-in is on. This is the mechanism the app-open trigger
- * operates: with the store off there is nothing to download and nothing to record, so the rollback of a
- * cleared config key is a clean no-op — and a user who never wanted a store never meets the multi-gigabyte
- * consent. The store root is the single value `resolveLibStore` gives — never re-derived here.
- */
-export async function maybeDownloadLibStore(
-    location: LibStoreLocation,
-    deps: Omit<LibStoreDownloadDeps, "storeRoot"> = {},
-): Promise<Result<LibStoreDownloadOutcome, LibStoreDownloadError>> {
-    if (!location.enabled) return ok({ type: "disabled" });
-    return downloadLibStore({ storeRoot: location.root, ...deps });
 }

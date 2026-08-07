@@ -10,7 +10,6 @@ import {
     downloadLibStore,
     inspectLibStoreDownload,
     libStoreDownloadPaths,
-    maybeDownloadLibStore,
     resolveStoreArch,
     type LibStoreDownloadError,
     type LibStoreDownloadOutcome,
@@ -411,16 +410,5 @@ describe("inspectLibStoreDownload — a locally built store is not a missing one
     });
 });
 
-describe("maybeDownloadLibStore — the opt-in gate", () => {
-    test("a store that is off means no download and no receipt", async () => {
-        const log: StubLog = { tokenCalls: 0, authHeaders: [] };
-        const stub = makeStub({ token: "T", manifest: manifestBytes([]), blobs: new Map(), log });
-
-        const result = await maybeDownloadLibStore({ enabled: false }, { fetch: stub, retry: NO_RETRY });
-
-        expect(result._unsafeUnwrap().type).toBe("disabled");
-        // The network was never touched, and nothing was written to disk.
-        expect(log.tokenCalls).toBe(0);
-        expect(log.authHeaders.length).toBe(0);
-    });
-});
+// There is no opt-in gate left to test: nothing suppresses the download, so the module exposes exactly
+// two entry points — the download itself and the local state read, both covered above.

@@ -4,11 +4,13 @@ import { err, ok, type Result } from "neverthrow";
 import { GLYPHS } from "../../lib/design_system.ts";
 import { ensureRuntime } from "../../lib/config.ts";
 import { capture } from "../../lib/container.ts";
-import { variantOfImage, type SandboxVariant } from "../../modules/libs/images.ts";
-import { resolveHarnessConfig, resolveLibStore, type LibStoreLocation } from "../../modules/harness/config.ts";
+import { env } from "../../lib/env.ts";
+import { isPublishedSandboxImage } from "../../modules/libs/images.ts";
+import { storePackagesFile } from "../../modules/libs/packages.ts";
+import { resolveHarnessConfig } from "../../modules/harness/config.ts";
 import {
+    downloadLibStore,
     inspectLibStoreDownload,
-    maybeDownloadLibStore,
     type LibStoreDownloadError,
     type LibStoreDownloadOutcome,
     type LibStoreDownloadProgress,
@@ -21,13 +23,16 @@ import { ConfirmDialog } from "../components/dialog/confirm_dialog.tsx";
 
 // The sandbox prerequisite gate, held here (not inside `app.tsx`) so the holder of the state is
 // decoupled from its callers. It has two jobs. The app-open trigger (`startLibStoreDownload`) starts the
-// package-store download in the background when the store opt-in is on, after a one-time consent, and it
-// asks before it applies a moved-tag update. The gate (`awaitSandboxReady`) holds each sandbox-making
-// action until the store is complete and the sandbox image is present, and it reports the wait through
-// the notice channel. The store download and the image pull each ask for their multi-gigabyte consent
-// inside the TUI, so app launch never blocks on either. The store half is a clean no-op when the store is
-// off, so a cleared config key is a full rollback — and the off default is exactly what keeps a user who
-// never wanted a store away from the consent.
+// package-store download in the background, after a one-time consent, and it asks before it applies a
+// moved-tag update. The gate (`awaitSandboxReady`) holds each sandbox-making action until the store is
+// complete and the sandbox image is present, and it reports the wait through the notice channel. The
+// store download and the image pull each ask for their multi-gigabyte consent inside the TUI, so app
+// launch never blocks on either.
+//
+// The store half has NO pass-through state. The runtime image bakes no R library and no Python library,
+// thus a sandbox with no store mounted can import nothing, and a gate that passed without a store would
+// start exactly that sandbox. A store the CLI cannot complete is a hard failure with a remedy: the gate
+// names the fault, offers a retry at the next action, and lets the action through never.
 //
 // Every effect is an injectable seam so the flow runs offline in a test with stubs, mirroring the seam
 // bundles of `profile_parity.ts` and `boot.ts`. One chat screen is mounted at a time, so a module
@@ -35,16 +40,14 @@ import { ConfirmDialog } from "../components/dialog/confirm_dialog.tsx";
 
 /**
  * The live state of the package-store download, surfaced for the status surface.
- * - `disabled` — the store opt-in is off; the gate passes on the store and only the image applies;
- * - `idle` — the store is on, not yet checked;
+ * - `idle` — not yet checked;
  * - `consent` — the first-download consent is open;
  * - `declined` — the user declined the first download; the gate re-offers at the next sandbox action;
  * - `downloading` — a first download runs, carrying a running byte total;
- * - `installed` — the receipt reports a complete store;
- * - `failed` — a download could not complete, carrying the actionable message the gate reports.
+ * - `installed` — the store is complete and its active farm carries a package inventory;
+ * - `failed` — the store could not be completed, carrying the actionable message the gate reports.
  */
 export type LibStoreGateState =
-    | { readonly phase: "disabled" }
     | { readonly phase: "idle" }
     | { readonly phase: "consent" }
     | { readonly phase: "declined" }
@@ -64,23 +67,26 @@ let storeFlowInflight: Promise<"ready" | "blocked"> | null = null;
 
 /** The readiness of the sandbox image, as the seam reports it without a network pull. */
 export type ImageReadiness =
-    | { readonly kind: "present" }
-    | { readonly kind: "pullable"; readonly variant: SandboxVariant }
-    | { readonly kind: "custom" }
-    | { readonly kind: "engine_error"; readonly message: string };
+    { readonly kind: "present" } | { readonly kind: "pullable" } | { readonly kind: "custom" } | { readonly kind: "engine_error"; readonly message: string };
 
 /** The effects the gate operates. Production passes {@link realSandboxGateSeams}; a test injects stubs. */
 export type SandboxGateSeams = {
-    /** Report whether the store is on, and its CLI-owned root. Real: {@link resolveLibStore}. */
-    readonly resolveLocation: () => LibStoreLocation;
+    /** The CLI-owned store root the sandbox will mount. Real: `env.libStoreDir`. */
+    readonly storeRoot: () => string;
     /** The cheap local state of the download, read without the network. Real: {@link inspectLibStoreDownload}. */
     readonly inspect: (root: string) => Promise<LibStoreDownloadState>;
-    /** Pull the store; `force` applies a moved-tag update. Real: {@link maybeDownloadLibStore}. */
+    /** Pull the store; `force` applies a moved-tag update. Real: {@link downloadLibStore}. */
     readonly download: (
-        location: LibStoreLocation,
+        root: string,
         force: boolean,
         onProgress?: (event: LibStoreDownloadProgress) => void,
     ) => Promise<Result<LibStoreDownloadOutcome, LibStoreDownloadError>>;
+    /**
+     * The active farm's package inventory, or `null` when the store carries none. This is the one fact
+     * that separates "the bytes arrived" from "a sandbox can import something". Real:
+     * {@link storePackagesFile}.
+     */
+    readonly storeInventory: (root: string) => string | null;
     /** The configured sandbox image reference. Real: `resolveHarnessConfig().sandboxImage`. */
     readonly sandboxImage: () => string;
     /** Report the image readiness without a pull. Real: an engine inspect. */
@@ -153,16 +159,16 @@ function noteProgress(event: LibStoreDownloadProgress): void {
 
 /** The production seams: the real store reads, the engine image checks, and the TUI feedback channels. */
 export const realSandboxGateSeams: SandboxGateSeams = {
-    resolveLocation: () => resolveLibStore(resolveHarnessConfig()),
+    storeRoot: () => env.libStoreDir,
     inspect: inspectLibStoreDownload,
-    download: (location, force, onProgress) => maybeDownloadLibStore(location, { force, ...(onProgress ? { onProgress } : {}) }),
+    download: (root, force, onProgress) => downloadLibStore({ storeRoot: root, force, ...(onProgress ? { onProgress } : {}) }),
+    storeInventory: storePackagesFile,
     sandboxImage: () => resolveHarnessConfig().sandboxImage,
     imageReadiness: async (image) => {
         const rt = await ensureRuntime();
         if (rt.isErr()) return { kind: "engine_error", message: firstLine(rt.error.message) };
         if ((await capture(rt.value, ["image", "inspect", image])).code === 0) return { kind: "present" };
-        const variant = variantOfImage(image);
-        return variant === null ? { kind: "custom" } : { kind: "pullable", variant };
+        return isPublishedSandboxImage(image) ? { kind: "pullable" } : { kind: "custom" };
     },
     pullImage: async (image) => {
         const rt = await ensureRuntime();
@@ -178,39 +184,71 @@ export const realSandboxGateSeams: SandboxGateSeams = {
     notify,
 };
 
+/**
+ * Settle a store whose bytes are all there: `installed` when its active farm carries the inventory a
+ * sandbox mounts, else `failed` with the remedy.
+ *
+ * A complete download is not the same fact as a usable store. The active-farm pointer can select a farm
+ * the harness refuses, and there is no second inventory source to degrade onto, so this refusal is the
+ * only thing between the user and a sandbox that imports nothing.
+ */
+function settleInstalled(root: string, seams: SandboxGateSeams): "ready" | "blocked" {
+    if (seams.storeInventory(root) !== null) {
+        setState({ phase: "installed" });
+        return "ready";
+    }
+    const message =
+        `The package store at ${root} has no package inventory for its active farm, so a sandbox would carry no library. ` +
+        "Run `inflexa store ls` to see the farms, then `inflexa store use <farm>` to select a complete one.";
+    setState({ phase: "failed", message });
+    seams.notify({ kind: "error", text: message });
+    return "blocked";
+}
+
 /** Download the store, moving the state to `downloading` then `installed` or `failed`, and return the verdict. */
-async function performDownload(location: LibStoreLocation, force: boolean, seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
+async function performDownload(root: string, force: boolean, seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
     setState({ phase: "downloading", bytes: 0 });
     seams.notify({ kind: "info", text: `Downloading the package store${GLYPHS.ellipsis}` });
-    const result = await seams.download(location, force, noteProgress);
+    const result = await seams.download(root, force, noteProgress);
     if (result.isErr()) {
         const message = `Could not download the package store: ${result.error.message}`;
         setState({ phase: "failed", message });
         seams.notify({ kind: "error", text: message });
         return "blocked";
     }
-    // Every ok outcome leaves a usable store: `downloaded` and `up_to_date` both pin the manifest, and
-    // `disabled` cannot arise here because the caller proved the store is on.
-    setState({ phase: "installed" });
-    if (result.value.type === "downloaded") seams.notify({ kind: "info", text: "The package store is ready." });
-    return "ready";
+    // Every ok outcome leaves the published bytes on disk: `downloaded` and `up_to_date` both pin the
+    // manifest. Whether the active farm is one a sandbox can mount is a separate question.
+    if (result.value.type === "downloaded") {
+        seams.notify({ kind: "info", text: "The package store is ready." });
+        reportUnreachableFarms(result.value, seams);
+    }
+    return settleInstalled(root, seams);
+}
+
+/**
+ * Name each farm a download added while it left the active-farm pointer alone, and the command that
+ * switches to it. The CLI never switches by itself, because a switch changes what every later sandbox
+ * mounts.
+ */
+function reportUnreachableFarms(outcome: Extract<LibStoreDownloadOutcome, { type: "downloaded" }>, seams: SandboxGateSeams): void {
+    if (outcome.merge.currentSet || outcome.merge.farmsAdded.length === 0) return;
+    for (const farm of outcome.merge.farmsAdded) {
+        seams.notify({ kind: "info", text: `The download added the farm "${farm}". Run \`inflexa store use ${farm}\` to make it the active farm.` });
+    }
 }
 
 /** The store flow behind the shared in-flight guard: retry a failure, or consent then download. */
-async function runStoreFlow(location: Extract<LibStoreLocation, { enabled: true }>, seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
+async function runStoreFlow(root: string, seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
     const previous = state();
     if (previous.phase === "failed") {
         // Report the failure again with its remedy, and offer a retry, so the gate never holds without end.
         seams.notify({ kind: "error", text: `${previous.message} Retry it?` });
         const retry = await seams.confirm({ title: STORE_RETRY_TITLE, message: previous.message });
         if (!retry) return "blocked";
-        return performDownload(location, false, seams);
+        return performDownload(root, false, seams);
     }
-    const local = await seams.inspect(location.root);
-    if (local === "installed") {
-        setState({ phase: "installed" });
-        return "ready";
-    }
+    const local = await seams.inspect(root);
+    if (local === "installed") return settleInstalled(root, seams);
     // The receipt is absent, or the store is incomplete: ask consent one time, then download. A `local`
     // store was built by `inflexa store add` and holds packages the user provisioned, so the ask names the
     // merge instead of offering a plain install over content that is already there.
@@ -220,20 +258,14 @@ async function runStoreFlow(location: Extract<LibStoreLocation, { enabled: true 
         setState({ phase: "declined" });
         return "blocked";
     }
-    return performDownload(location, false, seams);
+    return performDownload(root, false, seams);
 }
 
-/** Hold the caller until the store is complete. A store that is off passes silently; a blocked flow refuses. */
+/** Hold the caller until the store is complete and mountable. There is no state in which this passes without one. */
 async function ensureLibStore(seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
-    const location = seams.resolveLocation();
-    if (!location.enabled) {
-        // The store is off: the gate passes on the store, and only the image half applies.
-        setState({ phase: "disabled" });
-        return "ready";
-    }
     if (state().phase === "installed") return "ready";
     if (storeFlowInflight !== null) return storeFlowInflight;
-    storeFlowInflight = runStoreFlow(location, seams).finally(() => {
+    storeFlowInflight = runStoreFlow(seams.storeRoot(), seams).finally(() => {
         storeFlowInflight = null;
     });
     return storeFlowInflight;
@@ -253,19 +285,19 @@ async function ensureImage(seams: SandboxGateSeams): Promise<"ready" | "blocked"
             // A user's own tag cannot be pulled, so name the remedy and refuse rather than pull nothing.
             seams.notify({
                 kind: "error",
-                text: `Sandbox image "${image}" is not present, and it is not a published variant. Build it, or set a published image and run \`inflexa sandbox pull\`.`,
+                text: `Sandbox image "${image}" is not present, and it is not the published image. Build it, or set the published image and run \`inflexa sandbox pull\`.`,
             });
             return "blocked";
         case "pullable": {
             const yes = await seams.confirm({
                 title: "Pull the sandbox image?",
-                message: `The ${readiness.variant} sandbox image is not installed. Pull it now? (a multi-gigabyte download)`,
+                message: `The sandbox image is not installed. Pull it now? (a multi-gigabyte download)`,
             });
             if (!yes) {
                 seams.notify({ kind: "warn", text: "A sandbox image is necessary. Run `inflexa sandbox pull`, then retry." });
                 return "blocked";
             }
-            seams.notify({ kind: "info", text: `Pulling the ${readiness.variant} sandbox image${GLYPHS.ellipsis}` });
+            seams.notify({ kind: "info", text: `Pulling the sandbox image${GLYPHS.ellipsis}` });
             const pulled = await seams.pullImage(image);
             if (pulled.isErr()) {
                 seams.notify({ kind: "error", text: pulled.error.message });
@@ -283,8 +315,8 @@ async function ensureImage(seams: SandboxGateSeams): Promise<"ready" | "blocked"
 
 /**
  * Hold a sandbox-making action until the store is complete and the image is present. Returns `ready` when
- * both are satisfied, or `blocked` when the store download or the image pull did not complete — the gate
- * reports the reason as it decides, so a `blocked` caller starts no sandbox against an empty store.
+ * both are satisfied, or `blocked` when the store or the image pull did not complete — the gate reports
+ * the reason as it decides, so a `blocked` caller starts no sandbox against an empty store.
  */
 export async function awaitSandboxReady(seams: SandboxGateSeams = realSandboxGateSeams): Promise<"ready" | "blocked"> {
     const store = await ensureLibStore(seams);
@@ -293,20 +325,15 @@ export async function awaitSandboxReady(seams: SandboxGateSeams = realSandboxGat
 }
 
 /**
- * The app-open trigger for the background download. With the store off it is a clean no-op, so the consent
- * never opens on an installation that did not ask for a store. With the receipt absent it runs the
- * first-download flow (consent, then the background download), sharing the gate's in-flight guard so
- * consent is asked one time. With the store installed it resolves the tag: a moved `latest` reports
- * `update_available`, and the CLI asks before it applies the update — `force` is passed only after the yes,
- * so no update downloads silently. The app never blocks on any of this.
+ * The app-open trigger for the background download. With the receipt absent it runs the first-download
+ * flow (consent, then the background download), sharing the gate's in-flight guard so consent is asked
+ * one time. With the store installed it resolves the tag: a moved `latest` reports `update_available`,
+ * and the CLI asks before it applies the update — `force` is passed only after the yes, so no update
+ * downloads silently. The app never blocks on any of this.
  */
 export async function startLibStoreDownload(seams: SandboxGateSeams = realSandboxGateSeams): Promise<void> {
-    const location = seams.resolveLocation();
-    if (!location.enabled) {
-        setState({ phase: "disabled" });
-        return;
-    }
-    const local = await seams.inspect(location.root);
+    const root = seams.storeRoot();
+    const local = await seams.inspect(root);
     if (local !== "installed") {
         await ensureLibStore(seams);
         return;
@@ -314,7 +341,7 @@ export async function startLibStoreDownload(seams: SandboxGateSeams = realSandbo
     setState({ phase: "installed" });
     // The tag resolves to its manifest without a blob GET, so this check downloads nothing. A transient
     // fault must not break a usable store, so an error keeps the installed state.
-    const check = await seams.download(location, false);
+    const check = await seams.download(root, false);
     if (check.isErr()) return;
     if (check.value.type !== "update_available") return;
     seams.notify({ kind: "info", text: "A newer package store is available." });
@@ -323,12 +350,13 @@ export async function startLibStoreDownload(seams: SandboxGateSeams = realSandbo
     // The update runs only after the yes. The current store stays usable, so the state stays `installed`
     // and the gate does not hold while the update downloads.
     seams.notify({ kind: "info", text: `Updating the package store${GLYPHS.ellipsis}` });
-    const updated = await seams.download(location, true);
+    const updated = await seams.download(root, true);
     if (updated.isErr()) {
         seams.notify({ kind: "error", text: `Could not update the package store: ${updated.error.message}` });
         return;
     }
     seams.notify({ kind: "info", text: "The package store is updated." });
+    if (updated.value.type === "downloaded") reportUnreachableFarms(updated.value, seams);
 }
 
 /** Test hook: drop the gate state and the in-flight flow back to idle. Test-only. */

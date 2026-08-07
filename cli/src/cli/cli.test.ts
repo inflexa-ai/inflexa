@@ -92,23 +92,27 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.stderr).toContain("unknown command");
     });
 
-    // The root `.version()` owns `--version`; `sandbox pull` takes a positional
-    // variant (not a `--version`-shaped flag), so there is no clash. Both directions
-    // are asserted: bare `--version` prints the version, and `sandbox pull <variant>`
-    // reaches the pull command's own handler.
+    // The root `.version()` owns `--version`; `sandbox pull` takes no positional at all,
+    // so there is no clash. Both directions are asserted: bare `--version` prints the
+    // version, and an argument after `sandbox pull` reaches the pull command's own handler.
     test("bare --version prints the CLI version and exits 0", () => {
         const result = runCli(["--version"]);
         expect(result.exitCode).toBe(0);
         expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
     });
 
-    test("`sandbox pull <variant>` reaches the pull handler, not the root --version", () => {
-        // An unknown variant is rejected by the sandbox-pull handler BEFORE any docker
-        // call, so this proves the subcommand routed there (not the root --version) without
-        // touching the container runtime or the network.
-        const result = runCli(["sandbox", "pull", "definitely-not-a-variant"]);
+    test("`sandbox pull python-r` reports the retired argument, pulls nothing, and never reaches the root --version", () => {
+        // One runtime image is published, so the variant a user types out of habit is refused BEFORE any
+        // docker call. That proves the subcommand routed to its own handler, without touching the
+        // container runtime or the network.
+        const result = runCli(["sandbox", "pull", "python-r"]);
         expect(result.exitCode).toBe(1);
-        expect(result.stderr).toContain("Unknown variant");
+        expect(result.stderr).toContain("takes no image argument");
+        expect(result.stderr).toContain("python-r");
+        // The remedy names where the package set actually comes from now.
+        expect(result.stderr).toContain("inflexa store add");
+        // Nothing was pulled: no pull progress and no recorded image reached stdout.
+        expect(result.stdout).not.toContain("Sandbox image ready");
         // The root `--version` handler did NOT fire (it would print just the version).
         expect(result.stdout.trim()).not.toMatch(/^\d+\.\d+\.\d+$/);
     });

@@ -89,7 +89,7 @@ embedding:
   baseURL: https://api.openai.com/v1
   model: text-embedding-3-small
 refs: recommended
-sandbox: python
+sandbox: yes
 runtime: docker
 `);
         expect(readAnswersFile(path)._unsafeUnwrap()).toEqual({
@@ -105,7 +105,7 @@ runtime: docker
             resources: { sharePct: 50 },
             embedding: { mode: "api-key", baseURL: "https://api.openai.com/v1", model: "text-embedding-3-small" },
             refs: "recommended",
-            sandbox: "python",
+            sandbox: "yes",
             runtime: "docker",
         });
     });
@@ -421,7 +421,7 @@ describe("answersFromFlags — the flag front-end", () => {
             embeddings: "api-key",
             embeddingsUrl: "https://api.openai.com/v1",
             embeddingsModel: "text-embedding-3-small",
-            sandbox: "python-r",
+            sandbox: "yes",
             runtime: "podman",
             refs: "a,b",
         })._unsafeUnwrap();
@@ -438,7 +438,7 @@ describe("answersFromFlags — the flag front-end", () => {
             resources: { sharePct: 50 },
             embedding: { mode: "api-key", baseURL: "https://api.openai.com/v1", model: "text-embedding-3-small" },
             refs: ["a", "b"],
-            sandbox: "python-r",
+            sandbox: "yes",
             runtime: "podman",
         });
     });
@@ -539,12 +539,31 @@ describe("answersFromFlags — the flag front-end", () => {
         // A malformed port never becomes a candidate value (this front-end drops it), while a bad `--sandbox`
         // is only the schema's to judge. Reporting the first and stopping would send the author back for a
         // second run to discover the second — the same fix-it-once contract the file front-end holds.
-        const problems = problemsOf(answersFromFlags({ postgresPort: "0x1F5B", sandbox: "python-plus" })._unsafeUnwrapErr());
+        const problems = problemsOf(answersFromFlags({ postgresPort: "0x1F5B", sandbox: "python-r" })._unsafeUnwrapErr());
         expect(problems).toHaveLength(2);
         const text = problems.join("\n");
         expect(text).toContain("--postgres-port");
         expect(text).toContain("must be a whole number");
         expect(text).toContain("--sandbox");
+    });
+
+    test("a retired image variant fails validation, naming both spellings and saying the answer takes no image name", () => {
+        // One runtime image is published, so a variant name is dead. A user upgrading from the old surface
+        // types it out of habit, and reading it as "pull the one image" would hide the retirement from them.
+        for (const retired of ["python", "python-r"]) {
+            const problems = problemsOf(answersFromFlags({ sandbox: retired })._unsafeUnwrapErr());
+            expect(problems).toHaveLength(1);
+            const text = problems.join("\n");
+            // Both spellings, so the author fixes the flag or the file without guessing which is meant.
+            expect(text).toContain("`--sandbox`");
+            expect(text).toContain("`sandbox`");
+            expect(text).toContain("retired");
+            expect(text).toContain("takes no image name");
+        }
+    });
+
+    test("a `--sandbox` answer that names no variant is accepted, so the consent still reaches setup", () => {
+        expect(answersFromFlags({ sandbox: "yes" })._unsafeUnwrap().sandbox).toBe("yes");
     });
 
     test("a dropped flag candidate is never double-reported — the schema does not see it", () => {
@@ -694,8 +713,8 @@ describe("resolveSetupAnswers — precedence", () => {
     });
 
     test("a file-only answer survives when no flag answers it", () => {
-        const resolved = resolveSetupAnswers({}, { sandbox: "python", runtime: "podman", refs: "all" }, batch())._unsafeUnwrap();
-        expect(resolved.answers.sandbox).toBe("python");
+        const resolved = resolveSetupAnswers({}, { sandbox: "yes", runtime: "podman", refs: "all" }, batch())._unsafeUnwrap();
+        expect(resolved.answers.sandbox).toBe("yes");
         expect(resolved.answers.runtime).toBe("podman");
         expect(resolved.answers.refs).toBe("all");
     });
@@ -1164,7 +1183,7 @@ describe("loadSetupAnswers — both front-ends in one call", () => {
     });
 
     test("without --config the flags stand alone", () => {
-        expect(loadSetupAnswers({ sandbox: "python" }, batch())._unsafeUnwrap().answers.sandbox).toBe("python");
+        expect(loadSetupAnswers({ sandbox: "yes" }, batch())._unsafeUnwrap().answers.sandbox).toBe("yes");
     });
 
     test("--config pointed at a DIRECTORY is the unreadable-file error, not a parse failure", () => {

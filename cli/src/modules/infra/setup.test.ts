@@ -1728,17 +1728,20 @@ describe("setup() — batch orchestration", () => {
             expect(refsStep.mock.calls[0]![0].selection).toEqual({ ids: [CATALOG_ID] });
         });
 
-        test("a valid id list lets the run continue — the answered sandbox pull still happens", async () => {
+        test("a valid id list lets the run continue — the answered image pull still happens", async () => {
             const pull = spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () =>
-                ok({ type: "pulled" as const, variant: "python" as const, image: "ghcr.io/x/sandbox-python:latest" }),
+                ok({ type: "pulled" as const, image: "ghcr.io/inflexa-ai/sandbox-base:latest" }),
             );
-            spies.push(pull);
+            const provisioner = spyOn(sandboxPullModule, "provisionerPull").mockImplementation(async () =>
+                ok({ type: "pulled" as const, image: "ghcr.io/inflexa-ai/sandbox-provisioner:latest" }),
+            );
+            spies.push(pull, provisioner);
 
-            await runSetup(batch({ refs: `${CATALOG_ID},${OTHER_CATALOG_ID}`, sandbox: "python" }));
+            await runSetup(batch({ refs: `${CATALOG_ID},${OTHER_CATALOG_ID}`, sandbox: "yes" }));
 
             expect(process.exitCode).toBe(0);
             expect(refsStep.mock.calls[0]![0].selection).toEqual({ ids: [CATALOG_ID, OTHER_CATALOG_ID] });
-            expect(pull.mock.calls[0]![0]).toEqual({ variant: "python", yes: true });
+            expect(pull.mock.calls[0]![0]).toEqual({ yes: true });
         });
     });
 
@@ -1840,17 +1843,40 @@ describe("setup() — batch orchestration", () => {
         expect(firstReady).not.toHaveBeenCalled();
     });
 
-    test("an answered sandbox variant pulls without a size confirmation", async () => {
+    test("an answered sandbox pulls BOTH images without a size confirmation", async () => {
         const pull = spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () =>
-            ok({ type: "pulled" as const, variant: "python" as const, image: "ghcr.io/x/sandbox-python:latest" }),
+            ok({ type: "pulled" as const, image: "ghcr.io/inflexa-ai/sandbox-base:latest" }),
+        );
+        const provisioner = spyOn(sandboxPullModule, "provisionerPull").mockImplementation(async () =>
+            ok({ type: "pulled" as const, image: "ghcr.io/inflexa-ai/sandbox-provisioner:latest" }),
+        );
+        spies.push(pull, provisioner);
+
+        await runSetup(batch({ sandbox: "yes" }));
+
+        expect(process.exitCode).toBe(0);
+        // The ANSWER is the multi-GB consent, so `yes` rides each call and no confirm is reached. Both
+        // images ride one answer, because both are prerequisites of a working store.
+        expect(pull.mock.calls[0]![0]).toEqual({ yes: true });
+        expect(provisioner.mock.calls[0]![0]).toEqual({ yes: true });
+    });
+
+    test("a `--sandbox` answer that names a retired variant fails validation before anything is pulled", async () => {
+        const pull = spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () =>
+            ok({ type: "pulled" as const, image: "ghcr.io/inflexa-ai/sandbox-base:latest" }),
         );
         spies.push(pull);
 
-        await runSetup(batch({ sandbox: "python" }));
+        const errors = await runCapturingStderr(batch({ sandbox: "python-r" }));
 
-        expect(process.exitCode).toBe(0);
-        // The ANSWER is the multi-GB consent, so `yes` rides the call and no confirm is reached.
-        expect(pull.mock.calls[0]![0]).toEqual({ variant: "python", yes: true });
+        expect(process.exitCode).toBe(1);
+        // Both spellings, so a fleet author fixes the flag or the file without guessing which is meant.
+        expect(errors).toContain("`--sandbox`");
+        expect(errors).toContain("`sandbox`");
+        expect(errors).toContain("retired");
+        expect(errors).toContain("takes no image name");
+        // The refusal is up front: nothing was pulled.
+        expect(pull).not.toHaveBeenCalled();
     });
 
     test("an answered resource share persists the machine-relative absolute budget", async () => {
@@ -1914,6 +1940,7 @@ describe("setup() — batch orchestration", () => {
                     return options[0]!.value;
                 }),
                 spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () => ok({ type: "declined" as const })),
+                spyOn(sandboxPullModule, "provisionerPull").mockImplementation(async () => ok({ type: "declined" as const })),
             );
             // The interactive default-model step lists models off the proxy; every route 404s, so the
             // candidate list is empty and the optional manual-entry fallback is declined by the seam above.
@@ -2007,11 +2034,15 @@ describe("setup() — batch orchestration", () => {
         beforeEach(() => {
             answersDir = mkdtempSync(join(tmpdir(), "inflexa-answers-"));
             pullStep = spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () =>
-                ok({ type: "pulled" as const, variant: "python-r" as const, image: "ghcr.io/x/sandbox-python-r:latest" }),
+                ok({ type: "pulled" as const, image: "ghcr.io/inflexa-ai/sandbox-base:latest" }),
+            );
+            const provisionerStep = spyOn(sandboxPullModule, "provisionerPull").mockImplementation(async () =>
+                ok({ type: "pulled" as const, image: "ghcr.io/inflexa-ai/sandbox-provisioner:latest" }),
             );
             composeWriter = spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined));
             spies.push(
                 pullStep,
+                provisionerStep,
                 composeWriter,
                 spyOn(compose, "composeAvailable").mockImplementation(async () => true),
                 spyOn(container, "ensureReady").mockImplementation(async () => ok(undefined)),
@@ -2257,10 +2288,11 @@ describe("setup() — batch orchestration", () => {
                 },
             },
             sandbox: {
-                flags: { sandbox: "python-r" },
+                flags: { sandbox: "yes" },
                 effect: (run) => {
                     // The ANSWER is the multi-GB consent, so the pull carries `yes` and reaches no confirm.
-                    expect(run.sandbox).toEqual({ variant: "python-r", yes: true });
+                    // It names no image: one runtime image is published, and the answer selects nothing.
+                    expect(run.sandbox).toEqual({ yes: true });
                 },
             },
             runtime: {
