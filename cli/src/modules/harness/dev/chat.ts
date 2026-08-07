@@ -363,16 +363,17 @@ export type ChatSink = {
 
 /**
  * The small per-turn API the chat REPL drives. `emit` is the `EmitFn` handed to
- * `runAgent` — the command also routes the streaming provider wrapper's per-token
- * `onText` callback through it as `text-delta` events (see chat.ts), so deltas
- * and loop/tool events share one sink and one set of rules. `finishTurn` flushes
- * and resets per-turn state (dangling tool chips, the streamed-text flag).
+ * `runAgent` — the `chat` seam of the `runChatTurn` call above also routes the
+ * streaming provider's per-token callback through it as `text-delta` events, so
+ * deltas and loop/tool events share one sink and one set of rules. `finishTurn`
+ * flushes and resets per-turn state (dangling tool chips, the streamed-text flag).
  */
 export type ChatPrinter = {
     /**
      * The `EmitFn` sink handed to `runAgent` (and fed the streaming provider's
-     * text deltas). Drops sub-agent traffic, renders each event category coarsely,
-     * and never retains a received object (copy-on-receive).
+     * text deltas). Routes sub-agent traffic under the open tool call (rule 2),
+     * renders each event category coarsely, and never retains a received object
+     * (copy-on-receive).
      */
     readonly emit: EmitFn;
     /**

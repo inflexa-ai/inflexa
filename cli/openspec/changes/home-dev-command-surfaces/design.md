@@ -93,7 +93,7 @@ Phase 1 dissolves the two mixed files. Phase 2 moves the dev code. The order mat
 
 **`runtime.ts` grows to about 1197 lines** → accepted. The alternative separates a union from the mapper that exhausts it, and that costs a reader more than the length does.
 
-**The `dev/` boundary guard covers a static import only** → a `no-restricted-imports` rule in `eslint.config.js` fails a build when a product file imports `dev/`. It exempts the files under `dev/` and the registration gate.
+**The `dev/` boundary guard covers a static import only** → a `no-restricted-imports` rule in `eslint.config.js` fails a build when a product file imports `dev/`. It exempts the files under `dev/`, and nothing else.
 
 Two facts shaped it, and both cost a wrong first attempt. The pattern matches the import STRING, not a resolved path, so `**/modules/harness/dev/*` reads as armed while matching nothing from inside `modules/harness/` — a sibling writes `./dev/chat.ts`. The pattern is `**/dev/*`, confirmed against a sibling form and a deep form.
 

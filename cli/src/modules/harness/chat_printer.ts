@@ -7,8 +7,14 @@ import type { AskCardStatus, PlanCardStepView } from "../../types/session.ts";
 // Two surfaces consume them, and that is the whole reason they sit here rather than inside either
 // one: the TUI conversation reducer (`tui/hooks/conversation.ts`) and the dev REPL printer
 // (`dev/chat.ts`). Both must narrate the same stream the same way — a plan card the TUI reads as
-// three steps and the REPL reads as two would be a difference with no cause behind it — so the
-// coercion lives in exactly one place and neither surface re-derives it.
+// three steps and the REPL reads as two would be a difference with no cause behind it — so every
+// reader with two consumers lives here and neither surface re-derives it.
+//
+// A reader with ONE consumer stays with that consumer instead, per the single-caller rule of
+// `cli/CLAUDE.md`. `eventDepth` (`tui/hooks/conversation.ts`) is the case to know about: it repeats
+// the `source` presence read of `eventSource` below, because exporting a private helper for one
+// outside caller widens this surface for less than the repeat costs. A change to `EventSource`
+// touches that function too.
 //
 // Every reader COPIES what it keeps. An in-process `emit` shares mutable references with the agent
 // loop, so a reader that retained the received `data` object would hand its caller a value the loop

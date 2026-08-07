@@ -231,14 +231,17 @@ export default defineConfig([
         // REPLACES rather than extends per block (see sharedRestrictedSyntax), and threading that through
         // the `src/cli/**` block below would cost the `.action()` ban its scope.
         //
-        // Two exemptions, and no others:
-        //   - `src/modules/harness/dev/**` — the surfaces import each other (`dev/run.ts` → `dev/status.ts`).
-        //   - `src/cli/index.ts` — the registration gate itself, the one crossing the spec sanctions. Its
-        //     three `import()` calls sit inside `devCommandsEnabled()`, so a release build never evaluates
-        //     them. Exempted as a file (like `agent_policy.ts` above) rather than through inline disables,
-        //     which would put the justification at three sites instead of the one that owns the decision.
+        // One exemption, and no others: `src/modules/harness/dev/**`, because the surfaces import each
+        // other (`dev/run.ts` → `dev/status.ts`).
+        //
+        // The registration gate at `src/cli/index.ts` gets NO exemption, although it is the one crossing
+        // the spec sanctions. Its three crossings are the lazy `import()` calls inside
+        // `devCommandsEnabled()`, and the SCOPE note above is why they need no exemption to pass. A
+        // file-wide exemption would therefore buy nothing and would cost the gate the only guard it can
+        // still carry: a top-level static import, the one form a release build WOULD evaluate, and the
+        // form a reader reaches for the moment they want a type or a constant out of a dev action.
         files: ["src/**/*.{ts,tsx}"],
-        ignores: ["src/modules/harness/dev/**", "src/cli/index.ts"],
+        ignores: ["src/modules/harness/dev/**"],
         rules: {
             "no-restricted-imports": [
                 "error",

@@ -341,19 +341,6 @@ function updateToolPart(toolUseId: string, name: string, status: "ok" | "error" 
 }
 
 /**
- * Route a sub-agent event onto the activity line of the tool call it is running inside.
- *
- * ATTRIBUTION: the event carries `{agentId, callPath}` and no tool-use id, so which call a sub-agent
- * belongs to is not stated on the wire. What is known is that a sub-agent runs INSIDE a tool call, so
- * the newest still-open call is the answer — exact whenever one tool is open, which is the shape of
- * every sub-agent-spawning tool today. With several open concurrently this attributes to the most
- * recent, and is wrong only in the line's placement, never in its content. Widening `EventSource`
- * with the originating tool-use id is the fix if that ever stops being good enough.
- *
- * A no-op when no tool is open: such an event has nothing to be subordinate to, and putting it at
- * the transcript root is exactly the burial the routing rule exists to prevent.
- */
-/**
  * How deep in the agent call chain `event` was emitted — 1 for the top-level chat agent, higher for a
  * sub-agent, and 0 for an event that carries no source (a stream delta).
  *
@@ -367,10 +354,27 @@ function eventDepth(event: EmitEventArg): number {
     // `source` is required on loop orchestration events, optional on data parts, and absent on stream
     // events, so `in` is the honest presence read across the union. `callPath` is loop-owned and
     // untrusted, hence the `Array.isArray` guard: a malformed source reads as top-level, not a throw.
+    //
+    // This repeats the read that `isSubAgentEvent` makes inside `chat_printer.ts`, which is a decision
+    // and not an oversight: exporting that file's private `eventSource` for one outside function widens
+    // the shared surface for less than the repeat costs. A widening of `EventSource` touches both.
     const src = "source" in event && event.source ? event.source : undefined;
     return src !== undefined && Array.isArray(src.callPath) ? src.callPath.length : 0;
 }
 
+/**
+ * Route a sub-agent event onto the activity line of the tool call it is running inside.
+ *
+ * ATTRIBUTION: the event carries `{agentId, callPath}` and no tool-use id, so which call a sub-agent
+ * belongs to is not stated on the wire. What is known is that a sub-agent runs INSIDE a tool call, so
+ * the newest still-open call is the answer — exact whenever one tool is open, which is the shape of
+ * every sub-agent-spawning tool today. With several open concurrently this attributes to the most
+ * recent, and is wrong only in the line's placement, never in its content. Widening `EventSource`
+ * with the originating tool-use id is the fix if that ever stops being good enough.
+ *
+ * A no-op when no tool is open: such an event has nothing to be subordinate to, and putting it at
+ * the transcript root is exactly the burial the routing rule exists to prevent.
+ */
 function applySubAgentActivity(event: EmitEventArg): void {
     const id = currentAssistantId;
     if (!id || openTools.size === 0) return;

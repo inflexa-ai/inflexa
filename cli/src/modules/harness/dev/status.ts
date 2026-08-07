@@ -70,10 +70,11 @@ export async function readNewestWorkflowStep(
  * {@link readNewestWorkflowStep}. A UUID contains no LIKE wildcards, so the
  * pattern is literal apart from the trailing `%`.
  *
- * Shared by the headless run wait (`run.ts`) and the TUI's activity panel
- * rather than written twice: the `runId-N` child-id scheme is a contract with
- * the harness's workflow naming, and two copies of it would drift the moment
- * that scheme changes, leaving one surface silently reading only the parent.
+ * The headless run wait (`run.ts`) is the one caller, and the file header says
+ * why no product surface joins it. It stays a named function rather than an
+ * inline literal because the `runId-N` child-id scheme is a contract with the
+ * harness's workflow naming: one named site is where a reader looks when that
+ * scheme changes, and an inline copy at the call site reads as a local detail.
  */
 export function runWorkflowFamily(runId: string): { text: string; values: unknown[] } {
     return {

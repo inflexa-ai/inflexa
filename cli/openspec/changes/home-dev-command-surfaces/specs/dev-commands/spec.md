@@ -18,13 +18,15 @@ surface is a consumer of the product. A product file MUST NOT import a path unde
 
 The gated registration block in `src/cli/index.ts` is the one sanctioned crossing. It reaches each
 command action through the lazy `import()` that registration already uses. That call sits inside
-`devCommandsEnabled()`, so a release build never evaluates it. Nothing else outside `dev/` MUST name
-a path under it.
+`devCommandsEnabled()`, so a release build never evaluates it. Each other file outside `dev/` MUST
+NOT import a path under it. That ban covers the static form and the dynamic form alike.
 
 A lint rule MUST enforce that direction for a static import, so the boundary fails a build rather
-than a review. The rule MUST exempt the files under `dev/` and the registration gate. It MUST match
-the import string, not a resolved path. A sibling reaches the directory as `./dev/<file>`, which a
-pattern anchored on the full module path never matches.
+than a review. The rule MUST exempt the files under `dev/`. It MUST NOT exempt the registration
+gate, because the crossings of the gate are dynamic and the rule does not read a dynamic import.
+Thus the gate keeps the guard against a static import. The rule MUST match the import string, not a
+resolved path. A sibling reaches the directory as `./dev/<file>`, which a pattern anchored on the
+full module path never matches.
 
 A helper that both a product surface and a dev surface call MUST stay outside `dev/`, in
 the module that owns its subject. A shared helper MUST NOT move into `dev/` because a dev
@@ -64,7 +66,7 @@ registration".
 
 #### Scenario: The lint rule refuses a product file's static import
 
-- **GIVEN** a file under `src/` that is neither in `dev/` nor the registration gate
+- **GIVEN** a file under `src/` that is not in `dev/`, the registration gate included
 - **WHEN** it declares a static import of a path under `src/modules/harness/dev/`
 - **THEN** `bun run lint` reports a `no-restricted-imports` error naming the boundary
 - **AND** the error fires for a sibling's `./dev/<file>` form and for a deep `../modules/harness/dev/<file>` form alike

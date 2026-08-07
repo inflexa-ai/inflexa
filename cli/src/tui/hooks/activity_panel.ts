@@ -249,7 +249,7 @@ export type ActivityPanelSeams = {
 const realActivityPanelSeams: ActivityPanelSeams = {
     runtime: harnessRuntime,
     // The panel deliberately does NOT read `readNewestWorkflowStep` / `runWorkflowFamily` /
-    // `friendlyStepLabel` (`modules/harness/profile.ts`), which the headless `inflexa run` wait still
+    // `friendlyStepLabel` (`modules/harness/dev/status.ts`), which the headless `inflexa run` wait still
     // uses. Those select the newest row of the durability engine's step cache, and that table records
     // a step only when it RETURNS — so a completed-step record cannot describe in-flight work. It
     // names whatever finished last, which around the slowest operation in a run is an instantaneous
