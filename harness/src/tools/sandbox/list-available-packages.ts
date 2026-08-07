@@ -6,7 +6,7 @@
  * build (see the lib-store-build spec) and read from wherever the HOST can see
  * it — the container path when the host mounts the same store, an injected path
  * when it does not. Its shape is fixed by the
- * producers (`scripts/lib-store-common.sh`, `images/sandbox-python/inflexa-libs-refresh`):
+ * producers (`scripts/lib-store-common.sh`, `images/sandbox-base/inflexa-libs-refresh`):
  * two `#` advisory lines, then one `## <Section>` heading per language track
  * followed by that track's packages as a single comma-separated line.
  *

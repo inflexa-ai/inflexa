@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Common apt build toolchain for the sandbox-python and sandbox-python-r builder
-# stages: base build tools plus the -dev headers that Python C extensions and
-# Bioconductor source compiles link against. Stage-specific extra package names
-# may be passed as arguments (e.g. python3-yaml for the R toolchain) so they
-# install in the same apt transaction as the common set.
+# Common apt build toolchain for a builder stage that compiles a package: base
+# build tools plus the -dev headers that Python C extensions and Bioconductor
+# source compiles link against. Stage-specific extra package names may be passed
+# as arguments (e.g. python3-yaml) so they install in the same apt transaction as
+# the common set.
 #
 # Acquire::Retries: archive.ubuntu.com sits behind flaky round-robin mirrors; the
 # apt default of zero retries occasionally drops the whole invocation, so a small

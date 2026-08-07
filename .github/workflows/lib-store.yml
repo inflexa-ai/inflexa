@@ -1,27 +1,26 @@
 name: Build Sandbox Images
 
-# Builds the three layered sandbox images (sandbox-base → sandbox-python →
-# sandbox-python-r) from images/*/Dockerfile + images/lib-store-manifest.yaml and
-# publishes them to GitHub Packages (GHCR) as multi-arch manifests. It then
-# extracts per-track tarballs OUT of the published images and publishes the
-# content-addressed managed-mount artifacts to S3 — one build, two consumers:
+# Builds the ONE sandbox runtime image, sandbox-base, from
+# images/sandbox-base/Dockerfile + images/lib-store-manifest.yaml and publishes it
+# to GitHub Packages (GHCR) as a multi-arch manifest. The image carries the
+# language runtimes, the system libraries, the bioconda command-line tools at
+# /opt/conda, and the Node packages at /opt/node. It bakes NO R library and NO
+# Python library: the package store is the one source of a library, and
+# .github/workflows/lib-store-provisioner.yml publishes it.
 #
-#   * OSS user: `docker run ghcr.io/inflexa-ai/sandbox-python-r` — the
-#     store is baked, zero pull, zero mount. Or `FROM` it and add libs.
-#   * Managed: mounts the extracted tarballs read-only at /mnt/libs (cold-start
-#     friendly), unchanged from before — only the tarball SOURCE moved (an image
-#     subtree, not a throwaway builder).
+# OPEN DECISION — the per-track tarballs of the managed mount are cut OUT of a
+# published image below, and no image carries an R track or a Python track after
+# the retirement of the variants. The replacement source is not decided, thus the
+# extract step and every step after it fail until it is. See task 7.1 of the change
+# `preserve-farm-tracks-and-single-runtime-image`.
 #
-# Both arches build on large self-hosted Graviton/x86 builders — the full R +
-# Bioconductor compile does not fit a GitHub-hosted runner. amd64 → label
+# Both arches build on large self-hosted Graviton/x86 builders — the conda solve
+# and the image assembly do not fit a GitHub-hosted runner. amd64 → label
 # `inflexa-builder` (m6i.4xlarge), arm64 → label `inflexa-builder-arm64`
 # (m7g.4xlarge); the boxes live in platform-infra (modules/internal/builder-ec2*.tf)
-# and are started via `just build-start [arch]`. Both arches attempt every image
-# best-effort; sandbox-python-r stays continue-on-error (a native-arm64 R build
-# still occasionally trips) so an arch that cannot build R still publishes base +
-# python and the non-R tracks.
+# and are started via `just build-start [arch]`.
 #
-# The build-time LOAD CHECK runs inside each image build (best-effort + non-empty
+# The build-time LOAD CHECK runs inside the image build (best-effort + non-empty
 # floor). The COVERAGE REPORT runs after extraction (want-vs-got + regression diff
 # vs the last published manifest: an amd64 regression fails, an arm64 miss is
 # informational). The build advances latest/<arch> at publish (build-floor gated),
@@ -48,8 +47,6 @@ permissions:
 env:
   MANIFEST: images/lib-store-manifest.yaml
   IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/sandbox-base
-  IMAGE_PYTHON: ghcr.io/${{ github.repository_owner }}/sandbox-python
-  IMAGE_PYTHON_R: ghcr.io/${{ github.repository_owner }}/sandbox-python-r
   # Single source for the arch list consumed by the manifest combine loop. The
   # build and acceptance job matrices carry per-arch runner+platform, so they
   # list the arches inline — keep all three in lock-step.
@@ -129,10 +126,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Layered build: base → python → python-r, each on this arch, tagged
-      # <image>:<version>-<arch>. `--load` puts each image in the local docker
-      # daemon so the tarball extraction below can `docker run` it without a
-      # pull-back; `docker push` then publishes it to GHCR.
+      # One image, on this arch, tagged <image>:<version>-<arch>. `--load` puts it
+      # in the local docker daemon so a later step can `docker run` it without a
+      # pull-back; `docker push` then publishes it to GHCR. There is no inventory
+      # label: the image bakes no /mnt/libs/current/packages.txt, because the
+      # mounted store carries its own.
 
       - name: "Build + push: sandbox-base"
         run: |
@@ -144,53 +142,14 @@ jobs:
             .
           docker push "${IMAGE_BASE}:${VERSION}-${ARCH}"
 
-      - name: "Build + push: sandbox-python"
-        run: |
-          docker buildx build --load \
-            -f images/sandbox-python/Dockerfile \
-            --platform "$PLATFORM" \
-            --build-arg "SANDBOX_BASE_IMAGE=${IMAGE_BASE}:${VERSION}-${ARCH}" \
-            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
-            -t "${IMAGE_PYTHON}:${VERSION}-${ARCH}" \
-            .
-          # Stamp the inventory on BEFORE the push: a host that never bind-mounts the
-          # store reads the label, so an unlabelled published image is one whose agents
-          # cannot tell what is installed.
-          bash scripts/lib-store-label-packages.sh "${IMAGE_PYTHON}:${VERSION}-${ARCH}"
-          docker push "${IMAGE_PYTHON}:${VERSION}-${ARCH}"
-
-      - name: "Build + push: sandbox-python-r"
-        id: python_r
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          docker buildx build --load \
-            -f images/sandbox-python-r/Dockerfile \
-            --platform "$PLATFORM" \
-            --build-arg "SANDBOX_PYTHON_IMAGE=${IMAGE_PYTHON}:${VERSION}-${ARCH}" \
-            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
-            --secret id=github_token,env=GITHUB_TOKEN \
-            -t "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}" \
-            .
-          # Re-stamp rather than inherit: python-r is built FROM sandbox-python and
-          # would otherwise carry its base's label, advertising an inventory missing
-          # every R track this image adds.
-          bash scripts/lib-store-label-packages.sh "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}"
-          docker push "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}"
-
-      # Extract the per-track tarballs from the HIGHEST image that built for this
-      # arch: sandbox-python-r carries all tracks; if R did not build, fall back
-      # to sandbox-python (python/conda/node only).
+      # OPEN DECISION (task 7.1): the extraction cuts the per-track tarballs out of
+      # a published image, and sandbox-base carries no R track and no Python track.
+      # This step fails until the replacement source is decided. Do not point it at
+      # a different artifact before that decision.
       - name: Extract per-track tarballs from the image
         id: extract
         run: |
-          if [ "${{ steps.python_r.outcome }}" = "success" ]; then
-            TOP="${IMAGE_PYTHON_R}:${VERSION}-${ARCH}"
-          else
-            echo "::warning::sandbox-python-r did not build for $ARCH — extracting non-R tracks from sandbox-python"
-            TOP="${IMAGE_PYTHON}:${VERSION}-${ARCH}"
-          fi
+          TOP="${IMAGE_BASE}:${VERSION}-${ARCH}"
           echo "top_image=$TOP" >> "$GITHUB_OUTPUT"
           bash scripts/lib-store-extract-tarballs.sh "$TOP" staging
 
@@ -221,8 +180,6 @@ jobs:
             echo "| Image | Result |"
             echo "|-|-|"
             echo "| sandbox-base | pushed |"
-            echo "| sandbox-python | pushed |"
-            echo "| sandbox-python-r | ${{ steps.python_r.outcome }} |"
             echo "Extracted from: ${{ steps.extract.outputs.top_image }}"
             echo "Packed tracks: $(tr '\n' ' ' < dist/tracks.txt)"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -280,14 +237,14 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker rmi "${IMAGE_BASE}:${VERSION}-${ARCH}" "${IMAGE_PYTHON}:${VERSION}-${ARCH}" "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}" 2>/dev/null || true
+          docker rmi "${IMAGE_BASE}:${VERSION}-${ARCH}" 2>/dev/null || true
           rm -rf staging dist candidate
           docker image prune -f 2>/dev/null || true
           docker container prune -f 2>/dev/null || true
 
-  # Combine the per-arch image tags into multi-arch manifest lists so
+  # Combine the per-arch image tags into one multi-arch manifest list, so
   # `docker pull` resolves the host arch automatically. Only the arch tags that
-  # actually built are included (e.g. sandbox-python-r may be amd64-only).
+  # actually built are included.
   manifest:
     needs: [prepare, build]
     if: always()
@@ -323,5 +280,3 @@ jobs:
             echo "published ${image}:latest (${srcs[*]})"
           }
           combine "${IMAGE_BASE}"
-          combine "${IMAGE_PYTHON}"
-          combine "${IMAGE_PYTHON_R}"

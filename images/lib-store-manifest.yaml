@@ -586,19 +586,21 @@ python:
         arm64:
             - "liana"
 
-# Node packages installed into the store's node subtree (a flat list, not
-# arch-split). echarts backs the chart/report rendering path.
+# Node packages the runtime image installs at /opt/node (a flat list, not
+# arch-split). echarts backs the chart/report rendering path. A package farm cannot
+# carry this track, thus the image owns it.
 node:
     - echarts
 
 # Build-time dependencies (compilers, -dev headers) are in the builder stages of
-# images/sandbox-python/Dockerfile and images/sandbox-python-r/Dockerfile (not
-# listed here). Runtime system libraries are in images/sandbox-base/Dockerfile
-# (not listed here).
+# images/sandbox-provisioner/Dockerfile (not listed here). Runtime system
+# libraries are in images/sandbox-base/Dockerfile (not listed here).
 #
-# This manifest is the single package-set source of truth consumed by the layered
-# image builds: it only lists the R, Python, Node packages and bioinformatics
-# tools that go on the shared library store at /mnt/libs/current.
+# This manifest is the single package-set source of truth: it only lists the R,
+# Python, and Node packages and the bioinformatics tools of the sandbox. The
+# provisioner builds the R track and the Python track into the package store at
+# /mnt/libs/current. The runtime image builds the conda track and the Node track,
+# at /opt/conda and /opt/node.
 
 # Bioinformatics CLI tools from bioconda. `common` builds on every arch;
 # `amd64` holds tools with no linux-aarch64 bioconda package (the arm64 conda

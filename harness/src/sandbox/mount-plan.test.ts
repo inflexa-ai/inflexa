@@ -52,8 +52,17 @@ describe("buildMountPlan", () => {
     test("libs enabled injects lib-store env", () => {
         const plan = buildMountPlan(COORDS, { libs: true, refs: false });
         expect(plan.env.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
-        expect(plan.env.NODE_PATH).toBe("/mnt/libs/current/node/node_modules");
-        expect(plan.env.PATH).toContain("/mnt/libs/current/conda/bin");
+        expect(plan.env.NODE_PATH).toBe("/opt/node/node_modules");
+        expect(plan.env.PATH).toContain("/opt/conda/bin");
+    });
+
+    test("the injected env names the image paths, not a path under the store mount", () => {
+        // The image owns the conda track and the Node track. A store mounts
+        // read-only over /mnt/libs, so a store-relative value would remove the
+        // command-line tools of the image from every sandbox that has a store.
+        const plan = buildMountPlan(COORDS, { libs: true, refs: false });
+        expect(plan.env.NODE_PATH).not.toContain("/mnt/libs");
+        expect(plan.env.PATH).not.toContain("/mnt/libs");
     });
 
     test("libs unset omits lib-store env and libsPath", () => {

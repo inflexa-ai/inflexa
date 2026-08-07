@@ -1,17 +1,29 @@
-# Inflexa Sandbox - Base Image
-# Single image for all sandbox pods. R, Python, and Node packages come
-# from the shared library store mounted at /mnt/libs (not baked in).
+# Inflexa Sandbox - the one runtime image
 #
-# Size: ~2.3GB on arm64, of which the chromium layer is a measured 477MB (see that
-#       section for why the browser is carried here rather than in the variants).
-#       The 800MB-1.2GB target this line used to claim was already stale before
-#       chromium — the image measured ~1.8GB without it.
+# The image owns each language interpreter, the system libraries, and each track a
+# package farm cannot carry. The store owns the packages. Thus the R library and
+# the Python library come from the shared package store, mounted read-only at
+# /mnt/libs, and NO library is baked here.
+#
+# The conda prefix and the Node packages are the two tracks a farm cannot carry,
+# thus the image carries them. Both live OUTSIDE the store mount — at /opt/conda
+# and /opt/node — because a store mounts over /mnt/libs and would shadow any path
+# baked below it.
+#
+# Size: ~2.3GB on arm64 before the conda and Node tracks, of which the chromium
+#       layer is a measured 477MB (see that section for why the browser is here).
 # Contains: R 4.6.0, Python 3.12, Node.js 20, runtime system libs, fonts, tools,
-#           chromium (plotly static image export via kaleido),
+#           chromium (plotly static image export via kaleido), the bioconda
+#           command-line tools at /opt/conda, the Node packages at /opt/node,
 #           sandbox-server (Go static binary for HTTP-based command execution)
+#
+# Build context is the repo ROOT (so COPY can reach images/lib-store-manifest.yaml).
 
 # Must match lib-store-manifest.yaml base_image. CI passes --build-arg.
 ARG BASE_IMAGE=rocker/r-ver:4.6.0@sha256:6f05a1a8b8c52328f181593923909b01cbfd14c9caea93bf75ddc65e806d8eac
+
+# Target arch (auto-set by buildx). It arch-gates the numba target of the runtime.
+ARG TARGETARCH
 
 # =============================================================================
 # Stage 1: Build sandbox-server (Go static binary)
@@ -35,10 +47,158 @@ COPY images/sandbox-base/provenance/provtrack.c /build/provtrack.c
 RUN gcc -shared -fPIC -O2 -pthread -fstack-protector-strong -Wformat -Wformat-security -o /provtrack.so /build/provtrack.c -ldl
 
 # =============================================================================
-# Stage 3: Runtime image
+# Stage 3: libs-toolchain — the manifest and the tool that reads it. The conda
+# builder and the node builder both branch from it.
 # =============================================================================
 
-FROM ${BASE_IMAGE}
+FROM ${BASE_IMAGE} AS libs-toolchain
+
+# A failed producer in a pipeline must fail the layer.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# python3 reads the manifest and python3-yaml parses it. The conda track and the
+# Node track install prebuilt artifacts, thus this stage needs no compiler and no
+# -dev header.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-yaml curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY images/lib-store-manifest.yaml /tmp/manifest.yaml
+
+# =============================================================================
+# Stage 4: conda-builder — the bioinformatics command-line tools, from bioconda.
+#
+# The prefix is MADE at /opt/conda, the path it is read at. conda writes the
+# absolute prefix path into each shebang and each RPATH, thus a prefix that is
+# built elsewhere and then copied, linked, or moved does not run. The COPY in the
+# runtime stage below lands it at the same /opt/conda.
+# =============================================================================
+
+FROM libs-toolchain AS conda-builder
+ARG TARGETARCH
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# micromamba (deterministic binary from the official image).
+COPY --from=mambaorg/micromamba:2.5.0 /bin/micromamba /usr/local/bin/micromamba
+
+# `common + <arch>` — the manifest decides the arch split (amd64-only tools have
+# no linux-aarch64 bioconda build). Strict channel priority prevents mixed
+# conda-forge/bioconda dependency conflicts.
+RUN TOOLS=$(python3 -c "\
+import yaml, os; \
+g = yaml.safe_load(open('/tmp/manifest.yaml'))['system_tools']; \
+print(' '.join(g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), [])))" 2>/dev/null || true) \
+    && if [ -n "$TOOLS" ]; then \
+       micromamba create -y -p /opt/conda \
+         --channel-priority strict \
+         -c conda-forge -c bioconda \
+         $TOOLS; \
+       micromamba clean --all --yes; \
+    fi
+
+# Best-effort load check — every manifest tool that resolves on PATH goes into the
+# fragment (a canned --version call is logged for visibility); a missing tool is
+# dropped. Floor: zero resolved tools fails the build. PATH carries the conda bin
+# so a tool that ships its own runtime can find it — appended AFTER the system
+# dirs so the `python3` below stays the system one, which carries pyyaml.
+#
+# What is probed is the BINARY, which the manifest entry only usually names: an
+# entry can carry a conda version pin (`samtools=1.22.1`) and a package can
+# install an executable under another name (`eagle2` -> `eagle`, through the
+# manifest's `binaries` map). A probe of the raw entry would drop a tool that
+# works.
+#
+# The fragment stays in this builder stage, at /tmp. /mnt/libs/current holds no
+# package, and where the image advertises its own two tracks is an open decision.
+# The floor is what this check exists for, and the floor does not need a shipped
+# fragment.
+ENV PATH="${PATH}:/opt/conda/bin"
+RUN TOOLS=$(python3 -c "\
+import yaml, os, re; \
+g = yaml.safe_load(open('/tmp/manifest.yaml'))['system_tools']; \
+b = g.get('binaries') or {}; \
+specs = g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), []); \
+names = [re.split(r'[=<>!~\s]', s.strip(), maxsplit=1)[0] for s in specs]; \
+print('\n'.join(b.get(n, n) for n in names))" 2>/dev/null) \
+    && ok=""; failed=""; \
+    for tool in $TOOLS; do \
+      if command -v "$tool" >/dev/null 2>&1; then \
+        ver=$("$tool" --version 2>&1 | head -1 || true); \
+        echo "  OK: $tool ${ver}"; ok="$ok $tool"; \
+      else \
+        echo "DROP: $tool not found on PATH"; failed="$failed $tool"; \
+      fi; \
+    done; \
+    printf '## System tools (CLI)\n%s\n' "$(printf '%s\n' $ok | sort | paste -sd, - | sed 's/,/, /g')" \
+      > /tmp/conda.packages.txt; \
+    [ -n "$failed" ] && echo "NOTE: system tool(s) dropped:$failed"; \
+    if [ -z "$(printf '%s' $ok)" ]; then echo "ERROR: the conda track resolved ZERO tools (non-empty floor) — failing the build."; exit 1; fi; \
+    echo "Load check OK: system tools resolved"
+
+# World-readable for the unprivileged sandbox user. The chmod MUST stay in this
+# builder stage: chmod is a write, so it copies up every file it walks — even one
+# whose mode does not change — and a shipped layer would then carry a second copy
+# of the whole prefix. The COPY below preserves these modes.
+RUN chmod -R a+rX /opt/conda
+
+# =============================================================================
+# Stage 5: node-builder — the Node packages, at /opt/node.
+#
+# npm hoists one flat node_modules tree, which does not divide into one directory
+# for each package. A Python distribution and an R package do divide that way,
+# thus the farm code of the provisioner has no counterpart here and the image owns
+# this track.
+# =============================================================================
+
+FROM libs-toolchain AS node-builder
+
+# `npm install | tail` must preserve npm's failure status.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# TODO(supply-chain): this pipes NodeSource's setup script straight into bash, so
+# its contents are fetched and executed unpinned — the same gap the runtime stage
+# below records.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# The node package set is the manifest's flat `node:` list.
+RUN mkdir -p /opt/node \
+    && NODE_PKGS=$(python3 -c "\
+import yaml; \
+print(' '.join(yaml.safe_load(open('/tmp/manifest.yaml'))['node']))" 2>/dev/null || true) \
+    && cd /opt/node && npm install $NODE_PKGS 2>&1 | tail -3
+
+# Best-effort load check — require() each manifest node package; the fragment
+# comes from the set that loaded; floor if zero. (/opt/node carries the manifest's
+# direct deps; their transitive deps live under node_modules but are not
+# advertised.) The fragment stays at /tmp for the reason the conda stage records.
+RUN NODE_PKGS=$(python3 -c "\
+import yaml; \
+print(' '.join(yaml.safe_load(open('/tmp/manifest.yaml'))['node']))" 2>/dev/null) \
+    && cd /opt/node \
+    && FRAG="/tmp/node.packages.txt" NODE_PKGS="$NODE_PKGS" node -e '\
+const pkgs = (process.env.NODE_PKGS || "").split(/\s+/).filter(Boolean); \
+const bad = []; \
+for (const p of pkgs) { \
+  try { require(p); console.log("  OK: " + p); } \
+  catch (e) { console.log("DROP " + p + ": " + e.message); bad.push(p); } \
+} \
+const ok = pkgs.filter((p) => !bad.includes(p)); \
+require("fs").writeFileSync(process.env.FRAG, "## Node (npm)\n" + ok.join(", ") + "\n"); \
+if (bad.length) console.error("NOTE: " + bad.length + " Node package(s) dropped"); \
+if (!ok.length) { console.error("ERROR: the node track loaded ZERO packages (non-empty floor)"); process.exit(1); } \
+console.log("Load check OK: " + ok.length + "/" + pkgs.length + " Node package(s) loaded");'
+
+# World-readable — see the note above the matching chmod in conda-builder.
+RUN chmod -R a+rX /opt/node
+
+# =============================================================================
+# Stage 6: Runtime image
+# =============================================================================
+
+FROM ${BASE_IMAGE} AS runtime
 
 # A failed producer in a pipeline must fail the layer, not be hidden by a
 # successful shell/checksum/filter command on the right-hand side.
@@ -47,7 +207,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # OCI metadata: link the published package to its source repo (so GHCR files it
 # under the repo and it inherits repo access) and give it a specific description.
 LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inflexa"
-LABEL org.opencontainers.image.description="Inflexa sandbox base — minimal runtime (rocker/r-ver + system Python 3.12) with the sandbox server and provenance hooks; the layer sandbox-python and sandbox-python-r build on."
+LABEL org.opencontainers.image.description="Inflexa sandbox runtime — rocker/r-ver, system Python 3.12, Node.js 20, the bioconda command-line tools at /opt/conda, the Node packages at /opt/node, the sandbox server, and the provenance hooks. It bakes no R library and no Python library: the package store, mounted read-only at /mnt/libs, is the one source of a library."
 
 # =============================================================================
 # Runtime system libraries (no -dev packages, no build toolchain)
@@ -177,10 +337,10 @@ RUN mkdir -p /usr/local/share/fonts \
 # staged here. This is the same rule that puts `jags` in this file for r-cran-rjags:
 # a manifest package's RUNTIME system dependency belongs in the base image.
 #
-# It has to be *this* image, not sandbox-python. The managed service runs
-# sandbox-base directly and mounts the library tarballs (kaleido included) read-only
-# at /mnt/libs, so a browser staged only in the variant images would leave the
-# managed path with kaleido and nothing to render with.
+# The browser belongs to the image and never to the store. kaleido arrives with
+# the mounted store, and a store carries packages only, thus a browser staged
+# anywhere but here would leave each sandbox with kaleido and nothing to render
+# with.
 #
 # Why the xtradeb PPA and not something more obvious:
 #   - Ubuntu noble has no real chromium deb. `chromium`/`chromium-browser` in the
@@ -238,6 +398,45 @@ RUN ln -s /usr/bin/python3 /usr/local/bin/python
 # PYTHONPATH (which would leak into conda's Python 3.11 and break ABI).
 RUN echo "/mnt/libs/current/python/site-packages" > /usr/lib/python3/dist-packages/inflexa-libs.pth
 
+# =============================================================================
+# The package store — the mount points, the resolver env, and the inventory
+# producer. The image bakes NO library: /mnt/libs/current holds only the empty
+# mount points, so a bind of the store lands on a path that exists.
+# =============================================================================
+
+RUN mkdir -p /mnt/libs/current/python/site-packages
+
+# Self-sufficiency: a plain `docker run` with a store mounted and NO harness
+# resolves an import through this env. The harness injects the same values when it
+# mounts the store, thus the baked env is redundant with it and never in conflict.
+#
+# PATH puts /opt/conda/bin LAST, so the system python3 — which reads the store
+# .pth — stays the default `python3`, and not conda's own Python, which cannot see
+# the site-packages of the store.
+#
+# NODE_PATH and PATH name a path in this image, never a path under /mnt/libs. A
+# store mounts read-only over /mnt/libs, thus a store-relative value here would
+# remove the command-line tools of the image from each sandbox that has a store.
+ENV INFLEXA_LIB_ROOT=/mnt/libs/current
+ENV R_LIBS_SITE="/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran"
+ENV NODE_PATH="/opt/node/node_modules"
+ENV PATH="${PATH}:/opt/conda/bin"
+
+# The shared inventory producer, which re-derives packages.txt from the per-track
+# fragments at the store root. One producer for this image, the provisioner, and
+# the store, thus a store assembled by any route reports its inventory in one
+# shape. The image bakes no /mnt/libs/current/packages.txt, because the store
+# carries the packages and the mount brings its own inventory.
+COPY images/sandbox-base/inflexa-libs-refresh /usr/local/bin/inflexa-libs-refresh
+RUN chmod +x /usr/local/bin/inflexa-libs-refresh
+
+# The two tracks a package farm cannot carry. Both paths sit outside /mnt/libs,
+# thus a mounted store shadows neither. The conda prefix was made at /opt/conda
+# and it lands at /opt/conda, because its shebangs and its RPATHs carry that
+# absolute path.
+COPY --from=conda-builder /opt/conda /opt/conda
+COPY --from=node-builder /opt/node /opt/node
+
 # No library-specific reference paths are baked in. The reference store is
 # optional, its layout is owned by the catalog (and versioned per dataset), and
 # a path compiled into the image would either point at nothing or pin the image
@@ -287,3 +486,19 @@ USER sandbox
 EXPOSE 8765
 
 ENTRYPOINT ["/usr/local/bin/sandbox-entrypoint.sh"]
+
+# =============================================================================
+# Stage 7: the arch-gated numba target
+# =============================================================================
+# On arm64 the numba/LLVM CPU target is pinned to a generic model. An autodetect
+# of the host CPU crashes LLVM codegen on a newer arm64 core, and a generic target
+# is portable across each arm64 CPU. The provisioner sets the identical value when
+# it warms the JIT cache of a farm (`warm()` in provision.py), thus a mismatch here
+# would make each cache entry miss. amd64 keeps the host autodetect.
+#
+# Both stages derive from the one runtime stage, and only the stage of the target
+# arch is built, thus this costs no repeated work.
+FROM runtime AS runtime-amd64
+FROM runtime AS runtime-arm64
+ENV NUMBA_CPU_NAME=generic
+FROM runtime-${TARGETARCH}

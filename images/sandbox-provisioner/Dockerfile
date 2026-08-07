@@ -58,9 +58,10 @@ RUN R -e "install.packages(c('pak', 'yaml'))" > /tmp/pak-bootstrap.log 2>&1 \
     || { cat /tmp/pak-bootstrap.log; exit 1; }
 COPY images/gen-r-lock.R /usr/local/bin/gen-r-lock.R
 
-# The same packages.txt producer the published images run, so a store assembled
-# here and a store baked into an image advertise their contents identically.
-COPY images/sandbox-python/inflexa-libs-refresh /usr/local/bin/inflexa-libs-refresh
+# The same packages.txt producer the published runtime image carries, so a store
+# assembled here and a store obtained any other way advertise their contents
+# identically.
+COPY images/sandbox-base/inflexa-libs-refresh /usr/local/bin/inflexa-libs-refresh
 COPY images/sandbox-provisioner/provision.py /usr/local/bin/provision
 RUN chmod +x /usr/local/bin/inflexa-libs-refresh /usr/local/bin/provision
 

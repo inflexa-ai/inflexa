@@ -112,12 +112,18 @@ export function buildSessionSubPaths(coords: MountPlanCoords, workspaceSubPath: 
 /**
  * Lib-store package-discovery env. PYTHONPATH is intentionally omitted —
  * system Python resolves via a `.pth` file in the lib store.
+ *
+ * `PATH` and `NODE_PATH` name a path in the runtime image, never a path under
+ * `/mnt/libs`. The store carries packages only; the image owns the conda track at
+ * `/opt/conda` and the Node track at `/opt/node`. A store mounts read-only over
+ * `/mnt/libs`, so a store-relative `PATH` here would remove the command-line tools
+ * of the image from every sandbox that has a store.
  */
 function libStoreEnv(): Record<string, string> {
     return {
         R_LIBS_SITE: "/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran",
-        NODE_PATH: "/mnt/libs/current/node/node_modules",
-        PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mnt/libs/current/conda/bin",
+        NODE_PATH: "/opt/node/node_modules",
+        PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/conda/bin",
     };
 }
 

@@ -106,16 +106,22 @@ echo "Validating store at $LIB_PATH/current in $MOUNT_IMAGE ..."
 # the store lives inside the image, independent of any host INFLEXA_LIB_ROOT, so
 # they are hardcoded rather than sourced from lib-store-common.sh's LIB_STORE_ROOT.
 #
+# PATH and NODE_PATH name a path in the IMAGE, never a path under /mnt/libs. The
+# image owns the conda track at /opt/conda and the Node track at /opt/node, and the
+# store mounts over /mnt/libs. A store-relative value here would remove the
+# command-line tools of the image, which is the same trap the harness mount plan
+# documents.
+#
 # --entrypoint "" for the same reason as the baked path above: MOUNT_IMAGE is
-# sandbox-base, which defines the ENTRYPOINT the sandbox images inherit.
+# sandbox-base, which defines its own ENTRYPOINT.
 docker run --rm --entrypoint "" \
   -v "$LIB_PATH:/mnt/libs:ro" \
   -v "$SUITE_DIR:/opt/lib-store-validate:ro" \
   -v "$VALIDATOR_DIR:/opt/lib-validator:ro" \
   --tmpfs /mnt/refs \
   -e R_LIBS_SITE="/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran" \
-  -e NODE_PATH="/mnt/libs/current/node/node_modules" \
-  -e PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mnt/libs/current/conda/bin" \
+  -e NODE_PATH="/opt/node/node_modules" \
+  -e PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/conda/bin" \
   -e LIB_VALIDATOR_DIR=/opt/lib-validator \
   -e LIB_STORE_VERSION="${LIB_STORE_VERSION:-}" \
   "${SUMMARY_ARGS[@]}" \

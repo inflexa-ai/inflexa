@@ -2,41 +2,38 @@
 
 ## Overview
 
-The **lean base** of the three layered sandbox images. It bundles the language
-runtimes (R 4.6.0, Python 3.12, Node.js 20) plus a Go **sandbox-server** that is
-the in-container counterpart to the harness `SandboxClient`: the client submits
-work and receives results, while the server runs commands and POSTs HMAC-verified
+The **one runtime image** of the sandbox. It bundles the language runtimes (R
+4.6.0, Python 3.12, Node.js 20) plus a Go **sandbox-server** that is the
+in-container counterpart to the harness `SandboxClient`: the client submits work
+and receives results, while the server runs commands and POSTs HMAC-verified
 callbacks back to the host. See [`../../harness/CONTEXT.md`](../../harness/CONTEXT.md)
 and the [`sandbox-server`](../../harness/openspec/specs/sandbox-server/) /
 [`harness-sandbox-exec`](../../harness/openspec/specs/harness-sandbox-exec/) specs
 for the protocol.
 
-`sandbox-base` carries **no** analysis packages — its `/mnt/libs/current` is empty.
-The analysis libraries are added by the two images that layer on top of it:
+`sandbox-base` carries **no** R library and **no** Python library — its
+`/mnt/libs/current` is empty. The package store, mounted read-only at `/mnt/libs`,
+is the one source of a library.
 
-- [`../sandbox-python`](../sandbox-python) — `FROM sandbox-base` + the Python
-  libraries, the bioconda CLI tools, and the Node package(s) (echarts).
-- [`../sandbox-python-r`](../sandbox-python-r) — `FROM sandbox-python` + the R
-  libraries.
+The image does carry the two tracks that a package farm cannot carry: the conda
+prefix with the bioconda command-line tools, at `/opt/conda`, and the Node
+packages, at `/opt/node`. Both paths sit outside `/mnt/libs`, thus a mounted store
+shadows neither.
 
-Base stays lean deliberately: it is the image the **managed** service pulls per
-node (a few hundred MB of conda tools would be a real cold-start tax), and it
-mounts the per-track tarballs read-only over its empty `/mnt/libs`. An **OSS
-user** instead runs `sandbox-python`/`sandbox-python-r` directly — the store is
-baked in, no mount. All three publish to GHCR
-(`ghcr.io/inflexa-ai/sandbox-{base,python,python-r}`) for `linux/amd64` and
-`linux/arm64` via
+The image publishes to GHCR (`ghcr.io/inflexa-ai/sandbox-base`) for `linux/amd64`
+and `linux/arm64` through
 [`.github/workflows/lib-store.yml`](../../.github/workflows/lib-store.yml). See
-[`../README.md`](../README.md) for the image ladder, the manifest, and how to
-extend or build the images.
+[`../README.md`](../README.md) for the manifest, the resolver env, and how to build
+the image.
 
 ## What's here
 
 |Path|Role|
 |-|-|
-|`Dockerfile`|Multi-stage build: compiles the server + provenance shim, then assembles the runtime image on `BASE_IMAGE`.|
+|`Dockerfile`|Multi-stage build: compiles the server + provenance shim, builds the conda prefix and the Node packages, then assembles the runtime image on `BASE_IMAGE`.|
 |`server/`|The Go `sandbox-server` (static binary, `CGO_ENABLED=0`) — HTTP exec protocol + signed callbacks.|
 |`provenance/`|File-read tracking hooks: `provtrack.c` (LD_PRELOAD), `sitecustomize.py` (Python), `Rprofile.site` (R).|
+|`inflexa-libs-refresh`|The shared inventory producer. It re-derives the `packages.txt` of a store from the per-track fragments. The provisioner image carries the same file.|
 
 ## Exec protocol
 

@@ -43,6 +43,19 @@ Run with either::
   ReclaimTests.test_reclaim_keeps_referenced_drops_orphan            -> 7.3
   ReclaimTests.test_remove_farm_refuses_current                       -> 7.3
 
+Track preservation coverage map (test -> task of the change
+``harness/openspec/changes/preserve-farm-tracks-and-single-runtime-image``):
+  TrackPreservationTests.test_adding_a_python_package_keeps_the_r_track     -> 6.1
+  TrackPreservationTests.test_records_cover_the_preserved_track             -> 6.2
+  TrackPreservationTests.test_a_rebuilt_track_replaces_the_preserved_one    -> 6.3
+  TrackPreservationTests.test_preservation_installs_nothing_and_opens_no_network -> 6.4
+  TrackPreservationTests.test_a_stopped_run_leaves_a_farm_with_both_tracks  -> 6.5
+  TrackPreservationTests.test_reclaim_spares_a_store_dir_of_a_preserved_track -> 6.6
+  FarmAssemblyTests.test_farm_holds_no_conda_and_no_node                    -> 6.7
+
+Task 6.8 and task 6.9 are NOT covered here: 6.8 needs a real sandbox with a store
+mounted, and 6.9 needs the pak build, which does not fit the memory of a laptop.
+
 §9 tasks deliberately NOT covered here (require the real container / external
 tools / a running host, i.e. CI- or container-gated, not unit-verifiable):
   9.1  port acceptance.py — needs a real installed farm (compiled extensions,
@@ -118,6 +131,9 @@ class StoreTestCase(unittest.TestCase):
         # resolved AT THAT MOMENT. The resolution has to happen in the fake,
         # because it is what proves `current` already selected the farm.
         self.warm_paths: list[tuple[str, str]] = []
+        # The argv of every external tool the run shelled out to. A preservation
+        # test reads it to prove that a preserved track ran no installer.
+        self.calls: list[list[str]] = []
 
         self._orig_run = provision.subprocess.run
         provision.subprocess.run = self._fake_run
@@ -143,6 +159,7 @@ class StoreTestCase(unittest.TestCase):
         ``self.uv_rc`` makes both uv steps fail with ``self.uv_stderr``.
         """
         argv = list(cmd)
+        self.calls.append(argv)
         prog = argv[0]
         if prog == "chmod":
             return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -398,7 +415,7 @@ class FarmAssemblyTests(StoreTestCase):
 
     def test_build_farm_invariants(self):
         """§4.1/4.3/4.4 + the mount-path guard: links top-level entries to absolute
-        store targets, creates conda/ but not r//node//bin, and refuses when the store
+        store targets, creates no r//node//conda//bin, and refuses when the store
         root is not the sandbox mount."""
         store_dir = provision.STORE / "demo-1.0-000000000000000f"
         (store_dir / "demo").mkdir(parents=True)
@@ -418,9 +435,9 @@ class FarmAssemblyTests(StoreTestCase):
         self.assertIn("/store/", target)                # under the store, not a host path
         self.assertTrue((site / "demo-1.0.dist-info").is_symlink())
 
-        # conda is a bare mount point; r/ and node/ are NOT created for unprovisioned
-        # tracks, so the inventory does not advertise empty sections.
-        self.assertTrue((farm / "conda").is_dir())
+        # conda, r/ and node/ are NOT created. The image owns the conda track and the
+        # Node track, and an empty r/ would advertise an empty section.
+        self.assertFalse((farm / "conda").exists())
         self.assertFalse((farm / "r").exists())
         self.assertFalse((farm / "node").exists())
         # No bin/ in the store dir -> nothing hoisted -> no python/bin.
@@ -437,9 +454,10 @@ class FarmAssemblyTests(StoreTestCase):
         finally:
             provision.SANDBOX_MOUNT = saved
 
-    def test_conda_is_empty_mount_point_and_no_node(self):
-        """§4.4: conda/ is a bare, empty mount point, and node/ is never created, so
-        the inventory advertises no empty conda or node section."""
+    def test_farm_holds_no_conda_and_no_node(self):
+        """§6.7: a farm the provisioner builds holds no conda directory and no node
+        directory. The image owns both tracks, at a path outside the store mount, and
+        a conda prefix cannot resolve from a path that a publish step swaps."""
         store_dir = provision.STORE / "demo-1.0-000000000000000f"
         (store_dir / "demo").mkdir(parents=True)
         (store_dir / "demo" / "__init__.py").write_text("x = 1\n")
@@ -448,11 +466,8 @@ class FarmAssemblyTests(StoreTestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             provision.build_farm(farm, [store_dir])
 
-        conda = farm / "conda"
-        self.assertTrue(conda.is_dir())
-        self.assertFalse(conda.is_symlink())        # a real mount point, not a link
-        self.assertEqual(list(conda.iterdir()), [])  # empty: nothing is farmed into it
-        self.assertFalse((farm / "node").exists())   # no node subtree at all
+        self.assertFalse((farm / "conda").exists())
+        self.assertFalse((farm / "node").exists())
 
     def test_build_r_farm_skips_empty_subtree(self):
         """§4.4/6.2: R packages link into r/{cran,bioconductor}; an empty subtree
@@ -668,8 +683,8 @@ class ProvisionRunTests(StoreTestCase):
         self.assertEqual(os.readlink(provision.LIBS / "current"), "farms/demo")
 
     def test_rebuild_drops_stale_links_but_keeps_records(self):
-        """A farm holds this run's closure and nothing else: a link, an R subtree,
-        and an inventory fragment from an earlier run all go."""
+        """A rebuilt track holds this run's closure and nothing else: a link from an
+        earlier run goes with the subtree that this run makes again."""
         self.compile_text = self.FOO_1
         self.install_tree = dict(self.FOO_1_TREE)
         farm = provision.FARMS / "demo"
@@ -678,14 +693,6 @@ class ProvisionRunTests(StoreTestCase):
         site = farm / "python" / "site-packages"
         first_target = os.readlink(site / "foo")
         self.assertTrue((site / "foo-1.0.dist-info").is_symlink())
-
-        # An R track from an earlier run, with the fragment that run derived from it.
-        # This run passes no R manifest, so both belong to the previous farm only.
-        (farm / "r" / "cran").mkdir(parents=True)
-        (farm / "r" / "cran" / "oldRpkg").symlink_to(
-            str(provision.STORE / "oldrpkg-1.0-000000000000dead"))
-        (farm / "cran.packages.txt").write_text("## R (CRAN)\noldRpkg\n")
-        (farm / "r-bulk.lock").write_text("{}\n")
 
         # The same spec resolves to a new version, which is the real shape of a
         # stale link: the 1.0 metadata directory has no place in the 2.0 closure.
@@ -697,11 +704,8 @@ class ProvisionRunTests(StoreTestCase):
         self.assertTrue((site / "foo-2.0.dist-info").is_symlink())
         self.assertFalse((site / "foo-1.0.dist-info").is_symlink())
         self.assertNotEqual(os.readlink(site / "foo"), first_target)
-        self.assertFalse((farm / "r").exists())
-        self.assertFalse((farm / "r-bulk.lock").exists())
-        self.assertFalse((farm / "cran.packages.txt").exists())
         # The inventory must not advertise a package the farm no longer holds.
-        self.assertNotIn("oldRpkg", (farm / "packages.txt").read_text())
+        self.assertNotIn("foo-1.0", (farm / "packages.txt").read_text())
 
         # The records stayed, and they describe this run.
         for record in self.RECORDS:
@@ -789,6 +793,195 @@ class ProvisionRunTests(StoreTestCase):
         self.assertEqual(workload["script_sha256"], hashlib.sha256(script_bytes).hexdigest())
         # The path stays too, so the effectiveness check can run the script.
         self.assertEqual(lock["warm_script"], str(script))
+
+
+class TrackPreservationTests(StoreTestCase):
+    """§6.1-§6.6 — a run preserves each track that it does not rebuild.
+
+    The packages of a farm survive a run in the content-addressed store, because
+    only reclaim removes a directory from it. What a run used to destroy is the
+    VIEW: the r/{cran,bioconductor,github} link trees. These tests drive the whole
+    of ``_provision``, thus they cover the carry-forward, the records, and the
+    atomic publish together.
+    """
+
+    FOO_1 = "foo==1.0 \\\n    --hash=sha256:aaa\n"
+    FOO_1_TREE = {"foo/__init__.py": "x = 1\n",
+                  "foo-1.0.dist-info/RECORD": "foo/__init__.py,,\n"}
+
+    def _run(self, farm: str, specs: list[str] | None = None, **over) -> int:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return provision._provision(self._args(farm, specs, **over))
+
+    def _seed_r_track(self, farm: Path, *names: str) -> dict[str, Path]:
+        """Give `farm` an r/cran subtree of links into the store, as an R run leaves it."""
+        subdir = farm / "r" / "cran"
+        subdir.mkdir(parents=True, exist_ok=True)
+        store_dirs = {}
+        for index, name in enumerate(names):
+            store_dir = provision.STORE / f"{name.lower()}-1.0-00000000000000{index:02d}"
+            (store_dir / "R").mkdir(parents=True)
+            (store_dir / "R" / "code.R").write_text("f <- function() 1L\n")
+            (subdir / name).symlink_to(str(store_dir))
+            store_dirs[name] = store_dir
+        (farm / "r-bulk.lock").write_text('{"packages": []}\n')
+        return store_dirs
+
+    def _python_and_r_farm(self, name: str = "demo") -> Path:
+        """A published farm that carries a `python` track and an `r` track."""
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        self.assertEqual(self._run(name, ["foo"]), 0)
+        farm = provision.FARMS / name
+        self._seed_r_track(farm, "rpkgA", "rpkgB")
+        return farm
+
+    def _fake_provision_r(self, *names: str):
+        """Stand in for ``provision_r``: farm the named R packages, install nothing.
+
+        The real function needs pak, R, and pyyaml. The orchestration under test is
+        which track ``_provision`` builds and which track it carries forward.
+        """
+        def run(farm: Path, manifest: Path) -> dict:
+            packages = []
+            for index, name in enumerate(names):
+                store_dir = provision.STORE / f"{name.lower()}-2.0-0000000000000f{index:02d}"
+                store_dir.mkdir(exist_ok=True)
+                packages.append((name, store_dir))
+            provision.build_r_farm(farm, {"cran": packages, "bioconductor": [], "github": []})
+            return {"packages": {"cran": len(packages), "bioconductor": 0, "github": 0},
+                    "r_version": "4.6.0", "bioc_releases": []}
+        return run
+
+    def test_adding_a_python_package_keeps_the_r_track(self):
+        """§6.1: a run that adds one Python specification and builds no R track
+        publishes a farm that still resolves every R package."""
+        farm = self._python_and_r_farm()
+        before = {name: os.readlink(farm / "r" / "cran" / name) for name in ("rpkgA", "rpkgB")}
+
+        self.compile_text = "bar==2.0 \\\n    --hash=sha256:bbb\n" + self.FOO_1
+        self.install_tree = {"bar/__init__.py": "y = 2\n",
+                             "bar-2.0.dist-info/RECORD": "bar/__init__.py,,\n"}
+        self.assertEqual(self._run("demo", ["bar"]), 0)
+
+        # The R links resolve through the same three R paths, at the same targets.
+        for name, target in before.items():
+            link = farm / "r" / "cran" / name
+            self.assertTrue(link.is_symlink(), f"{name} lost its link")
+            self.assertEqual(os.readlink(link), target)
+        # The Python track carries both specifications.
+        site = farm / "python" / "site-packages"
+        self.assertTrue((site / "foo").is_symlink())
+        self.assertTrue((site / "bar").is_symlink())
+        # The provenance of the preserved track travels with it.
+        self.assertTrue((farm / "r-bulk.lock").is_file())
+        # The lock separates the rebuilt track from the inherited one.
+        lock = json.loads((farm / "lock.json").read_text())
+        self.assertEqual(lock["tracks"], {"built": ["python"], "preserved": ["r"]})
+
+    def test_records_cover_the_preserved_track(self):
+        """§6.2: the published meta.json names both tracks, and packages.txt lists
+        the R packages that the farm still resolves."""
+        farm = self._python_and_r_farm()
+
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        self.assertEqual(self._run("demo"), 0)
+
+        self.assertEqual(json.loads((farm / "meta.json").read_text())["tracks"],
+                         ["python", "r"])
+        inventory = (farm / "packages.txt").read_text()
+        self.assertIn("rpkgA", inventory)
+        self.assertIn("rpkgB", inventory)
+        self.assertIn("foo", inventory)
+        # The producer derives the fragment again from the preserved subtree.
+        self.assertIn("rpkgA", (farm / "cran.packages.txt").read_text())
+
+    def test_a_rebuilt_track_replaces_the_preserved_one(self):
+        """§6.3: a run that builds the R track publishes the new track, not a merge
+        of the new track and the previous one."""
+        farm = self._python_and_r_farm()
+
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        original = provision.provision_r
+        provision.provision_r = self._fake_provision_r("rpkgC")
+        try:
+            self.assertEqual(self._run("demo", r_manifest="/tmp/manifest.yaml"), 0)
+        finally:
+            provision.provision_r = original
+
+        cran = farm / "r" / "cran"
+        self.assertEqual(sorted(p.name for p in cran.iterdir()), ["rpkgC"])
+        lock = json.loads((farm / "lock.json").read_text())
+        self.assertEqual(lock["tracks"], {"built": ["python", "r"], "preserved": []})
+
+    def test_preservation_installs_nothing_and_opens_no_network(self):
+        """§6.4: the preserved-track path runs no installer and no resolver.
+
+        Every external tool of the run is recorded, so the check is on the tools the
+        run reached for, not on a count of calls.
+        """
+        farm = self._python_and_r_farm()
+
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        self.calls.clear()
+        self.assertEqual(self._run("demo"), 0)
+
+        # No R installer, no R resolver, and no load check ran for the preserved track.
+        for argv in self.calls:
+            self.assertNotIn(argv[0], ("Rscript", "R"), f"the run reached for R: {argv}")
+        # foo==1.0 is already in the store, thus the Python track reinstalls nothing.
+        self.assertEqual([a for a in self.calls if a[0] == "uv" and "install" in a], [])
+        self.assertTrue((farm / "r" / "cran" / "rpkgA").is_symlink())
+
+    def test_a_stopped_run_leaves_a_farm_with_both_tracks(self):
+        """§6.5: a run that stops before the publish leaves the farm path with one
+        complete farm, thus no track is lost."""
+        farm = self._python_and_r_farm()
+
+        self.compile_text = "bar==2.0 \\\n    --hash=sha256:bbb\n" + self.FOO_1
+        self.install_tree = {"bar/__init__.py": "y = 2\n",
+                             "bar-2.0.dist-info/RECORD": "bar/__init__.py,,\n"}
+        original = provision.publish_farm
+
+        def stop(staging, target):
+            raise RuntimeError("the run stopped before the publish")
+
+        provision.publish_farm = stop
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
+                provision._provision(self._args("demo", ["bar"]))
+        finally:
+            provision.publish_farm = original
+
+        # The old farm is complete: both tracks, and every record.
+        self.assertTrue((farm / "python" / "site-packages" / "foo").is_symlink())
+        self.assertTrue((farm / "r" / "cran" / "rpkgA").is_symlink())
+        self.assertTrue((farm / "r" / "cran" / "rpkgB").is_symlink())
+        self.assertTrue((farm / "r-bulk.lock").is_file())
+        for record in ("lock.json", "meta.json", "packages.txt"):
+            self.assertTrue((farm / record).is_file(), f"{record} did not survive")
+
+    def test_reclaim_spares_a_store_dir_of_a_preserved_track(self):
+        """§6.6: reclaim spares each store directory that a preserved track
+        references, because the preserved links live in the reachable farm."""
+        farm = self._python_and_r_farm()
+        r_dirs = {name: provision.STORE / os.readlink(farm / "r" / "cran" / name).split("/store/")[1]
+                  for name in ("rpkgA", "rpkgB")}
+        orphan = provision.STORE / "orphan-1.0-00000000000000ff"
+        orphan.mkdir()
+
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        self.assertEqual(self._run("demo"), 0)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision.reclaim(), 0)
+        for name, store_dir in r_dirs.items():
+            self.assertTrue(store_dir.is_dir(), f"reclaim removed {name}")
+        self.assertFalse(orphan.exists())
 
 
 class FailureMessageTests(StoreTestCase):

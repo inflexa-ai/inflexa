@@ -14,8 +14,10 @@ One host directory, three roles, all under the path the harness already knows as
 
   /mnt/libs/farms/<analysis>/
         One symlink farm per analysis — its dependency closure and nothing else.
-        Its interior is the layout the sandbox images already bake:
-        python/site-packages, r/{cran,bioconductor,github}, node/node_modules, conda.
+        Its interior is the layout the sandbox image already expects:
+        python/site-packages and r/{cran,bioconductor,github}. A farm carries
+        packages only. The conda prefix and the Node packages belong to the image,
+        at a path outside the store mount, thus a farm holds neither.
 
   /mnt/libs/current -> farms/<analysis>
         The pointer `libStoreUsable` resolves. Flipping it selects which farm the
@@ -319,25 +321,20 @@ def build_farm(farm: Path, store_dirs: list[Path]) -> list[str]:
             f"[provision] refusing to build a farm: store root {LIBS} is not the "
             f"sandbox mount {SANDBOX_MOUNT}; farm links would bake a path the sandbox "
             f"cannot resolve (set SANDBOX_LIB_MOUNT if the sandbox mounts elsewhere)")
-    # Remove only what this run makes again. The farm's records — lock.json,
-    # meta.json, and the packages.txt inventory — must outlive a run that stops
-    # early: a farm without them loses its requested set, and the harness then
-    # drops the mount with no message. Each rebuilt subtree goes in full, so no
-    # link from an earlier run stays behind.
+    # Remove only what this run makes again. This run makes the Python track again
+    # when it resolves a closure, thus that subtree goes in full and no link from an
+    # earlier run stays behind. A run that resolves no closure makes nothing again,
+    # thus it keeps the Python track that carry_tracks_forward carried across.
     #
-    # The inventory fragment of a removed subtree goes with it. The producer
-    # re-derives a fragment only for a subtree that exists, but it concatenates
-    # every fragment it finds, so a fragment from an earlier run would advertise
-    # packages the farm no longer holds. packages.txt itself stays, because it is
-    # one of the two markers the harness needs, and this run writes it again.
+    # Each other entry of the farm belongs to a track this function does not build,
+    # or it is a record. A removal here would undo the carry-forward, thus the R
+    # track, the R inventory fragments, and r-bulk.lock stay untouched.
     #
     # The prepared caches stay as well. Each numba entry is keyed on its source
     # file, so an entry for a package this run replaced can never load, and the
     # entries for the packages that did not change stay usable.
-    rebuilt = ["python", "conda", "r", "r-bulk.lock",
-               *(f"{sub}.packages.txt" for sub in R_SUBTREES)]
-    for name in rebuilt:
-        stale = farm / name
+    if store_dirs:
+        stale = farm / "python"
         if stale.is_symlink():
             stale.unlink()
         elif stale.is_dir():
@@ -345,16 +342,11 @@ def build_farm(farm: Path, store_dirs: list[Path]) -> list[str]:
         elif stale.exists():
             stale.unlink()
     site = farm / "python" / "site-packages"
-    site.mkdir(parents=True)
-    # conda is deliberately never farmed: its binaries carry their build prefix
-    # compiled in, so a prefix is bind-mounted whole at the exact path it was
-    # created for rather than relocated link by link. The directory exists only to
-    # be that mount point.
-    #
-    # The r/ and node/ subtrees are NOT pre-created. inflexa-libs-refresh derives
-    # one packages.txt section per subtree that exists, so an empty directory here
-    # would advertise an empty "R (CRAN)" track to list_available_packages.
-    (farm / "conda").mkdir(parents=True, exist_ok=True)
+    # exist_ok, because a preserved Python track already holds this directory.
+    site.mkdir(parents=True, exist_ok=True)
+    # The r/ subtrees are NOT pre-created. inflexa-libs-refresh derives one
+    # packages.txt section per subtree that exists, so an empty directory here would
+    # advertise an empty "R (CRAN)" track to list_available_packages.
 
     collisions: list[str] = []
     for store_dir in store_dirs:
@@ -422,6 +414,71 @@ def publish_farm(staging: Path, farm: Path) -> None:
         return
     # RENAME_EXCHANGE put the old farm at the staging path; drop it.
     shutil.rmtree(staging, ignore_errors=True)
+
+
+# --- Track preservation -------------------------------------------------------
+# A farm carries two tracks: the Python packages and the R packages. A run builds
+# the track it was asked for, and it carries the other track forward from the old
+# farm. Thus an added package never removes a track, and the removal of a track
+# stays an explicit operation, which is the removal of the farm.
+
+# The entries of a farm that belong to each track. The R inventory fragments are
+# not listed, because inflexa-libs-refresh derives a fragment again for each
+# subtree that the staging farm holds. r-bulk.lock is the provenance of the R
+# track, thus it travels with the track.
+TRACK_ENTRIES: dict[str, tuple[str, ...]] = {
+    "python": ("python",),
+    "r": ("r", "r-bulk.lock"),
+}
+
+
+def carry_tracks_forward(farm: Path, staging: Path, builds: set[str]) -> list[str]:
+    """Carry each track that the run does not build into the staging farm.
+
+    A track of a farm is a tree of symbolic links into the content-addressed store,
+    and the copy keeps each link verbatim. Thus the carry-forward installs no
+    package and it opens no network connection, and the published farm resolves the
+    preserved track through the same paths as before.
+
+    The copy reads the old farm and it writes the staging farm. It never removes an
+    entry from the old farm, thus a stop or a crash before the swap leaves the farm
+    path with one complete farm. A move would be cheaper by one link write, but a
+    move that is not followed by a publish loses the track.
+    """
+    preserved: list[str] = []
+    for track, entries in sorted(TRACK_ENTRIES.items()):
+        if track in builds:
+            continue
+        carried = False
+        for entry in entries:
+            src = farm / entry
+            if src.is_dir() and not src.is_symlink():
+                # symlinks=True keeps each link as a link. As a result the copy
+                # reads no package byte, and it cannot follow a link into the store.
+                shutil.copytree(src, staging / entry, symlinks=True)
+                carried = True
+            elif src.is_file():
+                shutil.copy2(src, staging / entry)
+                carried = True
+        if carried:
+            preserved.append(track)
+    return preserved
+
+
+def farm_tracks(farm: Path) -> list[str]:
+    """The tracks that a farm carries, read from the farm itself.
+
+    The record of a run alone reports a `python` track for a farm that also carries
+    `r`. The inventory of a farm states what a sandbox can import, thus the record
+    must describe the farm as published and not the work of the run.
+    """
+    tracks: list[str] = []
+    site = farm / "python" / "site-packages"
+    if site.is_dir() and any(site.iterdir()):
+        tracks.append("python")
+    if any((farm / "r" / sub).is_dir() for sub in R_SUBTREES):
+        tracks.append("r")
+    return tracks
 
 
 # --- R track -----------------------------------------------------------------
@@ -983,6 +1040,15 @@ def _provision(args) -> int:
         log("nothing requested and no existing lock — nothing to do")
         return 2
 
+    # The tracks this run builds. A track that is absent here is carried forward
+    # from the old farm below, thus a run that adds a Python package keeps the R
+    # track that it does not build.
+    builds: set[str] = set()
+    if requested:
+        builds.add("python")
+    if args.r_manifest:
+        builds.add("r")
+
     resolved: dict[str, list[str]] = {}
     pins: list[str] = []
     store_dirs: list[Path] = []
@@ -1008,10 +1074,10 @@ def _provision(args) -> int:
 
     # Carry the prepared caches forward from the old farm. Each numba entry is keyed on
     # its source file path, so an entry for a package this run does not change still
-    # loads, and a fresh farm would force the sandbox to recompile it. A move of the
-    # directory is atomic and reads no file content, thus it holds where a copy of the
-    # symlink farm does not. Cache preservation is an optimization, thus a move that
-    # fails is logged, never fatal, and the cache rebuilds on the next warm.
+    # loads, and a fresh farm would force the sandbox to recompile it. A cache holds
+    # real files, thus it moves rather than copies. Cache preservation is an
+    # optimization, thus a move that fails is logged, never fatal, and the cache
+    # rebuilds on the next warm.
     for cache in ("numba-cache", "matplotlib_config"):
         src = farm / cache
         if src.is_dir():
@@ -1019,6 +1085,13 @@ def _provision(args) -> int:
                 os.rename(src, staging / cache)
             except OSError as exc:
                 log(f"  note: could not carry {cache} forward ({exc}); it rebuilds on the next warm")
+
+    # Carry each track that this run does not build. The order matters: build_farm
+    # writes into a staging farm that already holds the preserved trees, thus a run
+    # that adds a Python package publishes a farm with both tracks.
+    preserved = carry_tracks_forward(farm, staging, builds)
+    log(f"tracks: this run builds {', '.join(sorted(builds)) or 'none'}; "
+        f"preserved from the old farm: {', '.join(preserved) or 'none'}")
 
     collisions = build_farm(staging, store_dirs)
 
@@ -1041,6 +1114,9 @@ def _provision(args) -> int:
         "hashes": resolved,
         "store_dirs": [d.name for d in store_dirs],
         "r": r_result,
+        # Which track this run built, and which track it inherited from the old
+        # farm. A later run reads this to tell a rebuilt track from a preserved one.
+        "tracks": {"built": sorted(builds), "preserved": preserved},
         "collisions": collisions,
         # The path of the warm script, kept so the effectiveness check can run it.
         "warm_script": args.warm_script,
@@ -1067,12 +1143,10 @@ def _provision(args) -> int:
                    env={**os.environ, "INFLEXA_LIB_ROOT": str(staging)}, check=True)
 
     # Second of the two completeness markers libStoreUsable requires before it
-    # will bind the store; without it the mount is silently dropped.
-    tracks = []
-    if store_dirs:
-        tracks.append("python")
-    if r_result.get("packages"):
-        tracks.append("r")
+    # will bind the store; without it the mount is silently dropped. The track list
+    # comes from the staging farm as it publishes, thus it names each preserved
+    # track beside each rebuilt one.
+    tracks = farm_tracks(staging)
     (staging / "meta.json").write_text(json.dumps({
         "version": args.farm,
         "arch": f"linux-{'arm64' if os.uname().machine == 'aarch64' else 'amd64'}",
