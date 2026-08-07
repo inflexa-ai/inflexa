@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../contracts/report-blocks.js";
-import { deriveChartOption, renderChart, type ChartRow, type EchartOption } from "./chart.js";
+import { renderChart } from "./chart-view.js";
+import { deriveChartOption, type ChartRow, type EchartOption } from "./chart.js";
 
 type Encoding = ChartBlock["encoding"];
 type ChartType = ChartBlock["chartType"];

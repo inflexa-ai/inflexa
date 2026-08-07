@@ -1,5 +1,5 @@
 /**
- * The reference ledger and the reference list.
+ * The reference ledger state.
  *
  * A claim binds to evidence, and a citation block points at an external source. The ledger collects each
  * reference in first-appearance order, and it gives one marker number to each distinct reference. A claim
@@ -11,8 +11,7 @@
  * not change the identity.
  */
 
-import { serializeReference, type ArtifactValueReference, type Reference } from "../contracts/report-reference.js";
-import { escapeHtml } from "./escape.js";
+import { serializeReference, type Reference } from "../contracts/report-reference.js";
 
 /**
  * The mutable ledger of references.
@@ -46,83 +45,4 @@ export class ReferenceLedger {
     entries(): readonly Reference[] {
         return this.order;
     }
-}
-
-/**
- * Render one evidence marker as a superscript that links to the list entry. The number comes from the
- * ledger as an integer, thus it needs no escape.
- */
-export function renderMarker(marker: number): string {
-    const n = String(marker);
-    return `<sup class="report-marker font-mono text-[10px] text-primary-500"><a href="#ref-${n}">${n}</a></sup>`;
-}
-
-/**
- * Describe a locator as plain text: the column and the one row selector. The refine of the schema admits
- * exactly one of `row` or `rowFilter`, thus the two branches cover a valid locator. The caller escapes
- * the result before it enters the page.
- */
-function describeLocator(locator: ArtifactValueReference["locator"]): string {
-    if (locator.row !== undefined) {
-        return `column ${locator.column}, row ${locator.row}`;
-    }
-    const filter = locator.rowFilter;
-    if (filter !== undefined) {
-        return `column ${locator.column}, row where ${filter.column} ${filter.op} ${String(filter.value)}`;
-    }
-    return `column ${locator.column}`;
-}
-
-/** Wrap a kind label. The label is a constant, and the escape stays for one uniform path. */
-function kindLabel(text: string): string {
-    return `<span class="report-ref-kind font-mono text-[11px] uppercase tracking-wider text-slate-400">${escapeHtml(text)}</span>`;
-}
-
-/** Wrap a path in a monospace code span. */
-function pathCode(text: string): string {
-    return `<code class="font-mono text-primary-700">${escapeHtml(text)}</code>`;
-}
-
-/** Wrap a plain detail such as a locator or an external id. */
-function detailSpan(text: string): string {
-    return `<span class="text-slate-500">${escapeHtml(text)}</span>`;
-}
-
-/**
- * Render the inner markup of one list entry. An artifact entry names its path, and it adds the locator
- * when the reference pins one cell. A citation entry names its identifier space and its id. A derivation
- * entry names its operation and its two inputs, each by path and locator.
- */
-function renderReferenceEntry(reference: Reference): string {
-    switch (reference.kind) {
-        case "artifact-value":
-            return `${kindLabel("Artifact value")} ${pathCode(reference.path)} ${detailSpan(describeLocator(reference.locator))}`;
-        case "artifact-table":
-            return `${kindLabel("Artifact table")} ${pathCode(reference.path)}`;
-        case "artifact-file":
-            return `${kindLabel("Artifact file")} ${pathCode(reference.path)}`;
-        case "citation":
-            return `${kindLabel("Citation")} ${detailSpan(`${reference.idKind}:${reference.id}`)}`;
-        case "derivation": {
-            const inputs = reference.inputs.map((input) => `${pathCode(input.path)} ${detailSpan(describeLocator(input.locator))}`).join(" and ");
-            return `${kindLabel(`Derivation (${reference.op})`)} ${inputs}`;
-        }
-    }
-}
-
-/**
- * Render the ordered reference list for the end of the page. The list keeps the first-appearance order,
- * thus the ordinal of each item matches its marker. An empty ledger gives an empty string, thus the page
- * shows no empty list.
- */
-export function renderReferenceList(ledger: ReferenceLedger): string {
-    const entries = ledger.entries();
-    if (entries.length === 0) {
-        return "";
-    }
-    const items = entries.map((reference, index) => {
-        const n = index + 1;
-        return `<li id="ref-${n}" class="report-ref-item mb-2 text-sm text-slate-600">${renderReferenceEntry(reference)}</li>`;
-    });
-    return `<ol class="report-references list-decimal pl-6">\n${items.join("\n")}\n</ol>`;
 }

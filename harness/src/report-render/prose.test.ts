@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { ClaimBlock, SectionBlock, TextBlock } from "../contracts/report-blocks.js";
 import type { Reference } from "../contracts/report-reference.js";
-import { renderClaim, renderNav, renderSectionOpen, renderText } from "./prose.js";
+import { renderClaim, renderNav, renderSection, renderText } from "./prose.js";
 import { ReferenceLedger } from "./references.js";
 
 describe("renderText", () => {
@@ -38,21 +38,26 @@ describe("renderClaim", () => {
     });
 });
 
-describe("renderSectionOpen", () => {
+describe("renderSection", () => {
     const section: SectionBlock = { kind: "section", id: "sec-1", title: "Overview", blocks: [{ kind: "text", id: "t", content: { prose: "x" } }] };
 
     it("renders h2 at depth 0", () => {
-        const html = renderSectionOpen(section, 0);
+        const html = renderSection(section, 0, "");
         expect(html).toContain("<h2");
         expect(html).toContain(`id="sec-1"`);
     });
 
     it("renders h3 at depth 1", () => {
-        expect(renderSectionOpen(section, 1)).toContain("<h3");
+        expect(renderSection(section, 1, "")).toContain("<h3");
     });
 
     it("renders h4 at depth 3", () => {
-        expect(renderSectionOpen(section, 3)).toContain("<h4");
+        expect(renderSection(section, 3, "")).toContain("<h4");
+    });
+
+    it("wraps the child markup as raw content", () => {
+        const html = renderSection(section, 0, "<p>child</p>");
+        expect(html).toContain("</h2><p>child</p></section>");
     });
 });
 

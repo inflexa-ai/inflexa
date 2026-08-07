@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
 import type { Reference } from "../contracts/report-reference.js";
-import { ReferenceLedger, renderReferenceList } from "./references.js";
+import { renderReferenceList } from "./references-view.js";
+import { ReferenceLedger } from "./references.js";
 
 describe("ReferenceLedger.mark", () => {
     it("numbers references by first appearance", () => {

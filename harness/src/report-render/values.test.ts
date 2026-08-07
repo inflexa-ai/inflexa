@@ -63,8 +63,8 @@ describe("renderFigure", () => {
     it("keeps a quote in the caption as text and inside the alt attribute", () => {
         const block: FigureBlock = { kind: "figure", id: "f2", binding: figureBinding, caption: 'a "quoted" caption' };
         const html = renderFigure(block, { type: "figure", src: "plot.png" });
-        // The figcaption content holds the raw quote, which is safe text.
-        expect(html).toContain('a "quoted" caption');
+        // The runtime escapes each child, thus the figcaption content holds the escaped quote.
+        expect(html).toContain("a &quot;quoted&quot; caption");
         // The alt attribute escapes the quote, thus the quote cannot break the attribute.
         expect(html).toContain(`alt="a &quot;quoted&quot; caption"`);
     });

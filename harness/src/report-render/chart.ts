@@ -1,9 +1,9 @@
 /**
- * The chart renderer of the report page.
+ * The chart derivation of the report page.
  *
  * A chart block binds one whole-table artifact and a channel mapping. `deriveChartOption` turns the
- * chart type, the encoding, and the resolved rows into one ECharts option object. `renderChart` wraps
- * the option in the container markup that the page bootstrap reads.
+ * chart type, the encoding, and the resolved rows into one ECharts option object. The chart container
+ * markup lives beside this file, and it wraps the option that this derivation gives.
  *
  * The renderer computes no aggregate. Each plotted number stays traceable to one cell of the evidence
  * artifact. A pie or a heatmap arrives one row per category or per cell, thus a repeated category or a
@@ -18,7 +18,6 @@ import { err, ok, type Result } from "neverthrow";
 
 import type { ChartBlock } from "../contracts/report-blocks.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
-import { escapeAttr, escapeHtml } from "./escape.js";
 import type { RenderProblem } from "./types.js";
 
 /** One cell of a resolved row. A cell is one string or one number. */
@@ -68,37 +67,6 @@ function deriveRaw(block: ChartBlock, rows: readonly ChartRow[], columns?: reado
         case "pie":
             return derivePie(block, rows, columns);
     }
-}
-
-/**
- * Render the container markup for a chart.
- *
- * The bootstrap in `page.ts` reads the option from the next element sibling of the container. Thus the
- * `<script type="application/json">` element MUST follow the container div with no element between them.
- * The title renders above the container, and the caption renders below.
- */
-export function renderChart(block: ChartBlock, option: EchartOption): string {
-    const containerId = chartContainerId(block.id);
-    // JSON inside a script element must never hold a raw `<`. The escape of `<` to `<` stops a
-    // `</script` sequence in a string cell from closing the element early. The browser reverses the
-    // escape when it parses the JSON, thus the option value stays exact.
-    const json = JSON.stringify(option).replace(/</g, "\\u003c");
-
-    const parts: string[] = [];
-    if (block.title !== undefined) {
-        parts.push(`<p class="chart-title">${escapeHtml(block.title)}</p>`);
-    }
-    parts.push(`<div id="${escapeAttr(containerId)}" data-echarts-id="${escapeAttr(block.id)}" class="chart-container"></div>`);
-    parts.push(`<script type="application/json">${json}</script>`);
-    if (block.caption !== undefined) {
-        parts.push(`<p class="chart-caption">${escapeHtml(block.caption)}</p>`);
-    }
-    return parts.join("");
-}
-
-/** The container id derives from the block id, thus the id stays stable across renders. */
-function chartContainerId(blockId: string): string {
-    return `chart-${blockId}`;
 }
 
 // ── The per-type derivations ────────────────────────────────────────────────
