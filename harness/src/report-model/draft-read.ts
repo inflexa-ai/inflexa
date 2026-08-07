@@ -119,6 +119,19 @@ export function buildOutline(draft: DraftDocument): OutlineEntry[] {
 }
 
 /**
+ * Build the outline of one container: an entry for each direct child, and nothing deeper.
+ *
+ * A landed operation reports the container that it changed, and the whole outline would grow the context
+ * by the size of the draft on every call. The child order is what the agent cannot know on its own, and a
+ * descendant did not move, thus one level answers the question that a landing raises.
+ *
+ * `depth` is the depth of the children, thus the entries read the same as the entries of a full outline.
+ */
+export function childOutline(blocks: readonly DraftBlock[], depth: number): OutlineEntry[] {
+    return blocks.map((block) => ({ id: block.id, kind: block.kind, depth, label: labelOf(block) }));
+}
+
+/**
  * Read one block by its id. An atom gives the block as it is, with its bindings. A section gives its own
  * fields and the id of each child. A block that no id holds gives `undefined`.
  */

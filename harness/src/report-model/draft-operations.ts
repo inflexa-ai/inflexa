@@ -215,10 +215,12 @@ export function moveBlock(draft: DraftDocument, operation: MoveOperation, snapsh
     });
 }
 
-/** One block, and the path of child indices from the root to the block. */
+/** One block, the path of child indices from the root to the block, and the section that holds it. */
 export interface Located {
     block: DraftBlock;
     path: number[];
+    /** The section that holds the block, or `undefined` when the block sits at the root. */
+    parent?: DraftSectionBlock;
 }
 
 /** A resolved destination: the container path, the insert index, and whether the container is the root. */
@@ -317,18 +319,18 @@ function commit(candidate: DraftDocument, added: DraftBlock | undefined, snapsho
  * The read surface needs the same search, thus this is the one find-by-id in the draft model.
  */
 export function locate(document: DraftDocument, id: string): Located | undefined {
-    return locateInBlocks(document.sections, id, []);
+    return locateInBlocks(document.sections, id, [], undefined);
 }
 
-function locateInBlocks(blocks: DraftBlock[], id: string, prefix: number[]): Located | undefined {
+function locateInBlocks(blocks: DraftBlock[], id: string, prefix: number[], parent: DraftSectionBlock | undefined): Located | undefined {
     for (let index = 0; index < blocks.length; index++) {
         const block = blocks[index];
         const path = [...prefix, index];
         if (block.id === id) {
-            return { block, path };
+            return parent === undefined ? { block, path } : { block, path, parent };
         }
         if (block.kind === "section") {
-            const found = locateInBlocks(block.blocks, id, path);
+            const found = locateInBlocks(block.blocks, id, path, block);
             if (found !== undefined) {
                 return found;
             }
