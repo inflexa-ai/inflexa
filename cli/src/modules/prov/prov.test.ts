@@ -21,27 +21,61 @@ import type {
     ProvFileKey,
     ProvCommandRef,
 } from "../../types/prov.ts";
-import {
-    appendCreation,
-    appendInputAdded,
-    appendInputRemoved,
-    appendRunStarted,
-    appendRunCompleted,
-    appendStepCompleted,
-    appendCommandExecuted,
-    appendFileWritten,
-    appendInputUsed,
-    fileQName,
-    commandQName,
-    modelAgentQName,
-    freshDocument,
-    serializeProvenance,
-} from "./document.ts";
+import { applyProvEvent, computeChainHash, computePayloadDigest, verifyHexDigest, verifyProvenance, verifyPayload } from "@inflexa-ai/prov-kernel";
+import { provModel, provSubject, serializeProvenance } from "./document.ts";
 import { updateAnalysisProvenance } from "../../db/primary_mutation.ts";
 import { initProvenanceRecording, flushProvenanceAsync, resetProvenanceRecorderForTests, resolveAnalysisForProv } from "./prov.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
-import { computeChainHash, computePayloadDigest, verifyHexDigest, resetSigningForTests, loadOrGenerateKeypair } from "./signing.ts";
-import { verifyProvenance, verifyPayload } from "./verify.ts";
+import { resetSigningForTests, loadOrGenerateKeypair } from "./signing.ts";
+
+const { fileQName, commandQName, modelAgentQName } = provModel;
+
+// Statement production goes through `applyProvEvent` (the kernel's sole supported producer); these
+// helpers keep the historical per-builder call shape the fixtures below were written against.
+function freshDocument(a: Analysis): ProvDocument {
+    return provModel.freshDocument(provSubject(a));
+}
+function appendCreation(doc: ProvDocument, analysisId: string, actor: ProvActor): void {
+    applyProvEvent(provModel, doc, { type: "analysis_created", analysisId, actor });
+}
+function appendInputAdded(doc: ProvDocument, analysisId: string, actor: ProvActor, input: ProvInputRef, derivedFromAnalysisId: string | null): void {
+    applyProvEvent(provModel, doc, { type: "input_added", analysisId, actor, input, derivedFromAnalysisId });
+}
+function appendInputRemoved(doc: ProvDocument, analysisId: string, actor: ProvActor, input: ProvInputRef): void {
+    applyProvEvent(provModel, doc, { type: "input_removed", analysisId, actor, input });
+}
+function appendRunStarted(doc: ProvDocument, analysisId: string, actor: ProvActor, run: ProvRunRef): void {
+    applyProvEvent(provModel, doc, { type: "run_started", analysisId, actor, run });
+}
+function appendRunCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvRunOutcome): void {
+    applyProvEvent(provModel, doc, { type: "run_completed", analysisId, actor, outcome });
+}
+function appendStepCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvStepOutcome, stepModel: ProvModelId): void {
+    applyProvEvent(provModel, doc, { type: "step_completed", analysisId, actor, outcome, model: stepModel });
+}
+function appendCommandExecuted(
+    doc: ProvDocument,
+    analysisId: string,
+    actor: ProvActor,
+    step: ProvStepRef,
+    command: ProvCommandRef,
+    stepModel: ProvModelId,
+): void {
+    applyProvEvent(provModel, doc, { type: "command_executed", analysisId, actor, step, command, model: stepModel });
+}
+function appendFileWritten(
+    doc: ProvDocument,
+    analysisId: string,
+    actor: ProvActor,
+    file: ProvFileRef,
+    step: ProvStepRef,
+    generation: "command" | "step",
+): void {
+    applyProvEvent(provModel, doc, { type: "file_written", analysisId, actor, file, step, generation });
+}
+function appendInputUsed(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, input: ProvUsedInputRef): void {
+    applyProvEvent(provModel, doc, { type: "input_used", analysisId, actor, step, input });
+}
 
 const analysis: Analysis = {
     id: "a1",
@@ -53,8 +87,9 @@ const analysis: Analysis = {
     projectId: null,
 };
 
-const user: ProvActor = { kind: "user", email: "alice@example.org" };
-const system: ProvActor = { kind: "system", version: "0.0.1", commit: "abc1234" };
+// `id` = the email the cli keys user agents by (the kernel derives the QName from `id`).
+const user: ProvActor = { kind: "user", id: "alice@example.org", email: "alice@example.org" };
+const system: ProvActor = { kind: "system", label: "inflexa cli", version: "0.0.1", commit: "abc1234" };
 const anon: ProvActor = { kind: "anonymous" };
 // The model that drove every model-driven fixture below — the vendor-qualified {provider}/{model}
 // name the emitters compose from the boot-resolved id.

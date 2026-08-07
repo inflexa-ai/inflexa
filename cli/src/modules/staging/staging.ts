@@ -61,7 +61,8 @@ export function inputSignature(fileId: string, size: number, mtimeMs: number): s
 /**
  * Deterministic file identity from the input's anchor+path. Uses Bun.hash for
  * speed (non-crypto). For single-file inputs the hashed key (`anchorId|path`)
- * is the same key space as `inputQName` in `modules/prov/document.ts`, so
+ * is the same key space as the kernel's `inputQName` (the `provModel` in
+ * `modules/prov/document.ts` injects the same `Bun.hash` digest), so
  * provenance and staging agree on identity without importing each other.
  * Directory members extend the key with the member's subpath
  * (`anchorId|path/subpath`) — provenance models the directory input as ONE
