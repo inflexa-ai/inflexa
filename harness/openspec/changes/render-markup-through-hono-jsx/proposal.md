@@ -6,7 +6,7 @@ The renderer builds its markup as hand-joined strings, and a person who restyles
 
 - The markup layer of `src/report-render/` moves to `hono/jsx` components in `.tsx` files. The chart derivation, the reference ledger, the walk, and the problem collection stay plain TypeScript.
 - Escaping moves from call-site helpers to the JSX runtime, which escapes each child and each attribute value by default. The escape helpers retire where the runtime covers them.
-- The two JSON script sinks keep the `<` to `<` rule, and each raw insertion passes through `raw()` from `hono/html`. The runtime gives no script-hardening, thus the rule stays ours.
+- The two JSON script sinks keep the rule that replaces every `<` with `\u003c`, and each raw insertion passes through `raw()` from `hono/html`. The runtime gives no script-hardening, thus the rule stays ours.
 - `class` is the one attribute convention. `className` compiles silently and rewrites to `class`, thus the code never uses it.
 - The toolchain grows two compiler options (`jsx`, `jsxImportSource`), two eslint globs, and a `*.test.tsx` build exclude. The spike proved each diff, and bun reads the JSX config from the tsconfig with no extra setup.
 - A validation gate lands in the tests: an offline HTML validation of the rendered page, and a property-syntax validation of the inline style rules. The gate covers the one hole the compiler leaves — an intrinsic element accepts an unknown attribute silently.

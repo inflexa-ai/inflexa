@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Escaping is always on
-The renderer MUST escape every interpolated string through the markup runtime, which escapes each child and each attribute value by default. A raw insertion MUST occur only at a JSON script sink, and each serialized JSON MUST replace every `<` before the insertion. Markup inside agent prose MUST reach the page as text, and never as an element.
+The renderer MUST escape every interpolated string through the markup runtime, which escapes each child and each attribute value by default. A raw insertion MUST occur only at a JSON script sink, and each serialized JSON MUST replace every `<` with `\u003c` before the insertion. Markup inside agent prose MUST reach the page as text, and never as an element.
 
 #### Scenario: Hostile prose stays text
 - **WHEN** the caller renders a text block whose prose holds a script tag
@@ -14,7 +14,7 @@ The renderer MUST escape every interpolated string through the markup runtime, w
 ## ADDED Requirements
 
 ### Requirement: The page validates as HTML and CSS
-The rendered page of a valid document MUST pass an offline HTML validation. The inline style rules MUST hold known properties with valid value syntax. The gate guards the attribute hole of the markup types, because an intrinsic element accepts an unknown attribute silently.
+The rendered page of a valid document MUST pass an offline HTML validation with the recommended preset. A disabled rule MUST carry its reason in the test. The inline style rules MUST hold known properties with valid value syntax. The gate guards the attribute hole of the markup types, because an intrinsic element accepts an unknown attribute silently.
 
 #### Scenario: The rendered page is valid HTML
 - **WHEN** the caller renders a document with every block kind

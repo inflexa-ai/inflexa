@@ -27,15 +27,17 @@ The spike also found the limits. An intrinsic element accepts an unknown attribu
 
 ### D2. The runtime owns the escaping, and the sinks keep the rule
 
-The JSX runtime escapes each child and each attribute value over the same five entities as the retired helpers. A raw insertion is legal only at the two JSON script sinks, through `raw()`, and each serialized JSON replaces every `<` with `<` first. The spike proved that `raw()` adds no protection of its own, thus the rule stays beside the sinks with its invariant comment.
+The JSX runtime escapes each child and each attribute value over the same five entities as the retired helpers. A raw insertion is legal only at the two JSON script sinks, through `raw()`, and each serialized JSON replaces every `<` with `\u003c` first. The spike proved that `raw()` adds no protection of its own, thus the rule stays beside the sinks with its invariant comment.
 
 ### D3. `class` is the convention, and `className` is banned
 
-Both compile, and the runtime rewrites `className` to `class` silently. A silent rewrite invites a mixed codebase, thus the code uses `class` only, and the review holds the line. The Tailwind class strings copy verbatim.
+Both compile, and the runtime rewrites `className` to `class` silently. A silent rewrite invites a mixed codebase, thus the code uses `class` only, and an eslint rule refuses the `className` attribute. The Tailwind class strings copy verbatim.
 
 ### D4. The validity gate covers the compiler hole
 
 An intrinsic element accepts an unknown attribute, thus a misspelled `src` compiles. The gate closes this at test time: `html-validate` runs offline over the rendered every-kind page, and `csstree-validator` checks each inline style property and value. Both land as dev dependencies, thus the published package ships nothing new.
+
+The HTML validation runs the recommended preset of the validator. When the page design rejects a rule on purpose, the rule turns off in the test, with its reason beside it. Thus the gate stays principled, and each exception is visible and justified.
 
 ### D5. The tests re-pin to the compact form, and semantics lead
 
