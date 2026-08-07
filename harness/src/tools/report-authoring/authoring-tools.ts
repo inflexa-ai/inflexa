@@ -19,6 +19,7 @@ import { z } from "zod";
 import {
     addBlock,
     changeBlock,
+    locate,
     moveBlock,
     removeBlock,
     setTitle,
@@ -27,7 +28,7 @@ import {
     type DraftPlace,
     type DraftRefusal,
 } from "../../report-model/draft-operations.js";
-import { buildOutline, readBlock, type OutlineEntry, type ReadableBlock } from "../../report-model/draft-read.js";
+import { buildOutline, childOutline, readBlock, type OutlineEntry, type ReadableBlock } from "../../report-model/draft-read.js";
 import { finishDraft, type FinishResult } from "../../report-model/draft-finish.js";
 import { DraftBlockSchema, type DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
@@ -111,8 +112,25 @@ export type ReadBlockInput = z.infer<typeof readBlockInput>;
 export type SetTitleInput = z.infer<typeof setTitleInput>;
 export type FinishDraftInput = z.infer<typeof finishDraftInput>;
 
-/** The result of a mutation tool. A landing carries the fresh outline. A refusal carries the typed reason. */
-export type MutationResult = { applied: true; outline: OutlineEntry[] } | { applied: false; refusal: DraftRefusal };
+/** One container that an operation changed, and the child order inside it after the operation. */
+export interface ChangedContainer {
+    /** The section that holds the children. It is absent when the container is the root. */
+    parentId?: string;
+    children: OutlineEntry[];
+}
+
+/**
+ * The result of a mutation tool. A refusal carries the typed reason.
+ *
+ * A landing carries the child order of each container that it changed, and not the whole outline. A whole
+ * outline costs the size of the draft on every landing, thus composing a report of n blocks would spend
+ * n-squared outline entries of agent context to author it. Only the container that the operation touched
+ * can surprise the agent: it chose the id, and the rest of the tree did not move. `read_outline` stays
+ * the way to read the whole draft, and it costs one call when the agent wants one.
+ *
+ * A move across two containers reports both. An operation that changes no child order reports none.
+ */
+export type MutationResult = { applied: true; changed: ChangedContainer[] } | { applied: false; refusal: DraftRefusal };
 
 /** The result of `read_outline`. */
 export interface OutlineResult {
@@ -232,13 +250,44 @@ function decodeBlockPayload(block: unknown): unknown {
 
 /** Read the `kind` of an untyped block payload, or `undefined` when the payload names none. */
 function readKind(block: unknown): string | undefined {
+    return readStringField(block, "kind");
+}
+
+/** Read the `id` of an untyped block payload, or `undefined` when the payload names none. */
+function readId(block: unknown): string | undefined {
+    return readStringField(block, "id");
+}
+
+function readStringField(block: unknown, field: "kind" | "id"): string | undefined {
     if (block !== null && typeof block === "object") {
-        const kind = (block as { kind?: unknown }).kind;
-        if (typeof kind === "string") {
-            return kind;
+        const value = (block as Record<string, unknown>)[field];
+        if (typeof value === "string") {
+            return value;
         }
     }
     return undefined;
+}
+
+/**
+ * The id of the section that holds a block, or `undefined` when the block sits at the root.
+ *
+ * The two cases are not distinguishable from the value alone, thus a caller that needs to tell "the root"
+ * from "no such block" tests the block itself first.
+ */
+function holderIdOf(document: DraftDocument, blockId: string): string | undefined {
+    return locate(document, blockId)?.parent?.id;
+}
+
+/** Read the child order of one container out of a document. */
+function containerIn(document: DraftDocument, parentId: string | undefined): ChangedContainer {
+    if (parentId === undefined) {
+        return { children: childOutline(document.sections, 0) };
+    }
+    const located = locate(document, parentId);
+    // A parent id reaches here only from a landed operation, which already resolved it to a section. The
+    // empty fall-back keeps the read total rather than asserting that.
+    const children = located !== undefined && located.block.kind === "section" ? located.block.blocks : [];
+    return { parentId, children: childOutline(children, located?.path.length ?? 0) };
 }
 
 /**
@@ -263,11 +312,24 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
     const snapshot = state.snapshot;
     let draft: DraftDocument = state.initialDraft ?? { title: "", sections: [] };
 
-    const land = (result: Result<DraftDocument, DraftRefusal>): MutationResult =>
+    /**
+     * Swap the holder on a landing, and report the containers that the operation changed.
+     *
+     * `holders` names them by id, and it reads the draft as it was and the draft as it becomes, because a
+     * removed block has a holder only in the first and an added block has one only in the second. The
+     * child order comes out of `next` in either case.
+     */
+    const land = (
+        result: Result<DraftDocument, DraftRefusal>,
+        holders: (previous: DraftDocument, next: DraftDocument) => (string | undefined)[],
+    ): MutationResult =>
         result.match<MutationResult, MutationResult>(
             (next): MutationResult => {
+                const previous = draft;
                 draft = next;
-                return { applied: true, outline: buildOutline(next) };
+                // A move inside one container names the same holder two times.
+                const unique = [...new Set(holders(previous, next))];
+                return { applied: true, changed: unique.map((parentId) => containerIn(next, parentId)) };
             },
             (refusal): MutationResult => ({ applied: false, refusal }),
         );
@@ -292,7 +354,13 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
             if (destination.isErr()) {
                 return ok(refuse(destination.error));
             }
-            return ok(land(addBlock(draft, { block: decodeBlockPayload(input.block), destination: destination.value }, snapshot)));
+            const block = decodeBlockPayload(input.block);
+            const addedId = readId(block);
+            return ok(
+                land(addBlock(draft, { block, destination: destination.value }, snapshot), (_previous, next) => [
+                    addedId === undefined ? undefined : holderIdOf(next, addedId),
+                ]),
+            );
         },
     });
 
@@ -309,7 +377,7 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
             if (operation.isErr()) {
                 return ok(refuse(operation.error));
             }
-            return ok(land(changeBlock(draft, operation.value, snapshot)));
+            return ok(land(changeBlock(draft, operation.value, snapshot), (_previous, next) => [holderIdOf(next, input.targetId)]));
         },
     });
 
@@ -319,7 +387,8 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         inputSchema: removeBlockInput,
         executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `remove ${input.targetId}`,
-        execute: async (input): Promise<Result<MutationResult, ToolError>> => ok(land(removeBlock(draft, { targetId: input.targetId }, snapshot))),
+        execute: async (input): Promise<Result<MutationResult, ToolError>> =>
+            ok(land(removeBlock(draft, { targetId: input.targetId }, snapshot), (previous) => [holderIdOf(previous, input.targetId)])),
     });
 
     const move_block = defineTool({
@@ -335,7 +404,12 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
             if (destination.isErr()) {
                 return ok(refuse(destination.error));
             }
-            return ok(land(moveBlock(draft, { targetId: input.targetId, destination: destination.value }, snapshot)));
+            return ok(
+                land(moveBlock(draft, { targetId: input.targetId, destination: destination.value }, snapshot), (previous, next) => [
+                    holderIdOf(previous, input.targetId),
+                    holderIdOf(next, input.targetId),
+                ]),
+            );
         },
     });
 
@@ -347,7 +421,8 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         inputSchema: setTitleInput,
         executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `title the report ${input.title}`,
-        execute: async (input): Promise<Result<MutationResult, ToolError>> => ok(land(ok(setTitle(draft, input.title)))),
+        // The title sits on the document, thus no container changes its child order.
+        execute: async (input): Promise<Result<MutationResult, ToolError>> => ok(land(ok(setTitle(draft, input.title)), () => [])),
     });
 
     const read_outline = defineTool({

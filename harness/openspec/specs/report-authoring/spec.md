@@ -133,7 +133,9 @@ A destination that names two places at one time MUST refuse with `conflicting-de
 - **THEN** the operation refuses with the reason `conflicting-destination`
 
 ### Requirement: Read-back without the full tree
-The read surface MUST give an outline of the draft, and one block by its id. An outline entry carries the id, the kind, the nesting, and a short label. It carries no binding and no full prose. A landed operation MUST return the fresh outline.
+The read surface MUST give an outline of the draft, and one block by its id. An outline entry carries the id, the kind, the nesting, and a short label. It carries no binding and no full prose.
+
+A landed operation MUST return the child order of each container that it changed, and it MUST NOT return the whole outline. The whole outline costs the size of the draft on each landing, thus a report of n blocks would spend n-squared outline entries of agent context to author it. The agent chose the id of its own block, and no other branch moved, thus the container that the operation touched is the one thing that a landing can tell it. A move across two containers reports both, and an operation that changes no child order reports none. The read of the whole outline stays one call away.
 
 The label of every block kind MUST clip, because a title, a caption, and a note are free prose too. A clipped label MUST carry a marker, thus the agent can tell a clipped label from a whole one. The clip MUST count code points, thus it never splits a character.
 
@@ -155,9 +157,13 @@ A read of a section MUST give the title of the section and the id of each child,
 - **WHEN** the agent reads the outline of a draft with a long section title
 - **THEN** the label is clipped, and it ends with a marker
 
-#### Scenario: A landed change returns the outline
-- **WHEN** an add operation lands
-- **THEN** the tool result carries `applied: true` and the fresh outline
+#### Scenario: A landed change returns the container that it changed
+- **WHEN** an add operation lands inside a section
+- **THEN** the tool result carries `applied: true` and the child order of that section, and no block of a different section
+
+#### Scenario: A move across two sections returns both
+- **WHEN** a move operation takes a block from one section to a different section
+- **THEN** the tool result carries the child order of the section that the block left and of the section that it reached
 
 ### Requirement: The finish operation
 The finish operation MUST validate the whole draft against the full document schema, the id rule, and the structural tier. It MUST report each gap as data. When the draft passes, it MUST give the valid `ReportDocument` value. The finish MUST NOT open a file, and it MUST NOT change the draft. The finish runs the structural tier only, and the value-tier gate of the report pipeline is a different capability.

@@ -22,7 +22,7 @@ function oneSectionDraft(): DraftDocument {
 }
 
 describe("add_block", () => {
-    it("lands a section on an empty draft, and the outline holds it", async () => {
+    it("lands a section on an empty draft, and reports the root container", async () => {
         const tools = createReportAuthoringTools({ snapshot });
         const { ctx } = makeToolContext();
 
@@ -31,7 +31,7 @@ describe("add_block", () => {
         const value = result._unsafeUnwrap();
         expect(value.applied).toBe(true);
         if (value.applied) {
-            expect(value.outline.map((entry) => entry.id)).toEqual(["s1"]);
+            expect(value.changed).toEqual([{ children: [{ id: "s1", kind: "section", depth: 0, label: "Intro" }] }]);
         }
         expect(tools.currentDraft().sections.map((section) => section.id)).toEqual(["s1"]);
     });
@@ -159,7 +159,7 @@ describe("change_block", () => {
 });
 
 describe("remove_block", () => {
-    it("lands a removal, and the outline drops the id", async () => {
+    it("lands a removal, and reports the container that the block left", async () => {
         const draft: DraftDocument = {
             title: "",
             sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "x" } }] }],
@@ -172,13 +172,13 @@ describe("remove_block", () => {
         const value = result._unsafeUnwrap();
         expect(value.applied).toBe(true);
         if (value.applied) {
-            expect(value.outline.map((entry) => entry.id)).toEqual(["s1"]);
+            expect(value.changed).toEqual([{ parentId: "s1", children: [] }]);
         }
     });
 });
 
 describe("move_block", () => {
-    it("lands a move with a flat anchor, and the outline shows the new order", async () => {
+    it("lands a move with a flat anchor, and reports the new child order", async () => {
         const draft: DraftDocument = {
             title: "",
             sections: [
@@ -201,7 +201,10 @@ describe("move_block", () => {
         const value = result._unsafeUnwrap();
         expect(value.applied).toBe(true);
         if (value.applied) {
-            expect(value.outline.map((entry) => entry.id)).toEqual(["s1", "t2", "t1"]);
+            // The move stays inside one container, thus that container is reported one time.
+            expect(value.changed).toHaveLength(1);
+            expect(value.changed[0]!.parentId).toBe("s1");
+            expect(value.changed[0]!.children.map((entry) => entry.id)).toEqual(["t2", "t1"]);
         }
     });
 
@@ -345,5 +348,56 @@ describe("factory isolation", () => {
         const secondOutline = (await second.read_outline.execute({}, ctx))._unsafeUnwrap();
         expect(secondOutline.outline).toEqual([]);
         expect(second.currentDraft().sections).toEqual([]);
+    });
+});
+
+describe("the cost of a landing", () => {
+    it("reports the changed container only, and not the whole draft", async () => {
+        const tools = createReportAuthoringTools({ snapshot });
+        const { ctx } = makeToolContext();
+        await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "First", blocks: [] } }, ctx);
+        await tools.add_block.execute({ block: { kind: "text", id: "t1", content: { prose: "in the first section" } }, parentId: "s1" }, ctx);
+        await tools.add_block.execute({ block: { kind: "section", id: "s2", title: "Second", blocks: [] } }, ctx);
+
+        const result = await tools.add_block.execute({ block: { kind: "text", id: "t2", content: { prose: "x" } }, parentId: "s2" }, ctx);
+
+        // A whole outline would grow with the draft on every landing, thus authoring n blocks would cost
+        // n-squared outline entries of agent context.
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(true);
+        if (value.applied) {
+            expect(value.changed).toEqual([{ parentId: "s2", children: [{ id: "t2", kind: "text", depth: 1, label: "x" }] }]);
+            expect(JSON.stringify(value)).not.toContain("in the first section");
+        }
+    });
+
+    it("reports both containers of a move across sections, and one for a move inside a section", async () => {
+        const draft: DraftDocument = {
+            title: "",
+            sections: [
+                { kind: "section", id: "s1", title: "First", blocks: [{ kind: "text", id: "t1", content: { prose: "a" } }] },
+                { kind: "section", id: "s2", title: "Second", blocks: [{ kind: "text", id: "t2", content: { prose: "b" } }] },
+            ],
+        };
+        const tools = createReportAuthoringTools({ snapshot, initialDraft: draft });
+        const { ctx } = makeToolContext();
+
+        const across = (await tools.move_block.execute({ targetId: "t1", parentId: "s2", place: "end" }, ctx))._unsafeUnwrap();
+
+        expect(across.applied).toBe(true);
+        if (across.applied) {
+            expect(across.changed.map((container) => container.parentId)).toEqual(["s1", "s2"]);
+            expect(across.changed[0]!.children).toEqual([]);
+            expect(across.changed[1]!.children.map((entry) => entry.id)).toEqual(["t2", "t1"]);
+        }
+    });
+
+    it("reports no container for a title, which changes no child order", async () => {
+        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
+        const { ctx } = makeToolContext();
+
+        const value = (await tools.set_title.execute({ title: "Report" }, ctx))._unsafeUnwrap();
+
+        expect(value).toEqual({ applied: true, changed: [] });
     });
 });
