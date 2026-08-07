@@ -1,14 +1,24 @@
+## RENAMED Requirements
+
+- FROM: `### Requirement: The download runs in the background with a receipt`
+- TO: `### Requirement: The download runs as a detached process with a receipt`
+
 ## MODIFIED Requirements
 
-### Requirement: The download runs in the background with a receipt
+### Requirement: The download runs as a detached process with a receipt
 
 `inflexa setup` SHALL start the download, and the app SHALL start none. The
 process runs detached, and `lib-store-download-process` owns its lifecycle.
 
 The download SHALL start when the receipt is absent and the user gave the consent
 at setup. No configuration value SHALL suppress the download, because the runtime
-image bakes no R library and no Python library. When the receipt reports
-`update_available`, the CLI SHALL report it and SHALL wait for the ask.
+image bakes no R library and no Python library.
+
+A receipt that pins a different manifest SHALL give the outcome
+`update_available`, and the run SHALL transfer nothing. `inflexa store ls` and the
+sidebar SHALL report that an update is available. The user SHALL then run
+`inflexa store download --update`, which is the consent to apply the moved tag. No
+surface SHALL open a prompt for that consent.
 
 It SHALL obey the receipt pattern of the reference store: stage, rename, then
 write the receipt. The client SHALL extract every layer into the staged root, and
@@ -62,6 +72,18 @@ that switches to it.
 - **WHEN** setup starts the download
 - **THEN** the transfer runs, and no configuration value stops it
 
+#### Scenario: A moved tag reports an update and transfers nothing
+
+- **GIVEN** a receipt that pins an older manifest
+- **WHEN** the download resolves the moved tag
+- **THEN** the outcome is `update_available`, and no layer transfers
+
+#### Scenario: The update ask has one owner
+
+- **GIVEN** an outcome of `update_available`
+- **WHEN** the user reads `inflexa store ls` or the sidebar
+- **THEN** both report the available update and name `inflexa store download --update`, and neither opens a prompt
+
 #### Scenario: An unreachable added farm is named
 
 - **GIVEN** a store root whose `current` already selects a local farm
@@ -79,6 +101,10 @@ The gate SHALL read the download process state, and not the receipt alone. The
 receipt decides whether the store is usable. The process state gives the reason
 for a hold, and it gives the progress that the hold reports.
 `lib-store-download-process` defines the states.
+
+The gate SHALL release a hold when the row reads `installed` AND the receipt
+validates. The receipt decides usability, and the row only ends the wait. A row of
+`installed` over an absent receipt SHALL keep the refusal.
 
 The gate SHALL start no download, and it SHALL open no consent. Setup owns the
 consent, and setup starts the process. The gate SHALL name
@@ -98,6 +124,11 @@ gate. Thus a downloader that a user killed SHALL NOT hold the action without end
 A state of `declined` SHALL refuse the action and SHALL name the retry. A user who
 answered no at setup SHALL NOT meet that question again at app open.
 
+A state of `canceled` SHALL behave at the gate exactly as `declined` behaves. It
+SHALL refuse the sandbox action, and it SHALL name `inflexa store download` as the
+retry. It SHALL open no consent. A user who stopped the transfer made a decision,
+thus the gate asks nothing.
+
 On a machine with no store, the app SHALL open at once. The gate SHALL hold at the
 first action that makes a sandbox. Chat, the workspace read surface, and the
 planner SHALL answer while the store is absent.
@@ -107,6 +138,10 @@ transfer with its running byte total, and it SHALL report a failure with its
 message. Thus a user reads the progress of a multi-gigabyte download without
 leaving the app. After the store completes, the gate SHALL make sure of the
 sandbox image, which asks its own consent.
+
+The hold text SHALL be bare text. It SHALL NOT carry the progress meter, and it
+SHALL NOT give the percentage a second time. The sidebar owns the meter, and two
+surfaces must not show one figure. `lib-store-download-process` defines the meter.
 
 #### Scenario: The first run opens the app and holds at the first analysis
 
@@ -125,6 +160,23 @@ sandbox image, which asks its own consent.
 - **WHEN** a sandbox action holds while the download runs
 - **THEN** the gate reports the download state and its running byte total
 
+#### Scenario: The hold text carries no meter
+
+- **WHEN** a sandbox action holds while the sidebar renders the meter
+- **THEN** the hold text stays bare, and it gives no meter and no percentage
+
+#### Scenario: An installed row and a valid receipt release the hold
+
+- **GIVEN** a sandbox action that holds while the download runs
+- **WHEN** the row reads `installed` and the receipt validates
+- **THEN** the gate releases the hold, and the action continues
+
+#### Scenario: An installed row over an absent receipt keeps the refusal
+
+- **GIVEN** a sandbox action that holds, and a row that reads `installed`
+- **WHEN** the receipt is absent
+- **THEN** the gate keeps the refusal, because the receipt decides usability
+
 #### Scenario: A dead downloader refuses at the gate
 
 - **GIVEN** a row that reports `running`, whose holder process is gone
@@ -134,6 +186,12 @@ sandbox image, which asks its own consent.
 #### Scenario: A declined state refuses and names the retry
 
 - **GIVEN** a download state of `declined` from a setup answer of no
+- **WHEN** a sandbox action arrives
+- **THEN** the gate refuses, names `inflexa store download`, and opens no consent
+
+#### Scenario: A canceled state refuses and names the retry
+
+- **GIVEN** a download state of `canceled` from a transfer that the user stopped
 - **WHEN** a sandbox action arrives
 - **THEN** the gate refuses, names `inflexa store download`, and opens no consent
 

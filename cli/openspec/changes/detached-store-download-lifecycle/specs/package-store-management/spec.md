@@ -3,16 +3,21 @@
 ### Requirement: `inflexa store download` joins the store command family
 
 The CLI SHALL give `inflexa store download`, beside `store add`, `store ls`,
-`store use`, `store remove-farm`, and `store reclaim`. The command obtains the
-published catalog for the one store root that the CLI owns.
+`store use`, `store remove-farm`, `store reclaim`, and `store cancel`. The command
+obtains the published catalog for the one store root that the CLI owns.
 
 The command SHALL start a detached download when no run is live. It SHALL report
 the live run otherwise, and it SHALL start no second process. The command SHALL
 exit after it starts the process. It SHALL NOT wait for the transfer.
 
-The command SHALL take `--force`, and `--force` SHALL start a transfer over a
-receipt that pins the current manifest. Without `--force`, such a receipt SHALL
-make the command report the store as up to date and start nothing.
+The command SHALL take `--update`, which is the consent to apply a moved tag.
+Without the flag, a receipt that pins the current manifest SHALL make the command
+report the store as up to date. Without the flag, a receipt that pins a different
+manifest SHALL make the command report an available update. In both of those two
+cases the command SHALL transfer nothing.
+
+`--update` SHALL NOT transfer a healthy store a second time. Over a receipt that
+pins the current manifest, the flag SHALL leave the store as it is.
 
 The command SHALL take the `approval` policy, because it writes the store root.
 Thus the conversation agent can retry the download after the user confirms.
@@ -37,20 +42,106 @@ writes nothing to the terminal of the starter, thus the user needs that pointer.
 #### Scenario: A complete store starts nothing
 
 - **GIVEN** a receipt that pins the current manifest
-- **WHEN** `inflexa store download` runs without `--force`
+- **WHEN** `inflexa store download` runs without `--update`
 - **THEN** the command reports the store as up to date, and it starts no process
 
-#### Scenario: `--force` downloads over a current receipt
+#### Scenario: A moved tag starts nothing without the flag
+
+- **GIVEN** a receipt that pins a different manifest
+- **WHEN** `inflexa store download` runs without `--update`
+- **THEN** the command reports an available update, and it transfers nothing
+
+#### Scenario: `--update` applies the moved tag
+
+- **GIVEN** a receipt that pins a different manifest
+- **WHEN** `inflexa store download --update` runs
+- **THEN** a detached process starts, and it transfers the newer manifest
+
+#### Scenario: `--update` over a current receipt starts nothing
 
 - **GIVEN** a receipt that pins the current manifest
-- **WHEN** `inflexa store download --force` runs
-- **THEN** a detached process starts and the transfer runs again
+- **WHEN** `inflexa store download --update` runs
+- **THEN** the command reports the store as up to date, and it starts no process
 
 #### Scenario: The command asks for approval
 
 - **GIVEN** a user who asks the conversation agent to retry the download
 - **WHEN** the agent runs `inflexa store download`
 - **THEN** the CLI asks the user to approve, and the run starts after the approval
+
+### Requirement: `inflexa store cancel` joins the store command family
+
+The CLI SHALL give `inflexa store cancel`, beside `store add`, `store ls`,
+`store use`, `store remove-farm`, `store reclaim`, and `store download`. The
+command stops the live catalog transfer.
+
+The command SHALL record the state `canceled`, and it SHALL remove the partial
+staged tree. It SHALL remove no installed content, thus each child that the store
+root holds stays where it is.
+
+When no run is live, the command SHALL report that fact and SHALL change nothing.
+
+The command SHALL take the `blocked` policy. The reason is that the cancel throws
+away a transfer that is part done. Thus the conversation agent names the command,
+and the user runs it.
+
+The cancel is a subcommand and not a flag on `inflexa store download`. A policy
+binds to a command, thus a flag on a command of `approval` cannot carry a
+`blocked` policy of its own.
+
+`lib-store-download-process` owns the lifecycle that this command ends.
+
+#### Scenario: The cancel stops the live run
+
+- **GIVEN** a live download
+- **WHEN** `inflexa store cancel` runs
+- **THEN** the transfer stops, the state is `canceled`, and the partial staged tree is gone
+
+#### Scenario: The cancel removes no installed content
+
+- **GIVEN** a store root with content, and a live download
+- **WHEN** `inflexa store cancel` runs
+- **THEN** the staged tree is gone, and each child of the store root stays
+
+#### Scenario: A cancel with no live run changes nothing
+
+- **GIVEN** no live download
+- **WHEN** `inflexa store cancel` runs
+- **THEN** the command reports that no run is live, and it changes nothing
+
+#### Scenario: The agent cannot run the cancel
+
+- **GIVEN** a user who asks the conversation agent to stop the transfer
+- **WHEN** the agent reads the policy of the command
+- **THEN** the CLI refuses the call, gives the reason, and names the command for the user
+
+### Requirement: `inflexa store add` refuses while a download is live
+
+`inflexa store add` SHALL refuse while a store download is live, exactly as
+`inflexa store use` does. The command SHALL name the live download, and it SHALL
+name the command that reports the progress. It SHALL write nothing to the store
+root.
+
+The published artifact is not one blob. It is a set of layers. The CLI extracts
+them into a staged root. It then merges that staged root into the store root one
+child at a time. A provisioning run that writes into the same pool during the
+merge can meet a half-merged store root.
+
+The refusal SHALL apply to the whole live period, which is the states `pending`
+and `running`. A row of `running` with no live holder reads as `failed`, thus a
+dead downloader SHALL NOT refuse the command.
+
+#### Scenario: A live download refuses the provisioning run
+
+- **GIVEN** a live store download
+- **WHEN** `inflexa store add <spec>` runs
+- **THEN** the command refuses, names the live download, and writes nothing to the store root
+
+#### Scenario: A dead downloader does not refuse the provisioning run
+
+- **GIVEN** a row that reports `running`, whose holder process is gone
+- **WHEN** `inflexa store add <spec>` runs
+- **THEN** the state reads as `failed`, and the command runs
 
 ## MODIFIED Requirements
 
@@ -67,8 +158,14 @@ the reason an import fails after a switch.
 The inspection SHALL report the state of the download beside the farms. It SHALL
 name the state, and it SHALL name the bytes transferred and the total bytes while
 a transfer runs. When the state is `failed`, it SHALL report the message and it
-SHALL name `inflexa store download` as the retry. When no row exists, it SHALL say
-that no download ran, because a store can arrive by a route that wrote no row.
+SHALL name `inflexa store download` as the retry. When the state is `canceled`, it SHALL
+say that the user stopped the transfer, and it SHALL name the same retry. When no
+row exists, it SHALL say that no download ran, because a store can arrive by a
+route that wrote no row.
+
+The inspection SHALL report an available update when the receipt pins a manifest
+that is not the current one. It SHALL name `inflexa store download --update`, and
+it SHALL open no prompt. The user owns that decision.
 
 The inspection command SHALL stay prompt-free and SHALL gain no option, because a
 passive diagnostic stays passive. A new option on an `auto` command is unsafe
@@ -113,6 +210,12 @@ until the user says otherwise.
 - **GIVEN** a download state of `failed`
 - **WHEN** `inflexa store ls` runs
 - **THEN** the output names the state, reports the message, and names `inflexa store download`
+
+#### Scenario: The listing reports an available update
+
+- **GIVEN** a receipt that pins a manifest that is not the current one
+- **WHEN** `inflexa store ls` runs
+- **THEN** the output says that an update is available, names `inflexa store download --update`, and opens no prompt
 
 #### Scenario: A store with no download row is reported plainly
 

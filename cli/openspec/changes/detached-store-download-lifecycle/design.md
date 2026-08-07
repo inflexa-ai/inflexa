@@ -47,9 +47,24 @@ that works.
 The rejected alternative is one record in the database. It makes the database the
 authority over the filesystem, and the filesystem is what the harness mounts.
 
-**Five states, and only a retry leaves a terminal one.** The states are `pending`,
-`running`, `installed`, `failed`, and `declined`. `declined` records a setup
-answer of no, thus a user who refused is not asked again at each app open.
+**Six states, and only a retry leaves a terminal one.** The states are `pending`,
+`running`, `installed`, `failed`, `declined`, and `canceled`. `declined` records a
+setup answer of no, thus a user who refused is not asked again at each app open.
+
+`canceled` records a transfer that started and that the user stopped. The
+difference from `declined` is load-bearing. A canceled run leaves a partial staged
+tree, and the CLI removes that tree. A declined run never wrote one.
+
+The two new transitions are `running` to `canceled`, and `canceled` to `pending`
+on a retry. `canceled` is terminal, and only a retry leaves it.
+
+At the gate the two states behave alike. Each one refuses the sandbox action, each
+one names the retry, and neither one opens a consent. The state names the reason,
+and the cleanup obeys the state.
+
+The rejected alternative is one `declined` state for both answers. Then the
+cleanup path cannot know whether a staged tree exists. It would stat the staging
+path at each read, and a stale tree from a killed run would read the same.
 
 The rejected alternative is a `consent` state that the app opens. The consent
 moves into setup with this change, thus the app asks nothing.
@@ -73,10 +88,16 @@ finds the lock held, thus it starts none. No separate guard is necessary.
 **Setup starts the process, and the app never does.** The app is a reader. This is
 the whole point of the detachment: a transfer that the app owns dies with the app.
 
-**The `--sandbox` answer consents to the catalog too.** That answer is already
-"the multi-GB consent" in `setup-answers`. The catalog is the third multi-gigabyte
-transfer that setup starts, beside the two images. One answer covers each of them,
-thus the user answers one question about size.
+**The `--sandbox` answer consents to one bundle.** Setup lists the runtime image,
+the provisioner image, and the catalog in one message. The user answers one time.
+
+No answer takes the two images and refuses the catalog. The store is mandatory,
+thus such an answer would give a sandbox that imports nothing. The bundle is not a
+convenience, and it is the only combination that works.
+
+Setup starts the detached downloader when it starts the image pulls. Thus the
+catalog transfers while the images pull. Setup exits when the images finish, and
+the catalog continues.
 
 **The harness boot no longer depends on the store.** `runtime.ts:644` returns
 `lib_store_unusable`, and `boot.ts:81` turns that into `phase: "failed"`. Then
@@ -97,7 +118,73 @@ a sandbox at once.
 Thus the agent can retry the download, and the user confirms it in chat.
 
 `store ls` reports the state, and it stays `auto` with no new option. A new option
-on an `auto` command is unsafe until the user says otherwise.
+on an `auto` command is unsafe until the user says otherwise. That listing is also
+the readiness readout of the agent, thus this change adds no command and no tool
+for it.
+
+**The cancel is a command, and it is a subcommand.** `inflexa store cancel` stops
+the live transfer, it records `canceled`, and it removes the partial staged tree.
+
+The process is detached, thus it outlives both setup and the app. A prompt lives
+in one terminal, and that terminal can close while the transfer continues. A
+command reaches the process from anywhere. Setup opens no prompt for the cancel,
+and it only names the command.
+
+With no live run, the command reports that fact and changes nothing. It writes no
+row, and it removes no tree. A cancel of nothing is not a failure.
+
+The cancel is a subcommand and not a flag on `store download`. `AgentPolicy`
+(`src/cli/agent_policy.ts:19-20`) binds one policy to one command, and `safeFlags`
+exists for `auto` only. Thus a flag cannot be `blocked` while its command stays
+`approval`. `cli/CLAUDE.md` states the same rule: an option must never change the
+effect class of a command.
+
+`--update` stays a flag on `store download`. The flag and the base command both
+write the store root, and both take `approval`, thus one policy covers the two.
+
+**The cancel takes the `blocked` policy.** The mandatory reason is that the cancel
+throws away a transfer that is part done. The agent names the command, and the
+user runs it.
+
+**The image removal joins the `sandbox` family.** `inflexa sandbox remove` removes
+the runtime image and the provisioner image. It sits beside `inflexa sandbox pull`
+and `inflexa sandbox status`, because `lib-store-provisioning` owns the image
+surface.
+
+The command reports what it removed. An absent image is a normal condition, thus
+the command reports the absence and refuses nothing. It touches no store and no
+farm, because the images and the catalog are separate artifacts.
+
+**The image removal takes the `blocked` policy.** The mandatory reason is that the
+removal destroys a multi-gigabyte artifact that a user waited for. A later
+`inflexa sandbox pull` transfers that artifact a second time.
+
+**A second `inflexa setup` never blocks.** Setup does many things, for example the
+references, the database, and the model configuration. A live catalog download
+blocks none of them.
+
+At its store step, a second setup opens no consent. The first answer stands, thus
+setup asks that question one time only.
+
+The store step reports the live transfer with its state and its byte totals. It
+names `inflexa store cancel`, and it names `inflexa sandbox remove`. Then setup
+continues to the remaining steps. The lock refuses a second downloader, thus the
+second setup starts no process and it is a reader at that step.
+
+The rejected alternative is a wait at the store step. A multi-gigabyte transfer
+would then hold the database step and the model step. A user who ran setup to fix
+a model could not reach that step.
+
+**The sidebar carries the meter, and the gate hold text does not.** The sidebar
+reports the transfer with the run meter glyph, which is `GLYPHS.bar` (U+25AE). The
+filled cells take the `success` role, and the empty cells take the `fgSubtle` role.
+
+`run_card_block.tsx:68-69` states the rule: two surfaces must not show one figure.
+The rail already owns the meter for a run, and the panel beside it stays bare text.
+The download obeys the same split, thus the gate hold text gives no percentage.
+
+The rejected alternative is a meter at the gate too. It shows one figure two times,
+and it makes each surface read as a separate widget over one transfer.
 
 ## Risks / Trade-offs
 
@@ -118,19 +205,19 @@ on an `auto` command is unsafe until the user says otherwise.
 
 1. Add the table, the read, and the write. Nothing reads the row yet.
 2. Add the lock hold and the read-only probe.
-3. Add `inflexa store download`, and register it with the `approval` policy.
-4. Start the detached process from `inflexa setup`.
-5. Make the sidebar and `store ls` report the row.
-6. Remove the app-open trigger, and make the harness boot non-fatal for the store.
+3. Add `inflexa store download` with `--update`, and register it with the
+   `approval` policy.
+4. Add `inflexa store cancel` and `inflexa sandbox remove`, each with the `blocked`
+   policy and its reason. Update the policy snapshot.
+5. Start the detached process from `inflexa setup`, and report a live run at a
+   second setup.
+6. Make the sidebar and `store ls` report the row.
+7. Remove the app-open trigger, and make the harness boot non-fatal for the store.
 
-Step 6 lands last, because it is the step that changes what a user sees. A
-rollback of step 6 restores the app-open trigger, and the detached path keeps
+Step 7 lands last, because it is the step that changes what a user sees. A
+rollback of step 7 restores the app-open trigger, and the detached path keeps
 working beside it.
 
 ## Open Questions
 
-- Does the sidebar report the transfer as a bar, or as a line of text? The design
-  gallery owns that answer, and this change does not decide it.
-- What does the downloader do when the app and setup both run on one machine, and
-  the user starts a second `inflexa setup`? The lock refuses the second start, and
-  the second setup reports the live run. Confirm that this is the wanted behavior.
+None. The second-setup question is resolved, and the Decisions record the answer.

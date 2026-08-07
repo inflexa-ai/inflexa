@@ -1,3 +1,56 @@
+## ADDED Requirements
+
+### Requirement: A second `inflexa setup` never blocks on a live catalog download
+
+`inflexa setup` SHALL complete each of its steps while a catalog download runs. A
+live transfer SHALL block no step of setup.
+
+Setup does many things, for example the references, the database, and the model
+configuration. Each of those steps SHALL run to its end during a transfer.
+
+At its store step, a second setup SHALL open no consent. The first answer stands,
+thus setup asks that question one time only.
+
+The store step SHALL report the live transfer. It SHALL name the state, and it
+SHALL name the bytes transferred and the total bytes.
+
+The store step SHALL name `inflexa store cancel`, which stops the transfer. It
+SHALL name `inflexa sandbox remove`, which removes the two pulled images. The user
+owns the two decisions, and setup makes neither one.
+
+Setup SHALL then continue to the remaining steps. It SHALL NOT wait for the
+transfer, and the held lock SHALL make it start no second downloader.
+
+#### Scenario: A second setup opens no consent for the catalog
+
+- **GIVEN** a live catalog download
+- **WHEN** `inflexa setup` runs a second time
+- **THEN** the store step opens no consent, because the first answer stands
+
+#### Scenario: A second setup reports the live transfer
+
+- **GIVEN** a live catalog download
+- **WHEN** `inflexa setup` reaches its store step
+- **THEN** it names the state, the bytes transferred, and the total bytes
+
+#### Scenario: A second setup names the two commands
+
+- **GIVEN** a live catalog download
+- **WHEN** `inflexa setup` reaches its store step
+- **THEN** it names `inflexa store cancel` and `inflexa sandbox remove`
+
+#### Scenario: The live transfer blocks no other step
+
+- **GIVEN** a live catalog download
+- **WHEN** `inflexa setup` runs a second time
+- **THEN** the references, the database, and the model configuration each complete, and setup exits
+
+#### Scenario: A second setup starts no second downloader
+
+- **GIVEN** a live catalog download that holds the lock
+- **WHEN** `inflexa setup` reaches its store step
+- **THEN** it starts no process, and it reports the live run
+
 ## MODIFIED Requirements
 
 ### Requirement: The sandbox image and resource allowance are answerable
@@ -12,13 +65,28 @@ A pull SHALL obtain both the runtime image and the provisioner image. The store 
 the one source of an R library and a Python library, and the provisioner extends
 it.
 
-The same answer SHALL consent to the catalog. The catalog is the third
-multi-gigabyte transfer that setup starts, beside the two images. Thus the user
-answers one question about size, and setup asks no second consent.
+The answer SHALL cover one bundle of three transfers:
 
-When the answer is yes, setup SHALL start the detached store downloader. Setup
-SHALL NOT wait for the transfer, and it SHALL name the command that reports the
-progress. `lib-store-download-process` owns the lifecycle of that process.
+- the runtime image
+- the provisioner image
+- the package store catalog
+
+Setup SHALL list the three items in one message. The user SHALL answer one time,
+and that one answer SHALL cover the whole bundle. Setup SHALL ask no second
+consent for the catalog.
+
+There SHALL be no answer that takes the two images and refuses the catalog. The
+store is mandatory, and no runtime image bakes a library. Thus a sandbox with no
+catalog can import nothing, and a partial answer has no working result.
+
+When the answer is yes, setup SHALL start the detached store downloader at the
+moment that it starts the image pulls. The catalog transfers while the images
+pull. Setup SHALL NOT wait for the catalog, and it SHALL name the command that
+reports the progress. `lib-store-download-process` owns the lifecycle of that
+process.
+
+Setup SHALL exit when the image pulls finish. The catalog transfer SHALL continue
+after that exit, because the downloader is a detached process.
 
 When the user answers no in an interactive run, setup SHALL record the download
 state as `declined`. The app SHALL NOT ask that question again at app open, and
@@ -48,10 +116,20 @@ detected machine, exactly as the prompt of the wizard persists it.
 - **WHEN** the setup command finishes
 - **THEN** setup exits, it names the command that reports the progress, and the transfer continues
 
-#### Scenario: One answer covers each large transfer
+#### Scenario: One answer covers the whole bundle
 
 - **WHEN** `setup --sandbox` runs interactively
-- **THEN** the user answers one size question, and setup asks no second consent for the catalog
+- **THEN** setup lists the two images and the catalog in one message, and the user answers one time
+
+#### Scenario: No answer takes the images and refuses the catalog
+
+- **WHEN** the user looks for a way to accept the images and refuse the catalog
+- **THEN** no such answer exists, because the store is mandatory
+
+#### Scenario: The catalog transfers while the images pull
+
+- **WHEN** `setup --sandbox` starts the two image pulls
+- **THEN** the detached catalog downloader starts at the same moment, and the two transfers run together
 
 #### Scenario: No sandbox answer downloads nothing
 

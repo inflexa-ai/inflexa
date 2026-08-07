@@ -1,3 +1,58 @@
+## ADDED Requirements
+
+### Requirement: `inflexa sandbox remove` removes the two pulled images
+
+The CLI SHALL give `inflexa sandbox remove`, beside `inflexa sandbox pull` and
+`inflexa sandbox status`. The command removes the two pulled images, which are the
+runtime image and the provisioner image.
+
+The command SHALL report what it removed. It SHALL name each image that it
+removed, and it SHALL name each image that was absent already.
+
+An absent image SHALL NOT make the command refuse. Absence is a normal condition,
+thus the command reports it and continues with the image that is on the machine.
+
+The command SHALL NOT touch the store, and it SHALL NOT touch a farm. The two
+images and the package catalog are separate artifacts. The `inflexa store` family
+owns the catalog surface.
+
+A later `inflexa sandbox pull` SHALL obtain the runtime image again. The removal
+is complete, thus the transfer runs a second time.
+
+The command SHALL take the `blocked` policy. The reason is that the removal
+destroys a multi-gigabyte artifact that a user waited for. Thus the conversation
+agent names the command, and the user runs it.
+
+#### Scenario: The command removes the two images
+
+- **GIVEN** a machine that holds the runtime image and the provisioner image
+- **WHEN** `inflexa sandbox remove` runs
+- **THEN** both images are gone, and the command names the two that it removed
+
+#### Scenario: An absent image is reported, not refused
+
+- **GIVEN** a machine that holds the runtime image only
+- **WHEN** `inflexa sandbox remove` runs
+- **THEN** the runtime image is gone, the command reports the absent provisioner image, and it does not fail
+
+#### Scenario: The removal leaves the store as it is
+
+- **GIVEN** a populated store with a farm
+- **WHEN** `inflexa sandbox remove` runs
+- **THEN** the store root and each farm are unchanged
+
+#### Scenario: A pull after the removal obtains the image again
+
+- **GIVEN** a machine on which `inflexa sandbox remove` ran
+- **WHEN** `inflexa sandbox pull` runs
+- **THEN** the CLI transfers the runtime image again
+
+#### Scenario: The agent cannot run the removal
+
+- **GIVEN** a user who asks the conversation agent to remove the images
+- **WHEN** the agent reads the policy of the command
+- **THEN** the CLI refuses the call, gives the reason, and names the command for the user
+
 ## MODIFIED Requirements
 
 ### Requirement: The package inventory describes what will actually be mounted

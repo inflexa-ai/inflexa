@@ -32,17 +32,34 @@ planner use no package, thus they must answer while the catalog arrives.
 - **The lock gives single-flight.** Setup starts one downloader. The app finds the
   lock held, thus it starts none and it only reads the row.
 - **New command `inflexa store download`.** It starts a run, or it reports the run
-  that is live. `--force` re-downloads over a receipt that pins the current
-  manifest. Its policy is `approval`, thus the conversation agent can retry the
-  download after the user confirms.
+  that is live. `--update` is the consent to apply a moved tag. Its policy is
+  `approval`, thus the conversation agent can retry the download after the user
+  confirms.
+- **The lifecycle takes a sixth state, which is `canceled`.** It records a transfer
+  that started and that the user stopped. `declined` records a consent of no that
+  started nothing. A canceled run leaves a partial staged tree, and the CLI removes
+  that tree.
+- **New command `inflexa store cancel`.** It stops the live transfer, it records
+  `canceled`, and it removes the partial staged tree. Its policy is `blocked`,
+  because the cancel throws away a transfer that is part done.
+- **New command `inflexa sandbox remove`.** It removes the runtime image and the
+  provisioner image, and it reports what it removed. It touches no store and no
+  farm. Its policy is `blocked`, because the removal destroys a multi-gigabyte
+  artifact that a user waited for.
+- **A second `inflexa setup` never blocks.** Its store step opens no consent,
+  reports the live transfer, names the two commands above, and continues to the
+  remaining steps.
 - **BREAKING** — the app no longer starts a download. `startLibStoreDownload` and
   its app-open trigger retire.
 - **The harness boot no longer depends on the store.** An absent or unreadable
   store makes no boot failure. The sandbox gate owns the refusal, which it already
   does.
-- **The `--sandbox` answer consents to the catalog too.** One answer covers each
-  multi-gigabyte transfer that setup starts, which is the two images and the
-  catalog.
+- **The `--sandbox` answer consents to one bundle.** That bundle is the runtime
+  image, the provisioner image, and the catalog. The store is mandatory, thus no
+  answer takes the two images and refuses the catalog.
+- **`inflexa store add` refuses while a download is live.** The merge moves the
+  staged tree into the store root one child at a time. Thus a provisioning run
+  during that merge can meet a half-merged root.
 
 ## Capabilities
 
@@ -60,11 +77,15 @@ planner use no package, thus they must answer while the catalog arrives.
   blob still matches its sha256 descriptor, and the merge rules stay.
 - `lib-store-provisioning`: an unreadable store inventory refuses each sandbox
   action, and it never fails the harness boot. Chat, the workspace read surface,
-  and the planner answer with no store.
-- `package-store-management`: `inflexa store download` joins the store command
-  family, and `inflexa store ls` reports the download state.
-- `setup-answers`: the `--sandbox` answer consents to the catalog beside the two
-  images, and setup starts the detached downloader.
+  and the planner answer with no store. `inflexa sandbox remove` joins the image
+  surface, because this capability owns that surface.
+- `package-store-management`: `inflexa store download` and `inflexa store cancel`
+  join the store command family, and `inflexa store ls` reports the download state.
+  `inflexa store add` refuses while a download is live, exactly as `inflexa store
+  use` does.
+- `setup-answers`: the `--sandbox` answer consents to one bundle, which is the two
+  images and the catalog. Setup starts the detached downloader when it starts the
+  image pulls. A second setup reports a live transfer and blocks no step.
 
 ## Impact
 
@@ -72,10 +93,16 @@ planner use no package, thus they must answer while the catalog arrives.
 - `src/db/primary_query.ts` and `src/db/primary_mutation.ts`: the read of the row,
   and the write of the progress.
 - `src/modules/libs/store_download.ts`: the transfer keeps its receipt pattern and
-  its merge. It gains the progress writes and the lock hold.
-- `src/modules/libs/store.ts`: `store download` joins it, and `store ls` reports
-  the state.
-- `src/modules/infra/setup.ts`: setup starts the detached process.
+  its merge. It gains the progress writes, the lock hold, and the cancel that
+  removes the partial staged tree.
+- `src/modules/libs/`: the persisted shape of the row colocates with the module,
+  because it has one consumer. It does not go in `src/types/`.
+- `src/modules/libs/store.ts`: `store download` and `store cancel` join it, `store
+  ls` reports the state, and `store add` refuses while a download is live.
+- `src/modules/libs/pull.ts`: the image removal joins `sandboxPull` and
+  `sandboxStatus`, which are the other two handlers of the `sandbox` family.
+- `src/modules/infra/setup.ts`: setup starts the detached process. A second setup
+  reports the live run, names the two commands, and waits for nothing.
 - `src/lib/lock.ts`: one read-only probe of a lock holder, beside
   `acquireInstanceLock`.
 - `src/modules/harness/runtime.ts`: the boot stops treating an absent store as
@@ -84,6 +111,9 @@ planner use no package, thus they must answer while the catalog arrives.
   trigger retires.
 - `src/tui/layout/sidebar.tsx`: the progress readout.
 - `src/cli/index.ts`: `store download` registers with the `approval` policy.
+  `store cancel` and `sandbox remove` each register with the `blocked` policy, and
+  each one carries its mandatory reason.
+- `src/cli/agent_policy_tree.test.ts`: the snapshot takes the three new grants.
 - This change depends on `mandatory-store-and-farm-switch`, which makes the store
   mandatory. It supersedes the app-open trigger that the same change specifies.
 
