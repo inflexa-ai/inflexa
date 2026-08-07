@@ -8,8 +8,8 @@
 
 import type { PropsWithChildren } from "hono/jsx";
 
-import type { ArtifactValueReference, Reference } from "../contracts/report-reference.js";
-import type { ReferenceLedger } from "./references.js";
+import type { ArtifactValueReference, Reference } from "../../contracts/report-reference.js";
+import type { ReferenceLedger } from "../references.js";
 
 /**
  * One evidence marker as a superscript that links to the list entry. The number comes from the ledger as

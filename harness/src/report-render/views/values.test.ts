@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
-import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../contracts/report-blocks.js";
-import type { ScalarReference } from "../contracts/report-reference.js";
+import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../contracts/report-blocks.js";
+import type { ScalarReference } from "../../contracts/report-reference.js";
 import { renderCitation, renderFigure, renderMetric, renderTable } from "./values.js";
-import { ReferenceLedger } from "./references.js";
+import { ReferenceLedger } from "../references.js";
 
 const scalarBinding: ScalarReference = { kind: "artifact-value", path: "runs/r1/de.csv", hash: "sha256:aaa", locator: { column: "padj", row: 0 } };
 const tableBinding: TableBlock["binding"] = { kind: "artifact-table", path: "runs/r1/de.csv", hash: "sha256:aaa" };
