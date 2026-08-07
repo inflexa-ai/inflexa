@@ -16,3 +16,7 @@
 - [ ] 3.2 Run `tsc -p tsconfig.json`, and repair each finding.
 - [ ] 3.3 Run the lint on the changed files, and repair each finding.
 - [ ] 3.4 Run the tests of the changed areas only: `src/state/report-versions.test.ts` and `src/state/purge-analysis.test.ts`, against the dev Postgres. Do not run the full suite.
+
+## 4. The record on #221
+
+- [ ] 4.1 After the merge, post the comment on #221 that records the enforcement and the surface change. The posted policy comment says the machinery "stays in place and unused", and that sentence goes stale with this change.

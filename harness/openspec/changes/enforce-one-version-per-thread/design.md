@@ -25,13 +25,15 @@ Nothing published carries the table, and no production code calls the store. Thu
 
 The table gets a named UNIQUE constraint on `thread_id`. The record reads nothing before the insert. The store already lets a constraint answer for the parent link, because an early read buys a round trip and a race window (`src/memory/thread-store.ts:334-341` states the pattern). `tryMutation` classifies the violation with the constraint name, and the record maps that name to the typed refusal `thread_already_holds_version`. Every other constraint violation stays a plain `DbError`.
 
+Two concurrent first records race, and the loser gets the same refusal. That is correct, because the thread holds a version by the time the loser lands.
+
 ### D2. The DDL changes in place, and a stale development database drops the table one time.
 
 The init DDL is `CREATE TABLE IF NOT EXISTS`, thus it does not alter an existing table. A development database made before this change holds the old shape, and the new insert omits `version_number`, which the old column refuses as NOT NULL. The remedy is one manual drop of `cortex_report_versions`. This is permitted exactly because nothing shipped, and it is the reason the removal happens now.
 
 ### D3. The read surface names the shape.
 
-`getVersion(versionId)` stays. `getThreadVersion(threadId)` replaces `getLatestVersion`, because "latest" implies a set. `listVersions` dies, because a list that always holds zero or one element teaches a false shape. The reuse link is untouched: `parentVersionId` crosses sessions, and its same-analysis rule stays.
+`getVersion(versionId)` stays. `getThreadVersion(threadId)` replaces `getLatestVersion`, because "latest" implies a set. `listVersions` dies, because a list that always holds zero or one element teaches a false shape. The vocabulary of the surface must teach the enforced shape, for the same reason that the machinery itself goes. The reuse link is untouched: `parentVersionId` crosses sessions, and its same-analysis rule stays.
 
 ### D4. `RecordedVersionRef` carries the id alone.
 
