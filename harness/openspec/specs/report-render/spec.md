@@ -82,11 +82,15 @@ The page MUST hold a left-side navigation with one anchor for each top-level sec
 - **THEN** the navigation holds three anchors, and each anchor targets its section id
 
 ### Requirement: Escaping is always on
-The renderer MUST escape every interpolated string: the prose, each title, each label, each caption, and each attribute value. Markup inside agent prose MUST reach the page as text, and never as an element.
+The renderer MUST escape every interpolated string through the markup runtime, which escapes each child and each attribute value by default. A raw insertion of serialized document data MUST occur only at a JSON script sink. Each serialized JSON MUST replace every `<` with `\u003c` before the insertion. A raw insertion is otherwise legal only for a trusted page constant, and for sibling markup that the runtime escaped already. Markup inside agent prose MUST reach the page as text, and never as an element.
 
 #### Scenario: Hostile prose stays text
 - **WHEN** the caller renders a text block whose prose holds a script tag
 - **THEN** the page shows the tag as escaped text, and the page holds no script element from the prose
+
+#### Scenario: A raw sink stays hardened
+- **WHEN** the caller renders a chart whose data holds a `</script>` sequence in a cell
+- **THEN** the inline JSON holds the replaced form, and the script element does not close early
 
 ### Requirement: The chart option derives, and the layout discipline applies
 The renderer MUST derive the ECharts option object from the chart type, the encoding, and the resolved rows. The derived option MUST pass through `normalizeEchartSpec` before it inlines. The container id MUST derive from the block id.
@@ -135,3 +139,14 @@ The skeleton MUST inline the style rules, and it MUST reference each script and 
 #### Scenario: The output stands alone beside the CDN
 - **WHEN** the caller renders any valid document
 - **THEN** the page holds no `src` or `href` that points at a local file
+
+### Requirement: The page validates as HTML and CSS
+The rendered page of a valid document MUST pass an offline HTML validation with the recommended preset. A disabled rule MUST carry its reason in the test. The inline style rules MUST hold known properties with valid value syntax. The gate guards the attribute hole of the markup types, because an intrinsic element accepts an unknown attribute silently.
+
+#### Scenario: The rendered page is valid HTML
+- **WHEN** the caller renders a document with every block kind
+- **THEN** an offline HTML validation of the page reports no error
+
+#### Scenario: The inline styles are valid CSS
+- **WHEN** the style rules of the page pass through the CSS validator
+- **THEN** the validator reports no unknown property and no invalid value
