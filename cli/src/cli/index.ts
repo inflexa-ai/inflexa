@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 
 import pkg from "../../package.json";
 import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, modelConnectionEnvDoc, type EnvDocEntry } from "../lib/env.ts";
@@ -794,6 +794,20 @@ export function buildProgram(): Command {
         },
     );
 
+    // `blocked`, not `approval`: the removal destroys a multi-gigabyte artifact the user waited for, and a
+    // later pull transfers it a second time. The agent names the command; the user runs it.
+    registerAction(
+        sandbox.command("remove").description("Remove the pulled sandbox image and provisioner image. It leaves the package store and every farm as they are"),
+        {
+            kind: "blocked",
+            reason: "Removing the sandbox images destroys a multi-gigabyte download the user waited for, and obtaining them again is a second multi-gigabyte transfer. Tell the user to run `inflexa sandbox remove` if that is what they want.",
+        },
+        async () => {
+            const { runSandboxRemove } = await import("../modules/libs/pull.ts");
+            await runSandboxRemove();
+        },
+    );
+
     // The host package store: provision packages into a farm, inspect it, switch the active farm, remove a
     // farm, and reclaim disk. The store is bind-mounted read-only at /mnt/libs in every sandbox. `add`,
     // `reclaim`, and `remove-farm` mutate it through the provisioner container and `use` writes the
@@ -841,6 +855,42 @@ export function buildProgram(): Command {
         async (farm: string, options: { force?: boolean }) => {
             const { runStoreUse } = await import("../modules/libs/store.ts");
             await runStoreUse(farm, { force: options.force ?? false });
+        },
+    );
+
+    // Stays `approval` (not `auto`): `download` writes the store root. The agent can therefore retry the
+    // transfer once the user confirms. `--update` rides the same policy, because the flag and the base
+    // command both write the store root — one policy covers the two.
+    registerAction(
+        store
+            .command("download")
+            .description("Obtain the published package catalog from GitHub Packages. The transfer runs in the background and outlives this command")
+            .option("--update", "Apply a moved `latest` tag. It is the consent to replace the pinned catalog, and it transfers a healthy store no second time")
+            // Hidden, because a user never types it: it is how the detached child is told to move the
+            // bytes itself rather than start a third process. Both shapes write the store root, so the
+            // effect class of the command is unchanged and one policy still covers it. The spelling is
+            // repeated at `DETACHED_TRANSFER_FLAG` (modules/libs/store_download.ts), which is what the
+            // spawn passes; `store_download.test.ts` pins the two against each other, because the registry
+            // must stay free of a non-lazy import of a command module.
+            .addOption(new Option("--run-transfer", "Move the bytes in this process instead of starting a detached one").hideHelp()),
+        { kind: "approval" },
+        async (options: { update?: boolean; runTransfer?: boolean }) => {
+            const { runStoreDownload } = await import("../modules/libs/store.ts");
+            await runStoreDownload({ update: options.update ?? false, runTransfer: options.runTransfer ?? false });
+        },
+    );
+
+    // `blocked`, not `approval`: the cancel throws away a transfer that is part done, and starting again
+    // moves those bytes a second time. The agent names the command; the user runs it.
+    registerAction(
+        store.command("cancel").description("Stop the package-catalog download that is running, and remove its partial transfer"),
+        {
+            kind: "blocked",
+            reason: "Cancelling the package-store download throws away a transfer that is part done, and starting it again moves those bytes a second time. Tell the user to run `inflexa store cancel` if that is what they want.",
+        },
+        async () => {
+            const { runStoreCancel } = await import("../modules/libs/store.ts");
+            await runStoreCancel();
         },
     );
 

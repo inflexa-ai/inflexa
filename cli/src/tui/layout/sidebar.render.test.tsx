@@ -20,6 +20,7 @@ import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
 import { __resetSidebarLiveForTest, absTime, absTimeShort, idTail, refreshSidebarData, relAge, type RefreshSeams } from "../hooks/sidebar_live.ts";
 import { __resetOpenThreadForTest, refreshOpenThread, type ThreadSeams } from "../hooks/thread.ts";
 import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
+import { __resetSandboxGateForTest, __setLibStoreGateStateForTest } from "../hooks/sandbox_gate.tsx";
 import { setChatStatus } from "../hooks/status.ts";
 import { entityFigureOf, Sidebar, usageSectionOf } from "./sidebar.tsx";
 import { tokenFigureDetail } from "../../lib/usage_format.ts";
@@ -1537,6 +1538,72 @@ describe("Sidebar per-entity figures", () => {
             // merely off-palette — the one theme where this assertion can fail for the right reason.
             expect(fg && rgbToHex(fg)).not.toBe("#ffffff");
             expect(fg && parseColor(themes["github-light"].colors.fg).equals(fg)).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
+// The PACKAGES section: the lifecycle of the DETACHED catalog downloader, which the app only READS.
+// The meter is the one surface that carries this figure — the gate hold text and the status bar both
+// stay bare, so a reader never meets one transfer as two widgets.
+describe("Sidebar PACKAGES — the package-store transfer", () => {
+    afterEach(() => __resetSandboxGateForTest());
+
+    /** The sidebar mounted over an analysis, with the gate state seeded. */
+    async function packagesFrame(state: Parameters<typeof __setLibStoreGateStateForTest>[0]): Promise<string> {
+        const analysis = createAnalysis({ cwd: dirA, name: str256("packages")._unsafeUnwrap(), inputPaths: [] })._unsafeUnwrap();
+        __setLibStoreGateStateForTest(state);
+        return renderFrame(sidebarNode(wsFor(analysis, dirA)), { width: 44, height: 40 });
+    }
+
+    test("a live transfer draws the meter from the two totals", async () => {
+        const frame = await packagesFrame({ phase: "downloading", bytes: 512, totalBytes: 1024, layers: 1, totalLayers: 2 });
+        expect(frame).toContain("PACKAGES");
+        // The meter cell is the design system's `bar` glyph, the same notation the RUNS embed uses.
+        expect(lineContaining(frame, GLYPHS.bar.repeat(4))).not.toBe("");
+    });
+
+    test("a run that has not resolved its manifest reports the resolve step and draws no meter", async () => {
+        const frame = await packagesFrame({ phase: "downloading", bytes: 0, totalBytes: null, layers: 0, totalLayers: null });
+        expect(frame).toContain("resolving the manifest");
+        // No total means no exact figure, thus no meter — an estimate that grew would be a number the CLI
+        // does not have.
+        expect(frame).not.toContain(GLYPHS.bar.repeat(4));
+    });
+
+    test("an installed store with a newer manifest names the update command and opens no prompt", async () => {
+        const frame = await packagesFrame({ phase: "installed", updateAvailable: true });
+        expect(frame).toContain("update available");
+        expect(frame).toContain("inflexa store download --update");
+    });
+
+    test("a machine on which no download ran says so, rather than reporting a failure", async () => {
+        const frame = await packagesFrame({ phase: "absent" });
+        expect(frame).toContain("no download ran");
+    });
+
+    test("a canceled transfer says that the user stopped it", async () => {
+        const frame = await packagesFrame({ phase: "canceled" });
+        expect(frame).toContain("you stopped the transfer");
+    });
+
+    test("the filled cells take the success role and the empty cells the fgSubtle tier", async () => {
+        // A character frame carries no color, so the roles are asserted on the resolved spans. The meter is
+        // decorative, thus `fgSubtle` is the correct tier for its empty cells.
+        const analysis = createAnalysis({ cwd: dirA, name: str256("meter")._unsafeUnwrap(), inputPaths: [] })._unsafeUnwrap();
+        __setLibStoreGateStateForTest({ phase: "downloading", bytes: 512, totalBytes: 1024, layers: 1, totalLayers: 2 });
+        const setup = await testRender(sidebarNode(wsFor(analysis, dirA)), { width: 44, height: 40 });
+        try {
+            await setup.renderOnce();
+            const palette = themes[DEFAULT_THEME_ID].colors;
+            const meterSpans: { text: string; fg: RGBA }[] = [];
+            for (const line of setup.captureSpans().lines) {
+                for (const span of line.spans) if (span.text.includes(GLYPHS.bar)) meterSpans.push({ text: span.text, fg: span.fg });
+            }
+            expect(meterSpans.length).toBe(2);
+            expect(rgbToHex(meterSpans[0]!.fg)).toBe(rgbToHex(parseColor(palette.success)));
+            expect(rgbToHex(meterSpans[1]!.fg)).toBe(rgbToHex(parseColor(palette.fgSubtle)));
         } finally {
             setup.renderer.destroy();
         }

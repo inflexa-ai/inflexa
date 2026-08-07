@@ -18,6 +18,8 @@ export type PolicyRow = {
     readonly kind: "auto" | "approval" | "blocked" | null;
     /** The `auto` policy's safe flags, else `null` — the set that must be a subset of {@link declaredOptions}. */
     readonly safeFlags: readonly string[] | null;
+    /** The `blocked` policy's mandatory reason, else `null`. It is handed verbatim to the model, so an empty one is a defect. */
+    readonly reason: string | null;
     /** Every declared option's canonical attributeName on this command. */
     readonly declaredOptions: readonly string[];
 };
@@ -44,6 +46,7 @@ function walk(command: Command, path: readonly string[], rows: PolicyRow[]): voi
             hasPolicy: policy !== undefined,
             kind: policy?.kind ?? null,
             safeFlags: policy?.kind === "auto" ? [...policy.safeFlags] : null,
+            reason: policy?.kind === "blocked" ? policy.reason : null,
             declaredOptions: command.options.map((option) => option.attributeName()),
         });
     }

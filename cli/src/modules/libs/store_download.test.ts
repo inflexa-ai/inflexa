@@ -5,12 +5,24 @@ import { dirname, join } from "node:path";
 
 import type { Result } from "neverthrow";
 
+import { Database } from "bun:sqlite";
+
+import { db } from "../../db/primary.ts";
+import { getLibStoreDownload } from "../../db/primary_query.ts";
+import { recordLibStoreDownloadManifest, recordLibStoreDownloadProgress, settleLibStoreDownload, startLibStoreDownloadRun } from "../../db/primary_mutation.ts";
 import type { FetchLike } from "../../lib/download.ts";
+import { env } from "../../lib/env.ts";
+import { instanceLockHolder, instanceLockPath, releaseInstanceLock, LIB_STORE_DOWNLOAD_LOCK_KEY } from "../../lib/lock.ts";
 import {
+    cancelLibStoreDownload,
     downloadLibStore,
     inspectLibStoreDownload,
     libStoreDownloadPaths,
+    readLibStoreDownloadReport,
     resolveStoreArch,
+    runLibStoreTransfer,
+    startLibStoreDownloadProcess,
+    DETACHED_TRANSFER_FLAG,
     type LibStoreDownloadError,
     type LibStoreDownloadOutcome,
 } from "./store_download.ts";
@@ -412,3 +424,342 @@ describe("inspectLibStoreDownload — a locally built store is not a missing one
 
 // There is no opt-in gate left to test: nothing suppresses the download, so the module exposes exactly
 // two entry points — the download itself and the local state read, both covered above.
+
+// --- the detached download process --------------------------------------------
+//
+// The lifecycle runs against the real SQLite database of the test sandbox and the real lock directory,
+// because those two ARE the mechanism: the row is how a second process reads the progress, and the lock
+// is how any process learns whether a downloader is live. Only the network and the spawn are stubbed —
+// no test ever puts a real process on the machine.
+
+/** Drop the lifecycle row and the download lock, so each test starts from a machine on which nothing ran. */
+function resetLifecycle(): void {
+    releaseInstanceLock(LIB_STORE_DOWNLOAD_LOCK_KEY);
+    rmSync(instanceLockPath(LIB_STORE_DOWNLOAD_LOCK_KEY), { force: true });
+    db()
+        .map((conn) => conn.query("DELETE FROM lib_store_downloads").run())
+        ._unsafeUnwrap();
+}
+
+/** Seed the lock file with `pid`, the way a live downloader of that pid would hold it. */
+function seedLock(pid: number): void {
+    mkdirSync(dirname(instanceLockPath(LIB_STORE_DOWNLOAD_LOCK_KEY)), { recursive: true });
+    writeFileSync(instanceLockPath(LIB_STORE_DOWNLOAD_LOCK_KEY), String(pid));
+}
+
+/** A stub registry over the two-layer store, plus the fetch seam the lifecycle functions take. */
+function stubRegistry(layers: { readonly base: BuiltLayer; readonly track: BuiltLayer }): FetchLike {
+    return makeStub({
+        token: "T",
+        manifest: manifestBytes([layers.base, layers.track]),
+        blobs: new Map([
+            [layers.base.digest, layers.base.bytes],
+            [layers.track.digest, layers.track.bytes],
+        ]),
+        log: { tokenCalls: 0, authHeaders: [] },
+    });
+}
+
+describe("the download row and the lock", () => {
+    beforeEach(() => resetLifecycle());
+    afterEach(() => resetLifecycle());
+
+    test("an absent row reads as `null` on the ok channel, never as an error", () => {
+        expect(getLibStoreDownload()._unsafeUnwrap()).toBeNull();
+        expect(readLibStoreDownloadReport()).toEqual({ row: null, state: null, live: false, holderPid: null });
+    });
+
+    test("each permitted transition lands, and only a retry leaves a terminal state", () => {
+        startLibStoreDownloadRun({ state: "pending", holderPid: null })._unsafeUnwrap();
+        expect(getLibStoreDownload()._unsafeUnwrap()?.state).toBe("pending");
+
+        startLibStoreDownloadRun({ state: "running", holderPid: process.pid })._unsafeUnwrap();
+        expect(getLibStoreDownload()._unsafeUnwrap()?.state).toBe("running");
+
+        for (const terminal of ["installed", "failed", "declined", "canceled"] as const) {
+            settleLibStoreDownload({ state: terminal, message: null })._unsafeUnwrap();
+            const row = getLibStoreDownload()._unsafeUnwrap();
+            expect(row?.state).toBe(terminal);
+            // A settled run holds no process, thus a later cancel signals nothing.
+            expect(row?.holderPid).toBeNull();
+            // The state does not change by itself: a second read gives the same terminal state.
+            expect(getLibStoreDownload()._unsafeUnwrap()?.state).toBe(terminal);
+            // Only a retry leaves it.
+            startLibStoreDownloadRun({ state: "pending", holderPid: null })._unsafeUnwrap();
+            expect(getLibStoreDownload()._unsafeUnwrap()?.state).toBe("pending");
+        }
+    });
+
+    test("a start resets every counter, so a retry never inherits the figures of the run before it", () => {
+        startLibStoreDownloadRun({ state: "running", holderPid: process.pid })._unsafeUnwrap();
+        recordLibStoreDownloadManifest({ manifestDigest: "sha256:a", totalBytes: 900, totalLayers: 3 })._unsafeUnwrap();
+        recordLibStoreDownloadProgress({ bytesTransferred: 300, layersCompleted: 1 })._unsafeUnwrap();
+        settleLibStoreDownload({ state: "failed", message: "the layer did not arrive." })._unsafeUnwrap();
+
+        startLibStoreDownloadRun({ state: "pending", holderPid: null })._unsafeUnwrap();
+        const row = getLibStoreDownload()._unsafeUnwrap();
+        expect(row?.bytesTransferred).toBe(0);
+        expect(row?.totalBytes).toBeNull();
+        expect(row?.totalLayers).toBeNull();
+        expect(row?.message).toBeNull();
+    });
+
+    test("a second connection reads the row while the writer writes it", () => {
+        // WAL mode is what makes this true, and it is the whole reason a detached writer and a reading app
+        // can share one file. A second HANDLE on the same path is the closest in-process stand-in for the
+        // second PROCESS the design has.
+        startLibStoreDownloadRun({ state: "running", holderPid: process.pid })._unsafeUnwrap();
+        const reader = new Database(env.dbPath, { readonly: true });
+        try {
+            for (const bytes of [100, 200, 300]) {
+                recordLibStoreDownloadProgress({ bytesTransferred: bytes, layersCompleted: 1 })._unsafeUnwrap();
+                const row = reader.query("SELECT bytes_transferred AS b FROM lib_store_downloads").get() as { b: number } | null;
+                expect(row?.b).toBe(bytes);
+            }
+        } finally {
+            reader.close();
+        }
+    });
+
+    test("a `running` row with no live holder reads as failed, with no heartbeat and no clock", () => {
+        startLibStoreDownloadRun({ state: "running", holderPid: 999_999 })._unsafeUnwrap();
+        // No lock file at all: nothing live holds the key.
+        const report = readLibStoreDownloadReport();
+        expect(report.row?.state).toBe("running");
+        expect(report.state).toBe("failed");
+        expect(report.live).toBe(false);
+    });
+
+    test("the probe reports a live holder and leaves the lock exactly as it was", () => {
+        seedLock(process.pid);
+        expect(instanceLockHolder(LIB_STORE_DOWNLOAD_LOCK_KEY)).toBe(process.pid);
+        // Read-only: a probe that took the lock would refuse the next real downloader.
+        expect(readFileSync(instanceLockPath(LIB_STORE_DOWNLOAD_LOCK_KEY), "utf8")).toBe(String(process.pid));
+        expect(instanceLockHolder(LIB_STORE_DOWNLOAD_LOCK_KEY)).toBe(process.pid);
+    });
+});
+
+describe("startLibStoreDownloadProcess", () => {
+    beforeEach(() => resetLifecycle());
+    afterEach(() => resetLifecycle());
+
+    test("a fresh machine starts one detached process and writes a pending row, with no network", async () => {
+        const spawned: (readonly string[])[] = [];
+        const started = await startLibStoreDownloadProcess({
+            storeRoot: join(work, "store"),
+            update: false,
+            fetch: async () => new Response("no network expected", { status: 500 }),
+            spawn: (cmd) => {
+                spawned.push(cmd);
+                return 4242;
+            },
+        });
+        expect(started._unsafeUnwrap()).toEqual({ type: "started", pid: 4242 });
+        expect(spawned.length).toBe(1);
+        // The child is told to move the bytes itself, rather than start a third process.
+        expect(spawned[0]).toContain(DETACHED_TRANSFER_FLAG);
+        expect(getLibStoreDownload()._unsafeUnwrap()?.state).toBe("pending");
+    });
+
+    test("a second start finds the lock held, starts no process, and reports the live run", async () => {
+        startLibStoreDownloadRun({ state: "running", holderPid: process.pid })._unsafeUnwrap();
+        recordLibStoreDownloadProgress({ bytesTransferred: 300, layersCompleted: 1 })._unsafeUnwrap();
+        seedLock(process.pid);
+
+        const spawned: (readonly string[])[] = [];
+        const started = await startLibStoreDownloadProcess({ storeRoot: join(work, "store"), update: false, spawn: (cmd) => spawned.push(cmd) });
+        const outcome = started._unsafeUnwrap();
+        expect(outcome.type).toBe("already_running");
+        if (outcome.type === "already_running") expect(outcome.report.row?.bytesTransferred).toBe(300);
+        expect(spawned).toEqual([]);
+    });
+
+    test("a receipt that pins the resolved manifest reports up to date, with and without `--update`", async () => {
+        const storeRoot = join(work, "store");
+        const layers = storeLayers();
+        (await downloadStore(storeRoot, layers))._unsafeUnwrap();
+
+        for (const update of [false, true]) {
+            const spawned: (readonly string[])[] = [];
+            const started = await startLibStoreDownloadProcess({
+                storeRoot,
+                update,
+                arch: "amd64",
+                fetch: stubRegistry(layers),
+                spawn: (cmd) => spawned.push(cmd),
+            });
+            expect(started._unsafeUnwrap().type).toBe("up_to_date");
+            // `--update` is the consent to apply a MOVED tag, not a way to transfer a healthy store again.
+            expect(spawned).toEqual([]);
+        }
+    });
+
+    test("a receipt that pins a different manifest reports an update, and `--update` then starts the transfer", async () => {
+        const storeRoot = join(work, "store");
+        const installed = storeLayers();
+        (await downloadStore(storeRoot, installed))._unsafeUnwrap();
+        // The row a completed `inflexa store download` leaves. The resolve ANNOTATES a row and never mints
+        // one, because a store that a manual pull made must keep reporting that no download ran.
+        settleLibStoreDownload({ state: "installed", message: null })._unsafeUnwrap();
+        // A moved `latest`: the registry now serves a manifest whose track layer differs.
+        const moved = { base: installed.base, track: buildLayer([{ path: "store/foo-2.0-def/data.txt", content: "newer\n" }], TRACK_MEDIA_TYPE) };
+
+        const spawned: (readonly string[])[] = [];
+        const reported = await startLibStoreDownloadProcess({
+            storeRoot,
+            update: false,
+            arch: "amd64",
+            fetch: stubRegistry(moved),
+            spawn: (cmd) => spawned.push(cmd),
+        });
+        expect(reported._unsafeUnwrap().type).toBe("update_available");
+        expect(spawned).toEqual([]);
+        // The resolve recorded the digest the registry serves now, which is how a reader with no network
+        // learns that an update is available.
+        expect(getLibStoreDownload()._unsafeUnwrap()?.manifestDigest).toBeTruthy();
+
+        const applied = await startLibStoreDownloadProcess({
+            storeRoot,
+            update: true,
+            arch: "amd64",
+            fetch: stubRegistry(moved),
+            spawn: () => 4242,
+        });
+        expect(applied._unsafeUnwrap()).toEqual({ type: "started", pid: 4242 });
+    });
+});
+
+describe("runLibStoreTransfer — the detached child", () => {
+    beforeEach(() => resetLifecycle());
+    afterEach(() => resetLifecycle());
+
+    test("a completed transfer records the exact totals, and neither total grows", async () => {
+        const storeRoot = join(work, "store");
+        const layers = storeLayers();
+        const declared = layers.base.size + layers.track.size;
+
+        await runLibStoreTransfer({ storeRoot, update: false, fetch: stubRegistry(layers), retry: NO_RETRY });
+
+        const row = getLibStoreDownload()._unsafeUnwrap();
+        expect(row?.state).toBe("installed");
+        // The manifest declares the size of every layer, so the totals are exact rather than an estimate.
+        expect(row?.totalBytes).toBe(declared);
+        expect(row?.totalLayers).toBe(2);
+        expect(row?.bytesTransferred).toBe(declared);
+        expect(row?.layersCompleted).toBe(2);
+        // The receipt is what makes the store usable; the row only reports that the run ended.
+        expect(existsSync(libStoreDownloadPaths(storeRoot).receipt)).toBe(true);
+        // The lock is released on every exit path, thus a later run is not refused by a ghost.
+        expect(instanceLockHolder(LIB_STORE_DOWNLOAD_LOCK_KEY)).toBeNull();
+    });
+
+    test("an exhausted disk names the bytes necessary and the bytes available, and leaves no staged tree", async () => {
+        const storeRoot = join(work, "store");
+        const layers = storeLayers();
+        const manifest = manifestBytes([layers.base, layers.track]);
+        // A genuinely full filesystem is not something a unit test can create, so the out-of-disk fault is
+        // injected at the transfer seam instead. What is under test is the CLASSIFICATION: the transfer
+        // stops with a cause that carries ENOSPC, and the message must then name the two byte figures.
+        const outOfDisk: FetchLike = async (input) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            if (url.includes("/token")) return new Response(JSON.stringify({ token: "T" }), { status: 200 });
+            if (url.includes("/manifests/")) return new Response(manifest, { status: 200 });
+            const cause = new Error("ENOSPC: no space left on device, write");
+            (cause as NodeJS.ErrnoException).code = "ENOSPC";
+            throw cause;
+        };
+
+        await runLibStoreTransfer({ storeRoot, update: false, fetch: outOfDisk, retry: NO_RETRY });
+
+        const row = getLibStoreDownload()._unsafeUnwrap();
+        expect(row?.state).toBe("failed");
+        // A bare "no space left" tells a user nothing about how much disk to free.
+        expect(row?.message).toContain("The disk ran out");
+        expect(row?.message).toContain("more and");
+        expect(row?.message).toContain("inflexa store download");
+        // The partial transfer is gone, and the store root holds what it held before the run.
+        expect(existsSync(libStoreDownloadPaths(storeRoot).staging)).toBe(false);
+        expect(existsSync(join(storeRoot, "current"))).toBe(false);
+    });
+
+    test("a second child that loses the lock race transfers nothing and writes nothing", async () => {
+        // pid 1 is live and is NOT this process: our own pid would re-acquire the lock re-entrantly, which
+        // is the right behavior for a re-entrant caller and the wrong fixture for a losing child.
+        seedLock(1);
+        settleLibStoreDownload({ state: "canceled", message: null })._unsafeUnwrap();
+        // The lock is already held by a live pid other than a reclaimable one, so this child returns at once.
+        const storeRoot = join(work, "store");
+        await runLibStoreTransfer({
+            storeRoot,
+            update: false,
+            fetch: async () => {
+                throw new Error("the losing child must reach no network");
+            },
+            retry: NO_RETRY,
+        });
+        expect(getLibStoreDownload()._unsafeUnwrap()?.state).toBe("canceled");
+        expect(existsSync(storeRoot)).toBe(false);
+    });
+});
+
+describe("cancelLibStoreDownload", () => {
+    beforeEach(() => resetLifecycle());
+    afterEach(() => resetLifecycle());
+
+    test("a cancel with no live run reports that fact and changes nothing", async () => {
+        const storeRoot = join(work, "store");
+        mkdirSync(join(storeRoot, "store", "foo-1.0-abc"), { recursive: true });
+        expect(await cancelLibStoreDownload(storeRoot)).toEqual({ type: "no_run" });
+        // It writes no row, it removes no tree, and it stops no process.
+        expect(getLibStoreDownload()._unsafeUnwrap()).toBeNull();
+        expect(existsSync(join(storeRoot, "store", "foo-1.0-abc"))).toBe(true);
+    });
+
+    test("a cancel records `canceled`, removes the partial staged tree, and keeps every installed child", async () => {
+        const storeRoot = join(work, "store");
+        makeLocalStore(storeRoot, { farm: "mine", current: true });
+        const staging = libStoreDownloadPaths(storeRoot).staging;
+        mkdirSync(join(staging, "attempt-1", "store"), { recursive: true });
+        writeFileSync(join(staging, "attempt-1", "store", "half.txt"), "part\n");
+
+        // A REAL child process holds the run, because the cancel genuinely signals the holder pid. Our own
+        // pid would take the test process down with it, and a foreign live pid is somebody else's process.
+        const child = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+        startLibStoreDownloadRun({ state: "running", holderPid: child.pid })._unsafeUnwrap();
+        seedLock(child.pid);
+
+        const canceling = cancelLibStoreDownload(storeRoot);
+        // Reaped, so the pid probe reads it as gone and the bounded wait ends — which is exactly the signal
+        // a real downloader gives when it exits and releases the lock.
+        await child.exited;
+        expect(await canceling).toEqual({ type: "canceled", holderPid: child.pid });
+
+        expect(getLibStoreDownload()._unsafeUnwrap()?.state).toBe("canceled");
+        expect(existsSync(staging)).toBe(false);
+        // No installed content was touched: each child the store root holds stays where it is.
+        expect(existsSync(join(storeRoot, "store", "six-1.16-local"))).toBe(true);
+        expect(existsSync(join(storeRoot, "farms", "mine"))).toBe(true);
+        expect(readlinkSync(join(storeRoot, "current"))).toBe("farms/mine");
+    });
+
+    test("a download after a cancel moves the state to pending, then to running", async () => {
+        settleLibStoreDownload({ state: "canceled", message: null })._unsafeUnwrap();
+        const started = await startLibStoreDownloadProcess({ storeRoot: join(work, "store"), update: false, spawn: () => 4242 });
+        expect(started._unsafeUnwrap().type).toBe("started");
+        expect(getLibStoreDownload()._unsafeUnwrap()?.state).toBe("pending");
+
+        // The child takes the lock and moves it on, which is the second half of the retry transition.
+        startLibStoreDownloadRun({ state: "running", holderPid: process.pid })._unsafeUnwrap();
+        expect(getLibStoreDownload()._unsafeUnwrap()?.state).toBe("running");
+    });
+});
+
+describe("the detached-transfer flag", () => {
+    test("the registry declares the exact flag the spawn passes", () => {
+        // The registry keeps its lazy-import discipline, so the spelling lives in two places. Reading the
+        // registry SOURCE rather than importing it keeps the whole command tree out of this test process,
+        // which is what the file-descriptor budget of the shared `bun test` run depends on (cli/CLAUDE.md).
+        const registry = readFileSync(join(import.meta.dir, "../../cli/index.ts"), "utf8");
+        expect(registry).toContain(`new Option("${DETACHED_TRANSFER_FLAG}"`);
+    });
+});

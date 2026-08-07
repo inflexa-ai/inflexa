@@ -944,30 +944,33 @@ describe("bootHarnessRuntime", () => {
         }
     });
 
-    test("an unreadable inventory fails the boot, naming the store — it never reads an image label cache", async () => {
+    test("an unreadable inventory boots the runtime, so chat answers while the catalog is absent", async () => {
         const calls: string[] = [];
         // The active farm carries no `packages.txt`. The runtime image bakes no library, so there is no
-        // second inventory source to degrade onto: the boot refuses and the remedy names the store.
+        // second inventory source — but the REFUSAL belongs to whatever is about to make a sandbox, not to
+        // the boot. Chat, the workspace read surface, and the planner use no package at all, and this is
+        // exactly the machine on which the user needs them.
         seedLibStoreRoot(false);
         const seams: BootSeams = { ...recordingSeams(calls), resolveStorePackages: () => null };
         try {
-            const result = await bootHarnessRuntime({ seams, config: testConfig() });
-            const error = result._unsafeUnwrapErr();
-            expect(error.type).toBe("lib_store_unusable");
-            if (error.type === "lib_store_unusable") expect(error.root).toBe(env.libStoreDir);
-            // The refusal lands before the DBOS-owning section, so a failed boot binds nothing.
-            expect(calls).not.toContain("boot");
+            const runtime = (await bootHarnessRuntime({ seams, config: testConfig() }))._unsafeUnwrap();
+            expect(runtime).toBeDefined();
+            expect(calls).toContain("boot");
+            // No inventory reached the sandbox composition, so nothing describes a package set that the
+            // mount does not carry. It never falls back to an image label cache.
+            expect(lastCore?.conversation.packagesFile).toBeUndefined();
         } finally {
             clearLibStoreRoot();
         }
     });
 
-    test("a store that is absent altogether fails the same way, rather than booting onto an empty image", async () => {
+    test("a store that is absent altogether boots the same way, and names no inventory", async () => {
         const calls: string[] = [];
         clearLibStoreRoot();
         const seams: BootSeams = { ...recordingSeams(calls), resolveStorePackages: () => null };
-        const result = await bootHarnessRuntime({ seams, config: testConfig() });
-        expect(result._unsafeUnwrapErr().type).toBe("lib_store_unusable");
+        const runtime = (await bootHarnessRuntime({ seams, config: testConfig() }))._unsafeUnwrap();
+        expect(runtime).toBeDefined();
+        expect(lastCore?.conversation.packagesFile).toBeUndefined();
     });
 });
 

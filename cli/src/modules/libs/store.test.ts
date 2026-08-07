@@ -8,7 +8,10 @@ import { err, ok } from "neverthrow";
 
 import { runtimes, stream, type CaptureResult } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
-import { HARNESS_RUNTIME_LOCK_KEY, instanceLockPath, releaseInstanceLock } from "../../lib/lock.ts";
+import { HARNESS_RUNTIME_LOCK_KEY, LIB_STORE_DOWNLOAD_LOCK_KEY, instanceLockPath, releaseInstanceLock } from "../../lib/lock.ts";
+import { db } from "../../db/primary.ts";
+import { recordLibStoreDownloadManifest, recordLibStoreDownloadProgress, settleLibStoreDownload, startLibStoreDownloadRun } from "../../db/primary_mutation.ts";
+import { libStoreDownloadPaths } from "./store_download.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { storePackagesFile } from "./packages.ts";
 import {
@@ -18,6 +21,9 @@ import {
     reclaimStore,
     removeFarm,
     resolveActiveFarm,
+    runStoreCancel,
+    runStoreDownload,
+    runStoreLs,
     storeUse,
     type ProvisionerInvocation,
     type ProvisionerRunner,
@@ -574,4 +580,230 @@ describe.skipIf(!imagePresent)("store add — the real provisioning path (podman
         expect(inventory).not.toBeNull();
         expect(readFileSync(inventory!, "utf8")).toContain("six");
     }, 180_000);
+});
+
+// --- the live-download refusal and the download readout ----------------------
+//
+// A download merges its staged tree into the store root one child at a time, so a provisioning run that
+// writes into the same pool during that merge can meet a half-merged root. The refusal covers the whole
+// live period, and a dead downloader refuses nothing.
+
+/** Drop the lifecycle row and the download lock, so each test starts from a machine on which nothing ran. */
+function resetDownloadLifecycle(): void {
+    releaseInstanceLock(LIB_STORE_DOWNLOAD_LOCK_KEY);
+    rmSync(instanceLockPath(LIB_STORE_DOWNLOAD_LOCK_KEY), { force: true });
+    db()
+        .map((conn) => conn.query("DELETE FROM lib_store_downloads").run())
+        ._unsafeUnwrap();
+}
+
+/** Seed the download lock with `pid`, the way a live downloader of that pid would hold it. */
+function seedDownloadLock(pid: number): void {
+    mkdirSync(dirname(instanceLockPath(LIB_STORE_DOWNLOAD_LOCK_KEY)), { recursive: true });
+    writeFileSync(instanceLockPath(LIB_STORE_DOWNLOAD_LOCK_KEY), String(pid));
+}
+
+describe("store add refuses while a download is live", () => {
+    beforeEach(() => resetDownloadLifecycle());
+    afterEach(() => resetDownloadLifecycle());
+
+    test("a live download refuses the provisioning run, names it, and writes nothing to the store root", async () => {
+        const root = join(tempStore(), "fresh");
+        startLibStoreDownloadRun({ state: "running", holderPid: process.pid })._unsafeUnwrap();
+        seedDownloadLock(process.pid);
+
+        const { runner, calls } = spyRunner(SUCCESS);
+        const ensure = spyEnsureImage();
+        const result = await provisionPackages({ storeRoot: root, farm: "default", specs: ["scanpy"] }, { run: runner, ensureImage: ensure.ensureImage });
+
+        const error = result._unsafeUnwrapErr();
+        expect(error.type).toBe("download_in_flight");
+        expect(error.message).toContain("inflexa store cancel");
+        expect(error.message).toContain("inflexa store ls");
+        // Nothing ran and nothing was written: the refusal lands before the image seam and before the
+        // store root is even created.
+        expect(calls).toEqual([]);
+        expect(ensure.calls).toBe(0);
+        expect(existsSync(root)).toBe(false);
+    });
+
+    test("a `running` row whose holder is gone refuses nothing, because it reads as failed", async () => {
+        const root = tempStore();
+        startLibStoreDownloadRun({ state: "running", holderPid: 999_999 })._unsafeUnwrap();
+        // No lock file: nothing live holds the key.
+        const { runner, calls } = spyRunner(SUCCESS);
+        const ensure = spyEnsureImage();
+        const result = await provisionPackages({ storeRoot: root, farm: "default", specs: ["scanpy"] }, { run: runner, ensureImage: ensure.ensureImage });
+
+        expect(result.isOk()).toBe(true);
+        expect(calls.length).toBe(1);
+    });
+});
+
+describe("inspectStore — the download readout", () => {
+    beforeEach(() => resetDownloadLifecycle());
+    afterEach(() => resetDownloadLifecycle());
+
+    test("an absent row reports that no download ran, because a store can arrive by a route that wrote none", async () => {
+        const root = tempStore();
+        makeFarm(root, "default");
+        const inspection = (await inspectStore(root))._unsafeUnwrap();
+        expect(inspection.download.state).toBeNull();
+        expect(inspection.download.updateAvailable).toBe(false);
+    });
+
+    test("a live transfer reports its state and its two byte figures", async () => {
+        const root = tempStore();
+        startLibStoreDownloadRun({ state: "running", holderPid: process.pid })._unsafeUnwrap();
+        recordLibStoreDownloadManifest({ manifestDigest: "sha256:a", totalBytes: 900, totalLayers: 3 })._unsafeUnwrap();
+        recordLibStoreDownloadProgress({ bytesTransferred: 300, layersCompleted: 1 })._unsafeUnwrap();
+        seedDownloadLock(process.pid);
+
+        const inspection = (await inspectStore(root))._unsafeUnwrap();
+        expect(inspection.download.state).toBe("running");
+        expect(inspection.download.bytesTransferred).toBe(300);
+        expect(inspection.download.totalBytes).toBe(900);
+    });
+
+    test("a failure reports its message, which names the fault and the remedy", async () => {
+        const root = tempStore();
+        settleLibStoreDownload({ state: "failed", message: "The registry was unreachable. Run `inflexa store download` to try again." })._unsafeUnwrap();
+        const inspection = (await inspectStore(root))._unsafeUnwrap();
+        expect(inspection.download.state).toBe("failed");
+        expect(inspection.download.message).toContain("inflexa store download");
+    });
+
+    test("a canceled run is reported as its own state, separate from a declined one", async () => {
+        const root = tempStore();
+        settleLibStoreDownload({ state: "canceled", message: null })._unsafeUnwrap();
+        expect((await inspectStore(root))._unsafeUnwrap().download.state).toBe("canceled");
+        settleLibStoreDownload({ state: "declined", message: null })._unsafeUnwrap();
+        expect((await inspectStore(root))._unsafeUnwrap().download.state).toBe("declined");
+    });
+
+    test("a receipt that pins a different manifest than the last resolve reports an available update", async () => {
+        const root = tempStore();
+        // The receipt is what is installed; the row carries the digest the registry serves now.
+        mkdirSync(libStoreDownloadPaths(root).metadata, { recursive: true });
+        writeFileSync(
+            libStoreDownloadPaths(root).receipt,
+            JSON.stringify({
+                version: 1,
+                manifestDigest: "sha256:a",
+                reference: "latest-arm64",
+                arch: "arm64",
+                activatedAt: "2026-01-01T00:00:00Z",
+                layers: [],
+            }),
+        );
+        settleLibStoreDownload({ state: "installed", message: null })._unsafeUnwrap();
+        recordLibStoreDownloadManifest({ manifestDigest: "sha256:b", totalBytes: 900, totalLayers: 3 })._unsafeUnwrap();
+
+        expect((await inspectStore(root))._unsafeUnwrap().download.updateAvailable).toBe(true);
+
+        // The same digest on both sides is a store that is up to date, and no surface offers an update.
+        recordLibStoreDownloadManifest({ manifestDigest: "sha256:a", totalBytes: 900, totalLayers: 3 })._unsafeUnwrap();
+        expect((await inspectStore(root))._unsafeUnwrap().download.updateAvailable).toBe(false);
+    });
+});
+
+describe("runStoreLs — the listing reports the download and prompts for nothing", () => {
+    beforeEach(() => {
+        resetDownloadLifecycle();
+        assertTestSandbox(env.libStoreDir);
+        rmSync(env.libStoreDir, { recursive: true, force: true });
+    });
+    afterEach(() => {
+        resetDownloadLifecycle();
+        assertTestSandbox(env.libStoreDir);
+        rmSync(env.libStoreDir, { recursive: true, force: true });
+    });
+
+    /** Run a command action with stdout captured, so the report is assertable and the suite stays quiet. */
+    async function output(run: () => Promise<void>): Promise<string> {
+        const lines: string[] = [];
+        const original = console.log;
+        console.log = (...args: unknown[]): void => void lines.push(args.map(String).join(" "));
+        try {
+            await run();
+        } finally {
+            console.log = original;
+        }
+        return lines.join("\n");
+    }
+
+    test("a live transfer is reported with its state and its byte figures", async () => {
+        makeFarm(env.libStoreDir, "default");
+        startLibStoreDownloadRun({ state: "running", holderPid: process.pid })._unsafeUnwrap();
+        recordLibStoreDownloadManifest({ manifestDigest: "sha256:a", totalBytes: 2048, totalLayers: 2 })._unsafeUnwrap();
+        recordLibStoreDownloadProgress({ bytesTransferred: 1024, layersCompleted: 1 })._unsafeUnwrap();
+        seedDownloadLock(process.pid);
+
+        const report = await output(runStoreLs);
+        expect(report).toContain("Download running");
+        expect(report).toContain("1.0 KiB of 2.0 KiB");
+    });
+
+    test("a failure names its message and the retry command", async () => {
+        makeFarm(env.libStoreDir, "default");
+        settleLibStoreDownload({ state: "failed", message: "The registry was unreachable." })._unsafeUnwrap();
+        const report = await output(runStoreLs);
+        expect(report).toContain("Download failed");
+        expect(report).toContain("The registry was unreachable.");
+        expect(report).toContain("inflexa store download");
+    });
+
+    test("a canceled run says that the user stopped the transfer, and names the same retry", async () => {
+        makeFarm(env.libStoreDir, "default");
+        settleLibStoreDownload({ state: "canceled", message: null })._unsafeUnwrap();
+        const report = await output(runStoreLs);
+        expect(report).toContain("you stopped the transfer");
+        expect(report).toContain("inflexa store download");
+    });
+
+    test("an absent row says that no download ran", async () => {
+        makeFarm(env.libStoreDir, "default");
+        expect(await output(runStoreLs)).toContain("no download ran");
+    });
+
+    test("an available update names `inflexa store download --update` and opens no prompt", async () => {
+        makeFarm(env.libStoreDir, "default");
+        mkdirSync(libStoreDownloadPaths(env.libStoreDir).metadata, { recursive: true });
+        writeFileSync(
+            libStoreDownloadPaths(env.libStoreDir).receipt,
+            JSON.stringify({
+                version: 1,
+                manifestDigest: "sha256:a",
+                reference: "latest-arm64",
+                arch: "arm64",
+                activatedAt: "2026-01-01T00:00:00Z",
+                layers: [],
+            }),
+        );
+        settleLibStoreDownload({ state: "installed", message: null })._unsafeUnwrap();
+        recordLibStoreDownloadManifest({ manifestDigest: "sha256:b", totalBytes: 2048, totalLayers: 2 })._unsafeUnwrap();
+
+        const report = await output(runStoreLs);
+        expect(report).toContain("inflexa store download --update");
+    });
+
+    test("a cancel with no live run reports that fact and changes nothing", async () => {
+        makeFarm(env.libStoreDir, "default");
+        const report = await output(runStoreCancel);
+        expect(report).toContain("No package-store download is running");
+        expect(existsSync(join(env.libStoreDir, "farms", "default"))).toBe(true);
+    });
+
+    test("a start over a live run names the progress command and the cancel command", async () => {
+        startLibStoreDownloadRun({ state: "running", holderPid: process.pid })._unsafeUnwrap();
+        recordLibStoreDownloadProgress({ bytesTransferred: 1024, layersCompleted: 1 })._unsafeUnwrap();
+        seedDownloadLock(process.pid);
+
+        const report = await output(() => runStoreDownload({}));
+        expect(report).toContain("already running");
+        // A detached process writes nothing to the terminal of the starter, so the pointer is what a user
+        // needs most.
+        expect(report).toContain("inflexa store ls");
+        expect(report).toContain("inflexa store cancel");
+    });
 });

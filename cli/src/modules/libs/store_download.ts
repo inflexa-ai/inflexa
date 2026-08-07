@@ -19,14 +19,20 @@
  * with `inflexa store add`, which provisions into the same `store/` pool and writes its own farms beside
  * the published ones ({@link mergeStagedRoot}).
  *
- * The gate that holds sandbox creation, the app-open trigger, the first-download consent, and the
- * update ask are the caller's wiring. This module gives the two mechanisms they operate: the download
- * ({@link downloadLibStore}) and the local state read ({@link inspectLibStoreDownload}). No
- * configuration value suppresses either, because the runtime image bakes no library.
+ * The transfer runs in a DETACHED process that `inflexa setup` and `inflexa store download` start and
+ * that outlives both ({@link startLibStoreDownloadProcess}). The lifecycle of that process — its state,
+ * its byte totals, and its liveness — is the second half of this module. One database row records what
+ * the process does now; the receipt on disk stays the truth of what the store holds. The two records
+ * never merge, because a store root can arrive by a route that wrote no row.
+ *
+ * The gate that holds sandbox creation is the caller's wiring. This module gives the mechanisms it
+ * operates: the download ({@link downloadLibStore}), the local state read
+ * ({@link inspectLibStoreDownload}), and the lifecycle read ({@link readLibStoreDownloadReport}). No
+ * configuration value suppresses any of them, because the runtime image bakes no library.
  */
 
 import { createReadStream, existsSync } from "node:fs";
-import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rename, rm, stat, statfs, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { createZstdDecompress } from "node:zlib";
@@ -34,8 +40,12 @@ import { createZstdDecompress } from "node:zlib";
 import { randomUUIDv7 } from "bun";
 import { err, ok, type Result } from "neverthrow";
 
+import { getLibStoreDownload } from "../../db/primary_query.ts";
+import { recordLibStoreDownloadManifest, recordLibStoreDownloadProgress, settleLibStoreDownload, startLibStoreDownloadRun } from "../../db/primary_mutation.ts";
 import { downloadToFile, type DownloadError, type DownloadProgress, type DownloadRetry, type FetchLike } from "../../lib/download.ts";
+import { env } from "../../lib/env.ts";
 import { sha256File } from "../../lib/hash.ts";
+import { acquireInstanceLock, instanceLockHolder, releaseInstanceLock, LIB_STORE_DOWNLOAD_LOCK_KEY } from "../../lib/lock.ts";
 
 /** The registry host the store publishes to. */
 const STORE_REGISTRY = "ghcr.io";
@@ -75,6 +85,58 @@ const DEFAULT_BLOB_RETRY: DownloadRetry = {
 
 /** A published store architecture, as the publisher tags it (`latest-<arch>`). */
 export type StoreArch = "amd64" | "arm64";
+
+/**
+ * The lifecycle state of the one detached catalog downloader.
+ *
+ * `declined` records a setup answer of no, which starts no transfer and writes no staged tree.
+ * `canceled` records a transfer that started and that the user stopped, which leaves a partial staged
+ * tree that the cancel removes. The difference is load-bearing: only one of the two has a tree to drop.
+ *
+ * `failed`, `declined`, and `canceled` are terminal. Only a retry leaves one of them.
+ */
+export type LibStoreDownloadStatus = "pending" | "running" | "installed" | "failed" | "declined" | "canceled";
+
+/**
+ * The one persisted row that records what the download process does now.
+ *
+ * The receipt on disk stays the truth of what the store holds. This row is the truth of what the
+ * process does, and it decides nothing about whether a sandbox can start. A store root can arrive by a
+ * route that wrote no row, for example a manual pull or `inflexa store add`, thus an absent row is a
+ * normal condition and never an unusable store.
+ *
+ * The shape lives beside the download rather than in `src/types/`, because the download is its one
+ * consumer. `src/db/` takes it as a type-only import, thus the storage layer keeps no runtime
+ * dependency on this module.
+ */
+export type LibStoreDownloadRow = {
+    /** The stable row id. There is one store root, thus there is one row. */
+    readonly id: string;
+    /** When the first run wrote the row, epoch millis. */
+    readonly createdAt: number;
+    /** When the last write landed, epoch millis. */
+    readonly updatedAt: number;
+    /** The lifecycle state. */
+    readonly state: LibStoreDownloadStatus;
+    /** The bytes the transfer has moved so far. */
+    readonly bytesTransferred: number;
+    /** The bytes the manifest declares, or `null` before the manifest resolves. It never grows after that moment. */
+    readonly totalBytes: number | null;
+    /** The layers the transfer has completed so far. */
+    readonly layersCompleted: number;
+    /** The layers the manifest declares, or `null` before the manifest resolves. */
+    readonly totalLayers: number | null;
+    /**
+     * The manifest digest the last resolve saw, which is the digest the registry serves now. A receipt
+     * that pins a different digest means an update is available, and that comparison is the only way a
+     * reader learns it without the network.
+     */
+    readonly manifestDigest: string | null;
+    /** The user-facing message of a failure: the fault and the remedy, never a stack trace. */
+    readonly message: string | null;
+    /** The process identifier of the downloader, or `null` when no process holds the run. */
+    readonly holderPid: number | null;
+};
 
 /** One layer descriptor from the manifest: the media type, the content digest, and the compressed size. */
 export type LibStoreLayer = {
@@ -143,9 +205,13 @@ export type LibStoreDownloadOutcome =
 /**
  * A fire-and-forget progress notification for one store download. A layer event carries its digest,
  * because several layers transfer in sequence and an unattributed byte count would be ambiguous.
+ *
+ * `manifest_resolved` carries the two totals. The manifest declares the size of every layer before the
+ * first byte arrives, thus an observer that records them records exact figures and never an estimate.
  */
 export type LibStoreDownloadProgress =
     | { readonly type: "resolving" }
+    | { readonly type: "manifest_resolved"; readonly manifestDigest: string; readonly totalBytes: number; readonly totalLayers: number }
     | { readonly type: "layer_started"; readonly digest: string; readonly declaredBytes?: number }
     | { readonly type: "layer_bytes"; readonly digest: string; readonly bytes: number }
     | { readonly type: "layer_completed"; readonly digest: string; readonly bytes: number }
@@ -363,7 +429,15 @@ async function downloadLayerBlob(
 ): Promise<Result<number, LibStoreDownloadError>> {
     if (existsSync(dest)) {
         const cached = await sha256File(dest);
-        if (cached.isOk() && `sha256:${cached.value}` === layer.digest) return ok((await stat(dest)).size);
+        if (cached.isOk() && `sha256:${cached.value}` === layer.digest) {
+            // A cache hit still reports its two edges. An observer that sums the completed layers would
+            // otherwise stop short of the declared total by exactly the layers a repaired run reused, and
+            // its meter would stall below full over a transfer that is in fact complete.
+            const bytes = (await stat(dest)).size;
+            reportProgress(onProgress, { type: "layer_started", digest: layer.digest, declaredBytes: layer.size });
+            reportProgress(onProgress, { type: "layer_completed", digest: layer.digest, bytes });
+            return ok(bytes);
+        }
     }
     const authed: FetchLike = (input, init) => {
         // downloadToFile sends no headers of its own; the bearer rides here, on the initial request. `fetch`
@@ -653,6 +727,15 @@ export async function downloadLibStore(deps: LibStoreDownloadDeps): Promise<Resu
     if (token.isErr()) return err(token.error);
     const manifest = await resolveManifest(doFetch, reference, token.value);
     if (manifest.isErr()) return err(manifest.error);
+    // Reported before the receipt comparison below, so a resolve that transfers nothing still tells the
+    // caller which manifest the registry serves now. That digest is what an installed receipt is compared
+    // against, thus it is how a reader with no network learns that an update is available.
+    reportProgress(deps.onProgress, {
+        type: "manifest_resolved",
+        manifestDigest: manifest.value.manifestDigest,
+        totalBytes: manifest.value.layers.reduce((sum, layer) => sum + layer.size, 0),
+        totalLayers: manifest.value.layers.length,
+    });
 
     const paths = libStoreDownloadPaths(deps.storeRoot);
     const receiptRead = await readLibStoreReceipt(paths.receipt);
@@ -695,4 +778,347 @@ export async function downloadLibStore(deps: LibStoreDownloadDeps): Promise<Resu
     // copy of the whole store. Nothing resumes from them after this point.
     await rm(paths.blobs, { recursive: true, force: true }).catch(() => undefined);
     return ok({ type: "downloaded", manifestDigest: manifest.value.manifestDigest, bytes, merge: staged.value });
+}
+
+// --- the detached download process --------------------------------------------
+//
+// One process transfers the catalog, and it outlives the command that started it. The state of that
+// process lives in one database row; the liveness of that process comes from one instance lock. The two
+// together answer every question a reader has, and neither needs a heartbeat or a clock.
+
+/**
+ * The manifest digest the receipt pins, or `null` when the store carries no valid receipt.
+ *
+ * This is the installed half of the update comparison. The other half is the digest the last resolve
+ * recorded on the row. When the two differ, an update is available — and that is the only way a reader
+ * with no network learns it.
+ */
+export async function installedLibStoreManifest(storeRoot: string): Promise<string | null> {
+    const read = await readLibStoreReceipt(libStoreDownloadPaths(storeRoot).receipt);
+    return read.receipt?.manifestDigest ?? null;
+}
+
+/** The lifecycle of the one downloader, as any reader sees it. */
+export type LibStoreDownloadReport = {
+    /** The row as it stands, or `null` when no download ever ran on this machine. */
+    readonly row: LibStoreDownloadRow | null;
+    /**
+     * The state a reader must act on, which is NOT always `row.state`. A row that reports `running` with
+     * no live holder reads as `failed`: a killed process writes no failure row, thus the lock is the only
+     * sound signal that the run is over. `null` means that no download ran.
+     */
+    readonly state: LibStoreDownloadStatus | null;
+    /** True while a downloader holds the lock. `inflexa store add` refuses through this, and a second start yields to it. */
+    readonly live: boolean;
+    /** The pid of the live downloader, or `null`. A cancel signals exactly this process. */
+    readonly holderPid: number | null;
+};
+
+/**
+ * Read the lifecycle of the one downloader: the row, corrected by the liveness of the lock holder.
+ *
+ * A read failure degrades to "no download ran" rather than an error. The database is a file on the
+ * machine of the user, and a store with a valid receipt is usable whatever this row says — a hard
+ * failure here would refuse a store that works.
+ */
+export function readLibStoreDownloadReport(): LibStoreDownloadReport {
+    const holderPid = instanceLockHolder(LIB_STORE_DOWNLOAD_LOCK_KEY);
+    const row = getLibStoreDownload().unwrapOr(null);
+    if (row === null) return { row: null, state: null, live: false, holderPid };
+    const started = row.state === "pending" || row.state === "running";
+    const live = started && holderPid !== null;
+    // A `pending` row belongs to a starter that has not yet spawned, or to a process that died before it
+    // took the lock. Neither is live, and only the second is a failure — but the two are indistinguishable
+    // from here, so `pending` keeps its own state and only `running` degrades.
+    const state = row.state === "running" && holderPid === null ? "failed" : row.state;
+    return { row, state, live, holderPid };
+}
+
+/** What a start attempt did. Only `started` puts a process on the machine. */
+export type LibStoreDownloadStart =
+    | { readonly type: "started"; readonly pid: number }
+    | { readonly type: "already_running"; readonly report: LibStoreDownloadReport }
+    | { readonly type: "up_to_date"; readonly manifestDigest: string }
+    | { readonly type: "update_available"; readonly installedDigest: string; readonly latestDigest: string };
+
+/**
+ * The argv that runs this CLI again. A dev run has no compiled binary, so the source entry is executed by
+ * the `bun` runtime; a release binary IS the `inflexa` executable. This module lives at
+ * `src/modules/libs/`, thus the CLI source entry is three levels up.
+ */
+function selfInvocation(argv: readonly string[]): string[] {
+    return env.isDevelopment ? [process.execPath, join(import.meta.dir, "../../index.ts"), ...argv] : [process.execPath, ...argv];
+}
+
+/**
+ * Start the detached downloader, or report why no process was necessary.
+ *
+ * The command that calls this exits at once. The child is `.unref()`ed and its output is discarded, so
+ * it holds no event loop and it writes nothing to the terminal of the starter — the row is where it
+ * reports, and `inflexa store ls` is where a user reads it.
+ *
+ * The resolve happens HERE and not in the child for the two cases that must answer synchronously. A
+ * receipt that pins the manifest the registry serves now means the store is up to date, and a receipt
+ * that pins a different one means an update is available. Neither starts a transfer, and `update` is the
+ * consent that applies the moved tag. With no receipt there is nothing to compare, thus the start needs
+ * no network at all.
+ */
+export async function startLibStoreDownloadProcess(params: {
+    readonly storeRoot: string;
+    readonly update: boolean;
+    /** Fetch implementation for the resolve; defaults to the runtime fetch. Injected by a test. */
+    readonly fetch?: FetchLike;
+    /** The architecture to resolve; defaults to the host architecture. Injected by a test. */
+    readonly arch?: StoreArch;
+    /** Put the detached child on the machine and report its pid. Injected by a test, so no test ever spawns one. */
+    readonly spawn?: (cmd: readonly string[]) => number;
+}): Promise<Result<LibStoreDownloadStart, LibStoreDownloadError>> {
+    const report = readLibStoreDownloadReport();
+    // The lock gives single-flight for free: one live holder means one downloader, and this start yields.
+    if (report.live) return ok({ type: "already_running", report });
+
+    if ((await inspectLibStoreDownload(params.storeRoot)) === "installed") {
+        // A valid receipt is there, thus this call resolves the manifest and transfers nothing whatever the
+        // outcome — `downloadLibStore` short-circuits on a present receipt when `force` is absent.
+        const resolved = await downloadLibStore({
+            storeRoot: params.storeRoot,
+            onProgress: recordResolvedManifest,
+            ...(params.fetch === undefined ? {} : { fetch: params.fetch }),
+            ...(params.arch === undefined ? {} : { arch: params.arch }),
+        });
+        if (resolved.isErr()) return err(resolved.error);
+        if (resolved.value.type === "up_to_date") return ok({ type: "up_to_date", manifestDigest: resolved.value.manifestDigest });
+        if (resolved.value.type === "update_available" && !params.update) {
+            return ok({ type: "update_available", installedDigest: resolved.value.installedDigest, latestDigest: resolved.value.latestDigest });
+        }
+    }
+
+    // `pending` before the spawn, so a reader between the write and the child taking the lock sees a run
+    // that is starting rather than the terminal state the last run left. Discarded on failure: the row is
+    // a readout, and a database this process cannot write must not stop the transfer from happening.
+    startLibStoreDownloadRun({ state: "pending", holderPid: null }).unwrapOr(undefined);
+    const cmd = selfInvocation(["store", "download", ...(params.update ? ["--update"] : []), DETACHED_TRANSFER_FLAG]);
+    try {
+        return ok({ type: "started", pid: (params.spawn ?? spawnDetached)(cmd) });
+    } catch (cause) {
+        const message = `Could not start the package-store downloader. Run \`inflexa store download\` again.`;
+        settleLibStoreDownload({ state: "failed", message }).unwrapOr(undefined);
+        return err({ type: "io_failed", message, cause });
+    }
+}
+
+/**
+ * The flag that tells the child to move the bytes itself rather than start a third process.
+ *
+ * The registry (`src/cli/index.ts`) declares the same spelling as a hidden option on `store download`,
+ * because a command registry that imported this module would give up its lazy-import discipline for one
+ * string. `store_download.test.ts` pins the two spellings against each other.
+ */
+export const DETACHED_TRANSFER_FLAG = "--run-transfer";
+
+/**
+ * Put the child on the machine and report its pid.
+ *
+ * `.unref()` and the ignored streams are what make it detached: it holds no event loop of the starter, it
+ * writes nothing to the terminal of the starter, and it survives that exit. The same pattern as
+ * `lib/open_external.ts`.
+ */
+function spawnDetached(cmd: readonly string[]): number {
+    const child = Bun.spawn({ cmd: [...cmd], stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    child.unref();
+    return child.pid;
+}
+
+/** Record the two exact totals when the manifest resolves, and ignore every other event. */
+function recordResolvedManifest(event: LibStoreDownloadProgress): void {
+    if (event.type !== "manifest_resolved") return;
+    // The write is discarded on failure, and that is deliberate: the row is a progress readout, thus a
+    // database this process cannot write must never abort a transfer that is otherwise succeeding.
+    recordLibStoreDownloadManifest({
+        manifestDigest: event.manifestDigest,
+        totalBytes: event.totalBytes,
+        totalLayers: event.totalLayers,
+    }).unwrapOr(undefined);
+}
+
+/**
+ * How often the live transfer writes its running counts.
+ *
+ * A multi-gigabyte transfer emits a byte event for every chunk, which is many thousands of events. One
+ * row write for each of them would be pure waste for a readout that a user reads at a human rate. Every
+ * layer edge writes regardless, so the recorded counts are exact at each layer boundary.
+ */
+const PROGRESS_WRITE_INTERVAL_MS = 500;
+
+/** Whether a thrown cause, or anything it wraps, is the out-of-disk error. */
+function isDiskFull(cause: unknown): boolean {
+    let current = cause;
+    for (let depth = 0; depth < 5 && current !== null && current !== undefined; depth += 1) {
+        if (typeof current === "object" && "code" in current && (current as { code?: unknown }).code === "ENOSPC") return true;
+        current = typeof current === "object" && "cause" in current ? (current as { cause?: unknown }).cause : undefined;
+    }
+    return false;
+}
+
+/** Render a byte count in the largest unit that keeps it readable, for a message a user acts on. */
+function describeBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ["KiB", "MiB", "GiB", "TiB"];
+    let value = bytes / 1024;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+    }
+    return `${value.toFixed(1)} ${units[unit]}`;
+}
+
+/** The bytes the filesystem under `path` still offers this user, or `null` when the question cannot be answered. */
+async function availableBytes(path: string): Promise<number | null> {
+    try {
+        const fs = await statfs(path);
+        return Number(fs.bavail) * Number(fs.bsize);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The message the row carries for a failure: the fault, and what to do about it.
+ *
+ * A disk that ran out gets the two figures a user needs to act. A bare "no space left" tells nobody how
+ * much disk to free, and the manifest already declares exactly how much the transfer still wants.
+ */
+async function describeTransferFailure(error: LibStoreDownloadError, storeRoot: string, remaining: number | null): Promise<string> {
+    if (isDiskFull("cause" in error ? error.cause : undefined)) {
+        const free = await availableBytes(storeRoot);
+        const need = remaining === null ? "the rest of the catalog" : describeBytes(remaining);
+        const have = free === null ? "less than that" : describeBytes(free);
+        return `The disk ran out while the package store downloaded. The transfer needs ${need} more and ${storeRoot} offers ${have}. Free the difference, then run \`inflexa store download\`.`;
+    }
+    return `${error.message} Run \`inflexa store download\` to try again.`;
+}
+
+/**
+ * Move the bytes in THIS process: hold the lock for the whole life of the run, write the row as the
+ * transfer advances, and settle the row on every exit path.
+ *
+ * This is the body of the detached child. It takes the lock first, because the lock is what makes the run
+ * visible as live to every other process — a run that wrote `running` without it would read as failed at
+ * once. A start that loses the race writes nothing and returns, thus two children can never both transfer.
+ */
+export async function runLibStoreTransfer(params: {
+    readonly storeRoot: string;
+    readonly update: boolean;
+    /** Fetch implementation for the transfer; defaults to the runtime fetch. Injected by a test. */
+    readonly fetch?: FetchLike;
+    /** Retry schedule for a blob GET; defaults to the module schedule. Injected by a test, so a failure fails at once. */
+    readonly retry?: DownloadRetry;
+    /** The architecture to transfer; defaults to the host architecture. Injected by a test. */
+    readonly arch?: StoreArch;
+}): Promise<void> {
+    const lock = acquireInstanceLock(LIB_STORE_DOWNLOAD_LOCK_KEY);
+    if (!lock.acquired) return;
+    startLibStoreDownloadRun({ state: "running", holderPid: process.pid }).unwrapOr(undefined);
+
+    let totalBytes: number | null = null;
+    let completedBytes = 0;
+    let inFlightBytes = 0;
+    let layersCompleted = 0;
+    let lastWrite = 0;
+    const writeProgress = (force: boolean): void => {
+        const now = Date.now();
+        if (!force && now - lastWrite < PROGRESS_WRITE_INTERVAL_MS) return;
+        lastWrite = now;
+        recordLibStoreDownloadProgress({ bytesTransferred: completedBytes + inFlightBytes, layersCompleted }).unwrapOr(undefined);
+    };
+
+    try {
+        const result = await downloadLibStore({
+            storeRoot: params.storeRoot,
+            force: params.update,
+            ...(params.fetch === undefined ? {} : { fetch: params.fetch }),
+            ...(params.retry === undefined ? {} : { retry: params.retry }),
+            ...(params.arch === undefined ? {} : { arch: params.arch }),
+            onProgress: (event) => {
+                switch (event.type) {
+                    case "manifest_resolved":
+                        totalBytes = event.totalBytes;
+                        recordResolvedManifest(event);
+                        return;
+                    case "layer_started":
+                        inFlightBytes = 0;
+                        return;
+                    case "layer_bytes":
+                        inFlightBytes += event.bytes;
+                        writeProgress(false);
+                        return;
+                    case "layer_completed":
+                        completedBytes += event.bytes;
+                        inFlightBytes = 0;
+                        layersCompleted += 1;
+                        writeProgress(true);
+                        return;
+                    default:
+                        return;
+                }
+            },
+        });
+
+        if (result.isErr()) {
+            // The staged tree is per-attempt debris that no retry reads, and a disk that ran out is exactly
+            // the case where leaving it costs the user the space they must free. The blob cache stays: a
+            // layer that completed is worth keeping, and the next run verifies each cached blob by digest.
+            await rm(libStoreDownloadPaths(params.storeRoot).staging, { recursive: true, force: true }).catch(() => undefined);
+            const remaining = totalBytes === null ? null : Math.max(0, totalBytes - completedBytes - inFlightBytes);
+            const message = await describeTransferFailure(result.error, params.storeRoot, remaining);
+            settleLibStoreDownload({ state: "failed", message }).unwrapOr(undefined);
+            return;
+        }
+
+        // Each ok outcome leaves the published bytes on disk: `downloaded` activated them, and the two
+        // no-op outcomes mean a receipt already pins them. Whether the active farm is one a sandbox can
+        // mount is a separate question, which the sandbox gate asks against the filesystem.
+        writeProgress(true);
+        settleLibStoreDownload({ state: "installed", message: null }).unwrapOr(undefined);
+    } finally {
+        releaseInstanceLock(LIB_STORE_DOWNLOAD_LOCK_KEY);
+    }
+}
+
+/** What a cancel did. `no_run` is a normal answer, not a failure: a cancel of nothing changes nothing. */
+export type LibStoreDownloadCancel = { readonly type: "canceled"; readonly holderPid: number } | { readonly type: "no_run" };
+
+/** How long the cancel waits for the signalled downloader to go away before it drops the staged tree. */
+const CANCEL_EXIT_WAIT_MS = 3000;
+
+/** How often the cancel tests whether the signalled downloader is gone. */
+const CANCEL_POLL_MS = 50;
+
+/**
+ * Stop the live transfer, record `canceled`, and remove the partial staged tree.
+ *
+ * The downloader is detached, thus it outlives both `inflexa setup` and the app, and a command is the
+ * only thing that reaches it from another terminal. The signal is SIGTERM and the wait is bounded: the
+ * staged tree is dropped only after the holder is gone, so a rename that is in flight is never raced.
+ *
+ * It removes NO installed content. The staged tree is per-attempt debris under the installer-owned
+ * metadata directory, and each child that the store root holds stays where it is.
+ */
+export async function cancelLibStoreDownload(storeRoot: string): Promise<LibStoreDownloadCancel> {
+    const report = readLibStoreDownloadReport();
+    if (!report.live || report.holderPid === null) return { type: "no_run" };
+    const holderPid = report.holderPid;
+    try {
+        process.kill(holderPid, "SIGTERM");
+    } catch {
+        // The process went away between the probe and the signal. The cleanup below is what matters.
+    }
+    for (let waited = 0; waited < CANCEL_EXIT_WAIT_MS; waited += CANCEL_POLL_MS) {
+        if (instanceLockHolder(LIB_STORE_DOWNLOAD_LOCK_KEY) === null) break;
+        await Promise.sleep(CANCEL_POLL_MS);
+    }
+    await rm(libStoreDownloadPaths(storeRoot).staging, { recursive: true, force: true }).catch(() => undefined);
+    settleLibStoreDownload({ state: "canceled", message: null }).unwrapOr(undefined);
+    return { type: "canceled", holderPid };
 }

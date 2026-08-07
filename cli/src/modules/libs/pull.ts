@@ -1,6 +1,6 @@
 /**
- * The `inflexa sandbox` command actions — pull, status — plus the config write
- * that records the pulled image. `sandboxPull` is the ONE dogfooded provisioning
+ * The `inflexa sandbox` command actions — pull, status, remove — plus the config
+ * write that records the pulled image. `sandboxPull` is the ONE dogfooded provisioning
  * path: the `sandbox pull` command and the `inflexa setup` wizard both funnel
  * through it. There is no second image-fetch path.
  *
@@ -201,6 +201,62 @@ async function reportImage(rt: ContainerRuntime, label: string, image: string, r
         console.log(`    Present  no`);
         console.log(`    Run \`${remedy}\` to download it.`);
     }
+}
+
+// --- removal -----------------------------------------------------------------
+
+/** What the removal did to one image. `absent` is a normal condition, never a refusal. */
+export type ImageRemoval = { readonly image: string; readonly outcome: "removed" | "absent" | "failed"; readonly detail?: string };
+
+/**
+ * Remove one image, reporting an absent one rather than refusing it. `image rm` exits non-zero for a
+ * reference the engine does not hold, and the presence probe separates that normal case from a real
+ * fault, for example an image a running container still holds.
+ */
+async function removeImage(rt: ContainerRuntime, image: string): Promise<ImageRemoval> {
+    if (!(await imagePresent(rt, image))) return { image, outcome: "absent" };
+    const result = await capture(rt, ["image", "rm", image]);
+    if (result.code === 0) return { image, outcome: "removed" };
+    const detail = result.stderr.trim() === "" ? result.stdout.trim() : result.stderr.trim();
+    return { image, outcome: "failed", ...(detail === "" ? {} : { detail }) };
+}
+
+/**
+ * `inflexa sandbox remove` — remove the two pulled images, and report what it removed.
+ *
+ * It touches NO store and NO farm. The two images and the package catalog are separate artifacts, and
+ * the `inflexa store` family owns the catalog surface. A later `inflexa sandbox pull` obtains the runtime
+ * image again, thus the removal is complete rather than partial.
+ *
+ * An absent image refuses nothing. The command reports the absence and continues with the image that is
+ * on the machine.
+ */
+export async function sandboxRemove(): Promise<Result<readonly ImageRemoval[], PullError>> {
+    const rtResult = await ensureRuntime();
+    if (rtResult.isErr()) return err({ type: "runtime_unavailable", message: rtResult.error.message });
+    const rt = rtResult.value;
+    // The CONFIGURED runtime image, which is the reference every sandbox starts from and the one a pull
+    // put on the machine. The provisioner has no configuration value and rides its constant.
+    return ok([await removeImage(rt, configuredSandboxImage()), await removeImage(rt, PROVISIONER_IMAGE)]);
+}
+
+/** `inflexa sandbox remove` — the command action: remove the two images and name what happened to each. */
+export async function runSandboxRemove(): Promise<void> {
+    const result = await sandboxRemove();
+    result.match(
+        (removals) => {
+            for (const removal of removals) {
+                if (removal.outcome === "removed") console.log(`  Removed  ${removal.image}`);
+                else if (removal.outcome === "absent") console.log(`  Absent   ${removal.image} — nothing to remove`);
+                else console.log(`  Kept     ${removal.image} — the engine refused the removal: ${removal.detail ?? "no detail"}`);
+            }
+            console.log("\n  The package store and its farms are unchanged. Run `inflexa sandbox pull` to obtain the runtime image again.\n");
+        },
+        (error) => {
+            console.error(`\n  Sandbox image removal failed: ${error.message}\n`);
+            process.exitCode = 1;
+        },
+    );
 }
 
 /**

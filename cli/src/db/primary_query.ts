@@ -16,6 +16,10 @@ import type { DbError } from "./errors.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Project } from "../types/project.ts";
 import type { Analysis, AnalysisInput } from "../types/analysis.ts";
+// TYPE-ONLY, and that is load-bearing. The persisted shape of the download colocates with its one
+// consumer under `modules/libs/`, while this layer must never take a runtime dependency on a feature
+// module. A type import erases at build time, thus the edge exists for the compiler alone.
+import type { LibStoreDownloadRow, LibStoreDownloadStatus } from "../modules/libs/store_download.ts";
 import { asStr256, type IdOrName } from "../lib/types.ts";
 import { tryQuery } from "./util.ts";
 
@@ -741,5 +745,67 @@ export function listSessionUsageByAgent(analysisId: string, threadId: string): R
             )
             .all(ANALYSIS_SCOPE, analysisId, threadId) as (LlmUsageTotalsRow & { agent_id: string })[];
         return rows.map((r) => ({ agentId: r.agent_id, totals: llmUsageTotalsFromRow(r) }));
+    });
+}
+
+// --- Data model: the package-store download ---
+
+/**
+ * The id of the one download row. There is one store root and one downloader, so "the download of that
+ * root" is the whole identity of the row — a minted id beside it would make two things that must agree
+ * about which row is current. Exported so the writes upsert on exactly the key this read looks for.
+ */
+export const LIB_STORE_DOWNLOAD_ID = "lib-store-download";
+
+/** The columns of `lib_store_downloads`, in the house order: identity, then core data. The table has no foreign key. */
+const LIB_STORE_DOWNLOAD_COLS =
+    "id, created_at, updated_at, state, bytes_transferred, total_bytes, layers_completed, total_layers, manifest_digest, message, holder_pid";
+
+/** A row of the columnar `lib_store_downloads` table — one typed column per field, so a reader filters on the state in SQL. */
+type LibStoreDownloadDbRow = {
+    id: string;
+    created_at: number;
+    updated_at: number;
+    state: string;
+    bytes_transferred: number;
+    total_bytes: number | null;
+    layers_completed: number;
+    total_layers: number | null;
+    manifest_digest: string | null;
+    message: string | null;
+    holder_pid: number | null;
+};
+
+function libStoreDownloadFromRow(r: LibStoreDownloadDbRow): LibStoreDownloadRow {
+    return {
+        id: r.id,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        // The `state` column carries a CHECK constraint naming exactly the six members of
+        // `LibStoreDownloadStatus`, so SQLite refuses any other value and this cast cannot widen.
+        state: r.state as LibStoreDownloadStatus,
+        bytesTransferred: r.bytes_transferred,
+        totalBytes: r.total_bytes,
+        layersCompleted: r.layers_completed,
+        totalLayers: r.total_layers,
+        manifestDigest: r.manifest_digest,
+        message: r.message,
+        holderPid: r.holder_pid,
+    };
+}
+
+/**
+ * The one download row, or `null` when no download ever ran on this machine.
+ *
+ * Absence rides the ok channel, never the error channel: a store root can arrive by a route that wrote
+ * no row, and such a store is completely usable. The read takes no lock — the database runs in WAL
+ * mode, thus this never blocks the live writer.
+ */
+export function getLibStoreDownload(): Result<LibStoreDownloadRow | null, DbError> {
+    return tryQuery("getLibStoreDownload", (conn) => {
+        const row = conn
+            .query(`SELECT ${LIB_STORE_DOWNLOAD_COLS} FROM lib_store_downloads WHERE id = ?`)
+            .get(LIB_STORE_DOWNLOAD_ID) as LibStoreDownloadDbRow | null;
+        return row ? libStoreDownloadFromRow(row) : null;
     });
 }

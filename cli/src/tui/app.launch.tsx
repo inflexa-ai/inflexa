@@ -13,7 +13,6 @@ import type { IdOrName } from "../lib/types.ts";
 import { resolveHarnessConfig, resolveModelConnection } from "../modules/harness/config.ts";
 import { describeBootError } from "../modules/harness/profile.ts";
 import { startHarnessBoot } from "./hooks/boot.ts";
-import { startLibStoreDownload } from "./hooks/sandbox_gate.tsx";
 import { App } from "./app.tsx";
 import { setTheme } from "./theme.ts";
 
@@ -83,11 +82,6 @@ async function renderChat(target: ChatTarget): Promise<void> {
     // boot-state store the App reads. Reached ONLY from renderChat: the passive
     // bare-`inflexa`-resolves-to-nothing path returns before renderChat and boots nothing (no-litter).
     void startHarnessBoot(cfg);
-
-    // Start the package-store download in the background AFTER render() has the terminal, so the consent
-    // prompt and the transfer both live inside the TUI and the app never blocks on them. It is a clean
-    // no-op when the store opt-in is off, and it asks before it applies a moved-tag update.
-    void startLibStoreDownload();
 }
 
 /** `inflexa new [name] [paths...]` — create an analysis (anchor = cwd) and open its chat. */

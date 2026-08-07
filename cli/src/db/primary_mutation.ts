@@ -7,6 +7,8 @@ import type { Anchor } from "../types/anchor.ts";
 import type { Project } from "../types/project.ts";
 import type { Analysis, AnalysisInput } from "../types/analysis.ts";
 import type { Str256 } from "../lib/types.ts";
+// The one row's id, taken from the reader so the writes upsert on exactly the key the read looks for.
+import { LIB_STORE_DOWNLOAD_ID } from "./primary_query.ts";
 
 /**
  * Mints and persists a new project. A duplicate `name` trips the `UNIQUE` constraint and
@@ -317,5 +319,96 @@ export function updateAnalysisProvenance(id: string, provenance: string, chainHa
                  WHERE id = ?`,
             )
             .run(provenance, chainHash, signature, id).changes;
+    });
+}
+
+// --- Data model: the package-store download ---
+
+/**
+ * Start, or start again, the one download run.
+ *
+ * Every counter resets here, because a run always begins with nothing transferred and the two totals
+ * stay absent until the manifest resolves. This is the write that leaves a terminal state: `failed`,
+ * `declined`, and `canceled` all move to `pending` through it, which is the retry the lifecycle permits.
+ *
+ * An upsert, because the very first run on a machine has no row and a retry rewrites the row it has.
+ */
+export function startLibStoreDownloadRun(params: { state: "pending" | "running"; holderPid: number | null }): Result<void, DbError> {
+    const now = Date.now();
+    return tryMutation("startLibStoreDownloadRun", (conn) => {
+        conn.query(
+            `INSERT INTO lib_store_downloads (
+                 id, created_at, updated_at, state, bytes_transferred, total_bytes,
+                 layers_completed, total_layers, manifest_digest, message, holder_pid
+             )
+             VALUES (?, ?, ?, ?, 0, NULL, 0, NULL, NULL, NULL, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                 updated_at = excluded.updated_at,
+                 state = excluded.state,
+                 bytes_transferred = 0,
+                 total_bytes = NULL,
+                 layers_completed = 0,
+                 total_layers = NULL,
+                 manifest_digest = NULL,
+                 message = NULL,
+                 holder_pid = excluded.holder_pid`,
+        ).run(LIB_STORE_DOWNLOAD_ID, now, now, params.state, params.holderPid);
+    });
+}
+
+/**
+ * Record what the resolved manifest declares: its digest, and the two exact totals.
+ *
+ * Written ONE time for each run, at the moment the manifest resolves. The manifest declares the size of
+ * every layer before the first byte arrives, so neither total is an estimate and neither grows again.
+ *
+ * A pure UPDATE, never an insert. A resolve that finds the store up to date must not mint a row for a
+ * store that no download ever made — such a store reports "no download ran", which is the truth.
+ * Returns rows changed: `0` when there is no row to annotate.
+ */
+export function recordLibStoreDownloadManifest(params: {
+    manifestDigest: string;
+    totalBytes: number | null;
+    totalLayers: number | null;
+}): Result<number, DbError> {
+    return tryMutation("recordLibStoreDownloadManifest", (conn) => {
+        return conn
+            .query("UPDATE lib_store_downloads SET updated_at = ?, total_bytes = ?, total_layers = ?, manifest_digest = ? WHERE id = ?")
+            .run(Date.now(), params.totalBytes, params.totalLayers, params.manifestDigest, LIB_STORE_DOWNLOAD_ID).changes;
+    });
+}
+
+/** Record how far the live transfer has moved. Returns rows changed — `0` when no run holds the row. */
+export function recordLibStoreDownloadProgress(params: { bytesTransferred: number; layersCompleted: number }): Result<number, DbError> {
+    return tryMutation("recordLibStoreDownloadProgress", (conn) => {
+        return conn
+            .query("UPDATE lib_store_downloads SET updated_at = ?, bytes_transferred = ?, layers_completed = ? WHERE id = ?")
+            .run(Date.now(), params.bytesTransferred, params.layersCompleted, LIB_STORE_DOWNLOAD_ID).changes;
+    });
+}
+
+/**
+ * Settle the run in a terminal state, and release the holder.
+ *
+ * `holder_pid` clears here because the process is over in every one of the four cases, and a stale pid
+ * would name a process that a later cancel must not signal.
+ *
+ * An upsert, because `declined` records a setup answer of no on a machine that has no row yet.
+ */
+export function settleLibStoreDownload(params: { state: "installed" | "failed" | "declined" | "canceled"; message: string | null }): Result<void, DbError> {
+    const now = Date.now();
+    return tryMutation("settleLibStoreDownload", (conn) => {
+        conn.query(
+            `INSERT INTO lib_store_downloads (
+                 id, created_at, updated_at, state, bytes_transferred, total_bytes,
+                 layers_completed, total_layers, manifest_digest, message, holder_pid
+             )
+             VALUES (?, ?, ?, ?, 0, NULL, 0, NULL, NULL, ?, NULL)
+             ON CONFLICT(id) DO UPDATE SET
+                 updated_at = excluded.updated_at,
+                 state = excluded.state,
+                 message = excluded.message,
+                 holder_pid = NULL`,
+        ).run(LIB_STORE_DOWNLOAD_ID, now, now, params.state, params.message);
     });
 }

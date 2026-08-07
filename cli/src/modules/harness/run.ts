@@ -56,7 +56,15 @@ import { workspaceDataDir } from "../analysis/output.ts";
 import { stageInputs } from "../staging/staging.ts";
 import { resolveHarnessConfig } from "./config.ts";
 import { validatePlanFile, persistPlan, type PlanIntakeError } from "./plan_intake.ts";
-import { describeBootError, ensureSandboxImage, formatElapsed, readNewestWorkflowStep, runWorkflowFamily, withStatusPool } from "./profile.ts";
+import {
+    describeBootError,
+    ensureLibStoreUsable,
+    ensureSandboxImage,
+    formatElapsed,
+    readNewestWorkflowStep,
+    runWorkflowFamily,
+    withStatusPool,
+} from "./profile.ts";
 import { bootHarnessRuntime, type RunTriggerDeps } from "./runtime.ts";
 
 type Spinner = ReturnType<typeof spinner>;
@@ -377,6 +385,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
         (e) => fail(describePlanIntakeError(e)),
     );
 
+    ensureLibStoreUsable();
     await ensureSandboxImage(cfg.sandboxImage);
 
     // Claim the per-analysis instance lock before boot, so this analysis stays

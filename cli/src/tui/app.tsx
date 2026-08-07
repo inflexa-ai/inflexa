@@ -36,7 +36,7 @@ import { UsageDialog, readSessionUsage } from "./components/dialog/usage_dialog.
 import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
 import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, interruptHintLabel, leaderSeq, KEYS, type LayerConfig } from "./keymap.ts";
 import { StatusBar, type StatusTone } from "./layout/status_bar.tsx";
-import { libStoreGateState } from "./hooks/sandbox_gate.tsx";
+import { libStoreGateState, watchLibStoreDownload } from "./hooks/sandbox_gate.tsx";
 import { Chat } from "./components/chat.tsx";
 import { BootIndicator } from "./components/boot_indicator.tsx";
 import { AskPrompt } from "./components/ask_prompt.tsx";
@@ -402,16 +402,17 @@ const STORE_STATUS_MESSAGE_WIDTH = 48;
 /**
  * The package-store gate as a status-bar segment, or `undefined` when the store asks nothing of the user.
  *
- * The three reported phases are exactly the ones in which the gate holds a sandbox action: the open
- * consent, the running download with its byte total, and the failure with its message. `idle`,
- * `declined`, and `installed` report nothing, because none of them is a wait the user is inside — a
- * declined consent re-opens at the next sandbox action, which moves the phase again.
+ * The reported phases are exactly the ones a user must act on: the live transfer with its byte total, and
+ * the failure with its message. `idle` and `installed` report nothing, and neither do the three terminal
+ * states that only a command leaves — the sidebar carries those, and the gate names the retry at the next
+ * sandbox action.
+ *
+ * The byte total is bare text and carries NO meter. The sidebar owns the meter for this transfer, and two
+ * surfaces must not show one figure.
  */
 function storeGateSegment(): { text: string; tone: StatusTone } | undefined {
     const gate = libStoreGateState();
     switch (gate.phase) {
-        case "consent":
-            return { text: `${GLYPHS.circleHalf} store download consent`, tone: "warn" };
         case "downloading":
             return { text: `${GLYPHS.circleHalf} store ${gate.bytes.formatBytes()}`, tone: "warn" };
         case "failed": {
@@ -500,6 +501,11 @@ export function App(props: AppProps) {
     // status surface (sidebar MODELS section) renders each agent's active model + any pending switch. Seeds
     // at the ready edge and follows every later swap/schedule. Under App's reactive owner.
     watchAgentModels();
+
+    // Mirror the DETACHED package-store downloader into the gate store, which the sidebar renders. The
+    // writer is a different process, so this is a poll rather than a subscription. Under App's reactive
+    // owner, thus its timer is cleared with the screen.
+    watchLibStoreDownload();
 
     // Open the DATA PROFILE details view. Snapshots the profile as of open (a
     // point-in-time view) and hands the composed lines to `ResultsDialog`, reused verbatim. The

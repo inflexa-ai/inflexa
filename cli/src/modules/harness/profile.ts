@@ -19,6 +19,7 @@ import { ensureRuntime, resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { capture, inherit } from "../../lib/container.ts";
 import { isPublishedSandboxImage } from "../libs/images.ts";
+import { storePackagesFile } from "../libs/packages.ts";
 import { getLogger } from "../../lib/log.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
@@ -103,7 +104,7 @@ export function describeBootError(e: HarnessBootError): string {
         case "lib_store_unusable":
             return [
                 `The package store at ${e.root} carries no readable package inventory for its active farm, so a sandbox launched now could import nothing.`,
-                "Open `inflexa` to download the store, or run `inflexa store ls` to see which farm the active-farm pointer selects and `inflexa store use <farm>` to select a complete one.",
+                "Run `inflexa store download` to obtain the published catalog, or `inflexa store ls` to see which farm the active-farm pointer selects and `inflexa store use <farm>` to select a complete one.",
             ].join("\n");
         case "postgres_unavailable":
             return e.cause.message;
@@ -122,6 +123,21 @@ export function describeBootError(e: HarnessBootError): string {
             throw new Error(`unhandled boot error: ${JSON.stringify(exhaustive)}`);
         }
     }
+}
+
+/**
+ * Pre-flight: the package store must carry a readable inventory for its active farm.
+ *
+ * `inflexa profile` and `inflexa run` each make a sandbox at once, and neither passes through the gate of
+ * the app. The harness boot refuses nothing about the store — an unreadable inventory must leave chat,
+ * the workspace read surface, and the planner working — so these two commands keep the refusal of their
+ * own. It runs BEFORE the boot, exactly as the config check does: a refusal before the work beats a
+ * sandbox that can import nothing.
+ *
+ * Exported so `inflexa run` reuses the identical check.
+ */
+export function ensureLibStoreUsable(): void {
+    if (storePackagesFile(env.libStoreDir) === null) fail(describeBootError({ type: "lib_store_unusable", root: env.libStoreDir }));
 }
 
 /**
@@ -195,6 +211,7 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
     // the same error, but only after the image check it never reaches.
     if (cfg.configError) fail(describeBootError({ type: "harness_config_invalid", issues: cfg.configError.issues }));
 
+    ensureLibStoreUsable();
     await ensureSandboxImage(cfg.sandboxImage);
 
     // Gate the workspace root BEFORE booting — an unresolvable or non-writable

@@ -69,10 +69,13 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa repair": "approval",
     "inflexa resume": "blocked",
     "inflexa sandbox pull": "approval",
+    "inflexa sandbox remove": "blocked",
     "inflexa sandbox status": "auto()",
     "inflexa setup": "blocked",
     "inflexa status": "approval",
     "inflexa store add": "approval",
+    "inflexa store cancel": "blocked",
+    "inflexa store download": "approval",
     "inflexa store ls": "auto()",
     "inflexa store reclaim": "approval",
     "inflexa store remove-farm": "approval",
@@ -119,10 +122,13 @@ const EXPECTED_DEV_ON: Record<string, string> = {
     "inflexa resume": "blocked",
     "inflexa run": "approval",
     "inflexa sandbox pull": "approval",
+    "inflexa sandbox remove": "blocked",
     "inflexa sandbox status": "auto()",
     "inflexa setup": "blocked",
     "inflexa status": "approval",
     "inflexa store add": "approval",
+    "inflexa store cancel": "blocked",
+    "inflexa store download": "approval",
     "inflexa store ls": "auto()",
     "inflexa store reclaim": "approval",
     "inflexa store remove-farm": "approval",
@@ -153,6 +159,16 @@ describe("agent policy — tree-walk exhaustiveness (both channels)", () => {
                 expect(row.declaredOptions).toContain(flag);
             }
         }
+    });
+});
+
+describe("agent policy — the reason of each blocked grant", () => {
+    // A `blocked` reason is handed verbatim to the model, so it is the only thing that lets the model
+    // explain the refusal and stop retrying. An empty one would leave the model with a bare "no".
+    test.each([["development"], ["production"]] as const)("every blocked grant in the %s channel carries a reason", (channel) => {
+        const blocked = runReport(channel).filter((row) => row.kind === "blocked");
+        expect(blocked.length).toBeGreaterThan(0);
+        for (const row of blocked) expect(row.reason ?? "").not.toBe("");
     });
 });
 

@@ -22,6 +22,8 @@ import {
 } from "../hooks/sidebar_live.ts";
 import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import { agentModels, bootState } from "../hooks/boot.ts";
+import { libStoreGateState } from "../hooks/sandbox_gate.tsx";
+import type { LibStoreGateState } from "../hooks/sandbox_gate.tsx";
 import { chatStatus } from "../hooks/status.ts";
 import type { ChatStatus } from "../hooks/status.ts";
 import { openThread } from "../hooks/thread.ts";
@@ -75,6 +77,67 @@ type LiveLine = { glyph: string | null; role: keyof ThemeColors; text: string };
 function firstLine(error: string | null): string {
     const line = (error ?? "").split("\n", 1)[0]?.trim() ?? "";
     return line.length > 0 ? line : "failed";
+}
+
+/**
+ * Cell budget for the package-store transfer meter. The rail is `size.railWidth` wide and the meter
+ * shares its row with nothing, so a fixed budget keeps the bar inside the slice at every terminal width.
+ * The same figure the RUNS embed uses, for one reading of one notation across the rail.
+ */
+const STORE_BAR_CELLS = 20;
+
+/**
+ * The PACKAGES line for each state of the detached catalog download.
+ *
+ * Every state that is not a live transfer reads as one muted or status-colored line, exactly like the
+ * DATA PROFILE row above it. A live transfer adds the meter, which is the one figure the sidebar owns —
+ * the gate hold text carries none, because two surfaces must not show one figure.
+ */
+function storeLineOf(gate: LibStoreGateState): LiveLine {
+    switch (gate.phase) {
+        case "idle":
+            return { glyph: null, role: "fgMuted", text: "not read yet" };
+        case "absent":
+            return { glyph: null, role: "fgMuted", text: "no download ran" };
+        case "pending":
+            return { glyph: GLYPHS.warning, role: "warning", text: `resolving the manifest${GLYPHS.ellipsis}` };
+        case "downloading":
+            // Before the manifest resolves there is no total, thus no meter and no ratio — the resolve step
+            // is what the reader is told, and an estimate would be a number the CLI does not have.
+            return {
+                glyph: GLYPHS.warning,
+                role: "warning",
+                text: gate.totalBytes === null ? `resolving the manifest${GLYPHS.ellipsis}` : `${gate.bytes.formatBytes()} of ${gate.totalBytes.formatBytes()}`,
+            };
+        case "installed":
+            return { glyph: GLYPHS.check, role: "success", text: gate.updateAvailable ? "installed — update available" : "installed" };
+        case "failed":
+            return { glyph: GLYPHS.cross, role: "error", text: firstLine(gate.message) };
+        case "declined":
+            return { glyph: GLYPHS.circleHollow, role: "fgSubtle", text: "declined at setup" };
+        case "canceled":
+            return { glyph: GLYPHS.circleHollow, role: "fgSubtle", text: "you stopped the transfer" };
+        default: {
+            const _exhaustive: never = gate;
+            return { glyph: null, role: "fgMuted", text: String(_exhaustive) };
+        }
+    }
+}
+
+/**
+ * The transfer meter, or `null` when there is nothing exact to draw.
+ *
+ * The same notation as the RUNS progress embed: `GLYPHS.bar` cells, the filled ones in `success` and the
+ * empty ones in the `fgSubtle` decoration tier. A partly-done transfer is clamped to `[1, cells − 1]`, so
+ * a transfer in flight never paints as fully filled or fully empty — an honest signal beats a rounding
+ * artifact.
+ */
+function storeMeterOf(gate: LibStoreGateState): { filled: string; empty: string } | null {
+    if (gate.phase !== "downloading" || gate.totalBytes === null || gate.totalBytes <= 0) return null;
+    const proportional = Math.round((gate.bytes / gate.totalBytes) * STORE_BAR_CELLS);
+    const partial = gate.bytes > 0 && gate.bytes < gate.totalBytes;
+    const filled = partial ? Math.min(STORE_BAR_CELLS - 1, Math.max(1, proportional)) : Math.min(STORE_BAR_CELLS, Math.max(0, proportional));
+    return { filled: GLYPHS.bar.repeat(filled), empty: GLYPHS.bar.repeat(STORE_BAR_CELLS - filled) };
 }
 
 /** Map a {@link ProfileSnapshot} to its display line: muted placeholders, warn "profiling…", success count+age, error one-liner. */
@@ -547,6 +610,16 @@ export function Sidebar(props: SidebarProps) {
         return s.runs.filter((r) => keep.has(r));
     });
 
+    // The package-catalog lifecycle. The gate store polls the row that the detached downloader writes, so
+    // these read one snapshot: memos, not bare accessors, because the line, the meter, and the update hint
+    // must describe the SAME read — three independent calls could straddle a poll tick and disagree.
+    const storeLine = createMemo(() => storeLineOf(libStoreGateState()));
+    const storeMeter = createMemo(() => storeMeterOf(libStoreGateState()));
+    const storeUpdateAvailable = createMemo((): boolean => {
+        const gate = libStoreGateState();
+        return gate.phase === "installed" && gate.updateAvailable;
+    });
+
     // The role models are present exactly once the runtime installs the live switch at boot (all roles
     // seed together), so an empty pair reads as "not ready" — decoupled from the boot phase so the
     // section reflects the switch's own authority, not a second boot-phase read.
@@ -729,6 +802,36 @@ export function Sidebar(props: SidebarProps) {
                     </Show>
                     <Show when={usageQuantities()} keyed>
                         {(quantities: TokenQuantities) => <TokenFigure quantities={quantities} variant="long" />}
+                    </Show>
+                </Section>
+
+                {/* The package catalog every sandbox mounts. It sits under USAGE and above MODELS, because
+                    it is a prerequisite of the work rather than a report of it, and MODELS stays the
+                    configuration footer. The state comes from the gate store, which polls the row that the
+                    DETACHED downloader writes — the app starts no transfer of its own.
+
+                    The meter is the ONE surface that carries this figure. The gate hold text and the status
+                    bar both stay bare, so the reader never meets one transfer as two widgets. Before the
+                    manifest resolves there is no total, thus the row reports the resolve step and draws no
+                    meter rather than an estimate that would grow. */}
+                <Section label="PACKAGES">
+                    <text>
+                        {storeLine().glyph !== null ? <Fg role={storeLine().role}>{`${storeLine().glyph} `}</Fg> : null}
+                        <Fg role="fgMuted">{storeLine().text}</Fg>
+                    </text>
+                    <Show when={storeMeter()} keyed>
+                        {(meter: { filled: string; empty: string }) => (
+                            <text>
+                                <Fg role="success">{meter.filled}</Fg>
+                                <Fg role="fgSubtle">{meter.empty}</Fg>
+                            </text>
+                        )}
+                    </Show>
+                    {/* The user owns the update decision, so the rail NAMES the command and opens no prompt. */}
+                    <Show when={storeUpdateAvailable()}>
+                        <text>
+                            <Fg role="fgMuted">inflexa store download --update</Fg>
+                        </text>
                     </Show>
                 </Section>
 

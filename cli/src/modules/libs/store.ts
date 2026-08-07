@@ -42,7 +42,15 @@ import { env } from "../../lib/env.ts";
 import { acquireInstanceLock, releaseInstanceLock, HARNESS_RUNTIME_LOCK_KEY } from "../../lib/lock.ts";
 import { PROVISIONER_IMAGE } from "./images.ts";
 import { ensureProvisionerImage } from "./pull.ts";
-import { inspectLibStoreDownload } from "./store_download.ts";
+import {
+    cancelLibStoreDownload,
+    inspectLibStoreDownload,
+    installedLibStoreManifest,
+    readLibStoreDownloadReport,
+    runLibStoreTransfer,
+    startLibStoreDownloadProcess,
+    type LibStoreDownloadStatus,
+} from "./store_download.ts";
 
 /** The path the store is mounted at in both the provisioner (read-write) and the sandbox (read-only). */
 const LIB_MOUNT = "/mnt/libs";
@@ -74,6 +82,7 @@ export type ProvisionError =
     | { readonly type: "runtime_unavailable"; readonly message: string }
     | { readonly type: "image_unavailable"; readonly message: string }
     | { readonly type: "store_locked"; readonly message: string }
+    | { readonly type: "download_in_flight"; readonly message: string }
     | { readonly type: "farm_not_found"; readonly farm: string; readonly message: string }
     | { readonly type: "provisioner_failed"; readonly code: number; readonly message: string }
     | { readonly type: "io_failed"; readonly message: string; readonly cause: unknown };
@@ -145,6 +154,26 @@ export type StoreFarm = {
 export type ActiveFarmPointer =
     { readonly state: "absent" } | { readonly state: "dangling"; readonly farm: string } | { readonly state: "resolved"; readonly farm: string };
 
+/**
+ * What the inspection reports about the detached catalog download.
+ *
+ * The state is the one a reader acts on, which is the row corrected by the liveness of the lock: a
+ * `running` row whose holder is gone reads as `failed`. `null` means that no download ever ran, which is
+ * a normal condition — a store root can arrive by a manual pull or by `inflexa store add`.
+ */
+export type StoreDownloadInspection = {
+    /** The lifecycle state, or `null` when no download ran. */
+    readonly state: LibStoreDownloadStatus | null;
+    /** The bytes the transfer has moved. */
+    readonly bytesTransferred: number;
+    /** The bytes the manifest declares, or `null` before the manifest resolves. */
+    readonly totalBytes: number | null;
+    /** The user-facing message of a failure. */
+    readonly message: string | null;
+    /** True when the receipt pins a manifest that is not the one the last resolve saw. */
+    readonly updateAvailable: boolean;
+};
+
 /** A passive inspection of the store, read from the host filesystem. */
 export type StoreInspection = {
     readonly root: string;
@@ -155,6 +184,8 @@ export type StoreInspection = {
     readonly farms: readonly StoreFarm[];
     /** Bytes the deduplicated store content occupies (`store/` only — the farms are symlinks). */
     readonly storeBytes: number;
+    /** The state of the catalog download. It describes the process, and it decides nothing about usability. */
+    readonly download: StoreDownloadInspection;
 };
 
 /** Deliver one progress event, swallowing anything the observer throws so it can never fail the run. */
@@ -254,6 +285,19 @@ export async function provisionPackages(
     params: { readonly storeRoot: string; readonly farm: string; readonly specs: readonly string[] },
     deps: ProvisionDeps = {},
 ): Promise<Result<ProvisionOutcome, ProvisionError>> {
+    // A live download merges its staged tree into the store root ONE CHILD AT A TIME, so a provisioning
+    // run that writes into the same pool during that merge can meet a half-merged root. The refusal covers
+    // the whole live period, exactly as `storeUse` refuses. A row of `running` whose holder is gone reads
+    // as failed, thus a dead downloader refuses nothing.
+    const download = readLibStoreDownloadReport();
+    if (download.live) {
+        return err({
+            type: "download_in_flight",
+            message:
+                "A package-store download is in flight, and it merges into this same store root. Wait for it to finish, or run `inflexa store cancel` to stop it. Run `inflexa store ls` to see its progress.",
+        });
+    }
+
     // The bind-mount source must exist before the engine mounts it; a missing source would be
     // auto-created as a root-owned directory the user cannot manage.
     const ensured = ensureStoreRootExists(params.storeRoot);
@@ -337,15 +381,39 @@ export async function reclaimStore(params: { readonly storeRoot: string }, deps:
  */
 export async function inspectStore(storeRoot: string): Promise<Result<StoreInspection, ProvisionError>> {
     try {
-        if (!existsSync(storeRoot)) return ok({ root: storeRoot, exists: false, active: { state: "absent" }, packages: [], farms: [], storeBytes: 0 });
+        const download = await inspectStoreDownload(storeRoot);
+        if (!existsSync(storeRoot)) {
+            return ok({ root: storeRoot, exists: false, active: { state: "absent" }, packages: [], farms: [], storeBytes: 0, download });
+        }
         const active = readActiveFarmPointer(storeRoot);
         const packages = await readStorePackages(storeRoot);
         const farms = await readFarms(storeRoot, active);
         const storeBytes = await dirBytes(join(storeRoot, "store"));
-        return ok({ root: storeRoot, exists: true, active, packages, farms, storeBytes });
+        return ok({ root: storeRoot, exists: true, active, packages, farms, storeBytes, download });
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not inspect the package store at ${storeRoot}.`, cause });
     }
+}
+
+/**
+ * The download half of the inspection: the lifecycle row, corrected for a dead holder, plus the update
+ * comparison.
+ *
+ * An update is available when the receipt pins one manifest and the last resolve saw a different one.
+ * Both halves are local, thus the listing needs no network and it opens no prompt — the user owns the
+ * decision, and `inflexa store download --update` is the consent that applies it.
+ */
+async function inspectStoreDownload(storeRoot: string): Promise<StoreDownloadInspection> {
+    const report = readLibStoreDownloadReport();
+    const latest = report.row?.manifestDigest ?? null;
+    const installed = latest === null ? null : await installedLibStoreManifest(storeRoot);
+    return {
+        state: report.state,
+        bytesTransferred: report.row?.bytesTransferred ?? 0,
+        totalBytes: report.row?.totalBytes ?? null,
+        message: report.row?.message ?? null,
+        updateAvailable: installed !== null && latest !== null && installed !== latest,
+    };
 }
 
 // --- the active-farm switch ---------------------------------------------------
@@ -635,6 +703,73 @@ export async function runStoreAdd(specs: string[], options: { farm?: string }): 
     );
 }
 
+/**
+ * `inflexa store download` — start the detached catalog transfer, or report why none is necessary.
+ *
+ * The command exits as soon as the process is on the machine. A detached process writes nothing to the
+ * terminal of the starter, thus every branch names the command that reports the progress.
+ *
+ * `--update` is the consent to apply a moved tag, and it is not a way to transfer a healthy store a
+ * second time: over a receipt that pins the manifest the registry serves now, the flag leaves the store
+ * as it is.
+ *
+ * `runTransfer` is the detached child itself. It moves the bytes in this process, holds the download lock
+ * for the whole run, and writes the row as it advances.
+ */
+export async function runStoreDownload(options: { update?: boolean; runTransfer?: boolean }): Promise<void> {
+    const storeRoot = env.libStoreDir;
+    if (options.runTransfer === true) {
+        await runLibStoreTransfer({ storeRoot, update: options.update ?? false });
+        return;
+    }
+    const result = await startLibStoreDownloadProcess({ storeRoot, update: options.update ?? false });
+    result.match((outcome) => {
+        switch (outcome.type) {
+            case "started":
+                console.log(`The package-store download runs in the background (pid ${outcome.pid}).`);
+                console.log("Run `inflexa store ls` to see the progress, or `inflexa store cancel` to stop it.");
+                return;
+            case "already_running": {
+                const row = outcome.report.row;
+                console.log(`A package-store download is already running (pid ${outcome.report.holderPid ?? "unknown"}).`);
+                if (row !== null) console.log(`  ${describeTransfer(row.bytesTransferred, row.totalBytes)}`);
+                console.log("Run `inflexa store ls` to see the progress, or `inflexa store cancel` to stop it.");
+                return;
+            }
+            case "up_to_date":
+                console.log("The package store is up to date. Nothing was transferred.");
+                return;
+            case "update_available":
+                console.log("A newer package store is available.");
+                console.log(`  installed ${outcome.installedDigest}`);
+                console.log(`  latest    ${outcome.latestDigest}`);
+                console.log("Run `inflexa store download --update` to apply it. Nothing was transferred.");
+                return;
+            default: {
+                const exhaustive: never = outcome;
+                throw new Error(`unhandled download start outcome: ${JSON.stringify(exhaustive)}`);
+            }
+        }
+    }, reportError);
+}
+
+/**
+ * `inflexa store cancel` — stop the live catalog transfer, record `canceled`, and drop the partial
+ * staged tree.
+ *
+ * A cancel of nothing is not a failure: with no live run the command reports that fact and changes
+ * nothing. It removes no installed content, thus each child that the store root holds stays where it is.
+ */
+export async function runStoreCancel(): Promise<void> {
+    const outcome = await cancelLibStoreDownload(env.libStoreDir);
+    if (outcome.type === "no_run") {
+        console.log("No package-store download is running. Nothing changed.");
+        return;
+    }
+    console.log(`Stopped the package-store download (pid ${outcome.holderPid}) and removed the partial transfer.`);
+    console.log("Each package and farm the store already holds stays. Run `inflexa store download` to start again.");
+}
+
 /** `inflexa store ls` — report the store's active farm, packages, farms, and disk use. */
 export async function runStoreLs(): Promise<void> {
     const result = await inspectStore(env.libStoreDir);
@@ -702,11 +837,59 @@ function describeActive(active: ActiveFarmPointer): string {
     }
 }
 
+/** Render the bytes moved against the bytes the manifest declares. Before the manifest resolves there is no total, thus no ratio. */
+function describeTransfer(bytesTransferred: number, totalBytes: number | null): string {
+    return totalBytes === null
+        ? `${formatBytes(bytesTransferred)} transferred — resolving the manifest`
+        : `${formatBytes(bytesTransferred)} of ${formatBytes(totalBytes)}`;
+}
+
+/**
+ * Render the download state as its report lines.
+ *
+ * Every branch is prose the user acts on. A failure reports its message and names the retry; a canceled
+ * run says that the user stopped it and names the same retry; an absent row says that no download ran,
+ * because a store can arrive by a route that wrote none. No branch opens a prompt.
+ */
+function printDownload(download: StoreDownloadInspection): void {
+    switch (download.state) {
+        case null:
+            console.log("  Download no download ran — run `inflexa store download` to obtain the published catalog.");
+            break;
+        case "pending":
+            console.log("  Download starting");
+            break;
+        case "running":
+            console.log(`  Download running — ${describeTransfer(download.bytesTransferred, download.totalBytes)}`);
+            break;
+        case "installed":
+            console.log("  Download installed");
+            break;
+        case "failed":
+            console.log("  Download failed");
+            if (download.message !== null) console.log(`    ${download.message}`);
+            console.log("    Run `inflexa store download` to try again.");
+            break;
+        case "declined":
+            console.log("  Download declined — run `inflexa store download` to obtain the published catalog.");
+            break;
+        case "canceled":
+            console.log("  Download canceled — you stopped the transfer. Run `inflexa store download` to start again.");
+            break;
+        default: {
+            const exhaustive: never = download.state;
+            throw new Error(`unhandled download state: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+    if (download.updateAvailable) console.log("  Update   a newer package store is available — run `inflexa store download --update` to apply it.");
+}
+
 /** Print a store inspection as an aligned report. */
 function printInspection(inspection: StoreInspection): void {
     console.log(`  Store    ${inspection.root}`);
     if (!inspection.exists) {
         console.log("  Present  no — run `inflexa store add <packages...>` to create it.");
+        printDownload(inspection.download);
         return;
     }
     console.log(`  Active   ${describeActive(inspection.active)}`);
@@ -718,6 +901,7 @@ function printInspection(inspection: StoreInspection): void {
         console.log(`    ${farm.name}${farm.active ? " (active)" : ""}  ${farm.links} link(s)  ${tracks}`);
     }
     console.log(`  Disk     ${formatBytes(inspection.storeBytes)}`);
+    printDownload(inspection.download);
 }
 
 /** Render a byte count in the largest unit that keeps it readable. */

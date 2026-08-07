@@ -193,6 +193,10 @@ export type HarnessBootError =
     | { type: "model_provider_mismatch"; provider: string; model: string }
     | { type: "model_required"; agents: readonly AgentName[] }
     | { type: "sandbox_engine_unresolved"; message: string }
+    // Raised by a command that makes a sandbox AT ONCE — `inflexa profile` and `inflexa run` — before it
+    // boots anything, exactly as `harness_config_invalid` is. The boot itself no longer raises it: an
+    // unreadable inventory refuses the sandbox action and never the boot, so that chat, the workspace read
+    // surface, and the planner keep answering while the catalog downloads.
     | { type: "lib_store_unusable"; root: string }
     | { type: "postgres_unavailable"; cause: PostgresError }
     | { type: "ingress_failed"; cause: IngressError }
@@ -638,11 +642,16 @@ async function bootHarnessRuntimeOnce(
     //
     // There is ONE source: the active farm of the store, which is the one store a sandbox mounts. The
     // runtime image bakes no R library and no Python library, thus a per-image label cache would describe
-    // an empty set and there is nothing to fall back to. An unreadable inventory is therefore a boot
-    // failure that names the store and the remedy, never a silent degradation onto an empty image — a
-    // sandbox that starts against it can import nothing at all.
+    // an empty set and there is nothing to fall back to. `null` is passed straight through, and the
+    // sandbox composition below omits the field rather than naming a second source.
+    //
+    // An unreadable inventory does NOT fail this boot. The refusal belongs to whatever is about to make a
+    // sandbox: the app gate (`tui/hooks/sandbox_gate.tsx`) holds each such action, and `inflexa profile`
+    // and `inflexa run` each keep a refusal of their own because each one makes a sandbox at once. A boot
+    // failure here would refuse a second time and take chat with it — and chat, the workspace read
+    // surface, and the planner use no package at all. On the machine where the catalog is still
+    // downloading, that is precisely the machine on which the user needs them.
     const packagesFile = seams.resolveStorePackages(env.libStoreDir);
-    if (packagesFile === null) return err({ type: "lib_store_unusable", root: env.libStoreDir });
 
     // The local CLI is a POLL-mode embedder: the host polls the sandbox for
     // results, the sandbox initiates nothing, and there is no callback listener to

@@ -658,37 +658,94 @@ export async function setup(options: SetupOptions): Promise<void> {
 }
 
 /**
- * Provision the container images as part of `inflexa setup`. Reuses the `sandboxPull`
- * and `provisionerPull` handlers (never a second fetch path); `docker pull` resolves
- * the host arch from each multi-arch manifest. Setup asks WHETHER to pull, and never
- * WHICH image: one runtime image is published, and the provisioner has no variant.
+ * Provision the sandbox bundle as part of `inflexa setup`: the runtime image, the provisioner image, and
+ * the package catalog. Reuses the `sandboxPull` and `provisionerPull` handlers (never a second fetch
+ * path); `docker pull` resolves the host arch from each multi-arch manifest. Setup asks WHETHER to
+ * obtain the bundle, and never WHICH image: one runtime image is published, and the provisioner has no
+ * variant.
  *
- * BOTH images are prerequisites of a working store, so one answer obtains both. The
- * runtime image runs the analysis, and the provisioner is what extends the store that
- * the analysis mounts.
+ * The three transfers are ONE bundle and ONE answer. The store is mandatory and no runtime image bakes a
+ * library, thus an answer that took the two images and refused the catalog would give a sandbox that can
+ * import nothing. A partial answer has no working result, so there is no way to express one.
  *
- * An image can be multiple GB, so pulling is gated on explicit consent — which the
- * three branches obtain three ways:
- *   - Answered: the ANSWER IS the consent (`--sandbox` names a multi-GB download in
- *     as many words), so each pull runs with `yes: true` and no size confirmation —
- *     there is no terminal to confirm on in the run that motivates the answer, and
- *     re-asking a question already answered is how a batch provision hangs.
- *   - Unanswered on a run that may prompt: hand off to the pull handlers so each
- *     confirms before its transfer and streams progress.
- *   - Unanswered with no prompt available: do NOT auto-download — a headless run
- *     must never silently pull GBs. Print a hint to the explicit command and continue.
- * Every branch is non-fatal (decline, failure): the images are an offer here, not a
- * prerequisite — `inflexa profile` pulls the runtime image on demand if still
- * missing, and a store command obtains the provisioner on demand.
+ * The bundle is multiple GB, so it is gated on explicit consent — which the three branches obtain three
+ * ways:
+ *   - Answered: the ANSWER IS the consent (`--sandbox` names a multi-GB download in as many words), so
+ *     each pull runs with `yes: true` and no size confirmation — there is no terminal to confirm on in
+ *     the run that motivates the answer, and re-asking a question already answered is how a batch
+ *     provision hangs.
+ *   - Unanswered on a run that may prompt: ONE question that lists the bundle, then each transfer runs
+ *     with no second confirmation.
+ *   - Unanswered with no prompt available: do NOT auto-download — a headless run must never silently
+ *     pull GBs. Print a hint that names the command for the images and the command for the catalog.
+ *
+ * The catalog downloader is DETACHED and it starts at the moment the image pulls start, thus the catalog
+ * transfers while the images pull. Setup exits when the images finish and it waits for the catalog in no
+ * way — the transfer outlives this command, and `inflexa store ls` is where its progress is read.
+ *
+ * A live transfer blocks nothing. A second setup opens no consent for the catalog, because the first
+ * answer stands; it reports the live run, and the held lock makes it start no second downloader.
+ *
+ * Every branch is non-fatal (decline, failure): the images are an offer here, not a prerequisite —
+ * `inflexa profile` pulls the runtime image on demand if still missing, and a store command obtains the
+ * provisioner on demand.
  */
 async function runSandboxImageSetup(answered: SetupAnswers["sandbox"], canPrompt: boolean): Promise<void> {
     const answer = answerOf(answered);
+    const { readLibStoreDownloadReport } = await import("../libs/store_download.ts");
+    const live = readLibStoreDownloadReport();
+    if (live.live) {
+        const row = live.row;
+        const moved = row === null || row.totalBytes === null ? "the manifest is resolving" : `${row.bytesTransferred} of ${row.totalBytes} bytes`;
+        note(
+            `A package-store download is already running (${row?.state ?? "running"}, ${moved}).\n` +
+                "Setup asks nothing about it, because you answered that question already.\n" +
+                "Run `inflexa store cancel` to stop the transfer.\n" +
+                "Run `inflexa sandbox remove` to remove the two pulled images.",
+            "Package catalog",
+        );
+    }
+
     if (!answer.answered && !canPrompt) {
-        note("Skipping the container images — no pull was requested.\nRun `inflexa sandbox pull --yes` to install them later.", "Container images");
+        note(
+            "Skipping the sandbox bundle — no download was requested.\n" +
+                "Run `inflexa sandbox pull --yes` to install the images.\n" +
+                "Run `inflexa store download` to obtain the package catalog.",
+            "Sandbox bundle",
+        );
         return;
     }
 
-    const opts = answer.answered ? { yes: true } : {};
+    // ONE question for the whole bundle. When a transfer is already live the catalog is not part of the
+    // question at all: the first answer stands, and the store step asks nothing a second time.
+    if (!answer.answered) {
+        const items = live.live
+            ? "the sandbox image and the provisioner image"
+            : "the sandbox image, the provisioner image, and the package catalog the sandbox mounts";
+        const proceed = await confirm(`Download ${items}? This is a multi-gigabyte transfer, and it runs with no further confirmation.`);
+        if (!proceed) {
+            // `declined` records an answer of no, so the app asks nothing at its next open. A declined run
+            // starts no transfer, thus it writes no staged tree. Only a live transfer is spared the write:
+            // the user consented to that catalog already, and this no was about the images.
+            if (!live.live) {
+                const { settleLibStoreDownload } = await import("../../db/primary_mutation.ts");
+                settleLibStoreDownload({ state: "declined", message: null }).unwrapOr(undefined);
+            }
+            note(
+                "Skipped the sandbox bundle.\n" +
+                    "Run `inflexa sandbox pull` to install the images.\n" +
+                    "Run `inflexa store download` to obtain the package catalog.",
+                "Sandbox bundle",
+            );
+            return;
+        }
+    }
+
+    // The catalog first, and without an await on its transfer: the process detaches, so the bytes move
+    // while the two image pulls run. A held lock makes this a read that starts nothing.
+    if (!live.live) await startCatalogDownload();
+
+    const opts = { yes: true };
     const { provisionerPull, sandboxPull } = await import("../libs/pull.ts");
     (await sandboxPull(opts)).match(
         (outcome) => {
@@ -708,6 +765,41 @@ async function runSandboxImageSetup(answered: SetupAnswers["sandbox"], canPrompt
             else if (outcome.type === "declined") log.info("Provisioner image skipped. `inflexa store add` obtains it when it needs it.");
         },
         (error) => log.warn(`Provisioner image install failed: ${error.message}\n  \`inflexa store add\` obtains it when it needs it.`),
+    );
+}
+
+/**
+ * Start the detached catalog downloader and report what it did, in one or two lines.
+ *
+ * Setup never waits for the transfer. A detached process writes nothing to the terminal of the starter,
+ * thus each branch names the command that reports the progress. A failure to start is a warning and not
+ * a dead installation: `inflexa store download` starts the transfer later.
+ */
+async function startCatalogDownload(): Promise<void> {
+    const { startLibStoreDownloadProcess } = await import("../libs/store_download.ts");
+    const started = await startLibStoreDownloadProcess({ storeRoot: env.libStoreDir, update: false });
+    started.match(
+        (outcome) => {
+            switch (outcome.type) {
+                case "started":
+                    log.success("The package catalog downloads in the background. Run `inflexa store ls` to see the progress.");
+                    return;
+                case "already_running":
+                    log.info("A package-catalog download is already running. Run `inflexa store ls` to see the progress.");
+                    return;
+                case "up_to_date":
+                    log.success("The package catalog is already up to date.");
+                    return;
+                case "update_available":
+                    log.info("A newer package catalog is available. Run `inflexa store download --update` to apply it.");
+                    return;
+                default: {
+                    const exhaustive: never = outcome;
+                    throw new Error(`unhandled download start outcome: ${JSON.stringify(exhaustive)}`);
+                }
+            }
+        },
+        (error) => log.warn(`The package catalog download did not start: ${error.message}\n  Run \`inflexa store download\` to try again.`),
     );
 }
 

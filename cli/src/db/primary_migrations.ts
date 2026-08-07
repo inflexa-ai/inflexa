@@ -172,6 +172,48 @@ export const migrations: Migration[] = [
             CREATE INDEX idx_llm_usage_scope ON llm_usage(scope_kind, scope_id);
         `,
     },
+    {
+        // The lifecycle of the detached package-store downloader: one row that records what the process
+        // does now. The receipt on disk stays the truth of what the store holds, so nothing here decides
+        // whether a sandbox can start — a store that a manual pull built carries no row at all, and it is
+        // usable. The two records never merge (design: "Split the two records, and give each one job").
+        //
+        // ONE row, keyed on a fixed id rather than a minted UUIDv7. There is one store root and one
+        // downloader, so "the download of that root" IS the identity; a synthetic id beside it would make
+        // two things that must agree about which row is current. This is the same argument `llm_usage`
+        // makes for `record_key`. Every write upserts on that id, so a retry rewrites the row in place.
+        //
+        // The CHECK on `state` is what makes the reader's cast of the column sound: SQLite refuses any
+        // value outside the six, thus a row that comes back always carries a `LibStoreDownloadStatus`.
+        //
+        // `total_bytes` and `total_layers` are nullable with NO DEFAULT, because absent must stay
+        // distinguishable from zero. The manifest declares the size of every layer, so the two totals are
+        // exact from the moment it resolves and NULL before it — a `DEFAULT 0` would rewrite "the manifest
+        // has not resolved" into "this store is empty", and a reader would draw a full meter over nothing.
+        //
+        // `holder_pid` is the liveness signal in reverse: the downloader holds the `lib-store-download`
+        // instance lock for its whole life, and a `running` row with no live holder reads as `failed`. The
+        // pid is recorded so a cancel can reach the process; the LOCK, not this column, decides liveness.
+        //
+        // No foreign key on any column, and no index: the table holds one row, which every reader reaches
+        // by its primary key.
+        version: 4,
+        up: `
+            CREATE TABLE lib_store_downloads (
+                id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('pending', 'running', 'installed', 'failed', 'declined', 'canceled')),
+                bytes_transferred INTEGER NOT NULL DEFAULT 0,
+                total_bytes INTEGER,
+                layers_completed INTEGER NOT NULL DEFAULT 0,
+                total_layers INTEGER,
+                manifest_digest TEXT,
+                message TEXT,
+                holder_pid INTEGER
+            );
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

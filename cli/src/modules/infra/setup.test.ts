@@ -36,6 +36,8 @@ import { answerSpelling, type AnswerKey, type AnswerValueKey, type SetupAnswerFl
 import * as compose from "./compose.ts";
 import * as embeddingSetup from "../embedding/setup.ts";
 import * as sandboxPullModule from "../libs/pull.ts";
+import * as storeDownloadModule from "../libs/store_download.ts";
+import * as primaryMutation from "../../db/primary_mutation.ts";
 import * as refsCommands from "../refs/commands.ts";
 import * as refsStore from "../refs/store.ts";
 import { detectedMachine, writeAgentModel, type ResolvedModelConnection } from "../harness/config.ts";
@@ -1360,6 +1362,10 @@ describe("setup() — batch orchestration", () => {
     let firstReady: ReturnType<typeof spyOn<typeof container, "firstReadyRuntime">>;
     let embedStep: ReturnType<typeof spyOn<typeof embeddingSetup, "runEmbeddingSetup">>;
     let refsStep: ReturnType<typeof spyOn<typeof refsCommands, "runReferenceSetup">>;
+    /** The detached-downloader start. Stubbed in EVERY test here, because the real one spawns a process. */
+    let catalogStart: ReturnType<typeof spyOn<typeof storeDownloadModule, "startLibStoreDownloadProcess">>;
+    /** The lifecycle read of the downloader. Stubbed so no test depends on a lock file or a row this suite did not write. */
+    let catalogReport: ReturnType<typeof spyOn<typeof storeDownloadModule, "readLibStoreDownloadReport">>;
 
     /** Serve per-route responses keyed by URL suffix; an unmapped route 404s (mirrors probeCredentialSource's own tests). */
     function routeFetch(routes: Record<string, () => Response>): void {
@@ -1438,7 +1444,17 @@ describe("setup() — batch orchestration", () => {
         firstReady = spyOn(container, "firstReadyRuntime").mockImplementation(async () => ok(container.runtimes.docker));
         embedStep = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(async () => ok(undefined));
         refsStep = spyOn(refsCommands, "runReferenceSetup").mockImplementation(async () => ok(undefined));
-        spies.push(firstReady, embedStep, refsStep);
+        // The catalog downloader is DETACHED, so the real start spawns an `inflexa` process. Stub it in
+        // every test of this suite: what the setup step owes is the START and the two commands it names,
+        // never the transfer itself.
+        catalogStart = spyOn(storeDownloadModule, "startLibStoreDownloadProcess").mockImplementation(async () => ok({ type: "started", pid: 4242 }));
+        catalogReport = spyOn(storeDownloadModule, "readLibStoreDownloadReport").mockImplementation(() => ({
+            row: null,
+            state: null,
+            live: false,
+            holderPid: null,
+        }));
+        spies.push(firstReady, embedStep, refsStep, catalogStart, catalogReport);
     });
 
     afterEach(() => {
@@ -1861,6 +1877,82 @@ describe("setup() — batch orchestration", () => {
         expect(provisioner.mock.calls[0]![0]).toEqual({ yes: true });
     });
 
+    test("an answered sandbox starts the detached catalog downloader beside the image pulls", async () => {
+        spies.push(
+            spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () => ok({ type: "pulled" as const, image: "sandbox" })),
+            spyOn(sandboxPullModule, "provisionerPull").mockImplementation(async () => ok({ type: "pulled" as const, image: "provisioner" })),
+        );
+
+        const output = await runSetup(batch({ sandbox: "yes" }));
+
+        expect(process.exitCode).toBe(0);
+        // ONE answer covers the whole bundle: the two images AND the catalog. The start is not awaited to
+        // completion — the process detaches — so setup names the command that reports the progress.
+        expect(catalogStart.mock.calls.length).toBe(1);
+        expect(catalogStart.mock.calls[0]![0]).toEqual({ storeRoot: env.libStoreDir, update: false });
+        expect(output).toContain("inflexa store ls");
+    });
+
+    test("no sandbox answer downloads nothing, and the hint names the command for the images and the one for the catalog", async () => {
+        const output = await runSetup(batch({}));
+
+        expect(process.exitCode).toBe(0);
+        expect(catalogStart.mock.calls.length).toBe(0);
+        expect(output).toContain("inflexa sandbox pull --yes");
+        expect(output).toContain("inflexa store download");
+    });
+
+    test("a second setup reports the live transfer, opens no consent for it, and starts no second downloader", async () => {
+        catalogReport.mockImplementation(() => ({
+            row: {
+                id: "lib-store-download",
+                createdAt: 1,
+                updatedAt: 2,
+                state: "running" as const,
+                bytesTransferred: 300,
+                totalBytes: 900,
+                layersCompleted: 1,
+                totalLayers: 3,
+                manifestDigest: "sha256:a",
+                message: null,
+                holderPid: 4242,
+            },
+            state: "running" as const,
+            live: true,
+            holderPid: 4242,
+        }));
+
+        const output = await runSetup(batch({ sandbox: "yes" }));
+
+        expect(process.exitCode).toBe(0);
+        // The state and the two byte figures, so the user reads how far the transfer got.
+        expect(output).toContain("running");
+        expect(output).toContain("300 of 900 bytes");
+        // The two commands the user owns. Setup makes neither decision and opens no prompt for either.
+        expect(output).toContain("inflexa store cancel");
+        expect(output).toContain("inflexa sandbox remove");
+        // The lock refuses a second downloader, so this setup is a reader at its store step.
+        expect(catalogStart.mock.calls.length).toBe(0);
+    });
+
+    test("a live transfer blocks no other step of setup, and setup exits", async () => {
+        catalogReport.mockImplementation(() => ({
+            row: null,
+            state: "running" as const,
+            live: true,
+            holderPid: 4242,
+        }));
+
+        const output = await runSetup(batch({ sandbox: "yes" }));
+
+        // The references, the database, and the model configuration each completed, and setup reached its
+        // closing note rather than waiting on a multi-gigabyte transfer.
+        expect(process.exitCode).toBe(0);
+        expect(refsStep.mock.calls.length).toBe(1);
+        expect(embedStep.mock.calls.length).toBe(1);
+        expect(output).toContain("Setup complete");
+    });
+
     test("a `--sandbox` answer that names a retired variant fails validation before anything is pulled", async () => {
         const pull = spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () =>
             ok({ type: "pulled" as const, image: "ghcr.io/inflexa-ai/sandbox-base:latest" }),
@@ -1941,6 +2033,13 @@ describe("setup() — batch orchestration", () => {
                 }),
                 spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () => ok({ type: "declined" as const })),
                 spyOn(sandboxPullModule, "provisionerPull").mockImplementation(async () => ok({ type: "declined" as const })),
+                // The bundle question. These flows leave `--sandbox` unanswered, so the ONE consent for the
+                // two images and the catalog is reached; declining it keeps the transfers out of the run,
+                // exactly as the two pull stubs above do.
+                spyOn(cliPrompts, "confirm").mockImplementation(async (message: string) => {
+                    prompts.push(message);
+                    return false;
+                }),
             );
             // The interactive default-model step lists models off the proxy; every route 404s, so the
             // candidate list is empty and the optional manual-entry fallback is declined by the seam above.
@@ -1960,6 +2059,24 @@ describe("setup() — batch orchestration", () => {
         function asked(messages: readonly string[], fragment: string): boolean {
             return messages.some((message) => message.includes(fragment));
         }
+
+        test("ONE question covers the bundle, and a refusal records the declined state", async () => {
+            const settle = spyOn(primaryMutation, "settleLibStoreDownload").mockImplementation(() => ok(undefined));
+            spies.push(settle);
+
+            await runSetup(interactive({ connection: "cliproxy" }));
+
+            expect(process.exitCode).toBe(0);
+            // ONE message lists the three transfers, and the user answers it one time.
+            const bundle = prompts.filter((message) => message.includes("sandbox image"));
+            expect(bundle.length).toBe(1);
+            expect(bundle[0]).toContain("provisioner image");
+            expect(bundle[0]).toContain("package catalog");
+            // The no is recorded, so the app asks nothing at its next open and the state names the reason.
+            expect(settle.mock.calls[0]![0]).toEqual({ state: "declined", message: null });
+            // A declined run starts no transfer, thus it writes no staged tree.
+            expect(catalogStart.mock.calls.length).toBe(0);
+        });
 
         test("`--postgres-password` skips ONLY the password prompt — user and port are still asked", async () => {
             spies.push(spyOn(compose, "composeAvailable").mockImplementation(async () => true));

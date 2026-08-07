@@ -82,7 +82,7 @@ describe("runMigrations", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3]);
+        expect(versions).toEqual([1, 2, 3, 4]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
@@ -194,7 +194,7 @@ describe("migration 2: dropping the chat tables", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3]);
+        expect(versions).toEqual([1, 2, 3, 4]);
 
         const tables = tableNames(db);
         for (const table of ["sessions", "messages", "parts"]) {

@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createSignal, onCleanup } from "solid-js";
 import { err, ok, type Result } from "neverthrow";
 
 import { GLYPHS } from "../../lib/design_system.ts";
@@ -9,11 +9,10 @@ import { isPublishedSandboxImage } from "../../modules/libs/images.ts";
 import { storePackagesFile } from "../../modules/libs/packages.ts";
 import { resolveHarnessConfig } from "../../modules/harness/config.ts";
 import {
-    downloadLibStore,
     inspectLibStoreDownload,
-    type LibStoreDownloadError,
-    type LibStoreDownloadOutcome,
-    type LibStoreDownloadProgress,
+    installedLibStoreManifest,
+    readLibStoreDownloadReport,
+    type LibStoreDownloadReport,
     type LibStoreDownloadState,
 } from "../../modules/libs/store_download.ts";
 import type { Notice } from "../theme.ts";
@@ -22,47 +21,69 @@ import { dialogClose, dialogPush } from "../components/dialog/dialog_host.tsx";
 import { ConfirmDialog } from "../components/dialog/confirm_dialog.tsx";
 
 // The sandbox prerequisite gate, held here (not inside `app.tsx`) so the holder of the state is
-// decoupled from its callers. It has two jobs. The app-open trigger (`startLibStoreDownload`) starts the
-// package-store download in the background, after a one-time consent, and it asks before it applies a
-// moved-tag update. The gate (`awaitSandboxReady`) holds each sandbox-making action until the store is
-// complete and the sandbox image is present, and it reports the wait through the notice channel. The
-// store download and the image pull each ask for their multi-gigabyte consent inside the TUI, so app
-// launch never blocks on either.
+// decoupled from its callers. It has two jobs. It publishes the lifecycle of the DETACHED package-store
+// downloader, which the sidebar renders. And it holds each sandbox-making action (`awaitSandboxReady`)
+// until the store is complete and the sandbox image is present, reporting the wait through the notice
+// channel.
+//
+// The app STARTS NO DOWNLOAD. `inflexa setup` starts the detached process and it owns the consent, thus
+// the app is a reader: it reads the row, it reports the state, and it names `inflexa store download` as
+// the retry. That split is the whole point of the detachment — a transfer the app owned would die with
+// the app.
 //
 // The store half has NO pass-through state. The runtime image bakes no R library and no Python library,
 // thus a sandbox with no store mounted can import nothing, and a gate that passed without a store would
 // start exactly that sandbox. A store the CLI cannot complete is a hard failure with a remedy: the gate
 // names the fault, offers a retry at the next action, and lets the action through never.
 //
+// The FILESYSTEM decides usability, never the row. A store root that a manual pull or `inflexa store
+// add` built carries no row at all, and it is completely usable; a row that reports `installed` over an
+// absent receipt keeps the refusal. The row supplies the reason for a hold and the progress the hold
+// reports, and nothing else.
+//
 // Every effect is an injectable seam so the flow runs offline in a test with stubs, mirroring the seam
 // bundles of `profile_parity.ts` and `boot.ts`. One chat screen is mounted at a time, so a module
 // singleton is the right holder.
 
 /**
- * The live state of the package-store download, surfaced for the status surface.
- * - `idle` — not yet checked;
- * - `consent` — the first-download consent is open;
- * - `declined` — the user declined the first download; the gate re-offers at the next sandbox action;
- * - `downloading` — a first download runs, carrying a running byte total;
+ * The lifecycle of the package-store download as the TUI reports it.
+ * - `idle` — not read yet (the first frame, before the watcher refreshes);
+ * - `absent` — no download ever ran on this machine, and the store root carries no usable store;
+ * - `pending` — a run is starting, and the manifest has not resolved;
+ * - `downloading` — a transfer is live, carrying its running counts and the totals the manifest declared;
  * - `installed` — the store is complete and its active farm carries a package inventory;
- * - `failed` — the store could not be completed, carrying the actionable message the gate reports.
+ * - `failed` — the store could not be completed, carrying the actionable message the gate reports;
+ * - `declined` — the user answered no at setup, thus no transfer ever started;
+ * - `canceled` — the user stopped a transfer that had started.
+ *
+ * `declined` and `canceled` behave alike at the gate: each refuses, each names the retry, and neither
+ * opens a consent. They stay separate states because only one of them leaves a staged tree to remove.
  */
 export type LibStoreGateState =
     | { readonly phase: "idle" }
-    | { readonly phase: "consent" }
+    | { readonly phase: "absent" }
+    | { readonly phase: "pending" }
+    | {
+          readonly phase: "downloading";
+          readonly bytes: number;
+          /** The bytes the manifest declares, or `null` while the manifest is still resolving. */
+          readonly totalBytes: number | null;
+          readonly layers: number;
+          readonly totalLayers: number | null;
+      }
+    | { readonly phase: "installed"; readonly updateAvailable: boolean }
+    | { readonly phase: "failed"; readonly message: string }
     | { readonly phase: "declined" }
-    | { readonly phase: "downloading"; readonly bytes: number }
-    | { readonly phase: "installed" }
-    | { readonly phase: "failed"; readonly message: string };
+    | { readonly phase: "canceled" };
 
 const [state, setState] = createSignal<LibStoreGateState>({ phase: "idle" });
 
 /** Read the current package-store gate state — call inside a tracking scope for reactivity. */
 export const libStoreGateState = state;
 
-// The in-flight store flow, so the app-open trigger and the gate share one download and ask consent one
-// time. The check-and-set below has no await between the read and the write, so two concurrent callers
-// cannot both start a flow.
+// The in-flight store wait, so two concurrent sandbox actions share one hold rather than each polling the
+// row on its own. The check-and-set below has no await between the read and the write, so two concurrent
+// callers cannot both start a wait.
 let storeFlowInflight: Promise<"ready" | "blocked"> | null = null;
 
 /** The readiness of the sandbox image, as the seam reports it without a network pull. */
@@ -75,12 +96,10 @@ export type SandboxGateSeams = {
     readonly storeRoot: () => string;
     /** The cheap local state of the download, read without the network. Real: {@link inspectLibStoreDownload}. */
     readonly inspect: (root: string) => Promise<LibStoreDownloadState>;
-    /** Pull the store; `force` applies a moved-tag update. Real: {@link downloadLibStore}. */
-    readonly download: (
-        root: string,
-        force: boolean,
-        onProgress?: (event: LibStoreDownloadProgress) => void,
-    ) => Promise<Result<LibStoreDownloadOutcome, LibStoreDownloadError>>;
+    /** The lifecycle of the detached downloader: the row, corrected by the liveness of the lock. Real: {@link readLibStoreDownloadReport}. */
+    readonly readDownload: () => LibStoreDownloadReport;
+    /** The manifest digest the receipt pins, or `null`. Real: {@link installedLibStoreManifest}. */
+    readonly installedManifest: (root: string) => Promise<string | null>;
     /**
      * The active farm's package inventory, or `null` when the store carries none. This is the one fact
      * that separates "the bytes arrived" from "a sandbox can import something". Real:
@@ -97,21 +116,13 @@ export type SandboxGateSeams = {
     readonly confirm: (opts: { title: string; message: string }) => Promise<boolean>;
     /** Raise a transient toast. Real: {@link notify}. */
     readonly notify: (notice: Notice) => void;
+    /**
+     * How long the hold waits between two reads of the row. A seam because it is a real delay, and a test
+     * that must observe several polls cannot spend the production cadence on each of them. Real:
+     * {@link DOWNLOAD_POLL_MS}.
+     */
+    readonly pollMs: number;
 };
-
-/** The rough download size named in the consent, so the user knows the cost before the yes. */
-const STORE_SIZE_HINT = "about 9 GB";
-const STORE_CONSENT_TITLE = "Download the package store?";
-const STORE_CONSENT_MESSAGE = `The analysis sandbox needs the package store. This is a one-time download of ${STORE_SIZE_HINT}. Download it now?`;
-/**
- * The consent for a store the user built with `inflexa store add`. That store holds real content, so the
- * text must say what the download does to it: the download merges, and it keeps each local package and
- * each local farm.
- */
-const STORE_MERGE_CONSENT_MESSAGE = `The analysis sandbox needs the published package store. The download adds to the store you have, and it keeps every package and farm that is already there. This is a one-time download of ${STORE_SIZE_HINT}. Download it now?`;
-const STORE_UPDATE_TITLE = "Update the package store?";
-const STORE_UPDATE_MESSAGE = `A newer package store is available. Download the update now? (${STORE_SIZE_HINT})`;
-const STORE_RETRY_TITLE = "Retry the package store download?";
 
 /** The first line of a multi-line message, so a runtime hint with its remedy stays one toast line. */
 function firstLine(text: string): string {
@@ -123,6 +134,9 @@ function firstLine(text: string): string {
  * funnel routes esc, click-outside, and ctrl+c through `onCancel` too, so `settled` makes sure the
  * promise resolves one time only. A cancel click pops the dialog here; a non-commit close already popped
  * it inside the funnel, where this nested pop is a no-op.
+ *
+ * The store half opens NO dialog: setup owns the download consent, thus the app asks nothing about the
+ * catalog. This serves the sandbox image pull, which is the one consent the app still owns.
  */
 function confirmInTui(opts: { title: string; message: string }): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
@@ -149,19 +163,21 @@ function confirmInTui(opts: { title: string; message: string }): Promise<boolean
     });
 }
 
-/** Accumulate a completed layer's bytes into the reactive state, so the status surface can show progress. */
-function noteProgress(event: LibStoreDownloadProgress): void {
-    if (event.type !== "layer_completed") return;
-    const current = state();
-    const base = current.phase === "downloading" ? current.bytes : 0;
-    setState({ phase: "downloading", bytes: base + event.bytes });
-}
+/**
+ * How often the watcher and the gate re-read the row.
+ *
+ * The writer is a different process, so a read is the only way this one learns that the transfer moved.
+ * The read is one point lookup by primary key against a WAL database, thus it never blocks that writer
+ * and it costs nothing measurable at this cadence.
+ */
+const DOWNLOAD_POLL_MS = 2000;
 
 /** The production seams: the real store reads, the engine image checks, and the TUI feedback channels. */
 export const realSandboxGateSeams: SandboxGateSeams = {
     storeRoot: () => env.libStoreDir,
     inspect: inspectLibStoreDownload,
-    download: (root, force, onProgress) => downloadLibStore({ storeRoot: root, force, ...(onProgress ? { onProgress } : {}) }),
+    readDownload: readLibStoreDownloadReport,
+    installedManifest: installedLibStoreManifest,
     storeInventory: storePackagesFile,
     sandboxImage: () => resolveHarnessConfig().sandboxImage,
     imageReadiness: async (image) => {
@@ -182,93 +198,145 @@ export const realSandboxGateSeams: SandboxGateSeams = {
     },
     confirm: confirmInTui,
     notify,
+    pollMs: DOWNLOAD_POLL_MS,
 };
 
+/** The one command that starts, or starts again, the detached transfer. Every refusal names it. */
+const STORE_RETRY_COMMAND = "Run `inflexa store download` to obtain it.";
+
 /**
- * Settle a store whose bytes are all there: `installed` when its active farm carries the inventory a
- * sandbox mounts, else `failed` with the remedy.
+ * Read the store as the FILESYSTEM reports it, and publish the state the two surfaces render.
  *
- * A complete download is not the same fact as a usable store. The active-farm pointer can select a farm
- * the harness refuses, and there is no second inventory source to degrade onto, so this refusal is the
- * only thing between the user and a sandbox that imports nothing.
+ * The receipt decides usability, and the inventory decides whether a sandbox can import anything. The row
+ * is consulted only for the reason and the progress of a hold, thus a store with no row and a valid
+ * receipt reads as installed, and a row of `installed` over an absent receipt does not.
  */
-function settleInstalled(root: string, seams: SandboxGateSeams): "ready" | "blocked" {
-    if (seams.storeInventory(root) !== null) {
-        setState({ phase: "installed" });
-        return "ready";
+export async function refreshLibStoreGateState(seams: SandboxGateSeams = realSandboxGateSeams): Promise<LibStoreGateState> {
+    const root = seams.storeRoot();
+    const report = seams.readDownload();
+    const usable = (await seams.inspect(root)) === "installed" && seams.storeInventory(root) !== null;
+    if (usable) {
+        // The last resolve recorded the digest the registry serves now; the receipt pins the digest that is
+        // installed. A difference between the two is the only signal of an available update that costs no
+        // network, and neither surface opens a prompt over it — the user owns that decision.
+        const latest = report.row?.manifestDigest ?? null;
+        const installed = latest === null ? null : await seams.installedManifest(root);
+        const next: LibStoreGateState = { phase: "installed", updateAvailable: installed !== null && installed !== latest };
+        setState(next);
+        return next;
     }
-    const message =
-        `The package store at ${root} has no package inventory for its active farm, so a sandbox would carry no library. ` +
-        "Run `inflexa store ls` to see the farms, then `inflexa store use <farm>` to select a complete one.";
-    setState({ phase: "failed", message });
-    seams.notify({ kind: "error", text: message });
-    return "blocked";
+    const next = describeUnusableStore(root, report);
+    setState(next);
+    return next;
 }
 
-/** Download the store, moving the state to `downloading` then `installed` or `failed`, and return the verdict. */
-async function performDownload(root: string, force: boolean, seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
-    setState({ phase: "downloading", bytes: 0 });
-    seams.notify({ kind: "info", text: `Downloading the package store${GLYPHS.ellipsis}` });
-    const result = await seams.download(root, force, noteProgress);
-    if (result.isErr()) {
-        const message = `Could not download the package store: ${result.error.message}`;
-        setState({ phase: "failed", message });
-        seams.notify({ kind: "error", text: message });
-        return "blocked";
+/** The state of a store a sandbox cannot mount yet: the lifecycle of the run, or the fault of the store itself. */
+function describeUnusableStore(root: string, report: LibStoreDownloadReport): LibStoreGateState {
+    const row = report.row;
+    switch (report.state) {
+        case null:
+            return { phase: "absent" };
+        case "pending":
+            return { phase: "pending" };
+        case "running":
+            return {
+                phase: "downloading",
+                bytes: row?.bytesTransferred ?? 0,
+                totalBytes: row?.totalBytes ?? null,
+                layers: row?.layersCompleted ?? 0,
+                totalLayers: row?.totalLayers ?? null,
+            };
+        case "failed":
+            return { phase: "failed", message: row?.message ?? `The package-store download did not complete. ${STORE_RETRY_COMMAND}` };
+        case "declined":
+            return { phase: "declined" };
+        case "canceled":
+            return { phase: "canceled" };
+        case "installed":
+            // The row says the bytes landed and the filesystem disagrees: the receipt or the active farm is
+            // gone. The filesystem is what a sandbox mounts, thus it wins and the gate keeps the refusal.
+            return {
+                phase: "failed",
+                message:
+                    `The package store at ${root} reports an installed download, but its active farm carries no package inventory, ` +
+                    `so a sandbox would carry no library. Run \`inflexa store ls\` to see the farms, then \`inflexa store use <farm>\` to select a complete one.`,
+            };
+        default: {
+            const exhaustive: never = report.state;
+            throw new Error(`unhandled download state: ${JSON.stringify(exhaustive)}`);
+        }
     }
-    // Every ok outcome leaves the published bytes on disk: `downloaded` and `up_to_date` both pin the
-    // manifest. Whether the active farm is one a sandbox can mount is a separate question.
-    if (result.value.type === "downloaded") {
-        seams.notify({ kind: "info", text: "The package store is ready." });
-        reportUnreachableFarms(result.value, seams);
+}
+
+/** The one hold line for a state that is not usable yet. Bare text: the sidebar owns the meter, and two surfaces must not show one figure. */
+function holdText(state: LibStoreGateState): string {
+    switch (state.phase) {
+        case "absent":
+            return `The analysis sandbox needs the package store, and no download ran. ${STORE_RETRY_COMMAND}`;
+        case "pending":
+            return `The package-store download is starting${GLYPHS.ellipsis}`;
+        case "downloading":
+            return `The package store is downloading${GLYPHS.ellipsis} ${state.bytes} bytes so far.`;
+        case "declined":
+            return `The package store was declined at setup, and the analysis sandbox needs it. ${STORE_RETRY_COMMAND}`;
+        case "canceled":
+            return `You stopped the package-store download, and the analysis sandbox needs it. ${STORE_RETRY_COMMAND}`;
+        case "failed":
+            return state.message;
+        default:
+            return `The analysis sandbox needs the package store. ${STORE_RETRY_COMMAND}`;
     }
-    return settleInstalled(root, seams);
 }
 
 /**
- * Name each farm a download added while it left the active-farm pointer alone, and the command that
- * switches to it. The CLI never switches by itself, because a switch changes what every later sandbox
- * mounts.
+ * Hold the caller while a transfer is live, then decide.
+ *
+ * The wait ends when the transfer ends, and that bound is structural rather than a timeout: the
+ * downloader holds the lock for its whole life, thus a process a user killed frees the lock and the next
+ * read of the row degrades `running` to `failed`. The gate therefore never holds without end, and it
+ * never lets the action through against an incomplete store.
+ *
+ * It starts NO process and it opens NO consent, in any state. `declined` and `canceled` each refuse and
+ * name the retry — a user who answered no, or who stopped the transfer, made a decision that the gate
+ * does not put a second time.
  */
-function reportUnreachableFarms(outcome: Extract<LibStoreDownloadOutcome, { type: "downloaded" }>, seams: SandboxGateSeams): void {
-    if (outcome.merge.currentSet || outcome.merge.farmsAdded.length === 0) return;
-    for (const farm of outcome.merge.farmsAdded) {
-        seams.notify({ kind: "info", text: `The download added the farm "${farm}". Run \`inflexa store use ${farm}\` to make it the active farm.` });
+async function runStoreFlow(seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
+    let announced = false;
+    for (;;) {
+        const current = await refreshLibStoreGateState(seams);
+        if (current.phase === "installed") return "ready";
+        if (!announced) {
+            announced = true;
+            seams.notify({ kind: current.phase === "downloading" || current.phase === "pending" ? "info" : "error", text: holdText(current) });
+        }
+        if (current.phase !== "downloading" && current.phase !== "pending") return "blocked";
+        await Promise.sleep(seams.pollMs);
     }
-}
-
-/** The store flow behind the shared in-flight guard: retry a failure, or consent then download. */
-async function runStoreFlow(root: string, seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
-    const previous = state();
-    if (previous.phase === "failed") {
-        // Report the failure again with its remedy, and offer a retry, so the gate never holds without end.
-        seams.notify({ kind: "error", text: `${previous.message} Retry it?` });
-        const retry = await seams.confirm({ title: STORE_RETRY_TITLE, message: previous.message });
-        if (!retry) return "blocked";
-        return performDownload(root, false, seams);
-    }
-    const local = await seams.inspect(root);
-    if (local === "installed") return settleInstalled(root, seams);
-    // The receipt is absent, or the store is incomplete: ask consent one time, then download. A `local`
-    // store was built by `inflexa store add` and holds packages the user provisioned, so the ask names the
-    // merge instead of offering a plain install over content that is already there.
-    setState({ phase: "consent" });
-    const yes = await seams.confirm({ title: STORE_CONSENT_TITLE, message: local === "local" ? STORE_MERGE_CONSENT_MESSAGE : STORE_CONSENT_MESSAGE });
-    if (!yes) {
-        setState({ phase: "declined" });
-        return "blocked";
-    }
-    return performDownload(root, false, seams);
 }
 
 /** Hold the caller until the store is complete and mountable. There is no state in which this passes without one. */
 async function ensureLibStore(seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
     if (state().phase === "installed") return "ready";
     if (storeFlowInflight !== null) return storeFlowInflight;
-    storeFlowInflight = runStoreFlow(seams.storeRoot(), seams).finally(() => {
+    storeFlowInflight = runStoreFlow(seams).finally(() => {
         storeFlowInflight = null;
     });
     return storeFlowInflight;
+}
+
+/**
+ * Mirror the detached downloader into the gate state, for the sidebar to render. Call ONCE from `App`'s
+ * setup, inside its reactive owner.
+ *
+ * A poll and not a subscription, because the writer is a DIFFERENT PROCESS: the row is the channel
+ * between the two, and nothing in this process is notified when it changes. The poll stays armed for the
+ * whole life of the screen — a transfer that `inflexa store download` starts in another terminal must
+ * appear here without the user reopening the app.
+ */
+export function watchLibStoreDownload(seams: SandboxGateSeams = realSandboxGateSeams): void {
+    void refreshLibStoreGateState(seams);
+    const timer = setInterval(() => void refreshLibStoreGateState(seams), seams.pollMs);
+    onCleanup(() => clearInterval(timer));
 }
 
 /** Hold the caller until the sandbox image is present, pulling it with consent inside the TUI. */
@@ -324,39 +392,9 @@ export async function awaitSandboxReady(seams: SandboxGateSeams = realSandboxGat
     return ensureImage(seams);
 }
 
-/**
- * The app-open trigger for the background download. With the receipt absent it runs the first-download
- * flow (consent, then the background download), sharing the gate's in-flight guard so consent is asked
- * one time. With the store installed it resolves the tag: a moved `latest` reports `update_available`,
- * and the CLI asks before it applies the update — `force` is passed only after the yes, so no update
- * downloads silently. The app never blocks on any of this.
- */
-export async function startLibStoreDownload(seams: SandboxGateSeams = realSandboxGateSeams): Promise<void> {
-    const root = seams.storeRoot();
-    const local = await seams.inspect(root);
-    if (local !== "installed") {
-        await ensureLibStore(seams);
-        return;
-    }
-    setState({ phase: "installed" });
-    // The tag resolves to its manifest without a blob GET, so this check downloads nothing. A transient
-    // fault must not break a usable store, so an error keeps the installed state.
-    const check = await seams.download(root, false);
-    if (check.isErr()) return;
-    if (check.value.type !== "update_available") return;
-    seams.notify({ kind: "info", text: "A newer package store is available." });
-    const yes = await seams.confirm({ title: STORE_UPDATE_TITLE, message: STORE_UPDATE_MESSAGE });
-    if (!yes) return;
-    // The update runs only after the yes. The current store stays usable, so the state stays `installed`
-    // and the gate does not hold while the update downloads.
-    seams.notify({ kind: "info", text: `Updating the package store${GLYPHS.ellipsis}` });
-    const updated = await seams.download(root, true);
-    if (updated.isErr()) {
-        seams.notify({ kind: "error", text: `Could not update the package store: ${updated.error.message}` });
-        return;
-    }
-    seams.notify({ kind: "info", text: "The package store is updated." });
-    if (updated.value.type === "downloaded") reportUnreachableFarms(updated.value, seams);
+/** Test hook: publish a lifecycle state directly, with no row and no filesystem. Test-only. */
+export function __setLibStoreGateStateForTest(next: LibStoreGateState): void {
+    setState(next);
 }
 
 /** Test hook: drop the gate state and the in-flight flow back to idle. Test-only. */

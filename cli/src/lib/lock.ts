@@ -34,6 +34,17 @@ export type LockOutcome = { acquired: true } | { acquired: false; holderPid: num
  */
 export const HARNESS_RUNTIME_LOCK_KEY = "harness-runtime";
 
+/**
+ * Advisory-lock key for the detached package-store downloader. A fixed sentinel, because the CLI owns
+ * one store root and runs at most one downloader for it.
+ *
+ * The key does two jobs at one time. It gives single-flight: a start that finds the lock held starts no
+ * second process. It also gives liveness: the downloader holds the key for its whole life, thus a row
+ * that reports `running` with no live holder reads as `failed`. A killed process writes no failure row,
+ * and this is the only sound signal that needs no heartbeat and no clock.
+ */
+export const LIB_STORE_DOWNLOAD_LOCK_KEY = "lib-store-download";
+
 /** Absolute path of a lock file for `key`. Exported for the unit test, which seeds and inspects it directly. */
 export function instanceLockPath(key: string): string {
     return join(env.locksDir, `${key}.lock`);
@@ -112,6 +123,22 @@ export function acquireInstanceLock(key: string): LockOutcome {
         getLogger("lock").warn({ err: cause, key }, "lock reclaim failed; proceeding without lock");
         return { acquired: true };
     }
+}
+
+/**
+ * The pid of the LIVE process that holds `key`'s lock, or `null` when nothing live holds it.
+ *
+ * READ-ONLY, and that is the whole point. {@link acquireInstanceLock} reclaims a lock whose holder is
+ * dead and it writes this process's pid, thus a reader that used it to answer "is a downloader live"
+ * would take the lock and refuse the next real downloader. This probe writes nothing and creates
+ * nothing.
+ *
+ * It reuses the two facts the acquire path already establishes: the lock path of a key, and the pid
+ * test. A dead or corrupt holder answers `null`, exactly as it reads to a contender.
+ */
+export function instanceLockHolder(key: string): number | null {
+    const pid = readHolderPid(instanceLockPath(key));
+    return pid !== null && isPidAlive(pid) ? pid : null;
 }
 
 /**
