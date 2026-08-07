@@ -6,7 +6,7 @@ No code makes a thread of the type `report`. The data model and the agent lookup
 
 - Add a public read of the latest `messages.seq` value of a thread. The append path computes it privately today, and the spawn needs the same value as the anchor.
 - Add the spawn operation. It makes a child thread with the type `report`, the parent thread id, and the anchor. It reads the anchor at the moment of the spawn, without a lock.
-- The spawn refuses an absent or archived parent, and it refuses a parent with an empty transcript. Each refusal is typed data.
+- The spawn refuses an absent or archived parent, and it refuses a parent with an empty transcript. It also refuses a parent that is not a conversation, thus a report session cannot nest. Each refusal is typed data.
 - The spawn composes the child title as `{parent title} — Report N`. N counts the existing report children plus one. When the parent holds no title, the title is `Report N`.
 - Add the children listing: the report sessions of one analysis, through the existing thread listing filters.
 - Add the session-version policy to the `report-versions` spec: a caller records at most one version for each report thread.
