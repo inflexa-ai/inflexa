@@ -17,13 +17,13 @@
 import { err, ok, type Result } from "neverthrow";
 
 import type { Block, ReportDocument } from "../contracts/report-blocks.js";
-import { renderChart } from "./chart-view.js";
+import { renderChart } from "./views/chart-view.js";
 import { deriveChartOption } from "./chart.js";
-import { assemblePage, renderReferenceSection } from "./page-view.js";
-import { renderClaim, renderNav, renderSection, renderText } from "./prose.js";
+import { assemblePage, renderReferenceSection } from "./views/page-view.js";
+import { renderClaim, renderNav, renderSection, renderText } from "./views/prose.js";
 import { ReferenceLedger } from "./references.js";
 import type { RenderProblem, RenderValue, RenderValues } from "./types.js";
-import { renderCitation, renderFigure, renderMetric, renderTable } from "./values.js";
+import { renderCitation, renderFigure, renderMetric, renderTable } from "./views/values.js";
 
 /**
  * Render a report document and its value map to one HTML string.

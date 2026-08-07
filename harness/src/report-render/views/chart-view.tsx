@@ -8,9 +8,9 @@
 
 import { raw } from "hono/html";
 
-import type { ChartBlock } from "../contracts/report-blocks.js";
-import type { EchartOption } from "./chart.js";
-import { scriptJson } from "./script-json.js";
+import type { ChartBlock } from "../../contracts/report-blocks.js";
+import type { EchartOption } from "../chart.js";
+import { scriptJson } from "../script-json.js";
 
 /** Render the container markup for a chart. */
 export function renderChart(block: ChartBlock, option: EchartOption): string {

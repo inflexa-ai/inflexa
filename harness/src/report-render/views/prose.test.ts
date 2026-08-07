@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
-import type { ClaimBlock, SectionBlock, TextBlock } from "../contracts/report-blocks.js";
-import type { Reference } from "../contracts/report-reference.js";
+import type { ClaimBlock, SectionBlock, TextBlock } from "../../contracts/report-blocks.js";
+import type { Reference } from "../../contracts/report-reference.js";
 import { renderClaim, renderNav, renderSection, renderText } from "./prose.js";
-import { ReferenceLedger } from "./references.js";
+import { ReferenceLedger } from "../references.js";
 
 describe("renderText", () => {
     it("splits prose on a blank line into paragraphs", () => {

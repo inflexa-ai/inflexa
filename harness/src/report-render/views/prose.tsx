@@ -8,8 +8,8 @@
 
 import { raw } from "hono/html";
 
-import type { ClaimBlock, SectionBlock, TextBlock } from "../contracts/report-blocks.js";
-import type { ReferenceLedger } from "./references.js";
+import type { ClaimBlock, SectionBlock, TextBlock } from "../../contracts/report-blocks.js";
+import type { ReferenceLedger } from "../references.js";
 import { Marker } from "./references-view.js";
 
 /** The paragraph class of a text block and a claim block. */

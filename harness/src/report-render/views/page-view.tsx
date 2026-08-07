@@ -9,10 +9,10 @@
 
 import { raw } from "hono/html";
 
-import { CDN_HEAD, CHART_BOOTSTRAP, ECHARTS_THEME, ECHARTS_THEME_NAME, PAGE_CSS } from "./page.js";
-import type { ReferenceLedger } from "./references.js";
+import { CDN_HEAD, CHART_BOOTSTRAP, ECHARTS_THEME, ECHARTS_THEME_NAME, PAGE_CSS } from "../page.js";
+import type { ReferenceLedger } from "../references.js";
 import { renderReferenceList } from "./references-view.js";
-import { scriptJson } from "./script-json.js";
+import { scriptJson } from "../script-json.js";
 
 /**
  * The theme object as script-safe JSON. `scriptJson` replaces every `<` with `\u003c`, thus a later edit

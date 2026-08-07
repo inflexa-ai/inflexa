@@ -6,10 +6,10 @@
  * hostile source reaches the page as text.
  */
 
-import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../contracts/report-blocks.js";
+import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../contracts/report-blocks.js";
 import { Marker } from "./references-view.js";
-import type { ReferenceLedger } from "./references.js";
-import type { RenderValue } from "./types.js";
+import type { ReferenceLedger } from "../references.js";
+import type { RenderValue } from "../types.js";
 
 /** The scalar value that a metric renders from. */
 type ScalarValue = Extract<RenderValue, { type: "scalar" }>;
