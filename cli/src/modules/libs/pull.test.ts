@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import { ok } from "neverthrow";
 
-import { isMovingTag, sandboxRemove, sandboxStatus } from "./pull.ts";
+import { isMovingTag, sandboxPull, sandboxRemove, sandboxStatus } from "./pull.ts";
 import { PROVISIONER_IMAGE, SANDBOX_IMAGE } from "./images.ts";
 import * as config from "../../lib/config.ts";
 import { readConfig } from "../../lib/config.ts";
@@ -75,8 +75,11 @@ describe("sandboxRemove — the two pulled images, and nothing else", () => {
     /**
      * Stub the engine seam. `present` decides which references the machine holds, so an absent image takes
      * the reported-not-refused path. Every `image rm` of a present reference succeeds.
+     *
+     * A successful removal DROPS the reference from `present`, exactly as an engine does. Thus a later
+     * probe against the same stub reads the image as absent, and a pull after a removal transfers again.
      */
-    function stubEngine(present: ReadonlySet<string>, failures: ReadonlyMap<string, string> = new Map()): void {
+    function stubEngine(present: Set<string>, failures: ReadonlyMap<string, string> = new Map()): void {
         issued = [];
         spies.push(
             spyOn(config, "ensureRuntime").mockImplementation(async () => ok(container.runtimes.docker)),
@@ -86,7 +89,9 @@ describe("sandboxRemove — the two pulled images, and nothing else", () => {
                 if (args[0] === "image" && args[1] === "inspect") return { code: present.has(image) ? 0 : 1, stdout: "", stderr: "" };
                 const failure = failures.get(image);
                 if (args[0] === "image" && args[1] === "rm") {
-                    return failure === undefined ? { code: 0, stdout: "", stderr: "" } : { code: 1, stdout: "", stderr: failure };
+                    if (failure !== undefined) return { code: 1, stdout: "", stderr: failure };
+                    present.delete(image);
+                    return { code: 0, stdout: "", stderr: "" };
                 }
                 return { code: 0, stdout: "", stderr: "" };
             }),
@@ -124,6 +129,20 @@ describe("sandboxRemove — the two pulled images, and nothing else", () => {
         const removals = (await sandboxRemove())._unsafeUnwrap();
         expect(removals[0]).toEqual({ image: SANDBOX_IMAGE, outcome: "failed", detail: "image is in use by a container" });
         expect(removals[1]).toEqual({ image: PROVISIONER_IMAGE, outcome: "removed" });
+    });
+
+    test("a pull after the removal obtains the runtime image again", async () => {
+        // The removal is complete, not partial. Thus the transfer runs a second time, and the machine holds
+        // the runtime image again — which is what makes `inflexa sandbox remove` a recoverable action.
+        stubEngine(new Set([SANDBOX_IMAGE, PROVISIONER_IMAGE]));
+        expect((await sandboxRemove())._unsafeUnwrap()[0]).toEqual({ image: SANDBOX_IMAGE, outcome: "removed" });
+
+        issued = [];
+        // `quiet` keeps the pull off the terminal of the test and asks nothing, which is the non-interactive
+        // shape the removal-then-pull sequence takes in a script.
+        const outcome = (await sandboxPull({ yes: true, quiet: true }))._unsafeUnwrap();
+        expect(outcome).toEqual({ type: "pulled", image: SANDBOX_IMAGE });
+        expect(issued.filter((args) => args[0] === "pull").map((args) => args[1])).toEqual([SANDBOX_IMAGE]);
     });
 
     test("the store root and each farm are left exactly as they were", async () => {

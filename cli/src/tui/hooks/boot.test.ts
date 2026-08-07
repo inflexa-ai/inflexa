@@ -1,11 +1,18 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { ok, err } from "neverthrow";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ok, okAsync, err } from "neverthrow";
 import { createRoot } from "solid-js";
-import type { ChatProvider } from "@inflexa-ai/harness";
+import { createCitationResolver, type ChatProvider } from "@inflexa-ai/harness";
 
+import { runtimes } from "../../lib/container.ts";
+import { env } from "../../lib/env.ts";
+import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import type { ResolvedHarnessConfig } from "../../modules/harness/config.ts";
-import type { HarnessRuntime, HarnessBootError } from "../../modules/harness/runtime.ts";
+import { bootHarnessRuntime, __resetHarnessRuntimeForTest, type HarnessRuntime, type HarnessBootError } from "../../modules/harness/runtime.ts";
 import { describeBootError } from "../../modules/harness/profile.ts";
+import { turnSubmitAction } from "../app.tsx";
 import {
     __resetGaugeForTest,
     clearAgentSwitch,
@@ -120,6 +127,108 @@ describe("boot store transitions", () => {
         const settled = bootState();
         if (settled.phase === "ready") expect(settled.model).toBe("claude-a");
         expect(harnessRuntime()?.conversation.model).toBe("claude-a");
+    });
+});
+
+// The regression the detached-download change exists to prevent. `runtime.test.ts` proves that the boot
+// returns a runtime when the store inventory resolves to null, and nothing followed that chain onward.
+// Here the REAL boot drives the store: the phase must reach `ready`, because `App` hands exactly that
+// predicate to `turnSubmitAction` as its `ready` input, and a submit is silently dropped while it is
+// false. A store refusal that creeps back into the boot shows up here as a chat that answers nothing.
+describe("a boot on a machine with no package store", () => {
+    let skillsDir: string;
+    let templatesDir: string;
+
+    beforeEach(() => {
+        // A boot in a different file leaves a process singleton that `bootHarnessRuntime` serves without
+        // running anything. Drop it first, thus this test always drives the real sequence.
+        __resetHarnessRuntimeForTest();
+        // A successful boot takes the machine-wide runtime lock, which writes a real file under
+        // `env.locksDir`. The guard keeps that write inside the test sandbox.
+        assertTestSandbox(env.locksDir);
+        skillsDir = mkdtempSync(join(tmpdir(), "boot-store-free-skills-"));
+        templatesDir = mkdtempSync(join(tmpdir(), "boot-store-free-templates-"));
+    });
+
+    afterEach(() => {
+        // Drop the process singleton and the agent switch the boot installed, so this runtime never
+        // answers a later boot.
+        __resetHarnessRuntimeForTest();
+        rmSync(skillsDir, { recursive: true, force: true });
+        rmSync(templatesDir, { recursive: true, force: true });
+    });
+
+    function storeFreeConfig(): ResolvedHarnessConfig {
+        return {
+            model: "claude-test-model",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            sandboxImage: "ghcr.io/inflexa-ai/sandbox-base:latest",
+            resourcePolicy: { perStep: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 }, budget: { cpu: 1, memoryGb: 1 } },
+            adminPort: 8433,
+            skillsDir,
+            templatesDir,
+        };
+    }
+
+    /**
+     * The real boot sequence over offline seams, with the one seam under test giving `null` — the answer
+     * `storePackagesFile` gives when the active farm carries no `packages.txt`, and the answer a machine
+     * whose catalog is still downloading gives. Every seam that would reach a container engine, Postgres,
+     * the proxy, or DBOS is stubbed, thus the sequence between them is the production one.
+     */
+    const storeFreeDriver: BootDriver = (options) =>
+        bootHarnessRuntime({
+            ...options,
+            connection: { mode: "cliproxy", provider: "anthropic", agents: {} },
+            seams: {
+                resolveStorePackages: () => null,
+                resolveSandboxEngine: async () => ok({ runtime: runtimes.docker, socketPath: undefined }),
+                ensurePostgres: async () => ok({ host: "localhost", port: 5, database: "d", user: "u", password: "p" }),
+                readKey: async () => ok("proxy-key"),
+                resolveModel: async () => ok("claude-from-proxy"),
+                resolveEmbedding: () => ok({ dimensions: 1536, embed: (texts) => okAsync(texts.map(() => new Array(1536).fill(0))) }),
+                probeEmbedding: async () => ok(undefined),
+                // The harness owns the boot tail, and `runtime.test.ts` pins its order against the real
+                // deps. This stand-in returns the handle shape only, and it runs no `beforeLaunch` hook:
+                // the store decision is made BEFORE this call, so nothing after it belongs to this test.
+                boot: async () => ({
+                    runtime: {
+                        agents: {
+                            forThread: () => ok({ id: "conversation-agent", systemPrompt: "", model: "claude-test-model", tools: [], maxIterations: 50 }),
+                        },
+                        workflows: {
+                            executeAnalysis: async () => ({
+                                runId: "",
+                                workflowId: "",
+                                status: "completed",
+                                completedSteps: [],
+                                failedSteps: [],
+                                canceledSteps: [],
+                            }),
+                            sandboxStep: async () => ({ status: "complete", durationMs: 0, finishReason: null, error: null }),
+                            executeTargetAssessment: async () => ({ assessmentId: "", status: "completed", bytes: 0 }),
+                            dataProfile: async () => {},
+                        },
+                        citationResolver: createCitationResolver(),
+                    },
+                    shutdown: async () => {},
+                }),
+            },
+        });
+
+    test("the phase reaches ready, so the composer sends the turn instead of dropping it", async () => {
+        await startHarnessBoot(storeFreeConfig(), storeFreeDriver);
+
+        const settled = bootState();
+        expect(settled.phase).toBe("ready");
+        expect(harnessRuntime()?.conversation.model).toBe("claude-test-model");
+        // `App` reads `bootState().phase === "ready"` as the `ready` gate of the submit. A `wait` verdict
+        // is the dropped message a user meets as chat that answers nothing while the catalog arrives.
+        expect(turnSubmitAction({ busy: false, ready: settled.phase === "ready", analysisId: "ana1", sessionId: "thr1" })).toEqual({
+            kind: "send",
+            sessionId: "thr1",
+            analysisId: "ana1",
+        });
     });
 });
 

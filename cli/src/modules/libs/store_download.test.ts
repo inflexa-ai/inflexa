@@ -761,5 +761,12 @@ describe("the detached-transfer flag", () => {
         // which is what the file-descriptor budget of the shared `bun test` run depends on (cli/CLAUDE.md).
         const registry = readFileSync(join(import.meta.dir, "../../cli/index.ts"), "utf8");
         expect(registry).toContain(`new Option("${DETACHED_TRANSFER_FLAG}"`);
+
+        // Commander maps the flag onto a camelCase key of the options object, and the handler reads that
+        // key. A rename of the flag moves the key too, and a handler left on the old spelling would read
+        // `undefined` and start a third process. Derive the key from the same constant, thus the two
+        // spellings cannot drift apart in silence.
+        const optionKey = DETACHED_TRANSFER_FLAG.replace("--", "").replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+        expect(registry).toContain(`options.${optionKey}`);
     });
 });
