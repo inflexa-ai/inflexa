@@ -2351,8 +2351,10 @@ export const commands: Command[] = [
             if (!a) return;
 
             let verify: typeof import("../modules/prov/verify.ts");
+            let kernel: typeof import("@inflexa-ai/prov-kernel");
             try {
                 verify = await import("../modules/prov/verify.ts");
+                kernel = await import("@inflexa-ai/prov-kernel");
             } catch {
                 notify({ kind: "error", text: "Provenance verification is unavailable." });
                 return;
@@ -2364,7 +2366,7 @@ export const commands: Command[] = [
                 return;
             }
 
-            notify({ kind: noticeKindFor(result), text: verify.formatVerifyResult(result) });
+            notify({ kind: noticeKindFor(result), text: kernel.formatVerifyResult(result) });
         },
     },
     {
@@ -2378,9 +2380,11 @@ export const commands: Command[] = [
             if (!a) return;
 
             let verify: typeof import("../modules/prov/verify.ts");
+            let kernel: typeof import("@inflexa-ai/prov-kernel");
             let output: typeof import("../modules/analysis/output.ts");
             try {
                 verify = await import("../modules/prov/verify.ts");
+                kernel = await import("@inflexa-ai/prov-kernel");
                 output = await import("../modules/analysis/output.ts");
             } catch {
                 notify({ kind: "error", text: "Provenance verification is unavailable." });
@@ -2407,7 +2411,7 @@ export const commands: Command[] = [
                 notify({ kind: "warn", text: "No .sig.json sidecar found. The export may be unsigned." });
                 return;
             }
-            notify({ kind: noticeKindFor(result), text: verify.formatVerifyResult(result) });
+            notify({ kind: noticeKindFor(result), text: kernel.formatVerifyResult(result) });
         },
     },
     // The session commands are boot-gated: thread metadata lives only in Postgres, so before `ready`

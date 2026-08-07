@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
 
-import { loadOrGenerateKeypair, loadPublicKey, computeChainHash, signHexDigest, verifyHexDigest, resetSigningForTests } from "./signing.ts";
+import { computeChainHash, signHexDigest, verifyHexDigest } from "@inflexa-ai/prov-kernel";
+
+import { loadOrGenerateKeypair, loadPublicKey, resetSigningForTests } from "./signing.ts";
 
 let tempDir: string | null = null;
 

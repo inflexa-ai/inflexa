@@ -1,0 +1,278 @@
+{
+  "document": "{\"prefix\":{\"inflexa\":\"https://inflexa.ai/prov#\"},\"entity\":{\"inflexa:analysis-compat-a1\":{\"prov:type\":\"inflexa:Analysis\",\"inflexa:name\":\"Compat Analysis\",\"inflexa:slug\":\"compat-analysis\"},\"inflexa:input-3szq2orucag3p\":{\"prov:type\":\"inflexa:Input\",\"inflexa:path\":\"data/raw\",\"inflexa:isDir\":true},\"inflexa:file-23uqybh7wy21z\":{\"inflexa:path\":\"data/raw/counts.csv\",\"inflexa:hash\":\"aaaa1111\",\"inflexa:source\":\"data\",\"inflexa:fileId\":\"file-1\"},\"inflexa:file-31vuey4g98s5h\":{\"prov:type\":\"inflexa:File\",\"inflexa:path\":\"runs/run-1/step-1/scripts/deg.R\",\"inflexa:hash\":\"cccc3333\",\"inflexa:size\":{\"$\":640,\"type\":\"xsd:int\"},\"inflexa:producer\":\"command\"},\"inflexa:file-3ioeavkjt47wm\":{\"prov:type\":\"inflexa:File\",\"inflexa:path\":\"runs/run-1/step-1/output/deg.csv\",\"inflexa:hash\":\"bbbb2222\",\"inflexa:size\":{\"$\":2048,\"type\":\"xsd:int\"},\"inflexa:producer\":\"command\"},\"inflexa:file-399gs3anylmub\":{\"prov:type\":\"inflexa:File\",\"inflexa:path\":\"runs/run-1/step-1/output/notes.md\",\"inflexa:hash\":\"eeee5555\",\"inflexa:size\":{\"$\":96,\"type\":\"xsd:int\"},\"inflexa:producer\":\"file_tool\"},\"inflexa:file-2blwrb4pa8snj\":{\"prov:type\":\"inflexa:File\",\"inflexa:path\":\"runs/run-1/step-1/output/summary.md\",\"inflexa:hash\":\"dddd4444\",\"inflexa:size\":{\"$\":100,\"type\":\"xsd:int\"},\"inflexa:producer\":\"command\"}},\"agent\":{\"inflexa:agent-user-alice_example_org\":{\"prov:type\":\"prov:Person\",\"inflexa:email\":\"alice@example.org\"},\"inflexa:agent-system\":{\"prov:type\":\"prov:SoftwareAgent\",\"prov:label\":\"inflexa cli\",\"inflexa:version\":\"0.0.0-compat\",\"inflexa:commit\":\"cafe0123\"},\"inflexa:agent-model-21ko3mworydhy\":{\"prov:type\":[\"prov:SoftwareAgent\",\"inflexa:Model\"],\"prov:label\":\"anthropic/claude-compat-1\",\"inflexa:model\":\"anthropic/claude-compat-1\"}},\"activity\":{\"inflexa:action-019fdc54-f758-7000-8c03-c028e7af4f5d\":{\"prov:startTime\":\"2023-11-14T22:13:20+00:00\",\"prov:endTime\":\"2023-11-14T22:13:20+00:00\",\"prov:type\":\"inflexa:CreateAnalysis\"},\"inflexa:action-019fdc54-f78c-7000-9ac2-338fcf91bf75\":{\"prov:startTime\":\"2023-11-14T22:13:20+00:00\",\"prov:endTime\":\"2023-11-14T22:13:20+00:00\",\"prov:type\":\"inflexa:AddInput\"},\"inflexa:run-run-1\":{\"prov:startTime\":\"2023-11-14T22:13:20+00:00\",\"prov:endTime\":\"2023-11-14T22:16:40+00:00\",\"prov:type\":\"inflexa:Run\",\"inflexa:runId\":\"run-1\",\"inflexa:planSummary\":\"compat plan\",\"inflexa:status\":\"completed\",\"inflexa:durationMs\":{\"$\":200000,\"type\":\"xsd:int\"}},\"inflexa:cmd-run-1-step-1-1qqxq874q2slb\":{\"prov:type\":\"inflexa:Command\",\"inflexa:command\":\"Rscript scripts/deg.R\",\"inflexa:args\":\"\",\"inflexa:exitCode\":{\"$\":0,\"type\":\"xsd:int\"},\"inflexa:durationMs\":{\"$\":1234,\"type\":\"xsd:int\"}},\"inflexa:cmd-run-1-step-1-2xt56uclzxukt\":{\"prov:type\":\"inflexa:FileToolWrite\",\"inflexa:tool\":\"write_file\"},\"inflexa:step-run-1-step-1\":{\"prov:endTime\":\"2023-11-14T22:15:00+00:00\",\"prov:type\":\"inflexa:Step\",\"inflexa:runId\":\"run-1\",\"inflexa:stepId\":\"step-1\",\"inflexa:status\":\"completed\",\"inflexa:durationMs\":{\"$\":100000,\"type\":\"xsd:int\"}},\"inflexa:action-019fdc54-f794-7000-9a72-7972be169b77\":{\"prov:startTime\":\"2023-11-14T22:13:20+00:00\",\"prov:endTime\":\"2023-11-14T22:13:20+00:00\",\"prov:type\":\"inflexa:RemoveInput\"}},\"wasAssociatedWith\":{\"_:id1\":{\"prov:activity\":\"inflexa:action-019fdc54-f758-7000-8c03-c028e7af4f5d\",\"prov:agent\":\"inflexa:agent-user-alice_example_org\"},\"_:id4\":{\"prov:activity\":\"inflexa:action-019fdc54-f78c-7000-9ac2-338fcf91bf75\",\"prov:agent\":\"inflexa:agent-user-alice_example_org\"},\"inflexa:assoc-run-run-1-2vvcqtg9iwd5q\":{\"prov:activity\":\"inflexa:run-run-1\",\"prov:agent\":\"inflexa:agent-system\"},\"inflexa:assoc-cmd-run-1-step-1-1qqxq874q2slb-2vvcqtg9iwd5q\":{\"prov:activity\":\"inflexa:cmd-run-1-step-1-1qqxq874q2slb\",\"prov:agent\":\"inflexa:agent-system\"},\"inflexa:assoc-cmd-run-1-step-1-1qqxq874q2slb-10xq603d188ft\":{\"prov:activity\":\"inflexa:cmd-run-1-step-1-1qqxq874q2slb\",\"prov:agent\":\"inflexa:agent-model-21ko3mworydhy\"},\"inflexa:assoc-cmd-run-1-step-1-2xt56uclzxukt-2vvcqtg9iwd5q\":{\"prov:activity\":\"inflexa:cmd-run-1-step-1-2xt56uclzxukt\",\"prov:agent\":\"inflexa:agent-system\"},\"inflexa:assoc-cmd-run-1-step-1-2xt56uclzxukt-10xq603d188ft\":{\"prov:activity\":\"inflexa:cmd-run-1-step-1-2xt56uclzxukt\",\"prov:agent\":\"inflexa:agent-model-21ko3mworydhy\"},\"inflexa:assoc-step-run-1-step-1-2vvcqtg9iwd5q\":{\"prov:activity\":\"inflexa:step-run-1-step-1\",\"prov:agent\":\"inflexa:agent-system\"},\"inflexa:assoc-step-run-1-step-1-10xq603d188ft\":{\"prov:activity\":\"inflexa:step-run-1-step-1\",\"prov:agent\":\"inflexa:agent-model-21ko3mworydhy\"},\"_:id8\":{\"prov:activity\":\"inflexa:action-019fdc54-f794-7000-9a72-7972be169b77\",\"prov:agent\":\"inflexa:agent-user-alice_example_org\"}},\"wasGeneratedBy\":{\"_:id2\":{\"prov:entity\":\"inflexa:analysis-compat-a1\",\"prov:activity\":\"inflexa:action-019fdc54-f758-7000-8c03-c028e7af4f5d\",\"prov:time\":\"2023-11-14T22:13:20+00:00\"},\"inflexa:gen-31vuey4g98s5h\":{\"prov:entity\":\"inflexa:file-31vuey4g98s5h\",\"prov:activity\":\"inflexa:cmd-run-1-step-1-1qqxq874q2slb\"},\"inflexa:gen-3ioeavkjt47wm\":{\"prov:entity\":\"inflexa:file-3ioeavkjt47wm\",\"prov:activity\":\"inflexa:cmd-run-1-step-1-1qqxq874q2slb\"},\"inflexa:gen-399gs3anylmub\":{\"prov:entity\":\"inflexa:file-399gs3anylmub\",\"prov:activity\":\"inflexa:cmd-run-1-step-1-2xt56uclzxukt\"},\"inflexa:gen-2blwrb4pa8snj\":{\"prov:entity\":\"inflexa:file-2blwrb4pa8snj\",\"prov:activity\":\"inflexa:step-run-1-step-1\"}},\"wasAttributedTo\":{\"_:id3\":{\"prov:entity\":\"inflexa:analysis-compat-a1\",\"prov:agent\":\"inflexa:agent-user-alice_example_org\"},\"_:id6\":{\"prov:entity\":\"inflexa:input-3szq2orucag3p\",\"prov:agent\":\"inflexa:agent-user-alice_example_org\"},\"inflexa:attr-31vuey4g98s5h-2vvcqtg9iwd5q\":{\"prov:entity\":\"inflexa:file-31vuey4g98s5h\",\"prov:agent\":\"inflexa:agent-system\"},\"inflexa:attr-3ioeavkjt47wm-2vvcqtg9iwd5q\":{\"prov:entity\":\"inflexa:file-3ioeavkjt47wm\",\"prov:agent\":\"inflexa:agent-system\"},\"inflexa:attr-399gs3anylmub-2vvcqtg9iwd5q\":{\"prov:entity\":\"inflexa:file-399gs3anylmub\",\"prov:agent\":\"inflexa:agent-system\"},\"inflexa:attr-2blwrb4pa8snj-2vvcqtg9iwd5q\":{\"prov:entity\":\"inflexa:file-2blwrb4pa8snj\",\"prov:agent\":\"inflexa:agent-system\"}},\"used\":{\"_:id5\":{\"prov:activity\":\"inflexa:action-019fdc54-f78c-7000-9ac2-338fcf91bf75\",\"prov:entity\":\"inflexa:input-3szq2orucag3p\",\"prov:time\":\"2023-11-14T22:13:20+00:00\"},\"inflexa:used-run-run-1\":{\"prov:activity\":\"inflexa:run-run-1\",\"prov:entity\":\"inflexa:analysis-compat-a1\"},\"inflexa:used-input-run-1-step-1-23uqybh7wy21z\":{\"prov:activity\":\"inflexa:step-run-1-step-1\",\"prov:entity\":\"inflexa:file-23uqybh7wy21z\"},\"inflexa:used-cmd-run-1-step-1-1qqxq874q2slb-23uqybh7wy21z\":{\"prov:activity\":\"inflexa:cmd-run-1-step-1-1qqxq874q2slb\",\"prov:entity\":\"inflexa:file-23uqybh7wy21z\"},\"inflexa:used-cmd-run-1-step-1-1qqxq874q2slb-31vuey4g98s5h\":{\"prov:activity\":\"inflexa:cmd-run-1-step-1-1qqxq874q2slb\",\"prov:entity\":\"inflexa:file-31vuey4g98s5h\"}},\"wasDerivedFrom\":{\"_:id7\":{\"prov:generatedEntity\":\"inflexa:analysis-compat-a1\",\"prov:usedEntity\":\"inflexa:input-3szq2orucag3p\"},\"inflexa:deriv-31vuey4g98s5h\":{\"prov:generatedEntity\":\"inflexa:file-31vuey4g98s5h\",\"prov:usedEntity\":\"inflexa:analysis-compat-a1\"},\"inflexa:deriv-3ioeavkjt47wm\":{\"prov:generatedEntity\":\"inflexa:file-3ioeavkjt47wm\",\"prov:usedEntity\":\"inflexa:analysis-compat-a1\"},\"inflexa:deriv-399gs3anylmub\":{\"prov:generatedEntity\":\"inflexa:file-399gs3anylmub\",\"prov:usedEntity\":\"inflexa:analysis-compat-a1\"},\"inflexa:deriv-2blwrb4pa8snj\":{\"prov:generatedEntity\":\"inflexa:file-2blwrb4pa8snj\",\"prov:usedEntity\":\"inflexa:analysis-compat-a1\"}},\"wasInformedBy\":{\"inflexa:informed-cmd-run-1-step-1-1qqxq874q2slb\":{\"prov:informed\":\"inflexa:cmd-run-1-step-1-1qqxq874q2slb\",\"prov:informant\":\"inflexa:step-run-1-step-1\"},\"inflexa:informed-cmd-run-1-step-1-2xt56uclzxukt\":{\"prov:informed\":\"inflexa:cmd-run-1-step-1-2xt56uclzxukt\",\"prov:informant\":\"inflexa:step-run-1-step-1\"},\"inflexa:informed-run-1-step-1\":{\"prov:informed\":\"inflexa:step-run-1-step-1\",\"prov:informant\":\"inflexa:run-run-1\"}},\"actedOnBehalfOf\":{\"inflexa:delegation-10xq603d188ft-2vvcqtg9iwd5q\":{\"prov:delegate\":\"inflexa:agent-model-21ko3mworydhy\",\"prov:responsible\":\"inflexa:agent-system\"}},\"wasInvalidatedBy\":{\"_:id9\":{\"prov:entity\":\"inflexa:input-3szq2orucag3p\",\"prov:activity\":\"inflexa:action-019fdc54-f794-7000-9a72-7972be169b77\",\"prov:time\":\"2023-11-14T22:13:20+00:00\"}}}",
+  "chainHash": "31bc03f93a74fa230551ebe1f81ea936d75b88a7c7e59d3cf94441a36b08ac85",
+  "signature": "c59c46e7d899a022f1257451e972b0d55083969190e437fa0d178b2bbb876f78694f5d492fba0934887fd9f6670763ca68290e037dbd20f23e05df9e5761290f",
+  "publicKeyJwk": {
+    "crv": "Ed25519",
+    "ext": true,
+    "key_ops": [
+      "verify"
+    ],
+    "kty": "OKP",
+    "x": "TpRyiLpoZ7T9DXFVGg1SFfWnURH8OL7NBn9opF5Y7JA"
+  },
+  "events": [
+    {
+      "type": "analysis_created",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "user",
+        "id": "alice@example.org",
+        "email": "alice@example.org"
+      }
+    },
+    {
+      "type": "input_added",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "user",
+        "id": "alice@example.org",
+        "email": "alice@example.org"
+      },
+      "input": {
+        "path": "data/raw",
+        "isDir": true,
+        "anchorId": "anchor-1"
+      },
+      "derivedFromAnalysisId": null
+    },
+    {
+      "type": "run_started",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "system",
+        "label": "inflexa cli",
+        "version": "0.0.0-compat",
+        "commit": "cafe0123"
+      },
+      "run": {
+        "runId": "run-1",
+        "planSummary": "compat plan",
+        "startedAtMs": 1700000000000
+      }
+    },
+    {
+      "type": "input_used",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "system",
+        "label": "inflexa cli",
+        "version": "0.0.0-compat",
+        "commit": "cafe0123"
+      },
+      "step": {
+        "runId": "run-1",
+        "stepId": "step-1"
+      },
+      "input": {
+        "path": "data/raw/counts.csv",
+        "hash": "aaaa1111",
+        "source": "data",
+        "fileId": "file-1"
+      }
+    },
+    {
+      "type": "command_executed",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "system",
+        "label": "inflexa cli",
+        "version": "0.0.0-compat",
+        "commit": "cafe0123"
+      },
+      "step": {
+        "runId": "run-1",
+        "stepId": "step-1"
+      },
+      "command": {
+        "kind": "command",
+        "command": "Rscript scripts/deg.R",
+        "args": [],
+        "exitCode": 0,
+        "durationMs": 1234,
+        "scriptPath": "runs/run-1/step-1/scripts/deg.R",
+        "outputs": [
+          {
+            "path": "runs/run-1/step-1/scripts/deg.R",
+            "hash": "cccc3333"
+          },
+          {
+            "path": "runs/run-1/step-1/output/deg.csv",
+            "hash": "bbbb2222"
+          }
+        ],
+        "inputs": [
+          {
+            "path": "data/raw/counts.csv",
+            "hash": "aaaa1111",
+            "source": "data",
+            "fileId": "file-1"
+          }
+        ]
+      },
+      "model": "anthropic/claude-compat-1"
+    },
+    {
+      "type": "file_written",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "system",
+        "label": "inflexa cli",
+        "version": "0.0.0-compat",
+        "commit": "cafe0123"
+      },
+      "file": {
+        "path": "runs/run-1/step-1/scripts/deg.R",
+        "hash": "cccc3333",
+        "size": 640,
+        "producer": "command"
+      },
+      "step": {
+        "runId": "run-1",
+        "stepId": "step-1"
+      },
+      "generation": "command"
+    },
+    {
+      "type": "file_written",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "system",
+        "label": "inflexa cli",
+        "version": "0.0.0-compat",
+        "commit": "cafe0123"
+      },
+      "file": {
+        "path": "runs/run-1/step-1/output/deg.csv",
+        "hash": "bbbb2222",
+        "size": 2048,
+        "producer": "command"
+      },
+      "step": {
+        "runId": "run-1",
+        "stepId": "step-1"
+      },
+      "generation": "command"
+    },
+    {
+      "type": "command_executed",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "system",
+        "label": "inflexa cli",
+        "version": "0.0.0-compat",
+        "commit": "cafe0123"
+      },
+      "step": {
+        "runId": "run-1",
+        "stepId": "step-1"
+      },
+      "command": {
+        "kind": "file_tool",
+        "tool": "write_file",
+        "outputs": [
+          {
+            "path": "runs/run-1/step-1/output/notes.md",
+            "hash": "eeee5555"
+          }
+        ]
+      },
+      "model": "anthropic/claude-compat-1"
+    },
+    {
+      "type": "file_written",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "system",
+        "label": "inflexa cli",
+        "version": "0.0.0-compat",
+        "commit": "cafe0123"
+      },
+      "file": {
+        "path": "runs/run-1/step-1/output/notes.md",
+        "hash": "eeee5555",
+        "size": 96,
+        "producer": "file_tool"
+      },
+      "step": {
+        "runId": "run-1",
+        "stepId": "step-1"
+      },
+      "generation": "command"
+    },
+    {
+      "type": "file_written",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "system",
+        "label": "inflexa cli",
+        "version": "0.0.0-compat",
+        "commit": "cafe0123"
+      },
+      "file": {
+        "path": "runs/run-1/step-1/output/summary.md",
+        "hash": "dddd4444",
+        "size": 100,
+        "producer": "command"
+      },
+      "step": {
+        "runId": "run-1",
+        "stepId": "step-1"
+      },
+      "generation": "step"
+    },
+    {
+      "type": "step_completed",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "system",
+        "label": "inflexa cli",
+        "version": "0.0.0-compat",
+        "commit": "cafe0123"
+      },
+      "outcome": {
+        "runId": "run-1",
+        "stepId": "step-1",
+        "status": "completed",
+        "completedAtMs": 1700000100000,
+        "durationMs": 100000
+      },
+      "model": "anthropic/claude-compat-1"
+    },
+    {
+      "type": "run_completed",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "system",
+        "label": "inflexa cli",
+        "version": "0.0.0-compat",
+        "commit": "cafe0123"
+      },
+      "outcome": {
+        "runId": "run-1",
+        "status": "completed",
+        "completedAtMs": 1700000200000,
+        "durationMs": 200000
+      }
+    },
+    {
+      "type": "input_removed",
+      "analysisId": "compat-a1",
+      "actor": {
+        "kind": "user",
+        "id": "alice@example.org",
+        "email": "alice@example.org"
+      },
+      "input": {
+        "path": "data/raw",
+        "isDir": true,
+        "anchorId": "anchor-1"
+      }
+    }
+  ],
+  "qnames": {
+    "file": "inflexa:file-3ioeavkjt47wm",
+    "command": "inflexa:cmd-run-1-step-1-1qqxq874q2slb",
+    "modelAgent": "inflexa:agent-model-21ko3mworydhy"
+  }
+}

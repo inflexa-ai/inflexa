@@ -48,7 +48,10 @@ command actions, and its logic-local types.
   `project ls`).
 - **`prov/`** — the provenance recorder. It is a bus subscriber that builds,
   signs, and stores the PROV document of each analysis. It also gives
-  `prov export` and `prov verify`.
+  `prov export` and `prov verify`. The PROV dialect itself — the QName
+  derivations, the statements, the crypto primitives, and the sidecar schema —
+  comes from `@inflexa-ai/prov-kernel`; the recorder owns only the lifecycle
+  around it.
 - **`staging/`** — it puts the analysis input files under the `data/` root of the
   analysis workspace. It gives each file a content hash, and it writes the
   `StagedInput` manifest that the harness accepts.

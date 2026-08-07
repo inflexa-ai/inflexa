@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
 
-import { verifyProvenance, verifyPayload, runVerifyFile } from "./verify.ts";
-import { computeChainHash, computePayloadDigest, signHexDigest, loadOrGenerateKeypair, resetSigningForTests } from "./signing.ts";
+import { computeChainHash, computePayloadDigest, signHexDigest, verifyProvenance, verifyPayload } from "@inflexa-ai/prov-kernel";
+
+import { runVerifyFile } from "./verify.ts";
+import { loadOrGenerateKeypair, resetSigningForTests } from "./signing.ts";
 
 let tempDir: string | null = null;
 
@@ -157,8 +159,7 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
         const digest = (await computePayloadDigest(provJson))._unsafeUnwrap();
         const signature = (await signHexDigest(kp.privateKey, digest))._unsafeUnwrap();
 
-        const { exportPublicKeyJwk } = await import("./signing.ts");
-        const publicKey = (await exportPublicKeyJwk())._unsafeUnwrap();
+        const publicKey = await crypto.subtle.exportKey("jwk", kp.publicKey);
 
         const provPath = join(dir, "provenance.json");
         writeFileSync(provPath, provJson);

@@ -35,8 +35,7 @@ import type { Workspace } from "./contexts/workspace.ts";
 import type { Notice } from "./theme.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { WorkspaceDisposal, WorkspaceError } from "../modules/analysis/output.ts";
-import type { Sidecar } from "../modules/prov/verify.ts";
-import type { SigningError } from "../modules/prov/signing.ts";
+import type { ProvSigningError as SigningError, Sidecar } from "@inflexa-ai/prov-kernel";
 // The SQLite layer's error union, distinct from the harness's Postgres one already imported above.
 import type { DbError as SqliteError } from "../db/errors.ts";
 import type { Analysis } from "../types/analysis.ts";

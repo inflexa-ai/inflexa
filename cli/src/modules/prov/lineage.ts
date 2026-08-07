@@ -13,9 +13,10 @@ import {
     type Resolution,
 } from "@inflexa-ai/tsprov/graph";
 
+import { PROV_UNIFY_OPTIONS } from "@inflexa-ai/prov-kernel";
 import { dieOn, fail } from "../../lib/cli.ts";
 import { getAnalysisProvenance } from "../../db/primary_query.ts";
-import { loadDocument, PROV_UNIFY_OPTIONS } from "./document.ts";
+import { provModel, provSubject } from "./document.ts";
 import { requireAnalysisForProv } from "./prov.ts";
 
 // The lineage traversal: the read-side answer to "where did this file come from?" (and, with
@@ -761,7 +762,7 @@ export function runProvLineage(analysisRef: string, ref: string, rawOpts: { forw
     const stored = getAnalysisProvenance(analysis.id).match((s) => s, dieOn("Failed to read provenance"));
     if (stored === null) fail(`No provenance recorded for "${analysis.name}" yet — run an analysis first.`);
 
-    const doc = loadDocument(analysis, stored).match((d) => d, dieOn("Stored provenance is corrupt"));
+    const doc = provModel.loadDocument(provSubject(analysis), stored).match((d) => d, dieOn("Stored provenance is corrupt"));
     const graph = lineageGraph(doc);
 
     const roots = resolveLineageRef(graph, ref).match(

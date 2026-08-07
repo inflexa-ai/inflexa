@@ -2,21 +2,21 @@ import { describe, expect, test } from "bun:test";
 import { ProvDocument } from "@inflexa-ai/tsprov";
 import type { ProvGraph } from "@inflexa-ai/tsprov/graph";
 
+import { applyProvEvent, PROV_UNIFY_OPTIONS } from "@inflexa-ai/prov-kernel";
 import { asStr256 } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
-import type { ProvActor, ProvCommandRef, ProvFileRef, ProvModelId, ProvStepRef } from "../../types/prov.ts";
-import {
-    appendCommandExecuted,
-    appendFileWritten,
-    appendInputAdded,
-    appendInputUsed,
-    appendRunStarted,
-    appendStepCompleted,
-    commandQName,
-    fileQName,
-    freshDocument,
-    PROV_UNIFY_OPTIONS,
-} from "./document.ts";
+import type {
+    ProvActor,
+    ProvCommandRef,
+    ProvFileRef,
+    ProvInputRef,
+    ProvModelId,
+    ProvRunRef,
+    ProvStepOutcome,
+    ProvStepRef,
+    ProvUsedInputRef,
+} from "../../types/prov.ts";
+import { provModel, provSubject } from "./document.ts";
 import {
     computeLineage,
     formatDot,
@@ -34,6 +34,46 @@ import {
 // production writes (deterministic QNames, identified relations, shared (path, hash) entity space)
 // — then round-tripped through PROV-JSON like the stored column, so the walk sees what the CLI sees.
 
+const { fileQName, commandQName } = provModel;
+
+// Statement production goes through `applyProvEvent` (the kernel's sole supported producer); these
+// helpers keep the historical per-builder call shape the fixtures below were written against.
+function freshDocument(a: Analysis): ProvDocument {
+    return provModel.freshDocument(provSubject(a));
+}
+function appendInputAdded(doc: ProvDocument, analysisId: string, actor: ProvActor, input: ProvInputRef, derivedFromAnalysisId: string | null): void {
+    applyProvEvent(provModel, doc, { type: "input_added", analysisId, actor, input, derivedFromAnalysisId });
+}
+function appendRunStarted(doc: ProvDocument, analysisId: string, actor: ProvActor, run: ProvRunRef): void {
+    applyProvEvent(provModel, doc, { type: "run_started", analysisId, actor, run });
+}
+function appendStepCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvStepOutcome, stepModel: ProvModelId): void {
+    applyProvEvent(provModel, doc, { type: "step_completed", analysisId, actor, outcome, model: stepModel });
+}
+function appendCommandExecuted(
+    doc: ProvDocument,
+    analysisId: string,
+    actor: ProvActor,
+    step: ProvStepRef,
+    command: ProvCommandRef,
+    stepModel: ProvModelId,
+): void {
+    applyProvEvent(provModel, doc, { type: "command_executed", analysisId, actor, step, command, model: stepModel });
+}
+function appendFileWritten(
+    doc: ProvDocument,
+    analysisId: string,
+    actor: ProvActor,
+    file: ProvFileRef,
+    step: ProvStepRef,
+    generation: "command" | "step",
+): void {
+    applyProvEvent(provModel, doc, { type: "file_written", analysisId, actor, file, step, generation });
+}
+function appendInputUsed(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, input: ProvUsedInputRef): void {
+    applyProvEvent(provModel, doc, { type: "input_used", analysisId, actor, step, input });
+}
+
 const analysis: Analysis = {
     id: "a1",
     createdAt: 1_700_000_000_000,
@@ -43,7 +83,7 @@ const analysis: Analysis = {
     anchorId: "anchor1",
     projectId: null,
 };
-const system: ProvActor = { kind: "system", version: "0.0.1", commit: "abc1234" };
+const system: ProvActor = { kind: "system", label: "inflexa cli", version: "0.0.1", commit: "abc1234" };
 const model: ProvModelId = "anthropic/claude-sonnet-4-5";
 const stepRef: ProvStepRef = { runId: "run-001", stepId: "step-de" };
 
