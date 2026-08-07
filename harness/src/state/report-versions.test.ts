@@ -56,24 +56,6 @@ describe("createReportVersionStore", () => {
         (await upsertAnalysis(pool, analysisId, null, null))._unsafeUnwrap();
     }
 
-    /**
-     * Wait until the store's insert blocks on the unique index. The poll reads
-     * `pg_stat_activity` for a lock wait on the versions table, thus the race
-     * driver releases its ordinal only after the store is blocked.
-     */
-    async function waitForBlockedInsert(): Promise<void> {
-        const deadline = Date.now() + 5000;
-        for (;;) {
-            const { rows } = await pool.query<{ n: number }>(
-                `SELECT COUNT(*)::int AS n FROM pg_stat_activity
-                 WHERE wait_event_type = 'Lock' AND query ILIKE '%cortex_report_versions%'`,
-            );
-            if ((rows[0]?.n ?? 0) > 0) return;
-            if (Date.now() > deadline) throw new Error("the store insert never blocked on the ordinal");
-            await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-    }
-
     it("records a version and reads the triple back by its id", async () => {
         const analysisId = "analysis-round-trip";
         await seedAnalysis(analysisId);
@@ -82,7 +64,6 @@ describe("createReportVersionStore", () => {
         const ref = (
             await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: "conv-anchor", parentSeq: 7 })
         )._unsafeUnwrap();
-        expect(ref.versionNumber).toBe(1);
 
         const version = (await store.getVersion(ref.versionId))._unsafeUnwrap();
         expect(version).not.toBeNull();
@@ -92,80 +73,74 @@ describe("createReportVersionStore", () => {
         expect(version!.threadId).toBe(threadId);
         expect(version!.parentThreadId).toBe("conv-anchor");
         expect(version!.parentSeq).toBe(7);
-        expect(version!.versionNumber).toBe(1);
         expect(version!.parentVersionId).toBeNull();
         expect(version!.createdAt).toBeInstanceOf(Date);
     });
 
-    it("counts ordinals up inside one thread, and independently across two threads", async () => {
-        const analysisId = "analysis-ordinals";
+    it("refuses a second record on one thread, and holds one row", async () => {
+        const analysisId = "analysis-one-per-thread";
         await seedAnalysis(analysisId);
-        const threadA = "thread-ordinals-a";
-        const threadB = "thread-ordinals-b";
+        const threadId = "thread-one-per-thread";
 
-        for (const _ of [0, 1, 2]) {
-            (await store.record({ document: validDocument, snapshot, analysisId, threadId: threadA, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const first = (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+
+        const failure = (
+            await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null })
+        )._unsafeUnwrapErr();
+        expect(failure.type).toBe("thread_already_holds_version");
+        if (failure.type === "thread_already_holds_version") {
+            expect(failure.threadId).toBe(threadId);
         }
-        const firstB = (
+
+        // The thread still holds only the first version.
+        const version = (await store.getThreadVersion(threadId))._unsafeUnwrap();
+        expect(version).not.toBeNull();
+        expect(version!.versionId).toBe(first.versionId);
+
+        const { rows } = await pool.query<{ n: number }>({
+            text: "SELECT COUNT(*)::int AS n FROM cortex_report_versions WHERE thread_id = $1",
+            values: [threadId],
+        });
+        expect(rows[0]!.n).toBe(1);
+    });
+
+    it("records the first version of each of two threads, and reads each back", async () => {
+        const analysisId = "analysis-two-threads";
+        await seedAnalysis(analysisId);
+        const threadA = "thread-two-a";
+        const threadB = "thread-two-b";
+
+        const refA = (
+            await store.record({ document: validDocument, snapshot, analysisId, threadId: threadA, parentThreadId: null, parentSeq: null })
+        )._unsafeUnwrap();
+        const refB = (
             await store.record({ document: validDocument, snapshot, analysisId, threadId: threadB, parentThreadId: null, parentSeq: null })
         )._unsafeUnwrap();
 
-        const listA = (await store.listVersions(threadA))._unsafeUnwrap();
-        expect(listA.map((v) => v.versionNumber)).toEqual([1, 2, 3]);
+        const versionA = (await store.getThreadVersion(threadA))._unsafeUnwrap();
+        expect(versionA!.versionId).toBe(refA.versionId);
+        expect(versionA!.threadId).toBe(threadA);
 
-        const latestA = (await store.getLatestVersion(threadA))._unsafeUnwrap();
-        expect(latestA!.versionNumber).toBe(3);
-
-        // The second thread counts on its own, thus its first version is 1.
-        expect(firstB.versionNumber).toBe(1);
-        const latestB = (await store.getLatestVersion(threadB))._unsafeUnwrap();
-        expect(latestB!.versionNumber).toBe(1);
-    });
-
-    it("retries the insert once when a pre-inserted conflicting ordinal loses the race", async () => {
-        const analysisId = "analysis-race";
-        await seedAnalysis(analysisId);
-        const threadId = "thread-race";
-
-        const holder = await pool.connect();
-        try {
-            await holder.query("BEGIN");
-            // Hold the ordinal 1 uncommitted. The store's MAX read cannot see it,
-            // so the store computes 1 too and then blocks on the unique index.
-            await holder.query({
-                text: `INSERT INTO cortex_report_versions
-                         (version_id, analysis_id, thread_id, version_number, document, snapshot)
-                       VALUES ($1, $2, $3, 1, $4::jsonb, $5::jsonb)`,
-                values: [randomUUID(), analysisId, threadId, JSON.stringify(validDocument), JSON.stringify(snapshot)],
-            });
-
-            const recording = store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null });
-            await waitForBlockedInsert();
-            // Release the ordinal 1. The store loses the race and retries with 2.
-            await holder.query("COMMIT");
-
-            const ref = (await recording)._unsafeUnwrap();
-            expect(ref.versionNumber).toBe(2);
-        } finally {
-            holder.release();
-        }
-
-        const versions = (await store.listVersions(threadId))._unsafeUnwrap();
-        expect(versions.map((v) => v.versionNumber)).toEqual([1, 2]);
+        const versionB = (await store.getThreadVersion(threadB))._unsafeUnwrap();
+        expect(versionB!.versionId).toBe(refB.versionId);
+        expect(versionB!.threadId).toBe(threadB);
     });
 
     it("nulls the parent link when the parent row goes", async () => {
         const analysisId = "analysis-parent-null";
         await seedAnalysis(analysisId);
-        const threadId = "thread-parent-null";
+        const parentThread = "thread-parent-null-parent";
+        const childThread = "thread-parent-null-child";
 
-        const parent = (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const parent = (
+            await store.record({ document: validDocument, snapshot, analysisId, threadId: parentThread, parentThreadId: null, parentSeq: null })
+        )._unsafeUnwrap();
         const child = (
             await store.record({
                 document: validDocument,
                 snapshot,
                 analysisId,
-                threadId,
+                threadId: childThread,
                 parentThreadId: null,
                 parentSeq: null,
                 parentVersionId: parent.versionId,
@@ -182,7 +157,7 @@ describe("createReportVersionStore", () => {
         expect(unlinked!.parentVersionId).toBeNull();
     });
 
-    it("leaves the versions when the thread row is deleted", async () => {
+    it("leaves the version when the thread row is deleted", async () => {
         const analysisId = "analysis-survive-thread";
         await seedAnalysis(analysisId);
         const threadId = "thread-survive";
@@ -214,8 +189,8 @@ describe("createReportVersionStore", () => {
             expect(failure.issues.length).toBeGreaterThan(0);
         }
 
-        const versions = (await store.listVersions(threadId))._unsafeUnwrap();
-        expect(versions).toEqual([]);
+        const version = (await store.getThreadVersion(threadId))._unsafeUnwrap();
+        expect(version).toBeNull();
     });
 
     it("refuses a malformed snapshot with no row", async () => {
@@ -234,8 +209,8 @@ describe("createReportVersionStore", () => {
             expect(failure.issues.length).toBeGreaterThan(0);
         }
 
-        const versions = (await store.listVersions(threadId))._unsafeUnwrap();
-        expect(versions).toEqual([]);
+        const version = (await store.getThreadVersion(threadId))._unsafeUnwrap();
+        expect(version).toBeNull();
     });
 
     it("keeps the stored snapshot after a later ledger write", async () => {
@@ -262,9 +237,12 @@ describe("createReportVersionStore", () => {
     it("reads a corrupted row as a typed error", async () => {
         const analysisId = "analysis-corrupt";
         await seedAnalysis(analysisId);
-        const threadId = "thread-corrupt";
+        const docThread = "thread-corrupt-doc";
+        const snapThread = "thread-corrupt-snapshot";
 
-        const badDoc = (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const badDoc = (
+            await store.record({ document: validDocument, snapshot, analysisId, threadId: docThread, parentThreadId: null, parentSeq: null })
+        )._unsafeUnwrap();
         await pool.query({ text: `UPDATE cortex_report_versions SET document = '{"bad":true}'::jsonb WHERE version_id = $1`, values: [badDoc.versionId] });
 
         const docFailure = (await store.getVersion(badDoc.versionId))._unsafeUnwrapErr();
@@ -276,7 +254,7 @@ describe("createReportVersionStore", () => {
         }
 
         const badSnap = (
-            await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null })
+            await store.record({ document: validDocument, snapshot, analysisId, threadId: snapThread, parentThreadId: null, parentSeq: null })
         )._unsafeUnwrap();
         await pool.query({
             text: `UPDATE cortex_report_versions SET snapshot = '{"artifacts":"nope"}'::jsonb WHERE version_id = $1`,
@@ -319,8 +297,8 @@ describe("createReportVersionStore", () => {
             expect(failure.parentAnalysisId).toBe(analysisOwner);
         }
 
-        const versions = (await store.listVersions(otherThread))._unsafeUnwrap();
-        expect(versions).toEqual([]);
+        const version = (await store.getThreadVersion(otherThread))._unsafeUnwrap();
+        expect(version).toBeNull();
     });
 
     it("refuses an unknown parent id through the foreign key", async () => {
@@ -341,8 +319,8 @@ describe("createReportVersionStore", () => {
         )._unsafeUnwrapErr();
         expect(failure.type).toBe("constraint_violation");
 
-        const versions = (await store.listVersions(threadId))._unsafeUnwrap();
-        expect(versions).toEqual([]);
+        const version = (await store.getThreadVersion(threadId))._unsafeUnwrap();
+        expect(version).toBeNull();
     });
 
     it("gives an absence for a version id that no row holds", async () => {
@@ -350,11 +328,8 @@ describe("createReportVersionStore", () => {
         expect(version).toBeNull();
     });
 
-    it("gives an absence for the latest of an empty thread, and an empty list", async () => {
-        const latest = (await store.getLatestVersion("thread-with-no-version"))._unsafeUnwrap();
-        expect(latest).toBeNull();
-
-        const versions = (await store.listVersions("thread-with-no-version"))._unsafeUnwrap();
-        expect(versions).toEqual([]);
+    it("gives an absence for a thread with no version", async () => {
+        const version = (await store.getThreadVersion("thread-with-no-version"))._unsafeUnwrap();
+        expect(version).toBeNull();
     });
 });

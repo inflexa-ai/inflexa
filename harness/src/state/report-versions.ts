@@ -5,9 +5,10 @@
  * snapshot, and the anchor. The store records a version and reads a version. It
  * never updates a recorded row, thus a correction is a new version.
  *
- * The id is stable, and the ordinal is unique inside a thread. The ordinal
- * computes inside the insert from the maximum of the thread. A concurrent record
- * loses on the unique index, and the store tries the insert one more time.
+ * A thread holds at most one version, and a named unique constraint on the thread
+ * id enforces it. The record reads nothing before the insert. A second record for
+ * one thread trips the constraint, and the store maps that trip to the typed
+ * refusal thread_already_holds_version.
  *
  * The store keeps the snapshot and the anchor as given, and it never mints a
  * snapshot. A read parses the stored document and the stored snapshot with the
@@ -26,18 +27,17 @@ import type { Pool } from "pg";
 import { z } from "zod";
 
 import { ReportDocumentSchema, type ReportDocument } from "../contracts/report-blocks.js";
-import { createNoopLogger } from "../lib/console-logger.js";
 import { type DbError, tryMutation, tryQuery } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
 import type { DomainError } from "../lib/result.js";
 import type { ReportSnapshot } from "../report-model/reference-resolver.js";
 
 /**
- * The name of the unique index over `(thread_id, version_number)`. Postgres
- * reports it on a duplicate-ordinal refusal, and the store matches it to tell a
- * lost ordinal race from any other constraint trip.
+ * The name of the unique constraint on thread_id. Postgres reports it on a
+ * duplicate-thread refusal, and the record matches it to map the trip to the
+ * thread_already_holds_version refusal.
  */
-const THREAD_VERSION_INDEX = "idx_cortex_report_versions_thread_version";
+const THREAD_UNIQUE_CONSTRAINT = "cortex_report_versions_one_per_thread";
 
 /**
  * One pinned artifact of a stored snapshot. The value carries the content hash,
@@ -94,7 +94,6 @@ export interface RecordVersionInput {
 /** The stable reference of a freshly recorded version. */
 export interface RecordedVersionRef {
     readonly versionId: string;
-    readonly versionNumber: number;
 }
 
 /**
@@ -104,6 +103,10 @@ export interface RecordedVersionRef {
  * The store parses the document and the snapshot before any row. The store
  * refuses a malformed document or a malformed snapshot here as typed data, and
  * no row lands.
+ *
+ * A second record for one thread is `thread_already_holds_version`. The unique
+ * constraint on the thread id trips, and the record maps that one constraint by
+ * its name. Every other constraint trip stays a `DbError`.
  *
  * A `parentVersionId` naming no row is not one of these -- the self foreign key
  * refuses an unknown parent id, and `tryMutation` classifies that refusal as the
@@ -126,6 +129,11 @@ export type RecordVersionError =
           readonly analysisId: string;
           readonly parentVersionId: string;
           readonly parentAnalysisId: string;
+      }
+    | {
+          readonly type: "thread_already_holds_version";
+          readonly op: string;
+          readonly threadId: string;
       }
     | DbError;
 
@@ -155,7 +163,6 @@ export interface RecordedVersion {
     readonly threadId: string;
     readonly parentThreadId: string | null;
     readonly parentSeq: number | null;
-    readonly versionNumber: number;
     /** The earlier version that this one reuses, or `null` when it has none. */
     readonly parentVersionId: string | null;
     readonly document: ReportDocument;
@@ -166,17 +173,15 @@ export interface RecordedVersion {
 export interface ReportVersionStore {
     /**
      * Record a version. The record parses the document, refuses a malformed value
-     * as data with no row, and refuses a parent from a different analysis. It
-     * computes the ordinal from the maximum of the thread, and it retries once on
-     * a lost ordinal race. The snapshot and the anchor store as given.
+     * as data with no row, and refuses a parent from a different analysis. It reads
+     * nothing before the insert. A second record for one thread refuses with
+     * thread_already_holds_version. The snapshot and the anchor store as given.
      */
     record(input: RecordVersionInput): ResultAsync<RecordedVersionRef, RecordVersionError>;
     /** One version by its id, or `null` when no row holds it. */
     getVersion(versionId: string): ResultAsync<RecordedVersion | null, DbError | VersionReadError>;
-    /** The latest version of a thread, or `null` for a thread with no version. */
-    getLatestVersion(threadId: string): ResultAsync<RecordedVersion | null, DbError | VersionReadError>;
-    /** The versions of a thread in ordinal order, or an empty list for a thread with no version. */
-    listVersions(threadId: string): ResultAsync<RecordedVersion[], DbError | VersionReadError>;
+    /** The one version of a thread, or `null` for a thread with no version. */
+    getThreadVersion(threadId: string): ResultAsync<RecordedVersion | null, DbError | VersionReadError>;
 }
 
 export interface ReportVersionStoreDeps {
@@ -190,7 +195,7 @@ export interface ReportVersionStoreDeps {
  * it into a number.
  */
 const VERSION_COLUMNS =
-    "version_id, analysis_id, thread_id, parent_thread_id, parent_seq::text AS parent_seq, version_number, parent_version_id, document, snapshot, created_at";
+    "version_id, analysis_id, thread_id, parent_thread_id, parent_seq::text AS parent_seq, parent_version_id, document, snapshot, created_at";
 
 interface VersionRow {
     readonly version_id: string;
@@ -198,7 +203,6 @@ interface VersionRow {
     readonly thread_id: string;
     readonly parent_thread_id: string | null;
     readonly parent_seq: string | null;
-    readonly version_number: number;
     readonly parent_version_id: string | null;
     readonly document: unknown;
     readonly snapshot: unknown;
@@ -206,18 +210,13 @@ interface VersionRow {
 }
 
 /**
- * The insert. The ordinal computes inside the statement from the maximum of the
- * thread, thus the read and the write see one snapshot and a race resolves on the
- * unique index. `created_at` takes the column default.
+ * The insert. The row carries no ordinal, thus the statement writes the given
+ * columns directly. `created_at` takes the column default.
  */
 const INSERT_SQL = `INSERT INTO cortex_report_versions
     (version_id, analysis_id, thread_id, parent_thread_id, parent_seq,
-     version_number, parent_version_id, document, snapshot)
-  SELECT $1, $2, $3, $4, $5::bigint,
-         COALESCE(MAX(version_number), 0) + 1, $6, $7::jsonb, $8::jsonb
-    FROM cortex_report_versions
-   WHERE thread_id = $3
-  RETURNING version_number`;
+     parent_version_id, document, snapshot)
+  VALUES ($1, $2, $3, $4, $5::bigint, $6, $7::jsonb, $8::jsonb)`;
 
 function rowToVersion(row: VersionRow): Result<RecordedVersion, VersionReadError> {
     const document = ReportDocumentSchema.safeParse(row.document);
@@ -234,7 +233,6 @@ function rowToVersion(row: VersionRow): Result<RecordedVersion, VersionReadError
         threadId: row.thread_id,
         parentThreadId: row.parent_thread_id,
         parentSeq: row.parent_seq === null ? null : Number(row.parent_seq),
-        versionNumber: row.version_number,
         parentVersionId: row.parent_version_id,
         document: document.data,
         snapshot: snapshot.data,
@@ -242,18 +240,22 @@ function rowToVersion(row: VersionRow): Result<RecordedVersion, VersionReadError
     });
 }
 
-/** A lost ordinal race -- a unique-index trip on `(thread_id, version_number)`. */
-function isOrdinalRace(error: DbError): boolean {
-    return error.type === "constraint_violation" && error.constraint === THREAD_VERSION_INDEX;
+/**
+ * Map an insert failure to a record refusal. A trip of the thread constraint is
+ * thread_already_holds_version. Every other DbError stays unchanged.
+ */
+function mapInsertError(error: DbError, threadId: string): RecordVersionError {
+    if (error.type === "constraint_violation" && error.constraint === THREAD_UNIQUE_CONSTRAINT) {
+        return { type: "thread_already_holds_version", op: "report-versions.record", threadId };
+    }
+    return error;
 }
 
 /**
  * Create a `ReportVersionStore` bound to a Postgres pool. The
  * `cortex_report_versions` table is provisioned by the state-init DDL.
  */
-export function createReportVersionStore({ pool, logger: injected }: ReportVersionStoreDeps): ReportVersionStore {
-    const logger = (injected ?? createNoopLogger()).named("report-versions");
-
+export function createReportVersionStore({ pool }: ReportVersionStoreDeps): ReportVersionStore {
     /**
      * The analysis scope of a parent version, or `null` when no such row exists.
      * Absence is not a verdict here: an unknown parent id falls through to the
@@ -282,10 +284,10 @@ export function createReportVersionStore({ pool, logger: injected }: ReportVersi
             return errAsync({ type: "malformed_snapshot", op: "report-versions.record", issues: reduceIssues(parsedSnapshot.error) });
         }
 
-        const insertOnce = (): ResultAsync<RecordedVersionRef, DbError> => {
+        const insert = (): ResultAsync<RecordedVersionRef, RecordVersionError> => {
             const versionId = randomUUID();
             return tryMutation("report-versions.record.insert", async () => {
-                const { rows } = await pool.query<{ version_number: number }>({
+                await pool.query({
                     text: INSERT_SQL,
                     values: [
                         versionId,
@@ -298,24 +300,12 @@ export function createReportVersionStore({ pool, logger: injected }: ReportVersi
                         JSON.stringify(input.snapshot),
                     ],
                 });
-                return { versionId, versionNumber: rows[0]!.version_number };
-            });
+                return { versionId };
+            }).mapErr((error) => mapInsertError(error, input.threadId));
         };
 
-        // One retry only: a lost race recomputes the ordinal from a maximum that
-        // now counts the winner. A second loss surfaces as the typed database
-        // error.
-        const insertWithRetry = (): ResultAsync<RecordedVersionRef, DbError> =>
-            insertOnce().orElse((error) => {
-                if (isOrdinalRace(error)) {
-                    logger.debug("report version ordinal race, retrying the insert once", { threadId: input.threadId });
-                    return insertOnce();
-                }
-                return errAsync(error);
-            });
-
         if (input.parentVersionId === undefined) {
-            return insertWithRetry();
+            return insert();
         }
 
         const parentVersionId = input.parentVersionId;
@@ -329,7 +319,7 @@ export function createReportVersionStore({ pool, logger: injected }: ReportVersi
                     parentAnalysisId,
                 });
             }
-            return insertWithRetry();
+            return insert();
         });
     }
 
@@ -346,10 +336,10 @@ export function createReportVersionStore({ pool, logger: injected }: ReportVersi
         });
     }
 
-    function getLatestVersion(threadId: string): ResultAsync<RecordedVersion | null, DbError | VersionReadError> {
-        return tryQuery("report-versions.getLatestVersion", () =>
+    function getThreadVersion(threadId: string): ResultAsync<RecordedVersion | null, DbError | VersionReadError> {
+        return tryQuery("report-versions.getThreadVersion", () =>
             pool.query<VersionRow>({
-                text: `SELECT ${VERSION_COLUMNS} FROM cortex_report_versions WHERE thread_id = $1 ORDER BY version_number DESC LIMIT 1`,
+                text: `SELECT ${VERSION_COLUMNS} FROM cortex_report_versions WHERE thread_id = $1`,
                 values: [threadId],
             }),
         ).andThen(({ rows }) => {
@@ -359,22 +349,5 @@ export function createReportVersionStore({ pool, logger: injected }: ReportVersi
         });
     }
 
-    function listVersions(threadId: string): ResultAsync<RecordedVersion[], DbError | VersionReadError> {
-        return tryQuery("report-versions.listVersions", () =>
-            pool.query<VersionRow>({
-                text: `SELECT ${VERSION_COLUMNS} FROM cortex_report_versions WHERE thread_id = $1 ORDER BY version_number ASC`,
-                values: [threadId],
-            }),
-        ).andThen(({ rows }) => {
-            const versions: RecordedVersion[] = [];
-            for (const row of rows) {
-                const parsed = rowToVersion(row);
-                if (parsed.isErr()) return err(parsed.error);
-                versions.push(parsed.value);
-            }
-            return ok(versions);
-        });
-    }
-
-    return { record, getVersion, getLatestVersion, listVersions };
+    return { record, getVersion, getThreadVersion };
 }
