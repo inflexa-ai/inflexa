@@ -33,6 +33,13 @@ The spawn MUST refuse a parent id that resolves to no live thread. The refusal i
 - **WHEN** the caller spawns from a thread that is archived
 - **THEN** the spawn refuses with `parent_not_found`, and no thread is written
 
+### Requirement: The spawn refuses a parent that is not a conversation
+The spawn MUST refuse a parent whose type is not `conversation`. The refusal is typed data with the reason `parent_not_a_conversation`. Thus a report session cannot spawn another report session, and the thread tree under an analysis stays flat.
+
+#### Scenario: A report parent refuses
+- **WHEN** the caller spawns with the id of a report thread as the parent
+- **THEN** the spawn refuses with `parent_not_a_conversation`, and no thread is written
+
 ### Requirement: The spawn refuses an empty parent transcript
 The spawn MUST refuse a parent that holds no messages. The refusal is typed data with the reason `empty_parent_transcript`. A report on an empty transcript reports nothing, thus the refusal is the correct answer.
 

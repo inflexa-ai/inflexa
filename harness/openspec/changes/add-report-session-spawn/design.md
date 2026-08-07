@@ -29,7 +29,9 @@ The operation lives in `src/app/spawn-report-session.ts`, beside the chat-turn p
 
 ### D2. The refusals are typed data on the err channel.
 
-The spawn returns `ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError>`. `SpawnRefusal` is a closed set: `parent_not_found` for an absent or archived parent, and `empty_parent_transcript` for a parent with no messages. Each variant carries the identifiers, in the pattern of `ThreadInputError` (`src/memory/thread-store.ts:135-156`). The store refusals pass through unchanged.
+The spawn returns `ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError>`. `SpawnRefusal` is a closed set: `parent_not_found` for an absent or archived parent, `parent_not_a_conversation` for a parent whose type is not `conversation`, and `empty_parent_transcript` for a parent with no messages.
+
+The parent-type rule keeps the tree flat: a report session cannot spawn another report session. Each variant carries the identifiers, in the pattern of `ThreadInputError` (`src/memory/thread-store.ts:135-156`). The store refusals pass through unchanged.
 
 An archived parent refuses because `getThread` filters `deleted_at IS NULL` (`src/memory/thread-store.ts:442`). A spawn from an archived conversation is a hidden-state write, and the host unarchives first when the user wants it.
 
@@ -50,6 +52,8 @@ The thread id of a conversation comes from the host UI (`src/memory/thread-store
 ### D6. The children listing is a named question, not new SQL.
 
 `listReportSessions(analysisId)` wraps `listThreads({ analysisId, type: "report" })`. The wrapper exists because #309 names the question, and a named operation is what #312 and #225 bind to. It adds no predicate of its own.
+
+Issue #309 words the question as "which report versions belong to this analysis". Under the one-session-one-version policy, each report session holds at most one version. Thus the sessions listing answers the versions question, and no version-store read by analysis is necessary.
 
 ### D7. The session-version policy is a caller requirement, and the store stays permissive.
 
