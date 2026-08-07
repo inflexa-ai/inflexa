@@ -1082,6 +1082,24 @@ describe("appendTurn turn usage rollup", () => {
     });
 });
 
+// --- latestSeq --------------------------------------------------------------
+
+describe("latestSeq", () => {
+    it("gives the greatest seq of a thread that holds turns", async () => {
+        const turn1 = [userText("question one"), assistantText("answer one")];
+        const turn2 = [userText("question two"), assistantText("answer two")];
+        (await append(THREAD, turn1))._unsafeUnwrap();
+        (await append(THREAD, turn2))._unsafeUnwrap();
+
+        // Four rows land at seq 0..3, so the tail is 3.
+        expect((await history.latestSeq(THREAD))._unsafeUnwrap()).toBe(3);
+    });
+
+    it("gives null for a thread with no messages", async () => {
+        expect((await history.latestSeq(THREAD))._unsafeUnwrap()).toBeNull();
+    });
+});
+
 // --- windowing is independent of the rollup ---------------------------------
 
 describe("loadRecent ignores the stored rollup", () => {
