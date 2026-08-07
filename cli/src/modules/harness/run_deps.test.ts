@@ -15,8 +15,11 @@ import {
     type ExecuteAnalysisDeps,
     type ProvenanceCollector,
     type RunAuthorizer,
+    type RunSession,
     type SandboxAgentBuildContext,
 } from "@inflexa-ai/harness";
+
+const runSession = {} as unknown as RunSession;
 
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
@@ -135,14 +138,14 @@ describe("run-engine provenance wiring", () => {
 
         captured = [];
         Bus.on("inflexa", spy);
-        deps.emitProvenance!({ type: "run_started", analysisId: "an-1", runId: "run-1", planSummary: "plan", stepCount: 1, atMs: 1_700_000_000_000 });
+        deps.emitProvenance!({ type: "run_started", analysisId: "an-1", runId: "run-1", planSummary: "plan", stepCount: 1, atMs: 1_700_000_000_000 }, runSession);
 
         expect(captured).toHaveLength(1);
         expect(captured[0]!.type).toBe("prov.run_started");
 
         // The emitter closed over the composition's model id — a settled step records which model
         // drove it (the wiring half of the model-agent record; the mapping itself is prov_bridge's).
-        deps.emitProvenance!({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_001_000 });
+        deps.emitProvenance!({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_001_000 }, runSession);
         const stepEvent = captured[1]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(stepEvent.model).toBe("anthropic/claude-test");
@@ -158,7 +161,7 @@ describe("run-engine provenance wiring", () => {
 
         captured = [];
         Bus.on("inflexa", spy);
-        deps.emitProvenance!({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_002_000 });
+        deps.emitProvenance!({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_002_000 }, runSession);
 
         const stepEvent = captured[0]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
@@ -196,7 +199,7 @@ describe("snapshot-safety — a captured deps field observes a live swap through
 
         captured = [];
         Bus.on("inflexa", spy);
-        capturedEmit({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_000_000 });
+        capturedEmit({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_000_000 }, runSession);
 
         const stepEvent = captured[0]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");

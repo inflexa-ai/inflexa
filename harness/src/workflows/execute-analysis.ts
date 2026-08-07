@@ -340,8 +340,12 @@ export interface ExecuteAnalysisDeps {
      * point. Idempotency is the consumer's job, achieved via the deterministic
      * identifiers the events carry, not via step caching. Every call site is
      * guarded so a throwing observer never fails the run.
+     *
+     * Events arrive with the run's `RunSession` from durable workflow input — a
+     * persisting realization needs its credential, scope, and identity.
+     * Implementations may ignore the parameter.
      */
-    readonly emitProvenance?: (event: RunProvenanceEvent) => void;
+    readonly emitProvenance?: (event: RunProvenanceEvent, session: RunSession) => void;
 
     /**
      * Optional, fire-and-forget observation of the run's live shape, for a host driving a UI.
@@ -379,11 +383,11 @@ function emitStreamPart(part: unknown): Promise<void> {
  * swallowed, never corrupt run state — integrity enforcement lives at the
  * host's own ledger, not here.
  */
-function emitProvenanceGuarded(deps: ExecuteAnalysisDeps, event: RunProvenanceEvent): void {
+function emitProvenanceGuarded(deps: ExecuteAnalysisDeps, event: RunProvenanceEvent, session: RunSession): void {
     const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis");
     if (!deps.emitProvenance) return;
     try {
-        deps.emitProvenance(event);
+        deps.emitProvenance(event, session);
     } catch (err) {
         logger.error("emitProvenance threw", { runId: event.runId, event: event.type, ...logger.errorFields(err) });
     }
@@ -780,14 +784,18 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         planSummary: input.planSummary,
         stepCount: input.steps.length,
     });
-    emitProvenanceGuarded(deps, {
-        type: "run_started",
-        analysisId: input.analysisId,
-        runId,
-        planSummary: input.planSummary,
-        stepCount: input.steps.length,
-        atMs: startedAtMs,
-    });
+    emitProvenanceGuarded(
+        deps,
+        {
+            type: "run_started",
+            analysisId: input.analysisId,
+            runId,
+            planSummary: input.planSummary,
+            stepCount: input.steps.length,
+            atMs: startedAtMs,
+        },
+        input.runSession,
+    );
     // Opening snapshot: every step pending. The scheduler's own map does not exist yet, and an
     // empty one yields exactly that — so a host has the run's full shape before the first dispatch
     // rather than learning the step list from whichever transition happens to land first.
@@ -1345,15 +1353,19 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         // timestamp replay-stable. Never-dispatched steps reach no settlement, so
         // they emit nothing by design.
         const settledAtMs = await DBOS.now();
-        emitProvenanceGuarded(deps, {
-            type: "step_completed",
-            analysisId: input.analysisId,
-            runId,
-            stepId: settled.stepId,
-            status: stepStatus,
-            ...(stepDurationMs !== undefined ? { durationMs: stepDurationMs } : {}),
-            atMs: settledAtMs,
-        });
+        emitProvenanceGuarded(
+            deps,
+            {
+                type: "step_completed",
+                analysisId: input.analysisId,
+                runId,
+                stepId: settled.stepId,
+                status: stepStatus,
+                ...(stepDurationMs !== undefined ? { durationMs: stepDurationMs } : {}),
+                atMs: settledAtMs,
+            },
+            input.runSession,
+        );
     }
 
     await drainBudgetExceededNotifications(budgetExceededChildIds);
@@ -1458,14 +1470,18 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     // `DBOS.now()` is checkpointed, so the span stays replay-stable (see `RunProvenanceEvent`).
     // The duration measures from the `run_started` read threaded in as `startedAtMs`.
     const terminalAtMs = await DBOS.now();
-    emitProvenanceGuarded(deps, {
-        type: "run_completed",
-        analysisId: input.analysisId,
-        runId,
-        status,
-        atMs: terminalAtMs,
-        durationMs: terminalAtMs - startedAtMs,
-    });
+    emitProvenanceGuarded(
+        deps,
+        {
+            type: "run_completed",
+            analysisId: input.analysisId,
+            runId,
+            status,
+            atMs: terminalAtMs,
+            durationMs: terminalAtMs - startedAtMs,
+        },
+        input.runSession,
+    );
 
     try {
         await DBOS.runStep(
