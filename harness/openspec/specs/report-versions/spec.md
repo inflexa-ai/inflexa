@@ -36,16 +36,16 @@ A recorded version MUST hold the block document, the snapshot, and the anchor on
 - **WHEN** a caller inspects the store surface
 - **THEN** the surface holds record and read operations only, and no operation changes a recorded row
 
-### Requirement: A stable id and a per-thread ordinal
-Each version MUST get a stable version id and an ordinal that is unique inside its thread. The first version of a thread holds the ordinal 1. The next ordinal is the maximum of the thread plus one. When two records race, the unique index refuses one insert, and the store tries the insert again one time. When the second insert also loses, the store gives the typed database error.
+### Requirement: One version for each thread
+The store MUST hold at most one version for each thread, and a named unique constraint on the thread id enforces it. A second record for the same thread MUST refuse with the typed reason `thread_already_holds_version`, and no new row lands. The refusal maps from the constraint violation, and the record reads nothing before the insert.
 
-#### Scenario: The ordinals count up inside one thread
-- **WHEN** the caller records three versions in one thread
-- **THEN** the versions hold the ordinals 1, 2, and 3
+#### Scenario: A second record on one thread refuses
+- **WHEN** the caller records a second version for a thread that holds one
+- **THEN** the record refuses with `thread_already_holds_version`, and the store holds one row for the thread
 
-#### Scenario: Two threads count independently
+#### Scenario: Two threads each hold one version
 - **WHEN** each of two threads records its first version
-- **THEN** each version holds the ordinal 1
+- **THEN** each thread holds one version
 
 ### Requirement: A parent version link records reuse
 A version can name a parent version with its stable id. The link is optional, because a first version has no parent. The parent MUST belong to the same analysis, and the record refuses a parent outside it. An unknown parent id refuses through the foreign key. When a cascade or an out-of-band delete removes the parent row, the link of the child MUST become null, and the child row stays.
@@ -76,11 +76,11 @@ The operation MUST NOT run the reference validation, and it MUST NOT mint a snap
 - **THEN** the read of the version gives the snapshot as it was at the record
 
 ### Requirement: The reads of a thread
-The store MUST give one version by its id, the latest version of a thread, and the version list of a thread. The list is in ordinal order. A read parses the stored document and snapshot with the existing schemas. A row that fails the parse MUST read as a typed error, and an absent row reads as a normal absence. A corrupt row MUST fail the whole list read, thus a partial history never presents as complete. For a thread with no versions, the latest read gives an absence, and the list gives an empty list.
+The store MUST give one version by its id, and the one version of a thread. A read parses the stored document and snapshot with the existing schemas. A row that fails the parse MUST read as a typed error, and an absent row reads as a normal absence. For a thread with no version, the thread read gives an absence.
 
-#### Scenario: The latest version of a thread
-- **WHEN** a thread holds the ordinals 1, 2, and 3
-- **THEN** the latest read gives the version with the ordinal 3
+#### Scenario: The version of a thread
+- **WHEN** a thread holds a recorded version
+- **THEN** the thread read gives that version
 
 #### Scenario: An unknown id is a normal absence
 - **WHEN** the caller reads a version id that no row holds
@@ -101,11 +101,11 @@ A delete of a report thread MUST NOT remove the versions that the thread recorde
 - **THEN** the read of the version by its id still gives the version
 
 ### Requirement: One report session records one version
-A caller of the record operation MUST record at most one version for each report thread. The record lands one time, when the mechanical gate passes and the user accepts the report. Before the acceptance, the session iterates the draft, and no version row exists. A correction after the acceptance is a new report session, and its version names the earlier version through the parent link. Thus every version row holds the ordinal 1, and the per-thread ordinal generality of the store stays unused. The store does not enforce this rule, and the requirement binds the session loop and the gate.
+A caller of the record operation MUST record at most one version for each report thread. The record lands one time, when the mechanical gate passes and the user accepts the report. Before the acceptance, the session iterates the draft, and no version row exists. A correction after the acceptance is a new report session, and its version names the earlier version through the parent link. The store enforces the rule, and a second record for one thread refuses as typed data.
 
 #### Scenario: The accepted report records one time
 - **WHEN** the report session records its accepted document
-- **THEN** the thread holds one version, and the version holds the ordinal 1
+- **THEN** the thread holds one version
 
 #### Scenario: A correction starts a new session
 - **WHEN** the user asks for a correction after the acceptance
