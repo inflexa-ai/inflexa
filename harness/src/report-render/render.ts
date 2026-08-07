@@ -1,5 +1,5 @@
 /**
- * The page renderer: the document walk, the value-map validation, and the page assembly.
+ * The page walk: the document walk, the value-map validation, and the problem collection.
  *
  * `renderReportPage` walks the sections in document order. It dispatches each block to its kind renderer,
  * and it validates the bound value against the shape that the block needs. A missing entry, or an entry of
@@ -11,38 +11,19 @@
  * list entry.
  *
  * The output is a pure function of the two inputs. The renderer reads no clock, no random value, and no
- * locale. A scalar shows through `String(value)` inside the value renderer. Thus the same document and the
- * same values give the same bytes.
+ * locale. Thus the same document and the same values give the same bytes.
  */
 
 import { err, ok, type Result } from "neverthrow";
 
 import type { Block, ReportDocument } from "../contracts/report-blocks.js";
-import { deriveChartOption, renderChart } from "./chart.js";
-import { escapeHtml } from "./escape.js";
-import { CDN_HEAD, CHART_BOOTSTRAP, ECHARTS_THEME, ECHARTS_THEME_NAME, PAGE_CSS } from "./page.js";
-import { renderClaim, renderNav, renderSectionClose, renderSectionOpen, renderText } from "./prose.js";
-import { ReferenceLedger, renderReferenceList } from "./references.js";
+import { renderChart } from "./chart-view.js";
+import { deriveChartOption } from "./chart.js";
+import { assemblePage, renderReferenceSection } from "./page-view.js";
+import { renderClaim, renderNav, renderSection, renderText } from "./prose.js";
+import { ReferenceLedger } from "./references.js";
 import type { RenderProblem, RenderValue, RenderValues } from "./types.js";
 import { renderCitation, renderFigure, renderMetric, renderTable } from "./values.js";
-
-/**
- * The theme object as script-safe JSON. The theme carries no `<` today. The escape of `<` to `<`
- * follows the script-element invariant with no exception, thus a later edit that adds a `<` stays safe. The
- * browser reverses the escape when it parses the script, thus the theme value stays exact.
- */
-const THEME_JSON = JSON.stringify(ECHARTS_THEME).replace(/</g, "\\u003c");
-
-/**
- * The registration script for the ECharts theme. It runs before the chart bootstrap, thus each chart reads
- * the registered theme by its name. The guard skips the call when the ECharts runtime did not load.
- */
-const THEME_REGISTRATION = `(function () {
-  if (typeof echarts === "undefined") {
-    return;
-  }
-  echarts.registerTheme(${JSON.stringify(ECHARTS_THEME_NAME)}, ${THEME_JSON});
-})();`;
 
 /**
  * Render a report document and its value map to one HTML string.
@@ -62,10 +43,9 @@ export function renderReportPage(document: ReportDocument, values: RenderValues)
         return err(problems);
     }
 
-    const title = escapeHtml(document.title);
     const nav = renderNav(document.sections);
     const references = renderReferenceSection(ledger);
-    return ok(assemblePage(title, nav, content.join("\n"), references));
+    return ok(assemblePage(document.title, nav, content.join(""), references));
 }
 
 /**
@@ -135,12 +115,11 @@ function renderBlock(block: Block, values: RenderValues, ledger: ReferenceLedger
             return renderChart(block, option.value);
         }
         case "section": {
-            const parts = [renderSectionOpen(block, depth)];
+            const parts: string[] = [];
             for (const child of block.blocks) {
                 parts.push(renderBlock(child, values, ledger, depth + 1, problems));
             }
-            parts.push(renderSectionClose());
-            return parts.join("\n");
+            return renderSection(block, depth, parts.join(""));
         }
     }
 }
@@ -153,54 +132,4 @@ function missingValue(blockId: string, expected: RenderValue["type"]): RenderPro
 /** A `wrong-shape` problem that names the block, the shape that arrived, and the shape that it needs. */
 function wrongShape(blockId: string, actual: RenderValue["type"], expected: RenderValue["type"]): RenderProblem {
     return { blockId, kind: "wrong-shape", detail: `The block needs a ${expected} value entry, but the entry is a ${actual}.` };
-}
-
-/**
- * Wrap the reference list in one fixed frame. An empty ledger gives an empty string, thus the page shows no
- * empty reference frame.
- */
-function renderReferenceSection(ledger: ReferenceLedger): string {
-    const list = renderReferenceList(ledger);
-    if (list === "") {
-        return "";
-    }
-    return [
-        `<section class="report-references-section mt-16 pt-8 border-t border-slate-200">`,
-        `<h2 class="text-xl font-semibold tracking-tight text-slate-900 mb-4">References</h2>`,
-        list,
-        `</section>`,
-    ].join("\n");
-}
-
-/**
- * Assemble the page from the escaped title, the navigation, the main content, and the reference frame. The
- * style rules inline in the head, and the two scripts sit at the end of the body. The theme registration
- * runs before the chart bootstrap, thus each chart finds its theme.
- */
-function assemblePage(title: string, nav: string, content: string, references: string): string {
-    const main = [
-        `<main class="report-main mx-auto max-w-4xl px-6 py-10">`,
-        `<h1 class="report-title text-4xl font-bold tracking-tight text-slate-900 mb-8">${title}</h1>`,
-        content,
-        references,
-        `</main>`,
-    ]
-        .filter((part) => part.length > 0)
-        .join("\n");
-    const body = [nav, main, `<script>${THEME_REGISTRATION}</script>`, `<script>${CHART_BOOTSTRAP}</script>`].join("\n");
-    return [
-        `<!doctype html>`,
-        `<html lang="en">`,
-        `<head>`,
-        `<meta charset="utf-8">`,
-        `<meta name="viewport" content="width=device-width, initial-scale=1">`,
-        `<title>${title}</title>`,
-        CDN_HEAD,
-        `<style>${PAGE_CSS}</style>`,
-        `</head>`,
-        `<body>`,
-        body,
-        `</body>`,
-        `</html>`,
-    ].join("\n");
 }
