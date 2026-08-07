@@ -45,6 +45,21 @@ The renderer MUST give each of the eight block kinds a rendered form. The render
 - **WHEN** the caller renders a figure block with a figure source string and a caption
 - **THEN** the page holds an image with that source, and the caption below it
 
+#### Scenario: An empty table renders its header alone
+- **WHEN** the caller renders a table block whose value entry holds zero rows and named columns
+- **THEN** the page holds the table with its header, and no data row
+
+#### Scenario: An empty chart still renders its container
+- **WHEN** the caller renders a chart block whose value entry holds zero rows
+- **THEN** the page holds the chart container, and the inline option holds an empty data list
+
+### Requirement: The page navigation
+The page MUST hold a left-side navigation with one anchor for each top-level section. Each anchor MUST target its section by the section block id.
+
+#### Scenario: The navigation lists the top-level sections
+- **WHEN** the caller renders a document with three top-level sections
+- **THEN** the navigation holds three anchors, and each anchor targets its section id
+
 ### Requirement: Escaping is always on
 The renderer MUST escape every interpolated string: the prose, each title, each label, each caption, and each attribute value. Markup inside agent prose MUST reach the page as text, and never as an element.
 
@@ -63,8 +78,31 @@ The renderer MUST derive the ECharts option object from the chart type, the enco
 - **WHEN** the caller renders a chart block
 - **THEN** the inline option carries the normalized layout, and it carries no in-spec title
 
+### Requirement: The per-type derivation rules
+The renderer MUST hold one fixed derivation rule for each chart type. A chart whose encoding lacks a column that its type demands MUST give a `RenderProblem`. The renderer MUST compute no aggregate, and a pie or heatmap entry with a repeated category MUST give a `RenderProblem`. The histogram MUST bin with the auto rule: the larger of the Sturges count and the Freedman-Diaconis count. The box MUST compute type-7 quantiles with Tukey fences at 1.5 IQR. Category order and group order MUST follow the first appearance in the rows.
+
+#### Scenario: The histogram bins deterministically
+- **WHEN** the caller renders a histogram over the same rows two times
+- **THEN** the two pages hold the same bin edges, and the bin count follows the auto rule
+
+#### Scenario: The box computes the summary
+- **WHEN** the caller renders a box chart over a category with seven numeric values
+- **THEN** the inline option holds the type-7 five-number summary, and each outlier sits in a paired scatter series
+
+#### Scenario: A repeated pie category refuses
+- **WHEN** the caller renders a pie whose rows hold one category two times
+- **THEN** the render returns a `RenderProblem` that names the block id and the repeated category
+
+#### Scenario: The heatmap grid is dense
+- **WHEN** the caller renders a heatmap whose rows lack one pair of x and y
+- **THEN** the inline option holds a cell for every pair, and the absent pair holds a null value
+
+#### Scenario: The order follows first appearance
+- **WHEN** the caller renders a bar chart whose categories first appear as Day2, Day10, Day1
+- **THEN** the category axis lists Day2, Day10, Day1 in that order
+
 ### Requirement: The claim evidence renders as markers and a reference list
-A claim MUST render its prose with evidence markers, and the references MUST list at the end of the page. The markers number by first appearance. An identical reference MUST appear one time in the list.
+A claim MUST render its prose with evidence markers, and the references MUST list at the end of the page. The markers number by first appearance. An identical reference MUST appear one time in the list. Reference identity is the full reference value after a stable serialization, thus two references are identical only when every field matches. A derivation reference MUST list as its operation with its two pinned inputs, each named by path and locator.
 
 #### Scenario: Two claims share one reference
 - **WHEN** the caller renders two claim blocks that carry the same reference
