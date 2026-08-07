@@ -56,6 +56,7 @@ const ANALYSIS_KEYED_TABLES = [
     "cortex_runs",
     "cortex_step_executions",
     "cortex_plans",
+    "cortex_report_versions",
     "cortex_analysis_threads",
     "cortex_working_memory",
     "cortex_asks",
@@ -68,6 +69,7 @@ const NOTHING_LEFT: Record<string, number> = {
     cortex_runs: 0,
     cortex_step_executions: 0,
     cortex_plans: 0,
+    cortex_report_versions: 0,
     cortex_analysis_threads: 0,
     cortex_working_memory: 0,
     cortex_asks: 0,
@@ -81,6 +83,7 @@ const FULLY_SEEDED: Record<string, number> = {
     cortex_runs: 2,
     cortex_step_executions: 2,
     cortex_plans: 1,
+    cortex_report_versions: 2,
     cortex_analysis_threads: 2,
     cortex_working_memory: 1,
     cortex_asks: 1,
@@ -173,6 +176,19 @@ describe("createAnalysisPurge", () => {
                     values: [threadId, seq],
                 });
             }
+        }
+
+        // Two recorded report versions on the first thread — the second reuses
+        // the first as its parent. A version outlives its thread and leaves the
+        // store only in the analysis purge.
+        const reportVersionIds = [`rv-1-${analysisId}`, `rv-2-${analysisId}`];
+        for (const [index, versionId] of reportVersionIds.entries()) {
+            await rig.pool.query({
+                text: `INSERT INTO cortex_report_versions
+                         (version_id, analysis_id, thread_id, version_number, parent_version_id, document, snapshot)
+                       VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, '{}'::jsonb)`,
+                values: [versionId, analysisId, threadIds[0], index + 1, index === 0 ? null : reportVersionIds[0]],
+            });
         }
 
         const runIds = [rig.nextWorkflowId(`run-1-${analysisId}-`), rig.nextWorkflowId(`run-2-${analysisId}-`)];
