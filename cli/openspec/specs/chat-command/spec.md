@@ -121,7 +121,7 @@ A text-shaped `data-presentation` part (`markdown`, `code`, `table`) MUST print 
 
 A pixel-shaped part MUST print one line for each entry. These parts are an `echart` or `svg` presentation (materialized through the shared cache), a `data-file-reference` entry, and a `data-report-preview`. The line carries a kind tag, a title, and the resolved path inside an OSC 8 `file://` hyperlink. The plain path stays visible, for a terminal with no hyperlink support. A `data-report-preview-failed` part prints its reason.
 
-The sink MUST drop an event that a sub-agent emits, which is one whose call path is deeper than the top-level agent. Any other conversation-emitted part MUST print a one-line tagged fallback, so the sink observes it rather than swallows it.
+A sub-agent event is one whose call path is deeper than the top-level agent. The sink MUST NOT print such an event at the transcript root. If a tool call is open, the sink MUST print the activity label of the event as a subordinate line under that tool call. If no tool call is open, the sink MUST drop the event. Any other conversation-emitted part MUST print a one-line tagged fallback, so the sink observes it rather than swallows it.
 
 The sink MUST extract what it renders at receipt. It MUST NOT retain a received event or part object, because an in-process emit shares mutable references with the agent loop.
 
@@ -152,7 +152,9 @@ Diagnostics go to stderr. Only the conversation goes to stdout.
 #### Scenario: Sub-agent traffic stays out of the transcript
 
 - **WHEN** an inner agent (planner, literature reviewer) emits events during a turn
-- **THEN** none of its deltas or tool chips appear on stdout
+- **THEN** no delta and no tool chip of that agent prints at the transcript root
+- **AND** an activity label of that agent prints as a subordinate line under the open tool call
+- **AND** nothing prints for that agent when no tool call is open
 
 #### Scenario: Unknown parts are observed, not hidden
 

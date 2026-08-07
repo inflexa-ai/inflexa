@@ -613,9 +613,11 @@ The directory states the same fact in the tree, where a reader meets it first.
 - **The dependency runs one way.** A file under `dev/` can import product code,
   because a dev surface is a consumer of the product. A product file must never
   import `dev/`. A `no-restricted-imports` rule enforces this for a static
-  import. It exempts the files under `dev/` and the registration gate in
-  `src/cli/index.ts`. It does NOT see a dynamic `import()`, so that one form
-  stays a review item — refer to the rule's own comment for the reason.
+  import. It exempts the files under `dev/`, and nothing else. It does NOT see a
+  dynamic `import()`, so that one form stays a review item. As a result the
+  registration gate in `src/cli/index.ts` needs no exemption. Its three lazy
+  imports pass on that gap. Thus the gate keeps the guard against a static
+  import — refer to the rule's own comment for the reason.
 - **A shared helper stays outside.** If a product surface and a dev surface both
   call it, the helper belongs in the module that owns its subject, not in `dev/`.
   `seedProfileLedger` (`profile_trigger.ts`) is the example: the parity trigger is

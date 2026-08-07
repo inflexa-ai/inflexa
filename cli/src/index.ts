@@ -46,7 +46,7 @@ process.on("exit", releaseHeldInstanceLocks);
 // no-op: a hung cleanup hook would otherwise trap the user's repeated `kill` with no exit short of
 // SIGKILL, so the repeat bypasses the chain and force-exits immediately with the conventional
 // 128+signal code — the standard escape hatch. SIGINT is deliberately untouched: it carries
-// chat-turn semantics (interrupt the turn, second press stops) wired per-turn in modules/harness/chat.ts.
+// chat-turn semantics (interrupt the turn, second press stops) wired per-turn in modules/harness/dev/chat.ts.
 const SIGNAL_EXIT_CODES = { SIGTERM: 143, SIGHUP: 129 } as const;
 let terminationHandled = false;
 for (const signal of ["SIGTERM", "SIGHUP"] as const) {
