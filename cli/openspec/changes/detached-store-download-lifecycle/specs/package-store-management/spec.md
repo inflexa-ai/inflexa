@@ -127,9 +127,16 @@ them into a staged root. It then merges that staged root into the store root one
 child at a time. A provisioning run that writes into the same pool during the
 merge can meet a half-merged store root.
 
-The refusal SHALL apply to the whole live period, which is the states `pending`
-and `running`. A row of `running` with no live holder reads as `failed`, thus a
-dead downloader SHALL NOT refuse the command.
+The refusal SHALL key on a live lock holder. A run is live when the row reports
+`pending` or `running`, and a process holds the download lock. A row of `running`
+with no live holder reads as `failed`, thus a dead downloader SHALL NOT refuse the
+command.
+
+A `pending` row carries no holder until the child takes the lock. That window
+starts no merge, because the merge comes after the transfer. Thus the window is
+safe, and a provisioning run inside it meets no half-merged store root. A
+`pending` row also shows nothing about the health of the starter. As a result, a
+refusal on the row alone would block the command with no transfer in flight.
 
 #### Scenario: A live download refuses the provisioning run
 
@@ -142,6 +149,12 @@ dead downloader SHALL NOT refuse the command.
 - **GIVEN** a row that reports `running`, whose holder process is gone
 - **WHEN** `inflexa store add <spec>` runs
 - **THEN** the state reads as `failed`, and the command runs
+
+#### Scenario: A pending row with no holder does not refuse the provisioning run
+
+- **GIVEN** a row that reports `pending`, and no holder of the download lock
+- **WHEN** `inflexa store add <spec>` runs
+- **THEN** the command runs, because no merge starts before the child takes the lock
 
 ## MODIFIED Requirements
 
@@ -163,9 +176,15 @@ say that the user stopped the transfer, and it SHALL name the same retry. When n
 row exists, it SHALL say that no download ran, because a store can arrive by a
 route that wrote no row.
 
-The inspection SHALL report an available update when the receipt pins a manifest
-that is not the current one. It SHALL name `inflexa store download --update`, and
-it SHALL open no prompt. The user owns that decision.
+The inspection SHALL report an available update when the recorded resolve differs
+from the receipt. The row records the digest of the last resolve, and the receipt
+pins the digest that is installed. The inspection SHALL name `inflexa store
+download --update`, and it SHALL open no prompt. The user owns that decision.
+
+A resolve happens only when `inflexa store download` or `inflexa setup` runs.
+`inflexa store ls` stays local, and it opens no network call. Thus the two
+surfaces report no update between a moved tag and the next resolve. The sidebar
+obeys the same rule, because it reads the same two records.
 
 The inspection command SHALL stay prompt-free and SHALL gain no option, because a
 passive diagnostic stays passive. A new option on an `auto` command is unsafe
@@ -213,9 +232,15 @@ until the user says otherwise.
 
 #### Scenario: The listing reports an available update
 
-- **GIVEN** a receipt that pins a manifest that is not the current one
+- **GIVEN** a recorded resolve whose digest differs from the digest that the receipt pins
 - **WHEN** `inflexa store ls` runs
 - **THEN** the output says that an update is available, names `inflexa store download --update`, and opens no prompt
+
+#### Scenario: A moved tag that no resolve saw reports no update
+
+- **GIVEN** a receipt that matches the last recorded resolve, and a tag that moved after that resolve
+- **WHEN** `inflexa store ls` runs
+- **THEN** the output reports no update, and the listing opens no network call
 
 #### Scenario: A store with no download row is reported plainly
 
