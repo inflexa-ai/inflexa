@@ -15,8 +15,8 @@ import { renderReferenceList } from "./references-view.js";
 import { scriptJson } from "./script-json.js";
 
 /**
- * The theme object as script-safe JSON. `scriptJson` replaces every `<` with `<`, thus a later edit
- * that adds a `<` to the theme stays safe inside the script sink. The browser reads `<` as `<`, thus
+ * The theme object as script-safe JSON. `scriptJson` replaces every `<` with `\u003c`, thus a later edit
+ * that adds a `<` to the theme stays safe inside the script sink. The JSON parser reads `\u003c` as `<`, thus
  * the theme value stays exact.
  */
 const THEME_JSON = scriptJson(ECHARTS_THEME);

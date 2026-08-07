@@ -16,8 +16,8 @@ import { scriptJson } from "./script-json.js";
 export function renderChart(block: ChartBlock, option: EchartOption): string {
     const containerId = chartContainerId(block.id);
     // The JSON goes to the page through `raw()`, thus `scriptJson` is the sole guard of this sink. It
-    // replaces every `<` with `<`, thus a `</script` sequence in a string cell cannot close the
-    // element early. The browser reads `<` as `<`, thus the option value stays exact.
+    // replaces every `<` with `\u003c`, thus a `</script` sequence in a string cell cannot close the
+    // element early. The JSON parser reads `\u003c` as `<`, thus the option value stays exact.
     const json = scriptJson(option);
     return String(
         <>

@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Escaping is always on
-The renderer MUST escape every interpolated string through the markup runtime, which escapes each child and each attribute value by default. A raw insertion MUST occur only at a JSON script sink, and each serialized JSON MUST replace every `<` with `\u003c` before the insertion. Markup inside agent prose MUST reach the page as text, and never as an element.
+The renderer MUST escape every interpolated string through the markup runtime, which escapes each child and each attribute value by default. A raw insertion of serialized document data MUST occur only at a JSON script sink. Each serialized JSON MUST replace every `<` with `\u003c` before the insertion. A raw insertion is otherwise legal only for a trusted page constant, and for sibling markup that the runtime escaped already. Markup inside agent prose MUST reach the page as text, and never as an element.
 
 #### Scenario: Hostile prose stays text
 - **WHEN** the caller renders a text block whose prose holds a script tag
