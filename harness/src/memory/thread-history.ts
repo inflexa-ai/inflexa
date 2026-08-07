@@ -192,6 +192,16 @@ export interface ThreadHistory {
      * empty thread reports `empty-thread`.
      */
     retractLastTurn(threadId: string): ResultAsync<RetractOutcome, DbError>;
+    /**
+     * The greatest `messages.seq` in the thread, or `null` when the thread holds
+     * no messages. The read takes no lock: it reports the tail at the read
+     * moment, and a concurrent append can move the tail one row later.
+     *
+     * `appendTurn` computes the same value under its lock to place the next row.
+     * This read shares the table, not that statement. A lock here buys a caller
+     * no guarantee, because the tail can move one append later without it.
+     */
+    latestSeq(threadId: string): ResultAsync<number | null, DbError>;
 }
 
 /**
@@ -631,5 +641,19 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         );
     }
 
-    return { appendTurn, loadRecent, loadPage, retractLastTurn };
+    function latestSeq(threadId: string): ResultAsync<number | null, DbError> {
+        // `MAX(seq)` over no rows is SQL NULL, so a thread with no messages reads
+        // as `null`, not as a seq — the absence a caller reads before it treats
+        // the value as an anchor. The `::text` cast carries a seq past 2^53 across
+        // the driver intact, the way every other read of this bigint column does,
+        // and `Number` makes the crossing in one place.
+        return tryQuery("thread-history.latestSeq", () =>
+            pool.query<{ max_seq: string | null }>("SELECT MAX(seq)::text AS max_seq FROM messages WHERE thread_id = $1", [threadId]),
+        ).map(({ rows }) => {
+            const maxSeq = rows[0]?.max_seq ?? null;
+            return maxSeq === null ? null : Number(maxSeq);
+        });
+    }
+
+    return { appendTurn, loadRecent, loadPage, retractLastTurn, latestSeq };
 }
