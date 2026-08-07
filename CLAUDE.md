@@ -185,11 +185,14 @@ A reply that reports an analysis, a review, or a status uses this shape, in this
 
 Drop each sentence that fits no section. A small question gets a small answer, without the shape. Write a maximum of 300 words in a reply.
 
+Use a vertical list for three or more parallel facts. Keep the reason inside the same item. Keep causal prose as prose.
+
 ## The shape of a pull request description
 
 - Give what changed and why in one paragraph.
 - Give the notes that a reviewer must have before the diff.
 - Do not restate the diff, the specs, the tests, or the CI result. The pull request holds them already.
+- Use a vertical list for three or more parallel facts. Keep the reason inside the same item.
 - Write a maximum of 300 words above the checkboxes of the template.
 
 ## The rule
