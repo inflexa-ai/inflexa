@@ -13,13 +13,13 @@
 
 ## 3. The render function
 
-- [ ] 3.1 Make `renderReportPage(document, values)`: the document walk, the value-map validation with collected `RenderProblem` values, and the `Result` channel. A claim takes no value entry.
-- [ ] 3.2 Make the page assembly: the skeleton, the navigation, the reference list, and the deterministic serialization rules (no clock, no random value, no locale formatting, `String(value)` for a scalar).
-- [ ] 3.3 Write the tests of the function: the byte-identical double render, the missing-value problem, the wrong-shape problem, the collected problems, the in-memory-only render, and the no-local-asset scan of the output.
+- [x] 3.1 Make `renderReportPage(document, values)`: the document walk, the value-map validation with collected `RenderProblem` values, and the `Result` channel. A claim takes no value entry.
+- [x] 3.2 Make the page assembly: the skeleton, the navigation, the reference list, and the deterministic serialization rules (no clock, no random value, no locale formatting, `String(value)` for a scalar).
+- [x] 3.3 Write the tests of the function: the byte-identical double render, the missing-value problem, the wrong-shape problem, the collected problems, the in-memory-only render, and the no-local-asset scan of the output.
 
 ## 4. The gates
 
-- [ ] 4.1 Run `bun run format:file` on each changed source file.
-- [ ] 4.2 Run `tsc -p tsconfig.json`, and repair each finding.
-- [ ] 4.3 Run the lint on `src/report-render/`, and repair each finding.
-- [ ] 4.4 Run the tests of `src/report-render/` only. Do not run the full suite.
+- [x] 4.1 Run `bun run format:file` on each changed source file.
+- [x] 4.2 Run `tsc -p tsconfig.json`, and repair each finding.
+- [x] 4.3 Run the lint on `src/report-render/`, and repair each finding.
+- [x] 4.4 Run the tests of `src/report-render/` only. Do not run the full suite.
