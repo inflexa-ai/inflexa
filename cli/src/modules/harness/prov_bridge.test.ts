@@ -4,7 +4,9 @@ import type { AgentSession, ArtifactManifestEntry, ArtifactRegistrationInput, Pr
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
 import type { ProvModelId } from "../../types/prov.ts";
-import { fileQName } from "../prov/document.ts";
+import { provModel } from "../prov/document.ts";
+
+const { fileQName } = provModel;
 import { createBusArtifactRegistry, createRunProvenanceEmitter, createSwappableSandboxEmitters } from "./prov_bridge.ts";
 
 // Bus-spy harness: capture every `inflexa` event the adapter emits, always detaching in cleanup so

@@ -2,7 +2,7 @@ import type { ArtifactRegistrationInput, ArtifactRegistry, ExternalRegistrationR
 
 import { Bus } from "../../lib/bus.ts";
 import type { ProvCommandInputRef, ProvCommandRef, ProvFileKey, ProvFileRef, ProvModelId, ProvStepRef, ProvUsedInputRef } from "../../types/prov.ts";
-import { fileQName } from "../prov/document.ts";
+import { provModel } from "../prov/document.ts";
 import { systemActor } from "../prov/prov.ts";
 
 // The cli↔harness provenance bridge: the two halves that connect the harness's execution machinery
@@ -251,7 +251,7 @@ export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry 
                 Bus.emit("inflexa", { type: "prov.command_executed", analysisId: input.resourceId, actor, step, command, model });
                 for (const file of files) {
                     Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, file, step, generation: "command" });
-                    registered.push({ path: file.path, externalId: fileQName(file) });
+                    registered.push({ path: file.path, externalId: provModel.fileQName(file) });
                 }
             }
 
@@ -261,7 +261,7 @@ export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry 
                 const file = attest(entry);
                 if (file === null) continue;
                 Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, file, step, generation: "step" });
-                registered.push({ path: file.path, externalId: fileQName(file) });
+                registered.push({ path: file.path, externalId: provModel.fileQName(file) });
             }
 
             // Step-level attested-input registry: container-absolute reads strip to analysis-relative so a

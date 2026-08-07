@@ -1,5 +1,6 @@
 import { ok, err, type Result } from "neverthrow";
 import type { ProvDocument } from "@inflexa-ai/tsprov";
+import { applyProvEvent, computeChainHash, signHexDigest, PROV_UNIFY_OPTIONS, type ProvEvent } from "@inflexa-ai/prov-kernel";
 import type { BusEvent, StampedEvent } from "../../types/events.ts";
 import type { ProvActor } from "../../types/prov.ts";
 import type { Analysis } from "../../types/analysis.ts";
@@ -11,21 +12,8 @@ import { getLogger } from "../../lib/log.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
 import { findAnalysesByRef, findAnalysesByRefWithAnchor, getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { updateAnalysisProvenance } from "../../db/primary_mutation.ts";
-import {
-    appendCreation,
-    appendInputAdded,
-    appendInputRemoved,
-    appendRunStarted,
-    appendRunCompleted,
-    appendStepCompleted,
-    appendCommandExecuted,
-    appendFileWritten,
-    appendInputUsed,
-    freshDocument,
-    loadDocument,
-    PROV_UNIFY_OPTIONS,
-} from "./document.ts";
-import { loadOrGenerateKeypair, computeChainHash, signHexDigest } from "./signing.ts";
+import { provModel, provSubject } from "./document.ts";
+import { loadOrGenerateKeypair } from "./signing.ts";
 import { loadAuth } from "../auth/auth.ts";
 import { decodeIdTokenClaims } from "../auth/whoami.ts";
 import pkg from "../../../package.json";
@@ -41,19 +29,23 @@ import { WaitGroup } from "@/lib/wg.ts";
  * The agent responsible for a user-initiated action: the logged-in user's email, or an anonymous
  * person when unauthenticated. Absence rides the ok channel — a failed/empty auth means anonymous,
  * never an error (the action still happened and must be recorded).
+ *
+ * `id` is the SAME email value the cli has always keyed user agents by — the kernel derives the
+ * `agent-user-…` QName from `id`, so this keeps the derived QNames byte-identical on existing
+ * documents (see `types/prov.ts`).
  */
 export function currentUserActor(): ProvActor {
     return loadAuth()
         .map((auth) => decodeIdTokenClaims(auth.idToken)?.email)
         .match<ProvActor>(
-            (email) => (email ? { kind: "user", email } : { kind: "anonymous" }),
+            (email) => (email ? { kind: "user", id: email, email } : { kind: "anonymous" }),
             () => ({ kind: "anonymous" }),
         );
 }
 
 /** The agent for a change inflexa makes autonomously: the CLI itself, stamped with its version and source commit. */
 export function systemActor(): ProvActor {
-    return { kind: "system", version: pkg.version, commit: bakedEnv.gitCommit };
+    return { kind: "system", label: "inflexa cli", version: pkg.version, commit: bakedEnv.gitCommit };
 }
 
 // --- Recorder ---
@@ -119,9 +111,24 @@ function isProvEvent(event: StampedEvent): event is StampedProvEvent {
     return event.type.startsWith("prov.");
 }
 
+/** A prov bus member with its envelope stripped — the stamp id dropped and the `prov.` prefix removed. */
+type KernelEventOf<E> = E extends { type: `prov.${infer K}` } ? Omit<E, "type" | "__infId"> & { type: K } : never;
+
+/**
+ * Strip the bus envelope off a prov member, yielding the kernel event `applyProvEvent` consumes.
+ * The `ProvEvent` return type is the exhaustiveness guard: a NEW `prov.*` bus member whose stripped
+ * shape has no kernel counterpart makes the return statement fail to compile — a forgotten kernel
+ * mapping is a build error, not a silently dropped record.
+ */
+function toKernelEvent(event: StampedProvEvent): ProvEvent {
+    // The cast only re-labels `type` after the mechanical prefix strip; the conditional type above
+    // carries every payload field through unchanged, and the return type checks the result.
+    return { ...event, type: event.type.slice("prov.".length) } as KernelEventOf<StampedProvEvent>;
+}
+
 function onEvent(event: StampedEvent): void {
-    // Session-scoped events are not ours — drop them before the shared work. The switch then dispatches
-    // ONLY the per-event builder; the doc lookup, its guard, and the dirty-mark are common to all of it.
+    // Session-scoped events are not ours — drop them before the shared work; the doc lookup, its
+    // guard, and the dirty-mark are common to every prov event.
     if (!isProvEvent(event)) return;
     const doc = liveDocForAnalysis(event.analysisId);
     if (!doc) return;
@@ -130,47 +137,9 @@ function onEvent(event: StampedEvent): void {
     // un-isolated, and several prov emit sites are UNGUARDED — notably the ArtifactRegistry `register()`
     // path (`prov_bridge.ts`), whose harness caller treats a throw as an attestation failure and fails
     // the step, orphaning its outputs. So a defect in one builder must drop that single record (log +
-    // skip the dirty-mark), never crash the emitting mutation/step. The builders don't call `unified()`
-    // today, so this is defense-in-depth against a future append-time invariant, not a live path.
+    // skip the dirty-mark), never crash the emitting mutation/step.
     try {
-        switch (event.type) {
-            case "prov.analysis_created":
-                appendCreation(doc, event.analysisId, event.actor);
-                break;
-            case "prov.input_added":
-                appendInputAdded(doc, event.analysisId, event.actor, event.input, event.derivedFromAnalysisId);
-                break;
-            case "prov.input_removed":
-                appendInputRemoved(doc, event.analysisId, event.actor, event.input);
-                break;
-            case "prov.run_started":
-                appendRunStarted(doc, event.analysisId, event.actor, event.run);
-                break;
-            case "prov.run_completed":
-                appendRunCompleted(doc, event.analysisId, event.actor, event.outcome);
-                break;
-            case "prov.step_completed":
-                appendStepCompleted(doc, event.analysisId, event.actor, event.outcome, event.model);
-                break;
-            case "prov.command_executed":
-                appendCommandExecuted(doc, event.analysisId, event.actor, event.step, event.command, event.model);
-                break;
-            case "prov.file_written":
-                appendFileWritten(doc, event.analysisId, event.actor, event.file, event.step, event.generation);
-                break;
-            case "prov.input_used":
-                appendInputUsed(doc, event.analysisId, event.actor, event.step, event.input);
-                break;
-            default:
-                // `event satisfies never`: every prov.* variant is handled above, so a NEW one added to
-                // BusEvent without a case here fails to compile at this line — a forgotten wiring is a
-                // build error, not a silently dropped record.
-                event satisfies never;
-                // `event.type` is statically `never` here but holds the real event's discriminant at
-                // runtime, naming which unhandled variant was dropped.
-                log.error({ type: (event as StampedEvent).type }, "unhandled prov event — not recorded");
-                return;
-        }
+        applyProvEvent(provModel, doc, toKernelEvent(event));
     } catch (err) {
         log.error({ type: event.type, analysisId: event.analysisId, err }, "prov builder threw; record dropped");
         return;
@@ -204,13 +173,13 @@ function liveDocForAnalysis(analysisId: string): ProvDocument | null {
             return null;
         },
     );
-    const docResult = loadDocument(analysis, integrity?.provenance ?? null);
+    const docResult = provModel.loadDocument(provSubject(analysis), integrity?.provenance ?? null);
     if (docResult.isErr()) {
         log.error({ analysisId, cause: docResult.error.cause }, "stored provenance is corrupt; starting fresh document");
         // Clear the stale chain hash so the next flush starts a new chain instead
         // of chaining from the old (now-disconnected) hash.
         chainHashes.delete(analysisId);
-        const fresh = freshDocument(analysis);
+        const fresh = provModel.freshDocument(provSubject(analysis));
         liveDocs.set(analysisId, fresh);
         return fresh;
     }
