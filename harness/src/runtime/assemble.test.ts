@@ -8,7 +8,6 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { upsertAnalysis } from "../state/analyses.js";
 import { createThreadAgentResolver, type CoreRuntime, type CoreRuntimeDeps } from "./assemble.js";
-import { createFixtureResolver } from "../report-model/fixture-resolver.js";
 import type { AgentDefinition } from "../loop/types.js";
 import type { ThreadType } from "../memory/thread-store.js";
 
@@ -108,16 +107,16 @@ describe("the report session handle", () => {
     });
 });
 
-describe("the report reference resolver dep", () => {
-    it("carries an optional reference resolver, thus an embedder can wire the report preview", () => {
-        // The assignment proves that the deps surface accepts the resolver. `assembleCoreRuntime`
-        // forwards it to the report agent's preview tool, thus a drift or a dropped field fails this at
-        // the type level and takes the one wiring point with it.
-        const withResolver: Pick<CoreRuntimeDeps, "reportReferenceResolver"> = { reportReferenceResolver: createFixtureResolver() };
-        expect(withResolver.reportReferenceResolver).toBeDefined();
-        // The dep is optional, thus the OSS default omits it and the preview tool degrades as data.
-        const without: Pick<CoreRuntimeDeps, "reportReferenceResolver"> = {};
-        expect(without.reportReferenceResolver).toBeUndefined();
+describe("the report host-read cap dep", () => {
+    it("carries an optional host-read cap, thus an embedder can tune the report resolver", () => {
+        // The assignment proves that the deps surface accepts the cap. `assembleCoreRuntime` builds the
+        // report resolver factory over it, thus a drift or a dropped field fails this at the type level and
+        // takes the one wiring point with it.
+        const withCap: Pick<CoreRuntimeDeps, "reportHostReadCapBytes"> = { reportHostReadCapBytes: 8 * 1024 * 1024 };
+        expect(withCap.reportHostReadCapBytes).toBeDefined();
+        // The cap is optional, thus the OSS default omits it and the resolver uses its 16 MiB default.
+        const without: Pick<CoreRuntimeDeps, "reportHostReadCapBytes"> = {};
+        expect(without.reportHostReadCapBytes).toBeUndefined();
     });
 });
 

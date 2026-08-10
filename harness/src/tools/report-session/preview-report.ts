@@ -30,6 +30,7 @@ import { extname, join } from "node:path";
 import { z } from "zod";
 
 import { resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
+import type { AuthContext } from "../../auth/types.js";
 import type { Block, ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { describeFsError, tryFsWrite, type FsError } from "../../lib/fs-result.js";
@@ -69,12 +70,13 @@ export type PreviewReportResult =
  * The construction deps of the preview tool.
  *
  * `resolveWorkspaceRoot` maps the analysis of the call onto its workspace root, thus one singleton tool
- * serves every analysis and it resolves the root per call from the scope. `resolver` is optional, because a
- * resolver realization can be absent.
+ * serves every analysis and it resolves the root per call from the scope. `makeResolver` is optional, because
+ * a resolver realization can be absent. It binds one analysis, thus the tool makes the resolver over the
+ * scope of the call.
  */
 export interface PreviewReportToolDeps {
     readonly gateway: ReportSessionStateGateway;
-    readonly resolver?: ReferenceResolver;
+    readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly logger?: Logger;
 }
@@ -272,11 +274,12 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             }
             const document = finished.document;
 
-            if (deps.resolver === undefined) {
+            if (deps.makeResolver === undefined) {
                 return ok({ outcome: "resolver-unavailable" });
             }
+            const resolver = deps.makeResolver({ analysisId, auth: ctx.session.auth });
 
-            const { resolutions, unresolved } = await resolveDocument(document, deps.resolver, snapshot);
+            const { resolutions, unresolved } = await resolveDocument(document, resolver, snapshot);
             if (unresolved.length > 0) {
                 return ok({ outcome: "unresolved-references", unresolved });
             }

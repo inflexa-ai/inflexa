@@ -72,6 +72,23 @@ the reference resolver is absent, tell the user, and do not preview again. Previ
 when the draft is ready to show, or when you want to confirm that each reference
 resolves.
 
+## Verify and Record
+
+The loop that ends a report is preview, look, repair, and record. Run it in order:
+
+- \`preview_report\` renders the current draft to a page. The Preview section above
+  gives its rules.
+- \`examine_page\` opens the rendered page in a real browser. It gives back a
+  screenshot, the console errors, and the failed requests. Look at the page.
+- Repair each fault that the look shows. A broken layout, an absent chart, and a
+  failed request each name a block or a binding that you repair.
+- \`record_report_version\` records the report as one version. It records only after
+  you look at the current page. It runs the whole gate first, thus a gap or an
+  unresolved reference comes back, and no version lands. A thread holds one version.
+
+Look again after each repair, because a repair changes the page. Record when the
+page reads clean.
+
 ## Do NOT
 
 - **Transcribe a number from memory.** Every metric, every table cell, and every
@@ -86,4 +103,8 @@ resolves.
   or remove that block by its id, and do not re-author the report.
 - **Leave a gap unread.** When \`finish_draft\` or \`preview_report\` reports a gap or
   an unresolved reference, repair it. Do not present a report that does not finish.
+- **Spiral on a cosmetic doubt.** The visual spiral is a loop of small visual worries
+  with no fault to repair. Look one time, then repair a real fault: a broken layout, an
+  absent chart, or a failed request. A matter of taste is not a fault. When the page
+  reads clean, record.
 `;

@@ -27,13 +27,13 @@
 
 ## 5. The toolset and the prompt
 
-- [ ] 5.1 Register the eyes tool and the record tool in the report-session toolset, beside `preview_report`.
-- [ ] 5.2 Extend the report-session prompt: the loop order (preview, look, repair, record), and the visual-spiral entry in the "Do NOT" list.
-- [ ] 5.3 Write the tests of the toolset registration.
+- [x] 5.1 Register the eyes tool and the record tool in the report-session toolset, beside `preview_report`.
+- [x] 5.2 Extend the report-session prompt: the loop order (preview, look, repair, record), and the visual-spiral entry in the "Do NOT" list.
+- [x] 5.3 Write the tests of the toolset registration.
 
 ## 6. The gates
 
-- [ ] 6.1 Run `bun run format:file` on each changed source file.
-- [ ] 6.2 Run `tsc -p tsconfig.json`, and repair each finding.
-- [ ] 6.3 Run the lint on the changed files, and repair each finding.
-- [ ] 6.4 Run the tests of the changed areas only. Do not run the full suite.
+- [x] 6.1 Run `bun run format:file` on each changed source file.
+- [x] 6.2 Run `tsc -p tsconfig.json`, and repair each finding.
+- [x] 6.3 Run the lint on the changed files, and repair each finding.
+- [x] 6.4 Run the tests of the changed areas only. Do not run the full suite.

@@ -155,7 +155,7 @@ describe("the gap return", () => {
         gateway.seed("t1", { document: { title: "", sections: [] }, snapshot: { artifacts: {} } });
         const tool = createPreviewReportTool({
             gateway,
-            resolver: createFixtureResolver(),
+            makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
         });
 
@@ -177,7 +177,7 @@ describe("the pass path", () => {
         gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
         const tool = createPreviewReportTool({
             gateway,
-            resolver: createFixtureResolver(),
+            makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
         });
 
@@ -222,7 +222,7 @@ describe("the staged asset", () => {
         gateway.seed("t1", { document, snapshot });
         const tool = createPreviewReportTool({
             gateway,
-            resolver: createFixtureResolver(),
+            makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
         });
 
@@ -261,7 +261,7 @@ describe("the figure containment", () => {
         gateway.seed("t1", { document, snapshot });
         const tool = createPreviewReportTool({
             gateway,
-            resolver: createFixtureResolver(),
+            makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
         });
 
@@ -302,7 +302,7 @@ describe("the unresolved reference", () => {
         gateway.seed("t1", { document: metricDoc(), snapshot });
         const tool = createPreviewReportTool({
             gateway,
-            resolver: createFixtureResolver(),
+            makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
         });
 
@@ -322,7 +322,7 @@ describe("the session refusal", () => {
         const root = await makeRoot();
         const tool = createPreviewReportTool({
             gateway: makeFakeGateway(),
-            resolver: createFixtureResolver(),
+            makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
         });
         // The default fixture scope is an analysis scope with no thread id.
@@ -340,7 +340,7 @@ describe("the session refusal", () => {
         const root = await makeRoot();
         const tool = createPreviewReportTool({
             gateway: makeFakeGateway(),
-            resolver: createFixtureResolver(),
+            makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
         });
 
@@ -357,7 +357,7 @@ describe("the session refusal", () => {
         const gateway = makeFakeGateway();
         // The thread belongs to a different analysis than the scope of the call.
         gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot }, "analysis-999");
-        const tool = createPreviewReportTool({ gateway, resolver: createFixtureResolver(), resolveWorkspaceRoot: () => root });
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
