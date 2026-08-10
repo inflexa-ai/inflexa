@@ -100,7 +100,11 @@ def test_deseq2_results():
     counts, metadata = _make_counts_and_metadata()
     dds = DeseqDataSet(counts=counts, metadata=metadata, design="~condition")
     dds.deseq2()
-    stats = DeseqStats(dds)
+    # DeseqStats needs the contrast. pydeseq2 0.4+ makes `contrast` a required
+    # argument, in the form [factor, tested level, reference level]. The design has
+    # one factor `condition` with the levels A and B, thus the contrast tests B
+    # against A.
+    stats = DeseqStats(dds, contrast=["condition", "B", "A"])
     stats.summary()
     res = stats.results_df
     assert res.shape[0] == 30

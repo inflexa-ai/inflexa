@@ -233,6 +233,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Geospatial / spatial omics
     libgdal34t64 libgeos3.12.1t64 libproj25 libsqlite3-0 libudunits2-0 \
     libtiff6 libjpeg-turbo8 libpng16-16 libgl1 libglib2.0-0 \
+    # OpenGL utility library (libGLU.so.1), for rgl. rgl is a transitive dependency
+    # of the R pak solve, thus nothing in the manifest promises it. rgl links against
+    # libGLU at dyn.load. The base image has libGL (libgl1) but not libGLU, thus rgl
+    # fails to load without this package.
+    libglu1-mesa \
     # Graphics / rendering / fonts
     libcairo2 libfreetype6 libfontconfig1 libharfbuzz0b libfribidi0 \
     libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 \
@@ -262,6 +267,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # SANDBOX_EGRESS_FIREWALL=1 is set (callback mode and K8s never set it).
     iptables \
     && rm -rf /var/lib/apt/lists/*
+
+# rgl draws with OpenGL, but the runtime is headless and has no display. This env
+# selects the rgl null device. Thus rgl loads and draws to an off-screen buffer, and
+# rgl.init does not open a GLX context. Without it, rgl.init fails on a machine with
+# no X server, even when libGLU is present.
+ENV RGL_USE_NULL=TRUE
 
 # =============================================================================
 # Node.js 20

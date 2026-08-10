@@ -29,6 +29,7 @@ import importlib.metadata as im
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -104,32 +105,65 @@ def parse_packages_txt(path: Path) -> dict[str, list[str]]:
 
 
 # --- Python import name derivation (mirrors the build's load check) ----------
+#
+# The import name of a distribution is not the distribution name. `protobuf`
+# imports as `google.protobuf`, `python-levenshtein` as `Levenshtein`, and each
+# `sphinxcontrib-*` dist as a member of the `sphinxcontrib` namespace. A swap of a
+# dash for an underscore in the dist name gives a wrong module and a false FAIL.
+#
+# `importlib.metadata.packages_distributions()` maps each real top-level module
+# onto the dist names that provide it. It reads the metadata of every dist on
+# `sys.path`, and the farm site-packages is on `sys.path` through the image .pth
+# file. Thus the map covers the store. The inverse of the map gives the true import
+# names of a dist, and not a guess from the dist name.
+
+def _norm_dist(name: str) -> str:
+    """Return the normalized form of a distribution name (PEP 503).
+
+    `packages_distributions()` reports the raw `Name` metadata of a dist. A lookup
+    must compare the normalized form, because a dash, an underscore, and a dot are
+    one separator in a distribution name."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _is_public_top_level(mod: str) -> bool:
+    """Report whether a name is a public top-level import name.
+
+    `packages_distributions()` derives some names from a file scan. Thus it can
+    report a scan artifact such as `__pycache__`, a private helper that starts with
+    an underscore, or a compiled mypyc module whose name starts with a digit. A
+    public import name is a valid identifier and does not start with an underscore.
+    This filter keeps the public names and drops the artifacts."""
+    return mod.isidentifier() and not mod.startswith("_")
+
+
+_MODULES_BY_DIST: dict[str, list[str]] | None = None
+
+
+def _modules_by_dist() -> dict[str, list[str]]:
+    """Build and cache the map {normalized dist name: [public top-level modules]}.
+
+    The map is the inverse of `packages_distributions()`. The scan runs one time,
+    because it reads the metadata of every dist on `sys.path`."""
+    global _MODULES_BY_DIST
+    if _MODULES_BY_DIST is None:
+        out: dict[str, set[str]] = {}
+        for module, dists in im.packages_distributions().items():
+            if not _is_public_top_level(module):
+                continue
+            for dist in dists:
+                out.setdefault(_norm_dist(dist), set()).add(module)
+        _MODULES_BY_DIST = {k: sorted(v) for k, v in out.items()}
+    return _MODULES_BY_DIST
+
 
 def modules_for(dist: str) -> list[str]:
-    try:
-        d = im.distribution(dist)
-    except im.PackageNotFoundError:
-        return []
-    txt = d.read_text("top_level.txt")
-    mods = [l.strip() for l in txt.splitlines() if l.strip() and not l.startswith("_")] if txt else []
-    if not mods:
-        seen = set()
-        for f in d.files or []:
-            parts = f.parts
-            if len(parts) == 1 and parts[0].endswith(".py") and not parts[0].startswith("_"):
-                seen.add(parts[0][:-3])
-            elif len(parts) >= 2 and parts[1] == "__init__.py":
-                top = parts[0]
-                if top and not top.startswith("_") and not top.endswith((".dist-info", ".data")):
-                    seen.add(top)
-        mods = sorted(seen)
-    if not mods:
-        # Namespace/meta dist (e.g. rpy2, whose code lives in the rpy2-rinterface /
-        # rpy2-robjects sub-dists): no top_level.txt and no own top-level module files,
-        # but the dist name itself is the importable namespace. Fall back to it — a
-        # genuinely-missing package then fails at the real import, not here.
-        mods = [dist.replace("-", "_")]
-    return mods
+    """Return the public top-level modules that a distribution provides.
+
+    An empty list means the dist provides no importable module. A stub dist is one
+    such case (for example `python-levenshtein`, which only pulls in `Levenshtein`).
+    The caller treats an empty list as a skip, and not as a failure."""
+    return _modules_by_dist().get(_norm_dist(dist), [])
 
 
 # --- farm-backed store detection --------------------------------------------
@@ -179,35 +213,48 @@ def _loaded_from_store(mod, store_dir: Path) -> bool:
 
 def check_python(names: list[str], farm_store: Path | None = None) -> list[str]:
     failed = []
+    skipped = []
     for name in names:
-        mods = modules_for(name)
-        if not mods:
-            print(f"  FAIL python {name}: no import module resolvable on the store")
+        try:
+            im.distribution(name)
+        except im.PackageNotFoundError:
+            # Advertised, but its metadata is absent from the store. packages.txt
+            # names a dist the store does not carry — the lie the invariant catches.
+            print(f"  FAIL python {name}: no distribution metadata found on the store")
             failed.append(name)
             continue
-        last = ""
-        imported = None
-        used = ""
+        mods = modules_for(name)
+        if not mods:
+            # The dist is present but provides no importable module. A stub dist is
+            # one such case (for example python-levenshtein, which only pulls in
+            # Levenshtein). The dist advertises no module, thus a missing module is
+            # not a lie. Skip it with a reason, and do not count it as a failure.
+            print(f"  SKIP python {name}: provides no importable top-level module (stub dist)")
+            skipped.append(name)
+            continue
+        # Import every module the dist provides. A dist that advertises a module it
+        # cannot load is a lie, thus one failed module fails the dist.
         for mod in mods:
             try:
                 imported = importlib.import_module(mod)
-                used = mod
-                break
             except Exception as e:  # noqa: BLE001
-                last = f"{mod}: {type(e).__name__}: {e}"
-        if imported is None:
-            print(f"  FAIL python {name}: {last}")
-            failed.append(name)
-            continue
-        # In farm mode the invariant is stronger: an advertised package must load
-        # FROM the farm, not from a stray baked or system copy. A module that
-        # resolves outside the store means packages.txt names a package the farm
-        # does not actually serve.
-        if farm_store is not None and not _loaded_from_store(imported, farm_store):
-            src = getattr(imported, "__file__", "no __file__")
-            print(f"  FAIL python {name}: {used} imported from outside the farm store ({src})")
-            failed.append(name)
-    print(f"import-all python: {len(names) - len(failed)}/{len(names)} OK")
+                print(f"  FAIL python {name}: {mod}: {type(e).__name__}: {e}")
+                failed.append(name)
+                break
+            # In farm mode the invariant is stronger: an advertised package must load
+            # FROM the farm, not from a stray baked or system copy. A module that
+            # resolves outside the store means packages.txt names a package the farm
+            # does not actually serve.
+            if farm_store is not None and not _loaded_from_store(imported, farm_store):
+                src = getattr(imported, "__file__", "no __file__")
+                print(f"  FAIL python {name}: {mod} imported from outside the farm store ({src})")
+                failed.append(name)
+                break
+    ok = len(names) - len(failed) - len(skipped)
+    msg = f"import-all python: {ok}/{len(names)} OK"
+    if skipped:
+        msg += f" ({len(skipped)} skipped: {', '.join(skipped)})"
+    print(msg)
     return failed
 
 
@@ -244,17 +291,29 @@ def check_r(names: list[str]) -> list[str]:
     fpath = Path("/tmp/r_import_failures.txt")
     if fpath.exists():
         fpath.unlink()  # clear any stale file from a prior run before this loop appends
-    # Append each failure to the file INSIDE the loop (not once at the end). A native
-    # crash — a segfault, OOM, or R aborting — cannot be caught by tryCatch and loses
-    # every package after it; incremental appends preserve the failures seen so far so a
-    # crash still surfaces partial results. The Rscript EXIT STATUS is the separate,
-    # authoritative signal for "did the run complete cleanly at all".
+    # Load each advertised package with loadNamespace, and not with library. The
+    # invariant is that each advertised package loads. loadNamespace loads the
+    # namespace and the compiled code. Thus it catches a real load failure, for
+    # example rgl, whose .onLoad opens the graphics driver.
+    #
+    # library also attaches the package, and an attach puts the package on the shared
+    # search path. A package can scan that path when it attaches. conflicted is one
+    # such package. conflicted then fails when the other advertised packages attach at
+    # the same time, but that condition is not the invariant. loadNamespace tests each
+    # package on its own. It is the R form of the Python importlib.import_module check
+    # above.
+    #
+    # Append each failure to the file inside the loop, and not one time at the end. A
+    # native crash does not go through tryCatch, and it loses each package after it. A
+    # segfault, an out-of-memory error, or an R abort is such a crash. The incremental
+    # append keeps the failures seen so far. The Rscript exit status is the separate
+    # and authoritative signal for a clean run.
     script = (
         "args <- commandArgs(trailingOnly=TRUE);"
         "ff <- '/tmp/r_import_failures.txt';"
         "bad <- character(0);"
         "for (p in args) {"
-        "  ok <- tryCatch({ suppressPackageStartupMessages(library(p, character.only=TRUE)); TRUE },"
+        "  ok <- tryCatch({ suppressMessages(loadNamespace(p)); TRUE },"
         "                 error=function(e){ cat(sprintf('  FAIL R %s: %s\\n', p, conditionMessage(e))); FALSE });"
         "  if (!isTRUE(ok)) { bad <- c(bad, p); cat(paste0(p, '\\n'), file=ff, append=TRUE) }"
         "};"
