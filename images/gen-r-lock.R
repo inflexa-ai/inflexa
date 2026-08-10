@@ -29,9 +29,13 @@ if (!is.na(ncpus) && ncpus > 0) {
 m <- yaml::read_yaml(manifest)
 r <- m$r
 
-cran_refs <- as.character(r$cran)
-bioc_refs <- paste0("bioc::", as.character(r$bioconductor))   # DEP already left this list
-git_refs  <- vapply(r$git, function(g) sprintf("git::%s@%s", g$url, g$commit), character(1))
+# A guard on each list: paste0() over an empty vector gives an empty vector, but a
+# NULL list read from YAML can arrive as list() whose as.character is "", and a
+# bare "bioc::" ref stops the solver. Length-test first, thus a manifest with one
+# track resolves.
+cran_refs <- if (length(r$cran)) as.character(r$cran) else character(0)
+bioc_refs <- if (length(r$bioconductor)) paste0("bioc::", as.character(r$bioconductor)) else character(0)
+git_refs  <- if (length(r$git)) vapply(r$git, function(g) sprintf("git::%s@%s", g$url, g$commit), character(1)) else character(0)
 bulk_refs <- c(cran_refs, bioc_refs, git_refs)
 message(sprintf("bulk refs: %d CRAN + %d Bioc + %d git = %d",
                 length(cran_refs), length(bioc_refs), length(git_refs), length(bulk_refs)))

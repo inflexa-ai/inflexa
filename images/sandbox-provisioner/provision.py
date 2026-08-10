@@ -131,7 +131,10 @@ def tree_hash(root: Path) -> str:
     for path in sorted(root.rglob("*"), key=lambda p: str(p.relative_to(root))):
         rel = path.relative_to(root)
         if (HASH_EXCLUDE_DIRS & set(rel.parts) or path.name.endswith(HASH_EXCLUDE_SUFFIX)
-                or rel.parts[0] in NOT_CONTENT):
+                or rel.parts[0] in NOT_CONTENT
+                # An R store directory nests the package one level down, thus its
+                # markers sit at depth two. The markers are bookkeeping, not content.
+                or (len(rel.parts) == 2 and rel.parts[1] in (PIN_MARKER, R_LINKING_MARKER))):
             continue
         h.update(str(rel).encode())
         if path.is_symlink():
@@ -209,9 +212,12 @@ def find_stored(pin: str) -> Path | None:
     """An existing store directory holding exactly this pin, if there is one."""
     name, version = pin.split("==", 1)
     for candidate in sorted(STORE.glob(f"{canon(name)}-{version}-*")):
-        marker = candidate / PIN_MARKER
-        if marker.is_file() and marker.read_text().strip() == pin:
-            return candidate
+        # A Python store directory carries the marker at its root. An R store
+        # directory nests the package one level down, thus the marker sits inside
+        # the inner directory that carries the real package name.
+        for marker in (candidate / PIN_MARKER, candidate / name / PIN_MARKER):
+            if marker.is_file() and marker.read_text().strip() == pin:
+                return candidate
     return None
 
 
@@ -550,16 +556,30 @@ def store_r_package(pkg_dir: Path) -> tuple[Path, bool]:
     existing = find_stored(pin)
     if existing is not None:
         return existing, False
-    digest = tree_hash(pkg_dir)[:16]   # no PIN_MARKER yet; tree_hash excludes it regardless
+    # Nest the package inside the store directory, under its real package name.
+    # R passes a loaded package its resolved library path, and a package such as
+    # Rfast rebuilds its own path as `libname/packagename` in `.onAttach`. A flat
+    # store directory resolves that to `store/<name>`, which does not exist. With
+    # the nesting, the resolved library path is the store directory, and
+    # `libname/packagename` lands on the inner directory. renv's cache proves the
+    # layout. The wrapper is hashed, thus `verify` re-hashes the same shape.
+    wrap = pkg_dir.parent / f".wrap-{pkg_dir.name}"
+    if wrap.exists():
+        shutil.rmtree(wrap)
+    wrap.mkdir()
+    pkg_dir.rename(wrap / name)
+    inner = wrap / name
+    digest = tree_hash(wrap)[:16]   # no PIN_MARKER yet; tree_hash excludes it regardless
     final = STORE / f"{canon(name)}-{version}-{digest}"
     if final.exists():
+        shutil.rmtree(wrap)
         return final, False
-    (pkg_dir / PIN_MARKER).write_text(pin + "\n")
+    (inner / PIN_MARKER).write_text(pin + "\n")
     # Record the LinkingTo packages beside the pin, so a package built against
     # another package's headers stays recorded with it.
-    (pkg_dir / R_LINKING_MARKER).write_text(json.dumps(read_r_linking(pkg_dir)) + "\n")
-    subprocess.run(["chmod", "-R", "a+rX", str(pkg_dir)], check=True)
-    pkg_dir.rename(final)
+    (inner / R_LINKING_MARKER).write_text(json.dumps(read_r_linking(inner)) + "\n")
+    subprocess.run(["chmod", "-R", "a+rX", str(wrap)], check=True)
+    wrap.rename(final)
     return final, True
 
 
@@ -581,7 +601,10 @@ def build_r_farm(farm: Path, stored: dict[str, list[tuple[str, Path]]]) -> None:
             link = subdir / name
             if link.is_symlink() or link.exists():
                 link.unlink()
-            link.symlink_to(str(store_dir))
+            # The target is the inner directory, whose basename is the real package
+            # name. Thus a package that rebuilds its path as libname/packagename
+            # resolves itself through the realpath of the link.
+            link.symlink_to(str(store_dir / name))
 
 
 def check_r_loads(farm: Path, stored: dict[str, list[tuple[str, Path]]]) -> None:
@@ -605,7 +628,7 @@ def check_r_loads(farm: Path, stored: dict[str, list[tuple[str, Path]]]) -> None
         # A compiled package keeps its shared object under libs/. Load it, then read
         # its registered routines, so the check runs the compiled code and not only
         # the symlink resolution.
-        if (store_dir / "libs").is_dir():
+        if (store_dir / name / "libs").is_dir():
             probe = (f"d <- getLoadedDLLs()[['{name}']]; "
                      f"if (!is.null(d)) invisible(getDLLRegisteredRoutines(d)); ")
         else:
@@ -614,11 +637,14 @@ def check_r_loads(farm: Path, stored: dict[str, list[tuple[str, Path]]]) -> None
                  f"suppressMessages(library('{name}', character.only = TRUE)); {probe}")
         proc = subprocess.run(["Rscript", "-e", rexpr], capture_output=True, text=True)
         if proc.returncode != 0:
-            tail = (proc.stderr or "").strip().splitlines()
+            # The last line of an R failure is usually the bare "Execution halted".
+            # The cause sits in the lines above it, thus the report carries the tail
+            # of the stream and not one line.
+            tail = (proc.stderr or "").strip().splitlines()[-8:]
+            detail = "\n  ".join(tail) if tail else "(R wrote nothing to stderr)"
             raise SystemExit(
                 f"[provision] R package {name} does not load through the farm "
-                f"(exit {proc.returncode}): "
-                f"{tail[-1] if tail else '(R wrote nothing to stderr)'}")
+                f"(exit {proc.returncode}):\n  {detail}")
     log(f"R load check: {len(packages)} package(s) load through the farm")
 
 

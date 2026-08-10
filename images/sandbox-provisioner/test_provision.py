@@ -272,7 +272,10 @@ class ContentAddressingTests(StoreTestCase):
         self.assertTrue(is_new)
         self.assertEqual(final.parent, provision.STORE)
         self.assertRegex(final.name, r"^myrpkg-1\.2\.3-[0-9a-f]{16}$")
-        self.assertEqual((final / provision.PIN_MARKER).read_text().strip(), "myRpkg==1.2.3")
+        # The package nests inside the store directory under its real name, thus a
+        # package that rebuilds its path as libname/packagename resolves itself.
+        self.assertTrue((final / "myRpkg" / "DESCRIPTION").is_file())
+        self.assertEqual((final / "myRpkg" / provision.PIN_MARKER).read_text().strip(), "myRpkg==1.2.3")
         self.assertFalse(pkg1.exists())  # published out of staging by rename
 
         pkg2 = self._make_r_pkg(staging / "myRpkg-again", "myRpkg", "1.2.3")
@@ -298,7 +301,7 @@ class ContentAddressingTests(StoreTestCase):
 
         final, is_new = provision.store_r_package(pkg)
         self.assertTrue(is_new)
-        record = json.loads((final / provision.R_LINKING_MARKER).read_text())
+        record = json.loads((final / "cpkg" / provision.R_LINKING_MARKER).read_text())
         self.assertEqual(record, ["Rcpp", "RcppArmadillo", "BH"])
 
         # The marker is excluded from the content address, so verify re-hashes clean.
@@ -308,7 +311,7 @@ class ContentAddressingTests(StoreTestCase):
         # A package with no LinkingTo records an empty list, not a missing marker.
         plain = self._make_r_pkg(staging / "plainpkg", "plainpkg", "2.0")
         final_plain, _ = provision.store_r_package(plain)
-        self.assertEqual(json.loads((final_plain / provision.R_LINKING_MARKER).read_text()), [])
+        self.assertEqual(json.loads((final_plain / "plainpkg" / provision.R_LINKING_MARKER).read_text()), [])
 
 
 class VerifyStoreTests(StoreTestCase):
@@ -484,7 +487,8 @@ class FarmAssemblyTests(StoreTestCase):
             "github": [],
         })
         self.assertTrue((farm / "r" / "cran" / "rpkgA").is_symlink())
-        self.assertEqual(os.readlink(farm / "r" / "cran" / "rpkgA"), str(ra))
+        # The target is the inner directory, whose basename is the package name.
+        self.assertEqual(os.readlink(farm / "r" / "cran" / "rpkgA"), str(ra / "rpkgA"))
         self.assertTrue((farm / "r" / "bioconductor" / "rpkgB").is_symlink())
         self.assertFalse((farm / "r" / "github").exists())  # empty subtree skipped
 
@@ -1211,9 +1215,9 @@ class RLoadCheckTests(StoreTestCase):
         pkgs = []
         for name, compiled in packages:
             store_dir = provision.STORE / f"{name.lower()}-1.0-000000000000000a"
-            store_dir.mkdir()
+            (store_dir / name).mkdir(parents=True)
             if compiled:
-                (store_dir / "libs").mkdir()
+                (store_dir / name / "libs").mkdir()
             pkgs.append((name, store_dir))
         return {"cran": pkgs, "bioconductor": [], "github": []}
 
