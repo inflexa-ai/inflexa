@@ -1,13 +1,17 @@
 /**
  * The authoring tool surface over the draft operations.
  *
- * The factory closes over a private draft holder and the pinned snapshot. It gives eight tools and a
- * read of the current draft. The tools read no ambient state, thus two factories hold two independent
- * drafts.
+ * The factory takes a session-state gateway, and it holds no draft. Each tool reads the thread id from the
+ * scope of the call, loads the state of that thread, applies the pure operation, and persists the new
+ * document. Thus two threads never share one draft, and a landed document outlives a host restart.
  *
- * Each tool maps its flat input onto a core operation, and it applies the pure operation. The holder
- * swaps only on a landed operation. A refused operation returns typed data in the ok channel, and the
- * error channel stays for an unexpected failure.
+ * Each tool maps its flat input onto a core operation, and it applies the pure operation. A landed
+ * document persists before the tool reports `applied: true`. A refused operation returns typed data in the
+ * ok channel, and the error channel stays for an unexpected failure.
+ *
+ * A call with no report thread in its scope, a thread with no stored state, and a gateway fault each
+ * refuse as typed data too. That refusal sits beside the core refusal, and it names the absent thread
+ * scope or the absent state.
  *
  * The primitive admits a flat object input only. Thus a destination is four optional fields, and not a
  * nested union. A conflict between the flat fields refuses before the core runs.
@@ -16,6 +20,7 @@
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import type { Scope } from "../../auth/types.js";
 import {
     addBlock,
     changeBlock,
@@ -32,7 +37,7 @@ import { buildOutline, childOutline, readBlock, type OutlineEntry, type Readable
 import { finishDraft, type FinishResult } from "../../report-model/draft-finish.js";
 import { DraftBlockSchema, type DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
-import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolContext, type ToolError } from "../define-tool.js";
 
 /**
  * The block payload.
@@ -120,7 +125,29 @@ export interface ChangedContainer {
 }
 
 /**
- * The result of a mutation tool. A refusal carries the typed reason.
+ * The closed set of tool-layer refusal reasons.
+ *
+ * `no-thread-scope` means that the scope of the call names no report thread. `absent-state` means that the
+ * gateway holds no state for the thread. `state-unavailable` means that the gateway cannot serve or store
+ * the state. The set is disjoint from the core `DraftRefusalReason`, thus a reader tells a core refusal
+ * from a tool-layer refusal by the reason alone.
+ */
+export type SessionRefusalReason = "no-thread-scope" | "absent-state" | "state-unavailable";
+
+/**
+ * A refusal that the tool layer raises before the core runs.
+ *
+ * The core refuses a bad edit. This layer refuses a call that names no thread, a thread with no stored
+ * state, or a gateway that cannot give the state. It sits beside the core `DraftRefusal`, and it never
+ * widens the closed reason set of the core.
+ */
+export interface SessionRefusal {
+    reason: SessionRefusalReason;
+    detail: string;
+}
+
+/**
+ * The result of a mutation tool. A refusal carries the typed reason, from the core or from the tool layer.
  *
  * A landing carries the child order of each container that it changed, and not the whole outline. A whole
  * outline costs the size of the draft on every landing, thus composing a report of n blocks would spend
@@ -130,24 +157,46 @@ export interface ChangedContainer {
  *
  * A move across two containers reports both. An operation that changes no child order reports none.
  */
-export type MutationResult = { applied: true; changed: ChangedContainer[] } | { applied: false; refusal: DraftRefusal };
+export type MutationResult = { applied: true; changed: ChangedContainer[] } | { applied: false; refusal: DraftRefusal | SessionRefusal };
 
-/** The result of `read_outline`. */
-export interface OutlineResult {
-    outline: OutlineEntry[];
-}
+/** The result of `read_outline`. A load that gives no state refuses instead of an outline. */
+export type OutlineResult = { outline: OutlineEntry[] } | { refused: SessionRefusal };
 
-/** The result of `read_block`. An absent block is an expected outcome, thus it stays in the ok channel. */
-export type ReadBlockResult = { found: true; block: ReadableBlock } | { found: false };
+/**
+ * The result of `read_block`. An absent block is an expected outcome, thus it stays in the ok channel. A
+ * load that gives no state refuses instead of a block.
+ */
+export type ReadBlockResult = { found: true; block: ReadableBlock } | { found: false } | { refused: SessionRefusal };
 
-/** The state that the factory closes over. */
-export interface ReportAuthoringState {
+/** The result of `finish_draft`. A load that gives no state refuses instead of a finish outcome. */
+export type FinishToolResult = FinishResult | { refused: SessionRefusal };
+
+/** The state of one report thread: the document under composition, and the frozen snapshot. */
+export interface ReportSessionState {
+    readonly document: DraftDocument;
     readonly snapshot: ReportSnapshot;
-    /** The draft to start from. The default is an empty draft. */
-    readonly initialDraft?: DraftDocument;
 }
 
-/** The eight authoring tools, plus a read of the current draft. */
+/** The outcome of a gateway load. An absent row is a normal condition, and a fault names the cause. */
+export type SessionStateLoad = { outcome: "found"; state: ReportSessionState } | { outcome: "absent" } | { outcome: "failed"; detail: string };
+
+/** The outcome of a gateway persist. */
+export type SessionStatePersist = { outcome: "persisted" } | { outcome: "failed"; detail: string };
+
+/**
+ * The session-state gateway that the tools read and write.
+ *
+ * The tool layer is the one consumer, thus the interface lives here. The interface speaks a plain
+ * discriminated value, not a `Result`, because the tools read the outcome as data. The runtime realizes
+ * the gateway over the durable store. A load gives the state, a typed absence, or a typed failure. A
+ * persist gives success, or a typed failure.
+ */
+export interface ReportSessionStateGateway {
+    load(threadId: string): Promise<SessionStateLoad>;
+    persist(threadId: string, document: DraftDocument): Promise<SessionStatePersist>;
+}
+
+/** The eight authoring tools. */
 export interface ReportAuthoringTools {
     readonly add_block: Tool<AddBlockInput, MutationResult>;
     readonly change_block: Tool<ChangeBlockInput, MutationResult>;
@@ -156,8 +205,7 @@ export interface ReportAuthoringTools {
     readonly set_title: Tool<SetTitleInput, MutationResult>;
     readonly read_outline: Tool<ReadOutlineInput, OutlineResult>;
     readonly read_block: Tool<ReadBlockInput, ReadBlockResult>;
-    readonly finish_draft: Tool<FinishDraftInput, FinishResult>;
-    currentDraft(): DraftDocument;
+    readonly finish_draft: Tool<FinishDraftInput, FinishToolResult>;
 }
 
 /** The flat fields that name a destination. Both `add_block` and `move_block` carry them. */
@@ -290,51 +338,80 @@ function containerIn(document: DraftDocument, parentId: string | undefined): Cha
     return { parentId, children: childOutline(children, located?.path.length ?? 0) };
 }
 
+/** The report thread id rides on the analysis scope. A scope of a different kind names no report thread. */
+function threadIdOf(scope: Scope): string | undefined {
+    return scope.kind === "analysis" ? scope.threadId : undefined;
+}
+
 /**
  * Every tool of this surface runs inline.
  *
- * The draft is closure memory with no durable backing. A step-mode tool goes through `DBOS.runStep`, which
- * caches the result of a step and replays it without running the body. A replay after a host restart would
- * hand the agent the cached `applied: true` outline of each landed operation while the rebuilt closure
- * holds an empty draft, and the finish would then report an empty document for a report that the
- * transcript shows as complete. Inline mode keeps the tool result and the draft in one lifetime.
+ * A tool loads the state of its thread, applies the pure operation, and persists the result in one body.
+ * The reported outline must agree with the row that the body just wrote. A step-mode tool goes through
+ * `DBOS.runStep`, which caches the result of a step and replays it without a fresh load. A replay could
+ * then report an outline that the current row no longer holds. Inline mode reads and writes the row in one
+ * lifetime, thus the outline never drifts from the state.
  */
 const AUTHORING_EXECUTION_MODE = "inline" as const;
 
 /**
- * Make the eight authoring tools over one draft.
+ * Make the eight authoring tools over a session-state gateway.
  *
- * The holder is a private `let`. Each tool reads the holder at call time, thus a landing through one tool
- * shows in the next call of every tool. The holder swaps only inside `land`, thus a refused operation
- * leaves the draft as it was.
+ * Each tool reads the thread id from the scope of the call, and it loads the state of that thread through
+ * the gateway. Thus one factory serves every thread, and two threads never share one draft. A mutation
+ * persists the new document before it reports `applied: true`, thus a reported landing is never lost.
  */
-export function createReportAuthoringTools(state: ReportAuthoringState): ReportAuthoringTools {
-    const snapshot = state.snapshot;
-    let draft: DraftDocument = state.initialDraft ?? { title: "", sections: [] };
+export function createReportAuthoringTools(gateway: ReportSessionStateGateway): ReportAuthoringTools {
+    /**
+     * Resolve the thread of the call, and load its state.
+     *
+     * A scope of a different kind, or an analysis scope with no thread id, names no thread to edit. Thus
+     * the call refuses before it reaches the gateway. An absent row and a gateway fault each refuse with
+     * the cause.
+     */
+    const openThread = async (ctx: ToolContext): Promise<Result<{ threadId: string; state: ReportSessionState }, SessionRefusal>> => {
+        const threadId = threadIdOf(ctx.session.scope);
+        if (threadId === undefined) {
+            return err({ reason: "no-thread-scope", detail: "the scope of the call carries no report thread id" });
+        }
+        const loaded = await gateway.load(threadId);
+        if (loaded.outcome === "absent") {
+            return err({ reason: "absent-state", detail: `no report session state exists for the thread ${threadId}` });
+        }
+        if (loaded.outcome === "failed") {
+            return err({ reason: "state-unavailable", detail: loaded.detail });
+        }
+        return ok({ threadId, state: loaded.state });
+    };
 
     /**
-     * Swap the holder on a landing, and report the containers that the operation changed.
+     * Persist a landing, and report the containers that the operation changed.
      *
-     * `holders` names them by id, and it reads the draft as it was and the draft as it becomes, because a
-     * removed block has a holder only in the first and an added block has one only in the second. The
-     * child order comes out of `next` in either case.
+     * `holders` names them by id, and it reads the previous document and the next document, because a
+     * removed block has a holder only in the first and an added block has one only in the second. The child
+     * order comes out of `next` in either case. A persist fault refuses with `state-unavailable`, thus the
+     * tool reports `applied: true` only after the row holds the new document.
      */
-    const land = (
+    const land = async (
+        threadId: string,
+        previous: DraftDocument,
         result: Result<DraftDocument, DraftRefusal>,
         holders: (previous: DraftDocument, next: DraftDocument) => (string | undefined)[],
-    ): MutationResult =>
-        result.match<MutationResult, MutationResult>(
-            (next): MutationResult => {
-                const previous = draft;
-                draft = next;
-                // A move inside one container names the same holder two times.
-                const unique = [...new Set(holders(previous, next))];
-                return { applied: true, changed: unique.map((parentId) => containerIn(next, parentId)) };
-            },
-            (refusal): MutationResult => ({ applied: false, refusal }),
-        );
+    ): Promise<MutationResult> => {
+        if (result.isErr()) {
+            return { applied: false, refusal: result.error };
+        }
+        const next = result.value;
+        const persisted = await gateway.persist(threadId, next);
+        if (persisted.outcome === "failed") {
+            return { applied: false, refusal: { reason: "state-unavailable", detail: persisted.detail } };
+        }
+        // A move inside one container names the same holder two times.
+        const unique = [...new Set(holders(previous, next))];
+        return { applied: true, changed: unique.map((parentId) => containerIn(next, parentId)) };
+    };
 
-    const refuse = (refusal: DraftRefusal): MutationResult => ({ applied: false, refusal });
+    const refuse = (refusal: DraftRefusal | SessionRefusal): MutationResult => ({ applied: false, refusal });
 
     const add_block = defineTool({
         id: "add_block",
@@ -349,7 +426,12 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
             const kind = readKind(decodeBlockPayload(input.block));
             return kind !== undefined ? `add ${kind}` : "add a block";
         },
-        execute: async (input): Promise<Result<MutationResult, ToolError>> => {
+        execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
+            const opened = await openThread(ctx);
+            if (opened.isErr()) {
+                return ok(refuse(opened.error));
+            }
+            const { threadId, state } = opened.value;
             const destination = toDestination(input);
             if (destination.isErr()) {
                 return ok(refuse(destination.error));
@@ -357,7 +439,7 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
             const block = decodeBlockPayload(input.block);
             const addedId = readId(block);
             return ok(
-                land(addBlock(draft, { block, destination: destination.value }, snapshot), (_previous, next) => [
+                await land(threadId, state.document, addBlock(state.document, { block, destination: destination.value }, state.snapshot), (_previous, next) => [
                     addedId === undefined ? undefined : holderIdOf(next, addedId),
                 ]),
             );
@@ -372,12 +454,21 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         inputSchema: changeBlockInput,
         executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `change ${input.targetId}`,
-        execute: async (input): Promise<Result<MutationResult, ToolError>> => {
+        execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
+            const opened = await openThread(ctx);
+            if (opened.isErr()) {
+                return ok(refuse(opened.error));
+            }
+            const { threadId, state } = opened.value;
             const operation = toChangeOperation(input);
             if (operation.isErr()) {
                 return ok(refuse(operation.error));
             }
-            return ok(land(changeBlock(draft, operation.value, snapshot), (_previous, next) => [holderIdOf(next, input.targetId)]));
+            return ok(
+                await land(threadId, state.document, changeBlock(state.document, operation.value, state.snapshot), (_previous, next) => [
+                    holderIdOf(next, input.targetId),
+                ]),
+            );
         },
     });
 
@@ -387,8 +478,18 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         inputSchema: removeBlockInput,
         executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `remove ${input.targetId}`,
-        execute: async (input): Promise<Result<MutationResult, ToolError>> =>
-            ok(land(removeBlock(draft, { targetId: input.targetId }, snapshot), (previous) => [holderIdOf(previous, input.targetId)])),
+        execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
+            const opened = await openThread(ctx);
+            if (opened.isErr()) {
+                return ok(refuse(opened.error));
+            }
+            const { threadId, state } = opened.value;
+            return ok(
+                await land(threadId, state.document, removeBlock(state.document, { targetId: input.targetId }, state.snapshot), (previous) => [
+                    holderIdOf(previous, input.targetId),
+                ]),
+            );
+        },
     });
 
     const move_block = defineTool({
@@ -399,16 +500,23 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         inputSchema: moveBlockInput,
         executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `move ${input.targetId}`,
-        execute: async (input): Promise<Result<MutationResult, ToolError>> => {
+        execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
+            const opened = await openThread(ctx);
+            if (opened.isErr()) {
+                return ok(refuse(opened.error));
+            }
+            const { threadId, state } = opened.value;
             const destination = toDestination(input);
             if (destination.isErr()) {
                 return ok(refuse(destination.error));
             }
             return ok(
-                land(moveBlock(draft, { targetId: input.targetId, destination: destination.value }, snapshot), (previous, next) => [
-                    holderIdOf(previous, input.targetId),
-                    holderIdOf(next, input.targetId),
-                ]),
+                await land(
+                    threadId,
+                    state.document,
+                    moveBlock(state.document, { targetId: input.targetId, destination: destination.value }, state.snapshot),
+                    (previous, next) => [holderIdOf(previous, input.targetId), holderIdOf(next, input.targetId)],
+                ),
             );
         },
     });
@@ -422,7 +530,14 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `title the report ${input.title}`,
         // The title sits on the document, thus no container changes its child order.
-        execute: async (input): Promise<Result<MutationResult, ToolError>> => ok(land(ok(setTitle(draft, input.title)), () => [])),
+        execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
+            const opened = await openThread(ctx);
+            if (opened.isErr()) {
+                return ok(refuse(opened.error));
+            }
+            const { threadId, state } = opened.value;
+            return ok(await land(threadId, state.document, ok(setTitle(state.document, input.title)), () => []));
+        },
     });
 
     const read_outline = defineTool({
@@ -435,7 +550,13 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         executionMode: AUTHORING_EXECUTION_MODE,
         // The input carries no field, thus a hook can only restate the name of the tool.
         describeCall: "none",
-        execute: async (): Promise<Result<OutlineResult, ToolError>> => ok({ outline: buildOutline(draft) }),
+        execute: async (_input, ctx): Promise<Result<OutlineResult, ToolError>> => {
+            const opened = await openThread(ctx);
+            if (opened.isErr()) {
+                return ok({ refused: opened.error });
+            }
+            return ok({ outline: buildOutline(opened.value.state.document) });
+        },
     });
 
     const read_block = defineTool({
@@ -446,8 +567,12 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         inputSchema: readBlockInput,
         executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `read ${input.targetId}`,
-        execute: async (input): Promise<Result<ReadBlockResult, ToolError>> => {
-            const block = readBlock(draft, input.targetId);
+        execute: async (input, ctx): Promise<Result<ReadBlockResult, ToolError>> => {
+            const opened = await openThread(ctx);
+            if (opened.isErr()) {
+                return ok({ refused: opened.error });
+            }
+            const block = readBlock(opened.value.state.document, input.targetId);
             const result: ReadBlockResult = block !== undefined ? { found: true, block } : { found: false };
             return ok(result);
         },
@@ -462,7 +587,13 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         executionMode: AUTHORING_EXECUTION_MODE,
         // The input carries no field, thus a hook can only restate the name of the tool.
         describeCall: "none",
-        execute: async (): Promise<Result<FinishResult, ToolError>> => ok(finishDraft(draft, snapshot)),
+        execute: async (_input, ctx): Promise<Result<FinishToolResult, ToolError>> => {
+            const opened = await openThread(ctx);
+            if (opened.isErr()) {
+                return ok({ refused: opened.error });
+            }
+            return ok(finishDraft(opened.value.state.document, opened.value.state.snapshot));
+        },
     });
 
     return {
@@ -474,6 +605,5 @@ export function createReportAuthoringTools(state: ReportAuthoringState): ReportA
         read_outline,
         read_block,
         finish_draft,
-        currentDraft: (): DraftDocument => draft,
     };
 }

@@ -88,6 +88,7 @@ const ANALYSIS_KEYED_DELETES: readonly { readonly op: string; readonly sql: stri
     { op: "purgeAnalysis.askGrants", sql: "DELETE FROM cortex_ask_grants WHERE analysis_id = $1" },
     { op: "purgeAnalysis.plans", sql: "DELETE FROM cortex_plans WHERE analysis_id = $1" },
     { op: "purgeAnalysis.reportVersions", sql: "DELETE FROM cortex_report_versions WHERE analysis_id = $1" },
+    { op: "purgeAnalysis.reportSessionState", sql: "DELETE FROM cortex_report_session_state WHERE analysis_id = $1" },
     { op: "purgeAnalysis.analysisState", sql: "DELETE FROM cortex_analysis_state WHERE analysis_id = $1" },
 ];
 
