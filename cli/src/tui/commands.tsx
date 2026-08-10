@@ -257,7 +257,7 @@ function noticeKindFor(result: VerifyResult): "info" | "warn" | "error" {
         case "no-key":
             return "warn";
         case "tampered":
-        case "invalid-sidecar":
+        case "invalid-attestation":
         case "invalid-key":
         case "verify-error":
             return "error";
@@ -1946,8 +1946,8 @@ export type ProvExportSeams = {
     readonly resolveOutputDir: typeof resolveOutputDir;
     /** The persisted provenance chain, rendered in the requested format. Real: `document.serializeProvenance`. */
     readonly serializeProvenance: typeof import("../modules/prov/document.ts").serializeProvenance;
-    /** The detached signature over the serialized document. Real: `verify.buildSidecar`. */
-    readonly buildSidecar: typeof import("../modules/prov/verify.ts").buildSidecar;
+    /** The detached signature over the serialized document. Real: `verify.buildAttestation`. */
+    readonly buildAttestation: typeof import("../modules/prov/verify.ts").buildAttestation;
 };
 
 /**
@@ -1962,21 +1962,22 @@ async function loadProvExportSeams(): Promise<ProvExportSeams | null> {
     try {
         const prov = await import("../modules/prov/document.ts");
         const verify = await import("../modules/prov/verify.ts");
-        return { resolveOutputDir, serializeProvenance: prov.serializeProvenance, buildSidecar: verify.buildSidecar };
+        return { resolveOutputDir, serializeProvenance: prov.serializeProvenance, buildAttestation: verify.buildAttestation };
     } catch {
         return null;
     }
 }
 
 /**
- * Serialize an analysis's provenance into its output folder — the document and its signature
- * sidecar — then notify the destination.
+ * Serialize an analysis's provenance into its output folder — the document and its signed
+ * attestation — then notify the destination.
  *
- * The sidecar is built BEFORE either file is written, and a signing failure writes neither. Writing
- * the document first would leave unsigned provenance on disk beneath a notice saying provenance is
- * never exported unsigned; the delete flow exports on the user's behalf without being asked, which
- * makes that contradiction routine rather than rare. A sidecar that cannot be *written* after the
- * document already landed is reported differently, because that leaves a real file the user has.
+ * The attestation is built BEFORE either file is written, and a signing failure writes neither.
+ * Writing the document first would leave unsigned provenance on disk beneath a notice saying
+ * provenance is never exported unsigned; the delete flow exports on the user's behalf without being
+ * asked, which makes that contradiction routine rather than rare. An attestation that cannot be
+ * *written* after the document already landed is reported differently, because that leaves a real
+ * file the user has.
  *
  * Exported for the delete ladder, which exports into the live workspace before retiring it, and for
  * the ordering tests. Resolves `true` only when both files landed — every failure is notified here,
@@ -2008,11 +2009,11 @@ export async function exportProvenanceToFile(a: Analysis, format: BuiltinProvFor
     );
     if (!text) return false;
 
-    // Provenance + sidecar are one logical export: the signature has to exist before anything is
-    // written, so a signing failure leaves the destination exactly as it found it.
-    const sidecarResult = await seams.buildSidecar(text);
-    if (sidecarResult.isErr()) {
-        notify({ kind: "error", text: `Signing failed (${sidecarResult.error.type}) — provenance is never exported unsigned.` });
+    // Provenance + attestation are one logical export: the signature has to exist before anything
+    // is written, so a signing failure leaves the destination exactly as it found it.
+    const attestationResult = await seams.buildAttestation(text);
+    if (attestationResult.isErr()) {
+        notify({ kind: "error", text: `Signing failed (${attestationResult.error.type}) — provenance is never exported unsigned.` });
         return false;
     }
 
@@ -2024,9 +2025,9 @@ export async function exportProvenanceToFile(a: Analysis, format: BuiltinProvFor
     }
 
     const sigDest = `${dest}.sig.json`;
-    const sidecarWrite = writeFileResult(sigDest, JSON.stringify(sidecarResult.value, null, 2), "exportProvenance:sidecar");
-    if (sidecarWrite.isErr()) {
-        notify({ kind: "error", text: `Wrote provenance but sidecar failed: ${String(sidecarWrite.error.cause)}` });
+    const attestationWrite = writeFileResult(sigDest, JSON.stringify(attestationResult.value, null, 2), "exportProvenance:attestation");
+    if (attestationWrite.isErr()) {
+        notify({ kind: "error", text: `Wrote provenance but attestation failed: ${String(attestationWrite.error.cause)}` });
         return false;
     }
 
@@ -2408,7 +2409,7 @@ export const commands: Command[] = [
 
             const result = await verify.verifyExportFile(provPath);
             if (!result) {
-                notify({ kind: "warn", text: "No .sig.json sidecar found. The export may be unsigned." });
+                notify({ kind: "warn", text: "No .sig.json attestation found. The export may be unsigned." });
                 return;
             }
             notify({ kind: noticeKindFor(result), text: kernel.formatVerifyResult(result) });
