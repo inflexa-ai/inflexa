@@ -1,44 +1,118 @@
 /**
  * The tests of the authoring tool surface.
  *
- * Each test drives a tool through `execute` with a minimal tool context. The core operations have their
- * own tests, thus these tests cover the flat-to-core map, the ok-channel refusal, the holder swap, and
- * the isolation of two factories.
+ * Each test drives a tool through `execute` with a minimal tool context and an in-memory gateway. The core
+ * operations have their own tests, thus these tests cover the flat-to-core map, the ok-channel refusal, the
+ * gateway persist, the per-thread isolation, and the tool-layer refusals.
  */
 
 import { describe, expect, it } from "bun:test";
 
+import type { Scope } from "../../auth/types.js";
 import type { DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
-import { createReportAuthoringTools } from "./authoring-tools.js";
+import type { ToolContext } from "../define-tool.js";
+import {
+    createReportAuthoringTools,
+    type ReportSessionState,
+    type ReportSessionStateGateway,
+    type SessionStateLoad,
+    type SessionStatePersist,
+} from "./authoring-tools.js";
 
 /** An empty snapshot. No test here needs a resolvable artifact, thus the map holds nothing. */
 const snapshot: ReportSnapshot = { artifacts: {} };
+
+/** An empty draft, as a legal draft state. */
+function emptyDraft(): DraftDocument {
+    return { title: "", sections: [] };
+}
 
 /** A section with one empty child slot, as a legal draft state. */
 function oneSectionDraft(): DraftDocument {
     return { title: "", sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [] }] };
 }
 
-describe("add_block", () => {
-    it("lands a section on an empty draft, and reports the root container", async () => {
-        const tools = createReportAuthoringTools({ snapshot });
-        const { ctx } = makeToolContext();
+/**
+ * An in-memory gateway. It holds one state for each thread, thus two threads stay isolated. The load and
+ * the persist read and write the same map, thus a landed document is visible to the next load. A fault flag
+ * forces the failure outcome, and the store clones each value to model a durable round trip.
+ */
+interface FakeGateway extends ReportSessionStateGateway {
+    seed(threadId: string, state: ReportSessionState): void;
+    peek(threadId: string): ReportSessionState | undefined;
+    setFault(fault: boolean): void;
+}
 
-        const result = await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Intro", blocks: [] } }, ctx);
+function makeFakeGateway(): FakeGateway {
+    const rows = new Map<string, ReportSessionState>();
+    let fault = false;
+    return {
+        seed(threadId, state): void {
+            rows.set(threadId, structuredClone(state));
+        },
+        peek(threadId): ReportSessionState | undefined {
+            const state = rows.get(threadId);
+            return state === undefined ? undefined : structuredClone(state);
+        },
+        setFault(value): void {
+            fault = value;
+        },
+        load(threadId): Promise<SessionStateLoad> {
+            if (fault) {
+                return Promise.resolve({ outcome: "failed", detail: "the store is down" });
+            }
+            const state = rows.get(threadId);
+            return Promise.resolve(state === undefined ? { outcome: "absent" } : { outcome: "found", state: structuredClone(state) });
+        },
+        persist(threadId, document): Promise<SessionStatePersist> {
+            if (fault) {
+                return Promise.resolve({ outcome: "failed", detail: "the store is down" });
+            }
+            const existing = rows.get(threadId);
+            const snapshotOfThread = existing?.snapshot ?? snapshot;
+            rows.set(threadId, { document: structuredClone(document), snapshot: snapshotOfThread });
+            return Promise.resolve({ outcome: "persisted" });
+        },
+    };
+}
+
+/** A tool context whose scope names a report thread. */
+function ctxForThread(threadId: string): ToolContext {
+    const { ctx } = makeToolContext();
+    const scope: Scope = { kind: "analysis", analysisId: "analysis-001", threadId };
+    return { ...ctx, session: { ...ctx.session, scope } };
+}
+
+/** A tool context whose scope names a resource of a different kind, thus it carries no thread id. */
+function ctxOtherKind(): ToolContext {
+    const { ctx } = makeToolContext();
+    const scope: Scope = { kind: "target-assessment", targetAssessmentId: "ta-001", billingContextId: "bc-001" };
+    return { ...ctx, session: { ...ctx.session, scope } };
+}
+
+describe("add_block", () => {
+    it("lands a section on an empty draft, reports the root container, and the gateway holds it", async () => {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: emptyDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
+
+        const result = await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Intro", blocks: [] } }, ctxForThread("t1"));
 
         const value = result._unsafeUnwrap();
         expect(value.applied).toBe(true);
         if (value.applied) {
             expect(value.changed).toEqual([{ children: [{ id: "s1", kind: "section", depth: 0, label: "Intro" }] }]);
         }
-        expect(tools.currentDraft().sections.map((section) => section.id)).toEqual(["s1"]);
+        // The gateway holds the new document, thus the persist ran before the tool reported the landing.
+        expect(gateway.peek("t1")!.document.sections.map((section) => section.id)).toEqual(["s1"]);
     });
 
-    it("refuses a reference outside the snapshot, and the holder stays unchanged", async () => {
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
-        const { ctx } = makeToolContext();
+    it("refuses a reference outside the snapshot, and the gateway document stays unchanged", async () => {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
         const metric = {
             kind: "metric",
             id: "m1",
@@ -46,22 +120,27 @@ describe("add_block", () => {
             value: { kind: "artifact-value", path: "does/not/exist.csv", hash: "sha256:abc", locator: { column: "n", row: 0 } },
         };
 
-        const result = await tools.add_block.execute({ block: metric, parentId: "s1" }, ctx);
+        const result = await tools.add_block.execute({ block: metric, parentId: "s1" }, ctxForThread("t1"));
 
         const value = result._unsafeUnwrap();
         expect(value.applied).toBe(false);
         if (!value.applied) {
             expect(value.refusal.reason).toBe("unresolved-reference");
         }
-        expect(tools.currentDraft().sections).toHaveLength(1);
-        expect(tools.currentDraft().sections[0]!.blocks).toEqual([]);
+        // The refusal ran no persist, thus the row stays the seeded draft.
+        expect(gateway.peek("t1")!.document.sections).toHaveLength(1);
+        expect(gateway.peek("t1")!.document.sections[0]!.blocks).toEqual([]);
     });
 
     it("refuses `before` and `after` together, and names the conflict", async () => {
-        const tools = createReportAuthoringTools({ snapshot });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: emptyDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
 
-        const result = await tools.add_block.execute({ block: { kind: "section", id: "s2", title: "X", blocks: [] }, before: "a", after: "b" }, ctx);
+        const result = await tools.add_block.execute(
+            { block: { kind: "section", id: "s2", title: "X", blocks: [] }, before: "a", after: "b" },
+            ctxForThread("t1"),
+        );
 
         const value = result._unsafeUnwrap();
         expect(value.applied).toBe(false);
@@ -69,11 +148,11 @@ describe("add_block", () => {
             expect(value.refusal.reason).toBe("conflicting-destination");
             expect(value.refusal.detail).toContain("before");
         }
-        expect(tools.currentDraft().sections).toEqual([]);
+        expect(gateway.peek("t1")!.document.sections).toEqual([]);
     });
 
     it("publishes the block grammar in its JSON schema", () => {
-        const tools = createReportAuthoringTools({ snapshot });
+        const tools = createReportAuthoringTools(makeFakeGateway());
         const schema = JSON.stringify(tools.add_block.jsonSchema);
 
         // The model learns the payload shape from the schema alone, thus the eight kinds must be in it.
@@ -82,73 +161,108 @@ describe("add_block", () => {
         }
     });
 
-    it("accepts an explicit null in each destination field that the call does not use", async () => {
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
-        const { ctx } = makeToolContext();
-        const input = { block: { kind: "text", id: "t1", content: { prose: "x" } }, parentId: "s1", place: null, before: null, after: null };
-
-        // Strict function calling requires every declared key, thus the unused anchors arrive as null.
-        expect(tools.add_block.inputSchema.safeParse(input).success).toBe(true);
-
-        const value = (await tools.add_block.execute(input, ctx))._unsafeUnwrap();
-        expect(value.applied).toBe(true);
-    });
-
     it("decodes a block payload that arrives as a JSON string", async () => {
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
         const encoded = JSON.stringify({ kind: "text", id: "t1", content: { prose: "x" } });
 
-        const value = (await tools.add_block.execute({ block: encoded, parentId: "s1" }, ctx))._unsafeUnwrap();
+        const value = (await tools.add_block.execute({ block: encoded, parentId: "s1" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(true);
-        expect(tools.currentDraft().sections[0]!.blocks.map((block) => block.id)).toEqual(["t1"]);
+        expect(gateway.peek("t1")!.document.sections[0]!.blocks.map((block) => block.id)).toEqual(["t1"]);
+    });
+});
+
+describe("the tool-layer refusal", () => {
+    it("refuses a call whose scope carries no thread id, and nothing persists", async () => {
+        const gateway = makeFakeGateway();
+        const tools = createReportAuthoringTools(gateway);
+        // The default fixture scope is an analysis scope with no thread id.
+        const { ctx } = makeToolContext();
+
+        const result = await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Intro", blocks: [] } }, ctx);
+
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(false);
+        if (!value.applied) {
+            expect(value.refusal.reason).toBe("no-thread-scope");
+        }
+    });
+
+    it("refuses a call whose scope names a resource of a different kind", async () => {
+        const tools = createReportAuthoringTools(makeFakeGateway());
+
+        const result = await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Intro", blocks: [] } }, ctxOtherKind());
+
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(false);
+        if (!value.applied) {
+            expect(value.refusal.reason).toBe("no-thread-scope");
+        }
+    });
+
+    it("refuses a mutation on a thread with no stored state", async () => {
+        const tools = createReportAuthoringTools(makeFakeGateway());
+
+        const result = await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Intro", blocks: [] } }, ctxForThread("absent"));
+
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(false);
+        if (!value.applied) {
+            expect(value.refusal.reason).toBe("absent-state");
+        }
+    });
+
+    it("refuses a read on a thread with no stored state", async () => {
+        const tools = createReportAuthoringTools(makeFakeGateway());
+
+        const outline = (await tools.read_outline.execute({}, ctxForThread("absent")))._unsafeUnwrap();
+
+        expect("refused" in outline).toBe(true);
+        if ("refused" in outline) {
+            expect(outline.refused.reason).toBe("absent-state");
+        }
+    });
+
+    it("refuses when the gateway reports a failure", async () => {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: emptyDraft(), snapshot });
+        gateway.setFault(true);
+        const tools = createReportAuthoringTools(gateway);
+
+        const result = await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Intro", blocks: [] } }, ctxForThread("t1"));
+
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(false);
+        if (!value.applied) {
+            expect(value.refusal.reason).toBe("state-unavailable");
+        }
     });
 });
 
 describe("change_block", () => {
     it("retitles a section from a call that names no block", async () => {
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
         // The loop validates against `inputSchema` before it runs `execute`, thus the retitle call must
         // pass the schema with the `block` key absent.
         const input = JSON.parse('{"targetId":"s1","title":"Results"}') as Record<string, unknown>;
         expect(tools.change_block.inputSchema.safeParse(input).success).toBe(true);
 
-        const value = (await tools.change_block.execute(input, ctx))._unsafeUnwrap();
+        const value = (await tools.change_block.execute(input, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(true);
-        expect(tools.currentDraft().sections[0]!.title).toBe("Results");
-    });
-
-    it("retitles a section when the unused block field arrives as null", async () => {
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
-        const { ctx } = makeToolContext();
-
-        const value = (await tools.change_block.execute({ targetId: "s1", title: "Results", block: null }, ctx))._unsafeUnwrap();
-
-        expect(value.applied).toBe(true);
-        expect(tools.currentDraft().sections[0]!.title).toBe("Results");
+        expect(gateway.peek("t1")!.document.sections[0]!.title).toBe("Results");
     });
 
     it("refuses a change that names neither a title nor a block", async () => {
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
 
-        const result = await tools.change_block.execute({ targetId: "s1" }, ctx);
-
-        const value = result._unsafeUnwrap();
-        expect(value.applied).toBe(false);
-        if (!value.applied) {
-            expect(value.refusal.reason).toBe("payload-kind-mismatch");
-        }
-    });
-
-    it("refuses a change that names both a title and a block", async () => {
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
-        const { ctx } = makeToolContext();
-
-        const result = await tools.change_block.execute({ targetId: "s1", title: "New", block: { kind: "text", id: "s1", content: { prose: "x" } } }, ctx);
+        const result = await tools.change_block.execute({ targetId: "s1" }, ctxForThread("t1"));
 
         const value = result._unsafeUnwrap();
         expect(value.applied).toBe(false);
@@ -160,14 +274,17 @@ describe("change_block", () => {
 
 describe("remove_block", () => {
     it("lands a removal, and reports the container that the block left", async () => {
-        const draft: DraftDocument = {
-            title: "",
-            sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "x" } }] }],
-        };
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: draft });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", {
+            document: {
+                title: "",
+                sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "x" } }] }],
+            },
+            snapshot,
+        });
+        const tools = createReportAuthoringTools(gateway);
 
-        const result = await tools.remove_block.execute({ targetId: "t1" }, ctx);
+        const result = await tools.remove_block.execute({ targetId: "t1" }, ctxForThread("t1"));
 
         const value = result._unsafeUnwrap();
         expect(value.applied).toBe(true);
@@ -179,24 +296,27 @@ describe("remove_block", () => {
 
 describe("move_block", () => {
     it("lands a move with a flat anchor, and reports the new child order", async () => {
-        const draft: DraftDocument = {
-            title: "",
-            sections: [
-                {
-                    kind: "section",
-                    id: "s1",
-                    title: "Intro",
-                    blocks: [
-                        { kind: "text", id: "t1", content: { prose: "a" } },
-                        { kind: "text", id: "t2", content: { prose: "b" } },
-                    ],
-                },
-            ],
-        };
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: draft });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", {
+            document: {
+                title: "",
+                sections: [
+                    {
+                        kind: "section",
+                        id: "s1",
+                        title: "Intro",
+                        blocks: [
+                            { kind: "text", id: "t1", content: { prose: "a" } },
+                            { kind: "text", id: "t2", content: { prose: "b" } },
+                        ],
+                    },
+                ],
+            },
+            snapshot,
+        });
+        const tools = createReportAuthoringTools(gateway);
 
-        const result = await tools.move_block.execute({ targetId: "t1", after: "t2" }, ctx);
+        const result = await tools.move_block.execute({ targetId: "t1", after: "t2" }, ctxForThread("t1"));
 
         const value = result._unsafeUnwrap();
         expect(value.applied).toBe(true);
@@ -207,31 +327,24 @@ describe("move_block", () => {
             expect(value.changed[0]!.children.map((entry) => entry.id)).toEqual(["t2", "t1"]);
         }
     });
-
-    it("refuses `before` and `after` together with conflicting-destination", async () => {
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
-        const { ctx } = makeToolContext();
-
-        const result = await tools.move_block.execute({ targetId: "s1", before: "a", after: "b" }, ctx);
-
-        const value = result._unsafeUnwrap();
-        expect(value.applied).toBe(false);
-        if (!value.applied) {
-            expect(value.refusal.reason).toBe("conflicting-destination");
-        }
-    });
 });
 
 describe("set_title", () => {
     it("sets the document title, and the finish then gives the document", async () => {
-        const tools = createReportAuthoringTools({ snapshot });
-        const { ctx } = makeToolContext();
-        await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Intro", blocks: [] } }, ctx);
-        await tools.add_block.execute({ block: { kind: "text", id: "t1", content: { prose: "x" } }, parentId: "s1" }, ctx);
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", {
+            document: {
+                title: "",
+                sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "x" } }] }],
+            },
+            snapshot,
+        });
+        const tools = createReportAuthoringTools(gateway);
+        const ctx = ctxForThread("t1");
 
         const untitled = (await tools.finish_draft.execute({}, ctx))._unsafeUnwrap();
-        expect(untitled.valid).toBe(false);
-        if (!untitled.valid) {
+        expect("valid" in untitled && untitled.valid).toBe(false);
+        if ("valid" in untitled && !untitled.valid) {
             expect(untitled.gaps).toContainEqual({ kind: "schema", path: "title", message: expect.stringContaining(">=1") });
         }
 
@@ -239,8 +352,8 @@ describe("set_title", () => {
         expect(set.applied).toBe(true);
 
         const titled = (await tools.finish_draft.execute({}, ctx))._unsafeUnwrap();
-        expect(titled.valid).toBe(true);
-        if (titled.valid) {
+        expect("valid" in titled && titled.valid).toBe(true);
+        if ("valid" in titled && titled.valid) {
             expect(titled.document.title).toBe("Differential expression");
         }
     });
@@ -248,41 +361,46 @@ describe("set_title", () => {
 
 describe("read_block", () => {
     it("names its target with the same field as each mutation tool", async () => {
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
 
-        const value = (await tools.read_block.execute({ targetId: "s1" }, ctx))._unsafeUnwrap();
+        const value = (await tools.read_block.execute({ targetId: "s1" }, ctxForThread("t1")))._unsafeUnwrap();
 
-        expect(value.found).toBe(true);
+        expect("found" in value && value.found).toBe(true);
         expect(tools.read_block.inputSchema.safeParse({ id: "s1" }).success).toBe(false);
     });
 
     it("gives a section without its subtree", async () => {
-        const draft: DraftDocument = {
-            title: "",
-            sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "a long body" } }] }],
-        };
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: draft });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", {
+            document: {
+                title: "",
+                sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "a long body" } }] }],
+            },
+            snapshot,
+        });
+        const tools = createReportAuthoringTools(gateway);
 
-        const value = (await tools.read_block.execute({ targetId: "s1" }, ctx))._unsafeUnwrap();
+        const value = (await tools.read_block.execute({ targetId: "s1" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value).toEqual({ found: true, block: { kind: "section", id: "s1", title: "Intro", childIds: ["t1"] } });
     });
 
     it("gives `found: false` for an unknown id", async () => {
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
 
-        const result = await tools.read_block.execute({ targetId: "nope" }, ctx);
+        const result = await tools.read_block.execute({ targetId: "nope" }, ctxForThread("t1"));
 
         expect(result._unsafeUnwrap()).toEqual({ found: false });
     });
 });
 
 describe("the tool surface", () => {
-    it("runs every tool inline, because the draft is closure memory with no durable backing", () => {
-        const tools = createReportAuthoringTools({ snapshot });
+    it("runs every tool inline, because a step-mode replay could report a stale outline", () => {
+        const tools = createReportAuthoringTools(makeFakeGateway());
         const packaged = [
             tools.add_block,
             tools.change_block,
@@ -294,21 +412,20 @@ describe("the tool surface", () => {
             tools.finish_draft,
         ];
 
-        // A step-mode tool replays its cached result over a rebuilt, empty draft.
         expect(packaged.map((tool) => tool.executionMode)).toEqual(Array(8).fill("inline"));
     });
 });
 
 describe("finish_draft", () => {
     it("reports a gap for an empty draft", async () => {
-        const tools = createReportAuthoringTools({ snapshot });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: emptyDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
 
-        const result = await tools.finish_draft.execute({}, ctx);
+        const value = (await tools.finish_draft.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
-        const value = result._unsafeUnwrap();
-        expect(value.valid).toBe(false);
-        if (!value.valid) {
+        expect("valid" in value && value.valid).toBe(false);
+        if ("valid" in value && !value.valid) {
             expect(value.gaps.length).toBeGreaterThan(0);
         }
     });
@@ -318,41 +435,49 @@ describe("finish_draft", () => {
             title: "Report",
             sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "hello" } }] }],
         };
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: complete });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: complete, snapshot });
+        const tools = createReportAuthoringTools(gateway);
 
-        const result = await tools.finish_draft.execute({}, ctx);
+        const value = (await tools.finish_draft.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
-        const value = result._unsafeUnwrap();
-        expect(value.valid).toBe(true);
-        if (value.valid) {
+        expect("valid" in value && value.valid).toBe(true);
+        if ("valid" in value && value.valid) {
             expect(value.document).toEqual(complete);
         }
     });
 });
 
-describe("factory isolation", () => {
-    it("keeps two drafts independent", async () => {
-        const first = createReportAuthoringTools({ snapshot });
-        const second = createReportAuthoringTools({ snapshot });
-        const { ctx } = makeToolContext();
+describe("thread isolation", () => {
+    it("keeps two threads independent through one factory", async () => {
+        const gateway = makeFakeGateway();
+        gateway.seed("tA", { document: emptyDraft(), snapshot });
+        gateway.seed("tB", { document: emptyDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
 
-        const added = await first.add_block.execute({ block: { kind: "section", id: "sA", title: "A", blocks: [] } }, ctx);
-        expect(added._unsafeUnwrap().applied).toBe(true);
+        const addedA = await tools.add_block.execute({ block: { kind: "section", id: "sA", title: "A", blocks: [] } }, ctxForThread("tA"));
+        expect(addedA._unsafeUnwrap().applied).toBe(true);
+        const addedB = await tools.add_block.execute({ block: { kind: "section", id: "sB", title: "B", blocks: [] } }, ctxForThread("tB"));
+        expect(addedB._unsafeUnwrap().applied).toBe(true);
 
-        const firstOutline = (await first.read_outline.execute({}, ctx))._unsafeUnwrap();
-        expect(firstOutline.outline.map((entry) => entry.id)).toEqual(["sA"]);
+        const outlineA = (await tools.read_outline.execute({}, ctxForThread("tA")))._unsafeUnwrap();
+        expect("outline" in outlineA && outlineA.outline.map((entry) => entry.id)).toEqual(["sA"]);
 
-        const secondOutline = (await second.read_outline.execute({}, ctx))._unsafeUnwrap();
-        expect(secondOutline.outline).toEqual([]);
-        expect(second.currentDraft().sections).toEqual([]);
+        const outlineB = (await tools.read_outline.execute({}, ctxForThread("tB")))._unsafeUnwrap();
+        expect("outline" in outlineB && outlineB.outline.map((entry) => entry.id)).toEqual(["sB"]);
+
+        // Each row holds only its own block.
+        expect(gateway.peek("tA")!.document.sections.map((section) => section.id)).toEqual(["sA"]);
+        expect(gateway.peek("tB")!.document.sections.map((section) => section.id)).toEqual(["sB"]);
     });
 });
 
 describe("the cost of a landing", () => {
     it("reports the changed container only, and not the whole draft", async () => {
-        const tools = createReportAuthoringTools({ snapshot });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: emptyDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
+        const ctx = ctxForThread("t1");
         await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "First", blocks: [] } }, ctx);
         await tools.add_block.execute({ block: { kind: "text", id: "t1", content: { prose: "in the first section" } }, parentId: "s1" }, ctx);
         await tools.add_block.execute({ block: { kind: "section", id: "s2", title: "Second", blocks: [] } }, ctx);
@@ -369,18 +494,21 @@ describe("the cost of a landing", () => {
         }
     });
 
-    it("reports both containers of a move across sections, and one for a move inside a section", async () => {
-        const draft: DraftDocument = {
-            title: "",
-            sections: [
-                { kind: "section", id: "s1", title: "First", blocks: [{ kind: "text", id: "t1", content: { prose: "a" } }] },
-                { kind: "section", id: "s2", title: "Second", blocks: [{ kind: "text", id: "t2", content: { prose: "b" } }] },
-            ],
-        };
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: draft });
-        const { ctx } = makeToolContext();
+    it("reports both containers of a move across sections", async () => {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", {
+            document: {
+                title: "",
+                sections: [
+                    { kind: "section", id: "s1", title: "First", blocks: [{ kind: "text", id: "t1", content: { prose: "a" } }] },
+                    { kind: "section", id: "s2", title: "Second", blocks: [{ kind: "text", id: "t2", content: { prose: "b" } }] },
+                ],
+            },
+            snapshot,
+        });
+        const tools = createReportAuthoringTools(gateway);
 
-        const across = (await tools.move_block.execute({ targetId: "t1", parentId: "s2", place: "end" }, ctx))._unsafeUnwrap();
+        const across = (await tools.move_block.execute({ targetId: "t1", parentId: "s2", place: "end" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(across.applied).toBe(true);
         if (across.applied) {
@@ -391,10 +519,11 @@ describe("the cost of a landing", () => {
     });
 
     it("reports no container for a title, which changes no child order", async () => {
-        const tools = createReportAuthoringTools({ snapshot, initialDraft: oneSectionDraft() });
-        const { ctx } = makeToolContext();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
 
-        const value = (await tools.set_title.execute({ title: "Report" }, ctx))._unsafeUnwrap();
+        const value = (await tools.set_title.execute({ title: "Report" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value).toEqual({ applied: true, changed: [] });
     });

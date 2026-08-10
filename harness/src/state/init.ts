@@ -165,6 +165,27 @@ CREATE TABLE IF NOT EXISTS cortex_report_versions (
 CREATE INDEX IF NOT EXISTS idx_cortex_report_versions_analysis
   ON cortex_report_versions(analysis_id);
 
+-- Report session state — one mutable row for each report session thread. The row
+-- holds the in-progress draft document and the pinned snapshot of the session. The
+-- thread id is the primary key, thus one session binds to one thread. The document
+-- column and the snapshot column are each nullable, because the mint writes the
+-- snapshot first and the document lands later. A purge of the analysis removes the
+-- row through the analysis_id cascade. The explicit purge delete stays a backstop,
+-- the same as the plans delete, because a database whose table predates the key
+-- never acquires one.
+CREATE TABLE IF NOT EXISTS cortex_report_session_state (
+  thread_id     TEXT PRIMARY KEY,
+  analysis_id   TEXT NOT NULL
+                  REFERENCES cortex_analysis_state(analysis_id)
+                  ON DELETE CASCADE,
+  document      JSONB,
+  snapshot      JSONB,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_report_session_state_analysis
+  ON cortex_report_session_state(analysis_id);
+
 -- Target assessments — organization-scoped, snapshot-style target dossiers.
 -- Independent of analyses, projects, runs, and chat threads. The full
 -- dossier is persisted as JSONB on the row, no separate artifacts table.

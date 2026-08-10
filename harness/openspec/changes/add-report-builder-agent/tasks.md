@@ -1,21 +1,21 @@
 ## 1. The session-state store
 
-- [ ] 1.1 Make the store in `src/state/report-session-state.ts`, and add the table to the DDL in `src/state/init.ts`. One row for each thread: the thread id as the key, the analysis id, the document, and the snapshot. Keep each DDL comment free of a semicolon.
-- [ ] 1.2 The read parses the stored document and the stored snapshot with the current schemas, the way `report-versions.ts` does. A parse failure reads as a typed error, and an absent row reads as a normal absence.
-- [ ] 1.3 The purge of an analysis removes the session-state rows of its threads. Extend the purge coverage the way the version store did.
-- [ ] 1.4 Write the tests of the store: a write and a read across two store instances, the absent row, the parse failure, and the purge.
+- [x] 1.1 Make the store in `src/state/report-session-state.ts`, and add the table to the DDL in `src/state/init.ts`. One row for each thread: the thread id as the key, the analysis id, the document, and the snapshot. Keep each DDL comment free of a semicolon.
+- [x] 1.2 The read parses the stored document and the stored snapshot with the current schemas, the way `report-versions.ts` does. A parse failure reads as a typed error, and an absent row reads as a normal absence.
+- [x] 1.3 The purge of an analysis removes the session-state rows of its threads. Extend the purge coverage the way the version store did.
+- [x] 1.4 Write the tests of the store: a write and a read across two store instances, the absent row, the parse failure, and the purge.
 
 ## 2. The authoring gateway
 
-- [ ] 2.1 Change `createReportAuthoringTools` to take a session-state gateway in place of the closure holder. The gateway loads the state by thread id, and it persists the document. The tool ids, the envelopes, and the refusal shapes stay as they are.
-- [ ] 2.2 Each tool reads the thread id from the scope of the call. A scope with no thread id refuses as typed data in the ok channel. A landed document persists before the tool reports `applied: true`.
-- [ ] 2.3 Update the tests of the tool layer: two threads through one factory stay isolated, the landed document persists before the report, and the missing thread id refuses.
+- [x] 2.1 Change `createReportAuthoringTools` to take a session-state gateway in place of the closure holder. The gateway loads the state by thread id, and it persists the document. The tool ids, the envelopes, and the refusal shapes stay as they are.
+- [x] 2.2 Each tool reads the thread id from the scope of the call. A scope with no thread id refuses as typed data in the ok channel. A landed document persists before the tool reports `applied: true`.
+- [x] 2.3 Update the tests of the tool layer: two threads through one factory stay isolated, the landed document persists before the report, and the missing thread id refuses.
 
 ## 3. The value bridge
 
-- [ ] 3.1 Make the bridge module in `src/report-render/value-bridge.ts`. It maps resolved values onto `RenderValues`: a scalar to a metric, rows to a table, and a file echo to a figure source through a caller-supplied policy. The policy stays a parameter here, and the preview tool gives the concrete one.
-- [ ] 3.2 A mismatch between a block kind and a resolved value type returns typed data that names the block and the mismatch. The bridge reads no file, and it resolves nothing.
-- [ ] 3.3 Write the tests of the bridge: each mapping, the figure policy, and the mismatch refusal.
+- [x] 3.1 Make the bridge module in `src/report-render/value-bridge.ts`. It maps resolved values onto `RenderValues`: a scalar to a metric, rows to a table, and a file echo to a figure source through a caller-supplied policy. The policy stays a parameter here, and the preview tool gives the concrete one.
+- [x] 3.2 A mismatch between a block kind and a resolved value type returns typed data that names the block and the mismatch. The bridge reads no file, and it resolves nothing.
+- [x] 3.3 Write the tests of the bridge: each mapping, the figure policy, and the mismatch refusal.
 
 ## 4. The session runtime
 
