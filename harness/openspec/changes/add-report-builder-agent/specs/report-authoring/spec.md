@@ -1,3 +1,12 @@
+## ADDED Requirements
+
+### Requirement: The title operation
+The tool surface MUST give a title operation that sets the title of the whole document. The operation loads, persists, and reports through the same path as the block operations. The title of the document is not the title of a section.
+
+#### Scenario: The title lands
+- **WHEN** the agent sets the title of the draft
+- **THEN** the document holds the title, and the result carries `applied: true` with the fresh outline
+
 ## MODIFIED Requirements
 
 ### Requirement: The authoring tool surface
