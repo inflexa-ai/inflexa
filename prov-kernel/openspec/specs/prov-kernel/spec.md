@@ -10,8 +10,8 @@ and the wire-format contract that independent producers implement against.
 `@inflexa-ai/prov-kernel` SHALL carry the Inflexa PROV dialect: the document model
 (QName derivation, statement builders, unify options, injectable digest), the
 core event union `ProvEvent` with its apply function `applyProvEvent`, the
-chain-hash and Ed25519 sign/verify primitives, the signed-sidecar schema, and
-the actor/ref value types the events carry. The event-to-statements
+chain-hash and Ed25519 sign/verify primitives, the signed-attestation schema,
+and the actor/ref value types the events carry. The event-to-statements
 mapping determines the serialized document bytes, thus the mapping is format
 and the kernel SHALL own it for the core events. Core statements SHALL be
 producible only through `applyProvEvent`: the per-core-event statement
@@ -75,11 +75,13 @@ anonymous (no `_:` identifier).
 
 The chain rule SHALL be `H_n = SHA-256(bytes(H_{n-1}) || bytes(json_n))`,
 seeded with `SHA-256("")` when no previous hash exists. Signatures SHALL be
-Ed25519 over the hex-decoded digest bytes, hex-encoded. The export sidecar
+Ed25519 over the hex-decoded digest bytes, hex-encoded. The export attestation
 SHALL be self-contained (payload digest, signature, and public JWK) and SHALL
-validate under `sidecarSchema`. Provenance SHALL never be written or exported
-unsigned — every signing failure surfaces as a `ProvSigningError` on the err
-channel.
+validate under `attestationSchema`. The attestation was named the "sidecar"
+before version 0.4.0; the object's field names do not carry the old name, thus
+existing artifacts verify unchanged. Provenance SHALL never be written or
+exported unsigned — every signing failure surfaces as a `ProvSigningError` on
+the err channel.
 
 #### Scenario: A correct chain link verifies
 
@@ -95,19 +97,19 @@ channel.
 - **WHEN** verification runs
 - **THEN** the result is `tampered` with a human-readable detail
 
-#### Scenario: A sidecar round-trips
+#### Scenario: An attestation round-trips
 
-- **GIVEN** a sidecar built by `buildSidecar` over a payload
-- **WHEN** the sidecar parses under `sidecarSchema` and `verifySidecar` runs
-  against the same payload
+- **GIVEN** an attestation built by `buildAttestation` over a payload
+- **WHEN** the attestation parses under `attestationSchema` and
+  `verifyAttestation` runs against the same payload
 - **THEN** the result is `valid`
 
 ### Requirement: The wire format is specified for independent implementation
 
 `prov-kernel/SPEC.md` SHALL state the namespace, the digest definition, the QName
 format per node kind, the relation-id schemes, the chain rule and its seed,
-the signature scheme and encodings, the sidecar shape, and the last-write-wins
-unify semantics — derived from the code. A committed golden fixture SHALL pin
+the signature scheme and encodings, the attestation shape, and the
+last-write-wins unify semantics — derived from the code. A committed golden fixture SHALL pin
 the serialized bytes of a fully deterministic document, so any conforming
 producer can test against it.
 
@@ -118,3 +120,57 @@ producer can test against it.
 - **WHEN** the test suite runs
 - **THEN** the golden fixture comparison fails until the fixture is
   regenerated on purpose and `SPEC.md` is updated in the same change
+
+### Requirement: The kernel owns the lineage read model
+
+The kernel SHALL provide the one read-side interpretation of a stored dialect
+document. `deriveLineageModel(provJson)` SHALL take the exact stored PROV-JSON
+string, unify it under `PROV_UNIFY_OPTIONS`, and return a
+`{ nodes, edges }` model: typed, presentation-free nodes (`analysis`, `input`,
+and `file` entities, `activity` nodes with the kinds `run`/`step`/`command`/
+`file_tool`/`action`, and `agent` nodes with the kinds
+`system`/`user`/`model`) and edges for exactly the seven relation kinds
+`used`, `generated`, `informed`, `derived`, `attributed`, `associated`, and
+`invalidated`. An edge SHALL point in the PROV assertion orientation (formal
+argument 0 to formal argument 1) and SHALL carry a deterministic id: the
+relation's dialect id when one exists, else the value-derived fallback
+`{kind}:{from}->{to}`. A relation endpoint the document never declares SHALL
+synthesize a minimal node from its QName; a statement kind outside the seven
+SHALL be skipped; bytes that do not parse or unify SHALL return
+`err({ type: "prov_corrupt" })`. `computeLineage(model, roots, options)` SHALL
+traverse ONLY the `generated` and `used` edges, forward or backward, with a
+file-hop `depth` bound of `2n` edges from a file root and `2n - 1` from an
+activity root, so a truncation lands on a file node.
+`findFileEntity(model, key)` SHALL return the file entity for a
+`(path, hash)` key. The read model SHALL NOT touch the write path: the golden
+fixture bytes do not change.
+
+#### Scenario: The golden document derives into the shared model
+
+- **GIVEN** the committed golden fixture bytes
+- **WHEN** `deriveLineageModel` runs
+- **THEN** every declared element is a typed node, every undeclared relation
+  endpoint is a synthesized minimal node, and each execution relation keys its
+  edge by its deterministic dialect id
+
+#### Scenario: Tolerance for anonymous and unknown statements
+
+- **GIVEN** a document with an anonymous lifecycle relation and a statement
+  kind outside the seven
+- **WHEN** `deriveLineageModel` runs
+- **THEN** the anonymous relation gets the value-derived fallback id, and the
+  unknown statement kind is skipped with no error
+
+#### Scenario: The walk traverses only generation and usage
+
+- **GIVEN** a derived model of a produced file
+- **WHEN** `computeLineage` walks backward from the file
+- **THEN** the result holds the file-to-command-to-input chain, and the
+  analysis entity, the run spine, and the agents stay out
+
+#### Scenario: Depth counts file hops and truncates on a file node
+
+- **GIVEN** a chain of two commands between three files
+- **WHEN** `computeLineage` walks backward from the last file with depth 1
+- **THEN** the result ends at the intermediate file, and the earlier command
+  and its inputs stay out

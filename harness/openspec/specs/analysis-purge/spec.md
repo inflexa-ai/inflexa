@@ -42,7 +42,14 @@ The harness SHALL expose `purgeAnalysis(analysisId)` as a host-agnostic operatio
 
 ### Requirement: Purge covers the analysis-keyed tables, the vector index, and the workflow footprint
 
-`purgeAnalysis` SHALL remove the analysis's rows from `cortex_analysis_state`, `cortex_artifacts`, `cortex_runs`, `cortex_step_executions`, `cortex_plans`, `cortex_analysis_threads`, `cortex_working_memory`, `cortex_asks`, and `cortex_ask_grants`; the `messages` rows of every thread belonging to the analysis; the analysis's dynamic pgvector table named by the shared `searchIndexName(analysisId)` derivation; and the analysis's DBOS workflow footprint. Coverage of the workflow footprint is normative, not optional: the DBOS rows carry the sandbox agent transcripts and the run-event stream and are the dominant share of an analysis's stored bytes, so a purge that omitted them would reclaim a small fraction of what it removes and still present itself as final.
+`purgeAnalysis` MUST remove this footprint:
+
+- the analysis rows of `cortex_analysis_state`, `cortex_artifacts`, `cortex_runs`, `cortex_step_executions`, `cortex_plans`, `cortex_report_versions`, `cortex_analysis_threads`, `cortex_working_memory`, `cortex_asks`, and `cortex_ask_grants`
+- the `messages` rows of each thread of the analysis
+- the dynamic pgvector table with the shared `searchIndexName(analysisId)` name
+- the DBOS workflow footprint of the analysis
+
+Coverage of the workflow footprint is normative, and it is not optional. The DBOS rows carry the sandbox agent transcripts and the run-event stream, and they are the dominant share of the stored bytes. Thus a purge that omits them reclaims a small fraction, but it still presents itself as final.
 
 #### Scenario: The dynamic vector table is dropped
 
@@ -58,7 +65,7 @@ The harness SHALL expose `purgeAnalysis(analysisId)` as a host-agnostic operatio
 
 #### Scenario: Messages are reached through the analysis's threads
 
-- **GIVEN** an analysis with several threads, each carrying messages
+- **GIVEN** an analysis with some threads, each with messages
 - **WHEN** `purgeAnalysis` completes successfully
 - **THEN** no `messages` row remains for any of those threads
 
@@ -67,6 +74,12 @@ The harness SHALL expose `purgeAnalysis(analysisId)` as a host-agnostic operatio
 - **GIVEN** an analysis with a completed run whose parent and child step workflows are recorded in the DBOS ledger
 - **WHEN** `purgeAnalysis` completes successfully
 - **THEN** those workflows' status rows are gone and the step-output, stream, input, event, and queue rows that depend on them are gone with them
+
+#### Scenario: The report versions are removed
+
+- **GIVEN** an analysis with a report thread that recorded two versions
+- **WHEN** `purgeAnalysis` completes successfully
+- **THEN** no `cortex_report_versions` row remains for the analysis
 
 ### Requirement: Purge collects workflow identity before deleting the rows that carry it
 

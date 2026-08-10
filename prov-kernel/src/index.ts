@@ -2,8 +2,8 @@
  * `@inflexa-ai/prov-kernel` — the Inflexa provenance format kernel. The public surface is the Inflexa
  * PROV dialect: the document model (QName derivation, unify options, injectable digest, the
  * `appendLifecycleAction` extension primitive), the core event union and its apply function, the
- * chain-hash and Ed25519 sign/verify primitives, the signed-sidecar schema, and the actor/ref
- * value types the events carry.
+ * lineage read model, the chain-hash and Ed25519 sign/verify primitives, the signed-attestation
+ * schema, and the actor/ref value types the events carry.
  *
  * Deliberately absent: any recorder lifecycle (sink, flush, queue, CAS), signer wiring, or
  * harness dependency. Each host owns its own recorder and emission policy; the kernel owns the
@@ -34,6 +34,22 @@ export type { ProvDigest, ProvDocumentModel, ProvDocumentModelOptions } from "./
 export { applyProvEvent } from "./events.js";
 export type { ProvEvent } from "./events.js";
 
+export { computeLineage, deriveLineageModel, findFileEntity } from "./lineage.js";
+export type {
+    LineageActivityKind,
+    LineageActivityNode,
+    LineageAgentKind,
+    LineageAgentNode,
+    LineageAnalysisNode,
+    LineageEdge,
+    LineageEdgeKind,
+    LineageFileNode,
+    LineageInputNode,
+    LineageModel,
+    LineageNode,
+    ProvReadError,
+} from "./lineage.js";
+
 export {
     computeChainHash,
     computePayloadDigest,
@@ -45,5 +61,5 @@ export {
 } from "./signing.js";
 export type { ProvPublicKeyJwk, ProvSigner, ProvSigningError } from "./signing.js";
 
-export { buildSidecar, formatVerifyResult, sidecarSchema, verifyPayload, verifyProvenance, verifySidecar } from "./verify.js";
-export type { Sidecar } from "./verify.js";
+export { attestationSchema, buildAttestation, formatVerifyResult, verifyAttestation, verifyPayload, verifyProvenance } from "./verify.js";
+export type { ProvAttestation } from "./verify.js";

@@ -126,7 +126,7 @@ export default defineConfig([
         ignores: ["eslint.config.js", "dist/"],
     },
     {
-        files: ["**/*.{js,mjs,cjs,ts,mts,cts}"],
+        files: ["**/*.{js,mjs,cjs,ts,mts,cts,tsx}"],
         plugins: { js },
         extends: ["js/recommended"],
         languageOptions: { globals: globals.node },
@@ -146,12 +146,19 @@ export default defineConfig([
                     selector: "CallExpression[callee.property.name='forEach']",
                     message: "`.forEach` is banned — use a `for` / `for...of` loop instead.",
                 },
+                // The JSX runtime rewrites `className` to `class` without a warning.
+                // A silent rewrite invites a codebase that mixes the two. Thus the
+                // markup uses `class` only.
+                {
+                    selector: "JSXAttribute[name.name='className']",
+                    message: "Use the `class` attribute, not `className`.",
+                },
             ],
         },
     },
     tseslint.configs.recommended,
     {
-        files: ["src/**/*.ts"],
+        files: ["src/**/*.{ts,tsx}"],
         plugins: { neverthrow },
         languageOptions: {
             parser: tseslint.parser,

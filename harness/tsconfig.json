@@ -7,6 +7,8 @@
     "esModuleInterop": true,
     "declaration": true,
     "resolveJsonModule": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": "src",
@@ -16,5 +18,5 @@
     }
   },
   "include": ["src"],
-  "exclude": ["node_modules", "src/**/*.test.ts", "src/**/__tests__"]
+  "exclude": ["node_modules", "src/**/*.test.ts", "src/**/*.test.tsx", "src/**/__tests__"]
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { computeChainHash, computePayloadDigest, createKeypairSigner, signHexDigest } from "./signing.js";
-import { buildSidecar, formatVerifyResult, sidecarSchema, verifyProvenance, verifySidecar } from "./verify.js";
+import { buildAttestation, formatVerifyResult, attestationSchema, verifyProvenance, verifyAttestation } from "./verify.js";
 
 async function makeKeypair(): Promise<CryptoKeyPair> {
     return (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
@@ -38,35 +38,35 @@ describe("verifyProvenance", () => {
     });
 });
 
-describe("sidecar", () => {
-    test("buildSidecar output parses under sidecarSchema and verifies", async () => {
+describe("attestation", () => {
+    test("buildAttestation output parses under attestationSchema and verifies", async () => {
         const kp = await makeKeypair();
         const signer = createKeypairSigner(kp);
 
-        const sidecarResult = await buildSidecar(signer, provJson);
-        expect(sidecarResult.isOk()).toBe(true);
-        const sidecar = sidecarSchema.parse(sidecarResult._unsafeUnwrap());
-        expect(sidecar.payloadDigest).toBe((await computePayloadDigest(provJson))._unsafeUnwrap());
-        expect(await verifySidecar(provJson, sidecar)).toEqual({ status: "valid" });
+        const attestationResult = await buildAttestation(signer, provJson);
+        expect(attestationResult.isOk()).toBe(true);
+        const attestation = attestationSchema.parse(attestationResult._unsafeUnwrap());
+        expect(attestation.payloadDigest).toBe((await computePayloadDigest(provJson))._unsafeUnwrap());
+        expect(await verifyAttestation(provJson, attestation)).toEqual({ status: "valid" });
     });
 
-    test("a kid rides the sidecar and does not affect verification", async () => {
+    test("a kid rides the attestation and does not affect verification", async () => {
         const kp = await makeKeypair();
-        const sidecar = (await buildSidecar(createKeypairSigner(kp), provJson, { kid: "signer-1" }))._unsafeUnwrap();
-        expect(sidecarSchema.parse(sidecar).kid).toBe("signer-1");
-        expect(await verifySidecar(provJson, sidecar)).toEqual({ status: "valid" });
+        const attestation = (await buildAttestation(createKeypairSigner(kp), provJson, { kid: "signer-1" }))._unsafeUnwrap();
+        expect(attestationSchema.parse(attestation).kid).toBe("signer-1");
+        expect(await verifyAttestation(provJson, attestation)).toEqual({ status: "valid" });
     });
 
     test("a modified payload reads tampered", async () => {
         const kp = await makeKeypair();
-        const sidecar = (await buildSidecar(createKeypairSigner(kp), provJson))._unsafeUnwrap();
-        expect(await verifySidecar(`${provJson} `, sidecar)).toMatchObject({ status: "tampered" });
+        const attestation = (await buildAttestation(createKeypairSigner(kp), provJson))._unsafeUnwrap();
+        expect(await verifyAttestation(`${provJson} `, attestation)).toMatchObject({ status: "tampered" });
     });
 
     test("a corrupt public key reads invalid-key", async () => {
         const kp = await makeKeypair();
-        const sidecar = (await buildSidecar(createKeypairSigner(kp), provJson))._unsafeUnwrap();
-        expect(await verifySidecar(provJson, { ...sidecar, publicKey: { kty: "OKP" } })).toEqual({ status: "invalid-key" });
+        const attestation = (await buildAttestation(createKeypairSigner(kp), provJson))._unsafeUnwrap();
+        expect(await verifyAttestation(provJson, { ...attestation, publicKey: { kty: "OKP" } })).toEqual({ status: "invalid-key" });
     });
 });
 

@@ -174,6 +174,27 @@ Obey these rules:
   short sentences that pad a small point are the same fault.
 - Stop when the answer is complete.
 
+## The shape of a reply
+
+A reply that reports an analysis, a review, or a status uses this shape, in this order:
+
+1. **The facts.** Each claim about code carries a `file:line` reference.
+2. **The decision.** If the work hides a decision, name that decision.
+3. **The call.** Give one recommendation and give the reason for it.
+4. **One question.** If the work cannot continue without an answer, ask one question, and only one.
+
+Drop each sentence that fits no section. A small question gets a small answer, without the shape. Write a maximum of 300 words in a reply.
+
+Use a vertical list for three or more parallel facts. Keep the reason inside the same item. Keep causal prose as prose.
+
+## The shape of a pull request description
+
+- Give what changed and why in one paragraph.
+- Give the notes that a reviewer must have before the diff.
+- Do not restate the diff, the specs, the tests, or the CI result. The pull request holds them already.
+- Use a vertical list for three or more parallel facts. Keep the reason inside the same item.
+- Write a maximum of 300 words above the checkboxes of the template.
+
 ## The rule
 
 Do only the work that the last message from the user asks for.
@@ -260,6 +281,8 @@ Sign off each commit with the identity of the user. Use the `-s` option of `git 
 ```
 git commit -s -m "<message>"
 ```
+
+The body of a commit message gives the reason for the change, in a maximum of 300 words. The cap is a limit, not a goal. Prefer a short and precise body. Do not restate the diff.
 
 ## This repository
 

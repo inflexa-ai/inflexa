@@ -134,6 +134,37 @@ CREATE TABLE IF NOT EXISTS cortex_plans (
 CREATE INDEX IF NOT EXISTS idx_cortex_plans_analysis
   ON cortex_plans(analysis_id, created_at DESC);
 
+-- Report versions — one immutable row for each recorded report version. A row
+-- holds the block document, the pinned snapshot, and the anchor. A thread holds
+-- at most one version. The named unique constraint on thread_id enforces the
+-- rule, because the report policy binds one version to each report session. The
+-- row outlives its thread. Thus the table has no foreign key to
+-- cortex_analysis_threads, and the row carries the anchor columns (thread_id,
+-- parent_thread_id, parent_seq) directly. A purge of the analysis removes the row
+-- through the analysis_id cascade. The table is append-only, and a correction is
+-- a new version, never an update to a recorded row.
+CREATE TABLE IF NOT EXISTS cortex_report_versions (
+  version_id        TEXT PRIMARY KEY,
+  analysis_id       TEXT NOT NULL
+                      REFERENCES cortex_analysis_state(analysis_id)
+                      ON DELETE CASCADE,
+  thread_id         TEXT NOT NULL,
+  -- Nullable pair: a root conversation anchor can be absent. A version with no
+  -- parent thread carries no parent_seq either.
+  parent_thread_id  TEXT,
+  parent_seq        BIGINT,
+  parent_version_id TEXT
+                      REFERENCES cortex_report_versions(version_id)
+                      ON DELETE SET NULL,
+  document          JSONB NOT NULL,
+  snapshot          JSONB NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT cortex_report_versions_one_per_thread UNIQUE (thread_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_report_versions_analysis
+  ON cortex_report_versions(analysis_id);
+
 -- Target assessments — organization-scoped, snapshot-style target dossiers.
 -- Independent of analyses, projects, runs, and chat threads. The full
 -- dossier is persisted as JSONB on the row, no separate artifacts table.
