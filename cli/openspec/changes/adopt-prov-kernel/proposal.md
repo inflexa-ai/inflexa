@@ -2,7 +2,7 @@
 
 ## Why
 
-The published `@inflexa-ai/prov-kernel@0.4.0` owns the Inflexa PROV dialect: the document model
+The published `@inflexa-ai/prov-kernel@0.5.0` owns the Inflexa PROV dialect: the document model
 (QName derivation, unify options, injectable digest), the core nine-event union with
 `applyProvEvent` as the sole supported producer of core statements, the lineage read model
 (`deriveLineageModel` / `computeLineage`), the chain-hash and Ed25519 sign/verify primitives, and
@@ -36,16 +36,15 @@ one signed document.
   graph-build (`lineageGraph` over tsprov's graph engine), attribute reading, and kind
   classification in favour of `deriveLineageModel`, and delegates the walk to the kernel's
   `computeLineage` (whose depth semantics — file-level hops, `2n`/`2n - 1` edge budgets — were
-  ported FROM this code). The cli keeps reference resolution, the per-root tree rebuild, the
-  tree/JSON/dot/mermaid renderings, and re-derives the depth-truncation set the retired engine's
-  frontier used to provide (a one-hop-wider walk reveals the unexpanded edges). Observable output
-  is unchanged.
-- Kernel 0.4.0's attestation naming lands across the cli: `buildSidecar`/`readSidecar`/
+  ported FROM this code). The cli keeps reference resolution, the per-root tree rebuild, and the
+  tree/JSON/dot/mermaid renderings; the depth-truncation set comes back from the kernel walk
+  itself. Observable output is unchanged.
+- The kernel's attestation naming lands across the cli: `buildSidecar`/`readSidecar`/
   `verifySidecar`/`sidecarSchema`/`Sidecar` become `buildAttestation`/`readAttestation`/
   `verifyAttestation`/`attestationSchema`/`ProvAttestation`, the `invalid-sidecar` verify status
   becomes `invalid-attestation`, and user-facing prose/help says "attestation". The on-disk
   `.sig.json` suffix and every JSON wire field are unchanged.
-- `package.json` adds `@inflexa-ai/prov-kernel@^0.4.0`; `@inflexa-ai/tsprov@0.5.1` stays (kernel
+- `package.json` adds `@inflexa-ai/prov-kernel@^0.5.0`; `@inflexa-ai/tsprov@0.5.1` stays (kernel
   peer).
 
 ## Capabilities
@@ -62,9 +61,9 @@ one signed document.
   only the keypair file lifecycle.
 - `prov-verify`: the verification functions, result formatting, and the attestation schema are
   the kernel's; the cli owns the storage reads and the command wiring.
-- `prov-lineage`: the document interpretation and the bounded walk are the kernel's read model;
-  the cli owns reference resolution, rendering, and the depth-truncation re-derivation (plus the
-  cli-imposed unbounded-walk ceiling the retired graph engine used to supply).
+- `prov-lineage`: the document interpretation, the bounded walk, and its truncation set are the
+  kernel's read model; the cli owns reference resolution, rendering, and the unbounded-walk
+  ceiling the retired graph engine used to supply.
 
 ## Impact
 
@@ -83,7 +82,7 @@ CLI source:
 - `src/modules/prov/kernel_compat.test.ts` + `__fixtures__/kernel_compat.json` — the continuity
   suite over the pre-kernel fixture.
 
-Dependencies: `@inflexa-ai/prov-kernel@^0.4.0` (new), peer-satisfied by the existing tsprov pin.
+Dependencies: `@inflexa-ai/prov-kernel@^0.5.0` (new), peer-satisfied by the existing tsprov pin.
 
 Out of scope: moving the recorder lifecycle, the bus contract, or the keypair file location — all
 stay cli-owned.

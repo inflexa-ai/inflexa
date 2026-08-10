@@ -47,12 +47,10 @@ outputs") — command-attributed facts are never asserted absent by a step node.
 The traversal SHALL keep a visited set and render a revisited entity as an explicit
 reference marker rather than re-expanding it (a command that writes and re-reads one
 path records `generates ∧ uses` on the same entity — a real cycle). A `--depth`
-bound SHALL render an explicit truncation marker at the cutoff. The kernel's walk
-returns the reached sub-model with no frontier, so the cli SHALL re-derive the
-truncation set itself (the same walk one file hop wider reveals exactly the edges
-the bounded walk left unexpanded; each such edge's walk-direction source is a
-truncation point), and a node at the bound with nothing recorded beyond it SHALL
-stay unmarked — its emptiness is genuine. "Unbounded" SHALL be backed by a
+bound SHALL render an explicit truncation marker at the cutoff. The truncation set
+comes from the kernel's walk, which reports the nodes it left unexpanded at the
+bound; a node at the bound with nothing recorded beyond it SHALL stay unmarked — its
+emptiness is genuine. "Unbounded" SHALL be backed by a
 cli-imposed safety ceiling (500 file-level hops — about 1000 edges, since one
 file→activity→file step is two edges) that truncates with the same marker rather
 than exhausting the render stack on a pathological chain. One CLI `--depth` unit

@@ -5,37 +5,30 @@ import {
     type LineageActivityNode,
     type LineageModel,
     type LineageNode,
+    type LineageWalk as KernelWalk,
 } from "@inflexa-ai/prov-kernel";
 
 import { dieOn, fail } from "../../lib/cli.ts";
 import { getAnalysisProvenance } from "../../db/primary_query.ts";
 import { requireAnalysisForProv } from "./prov.ts";
 
-// The lineage traversal: the read-side answer to "where did this file come from?" (and, with
-// --forward, "what came from this file?"). It reads the SAME stored bytes `export` serializes and
-// leans on the kernel's lineage read model for the format work — `deriveLineageModel` interprets
-// the stored PROV-JSON into typed nodes and edges (kind classification, `inflexa:*` facts, the
-// command → step run/step inheritance), and the kernel's `computeLineage` walks the
-// generation/usage edges with the canonical direction and depth semantics — while this file owns
-// everything that is CLI presentation: ref resolution, scoped absence claims, depth-truncation
-// markers, and the tree/JSON/dot/mermaid rendering.
+// The read-side answer to "where did this file come from?" (and, with --forward, "what came from
+// this file?"), over the same stored bytes `export` serializes. The kernel owns the interpretation
+// and the walk; this file owns CLI presentation: ref resolution, scoped absence claims, and the
+// tree/JSON/dot/mermaid rendering.
 //
-// The kernel walk traverses ONLY generation and usage edges. The document also carries a coarse
-// `wasDerivedFrom(file, analysis)` edge (for generic PROV consumers) and a `wasInformedBy` spine
-// (command → step → run); following either would pollute a file's lineage — derivation with a link
-// to the whole analysis, communication with every command's step and run activity. The run/step
-// spine is instead folded into the model as command LABELS (the kernel's informed-step
-// inheritance), never walked. Everything below the CLI action is pure over a `LineageModel`, so
-// the traversal stays unit-testable against documents built with the real builders.
+// The walk follows ONLY generation and usage edges. The document's coarse
+// `wasDerivedFrom(file, analysis)` edge and its `wasInformedBy` command → step → run spine would
+// pollute a file's lineage, so neither is walked; the spine is instead folded into the model as
+// command labels.
 
 /** Minimum hash-prefix length a lineage ref may resolve by — shorter prefixes are too collision-prone to guess on. */
 const MIN_HASH_PREFIX = 6;
 
 /**
- * The safety ceiling backing an "unbounded" walk, in file-level hops (~1000 edges — the ceiling
- * the retired graph engine imposed). The kernel walk itself has no ceiling, so the CLI supplies
- * one: a pathological chain truncates visibly with the ordinary depth marker rather than
- * exhausting the render stack.
+ * The safety ceiling backing an "unbounded" walk, in file-level hops. The kernel walk has no
+ * ceiling of its own, so a pathological chain truncates visibly here rather than exhausting the
+ * render stack.
  */
 const MAX_WALK_DEPTH = 500;
 
@@ -120,17 +113,8 @@ export type LineageRefError =
           total: number;
       };
 
-/**
- * One computed walk: the reached sub-model, its root QNames, and the file nodes the depth bound
- * cut short. The scope's nodes carry every fact the renderers need, so the formatters consume the
- * walk alone.
- */
-export type LineageWalk = {
-    roots: string[];
-    scope: LineageModel;
-    /** File-node QNames reached at the depth bound whose onward edges the walk left unexpanded. */
-    truncated: ReadonlySet<string>;
-};
+/** The kernel walk (reached sub-model + its truncation set) plus the root QNames the tree renders per. */
+export type LineageWalk = KernelWalk & { roots: string[] };
 
 /** The QName's localpart, for example `file-18bvqsvo19q9p` from `inflexa:file-…`. */
 function localpart(qn: string): string {
@@ -290,39 +274,17 @@ export function resolveLineageRef(model: LineageModel, ref: string): Result<Line
 }
 
 /**
- * Walk the resolved roots' lineage in ONE multi-root pass over the kernel's traversal. `depth`
- * counts file-level hops, exactly the kernel's `depth` semantics: from a FILE root one file hop
- * (file → activity → file) is two edges, so the kernel bounds at `2n`; from an ACTIVITY root the
- * first hop is activity → file (one edge), so it bounds at `2n - 1` — either way a truncation
- * always lands on a file node, never mid-hop on an activity. Unset stays unset for the caller;
- * internally the {@link MAX_WALK_DEPTH} ceiling then backs "unbounded" and truncates a
- * pathological chain visibly rather than exhausting the walk.
- *
- * The kernel returns the reached sub-model with no frontier, so the depth truncation is re-derived
- * here: the same walk one file hop wider reveals exactly the edges the bounded walk left
- * unexpanded, and each such edge's walk-direction source — a file node inside the bounded scope —
- * is a truncation point. A node at the bound with nothing beyond it stays unmarked: its emptiness
- * is genuine.
+ * Walk the resolved roots' lineage in ONE multi-root kernel pass. `depth` is the kernel's own
+ * file-hop semantics, so a truncation always lands on a file node; unset falls back to the
+ * {@link MAX_WALK_DEPTH} ceiling.
  */
 export function computeLineage(model: LineageModel, roots: LineageRoots, opts: { forward: boolean; depth?: number }): LineageWalk {
     const rootQns = roots.kind === "files" ? roots.infos.map((info) => info.qn) : [roots.qn];
-    const direction = opts.forward ? "forward" : "backward";
-    const depth = opts.depth ?? MAX_WALK_DEPTH;
-    const scope = kernelComputeLineage(model, rootQns, { direction, depth });
-
-    const truncated = new Set<string>();
-    const scoped = new Set(scope.nodes.map((n) => n.qn));
-    const reached = new Set(scope.edges.map((e) => e.id));
-    const wider = kernelComputeLineage(model, rootQns, { direction, depth: depth + 1 });
-    for (const edge of wider.edges) {
-        if (reached.has(edge.id)) continue;
-        // The walk-direction source of an edge only the wider walk recorded: backward follows
-        // the asserted orientation, forward reverses it.
-        const source = direction === "backward" ? edge.from : edge.to;
-        if (scoped.has(source)) truncated.add(source);
-    }
-
-    return { roots: rootQns, scope, truncated };
+    const walk = kernelComputeLineage(model, rootQns, {
+        direction: opts.forward ? "forward" : "backward",
+        depth: opts.depth ?? MAX_WALK_DEPTH,
+    });
+    return { ...walk, roots: rootQns };
 }
 
 /** Both orientations of the walk's generation/usage edges, keyed by node QName — the adjacency the tree renders per root. */
@@ -337,15 +299,15 @@ type WalkEdges = {
     usedBy: Map<string, string[]>;
 };
 
-/** Index the scope's traversed edges into both orientations. Generation points entity → activity, usage activity → entity. */
-function indexWalkEdges(scope: LineageModel): WalkEdges {
+/** Index the walk's traversed edges into both orientations. Generation points entity → activity, usage activity → entity. */
+function indexWalkEdges(walk: LineageModel): WalkEdges {
     const edges: WalkEdges = { generatedBy: new Map(), generates: new Map(), uses: new Map(), usedBy: new Map() };
     const push = (map: Map<string, string[]>, key: string, value: string): void => {
         const bucket = map.get(key);
         if (bucket) bucket.push(value);
         else map.set(key, [value]);
     };
-    for (const edge of scope.edges) {
+    for (const edge of walk.edges) {
         if (edge.kind === "generated") {
             push(edges.generatedBy, edge.from, edge.to);
             push(edges.generates, edge.to, edge.from);
@@ -360,35 +322,28 @@ function indexWalkEdges(scope: LineageModel): WalkEdges {
 /** One rendered root: a file entity's walk tree, or an activity root carrying its walked-side file subtrees. */
 type RootTree = { kind: "file"; file: LineageFile } | { kind: "activity"; activity: LineageActivity };
 
-/** The activity facts for the node at `qn` in the scope (a non-activity or missing node still renders — as the bare generic kind). */
+/** The activity facts for the node at `qn` (a non-activity or missing node still renders — as the bare generic kind). */
 function activityMetaOf(nodes: Map<string, LineageNode>, qn: string): Omit<LineageActivity, "files"> {
     const node = nodes.get(qn);
     return activityMeta(node?.kind === "activity" ? node : undefined, qn);
 }
 
-/** The file-identity facts for the node at `qn`, read off the scope (a missing node still renders — with null facts). */
+/** The file-identity facts for the node at `qn` (a missing node still renders — with null facts). */
 function fileInfoOf(nodes: Map<string, LineageNode>, qn: string): LineageFileInfo {
     const node = nodes.get(qn);
     return node === undefined ? { qn, path: null, hash: null, source: null } : toFileInfo(node);
 }
 
 /**
- * Rebuild one root's walk tree from the flat scope, with the per-root rendering semantics the tree
- * relies on: a private visited set per root, a re-encounter marked a `revisit` (checked BEFORE the
- * depth cut, so a cycle's back-edge always reads as a reference, never a truncation), and the
- * file-hop `--depth` bound enforced here. A node the bound cuts is a `depth` truncation only when
- * the walk recorded something beyond it — an onward edge in the scope, or a truncation entry from
- * the wider-walk comparison; otherwise its emptiness is genuine and it renders as a terminal.
- *
- * An ACTIVITY root's tree starts one walk edge in — its direct files sit at the first file hop,
- * so they take the remaining budget `budget - 1`, matching the kernel's `2n - 1` bound for
- * activity-rooted walks. The root's kind is read off the scope node: the walk's seed set is
- * kind-homogeneous, but per-root detection keeps the renderer honest either way.
+ * Rebuild one root's tree from the flat walk, re-imposing the per-root rendering semantics: a
+ * private visited set, a re-encounter marked a `revisit` (checked BEFORE the depth cut, so a
+ * cycle's back-edge always reads as a reference, never a truncation), and the file-hop bound. A cut
+ * node is a `depth` truncation only when something lies beyond it; otherwise it is a genuine
+ * terminal. An ACTIVITY root starts one walk edge in, so its direct files take `budget - 1`.
  *
  * The single multi-root walk is exact for this: BFS reaches every node at its MINIMUM distance over
- * all roots (≤ its distance from any one root), so the merged scope already holds every edge any
- * per-root render up to the same bound could need, and this render just re-imposes the per-root
- * bound and visited set on top.
+ * all roots, so the merged walk already holds every edge any per-root render up to the same bound
+ * could need.
  */
 function buildRootTree(
     nodes: Map<string, LineageNode>,
@@ -482,10 +437,11 @@ function activityLine(activity: LineageActivity, forward: boolean): string {
  */
 export function formatTree(walk: LineageWalk, opts: { forward: boolean; depth?: number }): string {
     const forward = opts.forward;
-    const nodes = new Map(walk.scope.nodes.map((n) => [n.qn, n]));
-    const edges = indexWalkEdges(walk.scope);
+    const nodes = new Map(walk.nodes.map((n) => [n.qn, n]));
+    const edges = indexWalkEdges(walk);
+    const truncated = new Set(walk.truncated);
     const budget = opts.depth ?? MAX_WALK_DEPTH;
-    const roots = walk.roots.map((qn) => buildRootTree(nodes, edges, walk.truncated, qn, forward, budget));
+    const roots = walk.roots.map((qn) => buildRootTree(nodes, edges, truncated, qn, forward, budget));
 
     const lines: string[] = [];
     // Distinct activities the render surfaced an attribution gap under, deduped by QName — a diamond
@@ -604,14 +560,15 @@ function activityJsonNode(node: LineageNode): LineageJsonNode {
  * from one representation.
  */
 export function formatJson(walk: LineageWalk): LineageJson {
+    const truncated = new Set(walk.truncated);
     const nodes: Record<string, LineageJsonNode> = {};
-    for (const node of walk.scope.nodes) {
-        nodes[node.qn] = isEntity(node) ? fileJsonNode(node, walk.truncated.has(node.qn)) : activityJsonNode(node);
+    for (const node of walk.nodes) {
+        nodes[node.qn] = isEntity(node) ? fileJsonNode(node, truncated.has(node.qn)) : activityJsonNode(node);
     }
 
     const edgeKeys = new Set<string>();
     const edges: LineageJson["edges"] = [];
-    for (const edge of walk.scope.edges) {
+    for (const edge of walk.edges) {
         const kind = edge.kind === "generated" ? "wasGeneratedBy" : edge.kind === "used" ? "used" : undefined;
         if (kind === undefined) continue;
         const key = `${kind}|${edge.from}|${edge.to}`;

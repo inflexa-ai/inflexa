@@ -11,6 +11,7 @@
 - [x] 2.1 Add `@inflexa-ai/prov-kernel@^0.3.0` to `package.json`; keep `@inflexa-ai/tsprov@0.5.1`
   (kernel peer). Update `bun.lock`.
 - [x] 2.2 Bump to `@inflexa-ai/prov-kernel@^0.4.0` (lineage read model + attestation names).
+- [x] 2.3 Bump to `@inflexa-ai/prov-kernel@^0.5.0` (the walk reports its own truncation).
 
 ## 3. Replace the duplicated dialect code
 
@@ -47,9 +48,9 @@
   `activityMeta`'s graph reads, `fileInfoOf`, `toFileInfo`-over-records, `firstAttr`,
   `fileEntities`, and the attribute-typed kind classification. Keep `resolveLineageRef`'s 5-tier
   search, `indexWalkEdges` + `buildRootTree`, the four formatters, `parseOptions`, and
-  `runProvLineage` — observable behaviour identical. Re-derive depth truncation via a
-  one-hop-wider kernel walk (the retired engine's frontier), and impose the unbounded-walk
-  ceiling cli-side (500 file hops).
+  `runProvLineage` — observable behaviour identical. Take the depth-truncation set off the kernel
+  walk, and impose the unbounded-walk ceiling cli-side (500 file hops). The cli `LineageWalk` is
+  the kernel's walk plus the root QNames the per-root tree rebuild needs.
 - [x] 4.4 `src/tui/commands.tsx`: the two verify palette commands lazy-import the kernel for
   `formatVerifyResult`.
 
