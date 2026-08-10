@@ -18,19 +18,18 @@ Non-Goals:
 
 - No change to the wire format, the digest derivation, or the signature
   scheme.
-- No new runtime dependency.
 
 ## Decisions
 
-### A vendored synchronous SHA-256
+### The `@noble/hashes` synchronous SHA-256
 
 The Web Crypto API gives only an asynchronous digest, but the `ProvDigest`
-contract is synchronous. The runtime-dependency policy of the package is
-tsprov, zod, and neverthrow only. Thus the kernel carries a minimal FIPS
-180-4 implementation in one internal module. `sha256.test.ts` proves
-byte-equality against `node:crypto` over inputs that cover the
-block-padding boundaries. The golden fixture pins the derived bytes as
-before.
+contract is synchronous. The audited `@noble/hashes` package gives a
+synchronous SHA-256 in pure JavaScript, with no `node:` import. Thus the
+runtime-dependency policy of the package grows to tsprov, zod, neverthrow,
+and `@noble/hashes`. `sha256.test.ts` proves byte-equality against
+`node:crypto` over inputs that cover the block-padding boundaries. The
+golden fixture pins the derived bytes as before.
 
 ### `globalThis.crypto.randomUUID` replaces `randomUUID`
 

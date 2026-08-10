@@ -5,6 +5,7 @@
     "": {
       "name": "@inflexa-ai/prov-kernel",
       "dependencies": {
+        "@noble/hashes": "^2.3.0",
         "neverthrow": "^8.2.0",
         "zod": "^4.4.3",
       },
@@ -56,6 +57,8 @@
     "@humanwhocodes/retry": ["@humanwhocodes/retry@0.4.3", "", {}, "sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ=="],
 
     "@inflexa-ai/tsprov": ["@inflexa-ai/tsprov@0.5.1", "", { "dependencies": { "luxon": "^3.7.2" } }, "sha512-F2Q+trPPT0YdAs5aQ8LY6OJ718yaVWYABTg5bN1qNqdIJvjjH/NCThbOA2j5IJvevErhpHJXPEqcixeOHiHzGQ=="],
+
+    "@noble/hashes": ["@noble/hashes@2.3.0", "", {}, "sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ=="],
 
     "@rollup/rollup-linux-x64-gnu": ["@rollup/rollup-linux-x64-gnu@4.62.4", "", { "os": "linux", "cpu": "x64" }, "sha512-W69hukhZ3KKNRCaMIEzKvcFye42hh0FE1+YoYaf5+Ikacuftoco6yO/xouz0hc5d5W/s3yBro5jRiuEE/Q5vUw=="],
 

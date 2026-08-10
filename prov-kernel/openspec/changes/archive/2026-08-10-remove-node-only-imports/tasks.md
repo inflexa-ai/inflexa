@@ -1,8 +1,7 @@
 ## 1. Remove the node-only imports
 
-- [x] 1.1 `src/sha256.ts`: vendor a synchronous SHA-256 (FIPS 180-4) in
-  one internal module.
-- [x] 1.2 `src/document.ts`: `defaultProvDigest` folds the vendored
+- [x] 1.1 `package.json`: add the `@noble/hashes` dependency.
+- [x] 1.2 `src/document.ts`: `defaultProvDigest` folds the `@noble/hashes`
   digest. The default action-id minter calls
   `globalThis.crypto.randomUUID`. Remove the `node:crypto` import.
 - [x] 1.3 `package.json`: declare `"sideEffects": false`.

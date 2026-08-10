@@ -1,6 +1,6 @@
 import { type Result, ok, err } from "neverthrow";
 import { ProvDocument, type UnifiedOptions } from "@inflexa-ai/tsprov";
-import { sha256 } from "./sha256.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import type {
     ProvActor,
     ProvInputRef,
@@ -58,8 +58,9 @@ export type ProvDigest = (s: string) => string;
 
 /** The default digest: a SHA-256 fold to base36, portable across JS runtimes. */
 export function defaultProvDigest(s: string): string {
-    // The vendored sha256 keeps this module free of `node:crypto`, so browser bundlers can
-    // resolve it. The first 8 digest bytes, read big-endian, give the same fold as before.
+    // The `@noble/hashes` sha256 is pure JavaScript, thus this module stays free of
+    // `node:crypto` and browser bundlers can resolve it. The first 8 digest bytes, read
+    // big-endian, give the same fold as before.
     const bytes = sha256(new TextEncoder().encode(s));
     return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(0).toString(36);
 }
