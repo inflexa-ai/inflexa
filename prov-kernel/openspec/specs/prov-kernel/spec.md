@@ -140,8 +140,17 @@ SHALL be skipped; bytes that do not parse or unify SHALL return
 `err({ type: "prov_corrupt" })`. `computeLineage(model, roots, options)` SHALL
 traverse ONLY the `generated` and `used` edges, forward or backward, with a
 file-hop `depth` bound of `2n` edges from a file root and `2n - 1` from an
-activity root, so a truncation lands on a file node.
-`findFileEntity(model, key)` SHALL return the file entity for a
+activity root, so a truncation lands on a file node, and SHALL return the
+reached sub-model plus `truncated`: the QNames of the in-scope nodes with at
+least one qualifying edge the depth bound left unexpanded, computed in the
+same single traversal and equivalent to diffing the walk against the same
+walk one file hop wider. A node at the bound with nothing beyond it SHALL NOT
+be truncated. `computeReachable(model, roots, options)` SHALL return the
+unbounded reachability closure of the roots as a reached sub-model: every
+edge kind traverses by default, `edgeKinds` narrows the set, direction is
+`forward`, `backward`, or `both`, and `both` SHALL be the union of the
+backward and forward closures from the same roots — not undirected
+connectivity. `findFileEntity(model, key)` SHALL return the file entity for a
 `(path, hash)` key. The read model SHALL NOT touch the write path: the golden
 fixture bytes do not change.
 
@@ -174,3 +183,22 @@ fixture bytes do not change.
 - **WHEN** `computeLineage` walks backward from the last file with depth 1
 - **THEN** the result ends at the intermediate file, and the earlier command
   and its inputs stay out
+
+#### Scenario: The walk reports its own truncation
+
+- **GIVEN** a chain of two commands between three files
+- **WHEN** `computeLineage` walks backward from the last file with depth 1
+- **THEN** `truncated` holds exactly the intermediate file — the node whose
+  producer lies beyond the bound — and a bound node with nothing beyond it,
+  or an unbounded walk, reports no truncation
+
+#### Scenario: The reachability closure serves a highlight consumer
+
+- **GIVEN** a derived model and one produced file
+- **WHEN** `computeReachable` runs with direction `both` and the default edge
+  kinds
+- **THEN** the reached sub-model holds the file itself, its producing command
+  and the run spine, the agents via association and attribution, and the
+  analysis via derivation, while a sibling command's exclusive output stays
+  out
+

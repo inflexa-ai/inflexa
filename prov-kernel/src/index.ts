@@ -34,7 +34,7 @@ export type { ProvDigest, ProvDocumentModel, ProvDocumentModelOptions } from "./
 export { applyProvEvent } from "./events.js";
 export type { ProvEvent } from "./events.js";
 
-export { computeLineage, deriveLineageModel, findFileEntity } from "./lineage.js";
+export { computeLineage, computeReachable, deriveLineageModel, findFileEntity } from "./lineage.js";
 export type {
     LineageActivityKind,
     LineageActivityNode,
@@ -47,6 +47,7 @@ export type {
     LineageInputNode,
     LineageModel,
     LineageNode,
+    LineageWalk,
     ProvReadError,
 } from "./lineage.js";
 
