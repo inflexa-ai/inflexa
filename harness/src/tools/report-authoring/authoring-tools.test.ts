@@ -212,6 +212,23 @@ describe("the tool-layer refusal", () => {
         }
     });
 
+    it("refuses a call whose thread id is not a safe segment", async () => {
+        const gateway = makeFakeGateway();
+        const tools = createReportAuthoringTools(gateway);
+        // A thread id that carries a traversal segment names no thread a tool can write under.
+        const { ctx } = makeToolContext();
+        const scope: Scope = { kind: "analysis", analysisId: "analysis-001", threadId: "../evil" };
+        const unsafeCtx: ToolContext = { ...ctx, session: { ...ctx.session, scope } };
+
+        const result = await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Intro", blocks: [] } }, unsafeCtx);
+
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(false);
+        if (!value.applied) {
+            expect(value.refusal.reason).toBe("no-thread-scope");
+        }
+    });
+
     it("refuses a mutation on a thread with no stored state", async () => {
         const tools = createReportAuthoringTools(makeFakeGateway());
 

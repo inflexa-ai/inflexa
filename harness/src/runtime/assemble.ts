@@ -19,7 +19,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import { createConversationAgent, type ConversationAgentDeps } from "../agents/conversation-agent.js";
 import { createReportSessionAgent } from "../agents/report-session-agent.js";
-import { createReportSessionRuntime } from "../app/report-session-runtime.js";
+import { createReportSessionRuntime, type ReportSessionRuntime } from "../app/report-session-runtime.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
@@ -156,6 +156,13 @@ export interface CoreRuntime {
      * on the `Result` channel.
      */
     readonly agents: ThreadAgentResolver;
+    /**
+     * The turn-start anchor of a report session. A serving path runs it at the
+     * turn start, thus a report tool call never arrives before the session state
+     * exists. The gateway stays behind the tool boundary, thus the runtime exposes
+     * the anchor operation alone here, and a later change wires it at the turn start.
+     */
+    readonly reportSession: Pick<ReportSessionRuntime, "ensureSessionState">;
     readonly workflows: RegisteredWorkflows;
     readonly citationResolver: CitationResolver;
 }
@@ -213,6 +220,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
 
     return {
         agents: createThreadAgentResolver(agents),
+        reportSession: { ensureSessionState: reportSession.ensureSessionState },
         workflows: {
             executeAnalysis,
             sandboxStep,

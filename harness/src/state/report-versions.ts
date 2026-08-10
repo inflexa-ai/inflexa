@@ -24,13 +24,15 @@ import { randomUUID } from "node:crypto";
 
 import { type Result, type ResultAsync, err, errAsync, ok } from "neverthrow";
 import type { Pool } from "pg";
-import { z } from "zod";
 
 import { ReportDocumentSchema, type ReportDocument } from "../contracts/report-blocks.js";
 import { type DbError, tryMutation, tryQuery } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
 import type { DomainError } from "../lib/result.js";
 import type { ReportSnapshot } from "../report-model/reference-resolver.js";
+import { parseSnapshot, reduceIssues, type SchemaIssue } from "./snapshot-parse.js";
+
+export type { SchemaIssue };
 
 /**
  * The name of the unique constraint on thread_id. Postgres reports it on a
@@ -38,42 +40,6 @@ import type { ReportSnapshot } from "../report-model/reference-resolver.js";
  * thread_already_holds_version refusal.
  */
 const THREAD_UNIQUE_CONSTRAINT = "cortex_report_versions_one_per_thread";
-
-/**
- * One pinned artifact of a stored snapshot. The value carries the content hash,
- * an optional file type, and optional rows. The `z.ZodType<ReportSnapshot>`
- * annotation below keeps this schema and the `ArtifactSnapshot` type of the
- * reference model in step, thus a change to one shows as a compile error there.
- */
-const ArtifactSnapshotSchema = z.object({
-    hash: z.string(),
-    fileType: z.string().nullable().optional(),
-    rows: z.array(z.record(z.string(), z.union([z.string(), z.number()]))).optional(),
-});
-
-/**
- * The stored-snapshot schema. The annotation ties the parse output to the
- * `ReportSnapshot` type of the reference model, thus the store and the structural
- * validation never disagree about the snapshot shape. The mint never fills `rows`,
- * but the schema admits what the type admits.
- */
-const ReportSnapshotSchema: z.ZodType<ReportSnapshot> = z.object({
-    artifacts: z.record(z.string(), ArtifactSnapshotSchema),
-    citations: z.array(z.string()).optional(),
-});
-
-/** One reduced schema issue -- the dotted path and the message, without the rest. */
-export interface SchemaIssue {
-    readonly path: string;
-    readonly message: string;
-}
-
-function reduceIssues(error: z.ZodError): SchemaIssue[] {
-    return error.issues.map((issue) => ({
-        path: issue.path.map((segment) => String(segment)).join("."),
-        message: issue.message,
-    }));
-}
 
 /** The anchor and the payload of a version to record. */
 export interface RecordVersionInput {
@@ -223,9 +189,9 @@ function rowToVersion(row: VersionRow): Result<RecordedVersion, VersionReadError
     if (!document.success) {
         return err({ type: "corrupt_version", op: "report-versions.read", versionId: row.version_id, part: "document", issues: reduceIssues(document.error) });
     }
-    const snapshot = ReportSnapshotSchema.safeParse(row.snapshot);
-    if (!snapshot.success) {
-        return err({ type: "corrupt_version", op: "report-versions.read", versionId: row.version_id, part: "snapshot", issues: reduceIssues(snapshot.error) });
+    const snapshot = parseSnapshot(row.snapshot);
+    if (snapshot.isErr()) {
+        return err({ type: "corrupt_version", op: "report-versions.read", versionId: row.version_id, part: "snapshot", issues: snapshot.error });
     }
     return ok({
         versionId: row.version_id,
@@ -235,7 +201,7 @@ function rowToVersion(row: VersionRow): Result<RecordedVersion, VersionReadError
         parentSeq: row.parent_seq === null ? null : Number(row.parent_seq),
         parentVersionId: row.parent_version_id,
         document: document.data,
-        snapshot: snapshot.data,
+        snapshot: snapshot.value,
         createdAt: row.created_at,
     });
 }
@@ -277,11 +243,11 @@ export function createReportVersionStore({ pool }: ReportVersionStoreDeps): Repo
         }
         const document = parsed.data;
 
-        // The parse guards the row against a caller bug through a cast. The store
-        // stores the given value, thus the parse changes no value.
-        const parsedSnapshot = ReportSnapshotSchema.safeParse(input.snapshot);
-        if (!parsedSnapshot.success) {
-            return errAsync({ type: "malformed_snapshot", op: "report-versions.record", issues: reduceIssues(parsedSnapshot.error) });
+        // The parse guards the row against a caller bug. The store stores the given
+        // value, thus the parse changes no value.
+        const parsedSnapshot = parseSnapshot(input.snapshot);
+        if (parsedSnapshot.isErr()) {
+            return errAsync({ type: "malformed_snapshot", op: "report-versions.record", issues: parsedSnapshot.error });
         }
 
         const insert = (): ResultAsync<RecordedVersionRef, RecordVersionError> => {

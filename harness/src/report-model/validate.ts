@@ -22,7 +22,7 @@ export type { ReportWarning };
  * A production resolver reads storage for each reference, and a large report holds hundreds of them. An
  * unbounded fan-out would open one read for each reference at the same moment.
  */
-const RESOLUTION_CONCURRENCY = 8;
+export const RESOLUTION_CONCURRENCY = 8;
 
 /** One schema conformance problem, reduced to a path and a message. */
 export interface SchemaIssue {
@@ -58,7 +58,7 @@ export type ReportValidation =
  * bound resolver broke its own contract. That is reported and never ignored, because a chart with no
  * table behind it renders nothing and a silent skip would pass it as grounded.
  */
-function checkChartEncoding(entry: CollectedReference, value: ResolvedValue): UnresolvedReference | undefined {
+export function checkChartEncoding(entry: CollectedReference, value: ResolvedValue): UnresolvedReference | undefined {
     const encodingColumns = entry.encodingColumns;
     if (encodingColumns === undefined || encodingColumns.length === 0) {
         return undefined;

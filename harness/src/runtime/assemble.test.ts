@@ -1,8 +1,13 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import type { Pool } from "pg";
 
 import type { ThreadAgentResolver, UnregisteredThreadType } from "@inflexa-ai/harness";
 
-import { createThreadAgentResolver } from "./assemble.js";
+import { createReportSessionRuntime } from "../app/report-session-runtime.js";
+import { withSchema } from "../__tests__/setup/postgres.js";
+import { createThreadStore } from "../memory/thread-store.js";
+import { upsertAnalysis } from "../state/analyses.js";
+import { createThreadAgentResolver, type CoreRuntime } from "./assemble.js";
 import type { AgentDefinition } from "../loop/types.js";
 import type { ThreadType } from "../memory/thread-store.js";
 
@@ -70,6 +75,35 @@ describe("createThreadAgentResolver", () => {
                 (refusal) => refusal,
             );
         expect(reduced).toEqual({ type: "unregistered_thread_type", threadType: "report" });
+    });
+});
+
+describe("the report session handle", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("assemble_report_session");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("anchors a seeded report thread through the exposed handle", async () => {
+        const analysisId = "analysis-assemble";
+        const threadId = "thread-assemble";
+        (await upsertAnalysis(pool, analysisId, null, null))._unsafeUnwrap();
+        (await createThreadStore(pool).createThread({ threadId, analysisId, type: "report" }))._unsafeUnwrap();
+
+        // The exposed handle is the runtime's turn-start anchor. The assignment proves
+        // that the `CoreRuntime` field type accepts it; a drift fails tsc.
+        const handle: CoreRuntime["reportSession"] = createReportSessionRuntime({ pool });
+
+        const ready = await handle.ensureSessionState(threadId);
+        expect(ready.outcome).toBe("ready");
     });
 });
 

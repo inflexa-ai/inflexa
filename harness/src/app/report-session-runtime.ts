@@ -122,6 +122,12 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
             log.error("the thread resolves to no analysis", { threadId });
             return { outcome: "failed", detail: "the thread names no analysis" };
         }
+        if (thread.value.threadType !== "report") {
+            // The session anchors a report thread only. A conversation thread carries no report session,
+            // thus a wrong type writes no row and the detail names the type.
+            log.error("the thread is not a report thread", { threadId, threadType: thread.value.threadType });
+            return { outcome: "failed", detail: `the thread is a ${thread.value.threadType} thread, not a report thread` };
+        }
         return mintAndWrite(threadId, thread.value.analysisId);
     }
 
