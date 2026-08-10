@@ -6,16 +6,18 @@
 # surfaces a failing status for a maintainer to review; it rolls nothing back.
 #
 # The store is obtained one of two ways (design.md "acceptance obtains the store
-# the way it is consumed"):
+# from the published store artifact"):
 #
-#   * baked image (the OSS path — the default): boot the published sandbox image
-#     for this arch (SANDBOX_IMAGE) directly, no mount. This is exactly what
-#     `inflexa sandbox pull` fetches and what OSS users run.
-#   * mounted tarballs (the managed path): pass --store <dir> pointing at an
-#     assembled tarball store to mount it read-only into sandbox-base instead.
+#   * mounted store artifact (the store path): pass --store <dir> pointing at a
+#     store extracted from the published store artifact, to mount it read-only into
+#     sandbox-base. This is the store a user pulls, thus it is the honest source for
+#     the import-all invariant.
+#   * baked image (SANDBOX_IMAGE, no mount): boot the published sandbox image
+#     directly. The one runtime image bakes no R library and no Python library,
+#     thus this route validates the image itself, not a package set.
 #
-# The extracted tarballs are cut FROM the published image, so validating the
-# image validates the same content the managed mount ships.
+# No runtime image bakes a package set after the retirement of the variants, thus a
+# store validation mounts the published store artifact.
 #
 # Runs from the repo root with Docker available.
 #

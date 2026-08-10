@@ -38,6 +38,22 @@ export interface EnvironmentStorePaths {
      * sandbox's own path, which makes the container path correct as-is; a host
      * whose store is baked into the image and never bind-mounted must inject the
      * path to its own extracted copy, or the inventory reads as unknown.
+     *
+     * This inventory covers the two tracks a package farm carries: the Python
+     * packages and the R packages. The two image-owned tracks — the bioconda
+     * command-line tools and the Node packages — are in `imagePackagesFile`.
      */
     readonly packagesFile?: string;
+    /**
+     * Host path of the runtime image's baked inventory fragment — the two tracks
+     * the image owns rather than the store: the bioconda command-line tools and
+     * the Node packages. The fragment lives outside the store mount, thus a mounted
+     * store never shadows it, and the image records exactly what it installed.
+     *
+     * The fragment is baked into the runtime image at `/opt/inflexa/image-packages.txt`.
+     * A host that does not see that container path must inject the path to its own
+     * extracted copy. Omit when there is no fragment to read; `list_available_packages`
+     * then reports the store tracks alone, which is a truthful answer.
+     */
+    readonly imagePackagesFile?: string;
 }

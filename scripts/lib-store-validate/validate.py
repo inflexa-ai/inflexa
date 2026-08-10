@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Acceptance validation suite — runs INSIDE a sandbox image with the library
-store at /mnt/libs/current (no network, runtime env only). The store is there
-either because it is baked into the image (the OSS path — a published
-sandbox-python/-r booted directly) or mounted read-only at /mnt/libs (the managed
-path).
+"""Acceptance validation suite — runs INSIDE the sandbox-base image with the
+library store at /mnt/libs/current (no network, runtime env only). The store is
+there because the published store artifact is mounted read-only at /mnt/libs. No
+runtime image bakes a package set after the retirement of the variants, thus the
+mounted store is the one source of a library.
 
 It derives its work from packages.txt, not a hardcoded list, and runs two phases:
 

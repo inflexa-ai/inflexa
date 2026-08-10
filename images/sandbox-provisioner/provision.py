@@ -1031,9 +1031,10 @@ def _provision(args) -> int:
     staging = FARMS / (FARM_STAGING + args.farm)
     lock_path = farm / "lock.json"
 
-    previous: list[str] = []
+    old_lock: dict = {}
     if lock_path.is_file():
-        previous = json.loads(lock_path.read_text()).get("requested", [])
+        old_lock = json.loads(lock_path.read_text())
+    previous: list[str] = old_lock.get("requested", [])
 
     requested = sorted(set(previous) | set(args.specs))
     if not requested and not args.r_manifest:
@@ -1095,7 +1096,11 @@ def _provision(args) -> int:
 
     collisions = build_farm(staging, store_dirs)
 
-    r_result: dict = {}
+    # A run that does not build R preserves the R track, thus the lock must still
+    # describe the R closure that the farm inherited. Carry the r block of the old
+    # lock forward. Otherwise r_result is {}, and the record drops the preserved R
+    # closure that the farm still resolves.
+    r_result: dict = old_lock.get("r", {})
     if args.r_manifest:
         r_result = provision_r(staging, Path(args.r_manifest))
 

@@ -109,10 +109,11 @@ print(' '.join(g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), [])))"
 # manifest's `binaries` map). A probe of the raw entry would drop a tool that
 # works.
 #
-# The fragment stays in this builder stage, at /tmp. /mnt/libs/current holds no
-# package, and where the image advertises its own two tracks is an open decision.
-# The floor is what this check exists for, and the floor does not need a shipped
-# fragment.
+# The load check writes the fragment to /tmp, and the runtime stage copies it into
+# the baked image inventory at /opt/inflexa. That path sits outside the store mount,
+# thus the image advertises its own command-line tools and a mounted store never
+# shadows the record. The floor is the other reason for this check, and the floor
+# fails the build when zero tools resolve.
 ENV PATH="${PATH}:/opt/conda/bin"
 RUN TOOLS=$(python3 -c "\
 import yaml, os, re; \
@@ -173,7 +174,8 @@ print(' '.join(yaml.safe_load(open('/tmp/manifest.yaml'))['node']))" 2>/dev/null
 # Best-effort load check — require() each manifest node package; the fragment
 # comes from the set that loaded; floor if zero. (/opt/node carries the manifest's
 # direct deps; their transitive deps live under node_modules but are not
-# advertised.) The fragment stays at /tmp for the reason the conda stage records.
+# advertised.) The runtime stage copies the fragment into the baked image inventory
+# at /opt/inflexa, the same as the conda fragment.
 RUN NODE_PKGS=$(python3 -c "\
 import yaml; \
 print(' '.join(yaml.safe_load(open('/tmp/manifest.yaml'))['node']))" 2>/dev/null) \
@@ -436,6 +438,19 @@ RUN chmod +x /usr/local/bin/inflexa-libs-refresh
 # absolute path.
 COPY --from=conda-builder /opt/conda /opt/conda
 COPY --from=node-builder /opt/node /opt/node
+
+# The image advertises its own two tracks — the bioconda command-line tools and the
+# Node packages — through a baked inventory fragment. Each builder derived its
+# fragment from the set that its load check resolved, thus the record matches what
+# the image installed and it cannot drift. The fragment lands at /opt/inflexa,
+# outside the store mount, thus a mounted store never shadows it. The harness tool
+# list_available_packages merges this fragment with the farm inventory, so an agent
+# reads one complete package list.
+COPY --from=conda-builder /tmp/conda.packages.txt /opt/inflexa/conda.packages.txt
+COPY --from=node-builder /tmp/node.packages.txt /opt/inflexa/node.packages.txt
+RUN cat /opt/inflexa/conda.packages.txt /opt/inflexa/node.packages.txt \
+      > /opt/inflexa/image-packages.txt \
+    && chmod -R a+rX /opt/inflexa
 
 # No library-specific reference paths are baked in. The reference store is
 # optional, its layout is owned by the catalog (and versioned per dataset), and

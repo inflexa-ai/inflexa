@@ -163,7 +163,10 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         throw new Error('createSandboxAgent: SandboxToolName "resolve_citation" requires a CitationResolver dependency.');
     }
     const registry: Record<SandboxToolName, Tool | undefined> = {
-        listAvailablePackages: createListAvailablePackagesTool({ ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}) }),
+        listAvailablePackages: createListAvailablePackagesTool({
+            ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}),
+            ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
+        }),
         listAvailableRefs: createListAvailableRefsTool({ ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}) }),
         resolveLibraryId: resolveLibraryIdTool,
         queryDocs: queryDocsTool,

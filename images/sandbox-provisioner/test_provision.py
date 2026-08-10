@@ -916,6 +916,37 @@ class TrackPreservationTests(StoreTestCase):
         lock = json.loads((farm / "lock.json").read_text())
         self.assertEqual(lock["tracks"], {"built": ["python", "r"], "preserved": []})
 
+    def test_the_r_block_of_the_lock_carries_forward(self):
+        """A run that does not build R carries the old lock's r block forward, so
+        the record still describes the R closure that the farm resolves. A blank r
+        block would make the lock deny the preserved R track.
+        """
+        # First, build a farm that carries a python track and an r track, and whose
+        # lock records a real r block.
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        original = provision.provision_r
+        provision.provision_r = self._fake_provision_r("rpkgC")
+        try:
+            self.assertEqual(self._run("demo", ["foo"], r_manifest="/tmp/manifest.yaml"), 0)
+        finally:
+            provision.provision_r = original
+        farm = provision.FARMS / "demo"
+        r_block = json.loads((farm / "lock.json").read_text())["r"]
+        self.assertEqual(r_block["packages"]["cran"], 1)
+
+        # A second run adds a Python package and builds no R track.
+        self.compile_text = "bar==2.0 \\\n    --hash=sha256:bbb\n" + self.FOO_1
+        self.install_tree = {"bar/__init__.py": "y = 2\n",
+                             "bar-2.0.dist-info/RECORD": "bar/__init__.py,,\n"}
+        self.assertEqual(self._run("demo", ["bar"]), 0)
+
+        # The R track is preserved, thus the lock still names the R closure that the
+        # farm inherited, and the r block is the block of the first run.
+        lock = json.loads((farm / "lock.json").read_text())
+        self.assertEqual(lock["tracks"]["preserved"], ["r"])
+        self.assertEqual(lock["r"], r_block)
+
     def test_preservation_installs_nothing_and_opens_no_network(self):
         """§6.4: the preserved-track path runs no installer and no resolver.
 

@@ -47,7 +47,7 @@ on:
   workflow_dispatch:
     inputs:
       r_ncpus:
-        description: "Cap on parallel R source compiles (empty = auto/detectCores). Set e.g. 4 if the R build OOMs, mirroring sandbox-python-r's R_NCPUS arg."
+        description: "Cap on parallel R source compiles (empty = auto/detectCores). Set for example 4 if the R build runs out of memory. It caps the parallel compiles of the provisioner R track build."
         required: false
         default: ""
 

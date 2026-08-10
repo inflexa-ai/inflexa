@@ -1012,7 +1012,10 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // not optional planner lookups. Read both inventories host-side before
             // the loop and put their rendered content in the planner's seed.
             const listAvailableRefs = createListAvailableRefsTool(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath });
-            const listAvailablePackages = createListAvailablePackagesTool(deps.packagesFile === undefined ? {} : { packagesFile: deps.packagesFile });
+            const listAvailablePackages = createListAvailablePackagesTool({
+                ...(deps.packagesFile === undefined ? {} : { packagesFile: deps.packagesFile }),
+                ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
+            });
             // A path-separator query matches every reference path and selects the
             // tool's recursive leaf scan, so the seed contains usable file paths,
             // not only top-level directory summaries.

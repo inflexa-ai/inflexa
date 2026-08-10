@@ -362,6 +362,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 model: deps.model,
                 skillsDir: deps.skillsDir,
                 ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}),
+                ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
                 ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
                 bioKeys: deps.bioKeys,
                 step: {

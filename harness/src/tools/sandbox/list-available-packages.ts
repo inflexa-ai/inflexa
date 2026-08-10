@@ -2,13 +2,23 @@
  * listAvailablePackages — query the R/Python/CLI/Node packages available in the
  * sandbox.
  *
- * The data source is the store's `packages.txt`, assembled by the library-store
- * build (see the lib-store-build spec) and read from wherever the HOST can see
- * it — the container path when the host mounts the same store, an injected path
- * when it does not. Its shape is fixed by the
- * producers (`scripts/lib-store-common.sh`, `images/sandbox-base/inflexa-libs-refresh`):
- * two `#` advisory lines, then one `## <Section>` heading per language track
- * followed by that track's packages as a single comma-separated line.
+ * The inventory has two sources, each read from wherever the HOST can see it —
+ * the container path when the host mounts the same store, an injected path when
+ * it does not:
+ *
+ *   1. The store's `packages.txt` — the two tracks a farm carries, the Python
+ *      packages and the R packages. It is assembled by the library-store build
+ *      (see the lib-store-build spec).
+ *   2. The image's baked fragment — the two tracks the image owns rather than the
+ *      store, the bioconda command-line tools and the Node packages. It lives
+ *      outside the store mount, thus a mounted store never shadows it. The tool
+ *      merges it into the store inventory, so one call reports every track.
+ *
+ * Both have the shape the producers fix
+ * (`scripts/lib-store-common.sh`, `images/sandbox-base/inflexa-libs-refresh`):
+ * `#` advisory lines, then one `## <Section>` heading per language track followed
+ * by that track's packages as a single comma-separated line. Thus one parser reads
+ * both.
  *
  *     # Available packages in the sandbox environment.
  *     # You cannot install packages from inside the sandbox — ...
@@ -19,7 +29,7 @@
  *     ## Python (pip)
  *     anndata, scanpy, ...
  *
- * The file carries **names only — there are no version strings in it**, so this
+ * Each source carries **names only — there are no version strings in it**, so this
  * tool reports presence and language track and cannot report a version.
  */
 
@@ -37,6 +47,14 @@ import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
  * never bind-mounted — inject their own path instead.
  */
 const DEFAULT_PACKAGES_FILE = "/mnt/libs/current/packages.txt";
+
+/**
+ * Where the image's baked inventory fragment lives inside the runtime image. It
+ * lists the two image-owned tracks (the bioconda command-line tools and the Node
+ * packages), and it sits outside the store mount so no store shadows it. A host
+ * that does not see this container path injects its own extracted copy instead.
+ */
+const DEFAULT_IMAGE_PACKAGES_FILE = "/opt/inflexa/image-packages.txt";
 
 /**
  * Default cap on a listing — high enough that the real store is never truncated.
@@ -198,11 +216,12 @@ export function queryPackages(sections: readonly Section[], { names, query, lang
     return { available: true, total, returned, hasMore: returned < total, content };
 }
 
-export type ListAvailablePackagesDeps = Pick<EnvironmentStorePaths, "packagesFile">;
+export type ListAvailablePackagesDeps = Pick<EnvironmentStorePaths, "packagesFile" | "imagePackagesFile">;
 
 /** Create the package inventory over a host-readable `packages.txt`. */
 export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps = {}) {
     const packagesFile = deps.packagesFile ?? DEFAULT_PACKAGES_FILE;
+    const imagePackagesFile = deps.imagePackagesFile ?? DEFAULT_IMAGE_PACKAGES_FILE;
     return defineTool({
         id: "list_available_packages",
         description:
@@ -234,15 +253,29 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
                 ),
         }),
         execute: async (input): Promise<Result<PackagesResult, ToolError>> => {
-            // An unreadable inventory is an expected environment state — model it as an
-            // `available: false` data variant telling the caller the set is UNKNOWN.
-            let raw: string;
+            // The store inventory is the presence gate: an unreadable one is an
+            // expected environment state — model it as an `available: false` data
+            // variant that tells the caller the set is UNKNOWN.
+            let store: string;
             try {
-                raw = await readFile(packagesFile, "utf-8");
+                store = await readFile(packagesFile, "utf-8");
             } catch {
                 return ok({ available: false, content: UNAVAILABLE_NOTE });
             }
-            return ok(queryPackages(parsePackagesFile(raw), input));
+            const sections = parsePackagesFile(store);
+            // Merge the image fragment, which advertises the two image-owned tracks.
+            // Its sections follow the store sections, thus the merged list keeps the
+            // canonical order (R, Python, then the command-line tools and Node). The
+            // absence of the fragment is a normal state, not an error: a host that
+            // does not see the image path reports the store tracks alone.
+            try {
+                const image = await readFile(imagePackagesFile, "utf-8");
+                sections.push(...parsePackagesFile(image));
+            } catch {
+                // The image fragment is not readable from this host. Report the
+                // store tracks alone.
+            }
+            return ok(queryPackages(sections, input));
         },
     });
 }

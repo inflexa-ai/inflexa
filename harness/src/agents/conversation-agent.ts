@@ -196,6 +196,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         hostTools,
         refStorePath,
         packagesFile,
+        imagePackagesFile,
         usageRecorder,
         citationResolver,
     } = deps;
@@ -242,7 +243,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // What is importable inside a sandbox. Reads the same manifest a sandbox agent
         // reads, host-side — so "is scanpy available?" is a manifest lookup here rather
         // than launching analysis computation to run one import.
-        createListAvailablePackagesTool({ ...(packagesFile ? { packagesFile } : {}) }),
+        createListAvailablePackagesTool({ ...(packagesFile ? { packagesFile } : {}), ...(imagePackagesFile ? { imagePackagesFile } : {}) }),
         // Execution.
         createInspectRunTool(pool),
         // The dataset's own record. No file backs it — the DB row is the only copy.
@@ -254,6 +255,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             usageRecorder,
             ...(refStorePath ? { refStorePath } : {}),
             ...(packagesFile ? { packagesFile } : {}),
+            ...(imagePackagesFile ? { imagePackagesFile } : {}),
             ...(deps.logger ? { logger: deps.logger } : {}),
         }),
         createExecuteAnalysisTool({

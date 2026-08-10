@@ -4,8 +4,7 @@
 # the canonical packages.txt concat order + header.
 #
 # Source this; do not execute it. Consumed by lib-store-pack.sh,
-# lib-store-extract-tarballs.sh, lib-store-write-manifest.sh, lib-store-publish.sh,
-# scripts/build-libs-local.sh, and the CI workflows.
+# lib-store-write-manifest.sh, lib-store-publish.sh, and the CI workflows.
 #
 # Store layout (relative to a version's <arch> root / the mounted `current/`):
 #   r/cran  r/bioconductor  r/github  python/  conda/  node/

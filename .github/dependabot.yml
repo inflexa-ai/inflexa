@@ -49,8 +49,6 @@ updates:
   - package-ecosystem: "docker"
     directories:
       - "/images/sandbox-base"
-      - "/images/sandbox-python"
-      - "/images/sandbox-python-r"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5

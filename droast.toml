@@ -3,8 +3,6 @@
 [[overrides]]
 paths = [
   "images/sandbox-base/Dockerfile",
-  "images/sandbox-python/Dockerfile",
-  "images/sandbox-python-r/Dockerfile",
 ]
 skip = ["DF033"]
 
@@ -17,5 +15,5 @@ skip = ["DF058"]
 # These append to PATH inherited from the parent stage. Docker expands the old
 # value before applying the ENV assignment; droast treats that as self-reference.
 [[overrides]]
-paths = ["images/sandbox-python/Dockerfile"]
+paths = ["images/sandbox-base/Dockerfile"]
 skip = ["DF062"]

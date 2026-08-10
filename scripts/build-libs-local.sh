@@ -1,21 +1,15 @@
 #!/usr/bin/env bash
-# Build the one sandbox runtime image locally and, optionally, extract the
-# per-track library-store tarballs OUT of it the way CI does. This reproduces the
-# CI image build on your own machine for testing — it does NOT assemble a host
+# Build the one sandbox runtime image locally, the way CI does. This reproduces
+# the CI image build on your own machine for a test — it does NOT assemble a host
 # store directory (the provisioner builds the store; see
 # .github/workflows/lib-store-provisioner.yml).
 #
 # Usage:
 #   ./scripts/build-libs-local.sh                       # build sandbox-base
-#   ./scripts/build-libs-local.sh --extract [--dest D]  # also extract tarballs to D (default: ./dist-libs)
 #   ./scripts/build-libs-local.sh --platform linux/amd64
 #
-# After building, validate a store against the image (the way a user consumes it):
+# After the build, validate a store against the image (the way a user consumes it):
 #   scripts/lib-store-validate/run.sh --store /path/to/store
-#
-# NOTE: --extract cuts the tarballs out of the image, and sandbox-base carries no
-# R track and no Python track. The replacement source for the managed-mount
-# tarballs is an open decision, thus --extract fails until it is answered.
 
 set -euo pipefail
 
@@ -27,9 +21,6 @@ source "$SCRIPT_DIR/lib-store-common.sh"
 
 MANIFEST="$PROJECT_ROOT/images/lib-store-manifest.yaml"
 PLATFORM="linux/$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')"
-EXTRACT=false
-DEST="$PROJECT_ROOT/dist-libs"
-
 TAG_BASE="sandbox-base:local"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -39,9 +30,7 @@ step()  { printf "\n${CYAN}--- %s ---${NC}\n" "$1"; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --extract)     EXTRACT=true; shift ;;
     --platform)    PLATFORM="$2"; shift 2 ;;
-    --dest)        DEST="$2"; shift 2 ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
@@ -63,17 +52,6 @@ docker build \
   -t "$TAG_BASE" \
   "$PROJECT_ROOT"
 info "sandbox-base built -> $TAG_BASE"
-
-if $EXTRACT; then
-  step "Extracting per-track tarballs from $TAG_BASE"
-  command -v zstd >/dev/null || { error "zstd is not installed (needed to pack tarballs)"; exit 1; }
-  STAGING=$(mktemp -d)
-  trap 'rm -rf "$STAGING"' EXIT
-  PLATFORM="$PLATFORM" bash "$SCRIPT_DIR/lib-store-extract-tarballs.sh" "$TAG_BASE" "$STAGING"
-  mkdir -p "$DEST"
-  bash "$SCRIPT_DIR/lib-store-pack.sh" "$STAGING" "$DEST"
-  info "Tarballs written to $DEST"
-fi
 
 step "Done"
 info "Image: $TAG_BASE"

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Publish a built library store to S3 — immutable versions, and advance `latest`
-# for this arch (build-floor gated; acceptance is non-gating and moves nothing):
-#   1. Upload each packed track tarball write-once to <version>/linux-<arch>/<track>.tar.zst.
-#   2. If the arch's full track set built, write the per-arch manifest (the
-#      lockfile the CLI pulls) to <version>/linux-<arch>/manifest.json and
-#      record the candidate pointer — version plus the top image ref — at
+# RETIRED — the per-track tarball upload is gone. The managed per-track tarballs
+# retire with the change `preserve-farm-tracks-and-single-runtime-image` (task 7.1),
+# because the managed delivery is decoupled from OSS and no runtime image carries a
+# track to extract. The content-addressed store publishes from
+# .github/workflows/lib-store-provisioner.yml. No workflow calls this script.
+#
+# What remains below writes the per-arch manifest and advances `latest`. It is
+# dormant and no consumer runs it:
+#   1. Write the per-arch manifest (the lockfile the CLI pulls) to
+#      <version>/linux-<arch>/manifest.json and record the candidate pointer at
 #      candidate/linux-<arch>.json.
-#      An incomplete build uploads its tarballs (they are content-addressed and
-#      reusable) but publishes no manifest and no candidate.
-#   3. Advance latest/linux-<arch>/manifest.json to this version, mirroring the
-#      image :latest tag the build also advances. This is gated by the build's own
-#      load check + non-empty floor + coverage regression guard — the same gate
-#      that decides whether the build publishes at all.
+#   2. Advance latest/linux-<arch>/manifest.json to this version, mirroring the
+#      image :latest tag the build also advances.
 #
 # Usage: lib-store-publish.sh <amd64|arm64> <version> <dist_dir>
 # Env:   S3_BUCKET PUBLIC_URL TOP_IMAGE  (TOP_IMAGE is the extracted top image ref
@@ -36,16 +36,9 @@ ARCH_DIR="linux-$ARCH"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# Immutable: a version is never rewritten; skip an object that already exists.
-while read -r track; do
-  [ -n "$track" ] || continue
-  KEY="$VERSION/$ARCH_DIR/$track.tar.zst"
-  if aws s3api head-object --bucket "$S3_BUCKET" --key "$KEY" >/dev/null 2>&1; then
-    echo "immutable: s3://$S3_BUCKET/$KEY already exists — skipping"
-  else
-    aws s3 cp "$DIST/$track.tar.zst" "s3://$S3_BUCKET/$KEY"
-  fi
-done < "$DIST/tracks.txt"
+# The per-track tarball upload is retired. The content-addressed store publishes
+# from .github/workflows/lib-store-provisioner.yml, and no runtime image carries a
+# track to extract into a tarball.
 
 # Best-effort: publish the manifest for exactly the tracks that packed (the floor
 # already dropped empty tracks). Only guard the R triple's all-or-none invariant.
@@ -79,9 +72,8 @@ fi
 # the image :latest tag is advanced the same way by the build's manifest job.
 aws s3 cp "s3://$S3_BUCKET/$MANIFEST_KEY" "s3://$S3_BUCKET/latest/$ARCH_DIR/manifest.json"
 
-# Candidate pointer: records the exact top image ref for this arch (sandbox-python-r,
-# or sandbox-python where R did not build) so a dispatch-triggered acceptance
-# validates the real image rather than assuming the R variant.
+# Candidate pointer: records the exact image ref for this arch, so a
+# dispatch-triggered acceptance validates the real image.
 printf '{"version":"%s","image":"%s","publish":"true"}\n' "$VERSION" "$TOP_IMAGE" \
   | aws s3 cp - "s3://$S3_BUCKET/candidate/$ARCH_DIR.json"
 echo "Published $VERSION ($TOP_IMAGE) for $ARCH_DIR and advanced latest/$ARCH_DIR"
