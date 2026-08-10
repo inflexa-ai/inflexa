@@ -122,11 +122,16 @@ jobs:
       # owned tracks through the baked fragment at /opt/inflexa.
 
       - name: "Build + push: sandbox-base"
+        # TARGETARCH is passed explicitly, although buildx predefines it. The
+        # builder left the predefined value empty at the final FROM interpolation,
+        # and the build then failed on the stage name `runtime-`. An explicit
+        # argument is deterministic on every builder.
         run: |
           docker buildx build --load \
             -f images/sandbox-base/Dockerfile \
             --platform "$PLATFORM" \
             --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            --build-arg "TARGETARCH=${ARCH}" \
             -t "${IMAGE_BASE}:${VERSION}-${ARCH}" \
             .
           docker push "${IMAGE_BASE}:${VERSION}-${ARCH}"

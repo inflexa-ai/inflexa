@@ -45,10 +45,13 @@ info "Platform:   $PLATFORM"
 # The one runtime image. The build context is the repo root, because the
 # Dockerfile COPYs images/lib-store-manifest.yaml and the inventory producer.
 step "Building: sandbox-base"
+# TARGETARCH passes explicitly, because not every builder fills the predefined
+# value at the final FROM interpolation of the Dockerfile.
 docker build \
   --file "$PROJECT_ROOT/images/sandbox-base/Dockerfile" \
   --platform "$PLATFORM" \
   --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+  --build-arg "TARGETARCH=${PLATFORM##*/}" \
   -t "$TAG_BASE" \
   "$PROJECT_ROOT"
 info "sandbox-base built -> $TAG_BASE"
