@@ -440,12 +440,12 @@ export function buildProgram(): Command {
         },
     );
 
-    // Read-only: sidecar read + verify (verify.ts), no database needed.
+    // Read-only: attestation read + verify (verify.ts), no database needed.
     registerAction(
         prov
             .command("verify-file")
-            .description("Verify an exported provenance file against its .sig.json sidecar (no database needed)")
-            .argument("<path>", "Exported provenance file to check against its .sig.json sidecar"),
+            .description("Verify an exported provenance file against its .sig.json attestation (no database needed)")
+            .argument("<path>", "Exported provenance file to check against its .sig.json attestation"),
         { kind: "auto", safeFlags: [] },
         async (path: string) => {
             const { runVerifyFile } = await import("../modules/prov/verify.ts");

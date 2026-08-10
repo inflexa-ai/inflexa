@@ -164,7 +164,7 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
         const provPath = join(dir, "provenance.json");
         writeFileSync(provPath, provJson);
 
-        const sidecar = {
+        const attestation = {
             payloadType: "application/json; profile=prov-json",
             payloadDigestAlgorithm: "SHA-256",
             payloadDigest: digest,
@@ -173,11 +173,11 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
             signature,
             publicKey,
         };
-        writeFileSync(`${provPath}.sig.json`, JSON.stringify(sidecar, null, 2));
+        writeFileSync(`${provPath}.sig.json`, JSON.stringify(attestation, null, 2));
         return { provPath, provJson };
     }
 
-    test("valid: provenance file + sidecar verify successfully", async () => {
+    test("valid: provenance file + attestation verify successfully", async () => {
         useTempKeyDir();
         const { provPath } = await writeSignedProvFile(tempDir!);
 
@@ -196,12 +196,12 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
         expect(exitCode).toBe(1);
     });
 
-    test("missing sidecar: reports that verification is not possible", async () => {
+    test("missing attestation: reports that verification is not possible", async () => {
         useTempKeyDir();
-        const provPath = join(tempDir!, "no-sidecar.json");
+        const provPath = join(tempDir!, "no-attestation.json");
         writeFileSync(provPath, '{"entity":{}}');
 
         const { output } = await captureConsole(() => runVerifyFile(provPath));
-        expect(output).toContain("No sidecar found");
+        expect(output).toContain("No attestation found");
     });
 });

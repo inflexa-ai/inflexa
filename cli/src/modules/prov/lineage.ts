@@ -1,41 +1,43 @@
 import { ok, err, type Result } from "neverthrow";
-import { ProvActivity, ProvCommunication, ProvEntity, ProvGeneration, ProvUsage, type AttrKey, type ProvDocument, type ProvRecord } from "@inflexa-ai/tsprov";
 import {
-    lineage,
-    MAX_WALK_DEPTH,
-    normalizeAttrValue,
-    provToGraph,
-    resolve,
-    resolveUnique,
-    toFlatGraph,
-    type LineageResult,
-    type ProvGraph,
-    type Resolution,
-} from "@inflexa-ai/tsprov/graph";
+    computeLineage as kernelComputeLineage,
+    deriveLineageModel,
+    type LineageActivityNode,
+    type LineageModel,
+    type LineageNode,
+} from "@inflexa-ai/prov-kernel";
 
-import { PROV_UNIFY_OPTIONS } from "@inflexa-ai/prov-kernel";
 import { dieOn, fail } from "../../lib/cli.ts";
 import { getAnalysisProvenance } from "../../db/primary_query.ts";
-import { provModel, provSubject } from "./document.ts";
 import { requireAnalysisForProv } from "./prov.ts";
 
 // The lineage traversal: the read-side answer to "where did this file come from?" (and, with
 // --forward, "what came from this file?"). It reads the SAME stored bytes `export` serializes and
-// leans on tsprov's graph engine for the mechanical graph work — a directional, cycle-safe, bounded
-// walk over the generation/usage edges — while this file owns everything that is inflexa's product
-// vocabulary: the `inflexa:*` attributes, the kind classification, step-grain labeling, scoped
-// absence claims, and the tree/JSON rendering.
+// leans on the kernel's lineage read model for the format work — `deriveLineageModel` interprets
+// the stored PROV-JSON into typed nodes and edges (kind classification, `inflexa:*` facts, the
+// command → step run/step inheritance), and the kernel's `computeLineage` walks the
+// generation/usage edges with the canonical direction and depth semantics — while this file owns
+// everything that is CLI presentation: ref resolution, scoped absence claims, depth-truncation
+// markers, and the tree/JSON/dot/mermaid rendering.
 //
-// The walk traverses ONLY generation and usage edges. The document also carries a coarse
+// The kernel walk traverses ONLY generation and usage edges. The document also carries a coarse
 // `wasDerivedFrom(file, analysis)` edge (for generic PROV consumers) and a `wasInformedBy` spine
 // (command → step → run); following either would pollute a file's lineage — derivation with a link
 // to the whole analysis, communication with every command's step and run activity. The run/step
-// spine is instead read as a LABEL off the communication adjacency (see `activityMeta`), never
-// walked. Everything below the CLI action is pure over a `ProvGraph`, so the traversal stays
-// unit-testable against documents built with the real builders.
+// spine is instead folded into the model as command LABELS (the kernel's informed-step
+// inheritance), never walked. Everything below the CLI action is pure over a `LineageModel`, so
+// the traversal stays unit-testable against documents built with the real builders.
 
 /** Minimum hash-prefix length a lineage ref may resolve by — shorter prefixes are too collision-prone to guess on. */
 const MIN_HASH_PREFIX = 6;
+
+/**
+ * The safety ceiling backing an "unbounded" walk, in file-level hops (~1000 edges — the ceiling
+ * the retired graph engine imposed). The kernel walk itself has no ceiling, so the CLI supplies
+ * one: a pathological chain truncates visibly with the ordinary depth marker rather than
+ * exhausting the render stack.
+ */
+const MAX_WALK_DEPTH = 500;
 
 /** How many known paths a not-found failure lists, so the user can orient without exporting the document. */
 const NOT_FOUND_SAMPLE = 10;
@@ -119,118 +121,139 @@ export type LineageRefError =
       };
 
 /**
- * The lexical/primary string form of a record's first value under `name`, or `undefined` when the
- * attribute is absent. The library's normalization returns EVERY matchable form (a QName yields its
- * URI and its `prefix:local` display form); the display facts read here are single-valued literals,
- * so element `[0]` is the value to show. Kind classification, which reads the QName-valued
- * `prov:type`, deliberately does NOT go through this helper — it needs the full form list.
+ * One computed walk: the reached sub-model, its root QNames, and the file nodes the depth bound
+ * cut short. The scope's nodes carry every fact the renderers need, so the formatters consume the
+ * walk alone.
  */
-function firstAttr(rec: ProvRecord, name: AttrKey): string | undefined {
-    const value = rec.getAttribute(name)[0];
-    return value === undefined ? undefined : normalizeAttrValue(value)[0];
+export type LineageWalk = {
+    roots: string[];
+    scope: LineageModel;
+    /** File-node QNames reached at the depth bound whose onward edges the walk left unexpanded. */
+    truncated: ReadonlySet<string>;
+};
+
+/** The QName's localpart, for example `file-18bvqsvo19q9p` from `inflexa:file-…`. */
+function localpart(qn: string): string {
+    const colon = qn.indexOf(":");
+    return colon === -1 ? qn : qn.slice(colon + 1);
 }
 
-/** A resolved entity record as a {@link LineageFileInfo} — its prefixed QName plus the identity facts it carries. */
-function toFileInfo(rec: ProvRecord): LineageFileInfo {
+type EntityNode = Extract<LineageNode, { kind: "analysis" | "input" | "file" }>;
+
+/** The model's entity node kinds — the walkable/addressable records that are not activities or agents. */
+function isEntity(node: LineageNode): node is EntityNode {
+    return node.kind === "analysis" || node.kind === "input" || node.kind === "file";
+}
+
+/** An entity node as a {@link LineageFileInfo} — its QName plus the identity facts its kind carries. */
+function toFileInfo(node: LineageNode): LineageFileInfo {
+    const path = (node.kind === "file" || node.kind === "input") && node.path !== undefined ? node.path : null;
+    const hash = node.kind === "file" && node.hash !== undefined ? node.hash : null;
+    const source = node.kind === "file" && node.source !== undefined ? node.source : null;
+    return { qn: node.qn, path, hash, source };
+}
+
+/**
+ * The activity's rendering facts off its model node. The kernel already did the format work: kind
+ * classification from `prov:type`, and the run/step ids a command inherits from its owning step
+ * (folded in off the `informed` edge at model derivation). The kernel's `run` and `action` kinds
+ * both render as the generic `activity` here — neither carries command facts.
+ */
+function activityMeta(node: LineageActivityNode | undefined, qn: string): Omit<LineageActivity, "files"> {
+    if (node === undefined) return { qn, kind: "activity" };
+    const kind = node.activity === "command" || node.activity === "file_tool" || node.activity === "step" ? node.activity : "activity";
     return {
-        qn: rec.identifier?.toString() ?? "",
-        path: firstAttr(rec, "inflexa:path") ?? null,
-        hash: firstAttr(rec, "inflexa:hash") ?? null,
-        source: firstAttr(rec, "inflexa:source") ?? null,
+        qn: node.qn,
+        kind,
+        ...(node.command !== undefined ? { command: node.command } : {}),
+        ...(node.exitCode !== undefined ? { exitCode: node.exitCode } : {}),
+        ...(node.tool !== undefined ? { tool: node.tool } : {}),
+        ...(node.unresolvedScript !== undefined ? { unresolvedScript: node.unresolvedScript } : {}),
+        ...(node.runId !== undefined ? { runId: node.runId } : {}),
+        ...(node.stepId !== undefined ? { stepId: node.stepId } : {}),
     };
 }
 
-/**
- * Every pathed entity in the document — whatever its QName scheme — carrying the facts the
- * not-found sample needs. The predicate is the attribute itself, not an identifier convention,
- * because a freshly-profiled analysis may carry ONLY `input-*` entities and the orientation hint
- * must still name their paths (the substring tier already matches these same entities). The
- * attribute lookup cannot throw here: every document this module loads declares the `inflexa`
- * namespace, so the name always resolves.
- */
-function fileEntities(graph: ProvGraph): LineageFileInfo[] {
-    const outcome = resolve(graph, { type: ProvEntity, where: (r) => r.getAttribute("inflexa:path").length > 0 });
-    return outcome.kind === "matched" ? outcome.records.map(toFileInfo) : [];
+/** Every pathed entity in the model — file or input, whatever its QName scheme — for the not-found sample. */
+function pathedInfos(model: LineageModel): LineageFileInfo[] {
+    return model.nodes.filter((n) => (n.kind === "file" || n.kind === "input") && n.path !== undefined).map(toFileInfo);
 }
 
 /**
- * Resolve a lineage ref through five tiers: exact `inflexa:path` (ALL entities carrying it — the
- * same path re-written across runs is several genuinely distinct entities, surfaced, not hidden),
- * exact `inflexa:hash`, an unambiguous hash prefix of ≥ {@link MIN_HASH_PREFIX} chars, a
- * case-sensitive substring search over recorded paths, command lines, and tool names, and — when
- * even the search finds nothing — an exact-identifier match against entity and activity QNames,
- * accepting the full prefixed form (`inflexa:input-…`) or the bare localpart (`input-…`): the
- * token a user copies straight out of the exported PROV. Hashes are deliberately never
- * substring-searched — hash addressing stays exact-or-prefix, git-style; a substring hit inside a
- * digest is noise, never intent — and identifier matching is exact only, placed last so it can
- * never shadow an attribute tier. A single search match resolves (an activity match roots the
- * walk there); matches that are all entities of ONE path collapse to that path's entity set — the
- * same multiplicity the exact-path tier surfaces; any other mix fails with kind-tagged candidates
+ * Resolve a lineage ref through five tiers: exact `path` (ALL entities carrying it — the same
+ * path re-written across runs is several genuinely distinct entities, surfaced, not hidden),
+ * exact `hash`, an unambiguous hash prefix of ≥ {@link MIN_HASH_PREFIX} chars, a case-sensitive
+ * substring search over recorded paths, command lines, and tool names, and — when even the search
+ * finds nothing — an exact-identifier match against entity and activity QNames, accepting the
+ * full prefixed form (`inflexa:input-…`) or the bare localpart (`input-…`): the token a user
+ * copies straight out of the exported PROV. Hashes are deliberately never substring-searched —
+ * hash addressing stays exact-or-prefix, git-style; a substring hit inside a digest is noise,
+ * never intent — and identifier matching is exact only, placed last so it can never shadow an
+ * attribute tier. A single search match resolves (an activity match roots the walk there);
+ * matches that are all entities of ONE path collapse to that path's entity set — the same
+ * multiplicity the exact-path tier surfaces; any other mix fails with kind-tagged candidates
  * rather than walking a surprise forest. No match at any tier fails with a sample of the paths
  * the document does know. Directory-style refs carry no special semantics: they land in the
  * candidate or not-found failure like any string.
  */
-export function resolveLineageRef(graph: ProvGraph, ref: string): Result<LineageRoots, LineageRefError> {
-    const byPath = resolve(graph, { type: ProvEntity, attributes: [{ name: "inflexa:path", equals: ref }] });
-    if (byPath.kind === "matched") return ok({ kind: "files", infos: byPath.records.map(toFileInfo) });
+export function resolveLineageRef(model: LineageModel, ref: string): Result<LineageRoots, LineageRefError> {
+    const byPath = model.nodes.filter((n) => (n.kind === "file" || n.kind === "input") && n.path === ref);
+    if (byPath.length > 0) return ok({ kind: "files", infos: byPath.map(toFileInfo) });
 
-    const byHash = resolve(graph, { type: ProvEntity, attributes: [{ name: "inflexa:hash", equals: ref }] });
-    if (byHash.kind === "matched") return ok({ kind: "files", infos: byHash.records.map(toFileInfo) });
+    const byHash = model.nodes.filter((n) => n.kind === "file" && n.hash === ref);
+    if (byHash.length > 0) return ok({ kind: "files", infos: byHash.map(toFileInfo) });
 
     if (ref.length >= MIN_HASH_PREFIX) {
-        const byPrefix = resolveUnique(graph, { type: ProvEntity, attributes: [{ name: "inflexa:hash", startsWith: ref }] });
-        if (byPrefix.kind === "resolved") return ok({ kind: "files", infos: [toFileInfo(byPrefix.record)] });
-        if (byPrefix.kind === "ambiguous") {
+        const byPrefix = model.nodes.filter((n) => n.kind === "file" && n.hash !== undefined && n.hash.startsWith(ref));
+        if (byPrefix.length === 1) return ok({ kind: "files", infos: [toFileInfo(byPrefix[0]!)] });
+        if (byPrefix.length > 1) {
             return err({
                 type: "ambiguous_hash",
-                candidates: byPrefix.candidates.map((c) => ({ path: firstAttr(c, "inflexa:path") ?? null, hash: firstAttr(c, "inflexa:hash") ?? null })),
+                candidates: byPrefix.map(toFileInfo).map((info) => ({ path: info.path, hash: info.hash })),
             });
         }
     }
 
     // Shared by every ambiguous outcome below, so the substring and identifier tiers can never
     // drift on how a candidate is described.
-    const toCandidates = (records: readonly ProvRecord[]): LineageSearchCandidate[] =>
-        records.slice(0, SEARCH_CANDIDATE_CAP).map((rec): LineageSearchCandidate => {
-            if (rec instanceof ProvEntity) {
-                const info = toFileInfo(rec);
+    const toCandidates = (nodes: readonly LineageNode[]): LineageSearchCandidate[] =>
+        nodes.slice(0, SEARCH_CANDIDATE_CAP).map((node): LineageSearchCandidate => {
+            if (isEntity(node)) {
+                const info = toFileInfo(node);
                 return { kind: "file", path: info.path, hash: info.hash };
             }
-            return { kind: "activity", line: activityFacts(activityMeta(graph, rec.identifier?.uri ?? "")) };
+            return { kind: "activity", line: activityFacts(activityMeta(node.kind === "activity" ? node : undefined, node.qn)) };
         });
 
     // Search tier: the ref as a substring over the three searchable targets, in a fixed probe
-    // order so candidate listings are deterministic. Entities and activities are disjoint record
-    // kinds, and no activity carries both a command and a tool, but the URI dedup guards the
+    // order so candidate listings are deterministic. Entities and activities are disjoint node
+    // kinds, and no activity carries both a command and a tool, but the QName dedup guards the
     // accounting anyway — a double-counted match would inflate `total`.
-    const matches: ProvRecord[] = [];
+    const matches: LineageNode[] = [];
     const seen = new Set<string>();
-    const collect = (outcome: Resolution): void => {
-        if (outcome.kind !== "matched") return;
-        for (const rec of outcome.records) {
-            const uri = rec.identifier?.uri;
-            if (uri === undefined || seen.has(uri)) continue;
-            seen.add(uri);
-            matches.push(rec);
+    const collect = (nodes: readonly LineageNode[]): void => {
+        for (const node of nodes) {
+            if (seen.has(node.qn)) continue;
+            seen.add(node.qn);
+            matches.push(node);
         }
     };
-    collect(resolve(graph, { type: ProvEntity, attributes: [{ name: "inflexa:path", includes: ref }] }));
-    collect(resolve(graph, { type: ProvActivity, attributes: [{ name: "inflexa:command", includes: ref }] }));
-    collect(resolve(graph, { type: ProvActivity, attributes: [{ name: "inflexa:tool", includes: ref }] }));
+    collect(model.nodes.filter((n) => (n.kind === "file" || n.kind === "input") && n.path !== undefined && n.path.includes(ref)));
+    collect(model.nodes.filter((n) => n.kind === "activity" && n.command !== undefined && n.command.includes(ref)));
+    collect(model.nodes.filter((n) => n.kind === "activity" && n.tool !== undefined && n.tool.includes(ref)));
 
     if (matches.length > 0) {
-        const entities = matches.filter((rec) => rec instanceof ProvEntity);
+        const entities = matches.filter(isEntity);
         if (entities.length === matches.length) {
             // Every entity carrying a path P also contains any substring of P, so an all-one-path
             // match set already IS that path's full entity set — no second query needed.
-            const paths = new Set(entities.map((rec) => firstAttr(rec, "inflexa:path")));
+            const paths = new Set(entities.map((node) => toFileInfo(node).path));
             if (paths.size === 1) return ok({ kind: "files", infos: entities.map(toFileInfo) });
         }
         if (matches.length === 1) {
             // A lone match here is always an activity — a lone entity already resolved through the
             // one-path collapse above. The `!` is sound: length was just checked.
-            const only = matches[0]!;
-            return ok({ kind: "activity", qn: only.identifier?.toString() ?? "" });
+            return ok({ kind: "activity", qn: matches[0]!.qn });
         }
         return err({ type: "ambiguous_search", candidates: toCandidates(matches), total: matches.length });
     }
@@ -238,27 +261,27 @@ export function resolveLineageRef(graph: ProvGraph, ref: string): Result<Lineage
     // Identifier tier: the ref as the record's own address — the exact token a user copies out of
     // the exported PROV (e.g. `prov:usedEntity: "inflexa:input-…"`). Exact only, and last, so no
     // attribute tier is ever shadowed by an identifier coincidence. Two accepted forms: the full
-    // prefixed QName (resolved through the document's namespaces — a string with no known prefix
-    // simply misses) and the bare localpart. Relations carry identifiers too (`gen-…`) but are not
-    // lineage roots in this grammar, so both probes are constrained to entities and activities.
-    const byQName = resolve(graph, { id: ref, type: [ProvEntity, ProvActivity] });
-    const byIdentifier =
-        byQName.kind === "matched" ? byQName : resolve(graph, { type: [ProvEntity, ProvActivity], where: (r) => r.identifier?.localpart === ref });
-    if (byIdentifier.kind === "matched") {
+    // prefixed QName and the bare localpart. Relations and agents carry identifiers too but are
+    // not lineage roots in this grammar, so both probes are constrained to entity and activity
+    // nodes.
+    const addressable = model.nodes.filter((n) => n.kind !== "agent");
+    const byQName = addressable.filter((n) => n.qn === ref);
+    const byIdentifier = byQName.length > 0 ? byQName : addressable.filter((n) => localpart(n.qn) === ref);
+    if (byIdentifier.length > 0) {
         // Identifiers are unique after unification, so several hits are a malformed edge case
         // (e.g. two prefixes sharing a localpart) — list rather than guess.
-        if (byIdentifier.records.length > 1) {
-            return err({ type: "ambiguous_search", candidates: toCandidates(byIdentifier.records), total: byIdentifier.records.length });
+        if (byIdentifier.length > 1) {
+            return err({ type: "ambiguous_search", candidates: toCandidates(byIdentifier), total: byIdentifier.length });
         }
-        const rec = byIdentifier.records[0]!; // length checked: exactly one
-        return rec instanceof ProvEntity ? ok({ kind: "files", infos: [toFileInfo(rec)] }) : ok({ kind: "activity", qn: rec.identifier?.toString() ?? "" });
+        const node = byIdentifier[0]!; // length checked: exactly one
+        return isEntity(node) ? ok({ kind: "files", infos: [toFileInfo(node)] }) : ok({ kind: "activity", qn: node.qn });
     }
 
-    // The document's own not-found sample mixes every record kind; the contract promises file PATHS,
-    // so the sample comes from the pathed-entity sweep instead.
+    // The contract promises file PATHS, so the orientation sample comes from the pathed-entity
+    // sweep — never a mixed dump of every record kind.
     const knownPaths = [
         ...new Set(
-            fileEntities(graph)
+            pathedInfos(model)
                 .map((f) => f.path)
                 .filter((p): p is string => p !== null),
         ),
@@ -266,106 +289,67 @@ export function resolveLineageRef(graph: ProvGraph, ref: string): Result<Lineage
     return err({ type: "not_found", knownPaths });
 }
 
-/** The lineage graph over an analysis's document: the last-write-wins unify the flush and export use, folded into the graph build. */
-export function lineageGraph(doc: ProvDocument): ProvGraph {
-    return provToGraph(doc, PROV_UNIFY_OPTIONS);
-}
-
 /**
- * Walk the resolved roots' lineage in ONE multi-root pass. `depth` counts file-level hops; the
- * engine counts edge hops. From a FILE root one file hop (file → activity → file) is two edges, so
- * the bound is `2n`; from an ACTIVITY root the first hop is activity → file (one edge), so the
- * bound is `2n - 1` — either way every frontier truncation lands on a file node, never mid-hop on
- * an activity. Unset stays unset: the engine's {@link MAX_WALK_DEPTH} ceiling then backs
- * "unbounded" and truncates a pathological chain visibly rather than exhausting the walk.
+ * Walk the resolved roots' lineage in ONE multi-root pass over the kernel's traversal. `depth`
+ * counts file-level hops, exactly the kernel's `depth` semantics: from a FILE root one file hop
+ * (file → activity → file) is two edges, so the kernel bounds at `2n`; from an ACTIVITY root the
+ * first hop is activity → file (one edge), so it bounds at `2n - 1` — either way a truncation
+ * always lands on a file node, never mid-hop on an activity. Unset stays unset for the caller;
+ * internally the {@link MAX_WALK_DEPTH} ceiling then backs "unbounded" and truncates a
+ * pathological chain visibly rather than exhausting the walk.
+ *
+ * The kernel returns the reached sub-model with no frontier, so the depth truncation is re-derived
+ * here: the same walk one file hop wider reveals exactly the edges the bounded walk left
+ * unexpanded, and each such edge's walk-direction source — a file node inside the bounded scope —
+ * is a truncation point. A node at the bound with nothing beyond it stays unmarked: its emptiness
+ * is genuine.
  */
-export function computeLineage(graph: ProvGraph, roots: LineageRoots, opts: { forward: boolean; depth?: number }): LineageResult {
+export function computeLineage(model: LineageModel, roots: LineageRoots, opts: { forward: boolean; depth?: number }): LineageWalk {
     const rootQns = roots.kind === "files" ? roots.infos.map((info) => info.qn) : [roots.qn];
-    return lineage(graph, rootQns, {
-        direction: opts.forward ? "forward" : "backward",
-        // The default "dataflow" profile also traverses derivation and communication; the coarse
-        // `wasDerivedFrom(file, analysis)` edge and the command → step → run spine must both stay
-        // out of a file's lineage, so the traversable set is exactly generation and usage.
-        relations: [ProvGeneration, ProvUsage],
-        ...(opts.depth !== undefined ? { depth: roots.kind === "activity" ? 2 * opts.depth - 1 : 2 * opts.depth } : {}),
-    });
-}
+    const direction = opts.forward ? "forward" : "backward";
+    const depth = opts.depth ?? MAX_WALK_DEPTH;
+    const scope = kernelComputeLineage(model, rootQns, { direction, depth });
 
-/**
- * The activity's rendering facts: its kind from `prov:type`, its command/tool facts, and its owning
- * step/run. A command has no step/run of its own — its spine is the `wasInformedBy` edge to the step
- * activity, read here as a LABEL off the graph's communication adjacency (the walk never follows
- * communication, but `provToGraph` indexes every relation, so the edge is present for this lookup).
- * A step activity (leaf-file generator) carries the run/step ids directly.
- */
-function activityMeta(graph: ProvGraph, uri: string): Omit<LineageActivity, "files"> {
-    const element = graph.getNode(uri)?.element;
-    const qn = element?.identifier?.toString() ?? uri;
-    const typeForms = element === undefined ? [] : element.getAttribute("prov:type").flatMap((v) => [...normalizeAttrValue(v)]);
-    const kind = typeForms.includes("inflexa:Command")
-        ? "command"
-        : typeForms.includes("inflexa:FileToolWrite")
-          ? "file_tool"
-          : typeForms.includes("inflexa:Step")
-            ? "step"
-            : "activity";
-    const command = element === undefined ? undefined : firstAttr(element, "inflexa:command");
-    const exitCodeRaw = element === undefined ? undefined : firstAttr(element, "inflexa:exitCode");
-    const exitCode = exitCodeRaw !== undefined && Number.isFinite(Number(exitCodeRaw)) ? Number(exitCodeRaw) : undefined;
-    const tool = element === undefined ? undefined : firstAttr(element, "inflexa:tool");
-    const unresolvedScript = element === undefined ? undefined : firstAttr(element, "inflexa:unresolvedScript");
-    let runId = element === undefined ? undefined : firstAttr(element, "inflexa:runId");
-    let stepId = element === undefined ? undefined : firstAttr(element, "inflexa:stepId");
-    if (runId === undefined && stepId === undefined) {
-        const stepUri = graph.outEdges(uri).find((e) => e.relation instanceof ProvCommunication)?.to;
-        const stepElement = stepUri === undefined ? undefined : graph.getNode(stepUri)?.element;
-        runId = stepElement === undefined ? undefined : firstAttr(stepElement, "inflexa:runId");
-        stepId = stepElement === undefined ? undefined : firstAttr(stepElement, "inflexa:stepId");
+    const truncated = new Set<string>();
+    const scoped = new Set(scope.nodes.map((n) => n.qn));
+    const reached = new Set(scope.edges.map((e) => e.id));
+    const wider = kernelComputeLineage(model, rootQns, { direction, depth: depth + 1 });
+    for (const edge of wider.edges) {
+        if (reached.has(edge.id)) continue;
+        // The walk-direction source of an edge only the wider walk recorded: backward follows
+        // the asserted orientation, forward reverses it.
+        const source = direction === "backward" ? edge.from : edge.to;
+        if (scoped.has(source)) truncated.add(source);
     }
-    return {
-        qn,
-        kind,
-        ...(command !== undefined ? { command } : {}),
-        ...(exitCode !== undefined ? { exitCode } : {}),
-        ...(tool !== undefined ? { tool } : {}),
-        ...(unresolvedScript !== undefined ? { unresolvedScript } : {}),
-        ...(runId !== undefined ? { runId } : {}),
-        ...(stepId !== undefined ? { stepId } : {}),
-    };
+
+    return { roots: rootQns, scope, truncated };
 }
 
-/** The file-identity facts for the node at `uri`, read off its element (a missing node still renders — with null facts). */
-function fileInfoOf(graph: ProvGraph, uri: string): LineageFileInfo {
-    const element = graph.getNode(uri)?.element;
-    const read = (name: AttrKey): string | null => (element === undefined ? null : (firstAttr(element, name) ?? null));
-    return { qn: element?.identifier?.toString() ?? uri, path: read("inflexa:path"), hash: read("inflexa:hash"), source: read("inflexa:source") };
-}
-
-/** Both orientations of the walk's generation/usage edges, keyed by node URI — the adjacency the tree renders per root. */
+/** Both orientations of the walk's generation/usage edges, keyed by node QName — the adjacency the tree renders per root. */
 type WalkEdges = {
-    /** entity URI → its generating activity URIs. */
+    /** entity QName → its generating activity QNames. */
     generatedBy: Map<string, string[]>;
-    /** activity URI → the entity URIs it generated. */
+    /** activity QName → the entity QNames it generated. */
     generates: Map<string, string[]>;
-    /** activity URI → the entity URIs it used. */
+    /** activity QName → the entity QNames it used. */
     uses: Map<string, string[]>;
-    /** entity URI → the activity URIs that used it. */
+    /** entity QName → the activity QNames that used it. */
     usedBy: Map<string, string[]>;
 };
 
-/** Index the flat result's traversed edges into both orientations. Generation points entity → activity, usage activity → entity. */
-function indexWalkEdges(result: LineageResult): WalkEdges {
+/** Index the scope's traversed edges into both orientations. Generation points entity → activity, usage activity → entity. */
+function indexWalkEdges(scope: LineageModel): WalkEdges {
     const edges: WalkEdges = { generatedBy: new Map(), generates: new Map(), uses: new Map(), usedBy: new Map() };
     const push = (map: Map<string, string[]>, key: string, value: string): void => {
         const bucket = map.get(key);
         if (bucket) bucket.push(value);
         else map.set(key, [value]);
     };
-    for (const edge of result.edges) {
-        if (edge.relation instanceof ProvGeneration) {
+    for (const edge of scope.edges) {
+        if (edge.kind === "generated") {
             push(edges.generatedBy, edge.from, edge.to);
             push(edges.generates, edge.to, edge.from);
-        } else if (edge.relation instanceof ProvUsage) {
+        } else if (edge.kind === "used") {
             push(edges.uses, edge.from, edge.to);
             push(edges.usedBy, edge.to, edge.from);
         }
@@ -376,53 +360,69 @@ function indexWalkEdges(result: LineageResult): WalkEdges {
 /** One rendered root: a file entity's walk tree, or an activity root carrying its walked-side file subtrees. */
 type RootTree = { kind: "file"; file: LineageFile } | { kind: "activity"; activity: LineageActivity };
 
+/** The activity facts for the node at `qn` in the scope (a non-activity or missing node still renders — as the bare generic kind). */
+function activityMetaOf(nodes: Map<string, LineageNode>, qn: string): Omit<LineageActivity, "files"> {
+    const node = nodes.get(qn);
+    return activityMeta(node?.kind === "activity" ? node : undefined, qn);
+}
+
+/** The file-identity facts for the node at `qn`, read off the scope (a missing node still renders — with null facts). */
+function fileInfoOf(nodes: Map<string, LineageNode>, qn: string): LineageFileInfo {
+    const node = nodes.get(qn);
+    return node === undefined ? { qn, path: null, hash: null, source: null } : toFileInfo(node);
+}
+
 /**
- * Rebuild one root's walk tree from the flat result, with the per-root rendering semantics the tree
+ * Rebuild one root's walk tree from the flat scope, with the per-root rendering semantics the tree
  * relies on: a private visited set per root, a re-encounter marked a `revisit` (checked BEFORE the
  * depth cut, so a cycle's back-edge always reads as a reference, never a truncation), and the
  * file-hop `--depth` bound enforced here. A node the bound cuts is a `depth` truncation only when
- * the walk recorded something beyond it — an onward edge in the result, or an engine frontier entry
- * (the "unbounded" ceiling); otherwise its emptiness is genuine and it renders as a terminal.
+ * the walk recorded something beyond it — an onward edge in the scope, or a truncation entry from
+ * the wider-walk comparison; otherwise its emptiness is genuine and it renders as a terminal.
  *
- * An ACTIVITY root's tree starts one engine edge in — its direct files sit at the first file hop,
- * so they take the remaining budget `budget - 1`, matching the engine's `2n - 1` bound for
- * activity-rooted walks. The root's kind is read off the graph node's element class: the walk's
- * seed set is kind-homogeneous, but per-root detection keeps the renderer honest either way.
+ * An ACTIVITY root's tree starts one walk edge in — its direct files sit at the first file hop,
+ * so they take the remaining budget `budget - 1`, matching the kernel's `2n - 1` bound for
+ * activity-rooted walks. The root's kind is read off the scope node: the walk's seed set is
+ * kind-homogeneous, but per-root detection keeps the renderer honest either way.
  *
  * The single multi-root walk is exact for this: BFS reaches every node at its MINIMUM distance over
- * all roots (≤ its distance from any one root), so the merged result already holds every edge any
+ * all roots (≤ its distance from any one root), so the merged scope already holds every edge any
  * per-root render up to the same bound could need, and this render just re-imposes the per-root
  * bound and visited set on top.
  */
-function buildRootTree(graph: ProvGraph, edges: WalkEdges, frontier: Set<string>, rootUri: string, forward: boolean, budget: number): RootTree {
+function buildRootTree(
+    nodes: Map<string, LineageNode>,
+    edges: WalkEdges,
+    truncated: ReadonlySet<string>,
+    rootQn: string,
+    forward: boolean,
+    budget: number,
+): RootTree {
     const visited = new Set<string>();
-    const onwardActivities = (uri: string): string[] => (forward ? edges.usedBy.get(uri) : edges.generatedBy.get(uri)) ?? [];
-    const activityFiles = (uri: string): string[] => (forward ? edges.generates.get(uri) : edges.uses.get(uri)) ?? [];
-    const step = (uri: string, remaining: number): LineageFile => {
-        const info = fileInfoOf(graph, uri);
-        if (visited.has(uri)) return { ...info, marker: "revisit", activities: [] };
-        const activityUris = onwardActivities(uri);
+    const onwardActivities = (qn: string): string[] => (forward ? edges.usedBy.get(qn) : edges.generatedBy.get(qn)) ?? [];
+    const activityFiles = (qn: string): string[] => (forward ? edges.generates.get(qn) : edges.uses.get(qn)) ?? [];
+    const step = (qn: string, remaining: number): LineageFile => {
+        const info = fileInfoOf(nodes, qn);
+        if (visited.has(qn)) return { ...info, marker: "revisit", activities: [] };
+        const activityQns = onwardActivities(qn);
         if (remaining <= 0) {
-            const truncated = activityUris.length > 0 || frontier.has(uri);
-            return { ...info, ...(truncated ? { marker: "depth" as const } : {}), activities: [] };
+            const cut = activityQns.length > 0 || truncated.has(qn);
+            return { ...info, ...(cut ? { marker: "depth" as const } : {}), activities: [] };
         }
-        visited.add(uri);
-        const activities = activityUris.map((auri): LineageActivity => ({
-            ...activityMeta(graph, auri),
-            files: activityFiles(auri).map((furi) => step(furi, remaining - 1)),
+        visited.add(qn);
+        const activities = activityQns.map((aqn): LineageActivity => ({
+            ...activityMetaOf(nodes, aqn),
+            files: activityFiles(aqn).map((fqn) => step(fqn, remaining - 1)),
         }));
-        // Reached within budget but the engine's ceiling stopped here: no onward edge was recorded,
-        // so the branch is incomplete, not a terminal — mark it truncated rather than a clean leaf.
-        if (activities.length === 0 && frontier.has(uri)) return { ...info, marker: "depth", activities: [] };
         return { ...info, activities };
     };
-    if (graph.getNode(rootUri)?.element instanceof ProvActivity) {
+    if (nodes.get(rootQn)?.kind === "activity") {
         return {
             kind: "activity",
-            activity: { ...activityMeta(graph, rootUri), files: activityFiles(rootUri).map((furi) => step(furi, budget - 1)) },
+            activity: { ...activityMetaOf(nodes, rootQn), files: activityFiles(rootQn).map((fqn) => step(fqn, budget - 1)) },
         };
     }
-    return { kind: "file", file: step(rootUri, budget) };
+    return { kind: "file", file: step(rootQn, budget) };
 }
 
 /** `hash` shortened for tree display — full hashes are for `--format json` and exact addressing. */
@@ -480,12 +480,12 @@ function activityLine(activity: LineageActivity, forward: boolean): string {
  * prints that script as a distinct child line — never a file — and the walk ends with one note
  * counting such gaps, so a reviewer cannot mistake the understated tree for the whole story.
  */
-export function formatTree(graph: ProvGraph, result: LineageResult, opts: { forward: boolean; depth?: number }): string {
+export function formatTree(walk: LineageWalk, opts: { forward: boolean; depth?: number }): string {
     const forward = opts.forward;
-    const edges = indexWalkEdges(result);
-    const frontier = new Set(result.frontier.map((f) => f.uri));
+    const nodes = new Map(walk.scope.nodes.map((n) => [n.qn, n]));
+    const edges = indexWalkEdges(walk.scope);
     const budget = opts.depth ?? MAX_WALK_DEPTH;
-    const roots = result.roots.map((uri) => buildRootTree(graph, edges, frontier, uri, forward, budget));
+    const roots = walk.roots.map((qn) => buildRootTree(nodes, edges, walk.truncated, qn, forward, budget));
 
     const lines: string[] = [];
     // Distinct activities the render surfaced an attribution gap under, deduped by QName — a diamond
@@ -581,16 +581,16 @@ export type LineageJson = {
 };
 
 /** The JSON node for a file entity, carrying `truncated: true` exactly when the walk recorded no expansion of it. */
-function fileJsonNode(graph: ProvGraph, uri: string, truncated: boolean): LineageJsonNode {
-    const info = fileInfoOf(graph, uri);
+function fileJsonNode(node: LineageNode, truncated: boolean): LineageJsonNode {
+    const info = toFileInfo(node);
     return { kind: "file", path: info.path, hash: info.hash, source: info.source, ...(truncated ? { truncated: true as const } : {}) };
 }
 
 /** The JSON node for an activity — its rendering facts minus the QName key and the tree-only `files`. */
-function activityJsonNode(graph: ProvGraph, uri: string): LineageJsonNode {
-    const { qn: _qn, ...facts } = activityMeta(graph, uri);
+function activityJsonNode(node: LineageNode): LineageJsonNode {
+    const { qn: _qn, ...facts } = activityMeta(node.kind === "activity" ? node : undefined, node.qn);
     // `facts` is the kind plus only the fields that kind carries (a command never has `tool`, a
-    // file tool never has `command`), because `activityMeta` populates them off the element's own
+    // file tool never has `command`), because `activityMeta` projects them off the model node's own
     // attributes — so the shape already satisfies the kind-discriminated union the assertion names.
     return facts as LineageJsonNode;
 }
@@ -598,43 +598,29 @@ function activityJsonNode(graph: ProvGraph, uri: string): LineageJsonNode {
 /**
  * Flatten the walk into `{ roots, nodes, edges }`. Nodes are keyed by prefixed QName, so a
  * re-encounter dedups naturally; a file node carries `truncated: true` only when the walk recorded
- * NO expansion of it anywhere — the engine's frontier semantics (BFS min-distance) give this
- * directly. Edges are emitted in PROV semantics regardless of walk direction: `wasGeneratedBy` is
- * always entity → activity and `used` always activity → entity, so a consumer re-derives either
- * direction from one representation.
+ * NO expansion of it anywhere — the multi-root BFS's min-distance semantics give this directly.
+ * Edges are emitted in PROV semantics regardless of walk direction: `wasGeneratedBy` is always
+ * entity → activity and `used` always activity → entity, so a consumer re-derives either direction
+ * from one representation.
  */
-export function formatJson(graph: ProvGraph, result: LineageResult): LineageJson {
-    const flat = toFlatGraph(result);
-    const truncated = new Set<string>();
-    for (const node of flat.nodes) if (node.truncated !== undefined) truncated.add(node.uri);
-
-    // Node keys are the prefixed QName, not the flat graph's full URI — the published `--format json`
-    // contract keys `nodes` by `inflexa:file-…`, so translate each node's URI at the boundary.
-    const uriToQn = new Map<string, string>();
+export function formatJson(walk: LineageWalk): LineageJson {
     const nodes: Record<string, LineageJsonNode> = {};
-    for (const node of result.nodes) {
-        const qn = node.element.identifier?.toString();
-        if (qn === undefined) continue;
-        uriToQn.set(node.uri, qn);
-        nodes[qn] = node.element instanceof ProvEntity ? fileJsonNode(graph, node.uri, truncated.has(node.uri)) : activityJsonNode(graph, node.uri);
+    for (const node of walk.scope.nodes) {
+        nodes[node.qn] = isEntity(node) ? fileJsonNode(node, walk.truncated.has(node.qn)) : activityJsonNode(node);
     }
 
     const edgeKeys = new Set<string>();
     const edges: LineageJson["edges"] = [];
-    for (const edge of result.edges) {
-        const kind = edge.relation instanceof ProvGeneration ? "wasGeneratedBy" : edge.relation instanceof ProvUsage ? "used" : undefined;
+    for (const edge of walk.scope.edges) {
+        const kind = edge.kind === "generated" ? "wasGeneratedBy" : edge.kind === "used" ? "used" : undefined;
         if (kind === undefined) continue;
-        const from = uriToQn.get(edge.from);
-        const to = uriToQn.get(edge.to);
-        if (from === undefined || to === undefined) continue;
-        const key = `${kind}|${from}|${to}`;
+        const key = `${kind}|${edge.from}|${edge.to}`;
         if (edgeKeys.has(key)) continue;
         edgeKeys.add(key);
-        edges.push({ from, to, kind });
+        edges.push({ from: edge.from, to: edge.to, kind });
     }
 
-    const roots = result.roots.map((uri) => uriToQn.get(uri)).filter((qn): qn is string => qn !== undefined);
-    return { roots, nodes, edges };
+    return { roots: [...walk.roots], nodes, edges };
 }
 
 /**
@@ -667,8 +653,8 @@ function dotNodeStatement(qn: string, node: LineageJsonNode): string {
  * asserted PROV orientation regardless of walk direction, labeled by kind — so a graph rendered
  * from either walk direction carries identical edges.
  */
-export function formatDot(graph: ProvGraph, result: LineageResult): string {
-    const flat = formatJson(graph, result);
+export function formatDot(walk: LineageWalk): string {
+    const flat = formatJson(walk);
     const lines: string[] = ["digraph lineage {"];
     for (const [qn, node] of Object.entries(flat.nodes)) lines.push(dotNodeStatement(qn, node));
     for (const edge of flat.edges) lines.push(`    ${dotQuoted(edge.from)} -> ${dotQuoted(edge.to)} [label=${dotQuoted(edge.kind)}];`);
@@ -694,8 +680,8 @@ function mermaidLabel(label: string): string {
  * `-.->|used|`. Unlike the tree, a shared intermediate appears ONCE with all its edges — this is
  * the format that shows the true DAG shape.
  */
-export function formatMermaid(graph: ProvGraph, result: LineageResult): string {
-    const flat = formatJson(graph, result);
+export function formatMermaid(walk: LineageWalk): string {
+    const flat = formatJson(walk);
     // QName → grammar-safe id. The sanitize is injective over realistic QNames; the suffix loop
     // makes uniqueness airtight rather than assumed.
     const ids = new Map<string, string>();
@@ -751,8 +737,9 @@ function parseOptions(opts: { forward?: boolean; depth?: string; format?: string
  * `inflexa prov lineage <analysis> <ref> [--forward] [--depth n] [--format tree|json|dot|mermaid]`
  * — resolve the ref (a file path, content hash, hash prefix, search string, or record QName) in
  * the analysis's stored provenance document and print its lineage. Reads the same stored bytes
- * `export` serializes; an analysis with no recorded provenance fails with an actionable message
- * rather than an empty walk.
+ * `export` serializes — `deriveLineageModel` interprets them under the same unify the flush and
+ * export use; an analysis with no recorded provenance fails with an actionable message rather than
+ * an empty walk.
  */
 export function runProvLineage(analysisRef: string, ref: string, rawOpts: { forward?: boolean; depth?: string; format?: string }): void {
     const opts = parseOptions(rawOpts);
@@ -762,10 +749,9 @@ export function runProvLineage(analysisRef: string, ref: string, rawOpts: { forw
     const stored = getAnalysisProvenance(analysis.id).match((s) => s, dieOn("Failed to read provenance"));
     if (stored === null) fail(`No provenance recorded for "${analysis.name}" yet — run an analysis first.`);
 
-    const doc = provModel.loadDocument(provSubject(analysis), stored).match((d) => d, dieOn("Stored provenance is corrupt"));
-    const graph = lineageGraph(doc);
+    const model = deriveLineageModel(stored).match((m) => m, dieOn("Stored provenance is corrupt"));
 
-    const roots = resolveLineageRef(graph, ref).match(
+    const roots = resolveLineageRef(model, ref).match(
         (r) => r,
         (e) => {
             if (e.type === "ambiguous_hash") {
@@ -784,9 +770,9 @@ export function runProvLineage(analysisRef: string, ref: string, rawOpts: { forw
         },
     );
 
-    const result = computeLineage(graph, roots, { forward: opts.forward, depth: opts.depth });
-    if (opts.format === "json") console.log(JSON.stringify(formatJson(graph, result), null, 2));
-    else if (opts.format === "dot") console.log(formatDot(graph, result));
-    else if (opts.format === "mermaid") console.log(formatMermaid(graph, result));
-    else console.log(formatTree(graph, result, { forward: opts.forward, depth: opts.depth }));
+    const walk = computeLineage(model, roots, { forward: opts.forward, depth: opts.depth });
+    if (opts.format === "json") console.log(JSON.stringify(formatJson(walk), null, 2));
+    else if (opts.format === "dot") console.log(formatDot(walk));
+    else if (opts.format === "mermaid") console.log(formatMermaid(walk));
+    else console.log(formatTree(walk, { forward: opts.forward, depth: opts.depth }));
 }

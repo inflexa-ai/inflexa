@@ -864,8 +864,8 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
     });
 });
 
-describe("export sidecar (writeSidecar via the full export path)", () => {
-    test("signed provenance produces a .sig.json sidecar with the correct shape", async () => {
+describe("export attestation (writeAttestation via the full export path)", () => {
+    test("signed provenance produces a .sig.json attestation with the correct shape", async () => {
         const { mkdirSync, rmSync, existsSync, readFileSync } = await import("node:fs");
         const { join } = await import("node:path");
         const { tmpdir } = await import("node:os");
@@ -875,7 +875,7 @@ describe("export sidecar (writeSidecar via the full export path)", () => {
         resetProvenanceRecorderForTests();
         initProvenanceRecording();
 
-        const tmpDir = join(tmpdir(), `prov-sidecar-test-${uuid()}`);
+        const tmpDir = join(tmpdir(), `prov-attestation-test-${uuid()}`);
         mkdirSync(tmpDir, { recursive: true });
         resetSigningForTests(join(tmpDir, "prov_key.json"));
 
@@ -885,7 +885,7 @@ describe("export sidecar (writeSidecar via the full export path)", () => {
         Bus.emit("inflexa", { type: "prov.analysis_created", analysisId: "a1", actor: system });
         await flushProvenanceAsync();
 
-        // Write provenance file, then call the sidecar writer via the export module.
+        // Write provenance file, then call the attestation writer via the export module.
         const provDest = join(tmpDir, "provenance.json");
         const provJson = serializeProvenance(analysis, "json")._unsafeUnwrap();
         const { writeFileSync: wf } = await import("node:fs");
@@ -896,14 +896,14 @@ describe("export sidecar (writeSidecar via the full export path)", () => {
         expect(integrity!.chainHash).not.toBeNull();
         expect(integrity!.signature).not.toBeNull();
 
-        // Build the sidecar via the shared builder (mirrors the export path).
-        const { buildSidecar } = await import("./verify.ts");
-        const sidecarResult = await buildSidecar(provJson);
-        expect(sidecarResult.isOk()).toBe(true);
-        const sidecar = sidecarResult._unsafeUnwrap();
+        // Build the attestation via the shared builder (mirrors the export path).
+        const { buildAttestation } = await import("./verify.ts");
+        const attestationResult = await buildAttestation(provJson);
+        expect(attestationResult.isOk()).toBe(true);
+        const attestation = attestationResult._unsafeUnwrap();
 
         const sigDest = `${provDest}.sig.json`;
-        wf(sigDest, JSON.stringify(sidecar, null, 2));
+        wf(sigDest, JSON.stringify(attestation, null, 2));
 
         expect(existsSync(sigDest)).toBe(true);
         const parsed = JSON.parse(readFileSync(sigDest, "utf-8"));
@@ -915,7 +915,7 @@ describe("export sidecar (writeSidecar via the full export path)", () => {
         expect(parsed.publicKey).toHaveProperty("kty", "OKP");
         expect(parsed.publicKey).toHaveProperty("crv", "Ed25519");
 
-        // The sidecar's payloadDigest is a simple SHA-256(provJson), not the chain hash.
+        // The attestation's payloadDigest is a simple SHA-256(provJson), not the chain hash.
         const contentDigest = (await computePayloadDigest(provJson))._unsafeUnwrap();
         expect(parsed.payloadDigest).toBe(contentDigest);
         expect(parsed.payloadDigest).not.toBe(integrity!.chainHash);

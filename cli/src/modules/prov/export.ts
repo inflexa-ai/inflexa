@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import { serializeProvenance } from "./document.ts";
 import { requireAnalysisForProv } from "./prov.ts";
-import { buildSidecar } from "./verify.ts";
+import { buildAttestation } from "./verify.ts";
 import { ensureOutputDir } from "../analysis/output.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
 
@@ -15,8 +15,8 @@ import { dieOn, fail } from "../../lib/cli.ts";
  * `inflexa prov export <analysis> [--format json|provn] [--output <file>]` — serialize an analysis's
  * provenance document. By DEFAULT writes `provenance.<format>` into the analysis's output folder
  * (under `.inflexa/`, created if needed); `--output <file>` overrides the destination. When a
- * signing key is available, a sidecar `.sig.json` is written alongside with a content digest and
- * Ed25519 signature for third-party verification.
+ * signing key is available, a `.sig.json` attestation is written alongside with a content digest
+ * and Ed25519 signature for third-party verification.
  */
 export async function runExportProvenance(ref: string, opts: { format?: string; output?: string }): Promise<void> {
     const format = parseFormat(opts.format);
@@ -32,32 +32,32 @@ export async function runExportProvenance(ref: string, opts: { format?: string; 
     }
     console.log(`Wrote ${format} provenance for "${analysis.name}" to ${dest}`);
 
-    // Sidecar is only meaningful for JSON exports — the payloadType claim must match the actual
-    // format, and PROV-N is a lossy re-serialization unverifiable against the chain hash.
+    // The attestation is only meaningful for JSON exports — the payloadType claim must match the
+    // actual format, and PROV-N is a lossy re-serialization unverifiable against the chain hash.
     if (format === "json") {
-        await writeSidecar(document, dest);
+        await writeAttestation(document, dest);
     }
 }
 
-/** Write the verification sidecar (`<dest>.sig.json`) alongside the exported provenance file. */
-async function writeSidecar(provJson: string, provDest: string): Promise<void> {
+/** Write the verification attestation (`<dest>.sig.json`) alongside the exported provenance file. */
+async function writeAttestation(provJson: string, provDest: string): Promise<void> {
     // The signature makes THIS document tamper-evident: a verifier can prove the exported JSON was
     // not altered after signing, and its artifact hashes are recomputed host-side from disk, so they
     // bind the real bytes on disk. It does NOT attest that the operation lineage the document records
     // is a faithful account of what untrusted code did — those read/write/delete edges are
     // self-reported by hooks running inside the sandbox at the workload's own uid, so an adversarial
     // workload can forge or omit them. Signing certifies the document, not the sandbox's self-report.
-    const result = await buildSidecar(provJson);
+    const result = await buildAttestation(provJson);
     if (result.isErr()) {
         fail(`Signing failed (${result.error.type}) — provenance is never exported unsigned.`);
     }
     const sigDest = `${provDest}.sig.json`;
     try {
         writeFileSync(sigDest, JSON.stringify(result.value, null, 2));
-        console.log(`Wrote verification sidecar to ${sigDest}`);
+        console.log(`Wrote verification attestation to ${sigDest}`);
     } catch {
         // Non-fatal: the provenance file was already written successfully.
-        console.warn(`Warning: could not write sidecar to ${sigDest}`);
+        console.warn(`Warning: could not write attestation to ${sigDest}`);
     }
 }
 

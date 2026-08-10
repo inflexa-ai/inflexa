@@ -35,7 +35,7 @@ import type { Workspace } from "./contexts/workspace.ts";
 import type { Notice } from "./theme.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { WorkspaceDisposal, WorkspaceError } from "../modules/analysis/output.ts";
-import type { ProvSigningError as SigningError, Sidecar } from "@inflexa-ai/prov-kernel";
+import type { ProvAttestation, ProvSigningError as SigningError } from "@inflexa-ai/prov-kernel";
 // The SQLite layer's error union, distinct from the harness's Postgres one already imported above.
 import type { DbError as SqliteError } from "../db/errors.ts";
 import type { Analysis } from "../types/analysis.ts";
@@ -1100,7 +1100,7 @@ describe("activity-panel palette command", () => {
 describe("palette provenance export", () => {
     const ANALYSIS = { id: "a1", name: "Alpha", slug: "alpha", anchorId: "anchor-1", projectId: null } as unknown as Analysis;
     const DOCUMENT = '{"prefix":{},"entity":{}}';
-    const SIDECAR: Sidecar = {
+    const ATTESTATION: ProvAttestation = {
         payloadType: "application/json; profile=prov-json",
         payloadDigestAlgorithm: "SHA-256",
         payloadDigest: "8f43",
@@ -1125,19 +1125,19 @@ describe("palette provenance export", () => {
     });
 
     /** The three edges, with the signature outcome the case is about. */
-    function seams(sidecar: ProvExportSeams["buildSidecar"]): ProvExportSeams {
+    function seams(attestation: ProvExportSeams["buildAttestation"]): ProvExportSeams {
         return {
             resolveOutputDir: () => ok<string, WorkspaceError>(out),
             serializeProvenance: () => ok<string, SqliteError>(DOCUMENT),
-            buildSidecar: sidecar,
+            buildAttestation: attestation,
         };
     }
 
-    test("a signing failure writes neither the document nor the sidecar", async () => {
+    test("a signing failure writes neither the document nor the attestation", async () => {
         const exported = await exportProvenanceToFile(
             ANALYSIS,
             "json",
-            seams(async () => err<Sidecar, SigningError>({ type: "keypair_race_lost" })),
+            seams(async () => err<ProvAttestation, SigningError>({ type: "keypair_race_lost" })),
         );
 
         // The delete flow reads this to caveat its own outcome notice, so an unwritten export must
@@ -1152,16 +1152,16 @@ describe("palette provenance export", () => {
         expect(currentNotice()?.text).toContain("never exported unsigned");
     });
 
-    test("a successful signature writes the document and its sidecar together", async () => {
+    test("a successful signature writes the document and its attestation together", async () => {
         const exported = await exportProvenanceToFile(
             ANALYSIS,
             "json",
-            seams(async () => ok<Sidecar, SigningError>(SIDECAR)),
+            seams(async () => ok<ProvAttestation, SigningError>(ATTESTATION)),
         );
 
         expect(exported).toBe(true);
         expect(readFileSync(join(out, "provenance.json"), "utf8")).toBe(DOCUMENT);
-        expect(JSON.parse(readFileSync(join(out, "provenance.json.sig.json"), "utf8"))).toEqual(SIDECAR);
+        expect(JSON.parse(readFileSync(join(out, "provenance.json.sig.json"), "utf8"))).toEqual(ATTESTATION);
         expect(currentNotice()?.kind).toBe("info");
         expect(currentNotice()?.text).toContain(join(out, "provenance.json"));
     });

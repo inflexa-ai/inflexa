@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ProvDocument } from "@inflexa-ai/tsprov";
-import type { ProvGraph } from "@inflexa-ai/tsprov/graph";
 
-import { applyProvEvent, PROV_UNIFY_OPTIONS } from "@inflexa-ai/prov-kernel";
+import { applyProvEvent, deriveLineageModel, PROV_UNIFY_OPTIONS, type LineageModel } from "@inflexa-ai/prov-kernel";
 import { asStr256 } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type {
@@ -23,7 +22,6 @@ import {
     formatJson,
     formatMermaid,
     formatTree,
-    lineageGraph,
     resolveLineageRef,
     type LineageFileInfo,
     type LineageJson,
@@ -137,13 +135,18 @@ function canonicalDoc(): ProvDocument {
     return ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json");
 }
 
-const graph = lineageGraph(canonicalDoc());
+/** The kernel read model over a document's serialized bytes — the same derivation the CLI runs on the stored column. */
+function lineageModelOf(doc: ProvDocument): LineageModel {
+    return deriveLineageModel(doc.serialize("json"))._unsafeUnwrap();
+}
+
+const graph = lineageModelOf(canonicalDoc());
 
 /** Resolve a ref, walk it, and render both projections — the construction every scenario shares. */
-function lineageOf(g: ProvGraph, ref: string, opts: { forward: boolean; depth?: number }): { json: LineageJson; tree: string } {
+function lineageOf(g: LineageModel, ref: string, opts: { forward: boolean; depth?: number }): { json: LineageJson; tree: string } {
     const roots = resolveLineageRef(g, ref)._unsafeUnwrap();
-    const result = computeLineage(g, roots, opts);
-    return { json: formatJson(g, result), tree: formatTree(g, result, opts) };
+    const walk = computeLineage(g, roots, opts);
+    return { json: formatJson(walk), tree: formatTree(walk, opts) };
 }
 
 /** The file infos of a resolution asserted to root at file entities. */
@@ -176,7 +179,7 @@ describe("resolveLineageRef", () => {
         const rerun = { path: deResultsKey.path, hash: "hashDe0002" };
         appendFileWritten(doc, "a1", system, fileRefOf(deResultsKey), stepRef, "step");
         appendFileWritten(doc, "a1", system, fileRefOf(rerun), { runId: "run-002", stepId: "step-de" }, "step");
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const infos = fileInfos(resolveLineageRef(g, deResultsKey.path)._unsafeUnwrap());
         expect(infos.map((i) => i.hash).sort()).toEqual(["hashDe0001", "hashDe0002"]);
@@ -196,7 +199,7 @@ describe("resolveLineageRef", () => {
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         appendFileWritten(doc, "a1", system, fileRefOf({ path: "output/a.csv", hash: "hashXX0001" }), stepRef, "step");
         appendFileWritten(doc, "a1", system, fileRefOf({ path: "output/b.csv", hash: "hashXX0002" }), stepRef, "step");
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const err = resolveLineageRef(g, "hashXX")._unsafeUnwrapErr();
         expect(err.type).toBe("ambiguous_hash");
@@ -233,7 +236,7 @@ describe("resolveLineageRef search tier", () => {
         const rerun = { path: deResultsKey.path, hash: "hashDe0002" };
         appendFileWritten(doc, "a1", system, fileRefOf(deResultsKey), stepRef, "step");
         appendFileWritten(doc, "a1", system, fileRefOf(rerun), { runId: "run-002", stepId: "step-de" }, "step");
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const infos = fileInfos(resolveLineageRef(g, "de_results")._unsafeUnwrap());
         expect(infos.map((i) => i.hash).sort()).toEqual(["hashDe0001", "hashDe0002"]);
@@ -264,7 +267,7 @@ describe("resolveLineageRef search tier", () => {
             const n = String(i).padStart(2, "0");
             appendFileWritten(doc, "a1", system, fileRefOf({ path: `output/f${n}.csv`, hash: `hashFile${n}` }), stepRef, "step");
         }
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const err = resolveLineageRef(g, "output/f")._unsafeUnwrapErr();
         expect(err.type).toBe("ambiguous_search");
@@ -287,7 +290,7 @@ describe("resolveLineageRef search tier", () => {
         // No file writes at all — the only pathed entity is the analysis-lifecycle input.
         const doc = freshDocument(analysis);
         appendInputAdded(doc, "a1", system, { path: "data/inputs/counts.csv", isDir: false, anchorId: "anchor1" }, null);
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const err = resolveLineageRef(g, "no/such/ref.bin")._unsafeUnwrapErr();
         expect(err.type).toBe("not_found");
@@ -305,7 +308,7 @@ describe("resolveLineageRef search tier", () => {
         appendFileWritten(doc, "a1", system, fileRefOf(key), stepRef, "step");
         appendCommandExecuted(doc, "a1", system, stepRef, reader, model);
         appendFileWritten(doc, "a1", system, fileRefOf(outKey), stepRef, "command");
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const infos = fileInfos(resolveLineageRef(g, key.path)._unsafeUnwrap());
         expect(infos).toHaveLength(1);
@@ -350,7 +353,7 @@ describe("activity-rooted walks", () => {
     test("dot renders an activity-rooted walk with no shape change", () => {
         const roots = resolveLineageRef(graph, "plot.py")._unsafeUnwrap();
         const result = computeLineage(graph, roots, { forward: false });
-        const dot = formatDot(graph, result);
+        const dot = formatDot(result);
         expect(dot.startsWith("digraph")).toBe(true);
         expect(dot).toContain(`"${commandQName(stepRef, cmdB.outputs)}" [shape=ellipse`);
         expect(dot).toContain('[label="used"]');
@@ -429,7 +432,7 @@ describe("backward lineage", () => {
         appendStepCompleted(doc, "a1", system, { runId: "run-002", stepId: "step-model", status: "completed", completedAtMs: 3 }, model);
         appendCommandExecuted(doc, "a1", system, readerStep, fit, model);
         appendFileWritten(doc, "a1", system, fileRefOf(modelKey), readerStep, "command");
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const { json } = lineageOf(g, modelKey.path, { forward: false });
         const fitQn = commandQName(readerStep, fit.outputs);
@@ -453,7 +456,7 @@ describe("backward lineage", () => {
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         appendCommandExecuted(doc, "a1", system, stepRef, selfRead, model);
         appendFileWritten(doc, "a1", system, fileRefOf(selfKey), stepRef, "command");
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const { json, tree } = lineageOf(g, selfKey.path, { forward: false });
         const genQn = commandQName(stepRef, selfRead.outputs);
@@ -508,7 +511,7 @@ describe("forward lineage", () => {
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         appendInputUsed(doc, "a1", system, stepRef, { ...countsKey, source: "data" });
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const { tree } = lineageOf(g, countsKey.path, { forward: true });
         expect(tree).toContain("no step-grain outputs (command outputs are attributed to their commands)");
@@ -540,7 +543,7 @@ describe("formatTree", () => {
             ...fileInfos(resolveLineageRef(graph, deResultsKey.path)._unsafeUnwrap()),
             ...fileInfos(resolveLineageRef(graph, heatmapKey.path)._unsafeUnwrap()),
         ];
-        const both = formatTree(graph, computeLineage(graph, { kind: "files", infos }, { forward: false, depth: 1 }), { forward: false, depth: 1 });
+        const both = formatTree(computeLineage(graph, { kind: "files", infos }, { forward: false, depth: 1 }), { forward: false, depth: 1 });
         expect(both).toContain("hashDe0001".slice(0, 12));
         expect(both).toContain("hashHeat01".slice(0, 12));
     });
@@ -580,8 +583,8 @@ describe("formatDot", () => {
     test("emits a valid digraph whose edge set matches the JSON edges exactly", () => {
         const roots = resolveLineageRef(graph, heatmapKey.path)._unsafeUnwrap();
         const result = computeLineage(graph, roots, { forward: false });
-        const json = formatJson(graph, result);
-        const dot = formatDot(graph, result);
+        const json = formatJson(result);
+        const dot = formatDot(result);
 
         expect(dot.startsWith("digraph")).toBe(true);
         expect(dot.trimEnd().endsWith("}")).toBe(true);
@@ -607,13 +610,13 @@ describe("formatDot", () => {
     test("marks the depth-truncated node visibly; the unbounded walk does not", () => {
         const roots = resolveLineageRef(graph, heatmapKey.path)._unsafeUnwrap();
 
-        const bounded = formatDot(graph, computeLineage(graph, roots, { forward: false, depth: 1 }));
+        const bounded = formatDot(computeLineage(graph, roots, { forward: false, depth: 1 }));
         // The path appears only in the node statement's label — edge lines carry QNames.
         const deBounded = bounded.split("\n").find((l) => l.includes("de_results.csv"))!;
         expect(deBounded).toContain("style=dashed");
         expect(deBounded).toContain("[truncated]");
 
-        const unbounded = formatDot(graph, computeLineage(graph, roots, { forward: false }));
+        const unbounded = formatDot(computeLineage(graph, roots, { forward: false }));
         const deFull = unbounded.split("\n").find((l) => l.includes("de_results.csv"))!;
         expect(deFull).not.toContain("style=dashed");
         expect(deFull).not.toContain("[truncated]");
@@ -626,10 +629,10 @@ describe("formatDot", () => {
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         appendCommandExecuted(doc, "a1", system, stepRef, quoting, model);
         appendFileWritten(doc, "a1", system, fileRefOf(outKey), stepRef, "command");
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const roots = resolveLineageRef(g, outKey.path)._unsafeUnwrap();
-        const dot = formatDot(g, computeLineage(g, roots, { forward: false }));
+        const dot = formatDot(computeLineage(g, roots, { forward: false }));
         // The command's quote and backslash must round-trip escaped inside the emitted label.
         expect(dot).toContain('bash -c \\"echo \\\\ hi\\"');
     });
@@ -639,10 +642,10 @@ describe("identifier resolution tier", () => {
     test("a record's bare localpart and prefixed QName both resolve it", () => {
         const doc = freshDocument(analysis);
         appendInputAdded(doc, "a1", system, { path: "data/raw", isDir: true, anchorId: "anchor1" }, null);
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
         // The identifier is discovered from the document itself — the token a user copies out of
         // the exported PROV, not a re-derivation of the QName hash.
-        const inputQn = g.nodes.map((n) => n.element.identifier?.toString() ?? "").find((q) => q.startsWith("inflexa:input-"))!;
+        const inputQn = g.nodes.map((n) => n.qn).find((q) => q.startsWith("inflexa:input-"))!;
 
         const byLocalpart = resolveLineageRef(g, inputQn.slice("inflexa:".length))._unsafeUnwrap();
         expect(byLocalpart.kind).toBe("files");
@@ -668,7 +671,7 @@ describe("identifier resolution tier", () => {
         const collidingPath = fileQName(firstKey).slice("inflexa:".length);
         const secondKey = { path: collidingPath, hash: "hashSecond" };
         appendFileWritten(doc, "a1", system, fileRefOf(secondKey), stepRef, "step");
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const roots = resolveLineageRef(g, collidingPath)._unsafeUnwrap();
         expect(roots.kind).toBe("files");
@@ -684,8 +687,8 @@ describe("formatMermaid", () => {
     test("emits flowchart source with grammar-safe ids and the JSON edge set", () => {
         const roots = resolveLineageRef(graph, heatmapKey.path)._unsafeUnwrap();
         const result = computeLineage(graph, roots, { forward: false });
-        const json = formatJson(graph, result);
-        const mermaid = formatMermaid(graph, result);
+        const json = formatJson(result);
+        const mermaid = formatMermaid(result);
 
         const lines = mermaid.split("\n");
         expect(lines[0]).toBe("flowchart LR");
@@ -720,10 +723,10 @@ describe("formatMermaid", () => {
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         appendCommandExecuted(doc, "a1", system, stepRef, selfRead, model);
         appendFileWritten(doc, "a1", system, fileRefOf(selfKey), stepRef, "command");
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const roots = resolveLineageRef(g, selfKey.path)._unsafeUnwrap();
-        const mermaid = formatMermaid(g, computeLineage(g, roots, { forward: false }));
+        const mermaid = formatMermaid(computeLineage(g, roots, { forward: false }));
         const lines = mermaid.split("\n");
         // The tree renders this entity twice (the root and a marked re-encounter); the graph draws
         // it ONCE, carrying both its generation and its self-read usage edge.
@@ -740,10 +743,10 @@ describe("formatMermaid", () => {
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         appendCommandExecuted(doc, "a1", system, stepRef, tricky, model);
         appendFileWritten(doc, "a1", system, fileRefOf(outKey), stepRef, "command");
-        const g = lineageGraph(doc);
+        const g = lineageModelOf(doc);
 
         const roots = resolveLineageRef(g, outKey.path)._unsafeUnwrap();
-        const mermaid = formatMermaid(g, computeLineage(g, roots, { forward: false }));
+        const mermaid = formatMermaid(computeLineage(g, roots, { forward: false }));
         // The embedded quotes arrive as Mermaid's entity escape; parentheses and hashes ride
         // inside the quoted label untouched.
         expect(mermaid).toContain("grep #quot;x#quot; (a) #tag (exit 0)");
@@ -766,13 +769,13 @@ describe("attribution gaps and per-kind absence wording", () => {
         outputs: [gapOutKey],
         inputs: [{ ...countsKey, source: "data", fileId: "file-1" }],
     };
-    function gapGraph(): ProvGraph {
+    function gapGraph(): LineageModel {
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         appendCommandExecuted(doc, "a1", system, stepRef, gapCmd, model);
         appendFileWritten(doc, "a1", system, fileRefOf(gapOutKey), stepRef, "command");
         appendInputUsed(doc, "a1", system, stepRef, { ...countsKey, source: "data", fileId: "file-1" });
-        return lineageGraph(ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json"));
+        return lineageModelOf(ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json"));
     }
 
     test("an unresolved script renders inline, marked unattributable, and is counted in a footer", () => {
@@ -797,8 +800,8 @@ describe("attribution gaps and per-kind absence wording", () => {
         const g = gapGraph();
         const roots = resolveLineageRef(g, gapOutKey.path)._unsafeUnwrap();
         const result = computeLineage(g, roots, { forward: false });
-        expect(formatDot(g, result)).toContain("[unresolved script scripts/de.R]");
-        expect(formatMermaid(g, result)).toContain("[unresolved script scripts/de.R]");
+        expect(formatDot(result)).toContain("[unresolved script scripts/de.R]");
+        expect(formatMermaid(result)).toContain("[unresolved script scripts/de.R]");
     });
 
     test("a file-tool write's empty input side is a positive by-design claim, not the command hedge", () => {
@@ -816,7 +819,7 @@ describe("attribution gaps and per-kind absence wording", () => {
         const cmd: ProvCommandRef = { kind: "command", command: "echo hi", exitCode: 0, outputs: [bytesOutKey], inputs: [] };
         appendCommandExecuted(doc, "a1", system, stepRef, cmd, model);
         appendFileWritten(doc, "a1", system, fileRefOf(bytesOutKey), stepRef, "command");
-        const g = lineageGraph(ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json"));
+        const g = lineageModelOf(ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json"));
 
         const { tree } = lineageOf(g, bytesOutKey.path, { forward: false });
         // A command with no recorded inputs keeps the honest hedge; a document with no gap appends no
@@ -855,7 +858,7 @@ describe("attribution gaps and per-kind absence wording", () => {
         // A mixed old/new re-emission ALSO stamps the attribute onto the same activity — the harmless
         // both-carry case. The resolved `used` edge is the stronger claim, so the note must skip it.
         doc.activity(commandQName(stepRef, cmd.outputs), undefined, undefined, { "inflexa:unresolvedScript": scriptP });
-        const g = lineageGraph(ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json"));
+        const g = lineageModelOf(ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json"));
 
         const { tree } = lineageOf(g, bothOutKey.path, { forward: false });
         // The script renders as a normal input file (resolved) — no inline gap line, no footer.
@@ -872,16 +875,16 @@ describe("attribution gaps and per-kind absence wording", () => {
         const roots = resolveLineageRef(g, countsKey.path)._unsafeUnwrap();
         const result = computeLineage(g, roots, { forward: true });
 
-        const tree = formatTree(g, result, { forward: true });
+        const tree = formatTree(result, { forward: true });
         expect(tree).not.toContain("not attributable to a recorded file");
         expect(tree).not.toContain("attribution gap");
 
-        const json = formatJson(g, result);
+        const json = formatJson(result);
         const cmdNode = json.nodes[commandQName(stepRef, gapCmd.outputs)]!;
         expect(cmdNode.kind).toBe("command");
         if (cmdNode.kind === "command") expect(cmdNode.unresolvedScript).toBe("scripts/de.R");
-        expect(formatDot(g, result)).toContain("[unresolved script scripts/de.R]");
-        expect(formatMermaid(g, result)).toContain("[unresolved script scripts/de.R]");
+        expect(formatDot(result)).toContain("[unresolved script scripts/de.R]");
+        expect(formatMermaid(result)).toContain("[unresolved script scripts/de.R]");
     });
 
     test("an unresolved script with no other recorded inputs renders the gap line alone — no contradicting hedge", () => {
@@ -894,7 +897,7 @@ describe("attribution gaps and per-kind absence wording", () => {
         const cmd: ProvCommandRef = { kind: "command", command: "Rscript de.R", exitCode: 0, scriptPath: "scripts/de.R", outputs: [outKey], inputs: [] };
         appendCommandExecuted(doc, "a1", system, stepRef, cmd, model);
         appendFileWritten(doc, "a1", system, fileRefOf(outKey), stepRef, "command");
-        const g = lineageGraph(ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json"));
+        const g = lineageModelOf(ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json"));
 
         const { tree } = lineageOf(g, outKey.path, { forward: false });
         // The standalone gap line REPLACES the hedge — asserted against the exact string so a regression

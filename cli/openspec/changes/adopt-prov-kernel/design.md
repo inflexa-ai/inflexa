@@ -3,7 +3,8 @@
 ## The ownership line
 
 The kernel owns the representation and its integrity: the QName derivations, the statement each
-core event appends, the unify policy, the chain/sign/verify primitives, and the sidecar schema.
+core event appends, the unify policy, the chain/sign/verify primitives, the lineage read model,
+and the attestation schema.
 The cli owns everything around a document's life on this machine: the recorder lifecycle (SQLite
 snapshot columns, revision-guarded dirty tracking, coalesced single-flight flush,
 rehydration-on-first-touch), the bus delivery mechanics, the keypair FILE lifecycle in the config
@@ -52,8 +53,8 @@ stable QNames).
   `[]` guard); the kernel omits the attribute. On re-emission into an existing document the old
   `""` survives the union and the kernel adds nothing — convergence, not corruption — covered by
   an explicit test. New documents never carry the attribute.
-- **Sidecar `kid`.** The kernel sidecar schema adds an optional `kid` signer id. The cli does not
-  set it; old sidecars without it validate unchanged.
+- **Attestation `kid`.** The kernel attestation schema adds an optional `kid` signer id. The cli
+  does not set it; old attestations without it validate unchanged.
 - **Verify wording.** The kernel's `formatVerifyResult` says "the signing key is missing" where
   the cli said "the signing key file is missing". Presentation-only; the cli adopts the kernel
   wording rather than keeping a one-line fork.
