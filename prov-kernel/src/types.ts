@@ -242,6 +242,6 @@ export type VerifyResult =
     | { status: "tampered"; detail: string }
     | { status: "no-key" }
     | { status: "empty" }
-    | { status: "invalid-sidecar"; detail: string }
+    | { status: "invalid-attestation"; detail: string }
     | { status: "invalid-key" }
     | { status: "verify-error"; detail: string };

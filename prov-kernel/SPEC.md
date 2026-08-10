@@ -393,14 +393,18 @@ place. Each chain hash is the lowercase hex encoding of the 32-byte digest.
 | Signature encoding | lowercase hex, 128 characters (64 bytes) |
 | Public key | JWK (`kty` `OKP`, `crv` `Ed25519`; key material base64url per JWK) |
 
-The chained path signs the chain hash. The sidecar path signs the payload
+The chained path signs the chain hash. The attestation path signs the payload
 digest `SHA-256(bytes(json))`, hex-encoded. In both paths the signature covers
 the hex-decoded digest bytes, not the hex string.
 
-## The sidecar
+## The attestation
 
-The export sidecar is one JSON object. A recipient verifies with the payload
-and the sidecar alone.
+Before version 0.4.0 this object was named the "sidecar" — artifacts written
+under that name exist and verify unchanged, because no field name carries the
+old name.
+
+The export attestation is one JSON object. A recipient verifies with the
+payload and the attestation alone.
 
 ```json
 {
@@ -419,8 +423,8 @@ and the sidecar alone.
 `signatureAlgorithm` are literals. `payloadDigestMethod` `verbatim` means the
 digest input is the exact payload bytes. `kid` is optional: when several
 writers sign exports of one document, `kid` says which key signed this one.
-Verification ignores it. The public key travels in the sidecar, thus the
-sidecar proves integrity, not origin. For origin trust a host pins the
+Verification ignores it. The public key travels in the attestation, thus the
+attestation proves integrity, not origin. For origin trust a host pins the
 signer's public key and compares before verification.
 
 ## Unify semantics

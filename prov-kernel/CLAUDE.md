@@ -15,7 +15,10 @@ Inflexa PROV dialect, and nothing else:
   determines the document bytes, thus it is format
 - the signing primitives (`src/signing.ts`): the chain hash, Ed25519
   sign/verify, and the `ProvSigner` seam
-- verification and the signed sidecar (`src/verify.ts`)
+- the lineage read model (`src/lineage.ts`): the node/edge model derived from
+  stored PROV-JSON, the generation/usage traversal, and the `(path, hash)`
+  file-entity lookup — the one read-side interpretation every consumer shares
+- verification and the signed attestation (`src/verify.ts`)
 - the actor and ref value types the builders accept (`src/types.ts`)
 
 The kernel obeys the three-layer rule: the harness observes, the kernel
@@ -28,14 +31,14 @@ QName derivations, and tsprov interop. The package has no dependency on
 
 [`SPEC.md`](SPEC.md) is the wire-format contract. It is derived from the code.
 If you change a derivation, an identifier scheme, the chain rule, or the
-sidecar shape, change `SPEC.md` in the same commit, and expect the golden
+attestation shape, change `SPEC.md` in the same commit, and expect the golden
 fixture test to fail until you regenerate the fixture on purpose.
 
 ### Public interface
 
 `src/index.ts` is the curated front door. It re-exports the document model,
-the signing primitives, the verification functions, the sidecar schema, and
-the value types. `package.json` declares `type: "module"` and the `exports`
+the lineage read model, the signing primitives, the verification functions,
+the attestation schema, and the value types. `package.json` declares `type: "module"` and the `exports`
 map: `.` goes to `dist/index.js`, and `./*` and `./*.js` go to `dist/*.js`.
 
 ## Commands

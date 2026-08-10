@@ -3,9 +3,11 @@
 `@inflexa-ai/prov-kernel` is the Inflexa provenance format kernel. It carries the
 Inflexa PROV dialect: the document model (QName derivation, unify options, an
 injectable digest, and the `appendLifecycleAction` extension primitive), the
-chain-hash and Ed25519 sign/verify primitives, the signed-sidecar schema, and
-the actor and ref value types that the events carry. [`SPEC.md`](SPEC.md) gives
-the exact wire format, sufficient for an independent implementation.
+lineage read model (`deriveLineageModel`, `computeLineage`, `findFileEntity`),
+the chain-hash and Ed25519 sign/verify primitives, the signed-attestation
+schema, and the actor and ref value types that the events carry.
+[`SPEC.md`](SPEC.md) gives the exact wire format, sufficient for an independent
+implementation.
 
 The package is a kernel, not a recorder. The three-layer rule divides the work:
 
@@ -34,7 +36,7 @@ bun test        # run the test suite (Node is the runtime; bun runs tests only)
 ```
 
 ```ts
-import { createProvDocumentModel, applyProvEvent, PROV_UNIFY_OPTIONS, createKeypairSigner, buildSidecar, verifySidecar } from "@inflexa-ai/prov-kernel";
+import { createProvDocumentModel, applyProvEvent, PROV_UNIFY_OPTIONS, createKeypairSigner, buildAttestation, verifyAttestation } from "@inflexa-ai/prov-kernel";
 
 const model = createProvDocumentModel(); // or inject a historical digest
 const doc = model.freshDocument({ analysisId: "a1" });

@@ -19,10 +19,11 @@ try {
   const required = [
     "createProvDocumentModel",
     "defaultProvDigest",
+    "deriveLineageModel",
     "createKeypairSigner",
     "computeChainHash",
-    "buildSidecar",
-    "verifySidecar",
+    "buildAttestation",
+    "verifyAttestation",
   ];
   const missing = required.filter((name) => typeof mod[name] !== "function");
   if (missing.length > 0) {
@@ -36,17 +37,17 @@ try {
     throw new Error(`fileQName produced an unexpected shape: ${qn}`);
   }
 
-  // One sign/verify roundtrip through the sidecar path.
+  // One sign/verify roundtrip through the attestation path.
   const keypair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
   const signer = mod.createKeypairSigner(keypair);
   const provJson = `{"prefix":{"inflexa":"https://inflexa.ai/prov#"}}`;
-  const sidecarResult = await mod.buildSidecar(signer, provJson);
-  if (sidecarResult.isErr()) {
-    throw new Error(`buildSidecar failed: ${JSON.stringify(sidecarResult.error)}`);
+  const attestationResult = await mod.buildAttestation(signer, provJson);
+  if (attestationResult.isErr()) {
+    throw new Error(`buildAttestation failed: ${JSON.stringify(attestationResult.error)}`);
   }
-  const verdict = await mod.verifySidecar(provJson, sidecarResult.value);
+  const verdict = await mod.verifyAttestation(provJson, attestationResult.value);
   if (verdict.status !== "valid") {
-    throw new Error(`sidecar roundtrip did not verify: ${JSON.stringify(verdict)}`);
+    throw new Error(`attestation roundtrip did not verify: ${JSON.stringify(verdict)}`);
   }
 
   console.log(`smoke: OK — barrel loads under node, QName derivation and sign/verify roundtrip pass.`);
