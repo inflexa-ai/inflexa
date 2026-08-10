@@ -54,7 +54,9 @@ bun run lint            # eslint .
 bun run smoke           # load dist/ under Node, one QName + one sign/verify roundtrip
 ```
 
-**Runtime**: Node.js. Bun is only for the tests (`bun test`).
+**Runtime**: browser and server. A module in `src/` must not import a
+`node:`-prefixed module — `src/browser-safety.test.ts` guards the built
+`dist/`. Bun is only for the tests (`bun test`).
 
 **After a change**, run `bun run typecheck`, `bun run lint`, `bun test`, and
 `bun run build && bun run smoke`.
