@@ -8,7 +8,6 @@ import { createRegistry } from "../tools/registry.js";
 import type { EmbeddingProvider } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ReportSessionStateGateway } from "../tools/report-authoring/authoring-tools.js";
-import { UnavailablePreviewPublisher } from "../tools/report/preview-publisher.js";
 
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice for
@@ -21,7 +20,6 @@ function buildAgent() {
         workspaceFs: {} as WorkspaceFilesystem,
         gateway: {} as ReportSessionStateGateway,
         resolveWorkspaceRoot: (id: string) => join("/sessions", id),
-        previews: new UnavailablePreviewPublisher(),
     });
 }
 

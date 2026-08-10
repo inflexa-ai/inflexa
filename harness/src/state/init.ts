@@ -172,7 +172,9 @@ CREATE INDEX IF NOT EXISTS idx_cortex_report_versions_analysis
 -- snapshot first and the document lands later. A purge of the analysis removes the
 -- row through the analysis_id cascade. The explicit purge delete stays a backstop,
 -- the same as the plans delete, because a database whose table predates the key
--- never acquires one.
+-- never acquires one. The thread id carries no foreign key, the same as the
+-- messages rows, thus a purge of a thread cannot reach this row through a cascade
+-- and purgeThread removes it by name.
 CREATE TABLE IF NOT EXISTS cortex_report_session_state (
   thread_id     TEXT PRIMARY KEY,
   analysis_id   TEXT NOT NULL

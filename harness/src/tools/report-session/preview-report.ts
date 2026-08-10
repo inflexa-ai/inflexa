@@ -10,10 +10,14 @@
  * namespace belongs to this path alone, thus the tool never writes under the old `previews/` or `reports/`
  * trees. The result carries the absolute page path, thus a local host shows the page with no seam.
  *
+ * The result carries no access grant. `PreviewPublisher` authorizes the URL space
+ * `previews/{analysisId}/{previewId}` (`contracts/content-url.ts`), and that space cannot name a page of
+ * this tree. A hosted view of a session page is a later capability, with a URL space of its own.
+ *
  * Each degraded condition is a typed outcome in the ok channel: a session refusal, a gap list, a resolver
- * absence, an unresolved reference, a bridge mismatch, and a render problem. The tool never throws for one
- * of them. When a `PreviewPublisher` realization mints access, the result also carries the minted access.
- * When the mint fails, the result names the absence, and the page path still returns.
+ * absence, an unresolved reference, a bridge mismatch, a render problem, and a write failure. The tool
+ * never throws for one of them. The filesystem speaks the throw protocol, thus the write runs inside a
+ * guard that turns a fault into the ok-channel outcome.
  */
 
 import { ok, type Result } from "neverthrow";
@@ -22,17 +26,16 @@ import { extname, join } from "node:path";
 import { z } from "zod";
 
 import type { Scope } from "../../auth/types.js";
-import type { ResolveWorkspaceRoot } from "../../workspace/paths.js";
+import { isSafeId, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import type { Block, ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
-import type { Logger } from "../../lib/logger.js";
+import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js";
 import type { ReferenceResolver, ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { ResolutionFailure } from "../../report-model/validate.js";
 import { bridgeValues, type BlockResolution, type BridgeMismatch, type ResolvedFile } from "../../report-render/value-bridge.js";
 import { renderReportPage } from "../../report-render/render.js";
 import type { RenderProblem } from "../../report-render/types.js";
-import { describeMintFailure, type PreviewPublisher } from "../report/preview-publisher.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import type { ReportSessionStateGateway, SessionRefusal } from "../report-authoring/authoring-tools.js";
 
@@ -42,14 +45,8 @@ const previewReportInput = z.object({});
 export type PreviewReportInput = z.infer<typeof previewReportInput>;
 
 /**
- * The hosted access of a preview. `minted: true` carries the surface that the publisher gave. `minted:
- * false` names the absence, and the page path still returns beside it.
- */
-export type PreviewAccess = { minted: true; baseUrl: string; token: string; expiresAt: string } | { minted: false; detail: string };
-
-/**
  * The typed outcome of the preview tool. Each arm is ok-channel data, thus the tool never throws for a
- * degraded condition. `rendered` carries the absolute page path and the hosted access.
+ * degraded condition. `rendered` carries the absolute page path.
  */
 export type PreviewReportResult =
     | { outcome: "refused"; refusal: SessionRefusal }
@@ -58,26 +55,32 @@ export type PreviewReportResult =
     | { outcome: "unresolved-references"; unresolved: ResolutionFailure[] }
     | { outcome: "bridge-mismatch"; mismatches: BridgeMismatch[] }
     | { outcome: "render-problems"; problems: RenderProblem[] }
-    | { outcome: "rendered"; pagePath: string; access: PreviewAccess };
+    | { outcome: "write-failed"; detail: string }
+    | { outcome: "rendered"; pagePath: string };
 
 /**
  * The construction deps of the preview tool.
  *
  * `resolveWorkspaceRoot` maps the analysis of the call onto its workspace root, thus one singleton tool
  * serves every analysis and it resolves the root per call from the scope. `resolver` is optional, because a
- * resolver realization can be absent. `previews` mints hosted access only, and it carries no page.
+ * resolver realization can be absent.
  */
 export interface PreviewReportToolDeps {
     readonly gateway: ReportSessionStateGateway;
     readonly resolver?: ReferenceResolver;
-    readonly previews: PreviewPublisher;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly logger?: Logger;
 }
 
-/** The report thread and its analysis ride on the analysis scope. A scope of a different kind names neither. */
+/**
+ * The report thread and its analysis ride on the analysis scope. A scope of a different kind names neither.
+ *
+ * The thread id becomes one segment of the session directory below. Thus the safe-id check sits here, beside
+ * the shape check, and not at the join: a scope whose id carries a separator or a traversal segment names no
+ * thread that this tool can write under.
+ */
 function threadScopeOf(scope: Scope): { threadId: string; analysisId: string } | undefined {
-    if (scope.kind !== "analysis" || scope.threadId === undefined) {
+    if (scope.kind !== "analysis" || scope.threadId === undefined || !isSafeId(scope.threadId)) {
         return undefined;
     }
     return { threadId: scope.threadId, analysisId: scope.analysisId };
@@ -238,7 +241,7 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
         execute: async (_input, ctx): Promise<Result<PreviewReportResult, ToolError>> => {
             const scope = threadScopeOf(ctx.session.scope);
             if (scope === undefined) {
-                const refusal: SessionRefusal = { reason: "no-thread-scope", detail: "the scope of the call carries no report thread id" };
+                const refusal: SessionRefusal = { reason: "no-thread-scope", detail: "the scope of the call names no usable report thread id" };
                 return ok({ outcome: "refused", refusal });
             }
             const { threadId, analysisId } = scope;
@@ -283,24 +286,21 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             const sessionDir = join(root, "report-sessions", threadId);
             const assetsDir = join(sessionDir, "assets");
             const pagePath = join(sessionDir, "index.html");
-            await mkdir(sessionDir, { recursive: true });
-            await stageFigures(resolutions, root, assetsDir);
-            await writeFile(pagePath, rendered.value, "utf8");
-
-            const mint = await deps.previews.mintPreviewAccess(analysisId, threadId);
-            if (!mint.ok) {
-                const detail = describeMintFailure(mint);
-                logger.warn("preview access unavailable — the page is on disk but no hosted surface exists", {
-                    threadId,
-                    ...(mint.status !== undefined ? { status: mint.status } : {}),
-                });
-                return ok({ outcome: "rendered", pagePath, access: { minted: false, detail } });
+            try {
+                await mkdir(sessionDir, { recursive: true });
+                await stageFigures(resolutions, root, assetsDir);
+                await writeFile(pagePath, rendered.value, "utf8");
+            } catch (cause) {
+                // A figure whose ledger path left the disk, a full volume, and a denied write each arrive as
+                // a rejection of `node:fs`. The tool contract is ok-channel data for each degraded
+                // condition, thus the fault becomes an outcome and the agent reads a cause instead of an
+                // error tool result. The log keeps the full fault, because the outcome carries the message
+                // alone.
+                logger.warn("the page did not land", { threadId, ...defaultErrorFields(cause) });
+                return ok({ outcome: "write-failed", detail: cause instanceof Error ? cause.message : String(cause) });
             }
-            return ok({
-                outcome: "rendered",
-                pagePath,
-                access: { minted: true, baseUrl: mint.data.baseUrl, token: mint.data.token, expiresAt: mint.data.expiresAt },
-            });
+
+            return ok({ outcome: "rendered", pagePath });
         },
     });
 }

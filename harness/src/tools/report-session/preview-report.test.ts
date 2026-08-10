@@ -17,7 +17,6 @@ import type { Scope } from "../../auth/types.js";
 import type { DraftDocument } from "../../report-model/draft.js";
 import { createFixtureResolver } from "../../report-model/fixture-resolver.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
-import { UnavailablePreviewPublisher, type PreviewMintResult, type PreviewPublisher } from "../report/preview-publisher.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
@@ -74,13 +73,6 @@ function makeFakeGateway(): FakeGateway {
     };
 }
 
-/** A publisher that mints ok. It carries no page, thus it gives the hosted surface alone. */
-class OkPublisher implements PreviewPublisher {
-    async mintPreviewAccess(): Promise<PreviewMintResult> {
-        return { ok: true, data: { baseUrl: "https://host/preview", token: "tok", expiresAt: "2030-01-01T00:00:00Z" } };
-    }
-}
-
 /** A tool context whose scope names a report thread. */
 function ctxForThread(threadId: string): ToolContext {
     const { ctx } = makeToolContext();
@@ -127,7 +119,6 @@ describe("the gap return", () => {
         const tool = createPreviewReportTool({
             gateway,
             resolver: createFixtureResolver(),
-            previews: new UnavailablePreviewPublisher(),
             resolveWorkspaceRoot: () => root,
         });
 
@@ -150,7 +141,6 @@ describe("the pass path", () => {
         const tool = createPreviewReportTool({
             gateway,
             resolver: createFixtureResolver(),
-            previews: new UnavailablePreviewPublisher(),
             resolveWorkspaceRoot: () => root,
         });
 
@@ -196,7 +186,6 @@ describe("the staged asset", () => {
         const tool = createPreviewReportTool({
             gateway,
             resolver: createFixtureResolver(),
-            previews: new UnavailablePreviewPublisher(),
             resolveWorkspaceRoot: () => root,
         });
 
@@ -218,7 +207,7 @@ describe("the resolver absence", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({ gateway, previews: new UnavailablePreviewPublisher(), resolveWorkspaceRoot: () => root });
+        const tool = createPreviewReportTool({ gateway, resolveWorkspaceRoot: () => root });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -239,7 +228,6 @@ describe("the unresolved reference", () => {
         const tool = createPreviewReportTool({
             gateway,
             resolver: createFixtureResolver(),
-            previews: new UnavailablePreviewPublisher(),
             resolveWorkspaceRoot: () => root,
         });
 
@@ -254,60 +242,12 @@ describe("the unresolved reference", () => {
     });
 });
 
-describe("the publisher arm", () => {
-    it("returns the page path when the publisher gives not-ok", async () => {
-        const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            resolver: createFixtureResolver(),
-            previews: new UnavailablePreviewPublisher(),
-            resolveWorkspaceRoot: () => root,
-        });
-
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
-
-        expect(result.outcome).toBe("rendered");
-        if (result.outcome === "rendered") {
-            expect(result.access.minted).toBe(false);
-            if (!result.access.minted) {
-                expect(result.access.detail.length).toBeGreaterThan(0);
-            }
-            expect(existsSync(result.pagePath)).toBe(true);
-        }
-        assertNoLegacyDirs(root);
-    });
-
-    it("carries the minted access when the publisher gives ok", async () => {
-        const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({ gateway, resolver: createFixtureResolver(), previews: new OkPublisher(), resolveWorkspaceRoot: () => root });
-
-        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
-
-        expect(result.outcome).toBe("rendered");
-        if (result.outcome === "rendered") {
-            expect(result.access.minted).toBe(true);
-            if (result.access.minted) {
-                expect(result.access.baseUrl).toBe("https://host/preview");
-                expect(result.access.token).toBe("tok");
-                expect(result.access.expiresAt).toBe("2030-01-01T00:00:00Z");
-            }
-            expect(existsSync(result.pagePath)).toBe(true);
-        }
-        assertNoLegacyDirs(root);
-    });
-});
-
 describe("the session refusal", () => {
     it("refuses a call whose scope carries no thread id", async () => {
         const root = await makeRoot();
         const tool = createPreviewReportTool({
             gateway: makeFakeGateway(),
             resolver: createFixtureResolver(),
-            previews: new UnavailablePreviewPublisher(),
             resolveWorkspaceRoot: () => root,
         });
         // The default fixture scope is an analysis scope with no thread id.
@@ -326,7 +266,6 @@ describe("the session refusal", () => {
         const tool = createPreviewReportTool({
             gateway: makeFakeGateway(),
             resolver: createFixtureResolver(),
-            previews: new UnavailablePreviewPublisher(),
             resolveWorkspaceRoot: () => root,
         });
 

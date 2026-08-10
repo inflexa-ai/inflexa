@@ -83,15 +83,15 @@ The roster of the agent MUST hold: the workspace read tools (`read_file`, `list_
 ### Requirement: The render-and-preview tool
 The preview tool MUST run the finish on the draft first. A gap list MUST return as data, and no render runs. On a pass, the tool MUST resolve each reference through the injected `ReferenceResolver`, bridge the values, and render with `renderReportPage`. The page and its staged assets MUST land in the session directory `report-sessions/{threadId}/` under the workspace root. The result MUST carry the page path as data.
 
-When a `PreviewPublisher` realization is present, the result MUST also carry the minted access. An unresolved reference, a resolver absence, and an unavailable publisher MUST each return a typed outcome that names the cause. The tool MUST NOT throw for any of these outcomes.
+The hosted view of a session page is a later capability with its own URL space, and the result carries no access grant. An unresolved reference, a resolver absence, and a failed write MUST each return a typed outcome that names the cause. The tool MUST NOT throw for any of these outcomes.
 
 #### Scenario: An unfinished draft returns the gaps
 - **WHEN** the agent calls the preview on a draft with an empty section
 - **THEN** the result carries the gap list, and no page lands
 
 #### Scenario: The page path returns for a local host
-- **WHEN** the render passes and the publisher realization is unavailable
-- **THEN** the result carries the page path and the publisher absence, and the page is on disk
+- **WHEN** the render passes
+- **THEN** the result carries the page path, and the page is on disk
 
 #### Scenario: The session directory stays off the old namespaces
 - **WHEN** the preview tool writes a page

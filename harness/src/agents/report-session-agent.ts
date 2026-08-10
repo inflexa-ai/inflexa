@@ -28,7 +28,6 @@ import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { Logger } from "../lib/logger.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
-import type { PreviewPublisher } from "../tools/report/preview-publisher.js";
 import type { ReportSessionStateGateway } from "../tools/report-authoring/authoring-tools.js";
 import { createReportAuthoringTools } from "../tools/report-authoring/authoring-tools.js";
 import { createPreviewReportTool } from "../tools/report-session/preview-report.js";
@@ -65,8 +64,6 @@ export interface ReportSessionAgentDeps {
     readonly gateway: ReportSessionStateGateway;
     /** Workspace-root resolution seam -- the preview tool resolves the page root per call. */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
-    /** Preview-publishing seam -- the preview tool mints hosted access when a realization is present. */
-    readonly previews: PreviewPublisher;
     /** Reference-resolution seam -- absent until a realization lands; the preview tool degrades as data. */
     readonly resolver?: ReferenceResolver;
     /** Operational logging seam; omitted falls back to no-op. */
@@ -75,7 +72,7 @@ export interface ReportSessionAgentDeps {
 
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
-    const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, previews, resolver, logger } = deps;
+    const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, resolver, logger } = deps;
     const authoring = createReportAuthoringTools(gateway);
 
     const tools: Tool[] = [
@@ -101,7 +98,6 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         createPreviewReportTool({
             gateway,
             resolveWorkspaceRoot,
-            previews,
             ...(resolver ? { resolver } : {}),
             ...(logger ? { logger } : {}),
         }),
