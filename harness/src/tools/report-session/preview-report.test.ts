@@ -202,6 +202,44 @@ describe("the staged asset", () => {
     });
 });
 
+describe("the figure containment", () => {
+    it("refuses a bound figure whose source escapes the workspace root, names the block, and no page lands", async () => {
+        const root = await makeRoot();
+        // The ledger accepts any path, thus a registered `../../` path is a legal snapshot key. The
+        // structural tier admits it, and the containment test at staging refuses the escape.
+        const escapePath = "../../escape.png";
+        const snapshot: ReportSnapshot = { artifacts: { [escapePath]: { hash: "sha256:bbb", fileType: "figure" } } };
+        const document: DraftDocument = {
+            title: "Figures",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Plots",
+                    blocks: [{ kind: "figure", id: "f1", binding: { kind: "artifact-file", path: escapePath, hash: "sha256:bbb" }, caption: "A plot" }],
+                },
+            ],
+        };
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document, snapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            resolver: createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("figure-out-of-scope");
+        if (result.outcome === "figure-out-of-scope") {
+            expect(result.blockId).toBe("f1");
+            expect(result.path).toBe(escapePath);
+        }
+        expect(existsSync(join(root, "report-sessions"))).toBe(false);
+        assertNoLegacyDirs(root);
+    });
+});
+
 describe("the resolver absence", () => {
     it("names the resolver absence, and no page lands", async () => {
         const root = await makeRoot();

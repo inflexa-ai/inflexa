@@ -47,9 +47,9 @@ describe("createReportSessionRuntime", () => {
         (await upsertAnalysis(pool, analysisId, null, null))._unsafeUnwrap();
     }
 
-    /** Seed the thread row the anchor operation resolves to an analysis. */
+    /** Seed the report thread row the anchor operation resolves to an analysis. */
     async function seedThread(threadId: string, analysisId: string): Promise<void> {
-        (await createThreadStore(pool).createThread({ threadId, analysisId }))._unsafeUnwrap();
+        (await createThreadStore(pool).createThread({ threadId, analysisId, type: "report" }))._unsafeUnwrap();
     }
 
     function artifact(analysisId: string, path: string, hash: string): RegisterArtifactInput {
@@ -116,6 +116,24 @@ describe("createReportSessionRuntime", () => {
         expect(loaded.outcome).toBe("found");
         if (loaded.outcome !== "found") throw new Error("expected found");
         expect(loaded.state.snapshot.artifacts).toEqual({});
+    });
+
+    it("refuses a conversation thread and writes no session row", async () => {
+        const analysisId = "analysis-conversation";
+        const threadId = "thread-conversation";
+        await seedAnalysis(analysisId);
+        // A conversation thread, not a report thread. The anchor operation carries a report session only.
+        (await createThreadStore(pool).createThread({ threadId, analysisId }))._unsafeUnwrap();
+
+        const runtime = createReportSessionRuntime({ pool });
+
+        const failed = await runtime.ensureSessionState(threadId);
+        expect(failed.outcome).toBe("failed");
+        if (failed.outcome === "failed") {
+            expect(failed.detail).toContain("conversation");
+        }
+        // A wrong-type thread writes no row.
+        expect(await rowCount(threadId)).toBe(0);
     });
 
     it("holds two documents for two threads", async () => {

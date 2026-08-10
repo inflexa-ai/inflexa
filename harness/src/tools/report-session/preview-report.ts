@@ -15,29 +15,33 @@
  * this tree. A hosted view of a session page is a later capability, with a URL space of its own.
  *
  * Each degraded condition is a typed outcome in the ok channel: a session refusal, a gap list, a resolver
- * absence, an unresolved reference, a bridge mismatch, a render problem, and a write failure. The tool
- * never throws for one of them. The filesystem speaks the throw protocol, thus the write runs inside a
- * guard that turns a fault into the ok-channel outcome.
+ * absence, an unresolved reference, a bridge mismatch, a render problem, a figure that escapes the
+ * workspace root, and a write failure. The tool never throws for one of them. The filesystem speaks the
+ * throw protocol, and the workspace-root seam signals an unresolvable resource the same way. Thus the
+ * write runs through the `tryFs` glue, which turns a genuine fault into the ok-channel outcome and lets a
+ * control-flow exception propagate.
  */
 
-import { ok, type Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { z } from "zod";
 
-import type { Scope } from "../../auth/types.js";
-import { isSafeId, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
+import { resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import type { Block, ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
+import { describeFsError, tryFsWrite, type FsError } from "../../lib/fs-result.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
+import { allWithConcurrency } from "../../lib/async-utils.js";
+import { walkBlocks } from "../../report-model/block-walk.js";
 import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js";
-import type { ReferenceResolver, ReportSnapshot } from "../../report-model/reference-resolver.js";
-import type { ResolutionFailure } from "../../report-model/validate.js";
+import type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "../../report-model/reference-resolver.js";
+import { checkChartEncoding, RESOLUTION_CONCURRENCY, type ResolutionFailure } from "../../report-model/validate.js";
 import { bridgeValues, type BlockResolution, type BridgeMismatch, type ResolvedFile } from "../../report-render/value-bridge.js";
 import { renderReportPage } from "../../report-render/render.js";
 import type { RenderProblem } from "../../report-render/types.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
-import type { ReportSessionStateGateway, SessionRefusal } from "../report-authoring/authoring-tools.js";
+import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 
 /** The empty input. The tool renders the current draft of the thread, thus it needs no field. */
 const previewReportInput = z.object({});
@@ -55,6 +59,7 @@ export type PreviewReportResult =
     | { outcome: "unresolved-references"; unresolved: ResolutionFailure[] }
     | { outcome: "bridge-mismatch"; mismatches: BridgeMismatch[] }
     | { outcome: "render-problems"; problems: RenderProblem[] }
+    | { outcome: "figure-out-of-scope"; blockId: string; path: string }
     | { outcome: "write-failed"; detail: string }
     | { outcome: "rendered"; pagePath: string };
 
@@ -70,20 +75,6 @@ export interface PreviewReportToolDeps {
     readonly resolver?: ReferenceResolver;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly logger?: Logger;
-}
-
-/**
- * The report thread and its analysis ride on the analysis scope. A scope of a different kind names neither.
- *
- * The thread id becomes one segment of the session directory below. Thus the safe-id check sits here, beside
- * the shape check, and not at the join: a scope whose id carries a separator or a traversal segment names no
- * thread that this tool can write under.
- */
-function threadScopeOf(scope: Scope): { threadId: string; analysisId: string } | undefined {
-    if (scope.kind !== "analysis" || scope.threadId === undefined || !isSafeId(scope.threadId)) {
-        return undefined;
-    }
-    return { threadId: scope.threadId, analysisId: scope.analysisId };
 }
 
 /**
@@ -104,118 +95,168 @@ function figureSourcePolicy(file: ResolvedFile): string {
 }
 
 /**
- * Resolve the references of one block, and give back the resolution of the block.
+ * Pair each block with the resolved value of its binding, in document order.
  *
- * A value-bearing kind carries its resolved value for the bridge. A no-value kind carries none. A section
- * gives its own resolution and the resolutions of its children in document order. An unresolved reference
- * lands in `unresolved` with the id of the block that carries it.
+ * A value-bearing kind carries the resolved value of its one reference, looked up by the block id from
+ * the map that the resolution pass filled. A no-value kind carries none. Where a reference sits in a
+ * block is the knowledge of `block-walk.ts`, thus this walk reads the block id alone and never a binding
+ * field.
  *
- * The switch is exhaustive over the block kinds. A ninth kind reaches the end with no return, and the
- * declared return type fails the build. Thus the walk cannot drop a kind in silence.
+ * The switch is exhaustive over the eight block kinds. A ninth kind reaches the end with no return, and
+ * the declared return type fails the build. Thus the walk cannot drop a kind in silence. A value-bearing
+ * block reaches here only when its reference resolved, because an unresolved reference short-circuits
+ * before this walk.
  */
-async function resolveBlock(block: Block, resolver: ReferenceResolver, snapshot: ReportSnapshot, unresolved: ResolutionFailure[]): Promise<BlockResolution[]> {
-    switch (block.kind) {
-        case "text":
-            return [{ blockId: block.id, kind: "text" }];
-        case "claim": {
-            for (const binding of block.bindings) {
-                const resolved = await resolver.resolve(binding, snapshot);
-                if (resolved.isErr()) {
-                    unresolved.push({ blockId: block.id, failure: resolved.error });
+function collectResolutions(blocks: readonly Block[], resolvedByBlock: ReadonlyMap<string, ResolvedValue>): BlockResolution[] {
+    const resolutions: BlockResolution[] = [];
+    const visit = (block: Block): void => {
+        switch (block.kind) {
+            case "section":
+                resolutions.push({ blockId: block.id, kind: "section" });
+                for (const child of block.blocks) {
+                    visit(child);
                 }
+                return;
+            case "text":
+            case "claim":
+            case "citation":
+                resolutions.push({ blockId: block.id, kind: block.kind });
+                return;
+            case "metric":
+            case "table":
+            case "chart":
+            case "figure": {
+                const resolved = resolvedByBlock.get(block.id);
+                if (resolved !== undefined) {
+                    resolutions.push({ blockId: block.id, kind: block.kind, resolved });
+                }
+                return;
             }
-            return [{ blockId: block.id, kind: "claim" }];
         }
-        case "citation": {
-            const resolved = await resolver.resolve(block.binding, snapshot);
-            if (resolved.isErr()) {
-                unresolved.push({ blockId: block.id, failure: resolved.error });
-            }
-            return [{ blockId: block.id, kind: "citation" }];
-        }
-        case "metric": {
-            const resolved = await resolver.resolve(block.value, snapshot);
-            if (resolved.isErr()) {
-                unresolved.push({ blockId: block.id, failure: resolved.error });
-                return [];
-            }
-            return [{ blockId: block.id, kind: "metric", resolved: resolved.value }];
-        }
-        case "table": {
-            const resolved = await resolver.resolve(block.binding, snapshot);
-            if (resolved.isErr()) {
-                unresolved.push({ blockId: block.id, failure: resolved.error });
-                return [];
-            }
-            return [{ blockId: block.id, kind: "table", resolved: resolved.value }];
-        }
-        case "chart": {
-            const resolved = await resolver.resolve(block.binding, snapshot);
-            if (resolved.isErr()) {
-                unresolved.push({ blockId: block.id, failure: resolved.error });
-                return [];
-            }
-            return [{ blockId: block.id, kind: "chart", resolved: resolved.value }];
-        }
-        case "figure": {
-            const resolved = await resolver.resolve(block.binding, snapshot);
-            if (resolved.isErr()) {
-                unresolved.push({ blockId: block.id, failure: resolved.error });
-                return [];
-            }
-            return [{ blockId: block.id, kind: "figure", resolved: resolved.value }];
-        }
-        case "section": {
-            const resolutions: BlockResolution[] = [{ blockId: block.id, kind: "section" }];
-            for (const child of block.blocks) {
-                resolutions.push(...(await resolveBlock(child, resolver, snapshot, unresolved)));
-            }
-            return resolutions;
-        }
+    };
+    for (const block of blocks) {
+        visit(block);
     }
+    return resolutions;
 }
 
-/** Walk the document, resolve each reference, and collect the resolutions and the unresolved references. */
+/**
+ * Resolve each reference of the document, and collect the resolutions and the unresolved references.
+ *
+ * The reference collection, the concurrency bound, and the chart-encoding match come from the mechanical
+ * validator, thus the preview and the record gate refuse the same references. `walkBlocks` collects the
+ * references one time, `allWithConcurrency` bounds the fan-out the same as `validateReport`, and
+ * `checkChartEncoding` catches a chart that plots a column which the bound table does not hold.
+ */
 async function resolveDocument(
     document: ReportDocument,
     resolver: ReferenceResolver,
     snapshot: ReportSnapshot,
 ): Promise<{ resolutions: BlockResolution[]; unresolved: ResolutionFailure[] }> {
-    const resolutions: BlockResolution[] = [];
+    const { references } = walkBlocks(document.sections);
+    const resolved = await allWithConcurrency(
+        references.map((entry) => () => resolver.resolve(entry.reference, snapshot).then((result) => ({ entry, result }))),
+        RESOLUTION_CONCURRENCY,
+    );
+
     const unresolved: ResolutionFailure[] = [];
-    for (const section of document.sections) {
-        resolutions.push(...(await resolveBlock(section, resolver, snapshot, unresolved)));
+    const resolvedByBlock = new Map<string, ResolvedValue>();
+    for (const { entry, result } of resolved) {
+        if (result.isErr()) {
+            unresolved.push({ blockId: entry.blockId, failure: result.error });
+            continue;
+        }
+        const encodingFailure = checkChartEncoding(entry, result.value);
+        if (encodingFailure !== undefined) {
+            unresolved.push({ blockId: entry.blockId, failure: encodingFailure });
+            continue;
+        }
+        // A value-bearing block holds one reference, thus the block id keys its one resolved value. A
+        // claim or a citation reference lands here too, and its block reads no value from this map.
+        resolvedByBlock.set(entry.blockId, result.value);
     }
-    return { resolutions, unresolved };
+
+    if (unresolved.length > 0) {
+        return { resolutions: [], unresolved };
+    }
+    return { resolutions: collectResolutions(document.sections, resolvedByBlock), unresolved };
 }
 
 /**
- * Stage each bound image beside the page.
- *
- * The staged name comes from `assetFileName`, thus a copy and the figure source agree on the file. A
- * duplicate name is one file for two figures, thus the copy runs one time for it. The source path of the
- * artifact is relative to the workspace root.
+ * The failure of the write pipeline. An `fs` fault or an unresolvable root rides `fs`. A figure whose
+ * source escapes the workspace root rides `figure-out-of-scope`, and it names the block.
  */
-async function stageFigures(resolutions: readonly BlockResolution[], root: string, assetsDir: string): Promise<void> {
-    const files: ResolvedFile[] = [];
-    for (const resolution of resolutions) {
-        if (resolution.kind === "figure" && resolution.resolved.type === "file") {
-            files.push(resolution.resolved);
-        }
+type PreviewWriteFailure = { kind: "fs"; error: FsError } | { kind: "figure-out-of-scope"; blockId: string; path: string };
+
+/**
+ * Resolve the page root, stage each bound image, and write the page.
+ *
+ * The workspace-root seam signals an unresolvable resource by a throw, thus the resolution sits inside
+ * the protection and its throw becomes a value. Each `fs` call runs through `tryFsWrite`, the one
+ * sanctioned `fs` guard, thus a genuine I/O fault becomes a value and a control-flow exception such as a
+ * cancellation propagates.
+ *
+ * A bound figure names a snapshot path, which is untrusted. A registered `../../` path escapes the root,
+ * thus the containment test runs before any copy and reuses the one workspace-path resolver. A source
+ * outside the root refuses and names the block, and no copy runs.
+ */
+async function renderToWorkspace(args: {
+    resolveWorkspaceRoot: ResolveWorkspaceRoot;
+    analysisId: string;
+    threadId: string;
+    resolutions: readonly BlockResolution[];
+    page: string;
+}): Promise<Result<string, PreviewWriteFailure>> {
+    let root: string;
+    try {
+        root = args.resolveWorkspaceRoot(args.analysisId);
+    } catch (cause) {
+        return err({ kind: "fs", error: { type: "read_failed", op: "preview.resolveWorkspaceRoot", path: args.analysisId, cause } });
     }
-    if (files.length === 0) {
-        return;
-    }
-    await mkdir(assetsDir, { recursive: true });
-    const staged = new Set<string>();
-    for (const file of files) {
-        const name = assetFileName(file);
-        if (staged.has(name)) {
+
+    const sessionDir = join(root, "report-sessions", args.threadId);
+    const assetsDir = join(sessionDir, "assets");
+    const pagePath = join(sessionDir, "index.html");
+
+    // Each bound figure, contained and deduplicated by its staged name, mapped to its host source.
+    const sources = new Map<string, string>();
+    for (const resolution of args.resolutions) {
+        if (resolution.kind !== "figure" || resolution.resolved.type !== "file") {
             continue;
         }
-        staged.add(name);
-        await copyFile(join(root, file.path), join(assetsDir, name));
+        const file: ResolvedFile = resolution.resolved;
+        const name = assetFileName(file);
+        if (sources.has(name)) {
+            continue;
+        }
+        const resolved = resolveWorkspacePath({ workspaceRoot: root, analysisId: args.analysisId, path: file.path });
+        if (resolved.kind !== "ok") {
+            return err({ kind: "figure-out-of-scope", blockId: resolution.blockId, path: file.path });
+        }
+        sources.set(name, resolved.absolute);
     }
+
+    const madeSession = await tryFsWrite("preview.mkdir", () => mkdir(sessionDir, { recursive: true }), { path: sessionDir });
+    if (madeSession.isErr()) {
+        return err({ kind: "fs", error: madeSession.error });
+    }
+    if (sources.size > 0) {
+        const madeAssets = await tryFsWrite("preview.mkdir", () => mkdir(assetsDir, { recursive: true }), { path: assetsDir });
+        if (madeAssets.isErr()) {
+            return err({ kind: "fs", error: madeAssets.error });
+        }
+        for (const [name, source] of sources) {
+            const copied = await tryFsWrite("preview.copyFile", () => copyFile(source, join(assetsDir, name)), { path: source });
+            if (copied.isErr()) {
+                return err({ kind: "fs", error: copied.error });
+            }
+        }
+    }
+    const wrote = await tryFsWrite("preview.writeFile", () => writeFile(pagePath, args.page, "utf8"), { path: pagePath });
+    if (wrote.isErr()) {
+        return err({ kind: "fs", error: wrote.error });
+    }
+    return ok(pagePath);
 }
 
 /**
@@ -239,23 +280,12 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
         executionMode: "inline",
         describeCall: "none",
         execute: async (_input, ctx): Promise<Result<PreviewReportResult, ToolError>> => {
-            const scope = threadScopeOf(ctx.session.scope);
-            if (scope === undefined) {
-                const refusal: SessionRefusal = { reason: "no-thread-scope", detail: "the scope of the call names no usable report thread id" };
-                return ok({ outcome: "refused", refusal });
+            const opened = await openReportThread(deps.gateway, ctx.session.scope);
+            if (opened.isErr()) {
+                return ok({ outcome: "refused", refusal: opened.error });
             }
-            const { threadId, analysisId } = scope;
-
-            const loaded = await deps.gateway.load(threadId);
-            if (loaded.outcome === "absent") {
-                const refusal: SessionRefusal = { reason: "absent-state", detail: `no report session state exists for the thread ${threadId}` };
-                return ok({ outcome: "refused", refusal });
-            }
-            if (loaded.outcome === "failed") {
-                const refusal: SessionRefusal = { reason: "state-unavailable", detail: loaded.detail };
-                return ok({ outcome: "refused", refusal });
-            }
-            const { document: draft, snapshot } = loaded.state;
+            const { threadId, analysisId, state } = opened.value;
+            const { document: draft, snapshot } = state;
 
             const finished = finishDraft(draft, snapshot);
             if (!finished.valid) {
@@ -282,25 +312,29 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 return ok({ outcome: "render-problems", problems: rendered.error });
             }
 
-            const root = deps.resolveWorkspaceRoot(analysisId);
-            const sessionDir = join(root, "report-sessions", threadId);
-            const assetsDir = join(sessionDir, "assets");
-            const pagePath = join(sessionDir, "index.html");
-            try {
-                await mkdir(sessionDir, { recursive: true });
-                await stageFigures(resolutions, root, assetsDir);
-                await writeFile(pagePath, rendered.value, "utf8");
-            } catch (cause) {
-                // A figure whose ledger path left the disk, a full volume, and a denied write each arrive as
-                // a rejection of `node:fs`. The tool contract is ok-channel data for each degraded
-                // condition, thus the fault becomes an outcome and the agent reads a cause instead of an
-                // error tool result. The log keeps the full fault, because the outcome carries the message
-                // alone.
-                logger.warn("the page did not land", { threadId, ...defaultErrorFields(cause) });
-                return ok({ outcome: "write-failed", detail: cause instanceof Error ? cause.message : String(cause) });
+            const written = await renderToWorkspace({
+                resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
+                analysisId,
+                threadId,
+                resolutions,
+                page: rendered.value,
+            });
+            if (written.isErr()) {
+                const failure = written.error;
+                if (failure.kind === "figure-out-of-scope") {
+                    // A bound figure names a path outside the workspace root. The record gate refuses the
+                    // same figure, thus the preview refuses it too and names the block.
+                    logger.warn("a bound figure escapes the workspace root", { threadId, analysisId, blockId: failure.blockId, path: failure.path });
+                    return ok({ outcome: "figure-out-of-scope", blockId: failure.blockId, path: failure.path });
+                }
+                // An unresolvable root, a full volume, and a denied write each arrive here as a value. The
+                // tool contract is ok-channel data for each degraded condition, thus the fault becomes an
+                // outcome. The log keeps the full fault, because the outcome carries the description alone.
+                logger.warn("the page did not land", { threadId, analysisId, ...defaultErrorFields(failure.error.cause) });
+                return ok({ outcome: "write-failed", detail: describeFsError(failure.error) });
             }
 
-            return ok({ outcome: "rendered", pagePath });
+            return ok({ outcome: "rendered", pagePath: written.value });
         },
     });
 }

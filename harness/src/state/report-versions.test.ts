@@ -234,6 +234,25 @@ describe("createReportVersionStore", () => {
         expect(version!.snapshot).toEqual(pinned);
     });
 
+    it("keeps a `__proto__` artifact key an ordinary snapshot entry across the round trip", async () => {
+        const analysisId = "analysis-proto";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-proto";
+        // The ledger accepts any path. A null-prototype map keeps `__proto__` an own
+        // key, thus the stored snapshot carries it and the read gives it back.
+        const artifacts: Record<string, { hash: string; fileType: string }> = Object.create(null);
+        artifacts["__proto__"] = { hash: "sha256:eee", fileType: "output" };
+        const withProto: ReportSnapshot = { artifacts };
+
+        const ref = (
+            await store.record({ document: validDocument, snapshot: withProto, analysisId, threadId, parentThreadId: null, parentSeq: null })
+        )._unsafeUnwrap();
+
+        const version = (await store.getVersion(ref.versionId))._unsafeUnwrap();
+        expect(Object.hasOwn(version!.snapshot.artifacts, "__proto__")).toBe(true);
+        expect(version!.snapshot.artifacts["__proto__"]).toEqual({ hash: "sha256:eee", fileType: "output" });
+    });
+
     it("reads a corrupted row as a typed error", async () => {
         const analysisId = "analysis-corrupt";
         await seedAnalysis(analysisId);

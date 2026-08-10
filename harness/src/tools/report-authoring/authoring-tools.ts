@@ -21,6 +21,7 @@ import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import type { Scope } from "../../auth/types.js";
+import { isSafeId } from "../../workspace/paths.js";
 import {
     addBlock,
     changeBlock,
@@ -196,6 +197,39 @@ export interface ReportSessionStateGateway {
     persist(threadId: string, document: DraftDocument): Promise<SessionStatePersist>;
 }
 
+/** The thread of a call, its analysis, and the loaded state, once the scope resolves and the load succeeds. */
+export interface OpenedThread {
+    readonly threadId: string;
+    readonly analysisId: string;
+    readonly state: ReportSessionState;
+}
+
+/**
+ * Resolve the report thread of a call, and load its state through the gateway.
+ *
+ * The report thread and its analysis ride on the analysis scope. The thread id becomes one segment of a
+ * session directory, thus the safe-id check sits here beside the shape check: a scope whose id carries a
+ * separator or a traversal segment names no thread that a tool can write under. A scope of a different
+ * kind, an unsafe id, an absent row, and a gateway fault each refuse as a typed `SessionRefusal`.
+ *
+ * The authoring tools and the preview tool share this one resolution, thus the two surfaces accept the
+ * same thread id and map a load outcome onto a refusal the same way.
+ */
+export async function openReportThread(gateway: ReportSessionStateGateway, scope: Scope): Promise<Result<OpenedThread, SessionRefusal>> {
+    if (scope.kind !== "analysis" || scope.threadId === undefined || !isSafeId(scope.threadId)) {
+        return err({ reason: "no-thread-scope", detail: "the scope of the call names no usable report thread id" });
+    }
+    const { threadId, analysisId } = scope;
+    const loaded = await gateway.load(threadId);
+    if (loaded.outcome === "absent") {
+        return err({ reason: "absent-state", detail: `no report session state exists for the thread ${threadId}` });
+    }
+    if (loaded.outcome === "failed") {
+        return err({ reason: "state-unavailable", detail: loaded.detail });
+    }
+    return ok({ threadId, analysisId, state: loaded.state });
+}
+
 /** The eight authoring tools. */
 export interface ReportAuthoringTools {
     readonly add_block: Tool<AddBlockInput, MutationResult>;
@@ -338,11 +372,6 @@ function containerIn(document: DraftDocument, parentId: string | undefined): Cha
     return { parentId, children: childOutline(children, located?.path.length ?? 0) };
 }
 
-/** The report thread id rides on the analysis scope. A scope of a different kind names no report thread. */
-function threadIdOf(scope: Scope): string | undefined {
-    return scope.kind === "analysis" ? scope.threadId : undefined;
-}
-
 /**
  * Every tool of this surface runs inline.
  *
@@ -365,24 +394,11 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
     /**
      * Resolve the thread of the call, and load its state.
      *
-     * A scope of a different kind, or an analysis scope with no thread id, names no thread to edit. Thus
-     * the call refuses before it reaches the gateway. An absent row and a gateway fault each refuse with
-     * the cause.
+     * The shared `openReportThread` holds the one resolution. A scope of a different kind, an unsafe or
+     * absent thread id, an absent row, and a gateway fault each refuse before the call reaches a core
+     * operation.
      */
-    const openThread = async (ctx: ToolContext): Promise<Result<{ threadId: string; state: ReportSessionState }, SessionRefusal>> => {
-        const threadId = threadIdOf(ctx.session.scope);
-        if (threadId === undefined) {
-            return err({ reason: "no-thread-scope", detail: "the scope of the call carries no report thread id" });
-        }
-        const loaded = await gateway.load(threadId);
-        if (loaded.outcome === "absent") {
-            return err({ reason: "absent-state", detail: `no report session state exists for the thread ${threadId}` });
-        }
-        if (loaded.outcome === "failed") {
-            return err({ reason: "state-unavailable", detail: loaded.detail });
-        }
-        return ok({ threadId, state: loaded.state });
-    };
+    const openThread = (ctx: ToolContext): Promise<Result<OpenedThread, SessionRefusal>> => openReportThread(gateway, ctx.session.scope);
 
     /**
      * Persist a landing, and report the containers that the operation changed.
