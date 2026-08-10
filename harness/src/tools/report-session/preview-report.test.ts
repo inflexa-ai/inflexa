@@ -124,7 +124,12 @@ describe("the gap return", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: { title: "", sections: [] }, snapshot: { artifacts: {} } });
-        const tool = createPreviewReportTool({ gateway, resolver: createFixtureResolver(), previews: new UnavailablePreviewPublisher(), root });
+        const tool = createPreviewReportTool({
+            gateway,
+            resolver: createFixtureResolver(),
+            previews: new UnavailablePreviewPublisher(),
+            resolveWorkspaceRoot: () => root,
+        });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -142,7 +147,12 @@ describe("the pass path", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({ gateway, resolver: createFixtureResolver(), previews: new UnavailablePreviewPublisher(), root });
+        const tool = createPreviewReportTool({
+            gateway,
+            resolver: createFixtureResolver(),
+            previews: new UnavailablePreviewPublisher(),
+            resolveWorkspaceRoot: () => root,
+        });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -183,7 +193,12 @@ describe("the staged asset", () => {
         };
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document, snapshot });
-        const tool = createPreviewReportTool({ gateway, resolver: createFixtureResolver(), previews: new UnavailablePreviewPublisher(), root });
+        const tool = createPreviewReportTool({
+            gateway,
+            resolver: createFixtureResolver(),
+            previews: new UnavailablePreviewPublisher(),
+            resolveWorkspaceRoot: () => root,
+        });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -203,7 +218,7 @@ describe("the resolver absence", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({ gateway, previews: new UnavailablePreviewPublisher(), root });
+        const tool = createPreviewReportTool({ gateway, previews: new UnavailablePreviewPublisher(), resolveWorkspaceRoot: () => root });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -221,7 +236,12 @@ describe("the unresolved reference", () => {
         const snapshot: ReportSnapshot = { artifacts: { "data/x.csv": { hash: "sha256:aaa", rows: [] } } };
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: metricDoc(), snapshot });
-        const tool = createPreviewReportTool({ gateway, resolver: createFixtureResolver(), previews: new UnavailablePreviewPublisher(), root });
+        const tool = createPreviewReportTool({
+            gateway,
+            resolver: createFixtureResolver(),
+            previews: new UnavailablePreviewPublisher(),
+            resolveWorkspaceRoot: () => root,
+        });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -239,7 +259,12 @@ describe("the publisher arm", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({ gateway, resolver: createFixtureResolver(), previews: new UnavailablePreviewPublisher(), root });
+        const tool = createPreviewReportTool({
+            gateway,
+            resolver: createFixtureResolver(),
+            previews: new UnavailablePreviewPublisher(),
+            resolveWorkspaceRoot: () => root,
+        });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -258,7 +283,7 @@ describe("the publisher arm", () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({ gateway, resolver: createFixtureResolver(), previews: new OkPublisher(), root });
+        const tool = createPreviewReportTool({ gateway, resolver: createFixtureResolver(), previews: new OkPublisher(), resolveWorkspaceRoot: () => root });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -283,7 +308,7 @@ describe("the session refusal", () => {
             gateway: makeFakeGateway(),
             resolver: createFixtureResolver(),
             previews: new UnavailablePreviewPublisher(),
-            root,
+            resolveWorkspaceRoot: () => root,
         });
         // The default fixture scope is an analysis scope with no thread id.
         const { ctx } = makeToolContext();
@@ -302,7 +327,7 @@ describe("the session refusal", () => {
             gateway: makeFakeGateway(),
             resolver: createFixtureResolver(),
             previews: new UnavailablePreviewPublisher(),
-            root,
+            resolveWorkspaceRoot: () => root,
         });
 
         const result = (await tool.execute({}, ctxForThread("absent")))._unsafeUnwrap();

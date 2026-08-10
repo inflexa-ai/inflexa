@@ -32,15 +32,15 @@
 
 ## 6. The agent, the prompt, and the registration
 
-- [ ] 6.1 Make the prompt module in `src/prompts/report-session.ts`. It obeys the prompt conventions: it names tools and mechanisms, it names no dataset and no path, and it carries a "Do NOT" list. It states the grounding rule: no number from memory.
-- [ ] 6.2 Make the agent definition in `src/agents/report-session-agent.ts` with the id `report-session`. The prompt composes with the identity part and the conversational part. The definition carries no per-session value.
-- [ ] 6.3 Wire the roster: the four workspace read tools, the workspace search, `inspect_run`, `inspect_data_profile`, the authoring tools over the gateway, and the preview tool. Wire no planner, no run launcher, no working-memory write, and no sandbox mutate surface.
-- [ ] 6.4 Register the agent under `report` in the assembly registry of `src/runtime/assemble.ts`.
-- [ ] 6.5 Write the tests: the report type resolves to the singleton, the roster holds the read surface and no run starter, and two threads through the registry stay isolated.
+- [x] 6.1 Make the prompt module in `src/prompts/report-session.ts`. It obeys the prompt conventions: it names tools and mechanisms, it names no dataset and no path, and it carries a "Do NOT" list. It states the grounding rule: no number from memory.
+- [x] 6.2 Make the agent definition in `src/agents/report-session-agent.ts` with the id `report-session`. The prompt composes with the identity part and the conversational part. The definition carries no per-session value.
+- [x] 6.3 Wire the roster: the four workspace read tools, the workspace search, `inspect_run`, `inspect_data_profile`, the authoring tools over the gateway, and the preview tool. Wire no planner, no run launcher, no working-memory write, and no sandbox mutate surface.
+- [x] 6.4 Register the agent under `report` in the assembly registry of `src/runtime/assemble.ts`.
+- [x] 6.5 Write the tests: the report type resolves to the singleton, the roster holds the read surface and no run starter, and two threads through the registry stay isolated.
 
 ## 7. The gates
 
-- [ ] 7.1 Run `bun run format:file` on each changed source file.
-- [ ] 7.2 Run `tsc -p tsconfig.json`, and repair each finding.
-- [ ] 7.3 Run the lint on the changed files, and repair each finding.
-- [ ] 7.4 Run the tests of the changed areas only: `src/state/report-session-state.test.ts`, `src/tools/report-authoring/`, `src/report-render/`, `src/app/report-session-runtime.test.ts`, `src/tools/report-session/`, `src/agents/report-session-agent.test.ts`, and the resolution tests in `src/runtime/`. Do not run the full suite.
+- [x] 7.1 Run `bun run format:file` on each changed source file.
+- [x] 7.2 Run `tsc -p tsconfig.json`, and repair each finding.
+- [x] 7.3 Run the lint on the changed files, and repair each finding.
+- [x] 7.4 Run the tests of the changed areas only: `src/state/report-session-state.test.ts`, `src/tools/report-authoring/`, `src/report-render/`, `src/app/report-session-runtime.test.ts`, `src/tools/report-session/`, `src/agents/report-session-agent.test.ts`, and the resolution tests in `src/runtime/`. Do not run the full suite.

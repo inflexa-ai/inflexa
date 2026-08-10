@@ -22,6 +22,7 @@ import { extname, join } from "node:path";
 import { z } from "zod";
 
 import type { Scope } from "../../auth/types.js";
+import type { ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import type { Block, ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
@@ -62,15 +63,15 @@ export type PreviewReportResult =
 /**
  * The construction deps of the preview tool.
  *
- * `root` is a resolved absolute path, and the tool never resolves a root itself. `resolver` is optional,
- * because a resolver realization can be absent. `previews` mints hosted access only, and it carries no
- * page.
+ * `resolveWorkspaceRoot` maps the analysis of the call onto its workspace root, thus one singleton tool
+ * serves every analysis and it resolves the root per call from the scope. `resolver` is optional, because a
+ * resolver realization can be absent. `previews` mints hosted access only, and it carries no page.
  */
 export interface PreviewReportToolDeps {
     readonly gateway: ReportSessionStateGateway;
     readonly resolver?: ReferenceResolver;
     readonly previews: PreviewPublisher;
-    readonly root: string;
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly logger?: Logger;
 }
 
@@ -218,7 +219,8 @@ async function stageFigures(resolutions: readonly BlockResolution[], root: strin
  * Make the render-and-preview tool over the session-state gateway and the render seams.
  *
  * The tool reads the thread id from the scope of the call, and it loads the state through the gateway. Thus
- * one factory serves every thread. The tool holds no per-session value, and it resolves no root.
+ * one factory serves every thread. The tool holds no per-session value, and it resolves the root of the
+ * analysis of the call.
  */
 export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<PreviewReportInput, PreviewReportResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("preview-report");
@@ -277,11 +279,12 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 return ok({ outcome: "render-problems", problems: rendered.error });
             }
 
-            const sessionDir = join(deps.root, "report-sessions", threadId);
+            const root = deps.resolveWorkspaceRoot(analysisId);
+            const sessionDir = join(root, "report-sessions", threadId);
             const assetsDir = join(sessionDir, "assets");
             const pagePath = join(sessionDir, "index.html");
             await mkdir(sessionDir, { recursive: true });
-            await stageFigures(resolutions, deps.root, assetsDir);
+            await stageFigures(resolutions, root, assetsDir);
             await writeFile(pagePath, rendered.value, "utf8");
 
             const mint = await deps.previews.mintPreviewAccess(analysisId, threadId);

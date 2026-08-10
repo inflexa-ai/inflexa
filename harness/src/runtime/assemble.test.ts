@@ -15,7 +15,18 @@ const conversationAgent: AgentDefinition = {
     maxIterations: 1,
 };
 
-// The registry `assembleCoreRuntime` builds today: only `conversation`.
+// A bare `AgentDefinition` stands in for the assembled report agent, the same way
+// `conversationAgent` stands in for the conversation agent.
+const reportAgent: AgentDefinition = {
+    id: "report-session",
+    systemPrompt: "",
+    model: "test/model",
+    tools: [],
+    maxIterations: 1,
+};
+
+// A registry that holds `conversation` and omits `report`. It exercises the
+// refusal path: a resolver built over a registry with no entry for a type refuses.
 function registry(): Partial<Record<ThreadType, AgentDefinition>> {
     return { conversation: conversationAgent };
 }
@@ -33,6 +44,17 @@ describe("createThreadAgentResolver", () => {
         const second = resolver.forThread("conversation");
         // Singleton semantics: both calls surface the same object, so a handle
         // captured at construction stays the one every turn resolves.
+        expect(first._unsafeUnwrap()).toBe(second._unsafeUnwrap());
+    });
+
+    it("resolves the report type to the same assembled singleton across two calls", () => {
+        const resolver = createThreadAgentResolver({ conversation: conversationAgent, report: reportAgent });
+        const first = resolver.forThread("report");
+        const second = resolver.forThread("report");
+        expect(first.isOk()).toBe(true);
+        expect(first._unsafeUnwrap()).toBe(reportAgent);
+        // Singleton semantics: both calls surface the same report agent, so a
+        // handle captured at construction stays the one every report turn resolves.
         expect(first._unsafeUnwrap()).toBe(second._unsafeUnwrap());
     });
 
