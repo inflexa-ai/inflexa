@@ -104,6 +104,22 @@ function trimmedAnswer(error: string): z.ZodString {
  */
 const RETIRED_SANDBOX_VARIANTS = ["python", "python-r"] as const;
 
+/** Whether `value` names a sandbox image variant this CLI retired. */
+export function isRetiredSandboxVariant(value: string): boolean {
+    // The cast widens the readonly tuple to `readonly string[]` so `.includes` accepts an arbitrary
+    // string; type-level only, the comparison is unchanged at runtime.
+    return (RETIRED_SANDBOX_VARIANTS as readonly string[]).includes(value);
+}
+
+/**
+ * The reason a `sandbox` answer that names a retired variant is refused — the tail of the problem line,
+ * with the question's spelling prepended by the caller. The schema (the file front-end) and the setup
+ * registry (the flag front-end, where the bare `--sandbox` flag turns a variant name into a positional)
+ * share one wording, so the two surfaces refuse in the same words.
+ */
+export const RETIRED_SANDBOX_MESSAGE =
+    "names a retired image variant. One sandbox image is published, so the answer takes no image name — the package set comes from the store, which `inflexa store add` extends";
+
 /**
  * A URL answer: a {@link trimmedAnswer} that must also parse AS a URL — which is to say WITH a scheme,
  * because the WHATWG parser is given no base to resolve against. `gw.corp/v1`, the shape a hand-written
@@ -230,17 +246,25 @@ export const setupAnswersSchema = z.strictObject({
         )
         .optional(),
     /**
-     * Whether setup pulls the container images. The answer IS the multi-GB consent, and its PRESENCE is
-     * the whole of it: one runtime image is published and the provisioner has no variant, so the answer
-     * selects nothing and no consumer reads its value.
+     * Whether setup pulls the container images and downloads the package catalog. The answer IS the
+     * multi-GB consent, and its PRESENCE is the whole of it: one runtime image is published and the
+     * provisioner has no variant, so the answer selects nothing and no consumer reads a value. The file
+     * spells the answer `sandbox: true`, and the flag is the bare `--sandbox`, thus `true` is the one value
+     * the schema accepts.
      *
      * A retired variant name is refused rather than ignored. A user upgrading from the variant surface
-     * writes `--sandbox python-r` out of habit, and silently reading that as "pull the one image" would
-     * hide from them that the image they asked for no longer exists.
+     * writes `sandbox: python-r` out of habit, and silently reading that as "pull the one image" would hide
+     * from them that the image they asked for no longer exists. The bare flag turns `--sandbox python-r`
+     * into a positional, which the setup registry refuses in the same words.
      */
-    sandbox: trimmedAnswer("must not be empty")
-        .refine((value) => !(RETIRED_SANDBOX_VARIANTS as readonly string[]).includes(value), {
-            error: "names a retired image variant. One sandbox image is published, so the answer takes no image name — the package set comes from the store, which `inflexa store add` extends",
+    sandbox: z
+        .literal(true, {
+            // unknown in: the raw answer from either front-end. A retired variant name earns the specific
+            // refusal, and any other non-`true` value earns the presence-only message.
+            error: (issue) =>
+                typeof issue.input === "string" && isRetiredSandboxVariant(issue.input)
+                    ? RETIRED_SANDBOX_MESSAGE
+                    : "takes no value — its presence is the whole consent, so write `sandbox: true`",
         })
         .optional(),
     /** Pins the container runtime as a hard gate — given-but-dead is an error, never a silent fallback. */
@@ -834,8 +858,8 @@ export type SetupAnswerFlags = {
     readonly embeddingsGguf?: string;
     /** `--refs recommended|all|<id,…>`. */
     readonly refs?: string;
-    /** `--sandbox <answer>`: the consent that pulls the container images. It names no image variant. */
-    readonly sandbox?: string;
+    /** `--sandbox`: the bare presence flag whose consent pulls the container images. Commander hands over `true`, and it carries no value. */
+    readonly sandbox?: boolean;
     /** `--runtime docker|podman`. */
     readonly runtime?: string;
 };

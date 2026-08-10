@@ -64,6 +64,7 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         skillsDir: "/tmp/skills",
         refStorePath: "/tmp/refs",
         packagesFile: null,
+        imagePackagesFile: null,
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
     };
 }

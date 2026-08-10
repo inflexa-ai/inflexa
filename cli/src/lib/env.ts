@@ -260,23 +260,23 @@ export const env = Object.freeze({
      */
     refsDir: join(dataDir(), "inflexa", "refs"),
     /**
-     * Cached sandbox-image package inventories, one directory per image ID. NOT a library
-     * store: the packages themselves are baked into the image and never staged here — this
-     * holds only the `packages.txt` extracted from the image's inventory label, so the
-     * harness can read on the host what otherwise exists only inside the container.
+     * Cached image inventory fragments, one file for each image digest. NOT a library store, because the
+     * runtime image bakes the packages and never stages them here. The file holds the
+     * `/opt/inflexa/image-packages.txt` fragment that the CLI extracts from the image. The fragment lists
+     * the two image-owned tracks, which are the bioconda command-line tools and the Node packages. Thus
+     * the CLI reads on the host what otherwise exists only inside the container.
      */
     libsDir: join(dataDir(), "inflexa", "libs"),
     /**
-     * Host package store root: `<dataDir>/inflexa/lib-store`. The ONE location — a CLI-owned path, the
-     * peer of `refsDir`, with no config key and no user override. The store-management commands create the
-     * store here and the download installs it here, so the writers and the reader cannot disagree. When
-     * the user opts in (`harness.libStore`), the harness bind-mounts this root read-only at the sandbox's
-     * `/mnt/libs`, which shadows the store the image bakes. The opt-in governs the MOUNT only: the content
-     * survives a cleared flag, so turning the store back on needs no second download.
+     * Host package store root: `<dataDir>/inflexa/lib-store`. The ONE location, a CLI-owned path, the peer
+     * of `refsDir`, with no config key and no user override. The store-management commands make the store
+     * here and the download installs it here, so the writers and the reader cannot disagree. The harness
+     * bind-mounts this root read-only at the sandbox's `/mnt/libs` for every sandbox. The mount is
+     * unconditional, because the runtime image bakes no R library and no Python library.
      *
-     * Deliberately DISTINCT from `libsDir`: `libsDir` caches per-image package inventories and is pruned
-     * by image identity, so a real store placed inside it would be deleted as stale cache. Keeping the two
-     * apart keeps content out of a cache.
+     * Deliberately DISTINCT from `libsDir`. `libsDir` caches the image inventory fragment for each image
+     * and is pruned by image identity. Thus a real store placed inside it would be deleted as stale cache.
+     * Keeping the two apart keeps the content out of a cache.
      */
     libStoreDir: join(dataDir(), "inflexa", "lib-store"),
     /**
@@ -504,14 +504,14 @@ export const envDoc: Readonly<
     },
     libsDir: {
         kind: "path",
-        label: "package inventories",
-        description: "per-image package lists extracted from the sandbox image's inventory label",
+        label: "image package cache",
+        description: "image inventory fragments extracted from each sandbox image, keyed by image digest",
         baseVar: dataVar,
     },
     libStoreDir: {
         kind: "path",
         label: "package store",
-        description: "host package store, mounted read-only in sandboxes at /mnt/libs when `harness.libStore` is on",
+        description: "host package store, mounted read-only in every sandbox at /mnt/libs",
         baseVar: dataVar,
     },
     contentDir: {

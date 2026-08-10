@@ -46,7 +46,7 @@ import { acquireInstanceLock, releaseInstanceLock, HARNESS_RUNTIME_LOCK_KEY } fr
 import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
-import { storePackagesFile } from "../libs/packages.ts";
+import { imagePackagesFile, storePackagesFile } from "../libs/packages.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
@@ -297,6 +297,12 @@ export type BootSeams = {
      * on disk. Real: {@link storePackagesFile}.
      */
     readonly resolveStorePackages: (storeRoot: string) => string | null;
+    /**
+     * The runtime image's inventory fragment, extracted and cached on the host and keyed by the image
+     * digest, or null when the CLI cannot extract it. A seam so the boot tests drive both branches without
+     * a container. Real: {@link imagePackagesFile} over {@link env.libsDir}.
+     */
+    readonly resolveImagePackages: (rt: ContainerRuntime, image: string) => Promise<string | null>;
     readonly ensurePostgres: () => Promise<Result<PostgresConnection, PostgresError>>;
     /** Construct the sandbox client — a seam so boot tests can inspect the engine config it is wired with. */
     readonly createSandbox: typeof createSandboxClient;
@@ -346,6 +352,7 @@ export type BootSeams = {
 const realSeams: BootSeams = {
     resolveSandboxEngine: resolveSandboxEngineOnce,
     resolveStorePackages: storePackagesFile,
+    resolveImagePackages: (rt, image) => imagePackagesFile(rt, image, env.libsDir),
     ensurePostgres: ensurePostgresReady,
     createSandbox: createSandboxClient,
     startIngress: () => startExecIngress(),
@@ -640,10 +647,9 @@ async function bootHarnessRuntimeOnce(
     // describes whatever the sandbox will actually mount, because an agent told a package exists when the
     // mount does not carry it writes code that fails at import.
     //
-    // There is ONE source: the active farm of the store, which is the one store a sandbox mounts. The
-    // runtime image bakes no R library and no Python library, thus a per-image label cache would describe
-    // an empty set and there is nothing to fall back to. `null` is passed straight through, and the
-    // sandbox composition below omits the field rather than naming a second source.
+    // The store gives the first source, which is the active farm a sandbox mounts. It carries the Python
+    // packages and the R packages. The runtime image gives the second source below. `null` from the store
+    // is passed straight through, and the sandbox composition omits the field.
     //
     // An unreadable inventory does NOT fail this boot. The refusal belongs to whatever is about to make a
     // sandbox: the app gate (`tui/hooks/sandbox_gate.tsx`) holds each such action, and `inflexa profile`
@@ -652,6 +658,13 @@ async function bootHarnessRuntimeOnce(
     // surface, and the planner use no package at all. On the machine where the catalog is still
     // downloading, that is precisely the machine on which the user needs them.
     const packagesFile = seams.resolveStorePackages(env.libStoreDir);
+
+    // The runtime image gives the second source, which is the baked fragment of the two image-owned
+    // tracks (the bioconda command-line tools and the Node packages). The fragment is not host-visible,
+    // thus the CLI extracts it one time for each image and caches it by the image digest. An extraction
+    // failure gives `null`, and the sandbox composition below omits the field. The harness then reports
+    // the store tracks alone, which is the graceful half it already handles. This never fails the boot.
+    const imagePackagesFile = await seams.resolveImagePackages(pinnedRuntime, cfg.sandboxImage);
 
     // The local CLI is a POLL-mode embedder: the host polls the sandbox for
     // results, the sandbox initiates nothing, and there is no callback listener to
@@ -901,6 +914,7 @@ async function bootHarnessRuntimeOnce(
             skillsDir: cfg.skillsDir,
             refStorePath: env.refsDir,
             packagesFile,
+            imagePackagesFile,
             bioKeys: cfg.bioKeys,
         };
 
@@ -936,6 +950,7 @@ async function bootHarnessRuntimeOnce(
                 skillsDir: cfg.skillsDir,
                 refStorePath: env.refsDir,
                 ...(packagesFile ? { packagesFile } : {}),
+                ...(imagePackagesFile ? { imagePackagesFile } : {}),
             },
         };
         // The conversation agent's dep surface minus the three fields
@@ -973,6 +988,9 @@ async function bootHarnessRuntimeOnce(
             // Same manifest the sandbox agents read. Without it, answering "is this package
             // installed?" would otherwise cost a durable analysis run just to import one name.
             ...(packagesFile ? { packagesFile } : {}),
+            // The image fragment rides beside the store manifest, so the planner and the "is this package
+            // installed?" answer see the image-owned conda and Node tracks too.
+            ...(imagePackagesFile ? { imagePackagesFile } : {}),
             chrome: {},
             // Host-supplied conversation tools: drive the local `inflexa` CLI as a subprocess
             // (run_inflexa), see candidate files in the launch folder (list_launch_dir), and add/remove

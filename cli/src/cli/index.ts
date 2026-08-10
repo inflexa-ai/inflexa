@@ -622,10 +622,14 @@ export function buildProgram(): Command {
             .option("--embeddings-gguf <path>", "Local embeddings only: path to your own GGUF model file instead of the built-in one")
             .option("--refs <ids>", "Reference data to download: recommended|all|<comma-separated dataset ids>. The value is the download consent")
             .option(
-                "--sandbox <answer>",
-                "Pull the container images (the sandbox image and the package provisioner). The answer is the multi-GB download consent; " +
-                    "nothing is pulled without it. It names no image variant — one sandbox image is published, and the package set comes from the store",
+                "--sandbox",
+                "Pull the container images (the sandbox image and the package provisioner). The presence of the flag is the multi-GB download consent, " +
+                    "and nothing is pulled without it. It takes no value — one sandbox image is published, and the package set comes from the store",
             )
+            // The bare `--sandbox` flag consumes no value, so `--sandbox python-r` (a habit from the retired
+            // variant surface) makes `python-r` a positional. Allowing excess arguments routes it to the
+            // handler below, which names the retirement instead of commander's generic "too many arguments".
+            .allowExcessArguments(true)
             .option(
                 "--runtime <runtime>",
                 "Container runtime to provision on: docker|podman. A hard gate — setup fails rather than falling back when it is not ready",
@@ -649,7 +653,22 @@ export function buildProgram(): Command {
                 validate: boolean;
                 yes?: boolean;
             },
+            command: Command,
         ) => {
+            // A positional argument reaches setup only through the bare `--sandbox` flag, which takes none.
+            // A retired variant name earns the shared refusal (both spellings, the retirement, and that the
+            // answer takes no image name); anything else is a plain unexpected argument.
+            const extra = command.args;
+            if (extra.length > 0) {
+                const first = extra[0]!;
+                const { answerSpelling, isRetiredSandboxVariant, RETIRED_SANDBOX_MESSAGE } = await import("../modules/infra/setup_answers.ts");
+                const detail = isRetiredSandboxVariant(first)
+                    ? `${answerSpelling("sandbox")} ${RETIRED_SANDBOX_MESSAGE}`
+                    : `\`inflexa setup\` takes no positional argument (got "${first}").`;
+                console.error(`\n  ${detail}\n`);
+                process.exitCode = 1;
+                return;
+            }
             const { setup } = await import("../modules/infra/setup.ts");
             await setup({
                 auth: options.auth,

@@ -89,7 +89,7 @@ embedding:
   baseURL: https://api.openai.com/v1
   model: text-embedding-3-small
 refs: recommended
-sandbox: yes
+sandbox: true
 runtime: docker
 `);
         expect(readAnswersFile(path)._unsafeUnwrap()).toEqual({
@@ -105,7 +105,7 @@ runtime: docker
             resources: { sharePct: 50 },
             embedding: { mode: "api-key", baseURL: "https://api.openai.com/v1", model: "text-embedding-3-small" },
             refs: "recommended",
-            sandbox: "yes",
+            sandbox: true,
             runtime: "docker",
         });
     });
@@ -113,6 +113,22 @@ runtime: docker
     test("an id list is accepted in place of a preset", () => {
         const path = writeAnswers("refs: [CollecTRI, msigdb-hallmark]\n");
         expect(readAnswersFile(path)._unsafeUnwrap().refs).toEqual(["CollecTRI", "msigdb-hallmark"]);
+    });
+
+    test("a `sandbox: true` answer is the pull consent, and it parses to the boolean it is", () => {
+        expect(readAnswersFile(writeAnswers("sandbox: true\n"))._unsafeUnwrap()).toEqual({ sandbox: true });
+    });
+
+    test("a retired sandbox variant fails validation, naming both spellings and saying the answer takes no image name", () => {
+        // One runtime image is published, so a variant name is dead. A file written against the old surface
+        // names the retirement instead of provisioning the one image behind the author's back.
+        for (const retired of ["python", "python-r"]) {
+            const text = problemsOf(readAnswersFile(writeAnswers(`sandbox: ${retired}\n`))._unsafeUnwrapErr()).join("\n");
+            expect(text).toContain("`--sandbox`");
+            expect(text).toContain("`sandbox`");
+            expect(text).toContain("retired");
+            expect(text).toContain("takes no image name");
+        }
     });
 
     test("a preset word is taken in any casing, and canonicalized — the file and the flag read one vocabulary", () => {
@@ -421,7 +437,7 @@ describe("answersFromFlags — the flag front-end", () => {
             embeddings: "api-key",
             embeddingsUrl: "https://api.openai.com/v1",
             embeddingsModel: "text-embedding-3-small",
-            sandbox: "yes",
+            sandbox: true,
             runtime: "podman",
             refs: "a,b",
         })._unsafeUnwrap();
@@ -438,7 +454,7 @@ describe("answersFromFlags — the flag front-end", () => {
             resources: { sharePct: 50 },
             embedding: { mode: "api-key", baseURL: "https://api.openai.com/v1", model: "text-embedding-3-small" },
             refs: ["a", "b"],
-            sandbox: "yes",
+            sandbox: true,
             runtime: "podman",
         });
     });
@@ -536,34 +552,21 @@ describe("answersFromFlags — the flag front-end", () => {
     });
 
     test("flag-level and schema-level problems are reported in ONE pass, not one class per run", () => {
-        // A malformed port never becomes a candidate value (this front-end drops it), while a bad `--sandbox`
+        // A malformed port never becomes a candidate value (this front-end drops it), while a bad `--runtime`
         // is only the schema's to judge. Reporting the first and stopping would send the author back for a
         // second run to discover the second — the same fix-it-once contract the file front-end holds.
-        const problems = problemsOf(answersFromFlags({ postgresPort: "0x1F5B", sandbox: "python-r" })._unsafeUnwrapErr());
+        const problems = problemsOf(answersFromFlags({ postgresPort: "0x1F5B", runtime: "bogus" })._unsafeUnwrapErr());
         expect(problems).toHaveLength(2);
         const text = problems.join("\n");
         expect(text).toContain("--postgres-port");
         expect(text).toContain("must be a whole number");
-        expect(text).toContain("--sandbox");
+        expect(text).toContain("--runtime");
     });
 
-    test("a retired image variant fails validation, naming both spellings and saying the answer takes no image name", () => {
-        // One runtime image is published, so a variant name is dead. A user upgrading from the old surface
-        // types it out of habit, and reading it as "pull the one image" would hide the retirement from them.
-        for (const retired of ["python", "python-r"]) {
-            const problems = problemsOf(answersFromFlags({ sandbox: retired })._unsafeUnwrapErr());
-            expect(problems).toHaveLength(1);
-            const text = problems.join("\n");
-            // Both spellings, so the author fixes the flag or the file without guessing which is meant.
-            expect(text).toContain("`--sandbox`");
-            expect(text).toContain("`sandbox`");
-            expect(text).toContain("retired");
-            expect(text).toContain("takes no image name");
-        }
-    });
-
-    test("a `--sandbox` answer that names no variant is accepted, so the consent still reaches setup", () => {
-        expect(answersFromFlags({ sandbox: "yes" })._unsafeUnwrap().sandbox).toBe("yes");
+    test("a bare `--sandbox` flag is the consent, and it reaches setup as `true`", () => {
+        // The bare flag carries no value: commander hands over `true`, which is the whole of the consent. A
+        // retired variant name can no longer ride the flag — it becomes a positional the registry refuses.
+        expect(answersFromFlags({ sandbox: true })._unsafeUnwrap().sandbox).toBe(true);
     });
 
     test("a dropped flag candidate is never double-reported — the schema does not see it", () => {
@@ -713,8 +716,8 @@ describe("resolveSetupAnswers — precedence", () => {
     });
 
     test("a file-only answer survives when no flag answers it", () => {
-        const resolved = resolveSetupAnswers({}, { sandbox: "yes", runtime: "podman", refs: "all" }, batch())._unsafeUnwrap();
-        expect(resolved.answers.sandbox).toBe("yes");
+        const resolved = resolveSetupAnswers({}, { sandbox: true, runtime: "podman", refs: "all" }, batch())._unsafeUnwrap();
+        expect(resolved.answers.sandbox).toBe(true);
         expect(resolved.answers.runtime).toBe("podman");
         expect(resolved.answers.refs).toBe("all");
     });
@@ -1183,7 +1186,7 @@ describe("loadSetupAnswers — both front-ends in one call", () => {
     });
 
     test("without --config the flags stand alone", () => {
-        expect(loadSetupAnswers({ sandbox: "yes" }, batch())._unsafeUnwrap().answers.sandbox).toBe("yes");
+        expect(loadSetupAnswers({ sandbox: true }, batch())._unsafeUnwrap().answers.sandbox).toBe(true);
     });
 
     test("--config pointed at a DIRECTORY is the unreadable-file error, not a parse failure", () => {

@@ -33,6 +33,9 @@ function cliproxyConnection(provider: string, agents: ResolvedModelConnection["a
     return { mode: "cliproxy", provider, agents };
 }
 
+/** The host path the offline `resolveImagePackages` seam returns — the extracted image fragment cache. */
+const IMAGE_FRAGMENT_PATH = "/cache/inflexa/libs/sha256-test.txt";
+
 let skillsDir: string;
 let templatesDir: string;
 
@@ -115,6 +118,12 @@ function recordingSeams(calls: string[]): BootSeams {
         resolveStorePackages: (root: string) => {
             calls.push("resolveStorePackages");
             return join(root, "current", "packages.txt");
+        },
+        // Offline stub: the real seam runs a container to extract the image fragment and caches it. A path
+        // is the ordinary answer; a test that wants the degraded case overrides this with `() => null`.
+        resolveImagePackages: async () => {
+            calls.push("resolveImagePackages");
+            return IMAGE_FRAGMENT_PATH;
         },
         resolveSandboxEngine: async () => {
             calls.push("resolveSandboxEngine");
@@ -301,8 +310,9 @@ describe("bootHarnessRuntime", () => {
             "resolveSandboxEngine",
             "postgres",
             // The store inventory read sits AFTER the prereq gates: a boot about to fail on
-            // Postgres never pays for it.
+            // Postgres never pays for it. The image fragment extraction follows it.
             "resolveStorePackages",
+            "resolveImagePackages",
             "boot",
             "sweepEphemeral",
             "sweepAsks",
@@ -946,18 +956,17 @@ describe("bootHarnessRuntime", () => {
 
     test("an unreadable inventory boots the runtime, so chat answers while the catalog is absent", async () => {
         const calls: string[] = [];
-        // The active farm carries no `packages.txt`. The runtime image bakes no library, so there is no
-        // second inventory source — but the REFUSAL belongs to whatever is about to make a sandbox, not to
-        // the boot. Chat, the workspace read surface, and the planner use no package at all, and this is
-        // exactly the machine on which the user needs them.
+        // The active farm carries no `packages.txt`, so the store inventory is unreadable. The REFUSAL
+        // belongs to whatever is about to make a sandbox, not to the boot. Chat, the workspace read surface,
+        // and the planner use no package at all, and this is exactly the machine on which the user needs them.
         seedLibStoreRoot(false);
         const seams: BootSeams = { ...recordingSeams(calls), resolveStorePackages: () => null };
         try {
             const runtime = (await bootHarnessRuntime({ seams, config: testConfig() }))._unsafeUnwrap();
             expect(runtime).toBeDefined();
             expect(calls).toContain("boot");
-            // No inventory reached the sandbox composition, so nothing describes a package set that the
-            // mount does not carry. It never falls back to an image label cache.
+            // The unreadable store reaches the sandbox composition as no `packagesFile`, so nothing describes
+            // a store package set the mount does not carry.
             expect(lastCore?.conversation.packagesFile).toBeUndefined();
         } finally {
             clearLibStoreRoot();
@@ -971,6 +980,43 @@ describe("bootHarnessRuntime", () => {
         const runtime = (await bootHarnessRuntime({ seams, config: testConfig() }))._unsafeUnwrap();
         expect(runtime).toBeDefined();
         expect(lastCore?.conversation.packagesFile).toBeUndefined();
+    });
+
+    test("the extracted image fragment reaches the conversation and data-profile composition bags", async () => {
+        const calls: string[] = [];
+        const storeRoot = seedLibStoreRoot(true);
+        try {
+            const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }))._unsafeUnwrap();
+            expect(runtime).toBeDefined();
+            // The store inventory and the image fragment are two distinct sources. Both flow to the
+            // composition: the store's `packages.txt`, and the extracted image fragment cache path.
+            expect(lastCore?.conversation.packagesFile).toBe(join(storeRoot, "current", "packages.txt"));
+            expect(lastCore?.conversation.imagePackagesFile).toBe(IMAGE_FRAGMENT_PATH);
+            expect(lastCore?.workflows.dataProfile.imagePackagesFile).toBe(IMAGE_FRAGMENT_PATH);
+        } finally {
+            clearLibStoreRoot();
+        }
+    });
+
+    test("a failed image-fragment extraction boots the runtime and names no fragment, while the store inventory still flows", async () => {
+        const calls: string[] = [];
+        const storeRoot = seedLibStoreRoot(true);
+        // The extraction gives null — an absent image, an older image with no fragment, or a failed run. The
+        // boot never fails on it, and the sandbox composition omits the field, so the harness reports the
+        // store tracks alone.
+        const seams: BootSeams = { ...recordingSeams(calls), resolveImagePackages: async () => null };
+        try {
+            const runtime = (await bootHarnessRuntime({ seams, config: testConfig() }))._unsafeUnwrap();
+            expect(runtime).toBeDefined();
+            expect(calls).toContain("boot");
+            // The store source is untouched by the fragment outcome, so it still flows.
+            expect(lastCore?.conversation.packagesFile).toBe(join(storeRoot, "current", "packages.txt"));
+            // A null fragment is omitted, not passed as null.
+            expect(lastCore?.conversation.imagePackagesFile).toBeUndefined();
+            expect(lastCore?.workflows.dataProfile.imagePackagesFile).toBeUndefined();
+        } finally {
+            clearLibStoreRoot();
+        }
     });
 });
 

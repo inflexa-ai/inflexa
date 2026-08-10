@@ -117,6 +117,18 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.stdout.trim()).not.toMatch(/^\d+\.\d+\.\d+$/);
     });
 
+    test("`setup --sandbox python-r` reports the retired variant, names both spellings, and pulls nothing", () => {
+        // The bare `--sandbox` flag takes no value, so a variant a user types out of habit becomes a
+        // positional. The registry refuses it up front — before any image pull or provision — and names the
+        // retirement, so the person sees the image they asked for is gone rather than a silent one-image pull.
+        const result = runCli(["setup", "--yes", "--sandbox", "python-r"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("`--sandbox`");
+        expect(result.stderr).toContain("`sandbox`");
+        expect(result.stderr).toContain("retired");
+        expect(result.stderr).toContain("takes no image name");
+    });
+
     // Regression for the reverted `enablePositionalOptions()`: it made a root-style flag
     // placed AFTER a subcommand (`inflexa project ls --project x`) hard-fail "unknown option",
     // breaking existing invocations. Without it, the shape parses again and runs the command.

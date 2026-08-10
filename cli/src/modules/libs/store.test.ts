@@ -293,6 +293,23 @@ describe("inspectStore — read-only", () => {
         expect(tracksOf("bare")).toEqual([]);
     });
 
+    test("reports the reclaimable bytes held by store content no farm references", async () => {
+        const root = tempStore();
+        // One package a farm links, and one orphan a reclaim would remove. An update keeps the orphan on
+        // disk, so the listing reports its bytes.
+        mkdirSync(join(root, "store", "kept-1.0-aaa"), { recursive: true });
+        writeFileSync(join(root, "store", "kept-1.0-aaa", "data"), "x".repeat(100));
+        mkdirSync(join(root, "store", "orphan-2.0-bbb"), { recursive: true });
+        writeFileSync(join(root, "store", "orphan-2.0-bbb", "data"), "y".repeat(500));
+        makeFarm(root, "default");
+        mkdirSync(join(root, "farms", "default", "python", "site-packages"), { recursive: true });
+        symlinkSync("../../../../store/kept-1.0-aaa", join(root, "farms", "default", "python", "site-packages", "kept"));
+
+        const inspection = (await inspectStore(root))._unsafeUnwrap();
+        // Only the orphan is reclaimable; the referenced package is spared.
+        expect(inspection.reclaimableBytes).toBe(500);
+    });
+
     test("reports an absent store as not present", async () => {
         const result = await inspectStore(join(tempStore(), "does-not-exist"));
         expect(result.isOk()).toBe(true);

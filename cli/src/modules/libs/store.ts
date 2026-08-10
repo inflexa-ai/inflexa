@@ -184,6 +184,13 @@ export type StoreInspection = {
     readonly farms: readonly StoreFarm[];
     /** Bytes the deduplicated store content occupies (`store/` only — the farms are symlinks). */
     readonly storeBytes: number;
+    /**
+     * Bytes held by store content that no farm references — the space `inflexa store reclaim` would
+     * recover. An update adds only the content whose hash changed and it removes nothing, thus an old
+     * version stays on disk until a reclaim runs. The listing reports this so a user sees the reclaimable
+     * disk without running the reclaim preview.
+     */
+    readonly reclaimableBytes: number;
     /** The state of the catalog download. It describes the process, and it decides nothing about usability. */
     readonly download: StoreDownloadInspection;
 };
@@ -383,13 +390,14 @@ export async function inspectStore(storeRoot: string): Promise<Result<StoreInspe
     try {
         const download = await inspectStoreDownload(storeRoot);
         if (!existsSync(storeRoot)) {
-            return ok({ root: storeRoot, exists: false, active: { state: "absent" }, packages: [], farms: [], storeBytes: 0, download });
+            return ok({ root: storeRoot, exists: false, active: { state: "absent" }, packages: [], farms: [], storeBytes: 0, reclaimableBytes: 0, download });
         }
         const active = readActiveFarmPointer(storeRoot);
         const packages = await readStorePackages(storeRoot);
         const farms = await readFarms(storeRoot, active);
         const storeBytes = await dirBytes(join(storeRoot, "store"));
-        return ok({ root: storeRoot, exists: true, active, packages, farms, storeBytes, download });
+        const reclaimableBytes = await reclaimableStoreBytes(storeRoot);
+        return ok({ root: storeRoot, exists: true, active, packages, farms, storeBytes, reclaimableBytes, download });
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not inspect the package store at ${storeRoot}.`, cause });
     }
@@ -660,6 +668,24 @@ async function dirBytes(dir: string): Promise<number> {
     return total;
 }
 
+/**
+ * Bytes held by store directories no farm references — the space `inflexa store reclaim` would recover.
+ *
+ * It reuses the referenced-set scan the reclaim uses ({@link referencedStoreDirs}), so the readout and the
+ * removal agree. An update never removes an old version, thus this number grows until a reclaim runs.
+ */
+async function reclaimableStoreBytes(storeRoot: string): Promise<number> {
+    const storeDir = join(storeRoot, "store");
+    if (!existsSync(storeDir)) return 0;
+    const referenced = await referencedStoreDirs(storeRoot);
+    let total = 0;
+    for (const entry of await readdir(storeDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.startsWith(".") || referenced.has(entry.name)) continue;
+        total += await dirBytes(join(storeDir, entry.name));
+    }
+    return total;
+}
+
 /** Create the store root so the engine binds an existing, user-owned directory. */
 function ensureStoreRootExists(storeRoot: string): Result<void, ProvisionError> {
     try {
@@ -901,6 +927,11 @@ function printInspection(inspection: StoreInspection): void {
         console.log(`    ${farm.name}${farm.active ? " (active)" : ""}  ${farm.links} link(s)  ${tracks}`);
     }
     console.log(`  Disk     ${formatBytes(inspection.storeBytes)}`);
+    // An update keeps each old version, thus a reclaimable total shows the disk that `inflexa store reclaim`
+    // frees. A zero total is the common state, and printing it would be noise, so the line stays silent then.
+    if (inspection.reclaimableBytes > 0) {
+        console.log(`  Reclaim  ${formatBytes(inspection.reclaimableBytes)} unreferenced — run \`inflexa store reclaim\` to recover it`);
+    }
     printDownload(inspection.download);
 }
 

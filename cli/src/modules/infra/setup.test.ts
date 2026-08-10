@@ -1753,7 +1753,7 @@ describe("setup() — batch orchestration", () => {
             );
             spies.push(pull, provisioner);
 
-            await runSetup(batch({ refs: `${CATALOG_ID},${OTHER_CATALOG_ID}`, sandbox: "yes" }));
+            await runSetup(batch({ refs: `${CATALOG_ID},${OTHER_CATALOG_ID}`, sandbox: true }));
 
             expect(process.exitCode).toBe(0);
             expect(refsStep.mock.calls[0]![0].selection).toEqual({ ids: [CATALOG_ID, OTHER_CATALOG_ID] });
@@ -1868,7 +1868,7 @@ describe("setup() — batch orchestration", () => {
         );
         spies.push(pull, provisioner);
 
-        await runSetup(batch({ sandbox: "yes" }));
+        await runSetup(batch({ sandbox: true }));
 
         expect(process.exitCode).toBe(0);
         // The ANSWER is the multi-GB consent, so `yes` rides each call and no confirm is reached. Both
@@ -1883,7 +1883,7 @@ describe("setup() — batch orchestration", () => {
             spyOn(sandboxPullModule, "provisionerPull").mockImplementation(async () => ok({ type: "pulled" as const, image: "provisioner" })),
         );
 
-        const output = await runSetup(batch({ sandbox: "yes" }));
+        const output = await runSetup(batch({ sandbox: true }));
 
         expect(process.exitCode).toBe(0);
         // ONE answer covers the whole bundle: the two images AND the catalog. The start is not awaited to
@@ -1922,7 +1922,7 @@ describe("setup() — batch orchestration", () => {
             holderPid: 4242,
         }));
 
-        const output = await runSetup(batch({ sandbox: "yes" }));
+        const output = await runSetup(batch({ sandbox: true }));
 
         expect(process.exitCode).toBe(0);
         // The state and the two byte figures, so the user reads how far the transfer got.
@@ -1943,7 +1943,7 @@ describe("setup() — batch orchestration", () => {
             holderPid: 4242,
         }));
 
-        const output = await runSetup(batch({ sandbox: "yes" }));
+        const output = await runSetup(batch({ sandbox: true }));
 
         // The references, the database, and the model configuration each completed, and setup reached its
         // closing note rather than waiting on a multi-gigabyte transfer.
@@ -1953,13 +1953,20 @@ describe("setup() — batch orchestration", () => {
         expect(output).toContain("Setup complete");
     });
 
-    test("a `--sandbox` answer that names a retired variant fails validation before anything is pulled", async () => {
+    test("a retired sandbox variant in the answers file fails validation before anything is pulled", async () => {
         const pull = spyOn(sandboxPullModule, "sandboxPull").mockImplementation(async () =>
             ok({ type: "pulled" as const, image: "ghcr.io/inflexa-ai/sandbox-base:latest" }),
         );
         spies.push(pull);
 
-        const errors = await runCapturingStderr(batch({ sandbox: "python-r" }));
+        // The bare `--sandbox` flag carries no value, so a retired variant reaches the up-front validation
+        // only through the answers file. The registry refuses the `--sandbox python-r` positional itself.
+        const dir = mkdtempSync(join(tmpdir(), "inflexa-answers-"));
+        const answersPath = join(dir, "fleet.yml");
+        writeFileSync(answersPath, "sandbox: python-r\n");
+
+        const errors = await runCapturingStderr(batch({ config: answersPath }));
+        rmSync(dir, { recursive: true, force: true });
 
         expect(process.exitCode).toBe(1);
         // Both spellings, so a fleet author fixes the flag or the file without guessing which is meant.
@@ -2405,7 +2412,7 @@ describe("setup() — batch orchestration", () => {
                 },
             },
             sandbox: {
-                flags: { sandbox: "yes" },
+                flags: { sandbox: true },
                 effect: (run) => {
                     // The ANSWER is the multi-GB consent, so the pull carries `yes` and reaches no confirm.
                     // It names no image: one runtime image is published, and the answer selects nothing.

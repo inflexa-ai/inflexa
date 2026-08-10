@@ -107,6 +107,13 @@ export type RunEngineComposition = {
      * the cli never bind-mounts the store, so there is no path to fall back to.
      */
     readonly packagesFile: string | null;
+    /**
+     * Host path of the runtime image's extracted inventory fragment, or null when the CLI could not
+     * extract it. The fragment lists the two image-owned tracks (the bioconda command-line tools and the
+     * Node packages), which the store never carries. Null is a normal state — no image pulled, an older
+     * image with no fragment, or a failed extraction — and the harness then reports the store tracks alone.
+     */
+    readonly imagePackagesFile: string | null;
     /** Bio/chem API keys; absent keys pass as empty strings and surface per-call. */
     readonly bioKeys: ResolvedHarnessConfig["bioKeys"];
 };
@@ -138,6 +145,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         skillsDir: comp.skillsDir,
         refStorePath: comp.refStorePath,
         ...(comp.packagesFile ? { packagesFile: comp.packagesFile } : {}),
+        ...(comp.imagePackagesFile ? { imagePackagesFile: comp.imagePackagesFile } : {}),
         bioKeys: comp.bioKeys,
         blockerHolder: ctx.blockerHolder,
         step: {

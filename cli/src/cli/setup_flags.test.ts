@@ -125,7 +125,6 @@ const REST_ARGV = [
     "--refs",
     "collectri,gtex-v10",
     "--sandbox",
-    "yes",
     "--runtime",
     "podman",
 ] as const;
@@ -178,7 +177,7 @@ describe("setup registry — every declared batch option reaches the answers lay
             resources: { sharePct: 37 },
             embedding: { mode: "api-key", baseURL: "https://embeds.internal/v1", model: "text-embedding-3-large", gguf: undefined },
             refs: ["collectri", "gtex-v10"],
-            sandbox: "yes",
+            sandbox: true,
             runtime: "podman",
         });
     });
