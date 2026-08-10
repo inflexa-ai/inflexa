@@ -1,8 +1,23 @@
 # lib-store-build Specification
 
 ## Purpose
-TBD - created by archiving change add-lib-store-bundles-and-validation. Update Purpose after archive.
+
+This capability is the build pipeline for the library store and the sandbox
+runtime image. The pipeline installs each package, then does a load check with a
+non-empty-track floor. It emits a per-architecture coverage report that guards
+against a regression.
+
+The pipeline publishes the package set in two forms. The first form is one tarball
+for each track. The second form is a content-addressed store, which it pushes to
+GHCR as an OCI artifact. It publishes an immutable version that a manifest selects.
+
+The pipeline publishes one sandbox runtime image, `sandbox-base`. The image carries
+the interpreters and the two image-owned tracks, but no R library and no Python
+library. After the pipeline publishes, an acceptance run validates the store on a
+fresh machine. The acceptance run is not a gate, and it moves no pointer.
+
 ## Requirements
+
 ### Requirement: The store ships as per-track, self-describing tarballs
 
 The build SHALL package the library store as one tarball per **track** —
@@ -89,119 +104,127 @@ which the build already advances atomically at publish.
 - **WHEN** the build publishes that arch
 - **THEN** `latest/linux-<arch>` (manifest + coverage baseline) advances to that version, without waiting on a separate acceptance run
 
-### Requirement: The build publishes three layered sandbox images
+### Requirement: The build publishes one sandbox runtime image
 
-The build SHALL publish three runtime images layered by `FROM`:
-`sandbox-base` → `sandbox-python` → `sandbox-python-r`. `sandbox-base` SHALL
-carry the language runtimes, system libraries, `sandbox-server`, and provenance
-hooks, and SHALL contain **no** analysis packages. `sandbox-python` SHALL add
-the Python libraries, the bioconda CLI tools, and the Node packages.
-`sandbox-python-r` SHALL add the R libraries. Each image SHALL be published for
-both `linux/amd64` and `linux/arm64` to GitHub Packages (GHCR) on the
-`inflexa-ai/inflexa` repository (`ghcr.io/inflexa-ai/<image>`) as a
-multi-arch manifest, and each SHALL have a committed Dockerfile that a user can
-edit or `FROM`.
+The build SHALL publish exactly one runtime image, `sandbox-base`. That image
+SHALL carry the language interpreters (R, Python, and Node.js), the system
+libraries, `sandbox-server`, and the provenance hooks. It SHALL also carry each
+track that a package farm cannot carry: the conda prefix with the bioconda
+command-line tools, and the Node packages. It SHALL contain **no** R library and
+**no** Python library. Its `/mnt/libs/current` SHALL be empty, so the mounted
+package store is the one source of a library. The build SHALL NOT publish a
+variant image that bakes a library set: `sandbox-python` and `sandbox-python-r`
+are retired.
 
-#### Scenario: The three images layer by FROM
+The image, and never the store, SHALL supply each interpreter. R comes from the
+digest-pinned base image the manifest names as `base_image`, and Python and
+Node.js come from apt in that same image. A package store SHALL NOT carry an
+interpreter, thus a store SHALL NOT change the R version, the Python version, or
+the Node version.
 
-- **WHEN** the images are built
-- **THEN** `sandbox-python` is built `FROM sandbox-base` and `sandbox-python-r` is built `FROM sandbox-python`
+The image SHALL place the conda prefix and the Node packages **outside** the store
+mount path. A package store mounts read-only over `/mnt/libs`, thus it shadows
+each path the image bakes below `/mnt/libs`. The conda prefix SHALL be at
+`/opt/conda` and the Node packages SHALL be at `/opt/node`.
 
-#### Scenario: Base carries no analysis packages
+The build SHALL **make** the conda prefix at that final path. Conda writes the
+absolute prefix path into each shebang and each RPATH. Thus the build SHALL NOT
+build the prefix elsewhere and then copy, link, or move it. The prefix SHALL carry
+the bioconda tool set, the channel list, and the strict channel priority the
+retired conda-builder stage used. It SHALL keep that stage's non-empty-tool floor.
+
+The image SHALL be published for both `linux/amd64` and `linux/arm64` to GitHub
+Packages (GHCR) on the `inflexa-ai/inflexa` repository
+(`ghcr.io/inflexa-ai/sandbox-base`), as a multi-arch manifest. It SHALL have a
+committed Dockerfile that a user can edit or `FROM`.
+
+#### Scenario: One runtime image is published
+
+- **WHEN** the build publishes its runtime images
+- **THEN** it publishes `sandbox-base` and no other runtime image, and neither `sandbox-python` nor `sandbox-python-r` is built or pushed
+
+#### Scenario: The runtime image carries no library
 
 - **WHEN** `sandbox-base` is inspected
-- **THEN** it contains the runtimes, system libraries, `sandbox-server`, and provenance hooks but no R/Python/conda/Node analysis packages, and its `/mnt/libs/current` is empty
+- **THEN** it contains the runtimes, system libraries, `sandbox-server`, and provenance hooks but no R library and no Python library, and its `/mnt/libs/current` is empty
+
+#### Scenario: The runtime image carries the conda tools and the Node packages
+
+- **WHEN** `sandbox-base` is inspected
+- **THEN** the bioconda command-line tools resolve from `/opt/conda/bin` and the Node packages are at `/opt/node/node_modules`
+
+#### Scenario: A mounted store does not shadow the baked tracks
+
+- **GIVEN** `sandbox-base` with a package store mounted read-only at `/mnt/libs`
+- **WHEN** a script runs a bioconda command-line tool or requires a baked Node package
+- **THEN** both resolve, because neither path is below `/mnt/libs`
+
+#### Scenario: The conda prefix is built at its final path
+
+- **WHEN** the build assembles the conda prefix
+- **THEN** it creates the prefix at `/opt/conda` directly, and it never copies, links, or moves a prefix built at another path
 
 #### Scenario: Both architectures are published
 
-- **WHEN** the build publishes the images
-- **THEN** each of `sandbox-base`, `sandbox-python`, and `sandbox-python-r` is published for `linux/amd64` and `linux/arm64`
-
-### Requirement: Every layer installs into the runtime mount path
-
-Each image layer SHALL install its packages into `/mnt/libs/current/…` — the
-same paths the managed read-only mount uses (`r/{cran,bioconductor,github}`,
-`python/site-packages`, `conda`, `node`). A baked image and a mounted store
-SHALL therefore present a byte-identical runtime layout, and the harness
-`lib-store` runtime mount contract SHALL NOT change.
-
-#### Scenario: A layer installs into the mount path
-
-- **WHEN** `sandbox-python-r` installs its R libraries
-- **THEN** they land under `/mnt/libs/current/r/{cran,bioconductor,github}`, the same subtree the managed mount populates
+- **WHEN** the build publishes the image
+- **THEN** `sandbox-base` is published for `linux/amd64` and `linux/arm64`
 
 ### Requirement: Sandbox images are self-sufficient at runtime
 
-Each published image SHALL bake the package-resolver env (`R_LIBS_SITE` covering
-the github/bioconductor/cran subtrees, `NODE_PATH`, `PATH` including the conda
-`bin`, and the Python `.pth`) and a `/mnt/libs/current/packages.txt`, so that
-running the image with **no** harness and **no** mount resolves imports for its
-baked packages and answers `list_available_packages`. Because the baked and
-mounted paths are identical, baking this env SHALL be safe under the managed
-mount (redundant with, never conflicting with, the harness-injected env).
+The published runtime image SHALL bake the package-resolver env and the mount
+points the store expects. The env is `R_LIBS_SITE` over the
+github/bioconductor/cran subtrees, the Python `.pth`, and `INFLEXA_LIB_ROOT`.
+Thus the image with a mounted store and **no** harness resolves imports and
+answers `list_available_packages`. The baked env and the harness-injected env name
+the same paths, thus the baked env SHALL be safe under the managed mount
+(redundant with, never in conflict with, the harness-injected env).
 
-#### Scenario: A plain docker run resolves baked packages
+The env for the two image-owned tracks SHALL name their baked paths, not a path
+under the store mount. `PATH` SHALL carry `/opt/conda/bin` and `NODE_PATH` SHALL
+be `/opt/node/node_modules`. The harness-injected env SHALL name the same two
+paths, so a mounted store never removes the tools of the image.
 
-- **GIVEN** `sandbox-python-r` run directly with no mount and no harness
-- **WHEN** a script imports a baked Python package or `library()`s a baked R package
-- **THEN** it resolves against `/mnt/libs/current` via the image's baked env
+The image SHALL carry the shared `packages.txt` producer, so a store assembled by
+any route reports its inventory in one shape. The image SHALL NOT bake a
+`/mnt/libs/current/packages.txt`, because `/mnt/libs/current` is empty.
 
-#### Scenario: packages.txt is present in the image
+The image SHALL bake an inventory fragment that lists the two image-owned tracks:
+the bioconda command-line tools and the Node packages. The build SHALL derive the
+fragment from the sets the load check resolved, thus the record matches what the
+image installed and it cannot drift. The fragment SHALL live at a path outside the
+store mount, so a mounted store never shadows it. Thus the image advertises its own
+two tracks, and `list_available_packages` merges the fragment with the farm
+inventory.
 
-- **WHEN** `list_available_packages` reads `/mnt/libs/current/packages.txt` inside a baked image with no mount
-- **THEN** the file exists and lists the image's baked packages
+#### Scenario: The image advertises its two owned tracks
 
-### Requirement: Downstream images extend the store through env-driven install locations
+- **WHEN** the baked inventory fragment is read inside `sandbox-base`
+- **THEN** it lists the bioconda command-line tools and the Node packages, at a path outside `/mnt/libs`, so a mounted store does not shadow it
 
-The images SHALL expose `INFLEXA_LIB_ROOT=/mnt/libs/current` as the single source
-of truth for the store location, and SHALL set the per-installer target env
-(`PIP_TARGET`, `R_LIBS_USER`, the npm prefix) so that a downstream `FROM` image's
-default `pip install`, `install.packages()`, and `npm install` land inside the
-store and resolve at runtime without path knowledge. The images SHALL provide a
-helper that re-derives `/mnt/libs/current/packages.txt` so packages added by a
-downstream image surface in `list_available_packages`.
+#### Scenario: A plain container run resolves a mounted store
 
-#### Scenario: A FROM image installs without path knowledge
+- **GIVEN** `sandbox-base` run directly with a package store mounted at `/mnt/libs` and no harness
+- **WHEN** a script imports a stored Python package or `library()`s a stored R package
+- **THEN** it resolves against `/mnt/libs/current` through the image's baked env
 
-- **GIVEN** a Dockerfile `FROM inflexa/sandbox-python-r` with `RUN pip install mypkg`
-- **WHEN** the derived image runs and imports `mypkg`
-- **THEN** `mypkg` resolves against `/mnt/libs/current` with no extra path wiring
+#### Scenario: The baked env names the two image-owned paths
 
-#### Scenario: Refreshing discovery after an extension
+- **WHEN** `sandbox-base` is inspected
+- **THEN** its `PATH` carries `/opt/conda/bin`, its `NODE_PATH` is `/opt/node/node_modules`, and neither names a path under `/mnt/libs`
 
-- **GIVEN** a downstream image that installed extra packages and ran the refresh helper
-- **WHEN** `list_available_packages` is called
-- **THEN** the added packages appear in `packages.txt`
+#### Scenario: The image bakes no store inventory
 
-### Requirement: Managed-mount tarballs are extracted from the published images
-
-After the images are published, the build SHALL extract each track's subtree from
-the images into the same per-track, content-addressed tarballs the managed mount
-consumes (`<version>/linux-<arch>/<track>.tar.zst`), hash them, and publish the
-per-arch manifest and the immutable-version layout unchanged. The tarballs' shape,
-content-addressing, dedup-by-digest, and immutable versioning SHALL be preserved;
-only the source of a tarball changes — an image layer subtree rather than a
-throwaway builder's track subtree.
-
-#### Scenario: Tarballs come from the image
-
-- **WHEN** the build extracts the `python` track
-- **THEN** it tars `/mnt/libs/current/python` out of the published `sandbox-python` image into `python.tar.zst`
-
-#### Scenario: Managed mount is unchanged
-
-- **GIVEN** the extracted tarballs and per-arch manifest
-- **WHEN** the managed service or the CLI pulls and mounts them
-- **THEN** the mounted `/mnt/libs/current` is identical to today's, with no change to the pull/mount path
+- **WHEN** `list_available_packages` reads `/mnt/libs/current/packages.txt` inside the image with no mount
+- **THEN** the file is absent, and the tool reports the store as unavailable rather than throwing
 
 ### Requirement: The load check is best-effort with a non-empty-track floor
 
-The build SHALL run a **load check** inside each image build that
-`import`/`library()`/`require()`/`--version`s each installed package and derives
-that track's `packages.txt` fragment from the set that actually loaded. A single
-package's load failure SHALL NOT fail the track — the package is simply absent
-from the fragment. A track that loaded **zero** packages SHALL fail the build
-(the non-empty floor), so a degenerate or empty track tarball is never published.
+The store build SHALL run a **load check**. The check
+`import`/`library()`/`require()`/`--version`s each installed package, and it derives
+that track's `packages.txt` fragment from the set that loaded. A single package's
+load failure SHALL NOT fail the track — the package is simply absent from the
+fragment. A track that loaded **zero** packages SHALL fail the build (the non-empty
+floor), so a degenerate or empty track is never published.
 
 #### Scenario: A single load failure drops one package, not the track
 
@@ -213,35 +236,35 @@ from the fragment. A track that loaded **zero** packages SHALL fail the build
 
 - **GIVEN** a track in which no package loaded
 - **WHEN** the load check runs
-- **THEN** the build fails and no tarball is published for that track
+- **THEN** the build fails and no track is published
 
 ### Requirement: The build emits a per-arch coverage report and guards against regressions
 
-After the load check, the build SHALL emit a **coverage report** — a table of,
-per architecture × track, the wanted / loaded / missing package counts and names.
-The report SHALL diff the loaded set against the last published manifest. A
-package that was published for `linux/amd64`, is still requested by the manifest,
-and is now missing SHALL be reported as a regression and SHALL fail the build; a
-package that never built for `linux/arm64` SHALL be reported informationally and
-SHALL NOT fail the build.
+After the load check, the store build SHALL emit a **coverage report**. The report
+is a table, per architecture and track, of the wanted, loaded, and missing package
+counts and names. The report SHALL diff the loaded set against the last published
+store. A regression is a package that the last `linux/amd64` store published, that
+the manifest still requests, and that no longer loads. A regression SHALL be
+reported and SHALL fail the build. A package that never built for `linux/arm64`
+SHALL be reported informationally and SHALL NOT fail the build.
 
 A previously-published package that the manifest **no longer requests** SHALL be
-reported as *dropped* rather than as a regression, on every architecture, and
-SHALL NOT fail the build. Removing a package from the manifest necessarily
-removes it — and any transitive dependency that came in with it — from the next
-published set, so treating that as breakage would make every intentional removal
-require a baseline reset before it could ship. Drops SHALL be printed by name, so
+reported as *dropped*, not as a regression. A drop SHALL NOT fail the build, on any
+architecture. A removal of a package from the manifest removes it, and any
+transitive dependency that came in with it, from the next published set. Thus a
+build that treats that as breakage would make a baseline reset necessary before
+every intentional removal could ship. The build SHALL print each drop by name, so
 an unintended removal is reviewable rather than silent.
 
 #### Scenario: A silent amd64 drop is a regression
 
-- **GIVEN** a package present in the last published `linux/amd64` manifest, still requested by the manifest, that no longer loads
+- **GIVEN** a package present in the last published `linux/amd64` store, still requested by the manifest, that no longer loads
 - **WHEN** the coverage report runs
 - **THEN** it is flagged as a regression and the build fails
 
 #### Scenario: An intentional removal is not a regression
 
-- **GIVEN** a package present in the last published `linux/amd64` manifest that the manifest no longer requests
+- **GIVEN** a package present in the last published `linux/amd64` store that the manifest no longer requests
 - **WHEN** the coverage report runs
 - **THEN** it is listed by name as dropped and the build does not fail
 
@@ -276,11 +299,11 @@ they share one R library path and form a dependency chain.
 
 After a build publishes, an **acceptance** run SHALL validate the published store
 on a **fresh machine** — no network, runtime environment only, correct
-architecture — obtaining the store the way it is actually consumed: by **booting
-the published image** (the OSS user path — the image `inflexa sandbox pull`
-fetches) and/or by **mounting the extracted tarballs read-only** (the managed
-path), rather than a validator-private download. It SHALL run, inside the
-obtained store:
+architecture — obtaining the store the way it is actually consumed. Two routes
+serve: **the published store artifact, mounted read-only into the published
+runtime image** (the user path), and **the extracted tarballs, mounted read-only**
+(the managed path). Acceptance SHALL NOT use a validator-private download. It
+SHALL run, inside the obtained store:
 
 1. **the import-all invariant** — `import`/`library()`/`require()` for **every**
    advertised package, and a check that the advertised `packages.txt` equals the
@@ -295,17 +318,17 @@ Acceptance SHALL NOT run R packages' own examples and SHALL NOT maintain a
 curated anchor-operation registry; the per-library smoke-test suite is the sole
 behavioral pass and covers both R and Python. Acceptance SHALL NOT move `latest`
 or any other consumer-facing pointer and SHALL NOT publish, tag, or mutate any
-image or tarball — the build already published everything before acceptance runs.
-Acceptance SHALL surface, per architecture, a **results table** in its run
-summary reporting the import-all tally per track and the per-library validator
-outcome (counts of pass / fail / error / skipped, and the failing/errored
-libraries), plus an overall green/red status, so a maintainer can review exactly
-what was verified.
+image, store artifact, or tarball — the build already published everything before
+acceptance runs. Acceptance SHALL surface, per architecture, a **results table**
+in its run summary reporting the import-all tally per track and the per-library
+validator outcome (counts of pass / fail / error / skipped, and the
+failing/errored libraries), plus an overall green/red status, so a maintainer can
+review exactly what was verified.
 
 #### Scenario: Acceptance obtains the store the way it is consumed
 
 - **WHEN** acceptance obtains the store
-- **THEN** it boots the published image (the OSS user path) and/or mounts the extracted tarballs read-only (the managed path), rather than a validator-private download path
+- **THEN** it mounts the published store artifact into the published runtime image, or it mounts the extracted tarballs read-only, and never a validator-private download path
 
 #### Scenario: The behavioral pass is the per-library smoke-test suite
 
@@ -323,7 +346,7 @@ what was verified.
 
 - **GIVEN** an acceptance run that completes either green or red
 - **WHEN** it finishes
-- **THEN** `latest/linux-<arch>`, the image `:latest` tag, and every published tarball are exactly as the build left them — acceptance mutates nothing
+- **THEN** `latest/linux-<arch>`, the image `:latest` tag, the store artifact tags, and every published tarball are exactly as the build left them — acceptance mutates nothing
 
 #### Scenario: The acceptance run surfaces a results table
 
@@ -395,14 +418,3 @@ Presence of cache files SHALL NOT be accepted as evidence that the cache is effe
 - **GIVEN** a store whose caches are prepared where the runtime reads them
 - **WHEN** the verification workload runs
 - **THEN** the check observes only cache loads and passes
-
-### Requirement: A store is validated against an equivalently built image
-
-The build SHALL validate a content-addressed store by comparing it against an image built from the same manifest, requiring the resolved versions and the import results to agree for every advertised package.
-
-#### Scenario: A divergent store fails validation
-
-- **GIVEN** a store and an image built from the same manifest
-- **WHEN** a package resolves to a different version in each, or imports in one and not the other
-- **THEN** validation fails and names the package
-
