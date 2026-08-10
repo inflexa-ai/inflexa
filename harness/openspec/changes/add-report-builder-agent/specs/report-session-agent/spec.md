@@ -22,8 +22,12 @@ The session runtime MUST bind the per-session state to the thread, behind the si
 - **WHEN** a session tool runs with a scope that carries no `threadId`
 - **THEN** the tool returns typed data that names the missing thread id, and it does not throw
 
-### Requirement: The lazy snapshot mint
-The runtime MUST mint the snapshot with `mintReportSnapshot` at the first call that needs it, one time for each thread. The runtime MUST write the minted snapshot into the session-state row of the thread. Every later call MUST read the stored snapshot, and it MUST NOT mint again. A mint failure MUST return as typed data, and a later call can mint again, because no row was written.
+### Requirement: The snapshot mints at session start
+The runtime MUST give an idempotent operation that makes sure that the session state of a thread exists. The first run of the operation MUST mint the snapshot with `mintReportSnapshot`, and it MUST write the row. The serving path of a report turn MUST run the operation at the start of the turn. Every later call MUST read the stored snapshot, and it MUST NOT mint again. A mint failure MUST return as typed data, and a later call can mint again, because no row was written.
+
+#### Scenario: The first served turn mints before any tool call
+- **WHEN** the first turn of a report thread starts
+- **THEN** the row holds the snapshot before a tool of the roster runs
 
 #### Scenario: The mint runs one time
 - **WHEN** a thread makes two authoring calls
@@ -49,7 +53,7 @@ The in-progress document and the pinned snapshot of a thread MUST live in one du
 - **THEN** the outline of the next turn holds the added block
 
 ### Requirement: The read-only roster
-The roster of the agent MUST hold: the four workspace read tools, the workspace search, `inspect_run`, `inspect_data_profile`, the authoring tools, and the render-and-preview tool. The roster MUST NOT hold a planner, a run launcher, a working-memory write, or a sandbox mutate surface. Thus no tool starts a run, and no tool changes an analysis.
+The roster of the agent MUST hold: the workspace read tools (`read_file`, `list_files`, `file_stat`, and `grep`), the workspace search, `inspect_run`, `inspect_data_profile`, the authoring tools, and the render-and-preview tool. The roster MUST NOT hold a planner, a run launcher, a working-memory write, or a sandbox mutate surface. Thus no tool starts a run, and no tool changes an analysis.
 
 #### Scenario: The roster holds no run starter
 - **WHEN** the assembled agent lists its tools
@@ -60,18 +64,24 @@ The roster of the agent MUST hold: the four workspace read tools, the workspace 
 - **THEN** the workspace read tools, the search, the run inspection, and the data-profile inspection are present
 
 ### Requirement: The render-and-preview tool
-The preview tool MUST run the finish on the draft first. A gap list MUST return as data, and no render runs. On a pass, the tool MUST resolve each reference through the injected `ReferenceResolver`, bridge the values, render with `renderReportPage`, and publish through `PreviewPublisher`. An unresolved reference, a resolver absence, and an unavailable publisher MUST each return a typed outcome that names the cause. The tool MUST NOT throw for any of these outcomes.
+The preview tool MUST run the finish on the draft first. A gap list MUST return as data, and no render runs. On a pass, the tool MUST resolve each reference through the injected `ReferenceResolver`, bridge the values, and render with `renderReportPage`. The page and its staged assets MUST land in the session directory `report-sessions/{threadId}/` under the workspace root. The result MUST carry the page path as data.
+
+When a `PreviewPublisher` realization is present, the result MUST also carry the minted access. An unresolved reference, a resolver absence, and an unavailable publisher MUST each return a typed outcome that names the cause. The tool MUST NOT throw for any of these outcomes.
 
 #### Scenario: An unfinished draft returns the gaps
 - **WHEN** the agent calls the preview on a draft with an empty section
-- **THEN** the result carries the gap list, and no page publishes
+- **THEN** the result carries the gap list, and no page lands
 
-#### Scenario: An unavailable publisher degrades as data
+#### Scenario: The page path returns for a local host
 - **WHEN** the render passes and the publisher realization is unavailable
-- **THEN** the result names the publisher absence, and the rendered page is not lost as an error
+- **THEN** the result carries the page path and the publisher absence, and the page is on disk
+
+#### Scenario: The session directory stays off the old namespaces
+- **WHEN** the preview tool writes a page
+- **THEN** no write touches `previews/` or `reports/`
 
 ### Requirement: The value bridge
-A pure module beside the renderer MUST map resolved values onto `RenderValues`: a scalar to a metric value, rows to a table, and a file echo to a figure source through a caller-supplied policy. The bridge MUST NOT read a file and MUST NOT resolve a reference itself.
+A pure module beside the renderer MUST map resolved values onto `RenderValues`: a scalar to a metric value, rows to a table, and a file echo to a figure source through a caller-supplied policy. The policy of the preview tool MUST stage the bound image into `assets/` beside the page, and the `src` is that relative path. The bridge MUST NOT read a file and MUST NOT resolve a reference itself.
 
 #### Scenario: A file echo becomes a figure source
 - **WHEN** the bridge maps a resolved file echo with a policy that builds a source string

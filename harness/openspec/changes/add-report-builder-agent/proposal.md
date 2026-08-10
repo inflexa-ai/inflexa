@@ -9,7 +9,7 @@ Every part between the block contract and a conversation is on main: the authori
 - Add the report-session runtime: a durable session-state row for each report thread, behind the singleton agent. The row holds the in-progress document and the pinned snapshot, keyed by the thread id.
 - The snapshot mints one time for each thread, at the first use, and the row keeps it. Thus the state survives a restart and a replica change, and the frozen anchor holds.
 - Change the authoring tool factory of #305 to a storage-backed gateway. It has no callers, thus the signature changes freely, and the tool ids and the envelopes stay.
-- Add the render-and-preview tool. It bridges each resolved value into the `RenderValues` of the renderer, and it reaches the page through the `PreviewPublisher` seam. An absent resolver realization or an unavailable publisher gives a typed degrade, not an error.
+- Add the render-and-preview tool. It bridges each resolved value into the `RenderValues` of the renderer, and it writes the page into the session directory on disk. The result carries the page path, plus the hosted access when a `PreviewPublisher` realization is present. An absence gives a typed degrade, not an error.
 - Add the prompt module of the agent, with the conversational composition, because the agent talks to the user.
 - The roster is read-only toward the analysis: the workspace read surface, the workspace search, `inspect_run`, and `inspect_data_profile`. No tool starts a run, and no tool changes the analysis. The rule holds by construction.
 

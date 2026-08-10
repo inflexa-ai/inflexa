@@ -36,11 +36,11 @@ The registry returns one assembled definition. Thus the per-session state moves 
 
 Two alternatives fell. A per-thread agent construction at turn time breaks the singleton requirement of the resolution spec. An in-process map keyed by thread dies with the process, and chat runs one replica for each turn on a managed host. Thus memory cannot be the home of the state, and a cache is a later option.
 
-### D3. The snapshot mints lazily, one time for each thread, and the row keeps it.
+### D3. The snapshot mints at session start, one time for each thread, and the row keeps it.
 
-The runtime mints with `mintReportSnapshot(pool, analysisId)` at the first call that needs the snapshot, and it writes the result into the session-state row. Every later call reads the stored snapshot, across restarts and replicas alike. Thus the membership of the session never changes after the first mint, and the frozen anchor holds. A mint failure returns as typed data, and a later call mints again, because no row was written.
+The runtime exposes an idempotent `ensureSessionState(threadId)`. The first call mints with `mintReportSnapshot(pool, analysisId)`, and it writes the result into the session-state row. The serving path of a report turn runs the operation at the start of the turn, thus the mint anchors at the first served turn. Each tool also runs the operation, thus a call order cannot break the state, and the row guard keeps the mint single.
 
-The mint runs after the spawn anchor, thus an artifact from the window between the spawn and the first call enters the membership. The skew is bounded and recorded: the version record pins the stored snapshot. A stricter anchor can move into the spawn later without a contract change here.
+Every later call reads the stored snapshot, across restarts and replicas alike. Thus the membership never changes after the mint, and the frozen anchor holds. A mint failure returns as typed data, and a later call mints again, because no row was written.
 
 ### D4. The authoring tools change to a storage-backed gateway, because no caller exists.
 
@@ -48,13 +48,17 @@ The mint runs after the spawn anchor, thus an artifact from the window between t
 
 ### D5. The preview tool renders only a finished draft, and absence degrades as data.
 
-`renderReportPage` takes a `ReportDocument`, and a mid-composition draft is not one. Thus the preview tool runs the finish first. A gap list returns as data, and the agent repairs the draft. On a pass, the tool resolves each reference through the injected `ReferenceResolver`, bridges the values into `RenderValues`, renders, and publishes through `PreviewPublisher`.
+`renderReportPage` takes a `ReportDocument`, and a mid-composition draft is not one. Thus the preview tool runs the finish first. A gap list returns as data, and the agent repairs the draft. On a pass, the tool resolves each reference through the injected `ReferenceResolver`, bridges the values into `RenderValues`, and renders.
+
+The page lands on disk, in the session directory `report-sessions/{threadId}/` under the workspace root. That namespace belongs to the new path alone, and the old path keeps `previews/` and `reports/`. The tool returns the page path as data, thus a local host shows the page with no seam. `PreviewPublisher.mintPreviewAccess` carries no content (`src/tools/report/preview-publisher.ts:39-41`), thus it serves only the hosted surface. When a realization is present, the tool also returns the minted access.
 
 Two absences are normal conditions: a resolver realization that cannot give values, and an unavailable publisher. Each returns a typed outcome that names the absent seam. Nothing throws, and nothing substitutes a fixture.
 
 ### D6. The value bridge is a small pure module beside the renderer.
 
 The bridge maps a `ResolvedValue` onto a `RenderValues` entry: a scalar to a metric value, rows to a table, and a file echo to a `figure.src` string through a caller-supplied policy. It lives in `src/report-render/` as a pure module, because the renderer owns the `RenderValues` contract. The preview tool supplies the source policy, because the page and its asset access are a session concern.
+
+The policy of the preview tool is concrete: it stages the bound image into `assets/` beside the page, and the `src` is that relative path. Thus the page directory is self-contained, a local viewer and a hosted surface read the same bytes, and no workspace layout leaks into the markup. A data URI fell, because a large figure makes a page of many megabytes.
 
 ### D7. The roster is the issue list, and the rule holds by construction.
 
