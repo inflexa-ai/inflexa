@@ -187,6 +187,10 @@ function recordingSeams(calls: string[]): BootSeams {
             return {
                 runtime: {
                     agents: { forThread: () => ok({ id: "conversation-agent", systemPrompt: "", model: "claude-test-model", tools: [], maxIterations: 50 }) },
+                    // The offline boot never drives a report turn, thus this anchor never runs. A
+                    // failed arm is the minimal stand-in — a ready arm would build a full durable
+                    // session-state row that no assertion here reads.
+                    reportSession: { ensureSessionState: async () => ({ outcome: "failed", kind: "unavailable", detail: "offline boot stub" }) },
                     workflows: {
                         executeAnalysis: async () => ({
                             runId: "",
