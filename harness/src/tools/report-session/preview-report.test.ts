@@ -17,7 +17,7 @@ import type { Scope } from "../../auth/types.js";
 import type { DraftDocument } from "../../report-model/draft.js";
 import { createFixtureResolver } from "../../report-model/fixture-resolver.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
-import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist } from "../report-authoring/authoring-tools.js";
+import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
 import { createPreviewReportTool } from "./preview-report.js";
@@ -51,12 +51,19 @@ interface FakeGateway extends ReportSessionStateGateway {
     setFault(fault: boolean): void;
 }
 
+interface FakeRow {
+    state: ReportSessionState;
+    analysisId: string;
+    rendered: string | null;
+    seen: string | null;
+}
+
 function makeFakeGateway(): FakeGateway {
-    const rows = new Map<string, { state: ReportSessionState; analysisId: string }>();
+    const rows = new Map<string, FakeRow>();
     let fault = false;
     return {
         seed(threadId, state, analysisId = DEFAULT_ANALYSIS_ID): void {
-            rows.set(threadId, { state: structuredClone(state), analysisId });
+            rows.set(threadId, { state: structuredClone(state), analysisId, rendered: null, seen: null });
         },
         setFault(value): void {
             fault = value;
@@ -70,14 +77,35 @@ function makeFakeGateway(): FakeGateway {
                 return Promise.resolve({ outcome: "absent" });
             }
             const state = structuredClone(row.state);
-            return Promise.resolve({ outcome: "found", state, analysisId: row.analysisId, token: state.document });
+            return Promise.resolve({ outcome: "found", state, analysisId: row.analysisId, token: state.document, seenDocumentHash: row.seen });
         },
         persist(threadId, document): Promise<SessionStatePersist> {
             const existing = rows.get(threadId);
             const snapshotOfThread = existing?.state.snapshot ?? { artifacts: {} };
             const analysisId = existing?.analysisId ?? DEFAULT_ANALYSIS_ID;
-            rows.set(threadId, { state: { document: structuredClone(document), snapshot: snapshotOfThread }, analysisId });
+            rows.set(threadId, {
+                state: { document: structuredClone(document), snapshot: snapshotOfThread },
+                analysisId,
+                rendered: existing?.rendered ?? null,
+                seen: existing?.seen ?? null,
+            });
             return Promise.resolve({ outcome: "persisted" });
+        },
+        stampRendered(threadId, hash): Promise<StampResult> {
+            const row = rows.get(threadId);
+            if (row === undefined) {
+                return Promise.resolve({ outcome: "absent" });
+            }
+            row.rendered = hash;
+            return Promise.resolve({ outcome: "stamped" });
+        },
+        stampSeen(threadId): Promise<StampResult> {
+            const row = rows.get(threadId);
+            if (row === undefined) {
+                return Promise.resolve({ outcome: "absent" });
+            }
+            row.seen = row.rendered;
+            return Promise.resolve({ outcome: "stamped" });
         },
     };
 }

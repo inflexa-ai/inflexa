@@ -46,6 +46,10 @@ export interface ReportSessionState {
     readonly document: DraftDocument | null;
     /** The pinned snapshot, or `null` before the pin writes it. */
     readonly snapshot: ReportSnapshot | null;
+    /** The hash of the draft that the last preview rendered, or `null` before the first preview. */
+    readonly renderedDocumentHash: string | null;
+    /** The hash that the last eyes capture saw, or `null` before the first look. */
+    readonly seenDocumentHash: string | null;
     readonly createdAt: Date;
 }
 
@@ -76,6 +80,12 @@ export interface PersistDocumentInput {
  * this turn must read the state again. `absent` means no row holds the thread.
  */
 export type PersistOutcome = "persisted" | "conflict" | "absent";
+
+/**
+ * The outcome of a stamp. `stamped` wrote the hash on the row. `absent` means that no row holds the
+ * thread, thus the stamp wrote nothing. A stamp reads nothing before the write.
+ */
+export type StampOutcome = "stamped" | "absent";
 
 /**
  * A stored row that a read cannot parse with the current schemas. It names the
@@ -114,6 +124,17 @@ export interface ReportSessionStateStore {
      * concurrent turn landed first, and `absent` means no row holds the thread.
      */
     persistDocument(input: PersistDocumentInput): ResultAsync<PersistOutcome, DbError>;
+    /**
+     * Stamp the rendered-document hash on the row. The preview calls it when the page lands, thus the row
+     * holds the hash of the draft that the page shows. `absent` means that no row holds the thread.
+     */
+    stampRendered(threadId: string, hash: string): ResultAsync<StampOutcome, DbError>;
+    /**
+     * Copy the rendered hash onto the seen hash. The eyes call it after a capture, thus the seen hash holds
+     * the hash of the draft that the picture shows, and never the current one. `absent` means that no row
+     * holds the thread.
+     */
+    stampSeen(threadId: string): ResultAsync<StampOutcome, DbError>;
 }
 
 export interface ReportSessionStateStoreDeps {
@@ -122,13 +143,15 @@ export interface ReportSessionStateStoreDeps {
 }
 
 /** The full row projection every read shares. */
-const STATE_COLUMNS = "thread_id, analysis_id, document, snapshot, created_at";
+const STATE_COLUMNS = "thread_id, analysis_id, document, snapshot, rendered_document_hash, seen_document_hash, created_at";
 
 interface SessionStateRow {
     readonly thread_id: string;
     readonly analysis_id: string;
     readonly document: unknown;
     readonly snapshot: unknown;
+    readonly rendered_document_hash: string | null;
+    readonly seen_document_hash: string | null;
     readonly created_at: Date;
 }
 
@@ -176,6 +199,8 @@ function rowToState(row: SessionStateRow): Result<ReportSessionState, SessionSta
         analysisId: row.analysis_id,
         document,
         snapshot,
+        renderedDocumentHash: row.rendered_document_hash,
+        seenDocumentHash: row.seen_document_hash,
         createdAt: row.created_at,
     });
 }
@@ -250,5 +275,27 @@ export function createReportSessionStateStore({ pool }: ReportSessionStateStoreD
         });
     }
 
-    return { readState, writeSnapshot, persistDocument };
+    function stampRendered(threadId: string, hash: string): ResultAsync<StampOutcome, DbError> {
+        return tryMutation("report-session-state.stampRendered", async () => {
+            const { rowCount } = await pool.query({
+                text: "UPDATE cortex_report_session_state SET rendered_document_hash = $2 WHERE thread_id = $1",
+                values: [threadId, hash],
+            });
+            return (rowCount ?? 0) > 0 ? "stamped" : "absent";
+        });
+    }
+
+    function stampSeen(threadId: string): ResultAsync<StampOutcome, DbError> {
+        return tryMutation("report-session-state.stampSeen", async () => {
+            // The seen hash takes the rendered hash of the same row. A copy inside the statement keeps the
+            // two markers on one row, thus the eyes copy the rendered hash and never the current one.
+            const { rowCount } = await pool.query({
+                text: "UPDATE cortex_report_session_state SET seen_document_hash = rendered_document_hash WHERE thread_id = $1",
+                values: [threadId],
+            });
+            return (rowCount ?? 0) > 0 ? "stamped" : "absent";
+        });
+    }
+
+    return { readState, writeSnapshot, persistDocument, stampRendered, stampSeen };
 }

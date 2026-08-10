@@ -175,14 +175,22 @@ CREATE INDEX IF NOT EXISTS idx_cortex_report_versions_analysis
 -- never acquires one. The thread id carries no foreign key, the same as the
 -- messages rows, thus a purge of a thread cannot reach this row through a cascade
 -- and purgeThread removes it by name.
+--
+-- The two hash columns are the look-before-record markers. rendered_document_hash
+-- holds the hash of the draft that the last preview rendered. seen_document_hash
+-- holds the hash that the last eyes capture saw, copied from the rendered hash.
+-- Each is nullable, because a fresh session has run no preview and no eyes. The
+-- record refuses unless the seen hash equals the hash of the current draft.
 CREATE TABLE IF NOT EXISTS cortex_report_session_state (
-  thread_id     TEXT PRIMARY KEY,
-  analysis_id   TEXT NOT NULL
-                  REFERENCES cortex_analysis_state(analysis_id)
-                  ON DELETE CASCADE,
-  document      JSONB,
-  snapshot      JSONB,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  thread_id              TEXT PRIMARY KEY,
+  analysis_id            TEXT NOT NULL
+                           REFERENCES cortex_analysis_state(analysis_id)
+                           ON DELETE CASCADE,
+  document               JSONB,
+  snapshot               JSONB,
+  rendered_document_hash TEXT,
+  seen_document_hash     TEXT,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_cortex_report_session_state_analysis
@@ -565,6 +573,11 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                 "ALTER TABLE cortex_step_executions ADD COLUMN IF NOT EXISTS child_workflow_id TEXT",
                 "CREATE INDEX IF NOT EXISTS idx_cortex_step_exec_child_workflow " + "ON cortex_step_executions(child_workflow_id)",
                 "ALTER TABLE cortex_analysis_state ADD COLUMN IF NOT EXISTS seed_input_file_ids JSONB",
+                // The look-before-record markers of a report session. Nullable and
+                // unbackfilled: a session with no preview and no eyes carries neither hash,
+                // which is the honest state, thus an existing row reads back as never-seen.
+                "ALTER TABLE cortex_report_session_state ADD COLUMN IF NOT EXISTS rendered_document_hash TEXT",
+                "ALTER TABLE cortex_report_session_state ADD COLUMN IF NOT EXISTS seen_document_hash TEXT",
                 // Databases created before `data_profile_status` became nullable still
                 // carry the NOT NULL floor, which would reject a clear. Idempotent:
                 // dropping an absent NOT NULL no-ops, so this is a no-op on fresh DBs.
