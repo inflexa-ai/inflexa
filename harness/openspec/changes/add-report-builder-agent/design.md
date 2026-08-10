@@ -19,7 +19,6 @@ The renderer is a pure function `renderReportPage(document, values)` (`src/repor
 **Non-Goals:**
 
 - The mechanical gate and the visual examination (#310).
-- A durable draft store. A restart loses an in-progress draft.
 - A skill pack and the design system (#311).
 - The parent-transcript tool. The user deferred it on the issue.
 - Context composition for the first turn (#223). The agent orients with its read tools.
@@ -31,19 +30,21 @@ The renderer is a pure function `renderReportPage(document, values)` (`src/repor
 
 The old templating agent holds `report-builder` (`src/agents/report-builder.ts:25`) until #313 removes it. Two agents with one id would collide in `SKILL_DECLARING_AGENTS` and in provenance. Thus the new definition is `src/agents/report-session-agent.ts` with the id `report-session`.
 
-### D2. The session runtime is a thread-keyed binder inside the tools.
+### D2. The per-session state lives in one durable row, behind the tool boundary.
 
-The registry returns one assembled definition. Thus the per-session state moves behind the tool boundary: the runtime holds a map from `threadId` to the session cell. A tool reads `ctx.session.scope.threadId` (`src/auth/types.ts:37`) at call time, and it reaches its cell through the binder. A call with no `threadId` in the scope refuses as typed data.
+The registry returns one assembled definition. Thus the per-session state moves behind the tool boundary, and it lives in a durable session-state row keyed by the thread id. A tool reads `ctx.session.scope.threadId` (`src/auth/types.ts:37`) at call time, loads the row, applies the operation, and persists the result. A call with no `threadId` in the scope refuses as typed data.
 
-The alternative was a per-thread agent construction at turn time. That breaks the singleton requirement of the resolution spec, and it rebuilds every tool on every turn.
+Two alternatives fell. A per-thread agent construction at turn time breaks the singleton requirement of the resolution spec. An in-process map keyed by thread dies with the process, and chat runs one replica for each turn on a managed host. Thus memory cannot be the home of the state, and a cache is a later option.
 
-### D3. The snapshot mints lazily, one time for each thread.
+### D3. The snapshot mints lazily, one time for each thread, and the row keeps it.
 
-The binder mints with `mintReportSnapshot(pool, analysisId)` at the first call that needs the snapshot, and it caches the result in the cell. The mint runs after the spawn anchor, thus an artifact from the window between the spawn and the first call enters the membership. The skew is bounded and recorded: the version record of #310 pins whatever snapshot the session used, and a stricter anchor can move into the spawn later without a contract change here.
+The runtime mints with `mintReportSnapshot(pool, analysisId)` at the first call that needs the snapshot, and it writes the result into the session-state row. Every later call reads the stored snapshot, across restarts and replicas alike. Thus the membership of the session never changes after the first mint, and the frozen anchor holds. A mint failure returns as typed data, and a later call mints again, because no row was written.
 
-### D4. The draft is in-memory per thread, and loss on restart is accepted.
+The mint runs after the spawn anchor, thus an artifact from the window between the spawn and the first call enters the membership. The skew is bounded and recorded: the version record pins the stored snapshot. A stricter anchor can move into the spawn later without a contract change here.
 
-The cell holds the authoring tool set of #305, made with `createReportAuthoringTools({ snapshot })`. The draft lives in that closure. A restart empties the binder, and the agent starts a fresh draft. The durable artifact is the recorded version (#308), and a durable draft store is a separate decision for a later issue.
+### D4. The authoring tools change to a storage-backed gateway, because no caller exists.
+
+`createReportAuthoringTools` closes over one draft and one snapshot (`src/tools/report-authoring/authoring-tools.ts:311-313`), and nothing calls it yet. Thus the factory signature changes freely: it takes a session-state gateway (load the state by thread id, persist the document) in place of the closure holder. A landed operation persists before it reports `applied: true`, thus a reported landing is never lost. The pure core of #305 stays untouched, and the tool ids, the envelopes, and the refusal shapes stay as they are.
 
 ### D5. The preview tool renders only a finished draft, and absence degrades as data.
 
@@ -65,8 +66,9 @@ The agent talks to the user, thus `composeSystemPrompt(reportSessionPrompt, { id
 
 ## Risks / Trade-offs
 
-- [The binder map grows with threads] → the cell count equals the report threads served by one process. A later eviction rule can land without a contract change.
-- [The lazy mint admits post-anchor artifacts] → D3 records the skew, and the recorded version pins the snapshot that was used. The tightening path stays open.
+- [Two concurrent turns on one thread race the row] → the last write wins, and a turn on one thread is serial in practice. A version guard can land later without a contract change.
+- [A read and a write on each tool call cost a round trip] → the document is small, and correctness across replicas outweighs the trip. A cache is a later option.
+- [The lazy mint admits post-anchor artifacts] → D3 records the skew, and the recorded version pins the stored snapshot. The tightening path stays open.
 - [The preview needs a resolver realization that #310 ships] → D5 degrades as typed data. The agent works today, and the preview completes when the realization lands.
 - [Two report agents exist until #313] → distinct ids and distinct files. The old path reads nothing from the new one.
 
