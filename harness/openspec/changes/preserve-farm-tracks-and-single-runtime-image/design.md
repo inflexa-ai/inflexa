@@ -49,18 +49,19 @@ code, thus a farm holds neither track.
 ## Decisions
 
 **Carry the track directories of the old farm forward, beside the two caches.**
-The old farm already holds the link trees of each track. A move of a directory is
-atomic, and it reads no file content. Thus the carry-forward costs no reinstall
-and no network.
+The old farm already holds the link trees of each track. The carry-forward copies
+each link tree into the staging farm, and it keeps each link verbatim
+(`shutil.copytree(..., symlinks=True)`). Thus the copy reads no package byte, it
+opens no network connection, and it costs no reinstall.
 
-The alternative is to pass `--r-manifest` on every run, which makes a full pak
-build. That build takes about 1h35m and it needs a network. Thus a `store add` of
-one Python package would pay for the whole R track.
+The copy leaves the live farm complete until the atomic swap. A move saves one link
+write for each entry, but a move takes the track out of the live farm. Thus a crash
+before the publish loses the track. The copy keeps the live farm intact until the
+swap, which is the property that the atomic publish depends on.
 
-A second alternative is to build the staging farm as a copy of the live farm. A
-copy of the symlink farm is slow, and it reads the live farm while the run can
-still fail. The move of a directory keeps the live farm complete until the swap,
-which is the property that the atomic publish depends on.
+The alternative to a preserved track is to pass `--r-manifest` on every run, which
+makes a full pak build. That build takes about 1h35m and it needs a network. Thus a
+`store add` of one Python package would pay for the whole R track.
 
 **Derive the track record from the published farm, not from the run.**
 `meta.json` lists the tracks of the current run today (`:1071-1080`), and
@@ -187,12 +188,13 @@ suite.
    `sandbox-base`.
 3. Build the conda prefix at `/opt/conda` and the Node packages at `/opt/node` in
    `sandbox-base`. Point the baked env and `mount-plan.ts` at the two paths.
-4. Apply the three delta specs.
-5. Remove `images/sandbox-python/` and `images/sandbox-python-r/`, and reduce the
+4. Remove `images/sandbox-python/` and `images/sandbox-python-r/`, and reduce the
    image build to one image.
+5. Apply the three delta specs last, after the four open decisions resolve and the
+   code lands. An apply writes the live spec, thus it waits for the decisions.
 
-Step 3 lands before step 5, because step 5 deletes the source of the two tracks.
-A rollback of step 1 is a revert of the carry-forward. A rollback of step 5 is a
+Step 3 lands before step 4, because step 4 deletes the source of the two tracks.
+A rollback of step 1 is a revert of the carry-forward. A rollback of step 4 is a
 revert of the workflow and the Dockerfile removal. The two steps are independent.
 
 ## Open Questions

@@ -57,11 +57,11 @@
 
 ## 8. Specs
 
-- [ ] 8.1 Apply the `package-store-management` delta: the removed opt-in, the provisioner constant, the container rule, `store use`, the richer inspection, and the download remedy
-- [ ] 8.2 Apply the `lib-store-provisioning` delta: the removed variant requirement, the new architecture requirement, the unconditional store pass, and the inventory failure mode
-- [ ] 8.3 Apply the `lib-store-download` delta: the unconditional download and the gate that makes sure of a store
-- [ ] 8.4 Apply the `setup-answers` delta: `--sandbox` names no variant, and a pull obtains both images
-- [ ] 8.5 Correct the `Purpose` section of `openspec/specs/lib-store-provisioning/spec.md`, which is still the archive placeholder
+- [x] 8.1 Apply the `package-store-management` delta: the removed opt-in, the provisioner constant, the container rule, `store use`, the richer inspection, and the download remedy
+- [x] 8.2 Apply the `lib-store-provisioning` delta: the removed variant requirement, the new architecture requirement, the unconditional store pass, and the inventory failure mode
+- [x] 8.3 Apply the `lib-store-download` delta: the unconditional download and the gate that makes sure of a store
+- [x] 8.4 Apply the `setup-answers` delta: `--sandbox` names no variant, and a pull obtains both images
+- [x] 8.5 Correct the `Purpose` section of `openspec/specs/lib-store-provisioning/spec.md`, which is still the archive placeholder
 
 ## 9. Verification
 
@@ -82,5 +82,5 @@
 
 ## 10. Open decisions
 
-- [ ] 10.1 BLOCKED — what value grammar does `--sandbox` take, now that no variant exists? The delta writes it as a flag with no value (`--sandbox`, file `sandbox: true`). The options are: (a) a flag with no value, or (b) a boolean value (`--sandbox true|false`). Confirm with the user before you write the parser, because `setup-answers` requires one grammar across the flag front-end and the file front-end
-- [ ] 10.2 BLOCKED — does an update of the store remove the old store version, or keep it until no farm names it? This question stays open from the archived download change. It does not block `store use`, but it decides what `store ls` reports about disk
+- [x] 10.1 RESOLVED — `--sandbox` is a bare flag, and the flag and the file share one grammar. The presence is the consent, and the absence skips the images and the catalog. The file writes `sandbox: true`, and there is no boolean value and no string value. A retired variant name is still refused. The schema refuses `sandbox: python-r` in the file, and the registry refuses the `--sandbox python-r` positional. Each refusal names both spellings
+- [x] 10.2 RESOLVED — an update keeps the old store version. The pool is content-addressed, thus an update adds only the directories whose content changed, and it removes nothing. `inflexa store reclaim` is the one removal path, and it obeys the live requirement "Reclamation is never implicit". `store ls` reports the reclaimable bytes, thus a user sees the disk that an update leaves behind

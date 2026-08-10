@@ -186,6 +186,12 @@ that state makes every sandbox unusable and the user cannot see it otherwise. It
 SHALL say which tracks each farm carries. A farm with fewer tracks than another is
 the reason an import fails after a switch.
 
+An update of the store SHALL remove nothing. The pool is content-addressed, thus
+an update adds only the content whose hash changed, and an old version stays on
+disk. `inflexa store reclaim` SHALL be the one path that removes store content.
+The inspection SHALL report the reclaimable bytes, so the user sees the disk an
+update leaves behind.
+
 The inspection command SHALL stay prompt-free and SHALL gain no option, because a
 passive diagnostic stays passive.
 
@@ -217,6 +223,12 @@ passive diagnostic stays passive.
 - **GIVEN** a store holding one farm with a Python track and one farm with a Python track and an R track
 - **WHEN** the user inspects the store
 - **THEN** the output names the track set of each farm
+
+#### Scenario: An update keeps the old version and the inspection reports the reclaimable bytes
+
+- **GIVEN** a store whose update added new content beside an old version no farm references
+- **WHEN** the user inspects the store
+- **THEN** the old version is still on disk, and the output reports the reclaimable bytes and names the reclaim command
 
 ## REMOVED Requirements
 

@@ -34,7 +34,7 @@
 - [x] 4.1 Delete `images/sandbox-python/` and `images/sandbox-python-r/`, after task 3 moves what `sandbox-base` needs
 - [x] 4.2 Reduce `.github/workflows/lib-store.yml` to one image build and one push (`:50-52`, `:137-176`). The workflow file is CI, not a spec
 - [x] 4.3 Point `.github/workflows/lib-store-acceptance.yml` at the published store artifact, mounted into `sandbox-base`, instead of a published variant image
-- [ ] 4.4 PART DONE — search the repository for a reference to `sandbox-python` or `sandbox-python-r` outside `cli/`, and correct each one. Corrected: `images/**`, `harness/src/tools/sandbox/list-available-packages.ts`, the two `lib-store*.yml` workflows, `scripts/build-libs-local.sh`, `scripts/lib-store-validate/run.sh`. Left, because they belong to another owner or to a blocked decision: `.github/dependabot.yml` (it lists the two deleted directories), `droast.toml` (it lists the two deleted Dockerfiles), `.github/workflows/lib-store-provisioner.yml` (one prose mention), `scripts/lib-store-extract-tarballs.sh`, `scripts/lib-store-publish.sh`, `scripts/lib-store-common.sh`, and `scripts/lib-store-validate/validate.py` (each one names the tarball source that task 7.1 decides), and `scripts/store-prototype/**` (a record of a past measurement)
+- [x] 4.4 Search the repository for a reference to `sandbox-python` or `sandbox-python-r` outside `cli/`, and correct each one. Corrected: `images/**`, `harness/src`, the two `lib-store*.yml` workflows, `.github/dependabot.yml`, `droast.toml`, `.github/workflows/lib-store-provisioner.yml`, and each script under `scripts/` that named the tarball source. The tarball scripts are deleted with decision 7.1. `scripts/store-prototype/**` stays as it is, because it is a record of a past measurement
 - [ ] 4.5 CI ONLY — build the one image for both architectures and publish it. The full build needs the self-hosted builders and about 1h35m
 
 ## 5. Specs
@@ -43,10 +43,10 @@ Task 5 waits on task 7.1 to task 7.4. Each one of those tasks decides a live
 requirement. An apply writes the live spec, thus it must wait for the four
 decisions.
 
-- [ ] 5.1 Apply the `lib-store-provisioner` delta: the added preservation requirement, and the modified record requirement
-- [ ] 5.2 Apply the `lib-store-build` delta: the renamed and modified image requirement, the modified self-sufficiency requirement, the modified acceptance requirement, and the two removals
-- [ ] 5.3 Apply the `lib-store` delta: the modified mount contract, and the modified resolver-env requirement that names `/opt/conda/bin` and `/opt/node/node_modules`
-- [ ] 5.4 Correct the `Purpose` section of `openspec/specs/lib-store-build/spec.md`, which is still the archive placeholder
+- [x] 5.1 Apply the `lib-store-provisioner` delta: the added preservation requirement, and the modified record requirement
+- [x] 5.2 Apply the `lib-store-build` delta: the renamed and modified image requirement, the modified self-sufficiency requirement, the modified acceptance requirement, and the two removals
+- [x] 5.3 Apply the `lib-store` delta: the modified mount contract, and the modified resolver-env requirement that names `/opt/conda/bin` and `/opt/node/node_modules`
+- [x] 5.4 Correct the `Purpose` section of `openspec/specs/lib-store-build/spec.md`, which is still the archive placeholder
 
 ## 6. Verification
 
@@ -70,15 +70,10 @@ tracks after the retirement. Task 7.2 and task 7.3 both depend on that answer.
 Answer them in the order 7.1, then 7.2, then 7.3. Task 7.4 is separate, and it
 depends on none of them.
 
-- [ ] 7.1 BLOCKED, ANSWER IT FIRST — which artifact feeds the per-track tarballs of the managed mount? The live requirement "Managed-mount tarballs are extracted from the published images" tars a subtree out of `sandbox-python`, which retires here. The options are: (a) extract the tracks from the content-addressed store, (b) keep a builder tree that no image publishes, or (c) retire the tarballs with Phase 5. Do not write a delta until the user decides
+- [x] 7.1 RESOLVED — the managed per-track tarballs retire (option c). The managed delivery is decoupled from OSS, and no runtime image carries a track to extract. The live requirement "Managed-mount tarballs are extracted from the published images" gets a REMOVED delta in `lib-store-build`, and the tarball extraction retires from the workflow and the scripts
 
-- [ ] 7.2 BLOCKED, ANSWER IT AFTER 7.1 — what does the build compare a store against? The live requirement "A store is validated against an equivalently built image" needs an image that bakes the same library set, and none remains. The artifact that task 7.1 selects is a candidate here. Options: (a) compare against the last published store, (b) compare against a throwaway builder tree, (c) retire the requirement and depend on acceptance. Do not write a delta until the user decides
+- [x] 7.2 RESOLVED — the store-against-image compare retires (option c). No image bakes the same package set, thus there is no equivalently built image to compare a store against. The live requirement "A store is validated against an equivalently built image" gets a REMOVED delta, and acceptance is the validation
 
-- [ ] 7.3 BLOCKED, ANSWER IT AFTER 7.1 AND 7.2 — do the live requirements "The load check is best-effort with a non-empty-track floor" and "The build emits a per-arch coverage report and guards against regressions" move to the store build? Both name an image build that installs packages, thus the answer follows from the two answers above. Do not write a delta until the user decides
+- [x] 7.3 RESOLVED — the load check and the coverage report move to the store build. The two live requirements "The load check is best-effort with a non-empty-track floor" and "The build emits a per-arch coverage report and guards against regressions" get MODIFIED deltas, and each now describes the store build, not an image build
 
-- [ ] 7.4 BLOCKED — how does `list_available_packages` advertise the two image-owned tracks? The inventory comes from the `packages.txt` of the active farm. The conda track and the Node track are no longer in a farm. The options are:
-    - (a) the provisioner writes the two fragments into each farm that it builds
-    - (b) the tool reads a second inventory file from the image
-    - (c) the two tracks stay unadvertised
-
-    Do not write a delta until the user decides
+- [x] 7.4 RESOLVED — the image advertises its two tracks with a baked inventory fragment (option b). The `sandbox-base` build writes the fragment at `/opt/inflexa/image-packages.txt`, outside `/mnt/libs`. The build derives the fragment from the conda and node load checks. `list_available_packages` merges the farm inventory and the image fragment, thus the agent reads one complete package list. The `lib-store` and `lib-store-build` deltas record it

@@ -28,6 +28,13 @@ each RPATH. Thus it cannot resolve from a mount whose path a publish step swaps.
 As a result a farm SHALL NOT hold a `conda` directory and SHALL NOT hold a `node`
 directory.
 
+The image advertises its two owned tracks — the bioconda command-line tools and
+the Node packages — through a baked inventory fragment. The fragment SHALL live at
+a path outside `/mnt/libs`, thus a mounted store never shadows it. The
+`list_available_packages` tool SHALL merge the farm inventory and the image
+fragment. Thus an agent reads one complete package list that names each of the four
+tracks.
+
 The dependency runs from the image to the store, and never the other way. Each
 stored compiled package matches the ABI of the interpreter the image carries. A
 change of the interpreter obliges a rebuild of the compiled packages of the store.
@@ -64,6 +71,12 @@ assembled. Because the whole store root is a single mount, farm links into
 - **GIVEN** a sandbox created with a store mounted at `/mnt/libs`
 - **WHEN** a script runs a bioconda command-line tool or requires a baked Node package
 - **THEN** both resolve from the image, because the store carries neither track and shadows neither path
+
+#### Scenario: The inventory merges the farm tracks and the image tracks
+
+- **GIVEN** a sandbox with a store mounted at `/mnt/libs` and the image inventory fragment outside it
+- **WHEN** `list_available_packages` reads the inventory
+- **THEN** it reports the farm's Python and R tracks with the image's command-line tools and Node packages, as one list
 
 #### Scenario: A farm carries no conda directory and no node directory
 

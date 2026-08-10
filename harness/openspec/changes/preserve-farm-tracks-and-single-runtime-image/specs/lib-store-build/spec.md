@@ -89,6 +89,19 @@ The image SHALL carry the shared `packages.txt` producer, so a store assembled b
 any route reports its inventory in one shape. The image SHALL NOT bake a
 `/mnt/libs/current/packages.txt`, because `/mnt/libs/current` is empty.
 
+The image SHALL bake an inventory fragment that lists the two image-owned tracks:
+the bioconda command-line tools and the Node packages. The build SHALL derive the
+fragment from the sets the load check resolved, thus the record matches what the
+image installed and it cannot drift. The fragment SHALL live at a path outside the
+store mount, so a mounted store never shadows it. Thus the image advertises its own
+two tracks, and `list_available_packages` merges the fragment with the farm
+inventory.
+
+#### Scenario: The image advertises its two owned tracks
+
+- **WHEN** the baked inventory fragment is read inside `sandbox-base`
+- **THEN** it lists the bioconda command-line tools and the Node packages, at a path outside `/mnt/libs`, so a mounted store does not shadow it
+
 #### Scenario: A plain container run resolves a mounted store
 
 - **GIVEN** `sandbox-base` run directly with a package store mounted at `/mnt/libs` and no harness
@@ -163,6 +176,63 @@ review exactly what was verified.
 - **WHEN** an acceptance run completes for an architecture
 - **THEN** its run summary contains a table of the import-all tally per track and the per-library validator outcome (pass / fail / error / skipped counts and the failing/errored libraries), plus the green/red status
 
+### Requirement: The load check is best-effort with a non-empty-track floor
+
+The store build SHALL run a **load check**. The check
+`import`/`library()`/`require()`/`--version`s each installed package, and it derives
+that track's `packages.txt` fragment from the set that loaded. A single package's
+load failure SHALL NOT fail the track — the package is simply absent from the
+fragment. A track that loaded **zero** packages SHALL fail the build (the non-empty
+floor), so a degenerate or empty track is never published.
+
+#### Scenario: A single load failure drops one package, not the track
+
+- **GIVEN** one manifest package that installs but fails to load, alongside others that load
+- **WHEN** the load check runs
+- **THEN** the failing package is absent from the fragment, the track still builds, and the loadable packages are advertised
+
+#### Scenario: An all-failed track fails the build
+
+- **GIVEN** a track in which no package loaded
+- **WHEN** the load check runs
+- **THEN** the build fails and no track is published
+
+### Requirement: The build emits a per-arch coverage report and guards against regressions
+
+After the load check, the store build SHALL emit a **coverage report**. The report
+is a table, per architecture and track, of the wanted, loaded, and missing package
+counts and names. The report SHALL diff the loaded set against the last published
+store. A regression is a package that the last `linux/amd64` store published, that
+the manifest still requests, and that no longer loads. A regression SHALL be
+reported and SHALL fail the build. A package that never built for `linux/arm64`
+SHALL be reported informationally and SHALL NOT fail the build.
+
+A previously-published package that the manifest **no longer requests** SHALL be
+reported as *dropped*, not as a regression. A drop SHALL NOT fail the build, on any
+architecture. A removal of a package from the manifest removes it, and any
+transitive dependency that came in with it, from the next published set. Thus a
+build that treats that as breakage would make a baseline reset necessary before
+every intentional removal could ship. The build SHALL print each drop by name, so
+an unintended removal is reviewable rather than silent.
+
+#### Scenario: A silent amd64 drop is a regression
+
+- **GIVEN** a package present in the last published `linux/amd64` store, still requested by the manifest, that no longer loads
+- **WHEN** the coverage report runs
+- **THEN** it is flagged as a regression and the build fails
+
+#### Scenario: An intentional removal is not a regression
+
+- **GIVEN** a package present in the last published `linux/amd64` store that the manifest no longer requests
+- **WHEN** the coverage report runs
+- **THEN** it is listed by name as dropped and the build does not fail
+
+#### Scenario: A missing arm64 package is tolerated
+
+- **GIVEN** a manifest package that does not build on `linux/arm64`
+- **WHEN** the coverage report runs
+- **THEN** it is listed as missing for arm64 without failing the build
+
 ## REMOVED Requirements
 
 ### Requirement: Every layer installs into the runtime mount path
@@ -189,3 +259,24 @@ normal case, not an edge case, and the extension path cannot work.
 `inflexa store add`, which writes into the store the sandbox actually mounts. A
 user who wants a private package set builds their own store rather than their own
 image.
+
+### Requirement: Managed-mount tarballs are extracted from the published images
+
+**Reason**: The managed per-track tarballs retire. The managed delivery is
+decoupled from OSS. No runtime image carries an R track or a Python track to
+extract after the retirement of the variants. Thus the source of the tarballs is
+gone.
+
+**Migration**: The content-addressed store publishes from the provisioner workflow
+(`.github/workflows/lib-store-provisioner.yml`). A managed mount obtains the store
+from the published store artifact, not from per-track tarballs cut out of an image.
+
+### Requirement: A store is validated against an equivalently built image
+
+**Reason**: No runtime image bakes the same package set after the retirement of the
+variants. Thus there is no equivalently built image to compare a store against.
+Acceptance is the validation.
+
+**Migration**: Acceptance validates the published store on a fresh machine, mounted
+read-only into the runtime image. The import-all invariant and the per-library
+smoke-test suite are the behavioral pass.

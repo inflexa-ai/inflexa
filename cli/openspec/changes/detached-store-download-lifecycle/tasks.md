@@ -84,12 +84,12 @@
 
 ## 8. Specs
 
-- [ ] 8.1 Apply the `lib-store-download-process` delta: the detached process, the six states, the row, the receipt split, the lock liveness, the single-flight rule, the download command, and the cancel command
-- [ ] 8.2 Apply the `lib-store-download` delta: the trigger at `inflexa setup`, the gate that reads the process state, and the gate treatment of `canceled`
-- [ ] 8.3 Apply the `lib-store-provisioning` delta: an unreadable inventory refuses each sandbox action and fails no boot, and `inflexa sandbox remove` joins the image surface
-- [ ] 8.4 Apply the `package-store-management` delta: `inflexa store download`, `inflexa store cancel`, and the download state in the inspection
-- [ ] 8.5 Apply the `setup-answers` delta: the `--sandbox` answer covers the catalog, setup starts the downloader, and a second setup blocks no step
-- [ ] 8.6 Reconcile `mandatory-store-and-farm-switch`, which owns the app-open trigger today. Its delta, its design, and its tasks each point at this change
+- [x] 8.1 Apply the `lib-store-download-process` delta: the detached process, the six states, the row, the receipt split, the lock liveness, the single-flight rule, the download command, and the cancel command
+- [x] 8.2 Apply the `lib-store-download` delta: the trigger at `inflexa setup`, the gate that reads the process state, and the gate treatment of `canceled`
+- [x] 8.3 Apply the `lib-store-provisioning` delta: an unreadable inventory refuses each sandbox action and fails no boot, and `inflexa sandbox remove` joins the image surface
+- [x] 8.4 Apply the `package-store-management` delta: `inflexa store download`, `inflexa store cancel`, and the download state in the inspection
+- [x] 8.5 Apply the `setup-answers` delta: the `--sandbox` answer covers the catalog, setup starts the downloader, and a second setup blocks no step
+- [x] 8.6 Reconcile `mandatory-store-and-farm-switch`, which owns the app-open trigger today. Its delta, its design, and its tasks each point at this change
 
 ## 9. Verification
 

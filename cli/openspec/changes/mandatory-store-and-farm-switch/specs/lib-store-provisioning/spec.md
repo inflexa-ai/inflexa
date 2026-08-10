@@ -167,16 +167,26 @@ remain as a fallback for a locally-tagged custom image.
 
 ### Requirement: The package inventory describes what will actually be mounted
 
-`list_available_packages` reads its inventory from a host path supplied by the CLI. The CLI SHALL supply the inventory of the store's active farm, which is the one store a sandbox mounts.
+`list_available_packages` reads its inventory from the host paths the CLI supplies. The CLI SHALL supply the inventory as the merge of two sources: the store's active farm, and the runtime image's baked fragment.
 
-The CLI SHALL NOT report an inventory from a source the sandbox will not mount.
-There is no second source: the runtime image bakes no library, so the per-image
-label cache describes an empty set. The CLI SHALL NOT fall back to it.
+The store is the first source. It carries the two farm tracks, which are the Python
+packages and the R packages. The CLI SHALL supply the inventory of the store's
+active farm, which is the one store a sandbox mounts.
 
-An inventory the CLI cannot read is a hard failure with a remedy, not a silent
-degradation. The CLI SHALL report that the store is unusable, SHALL name the
-remedy, and SHALL let the sandbox gate refuse the action. It SHALL NOT start a
-sandbox that would carry no library.
+The runtime image is the second source. It bakes a fragment that lists the two
+image-owned tracks, which are the bioconda command-line tools and the Node packages.
+The fragment is not host-visible. The CLI SHALL extract the fragment one time for
+each image and SHALL cache it on the host, keyed by the image digest. A pull of a
+new image gives a new digest, thus the cache refreshes itself.
+
+An absent fragment SHALL degrade to the store tracks alone. An extraction failure
+gives no fragment, and the CLI SHALL supply none. The tool then reports the store
+tracks alone. An absent fragment SHALL NOT fail the boot.
+
+An inventory of the STORE that the CLI cannot read is a hard failure with a remedy,
+not a silent degradation. The CLI SHALL report that the store is unusable, SHALL
+name the remedy, and SHALL let the sandbox gate refuse the action. It SHALL NOT
+start a sandbox that would carry no library.
 
 #### Scenario: The store supplies the inventory
 
@@ -190,11 +200,17 @@ sandbox that would carry no library.
 - **WHEN** a sandbox action runs
 - **THEN** the CLI reports the store as unusable, names the remedy, and starts no sandbox
 
-#### Scenario: The image label cache is never the inventory
+#### Scenario: The image fragment supplies the image-owned tracks
 
-- **GIVEN** a store that the harness would refuse
-- **WHEN** a sandbox action runs
-- **THEN** the CLI reads no inventory from the image label cache
+- **GIVEN** a store whose active farm carries a package inventory, and a runtime image with the baked fragment
+- **WHEN** a sandbox launches and `list_available_packages` runs
+- **THEN** it reads the farm's inventory merged with the image fragment, which the CLI extracted and cached by the image digest
+
+#### Scenario: An absent fragment degrades to the store tracks alone
+
+- **GIVEN** a runtime image whose fragment the CLI cannot extract
+- **WHEN** a sandbox launches and `list_available_packages` runs
+- **THEN** the CLI supplies no fragment, the boot continues, and the tool reports the store tracks alone
 
 ### Requirement: `inflexa sandbox status` reports the sandbox image
 
