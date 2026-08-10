@@ -7,6 +7,8 @@ import { reportSessionPrompt } from "../prompts/report-session.js";
 import { createRegistry } from "../tools/registry.js";
 import type { EmbeddingProvider } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
+import type { ThreadStore } from "../memory/thread-store.js";
+import type { ReportVersionStore } from "../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../tools/report-authoring/authoring-tools.js";
 
 // The composition root closes over its deps but never touches them at
@@ -20,14 +22,18 @@ function buildAgent() {
         workspaceFs: {} as WorkspaceFilesystem,
         gateway: {} as ReportSessionStateGateway,
         resolveWorkspaceRoot: (id: string) => join("/sessions", id),
+        store: {} as ReportVersionStore,
+        threads: {} as Pick<ThreadStore, "getThread">,
+        chrome: {},
     });
 }
 
 // The read surface toward the analysis. The roster roams the tree read-only.
 const READ_SURFACE = ["read_file", "list_files", "file_stat", "grep", "workspace_search", "inspect_run", "inspect_data_profile"] as const;
 
-// The composition surface: the eight authoring tools and the render-and-preview
-// tool. These nine ids are what makes the report path a report path.
+// The composition surface: the eight authoring tools, the render-and-preview tool,
+// the eyes tool, and the record tool. These eleven ids are what makes the report
+// path a report path.
 const COMPOSITION_SURFACE = [
     "add_block",
     "change_block",
@@ -38,6 +44,8 @@ const COMPOSITION_SURFACE = [
     "read_block",
     "finish_draft",
     "preview_report",
+    "examine_page",
+    "record_report_version",
 ] as const;
 
 // A tool that starts a run or writes an analysis has no place on this roster. Its
@@ -72,7 +80,7 @@ describe("createReportSessionAgent", () => {
         }
     });
 
-    test("holds the nine composition tools", () => {
+    test("holds the eleven composition tools", () => {
         const ids = new Set(buildAgent().tools.map((tool) => tool.id));
         for (const expected of COMPOSITION_SURFACE) {
             expect(ids.has(expected)).toBe(true);
@@ -120,6 +128,18 @@ describe("createReportSessionAgent", () => {
         }
         // The grounding rule is explicit: no number from memory.
         expect(reportSessionPrompt).toContain("never from memory");
+    });
+
+    test("the prompt teaches the verification loop and names the visual spiral", () => {
+        // The loop order and the two verification tools are stable substrings, thus
+        // the assertion does not couple to the full prose.
+        expect(reportSessionPrompt).toContain("preview, look, repair");
+        expect(reportSessionPrompt).toContain("examine_page");
+        expect(reportSessionPrompt).toContain("record_report_version");
+        expect(reportSessionPrompt).toContain("only after");
+        // The anti-pattern entry names the visual spiral.
+        expect(reportSessionPrompt).toContain("visual spiral");
+        expect(reportSessionPrompt).toContain("cosmetic doubt");
     });
 
     test("the definition carries no per-session value in the prompt", () => {

@@ -22,6 +22,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import type { AuthContext } from "../../auth/types.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { describeDbError } from "../../lib/db-result.js";
 import type { Logger } from "../../lib/logger.js";
@@ -63,14 +64,15 @@ export type RecordVersionResult =
  * The construction deps of the record tool.
  *
  * `store` is the append-only version store. `threads` reads the anchor of the report thread, thus the
- * version carries the parent conversation and the transcript position. `resolver` is optional, because a
- * resolver realization can be absent, and the gate needs one.
+ * version carries the parent conversation and the transcript position. `makeResolver` is optional, because a
+ * resolver realization can be absent, and the gate needs one. It binds one analysis, thus the tool makes the
+ * resolver over the scope of the call.
  */
 export interface RecordVersionToolDeps {
     readonly gateway: ReportSessionStateGateway;
     readonly store: ReportVersionStore;
     readonly threads: Pick<ThreadStore, "getThread">;
-    readonly resolver?: ReferenceResolver;
+    readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
     readonly logger?: Logger;
 }
 
@@ -123,11 +125,12 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
                 return ok({ outcome: "gaps", gaps: finished.gaps });
             }
 
-            if (deps.resolver === undefined) {
+            if (deps.makeResolver === undefined) {
                 return ok({ outcome: "resolver-unavailable" });
             }
+            const resolver = deps.makeResolver({ analysisId, auth: ctx.session.auth });
 
-            const validation = await validateReport(finished.document, snapshot, deps.resolver);
+            const validation = await validateReport(finished.document, snapshot, resolver);
             if (!validation.valid) {
                 return ok({
                     outcome: "invalid",

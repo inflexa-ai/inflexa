@@ -35,10 +35,20 @@ import {
     type ExecuteTargetAssessmentResult,
 } from "../workflows/execute-target-assessment.js";
 import { registerDataProfileWorkflow, type DataProfileDeps, type DataProfileWorkflowInput } from "../tasks/data-profile.js";
-import { registerExtractValuesWorkflow, type ExtractValuesResult, type ExtractValuesWorkflowInput } from "../tasks/extract-values.js";
+import {
+    bindExtractionTrigger,
+    createExtractionArm,
+    registerExtractValuesWorkflow,
+    type ExtractValuesResult,
+    type ExtractValuesWorkflowInput,
+} from "../tasks/extract-values.js";
 import { createCitationResolver, type CitationResolverConfig } from "../citations/resolve.js";
 import type { CitationResolver } from "../citations/types.js";
+import type { AuthContext } from "../auth/types.js";
+import { createThreadStore } from "../memory/thread-store.js";
+import { createProductionResolver } from "../report-model/production-resolver.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
+import { createReportVersionStore } from "../state/report-versions.js";
 
 /** Registered child sandbox-step callable the parent's child dispatch closes over. */
 export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -98,11 +108,11 @@ export interface CoreRuntimeDeps {
     /** Harness-owned citation capability configuration; no ambient lookup occurs. */
     readonly citationResolverConfig?: CitationResolverConfig;
     /**
-     * Reference-resolution seam for the report preview. Absent by default, thus the
-     * preview tool degrades as data until an embedder wires a realization. The
-     * realization itself stays out of the harness.
+     * The byte cap on the in-process host read of a report reference. A file over the
+     * cap falls through to the extraction arm. Absent, the resolver uses its 16 MiB
+     * default. The embedder tunes it here, thus a host changes it with no harness change.
      */
-    readonly reportReferenceResolver?: ReferenceResolver;
+    readonly reportHostReadCapBytes?: number;
 }
 
 /**
@@ -192,8 +202,8 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const executeTargetAssessment = registerExecuteTargetAssessment({ ...wf.executeTargetAssessment, usageRecorder });
     const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder });
     // The extraction workflow shares the profile's sandbox and authorization rails, thus it draws the same
-    // three seams from the profile deps. The arm over it stays unwired here, thus no production caller
-    // reaches this code yet. A later change binds the arm to the report resolver.
+    // three seams from the profile deps. The report resolver factory binds the extraction arm over this
+    // callable, thus a fall-through report reference reads its file out of process on the profile rails.
     const extractValues = registerExtractValuesWorkflow({
         sandboxClient: wf.dataProfile.sandboxClient,
         runAuthorizer: wf.dataProfile.runAuthorizer,
@@ -212,9 +222,28 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     // runtime binds the per-session state to the thread behind the tool boundary,
     // thus one definition serves every report thread. Its preview tool writes the
     // page into the analysis tree and returns the path, thus the page write reaches
-    // no host seam. The optional reference resolver is the one seam it can use, and
-    // it is absent by default.
+    // no host seam.
     const reportSession = createReportSessionRuntime({ pool: conversation.pool, ...(conversation.logger ? { logger: conversation.logger } : {}) });
+    const reportVersionStore = createReportVersionStore({ pool: conversation.pool, ...(conversation.logger ? { logger: conversation.logger } : {}) });
+    const reportThreads = createThreadStore(conversation.pool);
+
+    // The reference resolver of the report path, and its first production wiring. A
+    // resolver reads the pinned artifacts of one analysis, thus the factory binds one
+    // analysis and one auth for each tool call. The extraction arm falls through to the
+    // registered extract-values callable for an over-cap file, an unknown format, or a
+    // host parse fault. The cap gates the host read, and the resolver defaults it to 16 MiB.
+    const makeReportResolver = (scope: { analysisId: string; auth: AuthContext }): ReferenceResolver => {
+        const arm = createExtractionArm(
+            bindExtractionTrigger({ runAuthorizer: conversation.runAuthorizer, workflow: extractValues }, { auth: scope.auth, analysisId: scope.analysisId }),
+        );
+        return createProductionResolver({
+            workspaceRoot: conversation.resolveWorkspaceRoot(scope.analysisId),
+            analysisId: scope.analysisId,
+            extractionArm: arm,
+            ...(deps.reportHostReadCapBytes !== undefined ? { cap: deps.reportHostReadCapBytes } : {}),
+        });
+    };
+
     const reportAgent = createReportSessionAgent({
         model: conversation.model,
         pool: conversation.pool,
@@ -222,7 +251,10 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         workspaceFs: conversation.workspaceFs,
         gateway: reportSession.gateway,
         resolveWorkspaceRoot: conversation.resolveWorkspaceRoot,
-        ...(deps.reportReferenceResolver ? { resolver: deps.reportReferenceResolver } : {}),
+        store: reportVersionStore,
+        threads: reportThreads,
+        chrome: conversation.chrome,
+        makeResolver: makeReportResolver,
         ...(conversation.logger ? { logger: conversation.logger } : {}),
     });
 

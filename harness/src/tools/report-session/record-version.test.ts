@@ -99,7 +99,7 @@ describe("createRecordVersionTool", () => {
     });
 
     function makeTool(gateway: ReportSessionStateGateway) {
-        return createRecordVersionTool({ gateway, store, threads, resolver: createFixtureResolver() });
+        return createRecordVersionTool({ gateway, store, threads, makeResolver: () => createFixtureResolver() });
     }
 
     it("records nothing and names the block when an assert fails", async () => {

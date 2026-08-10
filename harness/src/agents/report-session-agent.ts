@@ -3,9 +3,9 @@
  *
  * `createReportSessionAgent` is the composition root of the report path. It gets
  * the shared deps one time, and it hands each tool exactly what it needs. The
- * authoring tools and the preview tool bind to the session-state gateway, thus one
- * assembled definition serves every thread, and the per-session state stays behind
- * the tool boundary.
+ * authoring tools, the preview tool, the eyes tool, and the record tool bind to the
+ * session-state gateway, thus one assembled definition serves every thread, and the
+ * per-session state stays behind the tool boundary.
  *
  * The roster is read-only toward the analysis. It holds the workspace read tools,
  * the workspace search, the run inspection, and the data-profile inspection. It
@@ -21,16 +21,20 @@
 
 import type { Pool } from "pg";
 
+import type { AuthContext } from "../auth/types.js";
 import type { AgentDefinition } from "../loop/types.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { EmbeddingProvider } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
+import type { ChromeConfig } from "../lib/chrome.js";
 import type { Logger } from "../lib/logger.js";
+import type { ThreadStore } from "../memory/thread-store.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
+import type { ReportVersionStore } from "../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../tools/report-authoring/authoring-tools.js";
 import { createReportAuthoringTools } from "../tools/report-authoring/authoring-tools.js";
-import { createPreviewReportTool } from "../tools/report-session/preview-report.js";
+import { createExaminePageTool, createPreviewReportTool, createRecordVersionTool } from "../tools/report-session/index.js";
 import { createFileStatTool, createGrepTool, createListFilesTool, createReadFileTool, createWorkspaceSearchTool } from "../tools/workspace/index.js";
 import { createInspectDataProfileTool, createInspectRunTool } from "../tools/research/index.js";
 import { reportSessionPrompt } from "../prompts/report-session.js";
@@ -48,8 +52,8 @@ const REPORT_SESSION_MAX_ITERATIONS = 50;
 /**
  * The shared dependencies of the report agent. The gateway binds the per-session
  * state to the thread, thus every tool that touches the state gets the same
- * gateway. The resolver is optional, because a resolver realization can be absent,
- * and the preview tool degrades as data when it is.
+ * gateway. The resolver factory is optional, because a resolver realization can be
+ * absent, and the preview tool and the record tool degrade as data when it is.
  */
 export interface ReportSessionAgentDeps {
     /** Model id -- the provenance and metric label. The provider owns the wire model. */
@@ -60,19 +64,28 @@ export interface ReportSessionAgentDeps {
     readonly embedding: EmbeddingProvider;
     /** Workspace filesystem read seam -- the four read tools. */
     readonly workspaceFs: WorkspaceFilesystem;
-    /** Session-state gateway -- the authoring tools and the preview tool bind to it. */
+    /** Session-state gateway -- the authoring tools, the preview tool, the eyes tool, and the record tool bind to it. */
     readonly gateway: ReportSessionStateGateway;
-    /** Workspace-root resolution seam -- the preview tool resolves the page root per call. */
+    /** Workspace-root resolution seam -- the preview tool and the eyes tool resolve the page root per call. */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
-    /** Reference-resolution seam -- absent until a realization lands; the preview tool degrades as data. */
-    readonly resolver?: ReferenceResolver;
+    /** Append-only version store -- the record tool gates the whole document first, then records one version. */
+    readonly store: ReportVersionStore;
+    /** Thread reader -- the record tool reads the anchor of the report thread. */
+    readonly threads: Pick<ThreadStore, "getThread">;
+    /** Headless-Chrome config -- the eyes tool opens the rendered page. */
+    readonly chrome: ChromeConfig;
+    /**
+     * Reference-resolution factory -- absent until a realization lands; the preview tool and the record tool
+     * degrade as data. The factory binds one analysis, thus a tool makes the resolver over the scope of the call.
+     */
+    readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
 }
 
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
-    const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, resolver, logger } = deps;
+    const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, makeResolver, logger } = deps;
     const authoring = createReportAuthoringTools(gateway);
 
     const tools: Tool[] = [
@@ -98,7 +111,22 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         createPreviewReportTool({
             gateway,
             resolveWorkspaceRoot,
-            ...(resolver ? { resolver } : {}),
+            ...(makeResolver ? { makeResolver } : {}),
+            ...(logger ? { logger } : {}),
+        }),
+        // The eyes tool. It opens the rendered page in headless Chrome.
+        createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot,
+            chrome,
+            ...(logger ? { logger } : {}),
+        }),
+        // The record tool. It gates the whole document, then records one version.
+        createRecordVersionTool({
+            gateway,
+            store,
+            threads,
+            ...(makeResolver ? { makeResolver } : {}),
             ...(logger ? { logger } : {}),
         }),
     ];
