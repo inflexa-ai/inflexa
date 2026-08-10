@@ -36,18 +36,21 @@ function oneSectionDraft(): DraftDocument {
 
 /**
  * An in-memory gateway. It holds one state for each thread, thus two threads stay isolated. The load and
- * the persist read and write the same map, thus a landed document is visible to the next load. A fault flag
- * forces the failure outcome, and the store clones each value to model a durable round trip.
+ * the persist read and write the same map, thus a landed document is visible to the next load. The full
+ * fault fails the load and the persist. The persist-only fault fails the persist but keeps the load, thus a
+ * test can isolate a land-time persist failure. The store clones each value to model a durable round trip.
  */
 interface FakeGateway extends ReportSessionStateGateway {
     seed(threadId: string, state: ReportSessionState): void;
     peek(threadId: string): ReportSessionState | undefined;
     setFault(fault: boolean): void;
+    setPersistFault(fault: boolean): void;
 }
 
 function makeFakeGateway(): FakeGateway {
     const rows = new Map<string, ReportSessionState>();
     let fault = false;
+    let persistFault = false;
     return {
         seed(threadId, state): void {
             rows.set(threadId, structuredClone(state));
@@ -59,6 +62,9 @@ function makeFakeGateway(): FakeGateway {
         setFault(value): void {
             fault = value;
         },
+        setPersistFault(value): void {
+            persistFault = value;
+        },
         load(threadId): Promise<SessionStateLoad> {
             if (fault) {
                 return Promise.resolve({ outcome: "failed", detail: "the store is down" });
@@ -69,6 +75,10 @@ function makeFakeGateway(): FakeGateway {
         persist(threadId, document): Promise<SessionStatePersist> {
             if (fault) {
                 return Promise.resolve({ outcome: "failed", detail: "the store is down" });
+            }
+            // The persist-only fault names a distinct detail, thus a test tells the persist branch from the load branch.
+            if (persistFault) {
+                return Promise.resolve({ outcome: "failed", detail: "the persist failed" });
             }
             const existing = rows.get(threadId);
             const snapshotOfThread = existing?.snapshot ?? snapshot;
@@ -238,6 +248,26 @@ describe("the tool-layer refusal", () => {
         if (!value.applied) {
             expect(value.refusal.reason).toBe("state-unavailable");
         }
+    });
+
+    it("refuses at the persist step, and the gateway holds the old document", async () => {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot });
+        // Only the persist fails. Thus the load gives the state, and the add lands in the pure core first.
+        gateway.setPersistFault(true);
+        const tools = createReportAuthoringTools(gateway);
+
+        const result = await tools.add_block.execute({ block: { kind: "text", id: "t1", content: { prose: "x" } }, parentId: "s1" }, ctxForThread("t1"));
+
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(false);
+        if (!value.applied) {
+            expect(value.refusal.reason).toBe("state-unavailable");
+            // The detail comes from the persist, thus the refusal is the persist branch and not the load branch.
+            expect(value.refusal.detail).toBe("the persist failed");
+        }
+        // The persist failed after the add landed, thus the row keeps the old draft with an empty section.
+        expect(gateway.peek("t1")!.document.sections[0]!.blocks).toEqual([]);
     });
 });
 

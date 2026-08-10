@@ -5,7 +5,7 @@ The tool surface MUST give a title operation that sets the title of the whole do
 
 #### Scenario: The title lands
 - **WHEN** the agent sets the title of the draft
-- **THEN** the document holds the title, and the result carries `applied: true` with the fresh outline
+- **THEN** the document holds the title, and the result carries `applied: true` with an empty changed list
 
 ## MODIFIED Requirements
 

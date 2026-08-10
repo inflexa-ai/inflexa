@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
+import type { ThreadAgentResolver, UnregisteredThreadType } from "@inflexa-ai/harness";
+
 import { createThreadAgentResolver } from "./assemble.js";
 import type { AgentDefinition } from "../loop/types.js";
 import type { ThreadType } from "../memory/thread-store.js";
@@ -68,5 +70,18 @@ describe("createThreadAgentResolver", () => {
                 (refusal) => refusal,
             );
         expect(reduced).toEqual({ type: "unregistered_thread_type", threadType: "report" });
+    });
+});
+
+describe("the barrel resolution surface", () => {
+    it("exports the resolver type, thus an embedder needs no deep path", () => {
+        // The assignment proves that the barrel type accepts the built resolver. A
+        // drift or a dropped export fails it at the type level.
+        const resolver: ThreadAgentResolver = createThreadAgentResolver(registry());
+        const outcome = resolver.forThread("report");
+        expect(outcome.isErr()).toBe(true);
+        // The barrel error type is the refusal type. Thus the error branch assigns to it.
+        const refusal: UnregisteredThreadType | undefined = outcome.isErr() ? outcome.error : undefined;
+        expect(refusal).toEqual({ type: "unregistered_thread_type", threadType: "report" });
     });
 });
