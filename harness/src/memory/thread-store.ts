@@ -22,10 +22,10 @@
  * row and the thread reads as it did; a listing widened with `includeArchived`
  * is the only way to obtain the id it takes, so the recovery is reachable by a
  * host that holds no thread ids it obtained elsewhere.
- * `purgeThread` is not recoverable: it removes the `messages` rows and the
- * metadata rows of the whole subtree in one transaction, so a failure partway
- * leaves both — never a thread stripped of its transcript, nor a transcript
- * with nothing naming it. It is the thread-scoped member of this package's
+ * `purgeThread` is not recoverable: it removes the `messages` rows, the report
+ * session-state rows, and the metadata rows of the whole subtree in one
+ * transaction, so a failure partway leaves them all — never a thread stripped of
+ * its transcript, nor a transcript with nothing naming it. It is the thread-scoped member of this package's
  * reclamation vocabulary — `purgeAnalysis` reclaims an analysis's whole
  * persisted footprint, `purgeThread` one subtree's.
  *
@@ -517,10 +517,10 @@ export function createThreadStore(pool: Pool): ThreadStore {
     }
 
     function purgeThread(threadId: string): ResultAsync<void, DbError> {
-        // One transaction for both statements: `messages` is attributable to an
+        // One transaction for every statement: `messages` is attributable to an
         // analysis only by joining through `cortex_analysis_threads`, so a metadata
         // row removed without its messages strands them beyond the reach of any
-        // later reclamation. Either the pair goes or neither does.
+        // later reclamation. Either the whole set goes or none of it does.
         //
         // The explicit message delete must reach the same depth the database
         // cascade reaches. The cascade on `parent_thread_id` removes a
@@ -529,9 +529,16 @@ export function createThreadStore(pool: Pool): ThreadStore {
         // would strand a grandchild's transcript exactly as a bare cascade strands
         // a child's.
         //
-        // Messages go first: the walk both statements share reads the very rows
-        // the second one removes, so the reverse order would leave the subtree
-        // unresolvable by the time its transcripts were named.
+        // The session state of a report thread goes the same way, and for the same
+        // reason: `cortex_report_session_state` carries no foreign key to
+        // `cortex_analysis_threads` either, so the cascade cannot reach it. Its row
+        // holds a whole draft document, and a purged thread can never be composed
+        // again, so a row left behind is dead weight until the analysis purge runs.
+        //
+        // Messages go first, and the thread rows go last: the walk every statement
+        // shares reads the very rows the last one removes, so a thread delete before
+        // the others would leave the subtree unresolvable by the time its transcripts
+        // and its drafts were named.
         return withTransaction(pool, "thread-store.purgeThread", (client) =>
             tryMutation("thread-store.purgeThread.messages", () =>
                 client.query(
@@ -540,6 +547,15 @@ export function createThreadStore(pool: Pool): ThreadStore {
                     [threadId],
                 ),
             )
+                .andThen(() =>
+                    tryMutation("thread-store.purgeThread.reportSessionState", () =>
+                        client.query(
+                            `${SUBTREE_CTE}
+         DELETE FROM cortex_report_session_state WHERE thread_id IN (SELECT thread_id FROM subtree)`,
+                            [threadId],
+                        ),
+                    ),
+                )
                 .andThen(() =>
                     tryMutation("thread-store.purgeThread.thread", () =>
                         client.query(

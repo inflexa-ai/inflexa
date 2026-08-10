@@ -20,7 +20,6 @@ import { err, ok, type Result } from "neverthrow";
 import { createConversationAgent, type ConversationAgentDeps } from "../agents/conversation-agent.js";
 import { createReportSessionAgent } from "../agents/report-session-agent.js";
 import { createReportSessionRuntime } from "../app/report-session-runtime.js";
-import { UnavailablePreviewPublisher, type PreviewPublisher } from "../tools/report/preview-publisher.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
@@ -95,12 +94,6 @@ export interface CoreRuntimeDeps {
     readonly usageRecorder?: UsageRecorder;
     /** Harness-owned citation capability configuration; no ambient lookup occurs. */
     readonly citationResolverConfig?: CitationResolverConfig;
-    /**
-     * Preview-publishing seam of the report path. A managed embedder injects a
-     * realization that mints hosted access; the OSS root falls back to the
-     * unavailable publisher, and the preview tool then reports the absence as data.
-     */
-    readonly reportPreviewPublisher?: PreviewPublisher;
 }
 
 /**
@@ -193,8 +186,8 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
 
     // The report agent is a singleton over the conversation deps. The session
     // runtime binds the per-session state to the thread behind the tool boundary,
-    // thus one definition serves every report thread. The preview tool degrades as
-    // data when its publisher realization is absent.
+    // thus one definition serves every report thread. Its preview tool writes the
+    // page into the analysis tree and returns the path, so it reaches no seam.
     const reportSession = createReportSessionRuntime({ pool: conversation.pool, ...(conversation.logger ? { logger: conversation.logger } : {}) });
     const reportAgent = createReportSessionAgent({
         model: conversation.model,
@@ -203,7 +196,6 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         workspaceFs: conversation.workspaceFs,
         gateway: reportSession.gateway,
         resolveWorkspaceRoot: conversation.resolveWorkspaceRoot,
-        previews: deps.reportPreviewPublisher ?? new UnavailablePreviewPublisher(),
         ...(conversation.logger ? { logger: conversation.logger } : {}),
     });
 
