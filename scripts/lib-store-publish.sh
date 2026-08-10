@@ -58,6 +58,25 @@ ARCH_DIR="linux-$ARCH"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# Does this key already exist? Only a 404 answers "no". Every other failure —
+# a 403 from a publish role missing s3:GetObject, throttling, a transport error —
+# means the question went unanswered, and the immutability guards below both
+# treat "unanswered" as "absent" if we let them: put_once would re-upload over a
+# published tarball, and the manifest check would skip its drift comparison and
+# overwrite. Both silently destroy exactly what they exist to protect, so an
+# indeterminate HEAD is fatal rather than a shrug.
+object_exists() {
+  local key="$1" err rc=0
+  err="$(aws s3api head-object --bucket "$S3_BUCKET" --key "$key" 2>&1 >/dev/null)" || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  case "$err" in
+    *404*|*"Not Found"*) return 1 ;;
+  esac
+  echo "::error::Could not determine whether s3://$S3_BUCKET/$key already exists (aws exited $rc): $err" >&2
+  echo "::error::Refusing to publish — the immutability guard cannot run, and continuing risks overwriting a published object. A 403 here usually means the publish role is missing s3:GetObject on this bucket." >&2
+  exit 1
+}
+
 # Immutable: a version is never rewritten; skip an object that already exists.
 put_once() {
   local src="$1" key="$VERSION/$ARCH_DIR/$2"
@@ -65,7 +84,7 @@ put_once() {
     echo "publish disabled: skipped the upload of $key"
     return 0
   fi
-  if aws s3api head-object --bucket "$S3_BUCKET" --key "$key" >/dev/null 2>&1; then
+  if object_exists "$key"; then
     echo "immutable: s3://$S3_BUCKET/$key already exists — skipping"
   else
     aws s3 cp "$src" "s3://$S3_BUCKET/$key"
@@ -120,7 +139,7 @@ fi
 # and FAIL LOUD on drift (cut a new version) rather than overwrite.
 "$SCRIPT_DIR/lib-store-write-manifest.sh" "$ARCH" "$VERSION" "$DIST" > "$WORK/manifest.json"
 MANIFEST_KEY="$VERSION/$ARCH_DIR/manifest.json"
-if aws s3api head-object --bucket "$S3_BUCKET" --key "$MANIFEST_KEY" >/dev/null 2>&1; then
+if object_exists "$MANIFEST_KEY"; then
   aws s3 cp "s3://$S3_BUCKET/$MANIFEST_KEY" "$WORK/manifest.published.json"
   # Drop buildTimestamp (per-run `date` stamp) before comparing — the check is about
   # integrity, not the publish wall-clock; everything else is deterministic per VERSION.
