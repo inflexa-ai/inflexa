@@ -21,10 +21,11 @@ import type { ProvFileKey } from "./types.js";
 // The read side of the dialect: one interpretation of a stored PROV-JSON document, shared by every
 // consumer. `deriveLineageModel` turns the exact stored bytes into a typed, presentation-free
 // node/edge model. `computeLineage` walks the generation/usage edges with the canonical traversal
-// semantics. `findFileEntity` is the `(path, hash)` identity lookup that cross-links an external
-// artifact record to its entity. A consumer that interprets the bytes itself can drift, and two
-// drifted readers show two different lineages for one signed document — thus the interpretation is
-// format and lives in the kernel.
+// semantics and reports its own depth truncation. `computeReachable` is the unbounded reachability
+// closure over a chosen edge-kind set, for subgraph and highlight consumers. `findFileEntity` is
+// the `(path, hash)` identity lookup that cross-links an external artifact record to its entity. A
+// consumer that interprets the bytes itself can drift, and two drifted readers show two different
+// lineages for one signed document — thus the interpretation is format and lives in the kernel.
 
 /** Why a document did not derive: the bytes do not parse or unify as a dialect document. */
 export type ProvReadError = { type: "prov_corrupt"; cause: unknown };
@@ -358,38 +359,43 @@ export function deriveLineageModel(provJson: string): Result<LineageModel, ProvR
     }
 }
 
+/** The lineage walk's result: the reached sub-model plus the QNames the depth bound cut. */
+export type LineageWalk = LineageModel & { truncated: string[] };
+
+const LINEAGE_EDGE_KINDS: ReadonlySet<LineageEdgeKind> = new Set(["generated", "used"]);
+
+const ALL_EDGE_KINDS: readonly LineageEdgeKind[] = ["used", "generated", "informed", "derived", "attributed", "associated", "invalidated"];
+
+type Traversal = { best: Map<string, number>; reached: Map<string, LineageEdge>; truncated: string[] };
+
 /**
- * Walk the lineage of `roots` and return the reached sub-model. The walk traverses ONLY the
- * `generated` and `used` edges: the coarse `derived` edge to the analysis and the `informed` spine
- * would pollute a file's lineage, so they stay out. Backward follows the asserted edges (a file to
- * its generator, an activity to what it read); forward reverses them (a file to its readers, an
- * activity to its outputs).
- *
- * `depth` counts file-level hops. One file hop (file to activity to file) is two edges, thus the
- * edge budget is `2n` from a file root and `2n - 1` from an activity root — a truncation always
- * lands on a file node, never between an activity and its files. An unset `depth` walks the whole
- * reachable component. A root the model does not contain adds nothing.
+ * The shared walk core: breadth-first over the directed adjacency of the selected edge kinds, keyed
+ * by the best remaining edge budget per node — a node reached again with a larger budget
+ * re-expands, so the bound is the minimum distance over all roots.
  */
-export function computeLineage(model: LineageModel, roots: readonly string[], opts: { direction: "forward" | "backward"; depth?: number }): LineageModel {
+function traverse(
+    model: LineageModel,
+    roots: readonly string[],
+    direction: "forward" | "backward",
+    kinds: ReadonlySet<LineageEdgeKind>,
+    budgetOf: (root: LineageNode) => number,
+): Traversal {
     const nodeByQn = new Map(model.nodes.map((n) => [n.qn, n]));
     const adjacency = new Map<string, { edge: LineageEdge; to: string }[]>();
     for (const edge of model.edges) {
-        if (edge.kind !== "generated" && edge.kind !== "used") continue;
-        const [from, to] = opts.direction === "backward" ? [edge.from, edge.to] : [edge.to, edge.from];
+        if (!kinds.has(edge.kind)) continue;
+        const [from, to] = direction === "backward" ? [edge.from, edge.to] : [edge.to, edge.from];
         const bucket = adjacency.get(from);
         if (bucket) bucket.push({ edge, to });
         else adjacency.set(from, [{ edge, to }]);
     }
 
-    // Breadth-first over the directed adjacency, keyed by the best remaining edge budget per node —
-    // a node reached again with a larger budget re-expands, so the bound is the minimum distance
-    // over all roots.
     const best = new Map<string, number>();
     const queue: { qn: string; remaining: number }[] = [];
     for (const qn of roots) {
         const root = nodeByQn.get(qn);
         if (root === undefined) continue;
-        const remaining = opts.depth === undefined ? Number.POSITIVE_INFINITY : root.kind === "activity" ? 2 * opts.depth - 1 : 2 * opts.depth;
+        const remaining = budgetOf(root);
         if ((best.get(qn) ?? -1) < remaining) {
             best.set(qn, remaining);
             queue.push({ qn, remaining });
@@ -409,7 +415,62 @@ export function computeLineage(model: LineageModel, roots: readonly string[], op
         }
     }
 
-    return { nodes: model.nodes.filter((n) => best.has(n.qn)), edges: model.edges.filter((e) => reached.has(e.id)) };
+    // An edge is recorded only by expanding its traversal-direction source, so a node whose final
+    // budget is exactly 0 with any qualifying edge at all has those edges unexpanded — the walk
+    // knows its own truncation, no wider re-walk needed. A node at the bound with an empty
+    // adjacency stays unmarked: its emptiness is genuine.
+    const truncated: string[] = [];
+    for (const [qn, remaining] of best) {
+        if (remaining === 0 && (adjacency.get(qn)?.length ?? 0) > 0) truncated.push(qn);
+    }
+    return { best, reached, truncated };
+}
+
+/**
+ * Walk the lineage of `roots` and return the reached sub-model. The walk traverses ONLY the
+ * `generated` and `used` edges: the coarse `derived` edge to the analysis and the `informed` spine
+ * would pollute a file's lineage, so they stay out. Backward follows the asserted edges (a file to
+ * its generator, an activity to what it read); forward reverses them (a file to its readers, an
+ * activity to its outputs).
+ *
+ * `depth` counts file-level hops. One file hop (file to activity to file) is two edges, thus the
+ * edge budget is `2n` from a file root and `2n - 1` from an activity root — a truncation always
+ * lands on a file node, never between an activity and its files. An unset `depth` walks the whole
+ * reachable component. A root the model does not contain adds nothing.
+ *
+ * `truncated` holds each in-scope node the depth bound cut: a node with at least one qualifying
+ * edge the walk did not expand. A node at the bound with nothing beyond it is not truncated.
+ */
+export function computeLineage(model: LineageModel, roots: readonly string[], opts: { direction: "forward" | "backward"; depth?: number }): LineageWalk {
+    const { best, reached, truncated } = traverse(model, roots, opts.direction, LINEAGE_EDGE_KINDS, (root) =>
+        opts.depth === undefined ? Number.POSITIVE_INFINITY : root.kind === "activity" ? 2 * opts.depth - 1 : 2 * opts.depth,
+    );
+    return { nodes: model.nodes.filter((n) => best.has(n.qn)), edges: model.edges.filter((e) => reached.has(e.id)), truncated };
+}
+
+/**
+ * Compute the reachability closure of `roots` and return the reached sub-model — reachability, not
+ * lineage: no depth, and every edge kind traverses unless `edgeKinds` narrows the set. Backward
+ * follows the asserted edges, forward reverses them, and `"both"` is the union of the two
+ * directional closures from the same roots (an upstream-plus-downstream cone, NOT undirected
+ * connectivity — a sibling consumer of a shared input stays out). A root the model does not
+ * contain adds nothing.
+ */
+export function computeReachable(
+    model: LineageModel,
+    roots: readonly string[],
+    opts: { direction: "forward" | "backward" | "both"; edgeKinds?: readonly LineageEdgeKind[] },
+): LineageModel {
+    const kinds: ReadonlySet<LineageEdgeKind> = new Set(opts.edgeKinds ?? ALL_EDGE_KINDS);
+    const directions = opts.direction === "both" ? (["backward", "forward"] as const) : ([opts.direction] as const);
+    const visited = new Set<string>();
+    const reached = new Set<string>();
+    for (const direction of directions) {
+        const walk = traverse(model, roots, direction, kinds, () => Number.POSITIVE_INFINITY);
+        for (const qn of walk.best.keys()) visited.add(qn);
+        for (const id of walk.reached.keys()) reached.add(id);
+    }
+    return { nodes: model.nodes.filter((n) => visited.has(n.qn)), edges: model.edges.filter((e) => reached.has(e.id)) };
 }
 
 /**

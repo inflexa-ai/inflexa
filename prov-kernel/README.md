@@ -3,7 +3,8 @@
 `@inflexa-ai/prov-kernel` is the Inflexa provenance format kernel. It carries the
 Inflexa PROV dialect: the document model (QName derivation, unify options, an
 injectable digest, and the `appendLifecycleAction` extension primitive), the
-lineage read model (`deriveLineageModel`, `computeLineage`, `findFileEntity`),
+lineage read model (`deriveLineageModel`, `computeLineage`, `computeReachable`,
+`findFileEntity`),
 the chain-hash and Ed25519 sign/verify primitives, the signed-attestation
 schema, and the actor and ref value types that the events carry.
 [`SPEC.md`](SPEC.md) gives the exact wire format, sufficient for an independent

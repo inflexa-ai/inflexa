@@ -16,7 +16,8 @@ Inflexa PROV dialect, and nothing else:
 - the signing primitives (`src/signing.ts`): the chain hash, Ed25519
   sign/verify, and the `ProvSigner` seam
 - the lineage read model (`src/lineage.ts`): the node/edge model derived from
-  stored PROV-JSON, the generation/usage traversal, and the `(path, hash)`
+  stored PROV-JSON, the generation/usage traversal with self-reported depth
+  truncation, the all-edge-kind reachability closure, and the `(path, hash)`
   file-entity lookup — the one read-side interpretation every consumer shares
 - verification and the signed attestation (`src/verify.ts`)
 - the actor and ref value types the builders accept (`src/types.ts`)

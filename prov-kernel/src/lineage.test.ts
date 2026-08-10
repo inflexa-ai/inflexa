@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import type { ProvDocument } from "@inflexa-ai/tsprov";
 import { createProvDocumentModel, PROV_UNIFY_OPTIONS, type ProvDocumentModel } from "./document.js";
 import { applyProvEvent } from "./events.js";
-import { computeLineage, deriveLineageModel, findFileEntity, type LineageModel } from "./lineage.js";
+import { computeLineage, computeReachable, deriveLineageModel, findFileEntity, type LineageModel } from "./lineage.js";
 import type { ProvActor, ProvCommandRef, ProvFileRef, ProvModelId, ProvStepRef } from "./types.js";
 
 // The read model is tested against two sources: the committed golden fixture (the exact stored
@@ -395,7 +395,198 @@ describe("computeLineage — depth", () => {
     });
 
     test("a root the model does not contain adds nothing", () => {
-        expect(computeLineage(chainModel, ["inflexa:file-nope"], { direction: "backward" })).toEqual({ nodes: [], edges: [] });
+        expect(computeLineage(chainModel, ["inflexa:file-nope"], { direction: "backward" })).toEqual({ nodes: [], edges: [], truncated: [] });
+    });
+});
+
+describe("computeLineage — truncated", () => {
+    test("the file cut by the bound is truncated; an unbounded walk reports none", () => {
+        expect(computeLineage(chainModel, [fileQn(heatmapKey)], { direction: "backward", depth: 1 }).truncated).toEqual([fileQn(deResultsKey)]);
+        expect(computeLineage(chainModel, [fileQn(heatmapKey)], { direction: "backward" }).truncated).toEqual([]);
+    });
+
+    test("a node at the bound with nothing beyond it stays unmarked", () => {
+        // At depth 2 both counts and the script sit at the bound: the script's write_file producer
+        // lies beyond, counts has no producer at all.
+        const walk = computeLineage(chainModel, [fileQn(heatmapKey)], { direction: "backward", depth: 2 });
+        expect(qns(walk)).toContain(fileQn(countsKey));
+        expect(walk.truncated).toEqual([fileQn(scriptKey)]);
+    });
+
+    test("an activity root's bound cuts on its file, one edge earlier", () => {
+        expect(computeLineage(chainModel, [bQn], { direction: "backward", depth: 1 }).truncated).toEqual([fileQn(deResultsKey)]);
+    });
+
+    test("a forward walk truncates on the file whose readers lie beyond", () => {
+        const walk = computeLineage(chainModel, [fileQn(countsKey)], { direction: "forward", depth: 1 });
+        expect(walk.truncated).toEqual([fileQn(deResultsKey)]);
+        // The leaf sits at the same bound with no reader beyond it.
+        expect(qns(walk)).toContain(fileQn(leafKey));
+    });
+
+    test("a second root inside the bound un-truncates what it re-expands", () => {
+        const walk = computeLineage(chainModel, [fileQn(heatmapKey), fileQn(deResultsKey)], { direction: "backward", depth: 1 });
+        expect(qns(walk)).toContain(fileQn(countsKey));
+        expect(walk.truncated).toEqual([fileQn(scriptKey)]);
+    });
+});
+
+describe("computeLineage — truncated is equivalent to the depth+1 diff derivation", () => {
+    // The re-derivation a consumer would otherwise run: the same walk one file hop wider reveals
+    // exactly the edges the bounded walk left unexpanded, and each such edge's walk-direction
+    // source that sits inside the bounded scope is a truncation point.
+    function diffTruncated(model: LineageModel, roots: readonly string[], direction: "forward" | "backward", depth: number): string[] {
+        const bounded = computeLineage(model, roots, { direction, depth });
+        const scoped = new Set(qns(bounded));
+        const reached = new Set(bounded.edges.map((e) => e.id));
+        const out = new Set<string>();
+        for (const edge of computeLineage(model, roots, { direction, depth: depth + 1 }).edges) {
+            if (reached.has(edge.id)) continue;
+            const source = direction === "backward" ? edge.from : edge.to;
+            if (scoped.has(source)) out.add(source);
+        }
+        return [...out].sort();
+    }
+
+    function selfReadModel(): LineageModel {
+        const doc = provModel.freshDocument({ analysisId: "a1" });
+        const selfKey = { path: "runs/run-001/step-de/output/self.csv", hash: "hashSelf01" };
+        const selfRead: ProvCommandRef = { kind: "command", command: "bash gen.sh", exitCode: 0, outputs: [selfKey], inputs: [{ ...selfKey, source: "step" }] };
+        applyProvEvent(provModel, doc, { type: "command_executed", analysisId: "a1", actor: system, step: stepRef, command: selfRead, model });
+        applyProvEvent(provModel, doc, {
+            type: "file_written",
+            analysisId: "a1",
+            actor: system,
+            file: fileRefOf(selfKey),
+            step: stepRef,
+            generation: "command",
+        });
+        return modelFrom(doc);
+    }
+
+    function crossRunModel(): LineageModel {
+        const doc = chainDoc(provModel);
+        const readerStep: ProvStepRef = { runId: "run-002", stepId: "step-model" };
+        const modelKey = { path: "runs/run-002/step-model/output/model.bin", hash: "hashModel1" };
+        const fit: ProvCommandRef = {
+            kind: "command",
+            command: "python fit.py",
+            exitCode: 0,
+            outputs: [modelKey],
+            inputs: [{ ...deResultsKey, source: "prior" }],
+        };
+        applyProvEvent(provModel, doc, {
+            type: "step_completed",
+            analysisId: "a1",
+            actor: system,
+            outcome: { runId: "run-002", stepId: "step-model", status: "completed", completedAtMs: 1_700_000_003_000 },
+            model,
+        });
+        applyProvEvent(provModel, doc, { type: "command_executed", analysisId: "a1", actor: system, step: readerStep, command: fit, model });
+        applyProvEvent(provModel, doc, {
+            type: "file_written",
+            analysisId: "a1",
+            actor: system,
+            file: fileRefOf(modelKey),
+            step: readerStep,
+            generation: "command",
+        });
+        return modelFrom(doc);
+    }
+
+    const fixtures: [string, LineageModel][] = [
+        ["chain", chainModel],
+        ["golden", deriveLineageModel(goldenJson)._unsafeUnwrap()],
+        ["self-read", selfReadModel()],
+        ["cross-run", crossRunModel()],
+    ];
+
+    for (const [name, fixture] of fixtures) {
+        test(`${name}: every root set, both directions, depths 0–4`, () => {
+            const rootSets: string[][] = [
+                ...fixture.nodes.map((n) => [n.qn]),
+                fixture.nodes.filter((n) => n.kind === "file").map((n) => n.qn),
+                [fixture.nodes.find((n) => n.kind === "activity")!.qn, fixture.nodes.find((n) => n.kind === "file")!.qn],
+            ];
+            for (const roots of rootSets) {
+                for (const direction of ["backward", "forward"] as const) {
+                    for (let depth = 0; depth <= 4; depth++) {
+                        const inWalk = [...computeLineage(fixture, roots, { direction, depth }).truncated].sort();
+                        expect(inWalk).toEqual(diffTruncated(fixture, roots, direction, depth));
+                    }
+                }
+            }
+        });
+    }
+});
+
+describe("computeReachable — golden document", () => {
+    const golden = deriveLineageModel(goldenJson)._unsafeUnwrap();
+
+    test("both directions from a consumed input reaches the full dataflow cone and nothing else", () => {
+        const sub = computeReachable(golden, ["inflexa:file-2cl35k0tb4udj"], { direction: "both" });
+        expect(qns(sub).sort()).toEqual([
+            "inflexa:cmd-r1-s1-1gmep6ya47zjz",
+            "inflexa:cmd-r1-s1-302d2bs8ad5ko",
+            "inflexa:cmd-r1-s1-3on7qauhakeey",
+            "inflexa:file-18bvqsvo19q9p",
+            "inflexa:file-2cl35k0tb4udj",
+            "inflexa:file-2oo1fa1324nay",
+            "inflexa:file-8cpsktnfc9if",
+            "inflexa:file-c0kyjyc0bmim",
+            "inflexa:file-monvuc8rxoat",
+            "inflexa:step-r1-s1",
+        ]);
+    });
+
+    test("a produced file reaches its agents via associated/attributed and the analysis via derived", () => {
+        const sub = computeReachable(golden, ["inflexa:file-18bvqsvo19q9p"], { direction: "both" });
+        const reached = new Set(qns(sub));
+        expect(reached.has("inflexa:file-18bvqsvo19q9p")).toBe(true);
+        expect(reached.has("inflexa:cmd-r1-s1-302d2bs8ad5ko")).toBe(true);
+        expect(reached.has("inflexa:step-r1-s1")).toBe(true);
+        expect(reached.has("inflexa:run-r1")).toBe(true);
+        expect(reached.has("inflexa:analysis-a-golden")).toBe(true);
+        expect(reached.has("inflexa:agent-system")).toBe(true);
+        // A sibling command's exclusive output is not in this file's cone.
+        expect(reached.has("inflexa:file-c0kyjyc0bmim")).toBe(false);
+    });
+
+    test("edgeKinds narrows the closure", () => {
+        // Generation/usage alone: no spine, no analysis, no agents.
+        const dataflow = computeReachable(golden, ["inflexa:file-18bvqsvo19q9p"], { direction: "both", edgeKinds: ["generated", "used"] });
+        expect(dataflow.nodes.some((n) => n.kind === "agent")).toBe(false);
+        expect(qns(dataflow)).not.toContain("inflexa:analysis-a-golden");
+        expect(qns(dataflow)).not.toContain("inflexa:run-r1");
+        // Adding the informed spine reaches the run; the agents still need associated/attributed.
+        const withSpine = computeReachable(golden, ["inflexa:file-18bvqsvo19q9p"], { direction: "both", edgeKinds: ["generated", "used", "informed"] });
+        expect(qns(withSpine)).toContain("inflexa:run-r1");
+        expect(withSpine.nodes.some((n) => n.kind === "agent")).toBe(false);
+    });
+
+    test("a root the model does not contain adds nothing", () => {
+        expect(computeReachable(golden, ["inflexa:file-nope"], { direction: "both" })).toEqual({ nodes: [], edges: [] });
+    });
+});
+
+describe("computeReachable — directions on the chain", () => {
+    test("backward is the upstream closure only, forward the downstream only", () => {
+        const backward = new Set(qns(computeReachable(chainModel, [fileQn(deResultsKey)], { direction: "backward" })));
+        expect(backward.has(aQn)).toBe(true);
+        expect(backward.has(fileQn(countsKey))).toBe(true);
+        expect(backward.has(bQn)).toBe(false);
+        expect(backward.has(fileQn(heatmapKey))).toBe(false);
+
+        const forward = new Set(qns(computeReachable(chainModel, [fileQn(deResultsKey)], { direction: "forward" })));
+        expect(forward.has(bQn)).toBe(true);
+        expect(forward.has(fileQn(heatmapKey))).toBe(true);
+        expect(forward.has(aQn)).toBe(false);
+    });
+
+    test("restricted to generation/usage it reaches exactly the unbounded lineage scope", () => {
+        const walk = computeLineage(chainModel, [fileQn(heatmapKey)], { direction: "backward" });
+        const sub = computeReachable(chainModel, [fileQn(heatmapKey)], { direction: "backward", edgeKinds: ["generated", "used"] });
+        expect(sub).toEqual({ nodes: walk.nodes, edges: walk.edges });
     });
 });
 

@@ -20,6 +20,8 @@ try {
     "createProvDocumentModel",
     "defaultProvDigest",
     "deriveLineageModel",
+    "computeLineage",
+    "computeReachable",
     "createKeypairSigner",
     "computeChainHash",
     "buildAttestation",
