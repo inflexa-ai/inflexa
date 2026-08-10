@@ -35,6 +35,7 @@ import {
     type ExecuteTargetAssessmentResult,
 } from "../workflows/execute-target-assessment.js";
 import { registerDataProfileWorkflow, type DataProfileDeps, type DataProfileWorkflowInput } from "../tasks/data-profile.js";
+import { registerExtractValuesWorkflow, type ExtractValuesResult, type ExtractValuesWorkflowInput } from "../tasks/extract-values.js";
 import { createCitationResolver, type CitationResolverConfig } from "../citations/resolve.js";
 import type { CitationResolver } from "../citations/types.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
@@ -68,6 +69,7 @@ export interface RegisteredWorkflows {
     readonly sandboxStep: SandboxStepCallable;
     readonly executeTargetAssessment: (input: ExecuteTargetAssessmentInput) => Promise<ExecuteTargetAssessmentResult>;
     readonly dataProfile: (input: DataProfileWorkflowInput) => Promise<void>;
+    readonly extractValues: (input: ExtractValuesWorkflowInput) => Promise<ExtractValuesResult>;
 }
 
 /**
@@ -189,6 +191,14 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const executeAnalysis = registerExecuteAnalysis({ ...wf.buildExecuteAnalysis(sandboxStep), citationResolver, usageRecorder });
     const executeTargetAssessment = registerExecuteTargetAssessment({ ...wf.executeTargetAssessment, usageRecorder });
     const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder });
+    // The extraction workflow shares the profile's sandbox and authorization rails, thus it draws the same
+    // three seams from the profile deps. The arm over it stays unwired here, thus no production caller
+    // reaches this code yet. A later change binds the arm to the report resolver.
+    const extractValues = registerExtractValuesWorkflow({
+        sandboxClient: wf.dataProfile.sandboxClient,
+        runAuthorizer: wf.dataProfile.runAuthorizer,
+        ...(wf.dataProfile.logger ? { logger: wf.dataProfile.logger } : {}),
+    });
 
     const conversationAgent = createConversationAgent({
         ...conversation,
@@ -236,6 +246,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             sandboxStep,
             executeTargetAssessment,
             dataProfile,
+            extractValues,
         },
         citationResolver,
     };

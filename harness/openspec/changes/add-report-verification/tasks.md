@@ -15,7 +15,7 @@
 - [x] 3.3 Make the prepare batching: group the references by artifact, read each file one time, and fill the cache. A resolve with no prior prepare still answers.
 - [x] 3.4 Make the fall-through classification: an over-cap file, an unknown format, or a parse fault goes to the extraction arm. Declare the arm as a small seam interface, thus a test stubs it. While no realization is wired, the arm fails with `extraction-unavailable` and a detail.
 - [x] 3.5 Write the tests: each layer, the cap tuning, the doubt fall-through, the absent lease beside nine under-cap successes, and the assert agreement between the two realizations.
-- [ ] 3.6 Make the extraction workflow on the profile rails: the authorization at the async edge, the ephemeral container, and the fixed extraction script as a shipped asset. One submission covers each document pass, and no agent loop runs in the container. Read `src/tasks/data-profile.ts` for the pattern.
+- [x] 3.6 Make the extraction workflow on the profile rails: the authorization at the async edge, the ephemeral container, and the fixed extraction script as a shipped asset. One submission covers each document pass, and no agent loop runs in the container. Read `src/tasks/data-profile.ts` for the pattern.
 
 ## 4. The record tool and the look-before-record rule
 
