@@ -65,4 +65,9 @@ COPY images/sandbox-base/inflexa-libs-refresh /usr/local/bin/inflexa-libs-refres
 COPY images/sandbox-provisioner/provision.py /usr/local/bin/provision
 RUN chmod +x /usr/local/bin/inflexa-libs-refresh /usr/local/bin/provision
 
+# Attach the published package to the repo, the same as sandbox-base. GHCR reads this
+# label to link the new package to the repository. A linked package takes the
+# repository visibility. An unlinked package stays private.
+LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inflexa"
+
 ENTRYPOINT ["/usr/local/bin/provision"]

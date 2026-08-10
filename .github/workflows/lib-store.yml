@@ -8,6 +8,11 @@ name: Build Sandbox Images
 # Python library: the package store is the one source of a library, and
 # .github/workflows/lib-store-provisioner.yml publishes it.
 #
+# This workflow also publishes the sandbox-provisioner image, which the CLI store
+# commands run. The provisioner publishes here beside sandbox-base, not in
+# lib-store-provisioner.yml. The two images share one base digest, and one workflow
+# keeps the pair in lockstep. If the base digest changes, publish BOTH images again.
+#
 # Both arches build on large self-hosted Graviton/x86 builders — the conda solve
 # and the image assembly do not fit a GitHub-hosted runner. amd64 → label
 # `inflexa-builder` (m6i.4xlarge), arm64 → label `inflexa-builder-arm64`
@@ -34,6 +39,9 @@ permissions:
 env:
   MANIFEST: images/lib-store-manifest.yaml
   IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/sandbox-base
+  # The provisioner image the CLI store commands pull. It publishes from the same
+  # build job as sandbox-base, from the one base digest the manifest declares.
+  IMAGE_PROVISIONER: ghcr.io/${{ github.repository_owner }}/sandbox-provisioner
   # Single source for the arch list consumed by the manifest combine loop. The
   # build and acceptance job matrices carry per-arch runner+platform, so they
   # list the arches inline — keep all three in lock-step.
@@ -148,10 +156,37 @@ jobs:
           path: candidate/
           retention-days: 7
 
+      # The provisioner image, on this arch, tagged <image>:<version>-<arch>. This
+      # step builds the provisioner FROM the same digest-pinned base as sandbox-base.
+      # It passes the same BASE_IMAGE argument that the store build passes, from the
+      # manifest. Thus the build cannot use a stale Dockerfile default. The provisioner
+      # Dockerfile asserts the base digest against the manifest. A mismatch fails the
+      # build. `--load` puts the image in the local docker daemon, and `docker push`
+      # then publishes it to GHCR. This step runs after the sandbox-base candidate
+      # upload, thus a provisioner build failure leaves the sandbox-base outputs whole.
+      #
+      # sandbox-provisioner is a NEW GHCR package. The first publish can make it
+      # private. If it is private, a maintainer sets its visibility to public in the
+      # org package settings. sandbox-base and lib-store had this same manual step.
+      # Then the CLI pulls the image with no authentication.
+      - name: "Build + push: sandbox-provisioner"
+        run: |
+          docker buildx build --load \
+            -f images/sandbox-provisioner/Dockerfile \
+            --platform "$PLATFORM" \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            -t "${IMAGE_PROVISIONER}:${VERSION}-${ARCH}" \
+            .
+          docker push "${IMAGE_PROVISIONER}:${VERSION}-${ARCH}"
+          {
+            echo "| sandbox-provisioner | pushed |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Cleanup
         if: always()
         run: |
           docker rmi "${IMAGE_BASE}:${VERSION}-${ARCH}" 2>/dev/null || true
+          docker rmi "${IMAGE_PROVISIONER}:${VERSION}-${ARCH}" 2>/dev/null || true
           rm -rf candidate
           docker image prune -f 2>/dev/null || true
           docker container prune -f 2>/dev/null || true
@@ -194,3 +229,7 @@ jobs:
             echo "published ${image}:latest (${srcs[*]})"
           }
           combine "${IMAGE_BASE}"
+          # Combine the provisioner arch tags into one multi-arch manifest too. The
+          # CLI pulls sandbox-provisioner with no platform flag. Thus the manifest must
+          # resolve the host architecture.
+          combine "${IMAGE_PROVISIONER}"

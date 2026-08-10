@@ -25,7 +25,7 @@ name: Emit content-addressed lib store (Provisioner)
 #     store BUILDS, uploads, and publishes; it does not yet assert it equals the
 #     baked image.
 #
-# Conventions mirror lib-store.yml (do not edit that file): same self-hosted EC2
+# Conventions mirror lib-store.yml (keep the store emission out of that file): same self-hosted EC2
 # builders (a full R + Bioconductor + Python compile does not fit a GitHub-hosted
 # runner), same arch matrix (amd64 primary, arm64 best-effort), same pinned action
 # digests, same version stamp, workflow_dispatch only. The builders must be started
@@ -168,8 +168,10 @@ jobs:
         # digest equals the manifest's base_image. Pass BASE_IMAGE from the manifest
         # (as lib-store.yml does) so a manifest bump cannot drift past a stale
         # Dockerfile default. `--load` puts the image in the local daemon so the run
-        # below can `docker run` it. The provisioner image is a local build tool and
-        # is NOT pushed; the store it emits is the artifact this workflow publishes.
+        # below can `docker run` it. This local build is not pushed, and it stays
+        # self-contained so a fork with no package-write permission can run the
+        # workflow. lib-store.yml owns the GHCR publish of the provisioner image.
+        # The store this run emits is the artifact this workflow publishes.
         run: |
           docker buildx build --load \
             -f images/sandbox-provisioner/Dockerfile \
