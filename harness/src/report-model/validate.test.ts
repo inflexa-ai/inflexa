@@ -2,8 +2,9 @@ import { describe, expect, it } from "bun:test";
 
 import type { Block, ReportDocument } from "../contracts/report-blocks.js";
 import { parseReference, serializeReference, type Reference } from "../contracts/report-reference.js";
+import { valuesMatch } from "./assert-rules.js";
 import { createFixtureResolver } from "./fixture-resolver.js";
-import type { ReportSnapshot } from "./reference-resolver.js";
+import type { ReferenceResolver, ReportSnapshot } from "./reference-resolver.js";
 import { validateReport, type ReportValidation } from "./validate.js";
 
 const TABLE_A_PATH = "runs/run-1/step-a/output/de.csv";
@@ -1400,5 +1401,86 @@ describe("validateReport — the file type of the pinned entry", () => {
         );
         const valid = expectValid(result);
         expect(valid.warnings).toEqual([]);
+    });
+});
+
+describe("validateReport — prepare before the loop", () => {
+    /**
+     * A stub resolver over the fixture. It counts each prepare, and it counts each resolve that runs while
+     * no prepare has run yet. Thus the order of prepare and the loop is observable state.
+     */
+    function countingResolver(): { resolver: ReferenceResolver; prepareCount: () => number; resolvesBeforePrepare: () => number } {
+        const fixture = createFixtureResolver();
+        let prepareCount = 0;
+        let resolvesBeforePrepare = 0;
+        const resolver: ReferenceResolver = {
+            async prepare() {
+                prepareCount += 1;
+            },
+            async resolve(reference, snapshot) {
+                if (prepareCount === 0) {
+                    resolvesBeforePrepare += 1;
+                }
+                return fixture.resolve(reference, snapshot);
+            },
+        };
+        return { resolver, prepareCount: () => prepareCount, resolvesBeforePrepare: () => resolvesBeforePrepare };
+    }
+
+    it("runs prepare one time before every resolve", async () => {
+        const stub = countingResolver();
+        expectValid(await validateReport(groundedReport(), snapshot, stub.resolver));
+        expect(stub.prepareCount()).toBe(1);
+        expect(stub.resolvesBeforePrepare()).toBe(0);
+    });
+
+    it("keeps the behavior of a realization without prepare", async () => {
+        const withoutPrepare = createFixtureResolver();
+        expect(withoutPrepare.prepare).toBeUndefined();
+        expectValid(await validateReport(groundedReport(), snapshot, withoutPrepare));
+    });
+});
+
+describe("assert-rules — one semantics for each realization", () => {
+    /** Bind a metric to the delta of the two float cells, under the given assert. */
+    function deltaMetric(id: string, assert: { value: number; tolerance?: number }): Block {
+        return {
+            kind: "metric",
+            id,
+            label: "Delta",
+            value: {
+                kind: "derivation",
+                op: "delta",
+                inputs: [
+                    {
+                        kind: "artifact-value",
+                        run: "run-1",
+                        path: FLOAT_PATH,
+                        hash: FLOAT_HASH,
+                        locator: { column: "value", rowFilter: { column: "name", op: "eq", value: "a" } },
+                    },
+                    {
+                        kind: "artifact-value",
+                        run: "run-1",
+                        path: FLOAT_PATH,
+                        hash: FLOAT_HASH,
+                        locator: { column: "value", rowFilter: { column: "name", op: "eq", value: "b" } },
+                    },
+                ],
+                assert,
+            },
+        };
+    }
+
+    it("agrees with the fixture on a tolerance case", async () => {
+        // The delta of the float cells a and b is 0.19999999999999998. A rounded 0.19 sits above the float
+        // noise, thus a tolerance decides the match.
+        const delta = 0.3 - 0.1;
+        const expected = 0.19;
+        const tolerance = 0.02;
+        const shared = valuesMatch(expected, delta, tolerance);
+        const throughFixture = (await validateReport(reportWith(deltaMetric("metric-agree", { value: expected, tolerance })), snapshot, resolver)).valid;
+        expect(shared).toBe(true);
+        expect(throughFixture).toBe(shared);
     });
 });

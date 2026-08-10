@@ -100,6 +100,16 @@ export async function resolveDocumentReferences(
     resolver: ReferenceResolver,
 ): Promise<ReferenceResolution> {
     const { references } = walkBlocks(sections);
+
+    // A realization that reads storage batches its reads here, one time before the loop. It fills a cache
+    // that each `resolve` then answers from. A realization without `prepare` keeps the per-reference read.
+    if (resolver.prepare !== undefined) {
+        await resolver.prepare(
+            references.map((entry) => entry.reference),
+            snapshot,
+        );
+    }
+
     const resolved = await allWithConcurrency(
         references.map((entry) => () => resolver.resolve(entry.reference, snapshot).then((result) => ({ entry, result }))),
         RESOLUTION_CONCURRENCY,
