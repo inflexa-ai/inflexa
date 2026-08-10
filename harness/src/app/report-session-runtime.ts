@@ -37,7 +37,13 @@ import { createThreadStore } from "../memory/thread-store.js";
 import type { DraftDocument } from "../report-model/draft.js";
 import { pinReportSnapshot } from "../report-model/pin-snapshot.js";
 import { createReportSessionStateStore, type ReportSessionState as StoredSessionState, type SessionStateReadError } from "../state/report-session-state.js";
-import type { ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, SessionStateToken } from "../tools/report-authoring/authoring-tools.js";
+import type {
+    ReportSessionStateGateway,
+    SessionStateLoad,
+    SessionStatePersist,
+    SessionStateToken,
+    StampResult,
+} from "../tools/report-authoring/authoring-tools.js";
 
 /** The empty draft of a fresh session. The pin writes the snapshot first, thus the document is empty here. */
 const EMPTY_DRAFT: DraftDocument = { title: "", sections: [] };
@@ -160,6 +166,7 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
             state: { document: state.document ?? EMPTY_DRAFT, snapshot: state.snapshot },
             analysisId: state.analysisId,
             token: state.document,
+            seenDocumentHash: state.seenDocumentHash,
         };
     }
 
@@ -197,6 +204,26 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
                 },
                 (error): SessionStatePersist => {
                     log.error("the session-state persist failed", { threadId, ...log.errorFields(error.cause) });
+                    return { outcome: "failed", detail: describeDbError(error) };
+                },
+            );
+        },
+        async stampRendered(threadId: string, hash: string): Promise<StampResult> {
+            const result = await store.stampRendered(threadId, hash);
+            return result.match(
+                (outcome): StampResult => (outcome === "stamped" ? { outcome: "stamped" } : { outcome: "absent" }),
+                (error): StampResult => {
+                    log.error("the rendered-hash stamp failed", { threadId, ...log.errorFields(error.cause) });
+                    return { outcome: "failed", detail: describeDbError(error) };
+                },
+            );
+        },
+        async stampSeen(threadId: string): Promise<StampResult> {
+            const result = await store.stampSeen(threadId);
+            return result.match(
+                (outcome): StampResult => (outcome === "stamped" ? { outcome: "stamped" } : { outcome: "absent" }),
+                (error): StampResult => {
+                    log.error("the seen-hash stamp failed", { threadId, ...log.errorFields(error.cause) });
                     return { outcome: "failed", detail: describeDbError(error) };
                 },
             );

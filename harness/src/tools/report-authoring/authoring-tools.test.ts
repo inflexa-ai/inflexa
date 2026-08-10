@@ -19,7 +19,14 @@ import {
     type ReportSessionStateGateway,
     type SessionStateLoad,
     type SessionStatePersist,
+    type StampResult,
 } from "./authoring-tools.js";
+
+/** The authoring tools read and write the draft only, thus a stamp is a no-op stub in these tests. */
+const stampStubs = {
+    stampRendered: (): Promise<StampResult> => Promise.resolve({ outcome: "stamped" }),
+    stampSeen: (): Promise<StampResult> => Promise.resolve({ outcome: "stamped" }),
+};
 
 /** An empty snapshot. No test here needs a resolvable artifact, thus the map holds nothing. */
 const snapshot: ReportSnapshot = { artifacts: {} };
@@ -78,8 +85,9 @@ function makeFakeGateway(): FakeGateway {
                 return Promise.resolve({ outcome: "absent" });
             }
             const state = structuredClone(row.state);
-            return Promise.resolve({ outcome: "found", state, analysisId: row.analysisId, token: state.document });
+            return Promise.resolve({ outcome: "found", state, analysisId: row.analysisId, token: state.document, seenDocumentHash: null });
         },
+        ...stampStubs,
         persist(threadId, document): Promise<SessionStatePersist> {
             if (fault) {
                 return Promise.resolve({ outcome: "failed", detail: "the store is down" });
@@ -334,6 +342,7 @@ describe("the tool-layer refusal", () => {
         const gateway: ReportSessionStateGateway = {
             load: () => Promise.resolve({ outcome: "wrong-type", detail: "the thread is a conversation thread, not a report thread" }),
             persist: () => Promise.resolve({ outcome: "persisted" }),
+            ...stampStubs,
         };
         const tools = createReportAuthoringTools(gateway);
 
@@ -350,8 +359,16 @@ describe("the tool-layer refusal", () => {
     it("refuses a landing when a concurrent turn changed the report first", async () => {
         // A gateway whose persist reports a conflict, the compare-and-swap outcome of the durable store.
         const gateway: ReportSessionStateGateway = {
-            load: () => Promise.resolve({ outcome: "found", state: { document: oneSectionDraft(), snapshot }, analysisId: "analysis-001", token: null }),
+            load: () =>
+                Promise.resolve({
+                    outcome: "found",
+                    state: { document: oneSectionDraft(), snapshot },
+                    analysisId: "analysis-001",
+                    token: null,
+                    seenDocumentHash: null,
+                }),
             persist: () => Promise.resolve({ outcome: "conflict" }),
+            ...stampStubs,
         };
         const tools = createReportAuthoringTools(gateway);
 

@@ -16,7 +16,9 @@
  *
  * Each degraded condition is a typed outcome in the ok channel: a session refusal, a gap list, a resolver
  * absence, an unresolved reference, a bridge mismatch, a render problem, a figure that escapes the
- * workspace root, and a write failure. The tool never throws for one of them. The filesystem speaks the
+ * workspace root, a write failure, and a stamp failure. The tool never throws for one of them. When the page
+ * lands, the tool stamps the hash of the rendered draft on the session state, thus the eyes and the record
+ * know which draft the page shows. The filesystem speaks the
  * throw protocol, and the workspace-root seam signals an unresolvable resource the same way. Thus the
  * write runs through the `tryFs` glue, which turns a genuine fault into the ok-channel outcome and lets a
  * control-flow exception propagate.
@@ -32,6 +34,7 @@ import type { Block, ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { describeFsError, tryFsWrite, type FsError } from "../../lib/fs-result.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
+import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js";
 import type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "../../report-model/reference-resolver.js";
 import { resolveDocumentReferences, type ResolutionFailure } from "../../report-model/validate.js";
@@ -59,6 +62,7 @@ export type PreviewReportResult =
     | { outcome: "render-problems"; problems: RenderProblem[] }
     | { outcome: "figure-out-of-scope"; blockId: string; path: string }
     | { outcome: "write-failed"; detail: string }
+    | { outcome: "stamp-failed"; pagePath: string; detail: string }
     | { outcome: "rendered"; pagePath: string };
 
 /**
@@ -307,6 +311,16 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
                 // outcome. The log keeps the full fault, because the outcome carries the description alone.
                 logger.warn("the page did not land", { threadId, analysisId, ...defaultErrorFields(failure.error.cause) });
                 return ok({ outcome: "write-failed", detail: describeFsError(failure.error) });
+            }
+
+            // The page shows the draft that the finish read. The stamp records that draft, thus the eyes
+            // copy this hash and the record compares against it. A failed stamp is a transient store fault,
+            // and the page stays on disk. The agent runs the preview again to stamp the marker.
+            const stamped = await deps.gateway.stampRendered(threadId, computeDraftHash(draft));
+            if (stamped.outcome !== "stamped") {
+                const detail = stamped.outcome === "failed" ? stamped.detail : "the session state row is absent";
+                logger.warn("the rendered hash did not stamp", { threadId, analysisId, detail });
+                return ok({ outcome: "stamp-failed", pagePath: written.value, detail });
             }
 
             return ok({ outcome: "rendered", pagePath: written.value });

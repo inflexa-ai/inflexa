@@ -207,4 +207,33 @@ describe("createReportSessionStateStore", () => {
 
         expect((await store.readState(threadId))._unsafeUnwrap()).toBeNull();
     });
+
+    it("lands the two stamps, and the row reads them back", async () => {
+        const analysisId = "analysis-stamps";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-stamps";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        // A fresh row carries neither marker.
+        const fresh = (await store.readState(threadId))._unsafeUnwrap();
+        expect(fresh!.renderedDocumentHash).toBeNull();
+        expect(fresh!.seenDocumentHash).toBeNull();
+
+        // The rendered stamp lands the hash, and the seen hash stays null until a look.
+        expect((await store.stampRendered(threadId, "hash-rendered"))._unsafeUnwrap()).toBe("stamped");
+        const afterRendered = (await store.readState(threadId))._unsafeUnwrap();
+        expect(afterRendered!.renderedDocumentHash).toBe("hash-rendered");
+        expect(afterRendered!.seenDocumentHash).toBeNull();
+
+        // The seen stamp copies the rendered hash, thus the two markers agree.
+        expect((await store.stampSeen(threadId))._unsafeUnwrap()).toBe("stamped");
+        const afterSeen = (await store.readState(threadId))._unsafeUnwrap();
+        expect(afterSeen!.seenDocumentHash).toBe("hash-rendered");
+        expect(afterSeen!.renderedDocumentHash).toBe("hash-rendered");
+    });
+
+    it("gives an absence for a stamp against a thread with no row", async () => {
+        expect((await store.stampRendered("thread-stamp-absent", "h"))._unsafeUnwrap()).toBe("absent");
+        expect((await store.stampSeen("thread-stamp-absent"))._unsafeUnwrap()).toBe("absent");
+    });
 });

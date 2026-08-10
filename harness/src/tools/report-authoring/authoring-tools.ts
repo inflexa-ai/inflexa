@@ -189,18 +189,29 @@ export interface ReportSessionState {
 export type SessionStateToken = DraftDocument | null;
 
 /**
- * The outcome of a gateway load. `found` carries the state, the analysis that owns the thread, and the
- * concurrency token. `absent` and `wrong-type` are permanent conditions, and `failed` is a transient fault
- * that names its cause.
+ * The outcome of a gateway load. `found` carries the state, the analysis that owns the thread, the
+ * concurrency token, and the seen-document hash of the look-before-record rule. `absent` and `wrong-type`
+ * are permanent conditions, and `failed` is a transient fault that names its cause.
+ *
+ * `seenDocumentHash` is the hash that the last eyes capture saw, or `null` before the first look. The record
+ * tool compares it against the hash of the current draft, thus a never-seen page and a stale look each
+ * refuse.
  */
 export type SessionStateLoad =
-    | { outcome: "found"; state: ReportSessionState; analysisId: string; token: SessionStateToken }
+    | { outcome: "found"; state: ReportSessionState; analysisId: string; token: SessionStateToken; seenDocumentHash: string | null }
     | { outcome: "absent" }
     | { outcome: "wrong-type"; detail: string }
     | { outcome: "failed"; detail: string };
 
 /** The outcome of a gateway persist. `conflict` means that a concurrent turn landed first. */
 export type SessionStatePersist = { outcome: "persisted" } | { outcome: "conflict" } | { outcome: "failed"; detail: string };
+
+/**
+ * The outcome of a gateway stamp. `stamped` wrote the marker. `absent` means that no row holds the thread.
+ * `failed` is a transient store fault that names its cause. Each arm is plain data, thus a stamp never
+ * throws for one of them.
+ */
+export type StampResult = { outcome: "stamped" } | { outcome: "absent" } | { outcome: "failed"; detail: string };
 
 /**
  * The session-state gateway that the tools read and write.
@@ -213,14 +224,29 @@ export type SessionStatePersist = { outcome: "persisted" } | { outcome: "conflic
 export interface ReportSessionStateGateway {
     load(threadId: string): Promise<SessionStateLoad>;
     persist(threadId: string, document: DraftDocument, expected: SessionStateToken): Promise<SessionStatePersist>;
+    /**
+     * Stamp the hash of the rendered draft on the session state. The preview calls it when the page lands,
+     * thus the runtime knows which draft the page shows.
+     */
+    stampRendered(threadId: string, hash: string): Promise<StampResult>;
+    /**
+     * Copy the rendered hash onto the seen hash. The eyes call it after a capture, thus the seen hash holds
+     * the hash of the draft that the picture shows, and never the current one.
+     */
+    stampSeen(threadId: string): Promise<StampResult>;
 }
 
-/** The thread of a call, its analysis, the loaded state, and the concurrency token that the persist compares against. */
+/**
+ * The thread of a call, its analysis, the loaded state, the concurrency token that the persist compares
+ * against, and the seen-document hash of the look-before-record rule.
+ */
 export interface OpenedThread {
     readonly threadId: string;
     readonly analysisId: string;
     readonly state: ReportSessionState;
     readonly token: SessionStateToken;
+    /** The hash that the last eyes capture saw, or `null` before the first look. */
+    readonly seenDocumentHash: string | null;
 }
 
 /**
@@ -259,7 +285,7 @@ export async function openReportThread(gateway: ReportSessionStateGateway, scope
             detail: `the scope names the analysis ${analysisId}, but the thread ${threadId} belongs to the analysis ${loaded.analysisId}`,
         });
     }
-    return ok({ threadId, analysisId, state: loaded.state, token: loaded.token });
+    return ok({ threadId, analysisId, state: loaded.state, token: loaded.token, seenDocumentHash: loaded.seenDocumentHash });
 }
 
 /** The eight authoring tools. */
