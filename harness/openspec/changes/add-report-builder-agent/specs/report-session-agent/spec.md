@@ -23,22 +23,30 @@ The session runtime MUST bind the per-session state to the thread, behind the si
 - **THEN** the tool returns typed data that names the missing thread id, and it does not throw
 
 ### Requirement: The lazy snapshot mint
-The runtime MUST mint the snapshot with `mintReportSnapshot` at the first call that needs it, one time for each thread. The runtime MUST cache the minted snapshot in the cell of the thread. A mint failure MUST return as typed data, and a later call can mint again.
+The runtime MUST mint the snapshot with `mintReportSnapshot` at the first call that needs it, one time for each thread. The runtime MUST write the minted snapshot into the session-state row of the thread. Every later call MUST read the stored snapshot, and it MUST NOT mint again. A mint failure MUST return as typed data, and a later call can mint again, because no row was written.
 
 #### Scenario: The mint runs one time
 - **WHEN** a thread makes two authoring calls
 - **THEN** the artifact ledger query runs one time, and both calls read one snapshot
 
+#### Scenario: The membership survives a restart
+- **WHEN** the process restarts after the mint, and a new artifact lands in the ledger
+- **THEN** the next call reads the stored snapshot, and the new artifact is not a member
+
 #### Scenario: A mint failure does not poison the thread
 - **WHEN** the first mint fails and the store recovers
 - **THEN** the next call mints again, and the session continues
 
-### Requirement: The draft is in-memory for each thread
-The draft of a thread MUST live in process memory, inside the authoring tool set of the cell. A process restart MUST empty the binder, and the next call starts a fresh draft. The recorded version stays the durable artifact of a report session.
+### Requirement: The session state is durable for each thread
+The in-progress document and the pinned snapshot of a thread MUST live in one durable session-state row, keyed by the thread id. A landed operation MUST persist the document before it reports `applied: true`. A process restart and a replica change MUST NOT lose a landed operation. A purge of the analysis MUST remove the session-state rows of its threads.
 
-#### Scenario: A restart starts a fresh draft
-- **WHEN** the process restarts after a thread composed blocks
-- **THEN** the next authoring call on that thread sees an empty draft, and no call fails
+#### Scenario: A restart keeps the document
+- **WHEN** the process restarts after a thread composed three blocks
+- **THEN** the next read on that thread gives the outline with the three blocks
+
+#### Scenario: A second process sees the landed operation
+- **WHEN** one process lands an add, and a different process serves the next turn
+- **THEN** the outline of the next turn holds the added block
 
 ### Requirement: The read-only roster
 The roster of the agent MUST hold: the four workspace read tools, the workspace search, `inspect_run`, `inspect_data_profile`, the authoring tools, and the render-and-preview tool. The roster MUST NOT hold a planner, a run launcher, a working-memory write, or a sandbox mutate surface. Thus no tool starts a run, and no tool changes an analysis.
