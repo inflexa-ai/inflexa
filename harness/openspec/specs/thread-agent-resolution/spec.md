@@ -3,25 +3,34 @@
 ## Purpose
 
 Define how a thread's type selects the agent that runs its turns. The selection
-rule is harness-owned: `assembleCoreRuntime` builds a type-keyed registry of the
-agents it assembles and exposes resolution as `CoreRuntime.agents`
-(`ThreadAgentResolver`, `src/runtime/assemble.ts`), so an embedder plumbs a
-thread's type into `forThread` and never maps types to agents itself. The
-registry is the single registration point for every typed agent — a future
-thread type's agent (e.g. the Report Builder) plugs in at assembly with no
-embedder change. `prepareChatTurn` surfaces the type from the row it already
-loads, so the turn path learns it at zero extra query cost.
+rule is harness-owned. `assembleCoreRuntime` builds a type-keyed registry of the
+agents it assembles, and it exposes resolution as `CoreRuntime.agents`
+(`ThreadAgentResolver`, `src/runtime/assemble.ts`). An embedder plumbs the type
+of a thread into `forThread`, and it never maps a type to an agent itself.
+
+The registry is the single registration point for every typed agent. It holds the
+conversation agent and the Report Builder agent. The agent of a later thread
+type plugs in at assembly, with no embedder change. `prepareChatTurn` surfaces
+the type from the row it already loads, so the turn path learns it at zero extra
+query cost.
 
 ## Requirements
 
 ### Requirement: The harness owns type→agent selection through a registry built at assembly
 
-`assembleCoreRuntime` SHALL build a type-keyed registry of the agents it assembles and expose resolution on `CoreRuntime` (`agents.forThread(type)`) as the only way to reach an agent by thread type. The `conversation` type SHALL resolve to the assembled conversation agent. The registry SHALL be the single registration point for every future typed agent, so a new thread type's agent plugs in at assembly with no embedder change, and the resolution surface types SHALL be re-exported from the package barrel.
+`assembleCoreRuntime` MUST build a type-keyed registry of the agents it assembles. It MUST expose resolution on `CoreRuntime` (`agents.forThread(type)`) as the only way to reach an agent by thread type. The `conversation` type MUST resolve to the assembled conversation agent. The `report` type MUST resolve to the assembled Report Builder agent.
+
+The registry MUST stay the single registration point for every typed agent. Thus the agent of a new thread type registers at assembly, with no embedder change. The resolution surface types MUST be re-exported from the package barrel.
 
 #### Scenario: The conversation type resolves to the conversation agent
 
 - **WHEN** `assembleCoreRuntime` returns and the caller resolves `agents.forThread("conversation")`
 - **THEN** the result is ok and carries the same conversation `AgentDefinition` the assembly built
+
+#### Scenario: The report type resolves to the Report Builder agent
+
+- **WHEN** `assembleCoreRuntime` returns and the caller resolves `agents.forThread("report")`
+- **THEN** the result is ok and carries the same Report Builder `AgentDefinition` the assembly built
 
 #### Scenario: An embedder reaches resolution through the package barrel
 
@@ -30,7 +39,7 @@ loads, so the turn path learns it at zero extra query cost.
 
 ### Requirement: Resolution returns assembled singletons
 
-Resolution SHALL return the same assembled `AgentDefinition` object on every call for a given type, never a per-call reconstruction, so references captured at construction time (an embedder's delegating provider handles, closure-wired tools) stay valid across every turn.
+Resolution MUST return the same assembled `AgentDefinition` object on every call for a given type, never a per-call reconstruction. Thus a reference captured at construction time (a delegating provider handle, a closure-wired tool) stays valid across every turn.
 
 #### Scenario: Repeated resolution yields one identity
 
@@ -39,17 +48,17 @@ Resolution SHALL return the same assembled `AgentDefinition` object on every cal
 
 ### Requirement: An unregistered type refuses with a typed error
 
-Resolution SHALL be synchronous and SHALL refuse a `ThreadType` with no registered agent by returning the `unregistered_thread_type` error variant — carrying the refused `threadType` — on the `Result` error channel, never by throwing. The error channel is permanent: registration of an agent for every current `ThreadType` member SHALL NOT narrow the signature, so adding a future member never forces an agent registration in the same commit.
+Resolution MUST be synchronous. It MUST refuse a `ThreadType` with no registered agent through the `unregistered_thread_type` error variant on the `Result` error channel, never by a throw. The variant carries the refused `threadType`. The error channel is permanent: registration of an agent for every current member MUST NOT narrow the signature. Thus a future member never forces an agent registration in the same commit.
 
-#### Scenario: The report type refuses before its agent exists
+#### Scenario: A registry without an entry refuses with the typed error
 
-- **GIVEN** a `CoreRuntime` assembled with no `report` agent registered
-- **WHEN** the caller resolves `agents.forThread("report")`
-- **THEN** the result is an error of type `unregistered_thread_type` with `threadType: "report"`
+- **GIVEN** a resolver built over a registry that holds no entry for a thread type
+- **WHEN** the caller resolves that type
+- **THEN** the result is an error of type `unregistered_thread_type` that carries the refused type
 
 ### Requirement: prepareChatTurn surfaces the thread's type
 
-`prepareChatTurn` SHALL include the thread's `threadType` on its `ok` result, read from the thread row its ownership check already loads — or, for a thread it creates, the type it created — so a caller resolves the turn's agent without a second thread read.
+`prepareChatTurn` MUST include the `threadType` of the thread on its `ok` result. The value comes from the thread row that the ownership step already loads. For a thread that it creates, the value is the type that it created. Thus a caller resolves the agent of the turn without a second thread read.
 
 #### Scenario: An existing thread reports its stored type
 

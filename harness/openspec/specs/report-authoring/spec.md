@@ -101,7 +101,9 @@ The move operation MUST move one block, named by its id, to a destination with t
 - **THEN** the operation refuses with the reason `cycle`, and the draft does not change
 
 ### Requirement: Validation before a change lands
-Each operation MUST validate the result before the change lands. The validation covers the payload grammar, the uniqueness of each id that the payload brings, and the structural resolution of each incoming reference. The id scan MUST read the payload and not the whole draft, thus a duplicate that the draft already carries MUST NOT refuse an operation on a different block. Resolution runs against the pinned snapshot with the structural tier. An operation MUST NOT open a file. A refused operation MUST leave the draft as it was.
+Each operation MUST validate the result before the change lands. The validation covers the payload grammar, the uniqueness of each id that the payload brings, and the structural resolution of each incoming reference.
+
+The id scan MUST read the payload and not the whole draft. Thus a duplicate that the draft already carries MUST NOT refuse an operation on a different block. Resolution runs against the pinned snapshot with the structural tier. An operation MUST NOT open a file. A refused operation MUST leave the draft as it was.
 
 #### Scenario: A malformed payload refuses
 - **WHEN** the agent adds a text block with an extra field in its content
@@ -135,11 +137,13 @@ A destination that names two places at one time MUST refuse with `conflicting-de
 ### Requirement: Read-back without the full tree
 The read surface MUST give an outline of the draft, and one block by its id. An outline entry carries the id, the kind, the nesting, and a short label. It carries no binding and no full prose.
 
-A landed operation MUST return the child order of each container that it changed, and it MUST NOT return the whole outline. The whole outline costs the size of the draft on each landing, thus a report of n blocks would spend n-squared outline entries of agent context to author it. The agent chose the id of its own block, and no other branch moved, thus the container that the operation touched is the one thing that a landing can tell it. A move across two containers reports both, and an operation that changes no child order reports none. The read of the whole outline stays one call away.
+A landed operation MUST return the child order of each container that it changed, and it MUST NOT return the whole outline. The whole outline costs the size of the draft on each landing. Thus a report of n blocks would spend n-squared outline entries of agent context to author it. The agent chose the id of its own block, and no other branch moved. Thus the container that the operation touched is the one thing that a landing can tell it.
+
+A move across two containers reports both, and an operation that changes no child order reports none. The read of the whole outline stays one call away.
 
 The label of every block kind MUST clip, because a title, a caption, and a note are free prose too. A clipped label MUST carry a marker, thus the agent can tell a clipped label from a whole one. The clip MUST count code points, thus it never splits a character.
 
-A read of a section MUST give the title of the section and the id of each child, and never the subtree. The outline already names every block under the section, thus a subtree would return the tree that the outline exists to keep out of the context.
+A read of a section MUST give the title of the section and the id of each child, and never the subtree. The outline already names every block under the section. Thus a subtree would return the tree that the outline exists to keep out of the context.
 
 #### Scenario: The outline stays small
 - **WHEN** the agent reads the outline of a draft with a long claim block
@@ -187,17 +191,25 @@ The finish MUST also carry each advisory warning, in both outcomes. A free numer
 - **THEN** the finish carries a warning for that block, and the warning does not change the outcome
 
 ### Requirement: The authoring tool surface
-The operations MUST ship as harness tools, made with `defineTool` through one factory. The factory closes over the draft holder and the snapshot, and the tools read no ambient state.
+The operations MUST ship as harness tools, made with `defineTool` through one factory. The factory closes over a session-state gateway and reads no other ambient state. A tool MUST read the thread id from the scope of the call, and it MUST load the state through the gateway. A landed document MUST persist before the tool reports. A call whose scope carries no thread id MUST refuse as typed data in the ok channel.
 
 The surface MUST give an operation that sets the title of the document. A draft starts with no title, thus without the operation every report finishes untitled or never finishes.
 
-The published input schema of a block payload MUST carry the block grammar. A tool is self-describing at attach time, thus a payload with no schema leaves the agent to discover each field through one refusal at a time. The runtime parse of the payload stays permissive, thus a malformed block still comes back as a typed refusal.
+The published input schema of a block payload MUST carry the block grammar. A tool is self-describing at attach time. Thus a payload with no schema leaves the agent to discover each field through one refusal at a time. The runtime parse of the payload stays permissive, thus a malformed block still comes back as a typed refusal.
 
-Each tool MUST declare the inline execution mode. The draft is process memory with no durable backing, thus a replay-cached tool result would outlive the draft that produced it.
+Each tool MUST declare the inline execution mode. The state loads fresh on each call, thus a replay-cached tool result would report a document that later operations changed.
 
 #### Scenario: The factory packages the tools
-- **WHEN** a caller gives the factory a draft holder and a snapshot
-- **THEN** the caller gets the authoring tools, and each tool operates on that draft only
+- **WHEN** a caller gives the factory a session-state gateway
+- **THEN** the caller gets the authoring tools, and each tool operates on the state of its own thread only
+
+#### Scenario: A landed operation persists before the report
+- **WHEN** an add operation lands on a thread
+- **THEN** the gateway holds the new document before the tool result reports `applied: true`
+
+#### Scenario: Two threads stay isolated through one factory
+- **WHEN** two threads each add a block through one factory
+- **THEN** the outline of each thread holds only its own block
 
 #### Scenario: The agent titles the report
 - **WHEN** the agent sets the title of the draft
