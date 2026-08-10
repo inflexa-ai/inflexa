@@ -60,7 +60,7 @@ export async function verifyProvenance(
 
 /**
  * Self-contained verification: check a simple `SHA-256(provJson)` content digest and its Ed25519
- * signature — the sidecar path, no chain mechanics needed.
+ * signature — the attestation path, no chain mechanics needed.
  */
 export async function verifyPayload(provJson: string, storedDigest: string, storedSignature: string, publicKey: CryptoKey): Promise<VerifyResult> {
     const digestResult = await computePayloadDigest(provJson);
@@ -99,23 +99,23 @@ export function formatVerifyResult(result: VerifyResult): string {
             return "Cannot verify: a signature exists but the signing key is missing.";
         case "empty":
             return "No provenance has been recorded for this analysis.";
-        case "invalid-sidecar":
-            return `Invalid sidecar: ${result.detail}`;
+        case "invalid-attestation":
+            return `Invalid attestation: ${result.detail}`;
         case "invalid-key":
-            return "The public key in the sidecar is invalid or unsupported.";
+            return "The public key in the attestation is invalid or unsupported.";
         case "verify-error":
             return `Verification could not complete (internal error): ${result.detail}`;
     }
 }
 
 /**
- * The self-describing export sidecar. A recipient verifies integrity with just the provenance
- * payload and this sidecar — no database, no chain history, no internal state needed.
+ * The self-describing export attestation. A recipient verifies integrity with just the provenance
+ * payload and this attestation — no database, no chain history, no internal state needed.
  *
- * Zod-validated on read so a corrupt or hand-edited sidecar surfaces a clear "invalid sidecar"
- * error instead of a downstream type confusion.
+ * Zod-validated on read so a corrupt or hand-edited attestation surfaces a clear "invalid
+ * attestation" error instead of a downstream type confusion.
  */
-export const sidecarSchema = z.object({
+export const attestationSchema = z.object({
     /** MIME type of the payload. */
     payloadType: z.literal("application/json; profile=prov-json"),
     /** Hash algorithm used to compute {@link payloadDigest}. */
@@ -134,23 +134,23 @@ export const sidecarSchema = z.object({
     kid: z.string().optional(),
 });
 
-/** The validated sidecar shape — inferred from the schema so the type never drifts. */
-export type Sidecar = z.infer<typeof sidecarSchema>;
+/** The validated attestation shape — inferred from the schema so the type never drifts. */
+export type ProvAttestation = z.infer<typeof attestationSchema>;
 
 /**
- * Build a sidecar for an exported provenance payload. Computes `SHA-256(provJson)` as the content
- * digest and signs it through the injected {@link ProvSigner}. Returns `err(ProvSigningError)`
- * when signing is unavailable — provenance is never exported unsigned. The sidecar is
- * self-contained: a recipient verifies with just the payload and the sidecar.
+ * Build an attestation for an exported provenance payload. Computes `SHA-256(provJson)` as the
+ * content digest and signs it through the injected {@link ProvSigner}. Returns
+ * `err(ProvSigningError)` when signing is unavailable — provenance is never exported unsigned. The
+ * attestation is self-contained: a recipient verifies with just the payload and the attestation.
  */
-export async function buildSidecar(signer: ProvSigner, provJson: string, opts?: { kid?: string }): Promise<Result<Sidecar, ProvSigningError>> {
+export async function buildAttestation(signer: ProvSigner, provJson: string, opts?: { kid?: string }): Promise<Result<ProvAttestation, ProvSigningError>> {
     const pubKeyResult = await signer.exportPublicKeyJwk();
     if (pubKeyResult.isErr()) return err(pubKeyResult.error);
     const publicKeyJwk: ProvPublicKeyJwk | null = pubKeyResult.value;
     if (!publicKeyJwk) return err({ type: "public_key_export_failed" });
 
     return computePayloadDigest(provJson).andThen((digest) =>
-        signer.sign(digest).map((signature): Sidecar => ({
+        signer.sign(digest).map((signature): ProvAttestation => ({
             payloadType: "application/json; profile=prov-json" as const,
             payloadDigestAlgorithm: "SHA-256" as const,
             payloadDigest: digest,
@@ -164,16 +164,16 @@ export async function buildSidecar(signer: ProvSigner, provJson: string, opts?: 
 }
 
 /**
- * Verify a provenance payload against its parsed sidecar: import the sidecar's public key and run
- * {@link verifyPayload}. Corrupt keys are returned as `VerifyResult` statuses, not thrown.
+ * Verify a provenance payload against its parsed attestation: import the attestation's public key
+ * and run {@link verifyPayload}. Corrupt keys are returned as `VerifyResult` statuses, not thrown.
  *
- * The public key is trusted solely because it travels in the sidecar — an attacker who replaces
- * both the payload and the sidecar (with their own key) passes verification. For sharing over
- * trusted channels this is fine; for stronger trust a host pins the signer's public key and
- * checks the sidecar's key against the pinned one before calling this.
+ * The public key is trusted solely because it travels in the attestation — an attacker who
+ * replaces both the payload and the attestation (with their own key) passes verification. For
+ * sharing over trusted channels this is fine; for stronger trust a host pins the signer's public
+ * key and checks the attestation's key against the pinned one before calling this.
  */
-export async function verifySidecar(provJson: string, sidecar: Sidecar): Promise<VerifyResult> {
-    const keyResult = await importPublicKeyJwk(sidecar.publicKey);
+export async function verifyAttestation(provJson: string, attestation: ProvAttestation): Promise<VerifyResult> {
+    const keyResult = await importPublicKeyJwk(attestation.publicKey);
     if (keyResult.isErr()) return { status: "invalid-key" };
-    return verifyPayload(provJson, sidecar.payloadDigest, sidecar.signature, keyResult.value);
+    return verifyPayload(provJson, attestation.payloadDigest, attestation.signature, keyResult.value);
 }

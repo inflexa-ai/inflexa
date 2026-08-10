@@ -2,7 +2,7 @@ import { ResultAsync } from "neverthrow";
 
 /**
  * Provenance signing primitives: the chain-hash and Ed25519 sign/verify operations a recorder,
- * the sidecar builder, and the verifier share — plus the {@link ProvSigner} seam through which a
+ * the attestation builder, and the verifier share — plus the {@link ProvSigner} seam through which a
  * host supplies key custody. Confined to this file so a WebCrypto fault is contained to provenance
  * integrity, not recording.
  *
@@ -26,10 +26,10 @@ export type ProvSigningError =
 /**
  * The signing seam a host fills at its composition root. `sign` receives a hex-encoded digest
  * (the chain hash at flush time, the payload digest at export time) and returns the hex-encoded
- * Ed25519 signature; `exportPublicKeyJwk` supplies the public half for sidecars and verification,
+ * Ed25519 signature; `exportPublicKeyJwk` supplies the public half for attestations and verification,
  * or `null` when no key exists yet.
  *
- * `exportPublicKeyJwk` may be called before any `sign` — the sidecar builder exports the public
+ * `exportPublicKeyJwk` may be called before any `sign` — the attestation builder exports the public
  * key first. An implementation backed by a lazily-created keypair must generate the pair on
  * demand at export time, not fail because no `sign` has run yet.
  */
@@ -78,7 +78,7 @@ export function computeChainHash(prevChainHashHex: string | null, provJson: stri
     );
 }
 
-/** Simple `SHA-256(provJson)` — the self-contained content digest used in the export sidecar. */
+/** Simple `SHA-256(provJson)` — the self-contained content digest used in the export attestation. */
 export function computePayloadDigest(provJson: string): ResultAsync<string, ProvSigningError> {
     return ResultAsync.fromPromise(
         crypto.subtle.digest("SHA-256", new TextEncoder().encode(provJson)).then((buf) => bytesToHex(new Uint8Array(buf))),
