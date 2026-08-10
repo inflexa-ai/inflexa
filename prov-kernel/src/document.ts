@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
 import { type Result, ok, err } from "neverthrow";
 import { ProvDocument, type UnifiedOptions } from "@inflexa-ai/tsprov";
+import { sha256 } from "./sha256.js";
 import type {
     ProvActor,
     ProvInputRef,
@@ -58,8 +58,10 @@ export type ProvDigest = (s: string) => string;
 
 /** The default digest: a SHA-256 fold to base36, portable across JS runtimes. */
 export function defaultProvDigest(s: string): string {
-    const bytes = createHash("sha256").update(s).digest();
-    return bytes.readBigUInt64BE(0).toString(36);
+    // The vendored sha256 keeps this module free of `node:crypto`, so browser bundlers can
+    // resolve it. The first 8 digest bytes, read big-endian, give the same fold as before.
+    const bytes = sha256(new TextEncoder().encode(s));
+    return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(0).toString(36);
 }
 
 export interface ProvDocumentModelOptions {
@@ -130,7 +132,8 @@ function qnameSafe(s: string): string {
  */
 export function buildDocumentModel(options: ProvDocumentModelOptions = {}) {
     const digest = options.digest ?? defaultProvDigest;
-    const mintActionId = options.mintActionId ?? randomUUID;
+    // `globalThis.crypto.randomUUID` exists in browsers and in Node.js — no `node:crypto` import.
+    const mintActionId = options.mintActionId ?? ((): string => globalThis.crypto.randomUUID());
     const now = options.now ?? ((): Date => new Date());
 
     /** The analysis's PROV subject-entity QName — the document's subject, related to by every action. */

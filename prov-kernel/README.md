@@ -27,6 +27,11 @@ The package is a kernel, not a recorder. The three-layer rule divides the work:
 Thus the package deliberately does NOT contain a recorder (sink, flush,
 queue, CAS) or signer wiring. Those are host-owned.
 
+The package runs in browser and server runtimes. No module imports a
+`node:`-prefixed module. The digest is a vendored synchronous SHA-256. The
+signature primitives use the Web Crypto API (`globalThis.crypto`). Thus a
+browser bundler resolves every import.
+
 ## Use
 
 ```bash
