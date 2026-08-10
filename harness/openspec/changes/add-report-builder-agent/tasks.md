@@ -19,16 +19,16 @@
 
 ## 4. The session runtime
 
-- [ ] 4.1 Make the runtime in `src/app/report-session-runtime.ts`. It realizes the gateway over the store, and it wires the authoring tool set of the agent.
-- [ ] 4.2 Give the idempotent operation that makes sure that the session state exists. Its first run mints with `mintReportSnapshot` and writes the row. The serving path of a report turn runs it at the turn start, and each tool runs it too. A mint failure returns as typed data, and a later run mints again.
-- [ ] 4.3 Write the tests of the runtime: the mint runs one time, the mint failure recovers, and two threads hold two documents. After a reload, the stored snapshot wins over a changed ledger.
+- [x] 4.1 Make the runtime in `src/app/report-session-runtime.ts`. It realizes the gateway over the store, and it wires the authoring tool set of the agent.
+- [x] 4.2 Give the idempotent operation that makes sure that the session state exists. Its first run mints with `mintReportSnapshot` and writes the row. The serving path of a report turn runs it at the turn start, and each tool runs it too. A mint failure returns as typed data, and a later run mints again.
+- [x] 4.3 Write the tests of the runtime: the mint runs one time, the mint failure recovers, and two threads hold two documents. After a reload, the stored snapshot wins over a changed ledger.
 
 ## 5. The render-and-preview tool
 
-- [ ] 5.1 Make the preview tool in `src/tools/report-session/`. It runs the finish on the document of the thread. A gap list returns as data, and no render runs.
-- [ ] 5.2 On a pass, the tool resolves each reference through the injected `ReferenceResolver`, bridges the values, and renders with `renderReportPage`. The page and the staged figure assets land in `report-sessions/{threadId}/` under the workspace root. The result carries the page path.
-- [ ] 5.3 When a `PreviewPublisher` realization is present, the result also carries the minted access. An unresolved reference, a resolver absence, and an unavailable publisher each return a typed outcome that names the cause. Nothing throws for these outcomes.
-- [ ] 5.4 Write the tests of the tool: the gap return, the pass path with the page on disk, the staged asset with a relative `src`, and each absence. No write touches `previews/` or `reports/`.
+- [x] 5.1 Make the preview tool in `src/tools/report-session/`. It runs the finish on the document of the thread. A gap list returns as data, and no render runs.
+- [x] 5.2 On a pass, the tool resolves each reference through the injected `ReferenceResolver`, bridges the values, and renders with `renderReportPage`. The page and the staged figure assets land in `report-sessions/{threadId}/` under the workspace root. The result carries the page path.
+- [x] 5.3 When a `PreviewPublisher` realization is present, the result also carries the minted access. An unresolved reference, a resolver absence, and an unavailable publisher each return a typed outcome that names the cause. Nothing throws for these outcomes.
+- [x] 5.4 Write the tests of the tool: the gap return, the pass path with the page on disk, the staged asset with a relative `src`, and each absence. No write touches `previews/` or `reports/`.
 
 ## 6. The agent, the prompt, and the registration
 
