@@ -2,4 +2,4 @@ A touch of this file starts the store build on the feature branch.
 The push trigger in .github/workflows/lib-store-provisioner.yml reads it.
 Remove this file together with that trigger before the merge.
 
-run: 1
+run: 2
