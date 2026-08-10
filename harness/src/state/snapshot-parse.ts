@@ -3,8 +3,8 @@
  *
  * The session-state store and the version store each hold a snapshot column, and
  * each reads it back the same way. A path such as `__proto__` is an ordinary
- * artifact key of the ledger, and the mint keeps it as an own member of a
- * null-prototype map (`report-model/mint-snapshot.ts`). Each object-shaped schema
+ * artifact key of the ledger, and the pin keeps it as an own member of a
+ * null-prototype map (`report-model/pin-snapshot.ts`). Each object-shaped schema
  * of zod drops such a key, thus a store that parsed the map through one would
  * resolve a reference to that artifact before a reload and refuse it as absent
  * after one. The walk reads the own keys of the stored map, and it parses each
@@ -60,7 +60,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * Parse a stored snapshot.
  *
  * The artifacts map never goes through a zod object schema, for the reason that
- * the module header gives: a zod object drops a `__proto__` key and the mint keeps
+ * the module header gives: a zod object drops a `__proto__` key and the pin keeps
  * it. The walk reads the own keys of the stored map, and it parses each value on
  * its own.
  *
@@ -78,7 +78,7 @@ export function parseSnapshot(stored: unknown): Result<ReportSnapshot, SchemaIss
     if (!citations.success) {
         return err(prefixIssues("citations", reduceIssues(citations.error)));
     }
-    // The map takes a null prototype, the same as the mint, thus a path such as
+    // The map takes a null prototype, the same as the pin, thus a path such as
     // `__proto__` stays an ordinary entry and never reaches a prototype slot.
     const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
     const issues: SchemaIssue[] = [];

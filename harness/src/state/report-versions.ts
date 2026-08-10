@@ -10,7 +10,7 @@
  * one thread trips the constraint, and the store maps that trip to the typed
  * refusal thread_already_holds_version.
  *
- * The store keeps the snapshot and the anchor as given, and it never mints a
+ * The store keeps the snapshot and the anchor as given, and it never pins a
  * snapshot. A read parses the stored document and the stored snapshot with the
  * current schemas. A row that fails a parse reads as a typed error, and it does
  * not crash. An absent row reads as a normal absence.

@@ -64,7 +64,7 @@ describe("createReportSessionRuntime", () => {
         return rows[0]!.n;
     }
 
-    it("mints one time and freezes the membership across two loads", async () => {
+    it("pins one time and freezes the membership across two loads", async () => {
         const analysisId = "analysis-once";
         const threadId = "thread-once";
         await seedAnalysis(analysisId);
@@ -81,14 +81,14 @@ describe("createReportSessionRuntime", () => {
         // A fresh row holds the snapshot and no document, thus the load gives the empty draft.
         expect(first.state.document).toEqual({ title: "", sections: [] });
 
-        // A new artifact lands after the mint. The stored membership must not grow.
+        // A new artifact lands after the pin. The stored membership must not grow.
         await upsertArtifact(pool, artifact(analysisId, "runs/r2/output/late.csv", "sha256:bbb"));
 
         const second = await runtime.gateway.load(threadId);
         expect(second.outcome).toBe("found");
         if (second.outcome !== "found") throw new Error("expected found");
         // The membership is the frozen anchor. The late artifact is not a member, thus
-        // the mint ran one time and the second load read the stored snapshot.
+        // the pin ran one time and the second load read the stored snapshot.
         expect(Object.keys(second.state.snapshot.artifacts)).toEqual([earlyPath]);
     });
 
@@ -102,7 +102,7 @@ describe("createReportSessionRuntime", () => {
         // The thread does not exist yet. The anchor resolves no analysis, thus it fails.
         const failed = await runtime.ensureSessionState(threadId);
         expect(failed.outcome).toBe("failed");
-        // A failed ensure writes no row, thus a later run mints again.
+        // A failed ensure writes no row, thus a later run pins again.
         expect(await rowCount(threadId)).toBe(0);
 
         // The store recovers: the thread lands. The analysis holds no artifact, which is a
@@ -146,7 +146,7 @@ describe("createReportSessionRuntime", () => {
 
         const runtime = createReportSessionRuntime({ pool });
 
-        // The load anchors each row before the persist. The mint writes the row first.
+        // The load anchors each row before the persist. The pin writes the row first.
         expect((await runtime.gateway.load(threadOne)).outcome).toBe("found");
         expect((await runtime.gateway.load(threadTwo)).outcome).toBe("found");
 
@@ -169,7 +169,7 @@ describe("createReportSessionRuntime", () => {
         const earlyPath = "runs/r1/output/de.csv";
         await upsertArtifact(pool, artifact(analysisId, earlyPath, "sha256:aaa"));
 
-        // The first runtime instance mints the snapshot and writes the row.
+        // The first runtime instance pins the snapshot and writes the row.
         const writer = createReportSessionRuntime({ pool });
         const written = await writer.gateway.load(threadId);
         expect(written.outcome).toBe("found");
@@ -177,7 +177,7 @@ describe("createReportSessionRuntime", () => {
         // A new artifact lands after the row is written.
         await upsertArtifact(pool, artifact(analysisId, "runs/r2/output/late.csv", "sha256:bbb"));
 
-        // A fresh runtime instance reads the stored snapshot, and it mints nothing.
+        // A fresh runtime instance reads the stored snapshot, and it pins nothing.
         const reader = createReportSessionRuntime({ pool });
         const reloaded = await reader.gateway.load(threadId);
         expect(reloaded.outcome).toBe("found");

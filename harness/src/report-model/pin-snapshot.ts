@@ -1,12 +1,12 @@
 /**
- * The mint of a report snapshot, which is the membership boundary of one report session.
+ * The pin of a report snapshot, which is the membership boundary of one report session.
  *
  * A report session freezes at one moment, and the analysis continues after that anchor. The snapshot
  * states which artifacts existed at the anchor, and that is a question that no other record answers.
  * Thus a session never cites an artifact that a later run produced.
  *
  * The artifact ledger holds one row for each path, and it keeps no history. Thus the set at a past
- * moment is not recoverable later, and the mint must run at the anchor itself.
+ * moment is not recoverable later, and the pin must run at the anchor itself.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -16,23 +16,23 @@ import type { Querier } from "../state/db.js";
 import type { ArtifactSnapshot, ReportSnapshot } from "./reference-resolver.js";
 
 /**
- * The reason that the mint gave no snapshot. The read of the ledger is the one operation that can
+ * The reason that the pin gave no snapshot. The read of the ledger is the one operation that can
  * fail. An analysis with no registered artifact is a normal answer, thus absence is not a member of
  * this set. `cause` carries the underlying fault for a log.
  */
-export type MintSnapshotError = {
+export type PinSnapshotError = {
     kind: "ledger-read-failed";
     cause: unknown;
 };
 
 /**
- * Mint the snapshot of one analysis from the artifact ledger.
+ * Pin the snapshot of one analysis from the artifact ledger.
  *
- * The mint copies no cell and no byte. An entry pins identity alone, thus the snapshot grows with the
+ * The pin copies no cell and no byte. An entry pins identity alone, thus the snapshot grows with the
  * count of artifacts and never with the size of the data. A read of an artifact belongs to the value
  * tier, which runs one time for each report version.
  */
-export async function mintReportSnapshot(pool: Querier, analysisId: string): Promise<Result<ReportSnapshot, MintSnapshotError>> {
+export async function pinReportSnapshot(pool: Querier, analysisId: string): Promise<Result<ReportSnapshot, PinSnapshotError>> {
     let ledgerRows: AnalysisArtifactRef[];
     try {
         ledgerRows = await queryAnalysisArtifacts(pool, analysisId);
@@ -49,8 +49,8 @@ export async function mintReportSnapshot(pool: Querier, analysisId: string): Pro
         artifacts[row.path] = { hash: row.hash, fileType: row.fileType };
     }
 
-    // The mint fills no citation. No store holds the citation ids of an analysis, and validation
-    // matches a citation against the external authorities and never against a minted list. Thus such
+    // The pin fills no citation. No store holds the citation ids of an analysis, and validation
+    // matches a citation against the external authorities and never against a pinned list. Thus such
     // a list would state nothing that a later read consumes.
     return ok({ artifacts });
 }

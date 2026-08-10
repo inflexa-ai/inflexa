@@ -3,22 +3,22 @@
  * gateway, and the idempotent operation that anchors one report session.
  *
  * The runtime binds three parts: the session-state store, the thread store, and
- * the mint. The tool layer speaks the gateway, and the gateway speaks a plain
+ * the pin. The tool layer speaks the gateway, and the gateway speaks a plain
  * discriminated value. Thus the neverthrow of the store stays inside this module,
  * and it never crosses the tool boundary.
  *
  * `ensureSessionState` makes sure that the row of a thread exists. The first run
- * resolves the analysis of the thread, mints the snapshot, and writes the row. A
- * later run reads the row and mints nothing. The store insert-if-absent keeps two
- * concurrent first runs to one row. A mint failure writes no row and returns as
- * typed data, thus a later run mints again.
+ * resolves the analysis of the thread, pins the snapshot, and writes the row. A
+ * later run reads the row and pins nothing. The store insert-if-absent keeps two
+ * concurrent first runs to one row. A pin failure writes no row and returns as
+ * typed data, thus a later run pins again.
  *
  * The gateway `load` runs the same operation, thus a tool call never arrives
  * before the state exists. A fresh row holds the snapshot and no document yet.
- * Thus `load` gives the empty draft with the stored snapshot, because the mint
+ * Thus `load` gives the empty draft with the stored snapshot, because the pin
  * writes the snapshot first and the document lands later.
  *
- * A store fault, an absent thread, and a mint failure each ride the failed arm
+ * A store fault, an absent thread, and a pin failure each ride the failed arm
  * with a short detail. The diagnostic goes to the injected `Logger`, never to the
  * detail alone.
  */
@@ -30,11 +30,11 @@ import { describeDbError, type DbError } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import type { DraftDocument } from "../report-model/draft.js";
-import { mintReportSnapshot } from "../report-model/mint-snapshot.js";
+import { pinReportSnapshot } from "../report-model/pin-snapshot.js";
 import { createReportSessionStateStore, type ReportSessionState as StoredSessionState, type SessionStateReadError } from "../state/report-session-state.js";
 import type { ReportSessionStateGateway, SessionStateLoad, SessionStatePersist } from "../tools/report-authoring/authoring-tools.js";
 
-/** The empty draft of a fresh session. The mint writes the snapshot first, thus the document is empty here. */
+/** The empty draft of a fresh session. The pin writes the snapshot first, thus the document is empty here. */
 const EMPTY_DRAFT: DraftDocument = { title: "", sections: [] };
 
 /**
@@ -86,17 +86,17 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
     }
 
     /**
-     * Mint the snapshot and write the row. A mint failure writes no row, thus a
-     * later run mints again. The write is insert-if-absent, thus two concurrent
+     * Pin the snapshot and write the row. A pin failure writes no row, thus a
+     * later run pins again. The write is insert-if-absent, thus two concurrent
      * first runs make one row and both read the winner back.
      */
-    async function mintAndWrite(threadId: string, analysisId: string): Promise<EnsureSessionStateResult> {
-        const minted = await mintReportSnapshot(pool, analysisId);
-        if (minted.isErr()) {
-            log.error("the snapshot mint failed", { threadId, analysisId, ...log.errorFields(minted.error.cause) });
+    async function pinAndWrite(threadId: string, analysisId: string): Promise<EnsureSessionStateResult> {
+        const pinned = await pinReportSnapshot(pool, analysisId);
+        if (pinned.isErr()) {
+            log.error("the snapshot pin failed", { threadId, analysisId, ...log.errorFields(pinned.error.cause) });
             return { outcome: "failed", detail: "the artifact ledger read failed" };
         }
-        const written = await store.writeSnapshot({ threadId, analysisId, snapshot: minted.value });
+        const written = await store.writeSnapshot({ threadId, analysisId, snapshot: pinned.value });
         return written.match(
             (row): EnsureSessionStateResult => ({ outcome: "ready", state: row }),
             (error): EnsureSessionStateResult => storeFault(threadId, error),
@@ -109,7 +109,7 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
             return storeFault(threadId, read.error);
         }
         if (read.value !== null) {
-            // The row exists, thus the anchor holds and the mint stays single.
+            // The row exists, thus the anchor holds and the pin stays single.
             return { outcome: "ready", state: read.value };
         }
         const thread = await threads.getThread(threadId);
@@ -118,7 +118,7 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
             return { outcome: "failed", detail: describeDbError(thread.error) };
         }
         if (thread.value === null) {
-            // The mint needs the analysis of the thread. An absent thread names none.
+            // The pin needs the analysis of the thread. An absent thread names none.
             log.error("the thread resolves to no analysis", { threadId });
             return { outcome: "failed", detail: "the thread names no analysis" };
         }
@@ -128,13 +128,13 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
             log.error("the thread is not a report thread", { threadId, threadType: thread.value.threadType });
             return { outcome: "failed", detail: `the thread is a ${thread.value.threadType} thread, not a report thread` };
         }
-        return mintAndWrite(threadId, thread.value.analysisId);
+        return pinAndWrite(threadId, thread.value.analysisId);
     }
 
     /**
      * Map the durable row onto the gateway load. A fresh row holds the snapshot and
      * no document, thus the load gives the empty draft. A row with no snapshot cannot
-     * serve a tool, because the mint writes the snapshot first.
+     * serve a tool, because the pin writes the snapshot first.
      */
     function toLoad(state: StoredSessionState): SessionStateLoad {
         if (state.snapshot === null) {
@@ -159,8 +159,8 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
                     if (updated) {
                         return { outcome: "persisted" };
                     }
-                    // The mint writes the row first. A persist that updates no row means the
-                    // mint-first invariant broke.
+                    // The pin writes the row first. A persist that updates no row means the
+                    // pin-first invariant broke.
                     log.error("the session-state persist matched no row", { threadId });
                     return { outcome: "failed", detail: "no report session state row exists to persist the document" };
                 },

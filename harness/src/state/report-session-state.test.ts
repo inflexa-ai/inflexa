@@ -62,7 +62,7 @@ describe("createReportSessionStateStore", () => {
 
         const writer = createReportSessionStateStore({ pool });
         const created = (await writer.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
-        // The mint writes the snapshot first, thus the document is absent at creation.
+        // The pin writes the snapshot first, thus the document is absent at creation.
         expect(created.snapshot).toEqual(snapshot);
         expect(created.document).toBeNull();
         expect(created.analysisId).toBe(analysisId);

@@ -168,7 +168,7 @@ CREATE INDEX IF NOT EXISTS idx_cortex_report_versions_analysis
 -- Report session state — one mutable row for each report session thread. The row
 -- holds the in-progress draft document and the pinned snapshot of the session. The
 -- thread id is the primary key, thus one session binds to one thread. The document
--- column and the snapshot column are each nullable, because the mint writes the
+-- column and the snapshot column are each nullable, because the pin writes the
 -- snapshot first and the document lands later. A purge of the analysis removes the
 -- row through the analysis_id cascade. The explicit purge delete stays a backstop,
 -- the same as the plans delete, because a database whose table predates the key
