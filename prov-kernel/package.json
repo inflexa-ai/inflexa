@@ -49,6 +49,7 @@
         "typecheck": "tsc -p tsconfig.eslint.json --noEmit"
     },
     "dependencies": {
+        "@noble/hashes": "^2.3.0",
         "neverthrow": "^8.2.0",
         "zod": "^4.4.3"
     },
