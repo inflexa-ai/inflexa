@@ -39,24 +39,24 @@ The session runtime MUST bind the per-session state to the thread, behind the si
 - **WHEN** a session tool runs with a scope that carries no `threadId`
 - **THEN** the tool returns typed data that names the missing thread id, and it does not throw
 
-### Requirement: The snapshot mints at session start
-The runtime MUST give an idempotent operation that makes sure that the session state of a thread exists. The first run of the operation MUST mint the snapshot with `mintReportSnapshot`, and it MUST write the row. The serving path of a report turn MUST run the operation at the start of the turn. Every later call MUST read the stored snapshot, and it MUST NOT mint again. A mint failure MUST return as typed data, and a later call can mint again, because no row was written.
+### Requirement: The snapshot pins at session start
+The runtime MUST give an idempotent operation that makes sure that the session state of a thread exists. The first run of the operation MUST pin the snapshot with `pinReportSnapshot`, and it MUST write the row. The serving path of a report turn MUST run the operation at the start of the turn. Every later call MUST read the stored snapshot, and it MUST NOT pin again. A pin failure MUST return as typed data, and a later call can pin again, because no row was written.
 
-#### Scenario: The first served turn mints before any tool call
+#### Scenario: The first served turn pins before any tool call
 - **WHEN** the first turn of a report thread starts
 - **THEN** the row holds the snapshot before a tool of the roster runs
 
-#### Scenario: The mint runs one time
+#### Scenario: The pin runs one time
 - **WHEN** a thread makes two authoring calls
 - **THEN** the artifact ledger query runs one time, and both calls read one snapshot
 
 #### Scenario: The membership survives a restart
-- **WHEN** the process restarts after the mint, and a new artifact lands in the ledger
+- **WHEN** the process restarts after the pin, and a new artifact lands in the ledger
 - **THEN** the next call reads the stored snapshot, and the new artifact is not a member
 
-#### Scenario: A mint failure does not poison the thread
-- **WHEN** the first mint fails and the store recovers
-- **THEN** the next call mints again, and the session continues
+#### Scenario: A pin failure does not poison the thread
+- **WHEN** the first pin fails and the store recovers
+- **THEN** the next call pins again, and the session continues
 
 ### Requirement: The session state is durable for each thread
 The in-progress document and the pinned snapshot of a thread MUST live in one durable session-state row, keyed by the thread id. A landed operation MUST persist the document before it reports `applied: true`. A process restart and a replica change MUST NOT lose a landed operation. A purge of the analysis MUST remove the session-state rows of its threads.

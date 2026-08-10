@@ -13,7 +13,7 @@
  * caller sees the durable state whichever call won.
  *
  * The document column and the snapshot column are each nullable. A row exists with a
- * snapshot and no document yet, because the mint writes the snapshot first and the
+ * snapshot and no document yet, because the pin writes the snapshot first and the
  * document lands later. A null column reads as a null value.
  *
  * A read parses the stored document with the draft schema, and the stored snapshot
@@ -40,7 +40,7 @@ export interface ReportSessionState {
     readonly analysisId: string;
     /** The in-progress draft document, or `null` before the first document lands. */
     readonly document: DraftDocument | null;
-    /** The pinned snapshot, or `null` before the mint writes it. */
+    /** The pinned snapshot, or `null` before the pin writes it. */
     readonly snapshot: ReportSnapshot | null;
     readonly createdAt: Date;
 }
@@ -91,7 +91,7 @@ export interface ReportSessionStateStore {
      */
     writeSnapshot(input: WriteSnapshotInput): ResultAsync<ReportSessionState, DbError | SessionStateReadError>;
     /**
-     * Persist the document of a thread. The row must exist, minted by `writeSnapshot`
+     * Persist the document of a thread. The row must exist, pinned by `writeSnapshot`
      * first. The value is `true` when a row took the document, and `false` when no row
      * holds the thread.
      */

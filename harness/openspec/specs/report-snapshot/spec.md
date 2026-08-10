@@ -8,7 +8,7 @@ snapshot states which artifacts existed at the anchor. Thus a session never cite
 artifact that a later run produced.
 
 The artifact ledger holds one row for each path, and it keeps no history. Thus the
-set at a past moment is not recoverable later, and the mint must run at the anchor.
+set at a past moment is not recoverable later, and the pin must run at the anchor.
 
 The snapshot holds identity, and it holds no cell and no byte. A completed run output
 cannot change under a report, because the path of a run output holds the run id. Thus
@@ -20,38 +20,38 @@ the `report-grounding` capability defines its seam and its reason set.
 
 ## Requirements
 
-### Requirement: The harness mints a snapshot for one analysis at a point in time
+### Requirement: The harness pins a snapshot for one analysis at a point in time
 
-The harness MUST give an operation that mints a `ReportSnapshot` for one analysis.
-The mint reads the artifact ledger, and it gives the set of artifacts that exist at
+The harness MUST give an operation that pins a `ReportSnapshot` for one analysis.
+The pin reads the artifact ledger, and it gives the set of artifacts that exist at
 that moment. The moment is the time anchor of the report session.
 
 The artifact ledger holds one row for each path, and it keeps no history. Thus the
-set at a past moment is not recoverable later, and the mint must happen at that
+set at a past moment is not recoverable later, and the pin must happen at that
 moment.
 
-The mint MUST include each row of the ledger, and it MUST filter no row. An artifact
+The pin MUST include each row of the ledger, and it MUST filter no row. An artifact
 whose bytes are unrecoverable stays a member, because it existed at the anchor. A
 reference to it then fails at the value tier, and the reason names the real cause.
 
-#### Scenario: The mint gives each registered artifact
+#### Scenario: The pin gives each registered artifact
 
-- **WHEN** the mint runs for an analysis that holds three registered artifacts
+- **WHEN** the pin runs for an analysis that holds three registered artifacts
 - **THEN** the snapshot holds one entry for each of the three artifacts
 
 #### Scenario: An analysis with no artifact gives an empty snapshot
 
-- **WHEN** the mint runs for an analysis that holds no registered artifact
-- **THEN** the snapshot holds no entry, and the mint reports no error
+- **WHEN** the pin runs for an analysis that holds no registered artifact
+- **THEN** the snapshot holds no entry, and the pin reports no error
 
-#### Scenario: An artifact that registers after the mint is absent
+#### Scenario: An artifact that registers after the pin is absent
 
-- **WHEN** a later run registers a new artifact after the mint
-- **THEN** the snapshot from the earlier mint holds no entry for that artifact
+- **WHEN** a later run registers a new artifact after the pin
+- **THEN** the snapshot from the earlier pin holds no entry for that artifact
 
 #### Scenario: An artifact with unrecoverable bytes stays a member
 
-- **WHEN** the mint runs for an analysis that holds a row with `unrecoverable_at` set
+- **WHEN** the pin runs for an analysis that holds a row with `unrecoverable_at` set
 - **THEN** the snapshot holds an entry for that artifact
 
 ### Requirement: A snapshot entry holds a hash and a file type
@@ -60,13 +60,13 @@ An entry MUST hold the content hash. It MUST hold the file type when the ledger 
 one for that artifact. The path is the key of the `artifacts` map, and it is not a
 field of the entry.
 
-The mint MUST NOT copy a cell, and it MUST NOT copy the bytes of an artifact. The
+The pin MUST NOT copy a cell, and it MUST NOT copy the bytes of an artifact. The
 entry pins identity only. The value tier reads the artifact when a value is
 necessary.
 
 #### Scenario: An entry carries the hash and the file type
 
-- **WHEN** the mint makes an entry for a registered artifact
+- **WHEN** the pin makes an entry for a registered artifact
 - **THEN** the entry holds the content hash and the file type of that artifact
 
 #### Scenario: The path addresses the entry
@@ -74,9 +74,9 @@ necessary.
 - **WHEN** a reference names the analysis-relative path of a registered artifact
 - **THEN** that path is the key that finds the entry in the `artifacts` map
 
-#### Scenario: The mint copies no cell
+#### Scenario: The pin copies no cell
 
-- **WHEN** the mint runs for an analysis that holds a table of one million rows
+- **WHEN** the pin runs for an analysis that holds a table of one million rows
 - **THEN** the snapshot holds the entry of that table, and it holds no row of it
 
 ### Requirement: The snapshot is the membership boundary of a session
@@ -89,7 +89,7 @@ The reason set of a refusal belongs to the `report-grounding` capability.
 
 #### Scenario: A reference to a later artifact is refused
 
-- **WHEN** a reference names a path that a run wrote after the mint
+- **WHEN** a reference names a path that a run wrote after the pin
 - **THEN** resolution returns an `UnresolvedReference` with reason `artifact-missing`
 
 ### Requirement: The structural validation reads the snapshot only

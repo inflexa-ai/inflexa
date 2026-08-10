@@ -21,7 +21,7 @@ import type { ArtifactType } from "../schemas/artifact-manifest.js";
  *
  * `rows` is optional because an image is pinned by its hash alone and holds no cells. An empty array in
  * that position would say that the artifact holds zero rows, which is a different and false claim. The
- * mint never populates `rows`. `rows` serves the fixture realization only, and that realization resolves
+ * pin never populates `rows`. `rows` serves the fixture realization only, and that realization resolves
  * from the snapshot itself. A production snapshot pins identity, and a value comes from a read of the
  * artifact.
  *
