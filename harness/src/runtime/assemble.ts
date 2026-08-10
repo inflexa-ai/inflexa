@@ -18,6 +18,9 @@
 import { err, ok, type Result } from "neverthrow";
 
 import { createConversationAgent, type ConversationAgentDeps } from "../agents/conversation-agent.js";
+import { createReportSessionAgent } from "../agents/report-session-agent.js";
+import { createReportSessionRuntime } from "../app/report-session-runtime.js";
+import { UnavailablePreviewPublisher, type PreviewPublisher } from "../tools/report/preview-publisher.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
@@ -92,6 +95,12 @@ export interface CoreRuntimeDeps {
     readonly usageRecorder?: UsageRecorder;
     /** Harness-owned citation capability configuration; no ambient lookup occurs. */
     readonly citationResolverConfig?: CitationResolverConfig;
+    /**
+     * Preview-publishing seam of the report path. A managed embedder injects a
+     * realization that mints hosted access; the OSS root falls back to the
+     * unavailable publisher, and the preview tool then reports the absence as data.
+     */
+    readonly reportPreviewPublisher?: PreviewPublisher;
 }
 
 /**
@@ -182,14 +191,32 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         citationResolver,
     });
 
-    // The single registration point for every typed agent. One entry today; a
-    // future thread type's agent plugs in here at assembly with no embedder
-    // change. `conversation` is required at the type level because boot resolves
-    // it unconditionally (`boot.ts` backfill) — a dropped registration must fail
-    // tsc here, not surface only as a boot-time throw. The `Partial` over the
-    // rest keeps the compiler honest that `report` has no agent yet.
-    const agents: Record<"conversation", AgentDefinition> & Partial<Record<ThreadType, AgentDefinition>> = {
+    // The report agent is a singleton over the conversation deps. The session
+    // runtime binds the per-session state to the thread behind the tool boundary,
+    // thus one definition serves every report thread. The preview tool degrades as
+    // data when its publisher realization is absent.
+    const reportSession = createReportSessionRuntime({ pool: conversation.pool, ...(conversation.logger ? { logger: conversation.logger } : {}) });
+    const reportAgent = createReportSessionAgent({
+        model: conversation.model,
+        pool: conversation.pool,
+        embedding: conversation.embedding,
+        workspaceFs: conversation.workspaceFs,
+        gateway: reportSession.gateway,
+        resolveWorkspaceRoot: conversation.resolveWorkspaceRoot,
+        previews: deps.reportPreviewPublisher ?? new UnavailablePreviewPublisher(),
+        ...(conversation.logger ? { logger: conversation.logger } : {}),
+    });
+
+    // The single registration point for every typed agent. A future thread type's
+    // agent plugs in here at assembly with no embedder change. `conversation` is
+    // required at the type level because boot resolves it unconditionally
+    // (`boot.ts` backfill). `report` is required now that its agent registers here,
+    // so a dropped registration fails tsc rather than surfacing only as a
+    // resolution refusal. The `Partial` over the rest keeps the compiler honest
+    // about a type that has no agent yet.
+    const agents: Record<"conversation" | "report", AgentDefinition> & Partial<Record<ThreadType, AgentDefinition>> = {
         conversation: conversationAgent,
+        report: reportAgent,
     };
 
     return {
