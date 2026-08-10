@@ -34,30 +34,34 @@ function oneSectionDraft(): DraftDocument {
     return { title: "", sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [] }] };
 }
 
+/** The default analysis of a seeded thread. It matches the scope of `ctxForThread`, thus a call resolves. */
+const DEFAULT_ANALYSIS_ID = "analysis-001";
+
 /**
- * An in-memory gateway. It holds one state for each thread, thus two threads stay isolated. The load and
- * the persist read and write the same map, thus a landed document is visible to the next load. The full
- * fault fails the load and the persist. The persist-only fault fails the persist but keeps the load, thus a
- * test can isolate a land-time persist failure. The store clones each value to model a durable round trip.
+ * An in-memory gateway. It holds one state and one analysis for each thread, thus two threads stay
+ * isolated. The load and the persist read and write the same map, thus a landed document is visible to the
+ * next load. The load hands the persist the prior document as the concurrency token. The full fault fails
+ * the load and the persist. The persist-only fault fails the persist but keeps the load, thus a test can
+ * isolate a land-time persist failure. The store clones each value to model a durable round trip.
  */
 interface FakeGateway extends ReportSessionStateGateway {
-    seed(threadId: string, state: ReportSessionState): void;
+    seed(threadId: string, state: ReportSessionState, analysisId?: string): void;
     peek(threadId: string): ReportSessionState | undefined;
     setFault(fault: boolean): void;
     setPersistFault(fault: boolean): void;
 }
 
 function makeFakeGateway(): FakeGateway {
-    const rows = new Map<string, ReportSessionState>();
+    const rows = new Map<string, { state: ReportSessionState; analysisId: string }>();
     let fault = false;
     let persistFault = false;
     return {
-        seed(threadId, state): void {
-            rows.set(threadId, structuredClone(state));
+        seed(threadId, state, analysisId = DEFAULT_ANALYSIS_ID): void {
+            rows.set(threadId, { state: structuredClone(state), analysisId });
         },
         peek(threadId): ReportSessionState | undefined {
-            const state = rows.get(threadId);
-            return state === undefined ? undefined : structuredClone(state);
+            const row = rows.get(threadId);
+            return row === undefined ? undefined : structuredClone(row.state);
         },
         setFault(value): void {
             fault = value;
@@ -69,8 +73,12 @@ function makeFakeGateway(): FakeGateway {
             if (fault) {
                 return Promise.resolve({ outcome: "failed", detail: "the store is down" });
             }
-            const state = rows.get(threadId);
-            return Promise.resolve(state === undefined ? { outcome: "absent" } : { outcome: "found", state: structuredClone(state) });
+            const row = rows.get(threadId);
+            if (row === undefined) {
+                return Promise.resolve({ outcome: "absent" });
+            }
+            const state = structuredClone(row.state);
+            return Promise.resolve({ outcome: "found", state, analysisId: row.analysisId, token: state.document });
         },
         persist(threadId, document): Promise<SessionStatePersist> {
             if (fault) {
@@ -81,8 +89,9 @@ function makeFakeGateway(): FakeGateway {
                 return Promise.resolve({ outcome: "failed", detail: "the persist failed" });
             }
             const existing = rows.get(threadId);
-            const snapshotOfThread = existing?.snapshot ?? snapshot;
-            rows.set(threadId, { document: structuredClone(document), snapshot: snapshotOfThread });
+            const snapshotOfThread = existing?.state.snapshot ?? snapshot;
+            const analysisId = existing?.analysisId ?? DEFAULT_ANALYSIS_ID;
+            rows.set(threadId, { state: { document: structuredClone(document), snapshot: snapshotOfThread }, analysisId });
             return Promise.resolve({ outcome: "persisted" });
         },
     };
@@ -91,7 +100,7 @@ function makeFakeGateway(): FakeGateway {
 /** A tool context whose scope names a report thread. */
 function ctxForThread(threadId: string): ToolContext {
     const { ctx } = makeToolContext();
-    const scope: Scope = { kind: "analysis", analysisId: "analysis-001", threadId };
+    const scope: Scope = { kind: "analysis", analysisId: DEFAULT_ANALYSIS_ID, threadId };
     return { ...ctx, session: { ...ctx.session, scope } };
 }
 
@@ -179,6 +188,20 @@ describe("add_block", () => {
 
         const value = (await tools.add_block.execute({ block: encoded, parentId: "s1" }, ctxForThread("t1")))._unsafeUnwrap();
 
+        expect(value.applied).toBe(true);
+        expect(gateway.peek("t1")!.document.sections[0]!.blocks.map((block) => block.id)).toEqual(["t1"]);
+    });
+
+    it("accepts an explicit null in each destination field that the call does not use", async () => {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
+        const input = { block: { kind: "text", id: "t1", content: { prose: "x" } }, parentId: "s1", place: null, before: null, after: null };
+
+        // Strict function calling requires every declared key, thus the unused anchors arrive as null.
+        expect(tools.add_block.inputSchema.safeParse(input).success).toBe(true);
+
+        const value = (await tools.add_block.execute(input, ctxForThread("t1")))._unsafeUnwrap();
         expect(value.applied).toBe(true);
         expect(gateway.peek("t1")!.document.sections[0]!.blocks.map((block) => block.id)).toEqual(["t1"]);
     });
@@ -286,6 +309,60 @@ describe("the tool-layer refusal", () => {
         // The persist failed after the add landed, thus the row keeps the old draft with an empty section.
         expect(gateway.peek("t1")!.document.sections[0]!.blocks).toEqual([]);
     });
+
+    it("refuses a scope whose analysis differs from the analysis that owns the thread, and nothing persists", async () => {
+        const gateway = makeFakeGateway();
+        // The thread belongs to a different analysis than the scope of the call.
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot }, "analysis-999");
+        const tools = createReportAuthoringTools(gateway);
+
+        const result = await tools.add_block.execute({ block: { kind: "text", id: "t9", content: { prose: "x" } }, parentId: "s1" }, ctxForThread("t1"));
+
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(false);
+        if (!value.applied) {
+            expect(value.refusal.reason).toBe("scope-analysis-mismatch");
+            expect(value.refusal.detail).toContain("analysis-001");
+            expect(value.refusal.detail).toContain("analysis-999");
+        }
+        // The mismatch ran no persist, thus the seeded draft stays.
+        expect(gateway.peek("t1")!.document.sections[0]!.blocks).toEqual([]);
+    });
+
+    it("refuses a wrong thread type with a permanent reason", async () => {
+        // A gateway whose load reports a wrong thread type, the permanent condition the runtime distinguishes.
+        const gateway: ReportSessionStateGateway = {
+            load: () => Promise.resolve({ outcome: "wrong-type", detail: "the thread is a conversation thread, not a report thread" }),
+            persist: () => Promise.resolve({ outcome: "persisted" }),
+        };
+        const tools = createReportAuthoringTools(gateway);
+
+        const result = await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Intro", blocks: [] } }, ctxForThread("t1"));
+
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(false);
+        if (!value.applied) {
+            expect(value.refusal.reason).toBe("wrong-thread-type");
+            expect(value.refusal.detail).toContain("permanent");
+        }
+    });
+
+    it("refuses a landing when a concurrent turn changed the report first", async () => {
+        // A gateway whose persist reports a conflict, the compare-and-swap outcome of the durable store.
+        const gateway: ReportSessionStateGateway = {
+            load: () => Promise.resolve({ outcome: "found", state: { document: oneSectionDraft(), snapshot }, analysisId: "analysis-001", token: null }),
+            persist: () => Promise.resolve({ outcome: "conflict" }),
+        };
+        const tools = createReportAuthoringTools(gateway);
+
+        const result = await tools.add_block.execute({ block: { kind: "text", id: "t1", content: { prose: "x" } }, parentId: "s1" }, ctxForThread("t1"));
+
+        const value = result._unsafeUnwrap();
+        expect(value.applied).toBe(false);
+        if (!value.applied) {
+            expect(value.refusal.reason).toBe("stale-state");
+        }
+    });
 });
 
 describe("change_block", () => {
@@ -299,6 +376,18 @@ describe("change_block", () => {
         expect(tools.change_block.inputSchema.safeParse(input).success).toBe(true);
 
         const value = (await tools.change_block.execute(input, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(value.applied).toBe(true);
+        expect(gateway.peek("t1")!.document.sections[0]!.title).toBe("Results");
+    });
+
+    it("retitles a section when the unused block field arrives as null", async () => {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
+
+        // Strict function calling sends the unused `block` field as null, thus the retitle still lands.
+        const value = (await tools.change_block.execute({ targetId: "s1", title: "Results", block: null }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value.applied).toBe(true);
         expect(gateway.peek("t1")!.document.sections[0]!.title).toBe("Results");

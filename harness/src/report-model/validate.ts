@@ -11,7 +11,7 @@
 import { ReportDocumentSchema } from "../contracts/report-blocks.js";
 import type { UnresolvedReference } from "../contracts/report-reference.js";
 import { allWithConcurrency } from "../lib/async-utils.js";
-import { walkBlocks, type CollectedReference, type ReportWarning } from "./block-walk.js";
+import { walkBlocks, type AnyBlock, type CollectedReference, type ReportWarning } from "./block-walk.js";
 import { columnsHeldByNoRow, type ReferenceResolver, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
 
 export type { ReportWarning };
@@ -77,6 +77,51 @@ export function checkChartEncoding(entry: CollectedReference, value: ResolvedVal
     };
 }
 
+/** The resolved values and the failures of one resolution pass over the references of a block tree. */
+export interface ReferenceResolution {
+    /** The resolved value of each block whose reference resolved, keyed by its block id. */
+    resolvedByBlock: Map<string, ResolvedValue>;
+    /** Each reference that did not resolve, or whose chart encoding named an absent column. */
+    failures: ResolutionFailure[];
+}
+
+/**
+ * Resolve each reference of a block tree under the concurrency bound, and run the chart-encoding match.
+ *
+ * The walk collects each reference one time, `allWithConcurrency` bounds the fan-out, and
+ * `checkChartEncoding` catches a chart that plots a column which the bound table does not hold. The record
+ * gate and the preview share this one pass, thus the two refuse the same references. A value-bearing block
+ * whose reference resolved carries its value in the map. A claim or a citation reference reads no value
+ * from the map. The walk collects every failure, thus a reviewer sees each block that broke.
+ */
+export async function resolveDocumentReferences(
+    sections: readonly AnyBlock[],
+    snapshot: ReportSnapshot,
+    resolver: ReferenceResolver,
+): Promise<ReferenceResolution> {
+    const { references } = walkBlocks(sections);
+    const resolved = await allWithConcurrency(
+        references.map((entry) => () => resolver.resolve(entry.reference, snapshot).then((result) => ({ entry, result }))),
+        RESOLUTION_CONCURRENCY,
+    );
+
+    const failures: ResolutionFailure[] = [];
+    const resolvedByBlock = new Map<string, ResolvedValue>();
+    for (const { entry, result } of resolved) {
+        if (result.isErr()) {
+            failures.push({ blockId: entry.blockId, failure: result.error });
+            continue;
+        }
+        const encodingFailure = checkChartEncoding(entry, result.value);
+        if (encodingFailure !== undefined) {
+            failures.push({ blockId: entry.blockId, failure: encodingFailure });
+            continue;
+        }
+        resolvedByBlock.set(entry.blockId, result.value);
+    }
+    return { resolvedByBlock, failures };
+}
+
 /** Resolve each reference, collect the schema conformance and the resolution outcomes, and warn on prose. */
 export async function validateReport(document: unknown, snapshot: ReportSnapshot, resolver: ReferenceResolver): Promise<ReportValidation> {
     const parsed = ReportDocumentSchema.safeParse(document);
@@ -88,26 +133,8 @@ export async function validateReport(document: unknown, snapshot: ReportSnapshot
         return { valid: false, schemaIssues, warnings: [] };
     }
 
-    const { references, repeatedIds, warnings } = walkBlocks(parsed.data.sections);
-
-    const resolved = await allWithConcurrency(
-        references.map((entry) => () => resolver.resolve(entry.reference, snapshot).then((result) => ({ entry, result }))),
-        RESOLUTION_CONCURRENCY,
-    );
-
-    // Collect every failure. A reviewer must see each block that broke, thus the walk does not stop at
-    // the first unresolved reference. The `Err` channel carries the unresolved reference itself.
-    const resolutionFailures: ResolutionFailure[] = [];
-    for (const { entry, result } of resolved) {
-        if (result.isErr()) {
-            resolutionFailures.push({ blockId: entry.blockId, failure: result.error });
-            continue;
-        }
-        const encodingFailure = checkChartEncoding(entry, result.value);
-        if (encodingFailure !== undefined) {
-            resolutionFailures.push({ blockId: entry.blockId, failure: encodingFailure });
-        }
-    }
+    const { repeatedIds, warnings } = walkBlocks(parsed.data.sections);
+    const { failures: resolutionFailures } = await resolveDocumentReferences(parsed.data.sections, snapshot, resolver);
 
     if (repeatedIds.length > 0 || resolutionFailures.length > 0) {
         return {

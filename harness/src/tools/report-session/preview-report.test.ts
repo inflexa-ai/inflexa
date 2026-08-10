@@ -38,21 +38,25 @@ async function makeRoot(): Promise<string> {
     return root;
 }
 
+/** The default analysis of a seeded thread. It matches the scope of `ctxForThread`, thus a call resolves. */
+const DEFAULT_ANALYSIS_ID = "analysis-001";
+
 /**
- * An in-memory gateway. It holds one state for each thread, and the load clones each value to model a
- * durable round trip. A fault flag forces the failure outcome.
+ * An in-memory gateway. It holds one state and one analysis for each thread, and the load clones each value
+ * to model a durable round trip. The found load carries the stored analysis and the prior document as the
+ * concurrency token. A fault flag forces the failure outcome.
  */
 interface FakeGateway extends ReportSessionStateGateway {
-    seed(threadId: string, state: ReportSessionState): void;
+    seed(threadId: string, state: ReportSessionState, analysisId?: string): void;
     setFault(fault: boolean): void;
 }
 
 function makeFakeGateway(): FakeGateway {
-    const rows = new Map<string, ReportSessionState>();
+    const rows = new Map<string, { state: ReportSessionState; analysisId: string }>();
     let fault = false;
     return {
-        seed(threadId, state): void {
-            rows.set(threadId, structuredClone(state));
+        seed(threadId, state, analysisId = DEFAULT_ANALYSIS_ID): void {
+            rows.set(threadId, { state: structuredClone(state), analysisId });
         },
         setFault(value): void {
             fault = value;
@@ -61,13 +65,18 @@ function makeFakeGateway(): FakeGateway {
             if (fault) {
                 return Promise.resolve({ outcome: "failed", detail: "the store is down" });
             }
-            const state = rows.get(threadId);
-            return Promise.resolve(state === undefined ? { outcome: "absent" } : { outcome: "found", state: structuredClone(state) });
+            const row = rows.get(threadId);
+            if (row === undefined) {
+                return Promise.resolve({ outcome: "absent" });
+            }
+            const state = structuredClone(row.state);
+            return Promise.resolve({ outcome: "found", state, analysisId: row.analysisId, token: state.document });
         },
         persist(threadId, document): Promise<SessionStatePersist> {
             const existing = rows.get(threadId);
-            const snapshotOfThread = existing?.snapshot ?? { artifacts: {} };
-            rows.set(threadId, { document: structuredClone(document), snapshot: snapshotOfThread });
+            const snapshotOfThread = existing?.state.snapshot ?? { artifacts: {} };
+            const analysisId = existing?.analysisId ?? DEFAULT_ANALYSIS_ID;
+            rows.set(threadId, { state: { document: structuredClone(document), snapshot: snapshotOfThread }, analysisId });
             return Promise.resolve({ outcome: "persisted" });
         },
     };
@@ -76,7 +85,7 @@ function makeFakeGateway(): FakeGateway {
 /** A tool context whose scope names a report thread. */
 function ctxForThread(threadId: string): ToolContext {
     const { ctx } = makeToolContext();
-    const scope: Scope = { kind: "analysis", analysisId: "analysis-001", threadId };
+    const scope: Scope = { kind: "analysis", analysisId: DEFAULT_ANALYSIS_ID, threadId };
     return { ...ctx, session: { ...ctx.session, scope } };
 }
 
@@ -313,5 +322,24 @@ describe("the session refusal", () => {
         if (result.outcome === "refused") {
             expect(result.refusal.reason).toBe("absent-state");
         }
+    });
+
+    it("refuses a scope whose analysis differs from the analysis that owns the thread", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        // The thread belongs to a different analysis than the scope of the call.
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot }, "analysis-999");
+        const tool = createPreviewReportTool({ gateway, resolver: createFixtureResolver(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("refused");
+        if (result.outcome === "refused") {
+            expect(result.refusal.reason).toBe("scope-analysis-mismatch");
+            expect(result.refusal.detail).toContain("analysis-001");
+            expect(result.refusal.detail).toContain("analysis-999");
+        }
+        // The mismatch refuses before any resolution, thus no page lands.
+        expect(existsSync(join(root, "report-sessions"))).toBe(false);
     });
 });

@@ -11,7 +11,7 @@
  * the workspace search, the run inspection, and the data-profile inspection. It
  * holds no planner, no run launcher, no working-memory write, and no sandbox
  * mutate surface. Thus no tool starts a run, and no tool changes an analysis. The
- * roster omits those tools; a runtime guard does not block them.
+ * roster omits those tools, and no runtime guard blocks them.
  *
  * The definition carries no per-session value. The system prompt composes through
  * `composeSystemPrompt` with the identity part and the conversational part, the
@@ -52,7 +52,7 @@ const REPORT_SESSION_MAX_ITERATIONS = 50;
  * and the preview tool degrades as data when it is.
  */
 export interface ReportSessionAgentDeps {
-    /** Model id -- provenance / metric label; the provider owns the wire model. */
+    /** Model id -- the provenance and metric label. The provider owns the wire model. */
     readonly model: string;
     /** Postgres pool -- workspace index, run inspection, and data-profile inspection. */
     readonly pool: Pool;

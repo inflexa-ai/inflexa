@@ -536,9 +536,9 @@ export function createThreadStore(pool: Pool): ThreadStore {
         // again, so a row left behind is dead weight until the analysis purge runs.
         //
         // Messages go first, and the thread rows go last: the walk every statement
-        // shares reads the very rows the last one removes, so a thread delete before
-        // the others would leave the subtree unresolvable by the time its transcripts
-        // and its drafts were named.
+        // shares reads the very rows the last one removes. Thus a thread delete before
+        // the others leaves the subtree unresolvable before a later statement names its
+        // transcripts and its drafts.
         return withTransaction(pool, "thread-store.purgeThread", (client) =>
             tryMutation("thread-store.purgeThread.messages", () =>
                 client.query(

@@ -68,7 +68,8 @@ describe("createReportSessionStateStore", () => {
         expect(created.analysisId).toBe(analysisId);
         expect(created.createdAt).toBeInstanceOf(Date);
 
-        expect((await writer.persistDocument({ threadId, document: validDraft }))._unsafeUnwrap()).toBe(true);
+        // A fresh row holds a null document, thus the prior document of the persist is null.
+        expect((await writer.persistDocument({ threadId, document: validDraft, expected: null }))._unsafeUnwrap()).toBe("persisted");
 
         // A second store instance reads the same durable row.
         const reader = createReportSessionStateStore({ pool });
@@ -89,7 +90,7 @@ describe("createReportSessionStateStore", () => {
         const created = (await store.writeSnapshot({ threadId, analysisId, snapshot: first }))._unsafeUnwrap();
         expect(created.snapshot).toEqual(first);
 
-        (await store.persistDocument({ threadId, document: validDraft }))._unsafeUnwrap();
+        (await store.persistDocument({ threadId, document: validDraft, expected: null }))._unsafeUnwrap();
 
         // The second write is insert-if-absent. The row already exists, thus the
         // winner keeps its snapshot and its document, and the store reads that row back.
@@ -103,6 +104,58 @@ describe("createReportSessionStateStore", () => {
             values: [threadId],
         });
         expect(rows[0]!.n).toBe(1);
+    });
+
+    it("refuses the second of two interleaved persists, and keeps the first landing", async () => {
+        const analysisId = "analysis-cas";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-cas";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        // Two turns read the fresh row, thus both hold the null prior document.
+        const secondLanding: DraftDocument = {
+            title: "A different report",
+            sections: [{ kind: "section", id: "s2", title: "Summary", blocks: [{ kind: "text", id: "t2", content: { prose: "Another finding." } }] }],
+        };
+
+        const first = (await store.persistDocument({ threadId, document: validDraft, expected: null }))._unsafeUnwrap();
+        expect(first).toBe("persisted");
+
+        // The second turn still holds the null prior document, but the row now holds the
+        // first landing, thus the compare-and-swap refuses.
+        const second = (await store.persistDocument({ threadId, document: secondLanding, expected: null }))._unsafeUnwrap();
+        expect(second).toBe("conflict");
+
+        // The row holds the first landing, and the second turn did not overwrite it.
+        const state = (await store.readState(threadId))._unsafeUnwrap();
+        expect(state!.document).toEqual(validDraft);
+    });
+
+    it("lands a second persist that carries the prior document as its token", async () => {
+        const analysisId = "analysis-cas-chain";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-cas-chain";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        // The first persist lands against the null prior document.
+        expect((await store.persistDocument({ threadId, document: validDraft, expected: null }))._unsafeUnwrap()).toBe("persisted");
+
+        // The next turn reads the stored document, thus its token is the first landing. The prior document
+        // still holds, thus the compare-and-swap against the parsed token lands.
+        const read = (await store.readState(threadId))._unsafeUnwrap();
+        const nextDoc: DraftDocument = {
+            title: "A second landing",
+            sections: [{ kind: "section", id: "s3", title: "Notes", blocks: [{ kind: "text", id: "t3", content: { prose: "More." } }] }],
+        };
+        expect((await store.persistDocument({ threadId, document: nextDoc, expected: read!.document }))._unsafeUnwrap()).toBe("persisted");
+
+        const after = (await store.readState(threadId))._unsafeUnwrap();
+        expect(after!.document).toEqual(nextDoc);
+    });
+
+    it("gives an absence for a persist against a thread with no row", async () => {
+        const outcome = (await store.persistDocument({ threadId: "thread-persist-absent", document: validDraft, expected: null }))._unsafeUnwrap();
+        expect(outcome).toBe("absent");
     });
 
     it("gives an absence for a thread with no row", async () => {

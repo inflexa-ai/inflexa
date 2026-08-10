@@ -21,6 +21,10 @@
  * document can be incomplete. A column that fails a parse reads as a typed error, and
  * it does not crash. An absent row reads as a normal absence.
  *
+ * A persist is a compare-and-swap. The load reads the prior document, and the persist
+ * lands only when the row still holds it. Thus two concurrent turns cannot both land,
+ * and the loser reads the state again.
+ *
  * A purge of the analysis removes the row through the analysis-id cascade.
  */
 
@@ -53,12 +57,25 @@ export interface WriteSnapshotInput {
     readonly snapshot: ReportSnapshot;
 }
 
-/** The document to persist against an existing row. */
+/** The document to persist against an existing row, and the prior document that the load read. */
 export interface PersistDocumentInput {
     readonly threadId: string;
     /** The draft document, stored as given. */
     readonly document: DraftDocument;
+    /**
+     * The prior document that the load read, or `null` before the first document lands.
+     * The persist lands only when the row still holds it, thus a concurrent turn that
+     * landed first turns this persist into a conflict.
+     */
+    readonly expected: DraftDocument | null;
 }
+
+/**
+ * The outcome of a persist. `persisted` landed the document. `conflict` means the row
+ * no longer holds the expected prior document, thus a concurrent turn landed first and
+ * this turn must read the state again. `absent` means no row holds the thread.
+ */
+export type PersistOutcome = "persisted" | "conflict" | "absent";
 
 /**
  * A stored row that a read cannot parse with the current schemas. It names the
@@ -91,11 +108,12 @@ export interface ReportSessionStateStore {
      */
     writeSnapshot(input: WriteSnapshotInput): ResultAsync<ReportSessionState, DbError | SessionStateReadError>;
     /**
-     * Persist the document of a thread. The row must exist, pinned by `writeSnapshot`
-     * first. The value is `true` when a row took the document, and `false` when no row
-     * holds the thread.
+     * Persist the document of a thread against the prior document that the load read.
+     * The row must exist, pinned by `writeSnapshot` first. The update lands only when
+     * the row still holds the prior document. `persisted` landed it, `conflict` means a
+     * concurrent turn landed first, and `absent` means no row holds the thread.
      */
-    persistDocument(input: PersistDocumentInput): ResultAsync<boolean, DbError>;
+    persistDocument(input: PersistDocumentInput): ResultAsync<PersistOutcome, DbError>;
 }
 
 export interface ReportSessionStateStoreDeps {
@@ -205,13 +223,30 @@ export function createReportSessionStateStore({ pool }: ReportSessionStateStoreD
             });
     }
 
-    function persistDocument(input: PersistDocumentInput): ResultAsync<boolean, DbError> {
+    function persistDocument(input: PersistDocumentInput): ResultAsync<PersistOutcome, DbError> {
         return tryMutation("report-session-state.persistDocument", async () => {
-            const { rowCount } = await pool.query({
-                text: "UPDATE cortex_report_session_state SET document = $2::jsonb WHERE thread_id = $1",
-                values: [input.threadId, JSON.stringify(input.document)],
+            // The prior document rides as SQL NULL when absent, thus the compare-and-swap
+            // matches a fresh row whose document column is null. A JSON `null` would be a
+            // distinct jsonb value, and it would never match the null column.
+            const expected = input.expected === null ? null : JSON.stringify(input.expected);
+            // One statement tells a conflict from an absence. `existed` counts the row, and
+            // `updated` counts the compare-and-swap. A row that exists but did not update
+            // holds a different prior document, thus a concurrent turn landed first.
+            const { rows } = await pool.query<{ existed: number; updated: number }>({
+                text: `WITH target AS (
+    SELECT 1 FROM cortex_report_session_state WHERE thread_id = $1
+  ), updated AS (
+    UPDATE cortex_report_session_state
+       SET document = $2::jsonb
+     WHERE thread_id = $1 AND document IS NOT DISTINCT FROM $3::jsonb
+    RETURNING 1
+  )
+  SELECT (SELECT COUNT(*) FROM target)::int AS existed, (SELECT COUNT(*) FROM updated)::int AS updated`,
+                values: [input.threadId, JSON.stringify(input.document), expected],
             });
-            return (rowCount ?? 0) > 0;
+            const row = rows[0];
+            if (row === undefined || row.existed === 0) return "absent";
+            return row.updated > 0 ? "persisted" : "conflict";
         });
     }
 

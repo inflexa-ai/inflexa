@@ -128,12 +128,15 @@ export interface ChangedContainer {
 /**
  * The closed set of tool-layer refusal reasons.
  *
- * `no-thread-scope` means that the scope of the call names no report thread. `absent-state` means that the
- * gateway holds no state for the thread. `state-unavailable` means that the gateway cannot serve or store
- * the state. The set is disjoint from the core `DraftRefusalReason`, thus a reader tells a core refusal
- * from a tool-layer refusal by the reason alone.
+ * `no-thread-scope` means that the scope of the call names no report thread. `absent-state` means that no
+ * report session exists for the thread, and it is permanent. `wrong-thread-type` means that the thread is
+ * not a report thread, and it is permanent. `scope-analysis-mismatch` means that the scope names one
+ * analysis and the thread belongs to another, and it is permanent. `stale-state` means that a concurrent
+ * turn landed first, and the agent must read the state again. `state-unavailable` means that the gateway
+ * cannot serve or store the state, and it is transient. The set is disjoint from the core
+ * `DraftRefusalReason`, thus a reader tells a core refusal from a tool-layer refusal by the reason alone.
  */
-export type SessionRefusalReason = "no-thread-scope" | "absent-state" | "state-unavailable";
+export type SessionRefusalReason = "no-thread-scope" | "absent-state" | "wrong-thread-type" | "scope-analysis-mismatch" | "stale-state" | "state-unavailable";
 
 /**
  * A refusal that the tool layer raises before the core runs.
@@ -178,11 +181,26 @@ export interface ReportSessionState {
     readonly snapshot: ReportSnapshot;
 }
 
-/** The outcome of a gateway load. An absent row is a normal condition, and a fault names the cause. */
-export type SessionStateLoad = { outcome: "found"; state: ReportSessionState } | { outcome: "absent" } | { outcome: "failed"; detail: string };
+/**
+ * The concurrency token that a load hands out and a persist compares against. It is the prior document
+ * that the load read, or `null` before the first document lands. The persist lands only when the row still
+ * holds it, thus a concurrent turn that landed first turns the next persist into a conflict.
+ */
+export type SessionStateToken = DraftDocument | null;
 
-/** The outcome of a gateway persist. */
-export type SessionStatePersist = { outcome: "persisted" } | { outcome: "failed"; detail: string };
+/**
+ * The outcome of a gateway load. `found` carries the state, the analysis that owns the thread, and the
+ * concurrency token. `absent` and `wrong-type` are permanent conditions, and `failed` is a transient fault
+ * that names its cause.
+ */
+export type SessionStateLoad =
+    | { outcome: "found"; state: ReportSessionState; analysisId: string; token: SessionStateToken }
+    | { outcome: "absent" }
+    | { outcome: "wrong-type"; detail: string }
+    | { outcome: "failed"; detail: string };
+
+/** The outcome of a gateway persist. `conflict` means that a concurrent turn landed first. */
+export type SessionStatePersist = { outcome: "persisted" } | { outcome: "conflict" } | { outcome: "failed"; detail: string };
 
 /**
  * The session-state gateway that the tools read and write.
@@ -194,14 +212,15 @@ export type SessionStatePersist = { outcome: "persisted" } | { outcome: "failed"
  */
 export interface ReportSessionStateGateway {
     load(threadId: string): Promise<SessionStateLoad>;
-    persist(threadId: string, document: DraftDocument): Promise<SessionStatePersist>;
+    persist(threadId: string, document: DraftDocument, expected: SessionStateToken): Promise<SessionStatePersist>;
 }
 
-/** The thread of a call, its analysis, and the loaded state, once the scope resolves and the load succeeds. */
+/** The thread of a call, its analysis, the loaded state, and the concurrency token that the persist compares against. */
 export interface OpenedThread {
     readonly threadId: string;
     readonly analysisId: string;
     readonly state: ReportSessionState;
+    readonly token: SessionStateToken;
 }
 
 /**
@@ -209,8 +228,12 @@ export interface OpenedThread {
  *
  * The report thread and its analysis ride on the analysis scope. The thread id becomes one segment of a
  * session directory, thus the safe-id check sits here beside the shape check: a scope whose id carries a
- * separator or a traversal segment names no thread that a tool can write under. A scope of a different
- * kind, an unsafe id, an absent row, and a gateway fault each refuse as a typed `SessionRefusal`.
+ * separator or a traversal segment names no thread that a tool can write under.
+ *
+ * The stored analysis of the thread must match the scope. A mismatch reads one analysis's draft and writes
+ * into another analysis's workspace, thus the resolution refuses it with a permanent reason that names the
+ * two ids. A scope of a different kind, an unsafe id, an absent thread, a wrong thread type, and a gateway
+ * fault each refuse as a typed `SessionRefusal` too.
  *
  * The authoring tools and the preview tool share this one resolution, thus the two surfaces accept the
  * same thread id and map a load outcome onto a refusal the same way.
@@ -222,12 +245,21 @@ export async function openReportThread(gateway: ReportSessionStateGateway, scope
     const { threadId, analysisId } = scope;
     const loaded = await gateway.load(threadId);
     if (loaded.outcome === "absent") {
-        return err({ reason: "absent-state", detail: `no report session state exists for the thread ${threadId}` });
+        return err({ reason: "absent-state", detail: `no report session exists for the thread ${threadId}, and this condition is permanent` });
+    }
+    if (loaded.outcome === "wrong-type") {
+        return err({ reason: "wrong-thread-type", detail: `${loaded.detail}, and this condition is permanent` });
     }
     if (loaded.outcome === "failed") {
         return err({ reason: "state-unavailable", detail: loaded.detail });
     }
-    return ok({ threadId, analysisId, state: loaded.state });
+    if (loaded.analysisId !== analysisId) {
+        return err({
+            reason: "scope-analysis-mismatch",
+            detail: `the scope names the analysis ${analysisId}, but the thread ${threadId} belongs to the analysis ${loaded.analysisId}`,
+        });
+    }
+    return ok({ threadId, analysisId, state: loaded.state, token: loaded.token });
 }
 
 /** The eight authoring tools. */
@@ -407,9 +439,13 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
      * removed block has a holder only in the first and an added block has one only in the second. The child
      * order comes out of `next` in either case. A persist fault refuses with `state-unavailable`, thus the
      * tool reports `applied: true` only after the row holds the new document.
+     *
+     * The persist is a compare-and-swap against the token that the load read. A concurrent turn that landed
+     * first turns the persist into a conflict, and the tool refuses with `stale-state`.
      */
     const land = async (
         threadId: string,
+        token: SessionStateToken,
         previous: DraftDocument,
         result: Result<DraftDocument, DraftRefusal>,
         holders: (previous: DraftDocument, next: DraftDocument) => (string | undefined)[],
@@ -418,7 +454,13 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             return { applied: false, refusal: result.error };
         }
         const next = result.value;
-        const persisted = await gateway.persist(threadId, next);
+        const persisted = await gateway.persist(threadId, next, token);
+        if (persisted.outcome === "conflict") {
+            return {
+                applied: false,
+                refusal: { reason: "stale-state", detail: "another turn changed the report since this turn read it, thus read the state again" },
+            };
+        }
         if (persisted.outcome === "failed") {
             return { applied: false, refusal: { reason: "state-unavailable", detail: persisted.detail } };
         }
@@ -447,7 +489,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             if (opened.isErr()) {
                 return ok(refuse(opened.error));
             }
-            const { threadId, state } = opened.value;
+            const { threadId, state, token } = opened.value;
             const destination = toDestination(input);
             if (destination.isErr()) {
                 return ok(refuse(destination.error));
@@ -455,9 +497,13 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             const block = decodeBlockPayload(input.block);
             const addedId = readId(block);
             return ok(
-                await land(threadId, state.document, addBlock(state.document, { block, destination: destination.value }, state.snapshot), (_previous, next) => [
-                    addedId === undefined ? undefined : holderIdOf(next, addedId),
-                ]),
+                await land(
+                    threadId,
+                    token,
+                    state.document,
+                    addBlock(state.document, { block, destination: destination.value }, state.snapshot),
+                    (_previous, next) => [addedId === undefined ? undefined : holderIdOf(next, addedId)],
+                ),
             );
         },
     });
@@ -475,13 +521,13 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             if (opened.isErr()) {
                 return ok(refuse(opened.error));
             }
-            const { threadId, state } = opened.value;
+            const { threadId, state, token } = opened.value;
             const operation = toChangeOperation(input);
             if (operation.isErr()) {
                 return ok(refuse(operation.error));
             }
             return ok(
-                await land(threadId, state.document, changeBlock(state.document, operation.value, state.snapshot), (_previous, next) => [
+                await land(threadId, token, state.document, changeBlock(state.document, operation.value, state.snapshot), (_previous, next) => [
                     holderIdOf(next, input.targetId),
                 ]),
             );
@@ -499,9 +545,9 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             if (opened.isErr()) {
                 return ok(refuse(opened.error));
             }
-            const { threadId, state } = opened.value;
+            const { threadId, state, token } = opened.value;
             return ok(
-                await land(threadId, state.document, removeBlock(state.document, { targetId: input.targetId }, state.snapshot), (previous) => [
+                await land(threadId, token, state.document, removeBlock(state.document, { targetId: input.targetId }, state.snapshot), (previous) => [
                     holderIdOf(previous, input.targetId),
                 ]),
             );
@@ -521,7 +567,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             if (opened.isErr()) {
                 return ok(refuse(opened.error));
             }
-            const { threadId, state } = opened.value;
+            const { threadId, state, token } = opened.value;
             const destination = toDestination(input);
             if (destination.isErr()) {
                 return ok(refuse(destination.error));
@@ -529,6 +575,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             return ok(
                 await land(
                     threadId,
+                    token,
                     state.document,
                     moveBlock(state.document, { targetId: input.targetId, destination: destination.value }, state.snapshot),
                     (previous, next) => [holderIdOf(previous, input.targetId), holderIdOf(next, input.targetId)],
@@ -551,8 +598,8 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             if (opened.isErr()) {
                 return ok(refuse(opened.error));
             }
-            const { threadId, state } = opened.value;
-            return ok(await land(threadId, state.document, ok(setTitle(state.document, input.title)), () => []));
+            const { threadId, state, token } = opened.value;
+            return ok(await land(threadId, token, state.document, ok(setTitle(state.document, input.title)), () => []));
         },
     });
 

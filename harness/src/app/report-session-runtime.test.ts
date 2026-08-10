@@ -146,12 +146,14 @@ describe("createReportSessionRuntime", () => {
 
         const runtime = createReportSessionRuntime({ pool });
 
-        // The load anchors each row before the persist. The pin writes the row first.
-        expect((await runtime.gateway.load(threadOne)).outcome).toBe("found");
-        expect((await runtime.gateway.load(threadTwo)).outcome).toBe("found");
+        // The load anchors each row before the persist. The pin writes the row first, and
+        // the load hands the persist the prior document as the concurrency token.
+        const loadedOne = await runtime.gateway.load(threadOne);
+        const loadedTwo = await runtime.gateway.load(threadTwo);
+        if (loadedOne.outcome !== "found" || loadedTwo.outcome !== "found") throw new Error("expected found");
 
-        expect((await runtime.gateway.persist(threadOne, DOC_ONE)).outcome).toBe("persisted");
-        expect((await runtime.gateway.persist(threadTwo, DOC_TWO)).outcome).toBe("persisted");
+        expect((await runtime.gateway.persist(threadOne, DOC_ONE, loadedOne.token)).outcome).toBe("persisted");
+        expect((await runtime.gateway.persist(threadTwo, DOC_TWO, loadedTwo.token)).outcome).toBe("persisted");
 
         const readOne = await runtime.gateway.load(threadOne);
         const readTwo = await runtime.gateway.load(threadTwo);
