@@ -50,6 +50,14 @@ on:
         description: "Cap on parallel R source compiles (empty = auto/detectCores). Set for example 4 if the R build runs out of memory. It caps the parallel compiles of the provisioner R track build."
         required: false
         default: ""
+  # TEMPORARY, remove before the merge to main. GitHub registers a workflow for
+  # dispatch only when its file reaches the default branch, and this file lives
+  # on the feature branch alone. A push trigger runs on any branch. A touch of
+  # the sentinel file starts a run. The trigger commit itself starts nothing,
+  # because the sentinel does not change in it.
+  push:
+    branches: [feat/two-container-package-store]
+    paths: [".store-build-trigger"]
 
 concurrency:
   group: ${{ github.workflow }}

@@ -35,7 +35,7 @@
 - [x] 4.2 Reduce `.github/workflows/lib-store.yml` to one image build and one push (`:50-52`, `:137-176`). The workflow file is CI, not a spec
 - [x] 4.3 Point `.github/workflows/lib-store-acceptance.yml` at the published store artifact, mounted into `sandbox-base`, instead of a published variant image
 - [x] 4.4 Search the repository for a reference to `sandbox-python` or `sandbox-python-r` outside `cli/`, and correct each one. Corrected: `images/**`, `harness/src`, the two `lib-store*.yml` workflows, `.github/dependabot.yml`, `droast.toml`, `.github/workflows/lib-store-provisioner.yml`, and each script under `scripts/` that named the tarball source. The tarball scripts are deleted with decision 7.1. `scripts/store-prototype/**` stays as it is, because it is a record of a past measurement
-- [ ] 4.5 CI ONLY — build the one image for both architectures and publish it. The full build needs the self-hosted builders and about 1h35m
+- [x] 4.5 CI ONLY — build the one image for both architectures and publish it. Done: run 31393896753 published `sandbox-base` and `sandbox-provisioner` for both architectures, as multi-arch manifests
 
 ## 5. Specs
 
