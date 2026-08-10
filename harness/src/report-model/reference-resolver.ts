@@ -68,9 +68,15 @@ export type ResolvedValue =
  * The `Ok` channel carries the resolved value. The `Err` channel carries the `UnresolvedReference`,
  * which names the reason and the detail that a reference did not bind. The validator collects each such
  * `Err` into its report, thus a caller reads the reason as data and resolution never throws.
+ *
+ * `prepare` is an optional batch step that runs one time before the per-reference loop. A realization
+ * that reads storage groups the references by artifact, reads each file one time, and fills a cache.
+ * `resolve` then answers from the cache. The method is optional, thus a realization without it keeps the
+ * per-reference behavior and the extension breaks no caller.
  */
 export interface ReferenceResolver {
     resolve(reference: Reference, snapshot: ReportSnapshot): Promise<Result<ResolvedValue, UnresolvedReference>>;
+    prepare?(references: readonly Reference[], snapshot: ReportSnapshot): Promise<void>;
 }
 
 /**

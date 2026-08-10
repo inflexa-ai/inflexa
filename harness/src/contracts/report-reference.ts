@@ -192,6 +192,8 @@ export const ScalarReferenceSchema = z.discriminatedUnion("kind", [ArtifactValue
  * the path. `unreadable-artifact` means that the entry exists, and that the resolver cannot read the
  * artifact as a table. Two conditions give the second reason. The file type refuses a read of a cell, or
  * the bytes are unrecoverable.
+ *
+ * `extraction-unavailable` means that the value tier must use an extraction arm that is not wired.
  */
 export const UnresolvedReasonSchema = z.enum([
     "artifact-missing",
@@ -200,6 +202,7 @@ export const UnresolvedReasonSchema = z.enum([
     "ambiguous-match",
     "assertion-failed",
     "unreadable-artifact",
+    "extraction-unavailable",
 ]);
 
 /** A reference that resolution could not bind, with the reason and an optional detail. */

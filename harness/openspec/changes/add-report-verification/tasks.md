@@ -1,12 +1,12 @@
 ## 1. The shared assert rules
 
-- [ ] 1.1 Extract the assert functions of `src/report-model/fixture-resolver.ts` into a shared module: the tolerance compare, the percent-fraction rule, and the citation assert. The fixture calls the shared functions, and its tests stay green.
+- [x] 1.1 Extract the assert functions of `src/report-model/fixture-resolver.ts` into a shared module: the tolerance compare, the percent-fraction rule, and the citation assert. The fixture calls the shared functions, and its tests stay green.
 
 ## 2. The seam extension
 
-- [ ] 2.1 Add the optional `prepare(references, snapshot)` method to `ReferenceResolver`, and the one call in `validate.ts` before the per-reference loop.
-- [ ] 2.2 Add `extraction-unavailable` to `UnresolvedReason` in `src/contracts/report-reference.ts`.
-- [ ] 2.3 Write the tests: `prepare` runs one time before the loop, and a realization without `prepare` keeps its behavior.
+- [x] 2.1 Add the optional `prepare(references, snapshot)` method to `ReferenceResolver`, and the one call in `validate.ts` before the per-reference loop.
+- [x] 2.2 Add `extraction-unavailable` to `UnresolvedReason` in `src/contracts/report-reference.ts`.
+- [x] 2.3 Write the tests: `prepare` runs one time before the loop, and a realization without `prepare` keeps its behavior.
 
 ## 3. The production resolver
 
