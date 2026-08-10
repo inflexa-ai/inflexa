@@ -110,7 +110,7 @@ describe("createReportSessionAgent", () => {
 
     test("the prompt module names no path, no format, and no dataset", () => {
         // A reviewer reads the module: no location, no format promise, no dataset
-        // name. A slash would be the first sign of a path or a slash-shaped format.
+        // name. A slash is the first sign of a path or a slash-shaped format.
         expect(reportSessionPrompt).not.toContain("/");
         for (const format of ["HTML", "CSV", "JSON", ".html", ".md"]) {
             expect(reportSessionPrompt.toLowerCase()).not.toContain(format.toLowerCase());
@@ -124,8 +124,8 @@ describe("createReportSessionAgent", () => {
 
     test("the definition carries no per-session value in the prompt", () => {
         const { systemPrompt } = buildAgent();
-        // A per-session value (a thread id, an analysis id, a resolved path) would
-        // break the cacheable prefix. The report layer names only tools and rules.
+        // A per-session value (a thread id, an analysis id, a resolved path) breaks
+        // the cacheable prefix. The report layer names only tools and rules.
         expect(systemPrompt).not.toContain("/sessions");
         expect(systemPrompt).not.toContain("report-sessions");
     });

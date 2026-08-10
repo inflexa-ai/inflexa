@@ -7,7 +7,8 @@ import { createReportSessionRuntime } from "../app/report-session-runtime.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { upsertAnalysis } from "../state/analyses.js";
-import { createThreadAgentResolver, type CoreRuntime } from "./assemble.js";
+import { createThreadAgentResolver, type CoreRuntime, type CoreRuntimeDeps } from "./assemble.js";
+import { createFixtureResolver } from "../report-model/fixture-resolver.js";
 import type { AgentDefinition } from "../loop/types.js";
 import type { ThreadType } from "../memory/thread-store.js";
 
@@ -104,6 +105,19 @@ describe("the report session handle", () => {
 
         const ready = await handle.ensureSessionState(threadId);
         expect(ready.outcome).toBe("ready");
+    });
+});
+
+describe("the report reference resolver dep", () => {
+    it("carries an optional reference resolver, thus an embedder can wire the report preview", () => {
+        // The assignment proves that the deps surface accepts the resolver. `assembleCoreRuntime`
+        // forwards it to the report agent's preview tool, thus a drift or a dropped field fails this at
+        // the type level and takes the one wiring point with it.
+        const withResolver: Pick<CoreRuntimeDeps, "reportReferenceResolver"> = { reportReferenceResolver: createFixtureResolver() };
+        expect(withResolver.reportReferenceResolver).toBeDefined();
+        // The dep is optional, thus the OSS default omits it and the preview tool degrades as data.
+        const without: Pick<CoreRuntimeDeps, "reportReferenceResolver"> = {};
+        expect(without.reportReferenceResolver).toBeUndefined();
     });
 });
 

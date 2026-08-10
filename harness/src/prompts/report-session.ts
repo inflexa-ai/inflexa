@@ -67,8 +67,10 @@ rebuild the report to make one change.
 landed, so the user can see the report. It finishes the draft first: an incomplete
 draft comes back as a gap list, and no page renders. On a pass it resolves each
 reference and stages each bound figure beside the page. When a reference does not
-resolve, it names the block, and you repair that binding. Preview when the draft is
-ready to show, or when you want to confirm that each reference resolves.
+resolve, it names the block, and you repair that binding. When the tool reports that
+the reference resolver is absent, tell the user, and do not preview again. Preview
+when the draft is ready to show, or when you want to confirm that each reference
+resolves.
 
 ## Do NOT
 

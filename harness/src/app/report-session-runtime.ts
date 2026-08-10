@@ -21,6 +21,11 @@
  * A store fault, an absent thread, and a pin failure each ride the failed arm
  * with a short detail. The diagnostic goes to the injected `Logger`, never to the
  * detail alone.
+ *
+ * The gateway load separates a permanent condition from a transient one. An absent
+ * thread and a wrong thread type are permanent, and a store or pin fault is
+ * transient. The persist is a compare-and-swap against the prior document that the
+ * load read, thus two concurrent turns cannot both land.
  */
 
 import type { Pool } from "pg";
@@ -32,17 +37,24 @@ import { createThreadStore } from "../memory/thread-store.js";
 import type { DraftDocument } from "../report-model/draft.js";
 import { pinReportSnapshot } from "../report-model/pin-snapshot.js";
 import { createReportSessionStateStore, type ReportSessionState as StoredSessionState, type SessionStateReadError } from "../state/report-session-state.js";
-import type { ReportSessionStateGateway, SessionStateLoad, SessionStatePersist } from "../tools/report-authoring/authoring-tools.js";
+import type { ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, SessionStateToken } from "../tools/report-authoring/authoring-tools.js";
 
 /** The empty draft of a fresh session. The pin writes the snapshot first, thus the document is empty here. */
 const EMPTY_DRAFT: DraftDocument = { title: "", sections: [] };
 
 /**
+ * How a failed anchor ends. `absent-thread` and `wrong-thread-type` are permanent
+ * conditions, and `unavailable` is a transient store or pin fault. The gateway load
+ * carries the distinction, thus the tool tells a permanent refusal from a transient one.
+ */
+export type EnsureFailureKind = "absent-thread" | "wrong-thread-type" | "unavailable";
+
+/**
  * The outcome of the anchor operation. `ready` carries the durable row, whose
  * document is `null` until the first document lands. `failed` names the cause as a
- * short detail, and the runtime logs the diagnostic beside it.
+ * short detail and a kind, and the runtime logs the diagnostic beside it.
  */
-export type EnsureSessionStateResult = { outcome: "ready"; state: StoredSessionState } | { outcome: "failed"; detail: string };
+export type EnsureSessionStateResult = { outcome: "ready"; state: StoredSessionState } | { outcome: "failed"; kind: EnsureFailureKind; detail: string };
 
 export interface ReportSessionRuntimeDeps {
     readonly pool: Pool;
@@ -79,10 +91,10 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
     function storeFault(threadId: string, error: DbError | SessionStateReadError): EnsureSessionStateResult {
         if (error.type === "corrupt_session_state") {
             log.error("the stored session state cannot parse", { threadId, part: error.part });
-            return { outcome: "failed", detail: `the stored ${error.part} of the session state cannot parse` };
+            return { outcome: "failed", kind: "unavailable", detail: `the stored ${error.part} of the session state cannot parse` };
         }
         log.error("the session-state store failed", { threadId, ...log.errorFields(error.cause) });
-        return { outcome: "failed", detail: describeDbError(error) };
+        return { outcome: "failed", kind: "unavailable", detail: describeDbError(error) };
     }
 
     /**
@@ -94,7 +106,7 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
         const pinned = await pinReportSnapshot(pool, analysisId);
         if (pinned.isErr()) {
             log.error("the snapshot pin failed", { threadId, analysisId, ...log.errorFields(pinned.error.cause) });
-            return { outcome: "failed", detail: "the artifact ledger read failed" };
+            return { outcome: "failed", kind: "unavailable", detail: "the artifact ledger read failed" };
         }
         const written = await store.writeSnapshot({ threadId, analysisId, snapshot: pinned.value });
         return written.match(
@@ -115,54 +127,73 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
         const thread = await threads.getThread(threadId);
         if (thread.isErr()) {
             log.error("the thread read failed", { threadId, ...log.errorFields(thread.error.cause) });
-            return { outcome: "failed", detail: describeDbError(thread.error) };
+            return { outcome: "failed", kind: "unavailable", detail: describeDbError(thread.error) };
         }
         if (thread.value === null) {
-            // The pin needs the analysis of the thread. An absent thread names none.
+            // The pin needs the analysis of the thread. An absent thread names none, and
+            // the absence is a permanent condition.
             log.error("the thread resolves to no analysis", { threadId });
-            return { outcome: "failed", detail: "the thread names no analysis" };
+            return { outcome: "failed", kind: "absent-thread", detail: "the thread names no analysis" };
         }
         if (thread.value.threadType !== "report") {
             // The session anchors a report thread only. A conversation thread carries no report session,
-            // thus a wrong type writes no row and the detail names the type.
+            // thus a wrong type writes no row and the detail names the type. The wrong type is permanent.
             log.error("the thread is not a report thread", { threadId, threadType: thread.value.threadType });
-            return { outcome: "failed", detail: `the thread is a ${thread.value.threadType} thread, not a report thread` };
+            return { outcome: "failed", kind: "wrong-thread-type", detail: `the thread is a ${thread.value.threadType} thread, not a report thread` };
         }
         return pinAndWrite(threadId, thread.value.analysisId);
     }
 
     /**
      * Map the durable row onto the gateway load. A fresh row holds the snapshot and
-     * no document, thus the load gives the empty draft. A row with no snapshot cannot
-     * serve a tool, because the pin writes the snapshot first.
+     * no document, thus the load gives the empty draft. The found load carries the
+     * stored analysis and the prior document as the concurrency token. A row with no
+     * snapshot cannot serve a tool, because the pin writes the snapshot first.
      */
     function toLoad(state: StoredSessionState): SessionStateLoad {
         if (state.snapshot === null) {
             log.error("the session-state row holds no snapshot", { threadId: state.threadId });
             return { outcome: "failed", detail: "the session state holds no snapshot" };
         }
-        return { outcome: "found", state: { document: state.document ?? EMPTY_DRAFT, snapshot: state.snapshot } };
+        return {
+            outcome: "found",
+            state: { document: state.document ?? EMPTY_DRAFT, snapshot: state.snapshot },
+            analysisId: state.analysisId,
+            token: state.document,
+        };
     }
 
     const gateway: ReportSessionStateGateway = {
         async load(threadId: string): Promise<SessionStateLoad> {
             const ensured = await ensureSessionState(threadId);
             if (ensured.outcome === "failed") {
-                return { outcome: "failed", detail: ensured.detail };
+                switch (ensured.kind) {
+                    case "absent-thread":
+                        return { outcome: "absent" };
+                    case "wrong-thread-type":
+                        return { outcome: "wrong-type", detail: ensured.detail };
+                    case "unavailable":
+                        return { outcome: "failed", detail: ensured.detail };
+                }
             }
             return toLoad(ensured.state);
         },
-        async persist(threadId: string, document: DraftDocument): Promise<SessionStatePersist> {
-            const result = await store.persistDocument({ threadId, document });
+        async persist(threadId: string, document: DraftDocument, expected: SessionStateToken): Promise<SessionStatePersist> {
+            const result = await store.persistDocument({ threadId, document, expected });
             return result.match(
-                (updated): SessionStatePersist => {
-                    if (updated) {
-                        return { outcome: "persisted" };
+                (outcome): SessionStatePersist => {
+                    switch (outcome) {
+                        case "persisted":
+                            return { outcome: "persisted" };
+                        case "conflict":
+                            // A concurrent turn landed first. The turn refuses and reads the state again.
+                            return { outcome: "conflict" };
+                        case "absent":
+                            // The pin writes the row first. A persist that finds no row means the
+                            // pin-first invariant broke.
+                            log.error("the session-state persist matched no row", { threadId });
+                            return { outcome: "failed", detail: "no report session state row exists to persist the document" };
                     }
-                    // The pin writes the row first. A persist that updates no row means the
-                    // pin-first invariant broke.
-                    log.error("the session-state persist matched no row", { threadId });
-                    return { outcome: "failed", detail: "no report session state row exists to persist the document" };
                 },
                 (error): SessionStatePersist => {
                     log.error("the session-state persist failed", { threadId, ...log.errorFields(error.cause) });

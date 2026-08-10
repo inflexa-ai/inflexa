@@ -32,11 +32,9 @@ import type { Block, ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { describeFsError, tryFsWrite, type FsError } from "../../lib/fs-result.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
-import { allWithConcurrency } from "../../lib/async-utils.js";
-import { walkBlocks } from "../../report-model/block-walk.js";
 import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js";
 import type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "../../report-model/reference-resolver.js";
-import { checkChartEncoding, RESOLUTION_CONCURRENCY, type ResolutionFailure } from "../../report-model/validate.js";
+import { resolveDocumentReferences, type ResolutionFailure } from "../../report-model/validate.js";
 import { bridgeValues, type BlockResolution, type BridgeMismatch, type ResolvedFile } from "../../report-render/value-bridge.js";
 import { renderReportPage } from "../../report-render/render.js";
 import type { RenderProblem } from "../../report-render/types.js";
@@ -141,45 +139,22 @@ function collectResolutions(blocks: readonly Block[], resolvedByBlock: ReadonlyM
 }
 
 /**
- * Resolve each reference of the document, and collect the resolutions and the unresolved references.
+ * Resolve each reference of the document, and split the resolutions from the unresolved references.
  *
- * The reference collection, the concurrency bound, and the chart-encoding match come from the mechanical
- * validator, thus the preview and the record gate refuse the same references. `walkBlocks` collects the
- * references one time, `allWithConcurrency` bounds the fan-out the same as `validateReport`, and
- * `checkChartEncoding` catches a chart that plots a column which the bound table does not hold.
+ * The shared `resolveDocumentReferences` walks the tree, resolves each reference under the concurrency
+ * bound, and runs the chart-encoding match, thus the preview and the record gate refuse the same
+ * references. On a clean pass the resolutions map onto the render model in document order.
  */
 async function resolveDocument(
     document: ReportDocument,
     resolver: ReferenceResolver,
     snapshot: ReportSnapshot,
 ): Promise<{ resolutions: BlockResolution[]; unresolved: ResolutionFailure[] }> {
-    const { references } = walkBlocks(document.sections);
-    const resolved = await allWithConcurrency(
-        references.map((entry) => () => resolver.resolve(entry.reference, snapshot).then((result) => ({ entry, result }))),
-        RESOLUTION_CONCURRENCY,
-    );
-
-    const unresolved: ResolutionFailure[] = [];
-    const resolvedByBlock = new Map<string, ResolvedValue>();
-    for (const { entry, result } of resolved) {
-        if (result.isErr()) {
-            unresolved.push({ blockId: entry.blockId, failure: result.error });
-            continue;
-        }
-        const encodingFailure = checkChartEncoding(entry, result.value);
-        if (encodingFailure !== undefined) {
-            unresolved.push({ blockId: entry.blockId, failure: encodingFailure });
-            continue;
-        }
-        // A value-bearing block holds one reference, thus the block id keys its one resolved value. A
-        // claim or a citation reference lands here too, and its block reads no value from this map.
-        resolvedByBlock.set(entry.blockId, result.value);
+    const { resolvedByBlock, failures } = await resolveDocumentReferences(document.sections, snapshot, resolver);
+    if (failures.length > 0) {
+        return { resolutions: [], unresolved: failures };
     }
-
-    if (unresolved.length > 0) {
-        return { resolutions: [], unresolved };
-    }
-    return { resolutions: collectResolutions(document.sections, resolvedByBlock), unresolved };
+    return { resolutions: collectResolutions(document.sections, resolvedByBlock), unresolved: [] };
 }
 
 /**

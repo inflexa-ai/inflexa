@@ -37,6 +37,7 @@ import {
 import { registerDataProfileWorkflow, type DataProfileDeps, type DataProfileWorkflowInput } from "../tasks/data-profile.js";
 import { createCitationResolver, type CitationResolverConfig } from "../citations/resolve.js";
 import type { CitationResolver } from "../citations/types.js";
+import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 
 /** Registered child sandbox-step callable the parent's child dispatch closes over. */
 export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -94,6 +95,12 @@ export interface CoreRuntimeDeps {
     readonly usageRecorder?: UsageRecorder;
     /** Harness-owned citation capability configuration; no ambient lookup occurs. */
     readonly citationResolverConfig?: CitationResolverConfig;
+    /**
+     * Reference-resolution seam for the report preview. Absent by default, thus the
+     * preview tool degrades as data until an embedder wires a realization. The
+     * realization itself stays out of the harness.
+     */
+    readonly reportReferenceResolver?: ReferenceResolver;
 }
 
 /**
@@ -194,7 +201,9 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     // The report agent is a singleton over the conversation deps. The session
     // runtime binds the per-session state to the thread behind the tool boundary,
     // thus one definition serves every report thread. Its preview tool writes the
-    // page into the analysis tree and returns the path, so it reaches no seam.
+    // page into the analysis tree and returns the path, thus the page write reaches
+    // no host seam. The optional reference resolver is the one seam it can use, and
+    // it is absent by default.
     const reportSession = createReportSessionRuntime({ pool: conversation.pool, ...(conversation.logger ? { logger: conversation.logger } : {}) });
     const reportAgent = createReportSessionAgent({
         model: conversation.model,
@@ -203,6 +212,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         workspaceFs: conversation.workspaceFs,
         gateway: reportSession.gateway,
         resolveWorkspaceRoot: conversation.resolveWorkspaceRoot,
+        ...(deps.reportReferenceResolver ? { resolver: deps.reportReferenceResolver } : {}),
         ...(conversation.logger ? { logger: conversation.logger } : {}),
     });
 
@@ -210,7 +220,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     // agent plugs in here at assembly with no embedder change. `conversation` is
     // required at the type level because boot resolves it unconditionally
     // (`boot.ts` backfill). `report` is required now that its agent registers here,
-    // so a dropped registration fails tsc rather than surfacing only as a
+    // so a dropped registration fails tsc, and it does not surface only as a
     // resolution refusal. The `Partial` over the rest keeps the compiler honest
     // about a type that has no agent yet.
     const agents: Record<"conversation" | "report", AgentDefinition> & Partial<Record<ThreadType, AgentDefinition>> = {

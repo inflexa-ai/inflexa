@@ -137,13 +137,13 @@ A destination that names two places at one time MUST refuse with `conflicting-de
 ### Requirement: Read-back without the full tree
 The read surface MUST give an outline of the draft, and one block by its id. An outline entry carries the id, the kind, the nesting, and a short label. It carries no binding and no full prose.
 
-A landed operation MUST return the child order of each container that it changed, and it MUST NOT return the whole outline. The whole outline costs the size of the draft on each landing. Thus a report of n blocks would spend n-squared outline entries of agent context to author it. The agent chose the id of its own block, and no other branch moved. Thus the container that the operation touched is the one thing that a landing can tell it.
+A landed operation MUST return the child order of each container that it changed, and it MUST NOT return the whole outline. The whole outline costs the size of the draft on each landing. Thus a report of n blocks spends n-squared outline entries of agent context to author it. The agent chose the id of its own block, and no other branch moved. Thus the container that the operation touched is the one thing that a landing can tell it.
 
 A move across two containers reports both, and an operation that changes no child order reports none. The read of the whole outline stays one call away.
 
 The label of every block kind MUST clip, because a title, a caption, and a note are free prose too. A clipped label MUST carry a marker, thus the agent can tell a clipped label from a whole one. The clip MUST count code points, thus it never splits a character.
 
-A read of a section MUST give the title of the section and the id of each child, and never the subtree. The outline already names every block under the section. Thus a subtree would return the tree that the outline exists to keep out of the context.
+A read of a section MUST give the title of the section and the id of each child, and never the subtree. The outline already names every block under the section. Thus a subtree returns the tree that the outline exists to keep out of the context.
 
 #### Scenario: The outline stays small
 - **WHEN** the agent reads the outline of a draft with a long claim block
@@ -197,7 +197,7 @@ The surface MUST give an operation that sets the title of the document. A draft 
 
 The published input schema of a block payload MUST carry the block grammar. A tool is self-describing at attach time. Thus a payload with no schema leaves the agent to discover each field through one refusal at a time. The runtime parse of the payload stays permissive, thus a malformed block still comes back as a typed refusal.
 
-Each tool MUST declare the inline execution mode. The state loads fresh on each call, thus a replay-cached tool result would report a document that later operations changed.
+Each tool MUST declare the inline execution mode. The state loads fresh on each call, thus a replay-cached tool result reports a document that later operations changed.
 
 #### Scenario: The factory packages the tools
 - **WHEN** a caller gives the factory a session-state gateway
