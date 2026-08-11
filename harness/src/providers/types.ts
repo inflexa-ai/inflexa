@@ -18,6 +18,15 @@ export type { FinishReason, LanguageModel, ModelMessage, ProviderOptions, ToolSe
 
 export interface ProviderCapabilities {
     readonly toolCalling: boolean;
+    /**
+     * Whether the wire can carry a picture inside a tool result. The loop moves a
+     * tool's picture into an image content block on the tool-result message. A
+     * wire that renders that block sets this flag. A wire that stringifies the
+     * block into text leaves it absent, and the loop then drops the picture and
+     * keeps the text, because base64 text floods the context and the model cannot
+     * see it. Absent means "cannot carry", never "unknown".
+     */
+    readonly imageToolResults?: boolean;
 }
 
 export interface ChatRequest {

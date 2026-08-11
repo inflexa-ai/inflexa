@@ -31,7 +31,7 @@ import { withPage, type ChromeConfig } from "../../lib/chrome.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import type { ResolveWorkspaceRoot } from "../../workspace/paths.js";
-import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { defineTool, withToolResultImage, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 
 /** One request that the page could not load, with the reason that the browser gave. */
@@ -61,16 +61,17 @@ export type ExaminePageInput = z.infer<typeof examinePageInput>;
 
 /**
  * The typed outcome of the eyes tool. Each arm is ok-channel data, thus the tool never throws for a
- * degraded condition. `examined` carries the screenshot, the console errors, and the failed requests.
- * `missed-stamp` means that the row holds no rendered hash, thus no preview stamped one and the agent must
- * run a new preview before the next look.
+ * degraded condition. `examined` carries the console errors, the failed requests, and the page path. The
+ * screenshot does not ride the JSON. It rides the image path of the tool result, thus the model sees the
+ * picture and the JSON text holds no bytes. `missed-stamp` means that the row holds no rendered hash, thus
+ * no preview stamped one and the agent must run a new preview before the next look.
  */
 export type ExaminePageResult =
     | { outcome: "refused"; refusal: SessionRefusal }
     | { outcome: "no-page" }
     | { outcome: "missed-stamp" }
     | { outcome: "capture-failed"; detail: string }
-    | { outcome: "examined"; screenshotBase64: string; consoleErrors: string[]; failedRequests: FailedRequest[] };
+    | { outcome: "examined"; consoleErrors: string[]; failedRequests: FailedRequest[]; pagePath: string };
 
 /**
  * The construction deps of the eyes tool.
@@ -89,6 +90,9 @@ export interface ExaminePageToolDeps {
 
 const NAV_TIMEOUT_MS = 20_000;
 const READY_TIMEOUT_MS = 8_000;
+
+/** The IANA media type of the screenshot. `page.screenshot` gives PNG bytes. */
+const SCREENSHOT_MEDIA_TYPE = "image/png";
 
 /**
  * The default capture over `withPage`. It collects the console errors, the page errors, and the failed
@@ -172,7 +176,8 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 return ok({ outcome: "capture-failed", detail: "the workspace root did not resolve" });
             }
 
-            const pagePath = join(root, "report-sessions", threadId, "index.html");
+            const relativePagePath = join("report-sessions", threadId, "index.html");
+            const pagePath = join(root, relativePagePath);
             try {
                 await access(pagePath);
             } catch (cause) {
@@ -208,12 +213,19 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 logger.warn("the seen hash did not stamp", { threadId, analysisId, detail });
             }
 
-            return ok({
-                outcome: "examined",
-                screenshotBase64: captured.screenshotBase64,
-                consoleErrors: captured.consoleErrors,
-                failedRequests: captured.failedRequests,
-            });
+            // The screenshot rides the image path of the tool result, thus the model sees the picture. The
+            // JSON keeps the faults and the page path only, thus the JSON text holds no bytes.
+            return ok(
+                withToolResultImage(
+                    {
+                        outcome: "examined" as const,
+                        consoleErrors: captured.consoleErrors,
+                        failedRequests: captured.failedRequests,
+                        pagePath: relativePagePath,
+                    },
+                    { base64: captured.screenshotBase64, mediaType: SCREENSHOT_MEDIA_TYPE },
+                ),
+            );
         },
     });
 }

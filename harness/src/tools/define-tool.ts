@@ -48,6 +48,47 @@ export function isToolError(value: unknown): value is ToolError {
 }
 
 /**
+ * The picture that a tool ok value carries beside its JSON data. `base64` holds
+ * the bytes, and `mediaType` names the IANA type, for example "image/png". The
+ * loop splits the picture out of the JSON text, and it rides the tool result as
+ * an image content block. Thus the model sees the picture, and the JSON text
+ * holds no bytes.
+ */
+export interface ToolResultImage {
+    readonly base64: string;
+    readonly mediaType: string;
+}
+
+/**
+ * The reserved key that carries a picture on a tool ok value. It is a symbol,
+ * thus it never collides with a data field. `JSON.stringify` also omits a symbol
+ * key, thus the bytes never reach the JSON text by accident.
+ */
+export const toolResultImageKey: unique symbol = Symbol("toolResultImage");
+
+/** A tool ok value that can carry a picture under the reserved key. */
+export type WithToolResultImage<T> = T & { readonly [toolResultImageKey]?: ToolResultImage };
+
+/**
+ * Attach a picture to a tool ok value. The value keeps its own fields, and the
+ * picture rides under the reserved key. The loop reads the key, and it moves the
+ * bytes into an image content block on the tool result.
+ */
+export function withToolResultImage<T extends object>(value: T, image: ToolResultImage): WithToolResultImage<T> {
+    return { ...value, [toolResultImageKey]: image };
+}
+
+/** Read the picture that a tool ok value carries, or undefined when it carries none. */
+export function readToolResultImage(value: unknown): ToolResultImage | undefined {
+    if (typeof value !== "object" || value === null) return undefined;
+    const image = (value as { [toolResultImageKey]?: unknown })[toolResultImageKey];
+    if (typeof image !== "object" || image === null) return undefined;
+    const { base64, mediaType } = image as Partial<ToolResultImage>;
+    if (typeof base64 !== "string" || typeof mediaType !== "string") return undefined;
+    return { base64, mediaType };
+}
+
+/**
  * The request-scoped values passed to every tool's `execute`. No injected
  * dependencies (see the harness-durable-runtime spec) — invocation identity,
  * `session`, `signal`, `emit`, the `runStep`

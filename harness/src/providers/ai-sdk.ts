@@ -516,7 +516,13 @@ function abortedStreamFailure(signal: AbortSignal | undefined, reason: string | 
 }
 
 export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
-    const capabilities: ProviderCapabilities = { toolCalling: deps.capabilities?.toolCalling ?? true };
+    const capabilities: ProviderCapabilities = {
+        toolCalling: deps.capabilities?.toolCalling ?? true,
+        // Propagate the picture flag only when the caller states it. An absent
+        // flag stays absent, thus the loop degrades to text for a wire that does
+        // not carry a picture in a tool result.
+        ...(deps.capabilities?.imageToolResults !== undefined ? { imageToolResults: deps.capabilities.imageToolResults } : {}),
+    };
     const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
     const maxOutputTokens = deps.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     const maxRetries = deps.maxRetries ?? RETRY_MAX_RETRIES;
@@ -757,7 +763,10 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         return createAiSdkProvider({
             model: provider.chat(config.model),
             resolveBilling: deps.resolveBilling,
-            capabilities: config.capabilities,
+            // The Anthropic Messages wire renders an image block inside a
+            // tool_result, thus the loop can send a picture. A config value
+            // overrides this default.
+            capabilities: { imageToolResults: true, ...config.capabilities },
             logger: deps.logger,
             ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
             ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),

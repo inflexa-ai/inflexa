@@ -3,11 +3,12 @@ import type { ModelMessage, ToolResultPart } from "ai";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
+import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import { isInterruptedMessage, isSyntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatResponse } from "../providers/types.js";
 import { AskRejectedError } from "../tools/approval/contract.js";
-import { defineTool, type Tool } from "../tools/define-tool.js";
+import { defineTool, withToolResultImage, type Tool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, thinkingBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
 import { runAgent, type RunAgentOptions } from "./run-agent.js";
 import { passthroughStep } from "./run-step.js";
@@ -423,6 +424,73 @@ describe("runAgent — tool-error boundary", () => {
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "abort", {})], "tool_use")]);
 
         await expect(runAgent(agentDef([tool]), GO, makeSession(), opts(provider))).rejects.toBe(aborted);
+    });
+});
+
+// ── A picture on a tool result ──────────────────────────────────────
+
+/** A scripted provider whose wire carries a picture inside a tool result. */
+function imagingProvider(script: ChatResponse[]): ScriptedProvider {
+    return { ...scriptedProvider(script), capabilities: { toolCalling: true, imageToolResults: true } };
+}
+
+/** An `eyes` tool that returns a picture beside its JSON faults. */
+function eyesTool(): Tool {
+    return defineTool({
+        id: "eyes",
+        description: "Look at a page and give a picture beside the faults.",
+        inputSchema: z.object({}),
+        describeCall: "none",
+        execute: async () => ok(withToolResultImage({ faults: ["boom"] }, { base64: "PNGBYTES", mediaType: "image/png" })),
+    });
+}
+
+describe("runAgent — a picture on a tool result", () => {
+    it("splits a picture-bearing result into a JSON text part and an image part when the wire carries a picture", async () => {
+        const provider = imagingProvider([makeMessage([toolUseBlock("tu-1", "eyes", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
+
+        const { messages } = await runAgent(agentDef([eyesTool()]), GO, makeSession(), opts(provider));
+
+        const result = toolResultParts(messages[2])[0]!;
+        expect(result.output.type).toBe("content");
+        const parts = (result.output as { type: "content"; value: Array<{ type: string }> }).value;
+        // The text part carries the faults, and it holds no bytes.
+        const textPart = parts.find((p) => p.type === "text") as { type: "text"; text: string };
+        expect(JSON.parse(textPart.text)).toEqual({ faults: ["boom"] });
+        expect(textPart.text).not.toContain("PNGBYTES");
+        // The file part carries the picture bytes and the media type.
+        const filePart = parts.find((p) => p.type === "file") as { type: "file"; mediaType: string; data: unknown };
+        expect(filePart.mediaType).toBe("image/png");
+        expect(filePart.data).toEqual({ type: "data", data: "PNGBYTES" });
+    });
+
+    it("drops the picture and keeps the JSON text when the wire carries none, and records the drop", async () => {
+        const logger = createCapturingLogger();
+        // The default scripted provider states no picture capability, thus the wire carries none.
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "eyes", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
+
+        const { messages } = await runAgent(agentDef([eyesTool()]), GO, makeSession(), opts(provider, { logger }));
+
+        const result = toolResultParts(messages[2])[0]!;
+        expect(result.output.type).toBe("json");
+        expect(outputValue(result)).toEqual({ faults: ["boom"] });
+        // No picture bytes reach the transcript.
+        expect(JSON.stringify(messages)).not.toContain("PNGBYTES");
+        // The drop rides the log, thus an operator sees that the picture did not reach the model.
+        expect(logger.records.some((r) => r.level === "warn" && r.msg.includes("carries no picture"))).toBe(true);
+    });
+
+    it("encodes a payload-free result as a plain JSON part, byte-identical to today", async () => {
+        // The wire carries a picture, but the tool attaches none, thus the result is unchanged.
+        const provider = imagingProvider([
+            makeMessage([toolUseBlock("tu-1", "echo", { label: "x" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider));
+
+        const result = toolResultParts(messages[2])[0]!;
+        expect(result.output).toEqual({ type: "json", value: { label: "x" } });
     });
 });
 
