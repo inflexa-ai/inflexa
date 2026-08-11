@@ -15,6 +15,7 @@ import { join } from "node:path";
 
 import type { Scope } from "../../auth/types.js";
 import type { DraftDocument } from "../../report-model/draft.js";
+import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { createFixtureResolver } from "../../report-model/fixture-resolver.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
@@ -49,6 +50,8 @@ const DEFAULT_ANALYSIS_ID = "analysis-001";
 interface FakeGateway extends ReportSessionStateGateway {
     seed(threadId: string, state: ReportSessionState, analysisId?: string): void;
     setFault(fault: boolean): void;
+    /** The hash that the last `stampRendered` wrote for the thread, or `null` when no stamp landed. */
+    renderedHash(threadId: string): string | null;
 }
 
 interface FakeRow {
@@ -67,6 +70,9 @@ function makeFakeGateway(): FakeGateway {
         },
         setFault(value): void {
             fault = value;
+        },
+        renderedHash(threadId): string | null {
+            return rows.get(threadId)?.rendered ?? null;
         },
         load(threadId): Promise<SessionStateLoad> {
             if (fault) {
@@ -191,6 +197,26 @@ describe("the pass path", () => {
             expect(content).toContain("42");
         }
         assertNoLegacyDirs(root);
+    });
+});
+
+describe("the rendered stamp", () => {
+    it("stamps the hash of the draft that rendered", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        const draft = metricDoc();
+        gateway.seed("t1", { document: draft, snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        // The stamp holds the hash of the draft that the finish read, thus the record gate compares against it.
+        expect(gateway.renderedHash("t1")).toBe(computeDraftHash(draft));
     });
 });
 

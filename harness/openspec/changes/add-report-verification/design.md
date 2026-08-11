@@ -43,7 +43,7 @@ The fixture resolver holds the assert match today: the tolerance compare, the pe
 
 ### D6. The seam gains one optional `prepare` method
 
-`prepare(references, snapshot)` is an optional method on `ReferenceResolver`. The validator calls it one time before its per-reference loop (`validate.ts:183`). The production realization batches there: it groups the references by artifact, reads each file one time, runs the one sandbox pass, and fills a cache. `resolve` then answers from the cache. The fixture ignores the method. A realization without `prepare` keeps the old behavior, thus the extension breaks no caller.
+`prepare(references, snapshot)` is an optional method on `ReferenceResolver`. The validator calls it one time before its per-reference loop (`validate.ts:106`). The production realization batches there: it groups the references by artifact, reads each file one time, runs the one sandbox pass, and fills a cache. `resolve` then answers from the cache. The fixture ignores the method. A realization without `prepare` keeps the old behavior, thus the extension breaks no caller.
 
 ### D7. The record gate runs before the store, and nothing needs removal
 
