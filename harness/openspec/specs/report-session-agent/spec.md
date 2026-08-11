@@ -81,7 +81,7 @@ The roster of the agent MUST hold: the workspace read tools (`read_file`, `list_
 - **THEN** the workspace read tools, the search, the run inspection, and the data-profile inspection are present
 
 ### Requirement: The render-and-preview tool
-The preview tool MUST run the finish on the draft first. A gap list MUST return as data, and no render runs. On a pass, the tool MUST resolve each reference through the injected `ReferenceResolver`, bridge the values, and render with `renderReportPage`. The page and its staged assets MUST land in the session directory `report-sessions/{threadId}/` under the workspace root. The result MUST carry the page path as data.
+The preview tool MUST run the finish on the draft first. A gap list MUST return as data, and no render runs. On a pass, the tool MUST resolve each reference through the injected `ReferenceResolver`, bridge the values, and render with `renderReportPage`. The page and its staged assets MUST land in the session directory `report-sessions/{threadId}/` under the workspace root. The result MUST carry the page path as data. When the page lands, the tool MUST stamp the hash of the rendered document on the session state.
 
 The hosted view of a session page is a later capability with its own URL space, and the result carries no access grant. An unresolved reference, a resolver absence, and a failed write MUST each return a typed outcome that names the cause. The tool MUST NOT throw for any of these outcomes.
 
@@ -97,6 +97,10 @@ The hosted view of a session page is a later capability with its own URL space, 
 - **WHEN** the preview tool writes a page
 - **THEN** no write touches `previews/` or `reports/`
 
+#### Scenario: The stamp follows the page
+- **WHEN** the preview writes the page
+- **THEN** the session state holds the hash of the rendered document
+
 ### Requirement: The value bridge
 A pure module beside the renderer MUST map resolved values onto `RenderValues`: a scalar to a metric value, rows to a table, and a file echo to a figure source through a caller-supplied policy. The policy of the preview tool MUST stage the bound image into `assets/` beside the page, and the `src` is that relative path. The bridge MUST NOT read a file and MUST NOT resolve a reference itself.
 
@@ -111,6 +115,12 @@ A pure module beside the renderer MUST map resolved values onto `RenderValues`: 
 ### Requirement: The prompt obligations
 The prompt of the agent MUST name its tools and their mechanisms, and it MUST NOT name a dataset, a path, or a format. The prompt MUST carry an explicit "Do NOT" list with the failure modes of report composition. The prompt MUST state that the agent grounds each claim through a reference, and that it does not transcribe a number from memory.
 
+The prompt MUST teach the verification loop: preview, look, repair, and record only after a look at the current page. The "Do NOT" list MUST name the visual spiral. The agent does not loop on a cosmetic doubt, and it records when the page reads clean.
+
 #### Scenario: The prompt stays free of environment detail
 - **WHEN** a reviewer reads the prompt module
 - **THEN** no dataset name, no path, and no format promise is present
+
+#### Scenario: The prompt teaches the loop order
+- **WHEN** a reviewer reads the prompt module
+- **THEN** the loop order and the visual-spiral anti-pattern are present
