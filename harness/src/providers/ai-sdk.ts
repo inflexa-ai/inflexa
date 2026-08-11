@@ -657,12 +657,14 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     maxRetries: 0,
                     headers,
                     abortSignal: signal,
-                    // The SDK bounds each gap between two content chunks of the body.
-                    // Its timer arms at the first part of the provider stream, thus the
-                    // wait until the response starts stays with the fetch guard. A
-                    // chunk that carries no content, for example a keep-alive comment,
-                    // produces no part, thus it does not reset this bound.
-                    ...(requestTimeoutMs !== undefined ? { timeout: { chunkMs: requestTimeoutMs } } : {}),
+                    // The fetch guard bounds the wait until the headers. Past the
+                    // headers the SDK owns two bounds: `firstChunkMs` covers the wait
+                    // for the first content chunk, and `chunkMs` covers each later
+                    // gap. The two take the same value, thus each silent interval of
+                    // the stream has the one configured bound. A chunk that carries
+                    // no content, for example a keep-alive comment, produces no part,
+                    // thus it feeds neither bound.
+                    ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
                     providerOptions: req.providerOptions,
                 });
                 const iterator = result.fullStream[Symbol.asyncIterator]();
