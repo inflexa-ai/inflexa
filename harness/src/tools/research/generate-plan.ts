@@ -69,6 +69,18 @@ const PLANNER_MAX_ITERATIONS = 13;
 /** Wall-clock guard for a single plan-generation invocation. */
 const PLAN_TIMEOUT_MS = 600_000;
 
+/**
+ * The effective wall-clock guard in milliseconds for one plan-generation
+ * invocation.
+ *
+ * The guard is the maximum of {@link PLAN_TIMEOUT_MS} and the request-timeout
+ * limit that the planner provider advertises. A configured value can make the
+ * guard longer. It cannot make the guard shorter.
+ */
+export function effectivePlanTimeoutMs(provider: Pick<ChatProvider, "requestTimeoutMs">): number {
+    return Math.max(PLAN_TIMEOUT_MS, provider.requestTimeoutMs ?? 0);
+}
+
 // ── Diagnostic bounds ───────────────────────────────────────────────
 //
 // This tool runs on `passthroughStep`: it writes no ledger row and owns no
@@ -1036,6 +1048,8 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 ...(input.userConstraints ? ["", "## User Constraints", input.userConstraints] : []),
             ].join("\n");
 
+            const planTimeoutMs = effectivePlanTimeoutMs(deps.conversation.provider);
+
             // Opens the invocation. Two things are only knowable here and both are
             // first-order suspects when a planner runs long and returns nothing: the size
             // of the seed it was handed, and which of its blocks made it that size. The
@@ -1048,7 +1062,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 model: deps.conversation.model,
                 maxIterations: PLANNER_MAX_ITERATIONS,
                 salvageIterations: DEFAULT_SALVAGE_ITERATIONS,
-                timeoutMs: PLAN_TIMEOUT_MS,
+                timeoutMs: planTimeoutMs,
                 grounding: grounding.kind,
                 ...(input.parentPlanId ? { parentPlanId: input.parentPlanId } : {}),
                 seedChars: {
@@ -1080,7 +1094,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
 
             // Merge the outer abort signal with a wall-clock timeout — either
             // cancels the planner promptly.
-            const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(PLAN_TIMEOUT_MS)]);
+            const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(planTimeoutMs)]);
 
             let runError: unknown = null;
             let run: RunToTerminalResult | null = null;

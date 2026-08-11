@@ -41,8 +41,24 @@ export interface AdHocRouterDeps {
     readonly pool: Pool;
     readonly resourcePolicy?: ResourcePolicy;
     readonly logger?: Logger;
-    /** Test seam; production always uses {@link AD_HOC_ROUTER_TIMEOUT_MS}. */
+    /**
+     * Test seam that sets an explicit deadline. An explicit value overrides the
+     * derived deadline. The derived deadline is the maximum of
+     * {@link AD_HOC_ROUTER_TIMEOUT_MS} and the request-timeout limit that the
+     * provider advertises.
+     */
     readonly timeoutMs?: number;
+}
+
+/**
+ * The effective router deadline in milliseconds.
+ *
+ * An explicit value overrides the derived deadline. The derived deadline is the
+ * maximum of {@link AD_HOC_ROUTER_TIMEOUT_MS} and the request-timeout limit that
+ * the provider advertises.
+ */
+export function effectiveAdHocTimeoutMs(provider: Pick<ChatProvider, "requestTimeoutMs">, explicit?: number): number {
+    return explicit ?? Math.max(AD_HOC_ROUTER_TIMEOUT_MS, provider.requestTimeoutMs ?? 0);
 }
 
 export function defaultAdHocResources(policy?: ResourcePolicy): ResourceSpec {
@@ -103,7 +119,7 @@ export async function routeAdHocRequest(
     ).join("\n");
     const orientation = await profileOrientation(deps.pool, input.analysisId, logger);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error("ad hoc routing timed out")), deps.timeoutMs ?? AD_HOC_ROUTER_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(new Error("ad hoc routing timed out")), effectiveAdHocTimeoutMs(deps.provider, deps.timeoutMs));
     const signal = AbortSignal.any([input.signal, controller.signal]);
     let raw: unknown;
     let failure: AdHocRoute["fallbackClass"];

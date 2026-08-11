@@ -4,7 +4,14 @@ import type { Pool } from "pg";
 
 import type { ChatProvider } from "../providers/types.js";
 import { makeToolContext } from "./__fixtures__/tool-context.js";
-import { AD_HOC_FALLBACK_AGENT_ID, defaultAdHocResources, routeAdHocRequest, validAdHocResources } from "./ad-hoc-router.js";
+import {
+    AD_HOC_FALLBACK_AGENT_ID,
+    AD_HOC_ROUTER_TIMEOUT_MS,
+    defaultAdHocResources,
+    effectiveAdHocTimeoutMs,
+    routeAdHocRequest,
+    validAdHocResources,
+} from "./ad-hoc-router.js";
 
 function providerReturning(input: Record<string, unknown>): ChatProvider {
     return {
@@ -203,6 +210,24 @@ describe("ad hoc routing", () => {
         expect(absentPolicy.agentId).toBe("network-agent");
         expect(absentPolicy.resources).toEqual({ cpu: 4, memoryGb: 8 });
         expect(absentPolicy.fallbackClass).toBeUndefined();
+    });
+});
+
+describe("effective ad hoc router timeout", () => {
+    it("uses the advertised request-timeout limit when it is larger than the constant", () => {
+        expect(effectiveAdHocTimeoutMs({ requestTimeoutMs: 30_000 })).toBe(30_000);
+    });
+
+    it("uses the default constant when the provider advertises nothing", () => {
+        expect(effectiveAdHocTimeoutMs({})).toBe(AD_HOC_ROUTER_TIMEOUT_MS);
+    });
+
+    it("keeps the constant when the advertised limit is smaller than the constant", () => {
+        expect(effectiveAdHocTimeoutMs({ requestTimeoutMs: 5_000 })).toBe(AD_HOC_ROUTER_TIMEOUT_MS);
+    });
+
+    it("lets an explicit deadline override the derived deadline", () => {
+        expect(effectiveAdHocTimeoutMs({ requestTimeoutMs: 30_000 }, 1)).toBe(1);
     });
 });
 

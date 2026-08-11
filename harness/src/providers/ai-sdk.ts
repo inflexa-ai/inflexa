@@ -9,7 +9,7 @@ import { scopeWorkloadId, type AgentSession } from "../auth/types.js";
 import type { ResolveBilling } from "../billing/resolver.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
-import { classifyProviderError, type ProviderError, toProviderError } from "./errors.js";
+import { classifyProviderError, type ProviderError, RequestTimeoutError, toProviderError } from "./errors.js";
 import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities } from "./types.js";
 
 /**
@@ -64,6 +64,8 @@ export interface AiSdkProviderDeps {
     readonly logger?: Logger;
     /** Output-token ceiling per request. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. */
     readonly maxOutputTokens?: number;
+    /** The retry limit of the harness envelope. Defaults to {@link RETRY_MAX_RETRIES}. */
+    readonly maxRetries?: number;
 }
 
 /**
@@ -86,6 +88,25 @@ export type AiSdkProviderConfig =
           readonly capabilities?: Partial<ProviderCapabilities>;
           /** Output-token ceiling per request. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. */
           readonly maxOutputTokens?: number;
+          /**
+           * The bound for each silent interval of a request attempt, in
+           * milliseconds. The value bounds the wait until the response starts, and
+           * each gap between two body chunks, per attempt. When the field is
+           * absent, the provider installs no guard, and its behavior does not
+           * change.
+           *
+           * The embedder fetch owns the transport floor. The supplied `fetch` must
+           * permit a silent wait of at least this value. When the transport cuts
+           * the request first, the connection-error classification applies
+           * unchanged.
+           */
+          readonly requestTimeoutMs?: number;
+          /**
+           * The retry limit of the harness envelope. The envelope uses this value
+           * in place of the default limit. When the field is absent, the envelope
+           * keeps the default of 10.
+           */
+          readonly maxRetries?: number;
       }
     | {
           readonly kind: "openai-compatible";
@@ -97,6 +118,25 @@ export type AiSdkProviderConfig =
           readonly capabilities?: Partial<ProviderCapabilities>;
           /** Output-token ceiling per request. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. */
           readonly maxOutputTokens?: number;
+          /**
+           * The bound for each silent interval of a request attempt, in
+           * milliseconds. The value bounds the wait until the response starts, and
+           * each gap between two body chunks, per attempt. When the field is
+           * absent, the provider installs no guard, and its behavior does not
+           * change.
+           *
+           * The embedder fetch owns the transport floor. The supplied `fetch` must
+           * permit a silent wait of at least this value. When the transport cuts
+           * the request first, the connection-error classification applies
+           * unchanged.
+           */
+          readonly requestTimeoutMs?: number;
+          /**
+           * The retry limit of the harness envelope. The envelope uses this value
+           * in place of the default limit. When the field is absent, the envelope
+           * keeps the default of 10.
+           */
+          readonly maxRetries?: number;
       };
 
 export interface ConfiguredAiSdkProviderDeps {
@@ -240,10 +280,10 @@ function unwrapForClassification(e: unknown): unknown {
  * true HTTP status instead of stopping at a synthetic wrapper. The attempt
  * counter is per-instance because each call builds its own retry.
  */
-function createRetry(signal: AbortSignal | undefined, logger: Logger) {
+function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number) {
     let retryCount = 0;
     return retryWithExponentialBackoff({
-        maxRetries: RETRY_MAX_RETRIES,
+        maxRetries,
         initialDelayInMs: RETRY_INITIAL_DELAY_MS,
         backoffFactor: RETRY_BACKOFF_FACTOR,
         abortSignal: signal,
@@ -410,12 +450,13 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const capabilities: ProviderCapabilities = { toolCalling: deps.capabilities?.toolCalling ?? true };
     const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
     const maxOutputTokens = deps.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    const maxRetries = deps.maxRetries ?? RETRY_MAX_RETRIES;
     const requestedModelId = requestedModelIdOf(deps.model);
     routeSdkWarningsTo(logger);
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
-            const retry = createRetry(signal, logger);
+            const retry = createRetry(signal, logger, maxRetries);
             const capture = captureServedModelId(deps.model);
             try {
                 const result = await retry(async () => {
@@ -448,7 +489,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     }
 
     async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
-        const retry = createRetry(signal, logger);
+        const retry = createRetry(signal, logger, maxRetries);
         const capture = captureServedModelId(deps.model);
         try {
             // Retry covers only stream establishment: streamText defers wire errors
@@ -543,40 +584,141 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 }
 
 /**
+ * Wrap a fetch so that no silent interval of a request attempt exceeds
+ * `requestTimeoutMs`. The wrapper arms one timer for each fetch call. The timer
+ * bounds the wait until the response starts. On expiry the wrapper aborts a
+ * dedicated controller with a `RequestTimeoutError` reason, and it composes that
+ * controller with the caller signal through `AbortSignal.any`. Thus the caller
+ * signal keeps its normal effect, and a caller abort stays a cancellation.
+ *
+ * When the response starts, the wrapper wraps the body. It re-arms the timer at
+ * the response start, and again on each received chunk, and it clears the timer
+ * at the end of the body. Thus a stream with steady chunks does not trip the
+ * guard, whatever its total length, but a stalled stream does. One fetch call is
+ * one attempt, because the SDK retries are off, thus the window is per attempt.
+ *
+ * When the field is absent, `createConfiguredAiSdkProvider` installs no wrapper,
+ * and the behavior stays byte-identical.
+ */
+function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeoutMs: number): FetchLike {
+    return async (input, init) => {
+        const controller = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const arm = (): void => {
+            if (timer !== undefined) clearTimeout(timer);
+            timer = setTimeout(() => controller.abort(new RequestTimeoutError(requestTimeoutMs)), requestTimeoutMs);
+        };
+        const clear = (): void => {
+            if (timer !== undefined) clearTimeout(timer);
+            timer = undefined;
+        };
+
+        // Compose the guard controller with the caller signal, thus either one
+        // can abort the wire, and the abort reason names its own source.
+        const signal = init?.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
+
+        arm();
+        let response: Response;
+        try {
+            response = await fetchImpl(input, { ...init, signal });
+        } catch (e) {
+            clear();
+            throw e;
+        }
+
+        // A body-less response, for example a 204, has no chunk to guard.
+        const body = response.body;
+        if (body === null) {
+            clear();
+            return response;
+        }
+
+        const source = body.getReader();
+        const guarded = new ReadableStream<Uint8Array>({
+            start() {
+                // Re-arm at the response start, thus the first chunk gap gets a
+                // full window even after a slow header wait.
+                arm();
+            },
+            async pull(streamController) {
+                try {
+                    const { done, value } = await source.read();
+                    if (done) {
+                        clear();
+                        streamController.close();
+                        return;
+                    }
+                    arm();
+                    streamController.enqueue(value);
+                } catch (e) {
+                    clear();
+                    streamController.error(e);
+                }
+            },
+            cancel(reason) {
+                clear();
+                return source.cancel(reason);
+            },
+        });
+
+        return new Response(guarded, { status: response.status, statusText: response.statusText, headers: response.headers });
+    };
+}
+
+/**
  * Realize an `AiSdkProviderConfig` into a `ChatProvider` bound to that config's
  * connection and model. The model is closed into the returned provider here (it
  * is never passed per `ChatRequest`), so N models require N provider
  * instances over one shared connection configuration — one instance serves the
  * single model it was built with.
+ *
+ * When the config sets `requestTimeoutMs`, the provider wraps the effective fetch
+ * (`config.fetch ?? globalThis.fetch`) with the request-timeout guard, and it
+ * advertises the value on the returned instance. When the field is absent, it
+ * installs no wrapper, and it advertises no value.
  */
 export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps): ChatProvider {
     const config = deps.config;
+    const requestTimeoutMs = config.requestTimeoutMs;
+    const effectiveFetch =
+        requestTimeoutMs === undefined ? config.fetch : wrapFetchWithRequestTimeout(config.fetch ?? (globalThis.fetch as FetchLike), requestTimeoutMs);
+
+    // The provider advertises the guard limit on its own instance, thus a
+    // consumer that scales a deadline reads it from the provider in its deps.
+    const advertise = (provider: ChatProvider): ChatProvider => (requestTimeoutMs === undefined ? provider : { ...provider, requestTimeoutMs });
+
     if (config.kind === "anthropic") {
         const provider = createAnthropic({
             baseURL: config.baseURL,
             apiKey: config.apiKey,
-            fetch: config.fetch as typeof fetch | undefined,
+            fetch: effectiveFetch as typeof fetch | undefined,
         });
-        return createAiSdkProvider({
-            model: provider.chat(config.model),
-            resolveBilling: deps.resolveBilling,
-            capabilities: config.capabilities,
-            logger: deps.logger,
-            ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
-        });
+        return advertise(
+            createAiSdkProvider({
+                model: provider.chat(config.model),
+                resolveBilling: deps.resolveBilling,
+                capabilities: config.capabilities,
+                logger: deps.logger,
+                ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
+                ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
+            }),
+        );
     }
 
     const provider = createOpenAICompatible({
         name: config.name,
         baseURL: config.baseURL,
         apiKey: config.apiKey,
-        fetch: config.fetch as typeof fetch | undefined,
+        fetch: effectiveFetch as typeof fetch | undefined,
     });
-    return createAiSdkProvider({
-        model: provider.chatModel(config.model),
-        resolveBilling: deps.resolveBilling,
-        capabilities: config.capabilities,
-        logger: deps.logger,
-        ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
-    });
+    return advertise(
+        createAiSdkProvider({
+            model: provider.chatModel(config.model),
+            resolveBilling: deps.resolveBilling,
+            capabilities: config.capabilities,
+            logger: deps.logger,
+            ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
+            ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
+        }),
+    );
 }

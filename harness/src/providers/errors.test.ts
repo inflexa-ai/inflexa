@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { classifyProviderError, isProviderError, toProviderError } from "./errors.js";
+import { classifyProviderError, isProviderError, RequestTimeoutError, toProviderError } from "./errors.js";
 
 /** Build a synthetic API error carrying an HTTP status, SDK-shaped. */
 function apiError(status: number): Error {
@@ -92,6 +92,35 @@ describe("classifyProviderError", () => {
             kind: "budget",
             retryable: false,
         });
+    });
+});
+
+describe("the request-timeout sentinel", () => {
+    it("classifies a bare sentinel as a retryable provider timeout", () => {
+        expect(classifyProviderError(new RequestTimeoutError(30_000))).toEqual({ kind: "provider", retryable: true });
+    });
+
+    it("reads the sentinel nested on the cause chain the same way the SDK wraps it", () => {
+        const wrapped = new Error("AI_APICallError", { cause: new RequestTimeoutError(30_000) });
+        expect(classifyProviderError(wrapped)).toEqual({ kind: "provider", retryable: true });
+    });
+
+    it("names the configured value and the workload in the composed message", () => {
+        const err = toProviderError(new RequestTimeoutError(45_000), "analysis:abc");
+        expect(err.type).toBe("provider");
+        expect(err.retryable).toBe(true);
+        expect(err.message).toContain("45000");
+        expect(err.message).toContain("analysis:abc");
+    });
+
+    it("wins over the connection-error path when both match the same throwable", () => {
+        // A guard abort can ride under a `fetch failed` wrapper. The sentinel
+        // detection runs first, thus the message names the configured value, not a
+        // bare connection failure.
+        const wrapped = new TypeError("fetch failed", { cause: new RequestTimeoutError(20_000) });
+        const err = toProviderError(wrapped, "analysis:abc");
+        expect(err.retryable).toBe(true);
+        expect(err.message).toContain("20000");
     });
 });
 
