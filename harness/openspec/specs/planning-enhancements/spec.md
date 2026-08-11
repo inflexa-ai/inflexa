@@ -19,8 +19,9 @@ dry-run) and `list_available_refs` (reference-store discovery, so a step is only
 committed to reference data the environment actually holds). That split, not the
 size of either set, is the invariant: a plan reaches the caller through exactly
 one terminal call, and non-terminal tools record no outcome. The whole
-invocation is bounded by a single 600s wall-clock guard merged with the caller's
-abort signal; the planner loop is iteration-capped at 13. There is no per-attempt
+invocation is bounded by one wall-clock guard, merged with the caller's abort
+signal. The guard is 600s, or the advertised provider request timeout when
+larger; the planner loop is iteration-capped at 13. There is no per-attempt
 timeout, no internal retry counter, and no `adaptive` thinking or `budget_tokens`
 anywhere in the planning path.
 
@@ -80,15 +81,22 @@ number of times, so adding one does not change the planner's exit contract.
 
 ### Requirement: A single wall-clock guard bounds the whole invocation
 
-The tool SHALL bound the entire invocation with a single 600s
-(`PLAN_TIMEOUT_MS = 600_000`) wall-clock guard, merged with the caller's abort
-signal via `AbortSignal.any`. There SHALL be no per-attempt timeout and no
-internal retry counter.
+The tool MUST bound the entire invocation with a single wall-clock guard,
+merged with the caller's abort signal through `AbortSignal.any`. The guard value
+MUST be the maximum of 600s (`PLAN_TIMEOUT_MS = 600_000`) and the
+`requestTimeoutMs` that the planner provider advertises. There MUST be no
+per-attempt timeout and no internal retry counter.
 
 #### Scenario: Invocation times out
 
-- **WHEN** plan generation exceeds the 600s wall-clock guard
+- **WHEN** plan generation exceeds the wall-clock guard
 - **THEN** the planner is aborted and the tool returns an `error` event indicating a timeout
+
+#### Scenario: A slow provider raises the guard
+
+- **GIVEN** a planner provider that advertises a `requestTimeoutMs` above 600s
+- **WHEN** the tool arms its wall-clock guard
+- **THEN** the guard value is the advertised value, not 600s
 
 #### Scenario: Caller abort cancels the planner
 
