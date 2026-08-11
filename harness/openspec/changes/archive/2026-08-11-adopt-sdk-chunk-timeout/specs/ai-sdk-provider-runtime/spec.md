@@ -38,17 +38,22 @@ When `requestTimeoutMs` is set, the provider MUST bound each silent interval of 
 
 ### Requirement: A guard expiry classifies as a retryable provider timeout
 
-A guard abort MUST surface as a provider error with `retryable: true`, and its message MUST name the configured value. An error named `TimeoutError`, the DOMException that the SDK `timeout` setting raises, MUST classify the same way. The classification MUST NOT treat either as a caller cancellation. The envelope MUST retry them under the same policy as a connection error. When the abort signal of the caller is aborted, the envelope MUST rethrow without a retry. Thus a wall-clock expiry that rides the caller signal never loops.
+A guard abort MUST surface as a provider error with `retryable: true`, and its message MUST name the configured value. An error named `TimeoutError`, the DOMException that the SDK `timeout` setting raises, MUST classify the same way. The classification MUST NOT treat either as a caller cancellation. The envelope MUST retry them under the same policy as a connection error, within its coverage. For a stream that coverage is the establishment window, so a failure after the first delta propagates un-retried. When the abort signal of the caller is aborted, the envelope MUST rethrow without a retry. Thus a wall-clock expiry that rides the caller signal never loops.
 
 #### Scenario: The envelope retries a guard expiry
 
 - **WHEN** the guard aborts an attempt and the retry limit is not reached
 - **THEN** the envelope makes another attempt with a fresh window
 
-#### Scenario: The envelope retries an SDK chunk timeout
+#### Scenario: The envelope retries an SDK chunk timeout at establishment
 
-- **WHEN** the SDK chunk bound aborts an attempt and the retry limit is not reached
+- **WHEN** the SDK chunk bound aborts a stream before its first delta and the retry limit is not reached
 - **THEN** the envelope makes another attempt with a fresh window
+
+#### Scenario: A mid-stream chunk timeout propagates
+
+- **WHEN** the SDK chunk bound aborts a stream after its first delta
+- **THEN** the provider error propagates without an envelope retry, per the establishment coverage of a stream
 
 #### Scenario: A caller-signal expiry does not loop
 
