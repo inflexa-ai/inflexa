@@ -122,9 +122,9 @@ a sparse column is different from a column that does not exist.
 The harness MUST expose a `ReferenceResolver` seam. Its `resolve(reference,
 snapshot)` operation MUST return the concrete value, or a typed
 `UnresolvedReference`. The `reason` MUST be one of `artifact-missing`,
-`hash-mismatch`, `locator-out-of-range`, `ambiguous-match`, `assertion-failed`, or
-`unreadable-artifact`. Resolution MUST target the pinned snapshot, so a version
-resolves to the same value over time.
+`hash-mismatch`, `locator-out-of-range`, `ambiguous-match`, `assertion-failed`,
+`unreadable-artifact`, or `extraction-unavailable`. Resolution MUST target the
+pinned snapshot, so a version resolves to the same value over time.
 
 Resolution MUST have two tiers. The structural tier answers from the snapshot alone,
 and it opens no file. The value tier reads the artifact, and it gives the cell.
@@ -132,6 +132,11 @@ and it opens no file. The value tier reads the artifact, and it gives the cell.
 A caller MUST be able to run the structural tier alone. Thus an authoring operation
 validates a reference with no read of a file, and the costly read happens one time
 for each version.
+
+The seam can carry an optional `prepare(references, snapshot)` operation. When a
+realization gives it, a validator MUST call `prepare` one time before its
+per-reference loop. A realization without `prepare` MUST keep its behavior, thus the
+extension breaks no caller.
 
 #### Scenario: A reference to a real cell resolves to its value
 
@@ -158,10 +163,20 @@ for each version.
 - **WHEN** a reference addresses a cell in an artifact that the resolver cannot read as a table
 - **THEN** resolution returns an `UnresolvedReference` with reason `unreadable-artifact`
 
+#### Scenario: An absent extraction arm returns extraction-unavailable
+
+- **WHEN** the value tier must use an extraction arm that is not wired
+- **THEN** resolution returns an `UnresolvedReference` with reason `extraction-unavailable`
+
 #### Scenario: The structural tier opens no file
 
 - **WHEN** a caller runs the structural tier on a reference
 - **THEN** the tier answers from the snapshot, and it reads no artifact
+
+#### Scenario: Prepare runs one time before the loop
+
+- **WHEN** a realization gives `prepare` and the validator resolves a document
+- **THEN** `prepare` runs one time, and each `resolve` follows it
 
 ### Requirement: An assertion is matched on resolve
 
