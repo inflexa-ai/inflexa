@@ -46,7 +46,7 @@ import { createCitationResolver, type CitationResolverConfig } from "../citation
 import type { CitationResolver } from "../citations/types.js";
 import type { AuthContext } from "../auth/types.js";
 import { createThreadStore } from "../memory/thread-store.js";
-import { createProductionResolver } from "../report-model/production-resolver.js";
+import { createArtifactReadStore, createProductionResolver } from "../report-model/production-resolver.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import { createReportVersionStore } from "../state/report-versions.js";
 
@@ -90,6 +90,21 @@ export interface RegisteredWorkflows {
  */
 export type ConversationAssemblyDeps = Omit<ConversationAgentDeps, "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder" | "citationResolver">;
 
+/**
+ * What binds one reference resolver: the analysis whose pinned artifacts it reads, and the auth of the tool
+ * call that reads them. A resolver serves one analysis, thus the report tools build one for each call.
+ */
+export interface ReportResolverScope {
+    readonly analysisId: string;
+    readonly auth: AuthContext;
+}
+
+/**
+ * The factory that gives the reference resolver of one report tool call. The harness wires the production
+ * realization, and an embedder can bind its own at its composition root.
+ */
+export type MakeReportReferenceResolver = (scope: ReportResolverScope) => ReferenceResolver;
+
 export interface CoreRuntimeDeps {
     readonly conversation: ConversationAssemblyDeps;
     readonly workflows: CoreWorkflowDeps;
@@ -113,6 +128,14 @@ export interface CoreRuntimeDeps {
      * default. The embedder tunes it here, thus a host changes it with no harness change.
      */
     readonly reportHostReadCapBytes?: number;
+    /**
+     * The report reference resolver of an embedder. A managed host reads its pinned
+     * artifacts from its own store, thus it binds a realization of the seam here and the
+     * report tools resolve through it. Absent, the harness wires the production resolver
+     * over the workspace tree and the extraction arm, which is the whole OSS path. A bound
+     * factory replaces that wiring, thus `reportHostReadCapBytes` then governs nothing.
+     */
+    readonly makeReportReferenceResolver?: MakeReportReferenceResolver;
 }
 
 /**
@@ -227,12 +250,19 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const reportVersionStore = createReportVersionStore({ pool: conversation.pool, ...(conversation.logger ? { logger: conversation.logger } : {}) });
     const reportThreads = createThreadStore(conversation.pool);
 
-    // The reference resolver of the report path, and its first production wiring. A
-    // resolver reads the pinned artifacts of one analysis, thus the factory binds one
-    // analysis and one auth for each tool call. The extraction arm falls through to the
-    // registered extract-values callable for an over-cap file, an unknown format, or a
-    // host parse fault. The cap gates the host read, and the resolver defaults it to 16 MiB.
-    const makeReportResolver = (scope: { analysisId: string; auth: AuthContext }): ReferenceResolver => {
+    // The read cache of the production report path, one for each recent analysis. A preview
+    // and the record that follows it are two tool calls over one draft, thus they meet the
+    // same artifacts. The store carries the streamed hash and the extracted rows between
+    // them, and each resolver still binds its own extraction arm below. Thus the auth of a
+    // call never outlives the call, and one unchanged file costs one hash and one container.
+    const reportArtifactReads = createArtifactReadStore();
+
+    // The reference resolver of the report path, and its production wiring. A resolver reads
+    // the pinned artifacts of one analysis, thus the factory binds one analysis and one auth
+    // for each tool call. The extraction arm falls through to the registered extract-values
+    // callable for an over-cap file or a host parse fault. The cap gates the host read, and
+    // the resolver defaults it to 16 MiB.
+    const makeProductionReportResolver = (scope: ReportResolverScope): ReferenceResolver => {
         const arm = createExtractionArm(
             bindExtractionTrigger({ runAuthorizer: conversation.runAuthorizer, workflow: extractValues }, { auth: scope.auth, analysisId: scope.analysisId }),
         );
@@ -240,9 +270,11 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             workspaceRoot: conversation.resolveWorkspaceRoot(scope.analysisId),
             analysisId: scope.analysisId,
             extractionArm: arm,
+            readCache: reportArtifactReads.forAnalysis(scope.analysisId),
             ...(deps.reportHostReadCapBytes !== undefined ? { cap: deps.reportHostReadCapBytes } : {}),
         });
     };
+    const makeReportResolver = deps.makeReportReferenceResolver ?? makeProductionReportResolver;
 
     const reportAgent = createReportSessionAgent({
         model: conversation.model,

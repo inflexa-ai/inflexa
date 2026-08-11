@@ -14,7 +14,14 @@ import { fileURLToPath } from "node:url";
 import type { ArtifactTableReference, ArtifactValueReference, Reference } from "../contracts/report-reference.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
 import { createFixtureResolver } from "./fixture-resolver.js";
-import { coerceCell, createProductionResolver, type ExtractionArm, type ExtractionArtifact, type ExtractionRequest } from "./production-resolver.js";
+import {
+    coerceCell,
+    createArtifactReadStore,
+    createProductionResolver,
+    type ExtractionArm,
+    type ExtractionArtifact,
+    type ExtractionRequest,
+} from "./production-resolver.js";
 import type { ArtifactSnapshot, ReportSnapshot } from "./reference-resolver.js";
 
 type Row = Record<string, string | number>;
@@ -196,7 +203,8 @@ describe("production resolver, the cap", () => {
 
         expect(result._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.42" });
         expect(batches.length).toBe(1);
-        expect(batches[0]).toEqual([{ path: "big.csv", hash }]);
+        // The host decided the reader before the fall-through, thus the request carries the format.
+        expect(batches[0]).toEqual([{ path: "big.csv", hash, format: "csv" }]);
     });
 
     test("the same larger file resolves in process under the default cap", async () => {
@@ -240,14 +248,20 @@ describe("production resolver, the fall-through", () => {
         expect(failure.detail).toContain("odd2.csv");
     });
 
-    test("an unknown format falls through", async () => {
+    test("an unknown format refuses before the arm, even when an arm is wired", async () => {
+        // The host decides the format for both arms. An extension that names no tabular format decides no
+        // reader, thus the file refuses as unavailable and the arm never receives a request for it.
         const hash = await writeArtifact("blob.dat", "some bytes that are not a table");
-        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const { arm, batches } = stubArm({ "blob.dat": [{ gene: "BRCA1", score: "0.5" }] });
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS, extractionArm: arm });
         const reference = valueRef("blob.dat", hash, "score", "gene", "BRCA1");
 
         const result = await resolver.resolve(reference, snapshotOf([{ path: "blob.dat", hash }]));
 
-        expect(result._unsafeUnwrapErr().reason).toBe("extraction-unavailable");
+        const failure = result._unsafeUnwrapErr();
+        expect(failure.reason).toBe("extraction-unavailable");
+        expect(failure.detail).toContain("no supported tabular format");
+        expect(batches.length).toBe(0);
     });
 });
 
@@ -379,19 +393,21 @@ describe("production resolver, the prepare cache", () => {
 
 describe("production resolver, the prepare batch of fall-throughs", () => {
     test("prepare sends every fall-through in one arm batch, and each later resolve answers from the arm", async () => {
-        // Each file has an unknown format, thus the host arm cannot read it and the file falls through.
-        const hashA = await writeArtifact("fall-a.dat", "some bytes that are not a table");
-        const hashB = await writeArtifact("fall-b.dat", "more bytes that are not a table");
+        // Each file holds an odd dialect, thus the strict host parser refuses the doubt and the file falls
+        // through. The extension names the reader, thus each request carries the format that the host chose.
+        const odd = "gene;pvalue;score\nBRCA1;0.01;0.9\nTP53;0.02;0,8\n";
+        const hashA = await writeArtifact("fall-a.csv", odd);
+        const hashB = await writeArtifact("fall-b.csv", `${odd}EGFR;0.03;0,7\n`);
         const { arm, batches } = stubArm({
-            "fall-a.dat": [{ gene: "BRCA1", score: "0.11" }],
-            "fall-b.dat": [{ gene: "BRCA1", score: "0.22" }],
+            "fall-a.csv": [{ gene: "BRCA1", score: "0.11" }],
+            "fall-b.csv": [{ gene: "BRCA1", score: "0.22" }],
         });
         const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS, extractionArm: arm });
-        const refA = valueRef("fall-a.dat", hashA, "score", "gene", "BRCA1");
-        const refB = valueRef("fall-b.dat", hashB, "score", "gene", "BRCA1");
+        const refA = valueRef("fall-a.csv", hashA, "score", "gene", "BRCA1");
+        const refB = valueRef("fall-b.csv", hashB, "score", "gene", "BRCA1");
         const snapshot = snapshotOf([
-            { path: "fall-a.dat", hash: hashA },
-            { path: "fall-b.dat", hash: hashB },
+            { path: "fall-a.csv", hash: hashA },
+            { path: "fall-b.csv", hash: hashB },
         ]);
 
         await resolver.prepare?.([refA, refB], snapshot);
@@ -401,8 +417,8 @@ describe("production resolver, the prepare batch of fall-throughs", () => {
         expect(batches[0]).toHaveLength(2);
         expect(batches[0]).toEqual(
             expect.arrayContaining([
-                { path: "fall-a.dat", hash: hashA },
-                { path: "fall-b.dat", hash: hashB },
+                { path: "fall-a.csv", hash: hashA, format: "csv" },
+                { path: "fall-b.csv", hash: hashB, format: "csv" },
             ]),
         );
 
@@ -412,6 +428,70 @@ describe("production resolver, the prepare batch of fall-throughs", () => {
         expect(outA._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.11" });
         expect(outB._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.22" });
         expect(batches.length).toBe(1);
+    });
+});
+
+describe("production resolver, the resolve path with no prepare", () => {
+    test("two references at one fall-through path open one arm batch", async () => {
+        // A resolve with no prior prepare writes what it read into the per-pass cache. Thus the second
+        // reference at the same path answers from the cache, and it starts no second container.
+        const hash = await writeArtifact("no-prepare.csv", "gene;score\nBRCA1;0.9\nTP53;0,8\n");
+        const { arm, batches } = stubArm({
+            "no-prepare.csv": [
+                { gene: "BRCA1", score: "0.11" },
+                { gene: "TP53", score: "0.22" },
+            ],
+        });
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS, extractionArm: arm });
+        const snapshot = snapshotOf([{ path: "no-prepare.csv", hash }]);
+
+        const first = await resolver.resolve(valueRef("no-prepare.csv", hash, "score", "gene", "BRCA1"), snapshot);
+        const second = await resolver.resolve(valueRef("no-prepare.csv", hash, "score", "gene", "TP53"), snapshot);
+
+        expect(first._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.11" });
+        expect(second._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.22" });
+        expect(batches.length).toBe(1);
+    });
+});
+
+describe("production resolver, the shared read cache", () => {
+    test("a second resolver over the same cache reads one unchanged file through no second arm batch", async () => {
+        // A preview and the record that follows it are two resolvers over one analysis. The shared cache
+        // carries the rows of the unchanged file, thus the second pass starts no second container.
+        const hash = await writeArtifact("shared.csv", "gene;score\nBRCA1;0.9\nTP53;0,8\n");
+        const { arm, batches } = stubArm({ "shared.csv": [{ gene: "BRCA1", score: "0.33" }] });
+        const readCache = createArtifactReadStore().forAnalysis(ANALYSIS);
+        const reference = valueRef("shared.csv", hash, "score", "gene", "BRCA1");
+        const snapshot = snapshotOf([{ path: "shared.csv", hash }]);
+
+        const first = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS, extractionArm: arm, readCache });
+        await first.prepare?.([reference], snapshot);
+        const second = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS, extractionArm: arm, readCache });
+        await second.prepare?.([reference], snapshot);
+        const result = await second.resolve(reference, snapshot);
+
+        expect(result._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.33" });
+        expect(batches.length).toBe(1);
+    });
+
+    test("a file that changed on disk reads again through the arm", async () => {
+        // The stat signature guards the shared rows. New bytes hold a new signature, thus the cache answers
+        // for the old bytes only and the new bytes cost one read of their own.
+        await writeArtifact("shared-change.csv", "gene;score\nBRCA1;0.9\nTP53;0,8\n");
+        const { arm, batches } = stubArm({ "shared-change.csv": [{ gene: "BRCA1", score: "0.44" }] });
+        const readCache = createArtifactReadStore().forAnalysis(ANALYSIS);
+
+        const before = await computeSha256File(join(root, "shared-change.csv"));
+        const first = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS, extractionArm: arm, readCache });
+        await first.prepare?.([valueRef("shared-change.csv", before, "score", "gene", "BRCA1")], snapshotOf([{ path: "shared-change.csv", hash: before }]));
+
+        const after = await writeArtifact("shared-change.csv", "gene;score;rank\nBRCA1;0.9;1\nTP53;0,8;2\nEGFR;0,7;3\n");
+        const reference = valueRef("shared-change.csv", after, "score", "gene", "BRCA1");
+        const second = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS, extractionArm: arm, readCache });
+        const result = await second.resolve(reference, snapshotOf([{ path: "shared-change.csv", hash: after }]));
+
+        expect(result._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.44" });
+        expect(batches.length).toBe(2);
     });
 });
 

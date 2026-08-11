@@ -760,13 +760,18 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             apiKey: config.apiKey,
             fetch: effectiveFetch as typeof fetch | undefined,
         });
+        // The Anthropic Messages wire renders an image block inside a
+        // tool_result, thus the loop can send a picture. A custom baseURL can
+        // front a different backend that stringifies the block. Thus the
+        // harness asserts the capability only for the default endpoint. An
+        // absent flag means "cannot carry", thus a config with a custom baseURL
+        // must declare the capability. A config value overrides this default in
+        // both directions.
+        const pictureDefault: Partial<ProviderCapabilities> = config.baseURL === undefined ? { imageToolResults: true } : {};
         return createAiSdkProvider({
             model: provider.chat(config.model),
             resolveBilling: deps.resolveBilling,
-            // The Anthropic Messages wire renders an image block inside a
-            // tool_result, thus the loop can send a picture. A config value
-            // overrides this default.
-            capabilities: { imageToolResults: true, ...config.capabilities },
+            capabilities: { ...pictureDefault, ...config.capabilities },
             logger: deps.logger,
             ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
             ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),

@@ -22,10 +22,36 @@ function enc(): Tiktoken {
 }
 
 /**
- * The token-bearing text of one content block. Text-carrying fields are
- * extracted directly; structural blocks (`tool_use` input, `tool_result`
- * payload) are JSON-stringified. A signed `thinking` block counts only its
- * reasoning text — the opaque `signature` is metadata, not prompt tokens.
+ * The token-bearing text of one tool-result output.
+ *
+ * A `content` output holds the text parts and the attachments side by side. Only
+ * the text is prompt text. A file rides the wire as an attachment, and the
+ * provider bills it at its own rate, thus its bytes count as `0` — the same rule
+ * as a top-level `file` block. A file that is stringified into the count inflates
+ * the row of the message by tens of thousands of tokens, and the load window then
+ * drops the true history.
+ *
+ * Each other output arm is plain JSON, thus it is stringified whole.
+ */
+function toolResultText(output: unknown): string {
+    if (typeof output !== "object" || output === null) return JSON.stringify(output ?? {});
+    const out = output as Record<string, unknown>;
+    if (out.type !== "content" || !Array.isArray(out.value)) return JSON.stringify(out);
+    const texts: string[] = [];
+    for (const item of out.value) {
+        if (typeof item !== "object" || item === null) continue;
+        const nested = item as Record<string, unknown>;
+        if (nested.type === "text" && typeof nested.text === "string") texts.push(nested.text);
+    }
+    return texts.join(" ");
+}
+
+/**
+ * The token-bearing text of one content block. A text-carrying field is
+ * extracted directly. A `tool_use` input is JSON-stringified, and a
+ * `tool_result` output goes through {@link toolResultText}. A signed `thinking`
+ * block counts only its reasoning text, because the opaque `signature` is
+ * metadata and not prompt tokens.
  */
 function tokenizableText(block: unknown): string {
     if (typeof block === "string") return block;
@@ -43,7 +69,7 @@ function tokenizableText(block: unknown): string {
         case "tool-call":
             return `${String(part.toolName ?? "")} ${JSON.stringify(part.input ?? {})}`;
         case "tool-result": {
-            return `${String(part.toolName ?? "")} ${JSON.stringify(part.output ?? {})}`;
+            return `${String(part.toolName ?? "")} ${toolResultText(part.output)}`;
         }
         default:
             return JSON.stringify(part);

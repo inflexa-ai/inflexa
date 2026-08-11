@@ -48,6 +48,23 @@ describe("the extraction script", () => {
         const matches = EXTRACTION_SCRIPT.match(/keep_default_na=False\)/g);
         expect(matches).toHaveLength(2);
     });
+
+    it("reads a JSON file by the strict host shape, and it infers no table", () => {
+        // The host reads a JSON table as an array of flat objects. The script obeys the same shape, thus a
+        // shape that the host refuses comes back as a typed refusal. A pandas inference pass would give
+        // back a different table for the same bytes.
+        expect(EXTRACTION_SCRIPT).not.toContain("read_json");
+        expect(EXTRACTION_SCRIPT).toContain("the JSON top-level value is not an array");
+        expect(EXTRACTION_SCRIPT).toContain("a JSON array item is not an object");
+        expect(EXTRACTION_SCRIPT).toContain("a JSON cell holds a nested value");
+    });
+
+    it("refuses a request that names no format", () => {
+        // The host decides the format for both arms. The script derives no reader from the extension, thus
+        // a request with no format is a protocol fault and never a comma-delimited guess.
+        expect(EXTRACTION_SCRIPT).toContain("the request names no supported format");
+        expect(EXTRACTION_SCRIPT).toContain('request.get("format")');
+    });
 });
 
 describe("buildExtractionExec", () => {
@@ -55,9 +72,9 @@ describe("buildExtractionExec", () => {
         const body = buildExtractionExec(
             "an-1",
             [
-                { path: "data/x.tsv", hash: "h1" },
-                { path: "/an-1/data/y.parquet", hash: "h2" },
-                { path: "data/z.dat", hash: "h3" },
+                { path: "data/x.tsv", hash: "h1", format: "tsv" },
+                { path: "/an-1/data/y.parquet", hash: "h2", format: "parquet" },
+                { path: "data/z.csv", hash: "h3", format: "csv" },
             ],
             "exec-9",
         );
@@ -65,15 +82,23 @@ describe("buildExtractionExec", () => {
         expect(body.execId).toBe("exec-9");
         expect(body.cwd).toBe("/an-1");
 
-        // The request list rides in one environment variable. The format derives from the extension. An
-        // unknown extension reads as csv, which is the general reader. Each request carries its pinned
-        // hash, thus the script can refuse a file that drifted from the pin.
+        // The request list rides in one environment variable. Each request carries its pinned hash, thus
+        // the script can refuse a file that drifted from the pin.
         const parsed = JSON.parse(body.env![EXTRACTION_INPUT_ENV]);
         expect(parsed).toEqual([
             { path: "data/x.tsv", format: "tsv", hash: "h1" },
             { path: "/an-1/data/y.parquet", format: "parquet", hash: "h2" },
-            { path: "data/z.dat", format: "csv", hash: "h3" },
+            { path: "data/z.csv", format: "csv", hash: "h3" },
         ]);
+    });
+
+    it("carries the format of the request, and it reads no format from the extension", () => {
+        // The host decides the format one time. A request whose format disagrees with the extension proves
+        // that this arm repeats no mapping of its own.
+        const body = buildExtractionExec("an-1", [{ path: "data/x.csv", hash: "h1", format: "tsv" }], "exec-10");
+
+        const parsed = JSON.parse(body.env![EXTRACTION_INPUT_ENV]);
+        expect(parsed).toEqual([{ path: "data/x.csv", format: "tsv", hash: "h1" }]);
     });
 });
 
@@ -128,8 +153,8 @@ describe("createExtractionArm", () => {
         });
 
         const requests: ExtractionRequest[] = [
-            { path: "data/a.csv", hash: "h1" },
-            { path: "data/b.parquet", hash: "h2" },
+            { path: "data/a.csv", hash: "h1", format: "csv" },
+            { path: "data/b.parquet", hash: "h2", format: "parquet" },
         ];
         const map = await arm.extract(requests);
 
@@ -143,6 +168,6 @@ describe("createExtractionArm", () => {
         const arm = createExtractionArm(async () => {
             throw new Error("the workflow faulted");
         });
-        await expect(arm.extract([{ path: "data/a.csv", hash: "h1" }])).rejects.toThrow("the workflow faulted");
+        await expect(arm.extract([{ path: "data/a.csv", hash: "h1", format: "csv" }])).rejects.toThrow("the workflow faulted");
     });
 });

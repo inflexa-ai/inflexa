@@ -16,8 +16,25 @@ import type { Logger } from "./logger.js";
 export interface ChromeConfig {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
+    /**
+     * The endpoint of the Chrome sidecar. The connection is out of process, thus the sidecar has its own
+     * filesystem and its own network position. A `file://` URL resolves against the filesystem of the
+     * sidecar and never against the filesystem of the harness host. A caller that navigates to a workspace
+     * file must run a sidecar that mounts the same workspace tree at the same path.
+     *
+     * An absent value means that the composition gives no browser at all. A caller that needs a look must
+     * report that condition, not attempt a connection.
+     */
     readonly browserUrl?: string;
     readonly maxPages?: number;
+}
+
+/**
+ * Whether the config names a browser to connect to. A composition with no endpoint has no eyes, and a
+ * caller reads that up front instead of failing once for each attempted connection.
+ */
+export function hasBrowserUrl(cfg: ChromeConfig): boolean {
+    return cfg.browserUrl !== undefined && cfg.browserUrl.trim().length > 0;
 }
 
 let browser: Browser | undefined;

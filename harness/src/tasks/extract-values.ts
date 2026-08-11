@@ -1,9 +1,10 @@
 /**
  * The extraction workflow on the profile rails, and the `ExtractionArm` realization over it.
  *
- * The report resolver falls through to this arm for an over-cap file, an unknown format, or a host parse
- * fault. The arm runs one fixed extraction script in an ephemeral sandbox, and it gives back the rows that
- * the script read. No agent loop runs anywhere in this path.
+ * The report resolver falls through to this arm for an over-cap file or a host parse fault. The arm runs one
+ * fixed extraction script in an ephemeral sandbox, and it gives back the rows that the script read. No agent
+ * loop runs anywhere in this path. A file whose extension names no tabular format never arrives here,
+ * because the host decides the format and it refuses the file before the fall-through.
  *
  * The shape matches the data profile (`src/tasks/data-profile.ts`). The authorization mints at the async
  * edge (`triggerExtractValues`) and rides in the workflow input. The body never mints, and it revokes the
@@ -24,13 +25,7 @@ import type { SandboxClient } from "../sandbox/client.js";
 import { generateExecutionId } from "../sandbox/execution-id.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
 import type { ExecEmit, ExecResult, SubmitExecBody } from "../sandbox/types.js";
-import {
-    detectExtractionFormat,
-    EXTRACTION_INPUT_ENV,
-    EXTRACTION_SCRIPT,
-    ExtractValuesResultSchema,
-    type ExtractValuesResult,
-} from "./extract-values-script.js";
+import { EXTRACTION_INPUT_ENV, EXTRACTION_SCRIPT, ExtractValuesResultSchema, type ExtractValuesResult } from "./extract-values-script.js";
 
 // The registration in the runtime assembly needs the result type, thus this module re-exports it.
 export type { ExtractValuesResult } from "./extract-values-script.js";
@@ -89,12 +84,15 @@ export interface ExtractValuesWorkflowInput {
  * request list rides in one environment variable.
  *
  * Each request carries its pinned hash. Thus the script can hash the file first and refuse a file that
- * drifted from the pin, before the pandas read gives back drifted bytes.
+ * drifted from the pin, before the read gives back drifted bytes.
+ *
+ * Each request also carries the format that the host decided. The script obeys that format, thus this arm
+ * derives no reader from an extension and the two arms can never read one file two ways.
  *
  * The function is pure, thus a test asserts the command shape without a sandbox.
  */
 export function buildExtractionExec(analysisId: string, requests: readonly ExtractionRequest[], execId: string): SubmitExecBody {
-    const scriptRequests = requests.map((request) => ({ path: request.path, format: detectExtractionFormat(request.path), hash: request.hash }));
+    const scriptRequests = requests.map((request) => ({ path: request.path, format: request.format, hash: request.hash }));
     return {
         command: ["python3", "-c", EXTRACTION_SCRIPT],
         execId,
