@@ -3,7 +3,7 @@
  *
  * Each test drives the tool through `execute` with a temp workspace root, an in-memory gateway, and a stub
  * capture that reads no browser. The chrome connection has its own prior art, thus these tests cover the tool
- * orchestration: the no-page outcome, and the seen-hash copy on a capture.
+ * orchestration: the no-browser outcome, the no-page outcome, and the seen-hash copy on a capture.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -111,6 +111,42 @@ function ctxForThread(threadId: string): ToolContext {
     const scope: Scope = { kind: "analysis", analysisId: DEFAULT_ANALYSIS_ID, threadId };
     return { ...ctx, session: { ...ctx.session, scope } };
 }
+
+describe("the no-browser outcome", () => {
+    it("reports the absent browser up front when the composition gives no browser and no capture seam, and stamps nothing", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        // The page and the rendered hash both exist, thus only the absent browser stops the look.
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {} });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("no-browser");
+        if (result.outcome === "no-browser") {
+            expect(result.detail).toContain("no browser");
+        }
+        // No eyes saw the page, thus the seen hash stays null and the record still refuses.
+        expect(gateway.seenOf(threadId)).toBeNull();
+    });
+
+    it("looks at the page when the config names a browser, thus the arm keys on the composition and not on the connection", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const stub: PageCapture = { screenshotBase64: "BASE64PNG", consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = () => Promise.resolve(stub);
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: { browserUrl: "http://localhost:9222" }, capture });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("examined");
+    });
+});
 
 describe("the no-page outcome", () => {
     it("gives a no-page outcome when no preview wrote the page, and stamps nothing", async () => {

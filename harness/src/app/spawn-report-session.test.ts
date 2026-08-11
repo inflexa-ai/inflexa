@@ -16,10 +16,13 @@ let drop: () => Promise<void>;
 let store: ThreadStore;
 let spawn: ReportSessionSpawn;
 
+/** A chrome config that names a browser, thus the eyes gate passes and the spawn reaches its own rules. */
+const WITH_BROWSER = { browserUrl: "http://localhost:9222" };
+
 beforeEach(async () => {
     ({ pool, drop } = await withSchema("spawn-report-session"));
     store = createThreadStore(pool);
-    spawn = createReportSessionSpawn({ pool });
+    spawn = createReportSessionSpawn({ pool, chrome: WITH_BROWSER });
 });
 
 afterEach(async () => {
@@ -114,6 +117,32 @@ describe("spawnReportSession anchor", () => {
 });
 
 describe("spawnReportSession refusals", () => {
+    it("refuses every spawn with no_browser when the composition names no browser, and writes no row", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        // The parent is legal in every other way, thus only the absent eyes route refuses.
+        const blind = createReportSessionSpawn({ pool, chrome: {} });
+
+        const failed = (await blind.spawnReportSession("p1"))._unsafeUnwrapErr();
+
+        expect(failed.type).toBe("no_browser");
+        expect(await reportThreadCount()).toBe(0);
+    });
+
+    it("spawns when the composition injects a capture seam and names no browser", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        // An injected seam is a route to a look, thus the gate passes with no browser endpoint.
+        const seamed = createReportSessionSpawn({
+            pool,
+            chrome: {},
+            capture: () => Promise.resolve({ screenshotBase64: "", consoleErrors: [], failedRequests: [] }),
+        });
+
+        const child = (await seamed.spawnReportSession("p1"))._unsafeUnwrap();
+
+        expect(child.threadType).toBe("report");
+        expect(await reportThreadCount()).toBe(1);
+    });
+
     it("refuses an unknown parent with parent_not_found and writes no row", async () => {
         const failed = (await spawn.spawnReportSession("ghost"))._unsafeUnwrapErr();
 

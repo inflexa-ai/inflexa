@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { CitationBlock, MetricBlock, ReportDocument, TextBlock } from "../contracts/report-blocks.js";
+import { CHART_BOOTSTRAP } from "./page.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
 
@@ -215,6 +216,56 @@ describe("renderReportPage readiness signal", () => {
         // when the page is ready instead of at a timeout.
         expect(html).toContain("window.__inflexaThemeReady = true");
         expect(html).toContain('document.dispatchEvent(new Event("inflexa-theme-ready"))');
+    });
+});
+
+describe("the chart bootstrap under a broken chart", () => {
+    /** One chart container beside its option script, the pair that the bootstrap walks. */
+    function fakeContainer(id: string): unknown {
+        return {
+            getAttribute: () => id,
+            nextElementSibling: { getAttribute: () => "application/json", textContent: "{}" },
+        };
+    }
+
+    /**
+     * Run the emitted bootstrap over fake page globals. Each global arrives as a parameter, thus the script
+     * reads the fakes and no real browser is necessary.
+     */
+    function runBootstrap(containers: unknown[], init: (container: unknown) => unknown): { ready: boolean; errors: string[] } {
+        const errors: string[] = [];
+        const win: Record<string, unknown> = { addEventListener: () => undefined };
+        const doc = {
+            querySelectorAll: () => containers,
+            dispatchEvent: () => true,
+            addEventListener: () => undefined,
+        };
+        const echarts = { init, getInstanceByDom: () => undefined };
+        const pageConsole = { error: (line: string) => errors.push(line) };
+        // The bootstrap is browser source text. Each global arrives as a parameter, thus the fake console
+        // of the page is the one that the script writes to.
+        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, pageConsole);
+        return { ready: win.__inflexaThemeReady === true, errors };
+    }
+
+    it("signals readiness and initializes the later chart when one chart throws", () => {
+        const good: string[] = [];
+        const { ready, errors } = runBootstrap([fakeContainer("bad"), fakeContainer("good")], (container) => {
+            if ((container as { getAttribute: () => string }).getAttribute() === "bad") {
+                throw new Error("bad option");
+            }
+            good.push("init");
+            return { setOption: () => undefined };
+        });
+
+        // The readiness signal still fires, thus a capture returns on the event and not at its timeout.
+        expect(ready).toBe(true);
+        // The later chart still initializes, thus one broken chart costs one chart.
+        expect(good).toEqual(["init"]);
+        // The fault reaches the console, thus the capture reads it and the agent repairs that one chart.
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain("bad");
+        expect(errors[0]).toContain("bad option");
     });
 });
 

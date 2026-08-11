@@ -518,6 +518,46 @@ describe("createConfiguredAiSdkProvider", () => {
 
         expect(provider.capabilities.toolCalling).toBe(true);
     });
+
+    // The picture flag is a fact about the endpoint, not about the dialect. An
+    // absent flag means "cannot carry", thus the loop degrades to text.
+    it("asserts the picture capability for the default anthropic endpoint", () => {
+        const provider = createConfiguredAiSdkProvider({
+            config: { kind: "anthropic", apiKey: "test-key", model: "claude-opus-5" },
+            resolveBilling: async () => ({}),
+        });
+
+        expect(provider.capabilities.imageToolResults).toBe(true);
+    });
+
+    it("leaves the picture capability absent for an anthropic config with a custom endpoint", () => {
+        const provider = createConfiguredAiSdkProvider({
+            config: { kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-5" },
+            resolveBilling: async () => ({}),
+        });
+
+        expect(provider.capabilities.imageToolResults).toBeUndefined();
+    });
+
+    it("honors the config over the endpoint default in both directions", () => {
+        const declared = createConfiguredAiSdkProvider({
+            config: {
+                kind: "anthropic",
+                baseURL: "http://models.local/anthropic",
+                apiKey: "test-key",
+                model: "claude-opus-5",
+                capabilities: { imageToolResults: true },
+            },
+            resolveBilling: async () => ({}),
+        });
+        const refused = createConfiguredAiSdkProvider({
+            config: { kind: "anthropic", apiKey: "test-key", model: "claude-opus-5", capabilities: { imageToolResults: false } },
+            resolveBilling: async () => ({}),
+        });
+
+        expect(declared.capabilities.imageToolResults).toBe(true);
+        expect(refused.capabilities.imageToolResults).toBe(false);
+    });
 });
 
 describe("computeRetryDelayMs", () => {

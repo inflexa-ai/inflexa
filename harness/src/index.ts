@@ -7,7 +7,21 @@
 
 // Runtime assembly + composition root.
 export { assembleCoreRuntime } from "./runtime/assemble.js";
-export type { CoreRuntime, CoreRuntimeDeps, CoreWorkflowDeps, RegisteredWorkflows, ConversationAssemblyDeps, SandboxStepCallable } from "./runtime/assemble.js";
+export type {
+    CoreRuntime,
+    CoreRuntimeDeps,
+    CoreWorkflowDeps,
+    RegisteredWorkflows,
+    ConversationAssemblyDeps,
+    SandboxStepCallable,
+    MakeReportReferenceResolver,
+    ReportResolverScope,
+} from "./runtime/assemble.js";
+// Seam: the report reference resolver. A managed host reads its pinned artifacts
+// from its own store, thus it binds a factory at its composition root. The names
+// of the resolver and of the two values that it reads belong on the front door,
+// because an embedder cannot type its realization without them.
+export type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "./report-model/reference-resolver.js";
 // Thread→agent resolution surface `CoreRuntime.agents` carries: an embedder
 // resolves a turn's agent by thread type and matches the typed refusal for a
 // type whose agent is not registered yet.

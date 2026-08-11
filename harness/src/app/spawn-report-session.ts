@@ -18,6 +18,13 @@
  * A conversation thread id comes from the host UI. But the spawn is a harness
  * operation with no UI in front of it. Thus it mints a `randomUUID` and returns
  * the full row. A managed deployment gets the same behavior with no host code.
+ *
+ * The spawn also gates on the eyes of the composition. A report session records
+ * a version only after a look at the rendered page, and only a browser can look.
+ * Thus a composition with no browser and no injected capture seam can author a
+ * draft that no gate ever accepts. The spawn refuses that session before it
+ * writes a row, because a dead-end thread is worse than a refusal that names the
+ * absent capability.
  */
 
 import { randomUUID } from "node:crypto";
@@ -26,6 +33,8 @@ import { type ResultAsync, errAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import type { DbError } from "../lib/db-result.js";
+import { hasBrowserUrl, type ChromeConfig } from "../lib/chrome.js";
+import type { CapturePage } from "../lib/page-capture.js";
 import type { DomainError } from "../lib/result.js";
 import { createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore, type Thread, type ThreadInputError, type ThreadPage, type ThreadType } from "../memory/thread-store.js";
@@ -41,9 +50,16 @@ import { createThreadStore, type Thread, type ThreadInputError, type ThreadPage,
  * state is not permitted. `parent_not_a_conversation` keeps the tree flat: a
  * report session cannot spawn another. `empty_parent_transcript` refuses a
  * report on a parent that holds no messages, because such a report reports
- * nothing.
+ * nothing. `no_browser` refuses every spawn under a composition that gives no
+ * eyes, and it carries the line that explains the absent capability.
  */
 export type SpawnRefusal =
+    | {
+          readonly type: "no_browser";
+          readonly op: string;
+          readonly parentThreadId: string;
+          readonly detail: string;
+      }
     | {
           readonly type: "parent_not_found";
           readonly op: string;
@@ -74,6 +90,18 @@ export interface ReportSessionPaging {
 
 export interface ReportSessionSpawnDeps {
     readonly pool: Pool;
+    /**
+     * The chrome config that the same composition gives to the eyes tool. The
+     * spawn reads only whether it names a browser, thus the spawn and the tool
+     * decide the availability of the eyes from one value.
+     */
+    readonly chrome: ChromeConfig;
+    /**
+     * The capture seam that the same composition gives to the eyes tool. A
+     * present seam is a route to a look with no browser endpoint, thus it
+     * satisfies the gate on its own.
+     */
+    readonly capture?: CapturePage;
 }
 
 export interface ReportSessionSpawn {
@@ -82,10 +110,10 @@ export interface ReportSessionSpawn {
      * The child takes the analysis of the parent, the parent thread id, and the
      * anchor — the parent's latest `messages.seq` at this moment.
      *
-     * Refused with a `SpawnRefusal`, no row written: an absent or archived
-     * parent, a parent that is not a conversation, and a parent with no
-     * messages. A store refusal (`DbError`, `ThreadInputError`) passes through
-     * unchanged.
+     * Refused with a `SpawnRefusal`, no row written: a composition with no
+     * eyes, an absent or archived parent, a parent that is not a conversation,
+     * and a parent with no messages. A store refusal (`DbError`,
+     * `ThreadInputError`) passes through unchanged.
      */
     spawnReportSession(parentThreadId: string): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError>;
     /**
@@ -97,6 +125,9 @@ export interface ReportSessionSpawn {
 }
 
 const OP = "spawn-report-session";
+
+/** The line that the caller reads when the composition gives no eyes. */
+const NO_BROWSER_DETAIL = "the composition gives no browser, thus a report session can never record a version";
 
 /**
  * Compose the child title. N counts the existing report children of the parent
@@ -117,8 +148,17 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
     const { pool } = deps;
     const store = createThreadStore(pool);
     const history = createThreadHistory(pool);
+    // The eyes of the composition are fixed at construction, thus the gate reads
+    // one boolean and never a live probe of the sidecar.
+    const eyesAvailable = deps.capture !== undefined || hasBrowserUrl(deps.chrome);
 
     function spawnReportSession(parentThreadId: string): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError> {
+        // The gate runs before the parent read. A session with no route to a look
+        // reaches the record gate and refuses there forever, thus the spawn is the
+        // one honest place to say so.
+        if (!eyesAvailable) {
+            return errAsync({ type: "no_browser", op: OP, parentThreadId, detail: NO_BROWSER_DETAIL });
+        }
         return store.getThread(parentThreadId).andThen((parent): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError> => {
             // An absent parent and an archived one arrive the same way — `getThread`
             // filters the tombstone — and both refuse as `parent_not_found`.

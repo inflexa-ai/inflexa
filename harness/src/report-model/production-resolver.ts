@@ -5,8 +5,13 @@
  * The realization holds three layers. Layer one is identity: membership through `snapshotEntry`, and a
  * streamed hash compare with `computeSha256File`. A hash mismatch fails before any parse. Layer two is
  * the host fast path: an in-process parse of a CSV, a TSV, a JSON, or a parquet file at or under the cap.
- * Layer three is the fall-through: an over-cap file, an unknown format, or a host parse fault goes to the
- * extraction arm. On any doubt the read falls through, thus correctness never depends on the host parser.
+ * Layer three is the fall-through: an over-cap file or a host parse fault goes to the extraction arm. On any
+ * doubt the read falls through, thus correctness never depends on the host parser. An extension that names
+ * no tabular format refuses here, because the host decides the format for both arms.
+ *
+ * A read of the bytes is the expensive part, thus an optional `ArtifactReadCache` outlives one resolver. It
+ * holds the streamed hash and the extracted rows against a stat signature. Two tool calls of one analysis
+ * share one cache, and each call still binds its own extraction arm with its own auth.
  *
  * The realization calls the shared assert functions in `assert-rules.ts`, and it mirrors the locator walk
  * and the reason choices of `fixture-resolver.ts`. Thus one semantics exists, and the fixture stays the
@@ -60,10 +65,14 @@ const PREPARE_CONCURRENCY = 8;
 /**
  * One artifact that the host fast path could not read, addressed for the extraction arm. The `hash` pins
  * the exact bytes, thus the arm reads the same artifact that the identity layer verified.
+ *
+ * `format` carries the reader that the host decided. The arm never derives a reader from the extension,
+ * thus the host arm and the sandbox arm can never read one file two ways.
  */
 export interface ExtractionRequest {
     readonly path: string;
     readonly hash: string;
+    readonly format: TabularFormat;
 }
 
 /** The rows that the extraction arm read for one artifact. Downstream the rows share the host path logic. */
@@ -84,27 +93,121 @@ export interface ExtractionArm {
 }
 
 /**
+ * The disk facts of one artifact that outlive one resolver.
+ *
+ * `signature` states the bytes that the pass read: the size, the modification time, and the inode. A later
+ * pass compares its own stat against it before it trusts anything here, thus a file that changed on disk is
+ * read again. `rows` is present only for a clean read, because a read fault is transient and it must not
+ * stick to the analysis.
+ */
+export interface ArtifactRead {
+    readonly signature: string;
+    readonly hash: string;
+    readonly rows?: Array<Record<string, string | number>>;
+}
+
+/**
+ * The read cache of one analysis. It holds what a read of the bytes costs: the streamed hash, and the rows
+ * of a file that the host could not parse in process. Two resolvers of one analysis share one cache, thus a
+ * preview and the record that follows it hash one unchanged file one time and start one container.
+ *
+ * The cache holds no authorization and no session value. Each resolver still binds its own extraction arm
+ * over the auth of its own call.
+ */
+export interface ArtifactReadCache {
+    get(absolutePath: string): ArtifactRead | undefined;
+    set(absolutePath: string, read: ArtifactRead): void;
+}
+
+/** The read caches that the host process holds, one for each recent analysis. */
+export interface ArtifactReadStore {
+    forAnalysis(analysisId: string): ArtifactReadCache;
+}
+
+/** The analyses that the read store holds at the same time. An older analysis drops out first. */
+const ANALYSIS_CACHE_LIMIT = 4;
+
+/** The artifacts that one analysis holds at the same time. The rows of a large file live here, thus the bound is small. */
+const ARTIFACT_CACHE_LIMIT = 32;
+
+/**
+ * A bounded map that drops the least recently used entry.
+ *
+ * A `Map` keeps its insertion order. Thus a read that deletes the key and sets it again moves the key to the
+ * end, and the first key of the map is always the oldest use.
+ */
+function createBoundedMap<V>(limit: number): { get(key: string): V | undefined; set(key: string, value: V): void } {
+    const entries = new Map<string, V>();
+    return {
+        get(key) {
+            const value = entries.get(key);
+            if (value === undefined) {
+                return undefined;
+            }
+            entries.delete(key);
+            entries.set(key, value);
+            return value;
+        },
+        set(key, value) {
+            entries.delete(key);
+            entries.set(key, value);
+            if (entries.size > limit) {
+                const oldest = entries.keys().next();
+                if (!oldest.done) {
+                    entries.delete(oldest.value);
+                }
+            }
+        },
+    };
+}
+
+/**
+ * Make the read store of the report path. One host process serves many analyses, thus the store bounds both
+ * dimensions: how many analyses it holds, and how many artifacts one analysis holds. A dropped entry costs
+ * one read again, and it is never wrong.
+ */
+export function createArtifactReadStore(): ArtifactReadStore {
+    const byAnalysis = createBoundedMap<ArtifactReadCache>(ANALYSIS_CACHE_LIMIT);
+    return {
+        forAnalysis(analysisId) {
+            const held = byAnalysis.get(analysisId);
+            if (held !== undefined) {
+                return held;
+            }
+            const made = createBoundedMap<ArtifactRead>(ARTIFACT_CACHE_LIMIT);
+            byAnalysis.set(analysisId, made);
+            return made;
+        },
+    };
+}
+
+/**
  * The construction deps of the production resolver.
  *
  * `workspaceRoot` and `analysisId` contain the untrusted snapshot path through `resolveWorkspacePath`,
  * the same containment as the preview tool. `cap` gates the cell extraction, and it defaults to 16 MiB.
- * `extractionArm` is optional, because no sandbox realization is wired yet.
+ * `extractionArm` is optional, because no sandbox realization is wired yet. `readCache` is optional, thus a
+ * resolver with no cache reads every artifact itself and its reads die with it.
  */
 export interface ProductionResolverDeps {
     readonly workspaceRoot: string;
     readonly analysisId: string;
     readonly cap?: number;
     readonly extractionArm?: ExtractionArm;
+    readonly readCache?: ArtifactReadCache;
 }
 
-/** The tabular formats that the host fast path reads. Another extension falls through as unknown. */
-type TabularFormat = "csv" | "tsv" | "json" | "parquet";
+/**
+ * The tabular formats that the host fast path reads. The host decides which one a file is, one time, and it
+ * carries the decision to the extraction arm. Another extension names no format at all.
+ */
+export type TabularFormat = "csv" | "tsv" | "json" | "parquet";
 
 /** The identity of one artifact, computed one time for each path. */
 type Identity =
     | { kind: "missing" }
     | { kind: "unreadable"; detail: string }
-    | { kind: "ready"; onDiskHash: string; fileType?: string | null; absolute: string; size: number };
+    | { kind: "ready"; onDiskHash: string; fileType?: string | null; absolute: string; size: number; signature: string };
 
 /** The identity of an artifact that is present, contained, and readable. */
 type ReadyIdentity = Extract<Identity, { kind: "ready" }>;
@@ -112,13 +215,19 @@ type ReadyIdentity = Extract<Identity, { kind: "ready" }>;
 /** The cells of one artifact, computed one time for each path that a reference reads. */
 type Cells = { kind: "rows"; rows: Row[] } | { kind: "unavailable"; detail: string } | { kind: "unreadable"; detail: string };
 
-/** The host read outcome, before the extraction arm resolves a fall-through. */
-type HostRead = { kind: "rows"; rows: Row[] } | { kind: "fall-through"; detail: string };
+/**
+ * The host read outcome, before the extraction arm resolves a fall-through. A fall-through carries the
+ * decided format, thus the arm reads the file the same way the host would have. `unsupported-format` never
+ * reaches the arm, because no reader is decided and a guess is what this design refuses.
+ */
+type HostRead =
+    { kind: "rows"; rows: Row[] } | { kind: "fall-through"; format: TabularFormat; detail: string } | { kind: "unsupported-format"; detail: string };
 
-/** One fall-through artifact and the reason that the host arm could not read it. */
+/** One fall-through artifact, the reader that the host decided, and the reason that the host arm stopped. */
 interface FallThrough {
     readonly path: string;
     readonly hash: string;
+    readonly format: TabularFormat;
     readonly hostDetail: string;
 }
 
@@ -133,7 +242,12 @@ function describeReference(reference: DerivationInputReference): string {
     return `artifact value at ${reference.path} column ${reference.locator.column}`;
 }
 
-/** Map a file extension to the format that the host arm reads. An unknown extension gives back `undefined`. */
+/**
+ * Map a file extension to the format that the host arm reads. An unknown extension gives back `undefined`.
+ *
+ * This is the one format decision of the report path. The extraction request carries the answer, thus the
+ * sandbox arm never repeats the mapping and the two arms hold no second table between them.
+ */
 function detectFormat(path: string): TabularFormat | undefined {
     switch (extname(path).toLowerCase()) {
         case ".csv":
@@ -371,34 +485,37 @@ async function parseParquet(bytes: Buffer): Promise<Row[] | undefined> {
 }
 
 /**
- * Read the cells of one artifact through the host fast path. An over-cap file, an unknown format, and a
- * parse fault each give back a fall-through, thus the arm reads them out of process.
+ * Read the cells of one artifact through the host fast path. An over-cap file and a parse fault each give
+ * back a fall-through, thus the arm reads them out of process.
+ *
+ * An extension that names no tabular format stops here. The arm reads a file by a decided format, and no
+ * format is decided, thus the arm has nothing to obey and the read is unavailable.
  */
 async function hostReadCells(cap: number, path: string, identity: ReadyIdentity): Promise<HostRead> {
     const format = detectFormat(path);
     if (format === undefined) {
-        return { kind: "fall-through", detail: "the file format is not a supported tabular format" };
+        return { kind: "unsupported-format", detail: `the file at ${path} has no supported tabular format, thus no reader is decided for it` };
     }
     if (identity.size > cap) {
-        return { kind: "fall-through", detail: `the file size of ${identity.size} bytes is over the ${cap}-byte cap` };
+        return { kind: "fall-through", format, detail: `the file size of ${identity.size} bytes is over the ${cap}-byte cap` };
     }
     let bytes: Buffer;
     try {
         bytes = await readFile(identity.absolute);
     } catch {
-        return { kind: "fall-through", detail: "the file could not be read" };
+        return { kind: "fall-through", format, detail: "the file could not be read" };
     }
     if (format === "parquet") {
         const rows = await parseParquet(bytes);
-        return rows === undefined ? { kind: "fall-through", detail: "the parquet read did not succeed" } : { kind: "rows", rows };
+        return rows === undefined ? { kind: "fall-through", format, detail: "the parquet read did not succeed" } : { kind: "rows", rows };
     }
     const text = bytes.toString("utf8");
     if (format === "json") {
         const rows = parseJsonTable(text);
-        return rows === undefined ? { kind: "fall-through", detail: "the JSON parse did not succeed" } : { kind: "rows", rows };
+        return rows === undefined ? { kind: "fall-through", format, detail: "the JSON parse did not succeed" } : { kind: "rows", rows };
     }
     const rows = parseDelimited(text, format === "tsv" ? "\t" : ",");
-    return rows === undefined ? { kind: "fall-through", detail: "the delimited parse did not succeed" } : { kind: "rows", rows };
+    return rows === undefined ? { kind: "fall-through", format, detail: "the delimited parse did not succeed" } : { kind: "rows", rows };
 }
 
 /**
@@ -407,8 +524,18 @@ async function hostReadCells(cap: number, path: string, identity: ReadyIdentity)
  * An agent authors a report reference, thus the path is untrusted. `resolveWorkspacePath` contains the
  * path against the workspace root, the same containment as the preview tool. The hash streams at every
  * size, thus a huge file never loads into memory here.
+ *
+ * The stat runs before the cache read, thus a deleted file is unreadable even when the cache holds its
+ * bytes. A cached hash serves only bytes whose stat signature did not move. `fileType` states a role, and
+ * the snapshot of this pass gives it, thus the cache never carries a role from an earlier snapshot.
  */
-async function computeIdentity(workspaceRoot: string, analysisId: string, path: string, snapshot: ReportSnapshot): Promise<Identity> {
+async function computeIdentity(
+    workspaceRoot: string,
+    analysisId: string,
+    path: string,
+    snapshot: ReportSnapshot,
+    readCache?: ArtifactReadCache,
+): Promise<Identity> {
     const entry = snapshotEntry(snapshot, path);
     if (entry === undefined) {
         return { kind: "missing" };
@@ -418,10 +545,19 @@ async function computeIdentity(workspaceRoot: string, analysisId: string, path: 
         return { kind: "unreadable", detail: `the artifact path ${path} escapes the workspace root` };
     }
     let size: number;
+    let signature: string;
     try {
-        size = (await stat(resolved.absolute)).size;
+        const stats = await stat(resolved.absolute);
+        size = stats.size;
+        // The size, the modification time, and the inode together move when the bytes move. A rewrite in
+        // place moves the time, and a replace by rename moves the inode.
+        signature = `${stats.size}:${stats.mtimeMs}:${stats.ino}`;
     } catch {
         return { kind: "unreadable", detail: `the artifact at ${path} is not readable on disk` };
+    }
+    const shared = readCache?.get(resolved.absolute);
+    if (shared !== undefined && shared.signature === signature) {
+        return { kind: "ready", onDiskHash: shared.hash, fileType: entry.fileType, absolute: resolved.absolute, size, signature };
     }
     let onDiskHash: string;
     try {
@@ -429,7 +565,8 @@ async function computeIdentity(workspaceRoot: string, analysisId: string, path: 
     } catch {
         return { kind: "unreadable", detail: `the artifact at ${path} is not readable on disk` };
     }
-    return { kind: "ready", onDiskHash, fileType: entry.fileType, absolute: resolved.absolute, size };
+    readCache?.set(resolved.absolute, { signature, hash: onDiskHash });
+    return { kind: "ready", onDiskHash, fileType: entry.fileType, absolute: resolved.absolute, size, signature };
 }
 
 /**
@@ -453,7 +590,7 @@ async function extractFallThrough(arm: ExtractionArm | undefined, requests: read
     }
     let answers: ReadonlyMap<string, ExtractionArtifact>;
     try {
-        answers = await arm.extract(requests.map((request) => ({ path: request.path, hash: request.hash })));
+        answers = await arm.extract(requests.map((request) => ({ path: request.path, hash: request.hash, format: request.format })));
     } catch {
         // The arm speaks the throw protocol for a genuine infrastructure fault. This boundary turns the
         // throw into a value, thus each reference on the batch reads a failure as data.
@@ -472,6 +609,24 @@ async function extractFallThrough(arm: ExtractionArm | undefined, requests: read
         );
     }
     return out;
+}
+
+/**
+ * Give back the rows that an earlier pass read for these exact bytes, or `undefined` when nothing shared
+ * them. The signature compare is the whole guard: a file that changed on disk holds a different signature,
+ * thus the earlier rows never answer for the new bytes.
+ */
+function sharedRows(readCache: ArtifactReadCache | undefined, identity: ReadyIdentity): Row[] | undefined {
+    const held = readCache?.get(identity.absolute);
+    return held !== undefined && held.signature === identity.signature && held.rows !== undefined ? held.rows : undefined;
+}
+
+/**
+ * Share the rows of one clean read, thus the next pass over the same bytes starts no second container and
+ * parses nothing again. A failed read is transient, thus only rows enter the cache.
+ */
+function shareRows(readCache: ArtifactReadCache | undefined, identity: ReadyIdentity, rows: Row[]): void {
+    readCache?.set(identity.absolute, { signature: identity.signature, hash: identity.onDiskHash, rows });
 }
 
 /**
@@ -510,37 +665,66 @@ interface PathIntent {
  *
  * The resolver holds a per-pass cache. `prepare` groups the references by artifact, reads each file one
  * time, and fills the cache. `resolve` then answers from the cache. A `resolve` with no prior `prepare`
- * still answers, at the cost of a per-reference read.
+ * still answers, and it writes what it read into the same cache. Thus the cost is one read for each
+ * artifact on both paths, and never one read for each reference.
  */
 export function createProductionResolver(deps: ProductionResolverDeps): ReferenceResolver {
-    const { workspaceRoot, analysisId, extractionArm } = deps;
+    const { workspaceRoot, analysisId, extractionArm, readCache } = deps;
     const cap = deps.cap ?? DEFAULT_CAP_BYTES;
 
     // The per-pass caches. `prepare` clears and refills them, thus a later pass reads the artifacts again.
     const idCache = new Map<string, Identity>();
     const cellsCache = new Map<string, Cells>();
 
-    /** Give back the identity of one path, from the cache after a prepare, or by a fresh read. */
+    /**
+     * Give back the identity of one path, from the cache after a prepare, or by a fresh read. A fresh read
+     * enters the cache, thus a second reference at one path never streams the hash again.
+     */
     async function getIdentity(path: string, snapshot: ReportSnapshot): Promise<Identity> {
         const cached = idCache.get(path);
-        return cached ?? (await computeIdentity(workspaceRoot, analysisId, path, snapshot));
+        if (cached !== undefined) {
+            return cached;
+        }
+        const identity = await computeIdentity(workspaceRoot, analysisId, path, snapshot, readCache);
+        idCache.set(path, identity);
+        return identity;
     }
 
     /**
      * Give back the cells of one path, from the cache after a prepare, or by a fresh read. A fresh read
-     * runs the host fast path, and it resolves a fall-through through the arm as a batch of one.
+     * runs the host fast path, and it resolves a fall-through through the arm as a batch of one. The
+     * outcome enters the cache, thus a second reference at one path opens no second batch.
      */
     async function getCells(path: string, identity: ReadyIdentity): Promise<Cells> {
         const cached = cellsCache.get(path);
         if (cached !== undefined) {
             return cached;
         }
+        const shared = sharedRows(readCache, identity);
+        if (shared !== undefined) {
+            const held: Cells = { kind: "rows", rows: shared };
+            cellsCache.set(path, held);
+            return held;
+        }
         const read = await hostReadCells(cap, path, identity);
         if (read.kind === "rows") {
-            return { kind: "rows", rows: read.rows };
+            const parsed: Cells = { kind: "rows", rows: read.rows };
+            shareRows(readCache, identity, read.rows);
+            cellsCache.set(path, parsed);
+            return parsed;
         }
-        const resolved = await extractFallThrough(extractionArm, [{ path, hash: identity.onDiskHash, hostDetail: read.detail }]);
-        return resolved.get(path) ?? { kind: "unreadable", detail: `the extraction arm did not read the file at ${path}` };
+        if (read.kind === "unsupported-format") {
+            const unavailable: Cells = { kind: "unavailable", detail: read.detail };
+            cellsCache.set(path, unavailable);
+            return unavailable;
+        }
+        const resolved = await extractFallThrough(extractionArm, [{ path, hash: identity.onDiskHash, format: read.format, hostDetail: read.detail }]);
+        const cells = resolved.get(path) ?? { kind: "unreadable", detail: `the extraction arm did not read the file at ${path}` };
+        if (cells.kind === "rows") {
+            shareRows(readCache, identity, cells.rows);
+        }
+        cellsCache.set(path, cells);
+        return cells;
     }
 
     /**
@@ -755,7 +939,7 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
             entries.map(
                 ([path]) =>
                     () =>
-                        computeIdentity(workspaceRoot, analysisId, path, snapshot),
+                        computeIdentity(workspaceRoot, analysisId, path, snapshot, readCache),
             ),
             PREPARE_CONCURRENCY,
         );
@@ -772,25 +956,46 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
                 cellTargets.push({ path, identity });
             }
         }
+        // An earlier pass over these exact bytes already paid for the rows. Take them, thus the second pass
+        // of one analysis parses nothing again and starts no second container.
+        const pending: Array<{ path: string; identity: ReadyIdentity }> = [];
+        for (const target of cellTargets) {
+            const shared = sharedRows(readCache, target.identity);
+            if (shared !== undefined) {
+                cellsCache.set(target.path, { kind: "rows", rows: shared });
+            } else {
+                pending.push(target);
+            }
+        }
         const reads = await allWithConcurrency(
-            cellTargets.map((target) => () => hostReadCells(cap, target.path, target.identity)),
+            pending.map((target) => () => hostReadCells(cap, target.path, target.identity)),
             PREPARE_CONCURRENCY,
         );
 
-        // Split the clean reads from the fall-throughs, then resolve every fall-through in one arm call.
+        // Split the clean reads from the fall-throughs, then resolve every fall-through in one arm call. An
+        // unsupported format reaches no arm, because no reader is decided for it.
         const fallThrough: FallThrough[] = [];
-        for (let t = 0; t < cellTargets.length; t += 1) {
-            const target = cellTargets[t];
+        const identityByPath = new Map<string, ReadyIdentity>();
+        for (let t = 0; t < pending.length; t += 1) {
+            const target = pending[t];
             const read = reads[t];
             if (read.kind === "rows") {
                 cellsCache.set(target.path, { kind: "rows", rows: read.rows });
+                shareRows(readCache, target.identity, read.rows);
+            } else if (read.kind === "unsupported-format") {
+                cellsCache.set(target.path, { kind: "unavailable", detail: read.detail });
             } else {
-                fallThrough.push({ path: target.path, hash: target.identity.onDiskHash, hostDetail: read.detail });
+                identityByPath.set(target.path, target.identity);
+                fallThrough.push({ path: target.path, hash: target.identity.onDiskHash, format: read.format, hostDetail: read.detail });
             }
         }
         const resolved = await extractFallThrough(extractionArm, fallThrough);
         for (const [path, cells] of resolved) {
             cellsCache.set(path, cells);
+            const identity = identityByPath.get(path);
+            if (cells.kind === "rows" && identity !== undefined) {
+                shareRows(readCache, identity, cells.rows);
+            }
         }
     }
 

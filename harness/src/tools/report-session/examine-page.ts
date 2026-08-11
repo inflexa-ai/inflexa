@@ -9,6 +9,14 @@
  * page lives at `report-sessions/{threadId}/index.html` under the workspace root, which the preview writes.
  * A missed page means that no preview ran, and it is a typed outcome, not a throw.
  *
+ * The `file://` URL resolves on the filesystem of the Chrome sidecar, because the connection is out of
+ * process. Thus the sidecar must mount the workspace tree of the harness host at the same path. A sidecar
+ * with no such mount reports the page as an unreachable request, and the tool gives back that fault.
+ *
+ * A composition that names no browser and injects no capture seam has no eyes at all. The tool reports that
+ * condition once, up front, and it stamps nothing. A per-attempt capture failure would instead read as a
+ * transient fault and invite a repeat of a call that can never pass.
+ *
  * On a capture the tool copies the rendered hash onto the seen hash through the gateway. Thus the look
  * counts, and the record tool lets the current draft record. The copy takes the rendered hash and never the
  * current one, thus a later edit makes the look stale and the record refuses.
@@ -27,32 +35,17 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 
-import { withPage, type ChromeConfig } from "../../lib/chrome.js";
+import { hasBrowserUrl, type ChromeConfig } from "../../lib/chrome.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
+import { capturePage, type CapturePage, type FailedRequest, type PageCapture } from "../../lib/page-capture.js";
 import type { ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, withToolResultImage, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 
-/** One request that the page could not load, with the reason that the browser gave. */
-export interface FailedRequest {
-    url: string;
-    reason: string;
-}
-
-/** The picture and the faults of one page capture. */
-export interface PageCapture {
-    screenshotBase64: string;
-    consoleErrors: string[];
-    failedRequests: FailedRequest[];
-}
-
-/**
- * The capture seam. It navigates to a page URL, and it gives back the screenshot and the faults. The seam
- * speaks the throw protocol, because the chrome connection does. A test injects a seam that reads no
- * browser, thus the tool orchestration runs with no chrome sidecar.
- */
-export type CapturePage = (url: string) => Promise<PageCapture>;
+// The capture shapes live beside the chrome connection, because two tools capture the same page. The tool
+// keeps them on its own surface, thus a consumer of the tool imports one module.
+export type { CapturePage, FailedRequest, PageCapture };
 
 /** The empty input. The tool examines the current page of the thread, thus it needs no field. */
 const examinePageInput = z.object({});
@@ -64,10 +57,12 @@ export type ExaminePageInput = z.infer<typeof examinePageInput>;
  * degraded condition. `examined` carries the console errors, the failed requests, and the page path. The
  * screenshot does not ride the JSON. It rides the image path of the tool result, thus the model sees the
  * picture and the JSON text holds no bytes. `missed-stamp` means that the row holds no rendered hash, thus
- * no preview stamped one and the agent must run a new preview before the next look.
+ * no preview stamped one and the agent must run a new preview before the next look. `no-browser` means that
+ * the composition gives no browser, thus no look is possible at all and a repeat gives the same answer.
  */
 export type ExaminePageResult =
     | { outcome: "refused"; refusal: SessionRefusal }
+    | { outcome: "no-browser"; detail: string }
     | { outcome: "no-page" }
     | { outcome: "missed-stamp" }
     | { outcome: "capture-failed"; detail: string }
@@ -77,8 +72,9 @@ export type ExaminePageResult =
  * The construction deps of the eyes tool.
  *
  * `resolveWorkspaceRoot` maps the analysis of the call onto its workspace root, thus one singleton tool
- * serves every analysis. `chrome` configures the headless browser. `capture` is optional and defaults to a
- * realization over `withPage`, thus a test injects a seam that reads no browser.
+ * serves every analysis. `chrome` configures the headless browser, and the sidecar that it names must mount
+ * the workspace tree at the same path, because the tool navigates to a `file://` URL. `capture` is optional
+ * and defaults to the shared capture, thus a test injects a seam that reads no browser.
  */
 export interface ExaminePageToolDeps {
     readonly gateway: ReportSessionStateGateway;
@@ -88,57 +84,11 @@ export interface ExaminePageToolDeps {
     readonly logger?: Logger;
 }
 
-const NAV_TIMEOUT_MS = 20_000;
-const READY_TIMEOUT_MS = 8_000;
-
 /** The IANA media type of the screenshot. `page.screenshot` gives PNG bytes. */
 const SCREENSHOT_MEDIA_TYPE = "image/png";
 
-/**
- * The default capture over `withPage`. It collects the console errors, the page errors, and the failed
- * requests, then it waits for the theme-ready event and captures the screenshot. The event fires after the
- * page registers its chart theme, thus the picture shows the painted charts. The wait is best-effort, thus a
- * page with no event still captures.
- */
-function chromeCapture(chrome: ChromeConfig): CapturePage {
-    return (url) =>
-        withPage(chrome, async (page) => {
-            const consoleErrors: string[] = [];
-            const failedRequests: FailedRequest[] = [];
-
-            page.on("console", (msg) => {
-                if (msg.type() === "error") consoleErrors.push(msg.text());
-            });
-            page.on("pageerror", (err) => consoleErrors.push(`pageerror: ${err.message}`));
-            page.on("requestfailed", (req) => {
-                failedRequests.push({ url: req.url(), reason: req.failure()?.errorText ?? "unknown" });
-            });
-
-            await page.goto(url, { waitUntil: "networkidle2", timeout: NAV_TIMEOUT_MS });
-
-            // The theme-ready event fires after the chart theme registers. The `__inflexaThemeReady`
-            // sentinel guards a page that already dispatched the event before this wait, thus a plain
-            // listener does not block forever. The callback runs in the browser context.
-            await page
-                .evaluate(
-                    new Function(
-                        "timeout",
-                        "return new Promise(function(resolve){if(window.__inflexaThemeReady){resolve();return;}var t=setTimeout(resolve,timeout);document.addEventListener('inflexa-theme-ready',function(){clearTimeout(t);resolve();},{once:true});});",
-                    ) as (timeout: number) => Promise<void>,
-                    READY_TIMEOUT_MS,
-                )
-                .catch(() => {
-                    /* the picture captures as it stands */
-                });
-
-            const screenshot = await page.screenshot({ encoding: "base64", fullPage: false });
-            return {
-                screenshotBase64: typeof screenshot === "string" ? screenshot : Buffer.from(screenshot).toString("base64"),
-                consoleErrors,
-                failedRequests,
-            };
-        });
-}
+/** The line that the agent reads when the composition gives no browser. */
+const NO_BROWSER_DETAIL = "the composition gives no browser, thus this session cannot look at its page";
 
 /**
  * Make the eyes tool over the session-state gateway, the workspace-root seam, and the chrome config.
@@ -148,7 +98,10 @@ function chromeCapture(chrome: ChromeConfig): CapturePage {
  */
 export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePageInput, ExaminePageResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("examine-page");
-    const capture = deps.capture ?? chromeCapture(deps.chrome);
+    // An injected seam is the eyes of a test. A named browser is the eyes of a deployment. With neither, the
+    // composition has no eyes, and that answer is fixed at construction.
+    const eyesAvailable = deps.capture !== undefined || hasBrowserUrl(deps.chrome);
+    const capture: CapturePage = deps.capture ?? ((url) => capturePage(deps.chrome, url));
 
     return defineTool({
         id: "examine_page",
@@ -162,6 +115,13 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
         executionMode: "inline",
         describeCall: "none",
         execute: async (_input, ctx): Promise<Result<ExaminePageResult, ToolError>> => {
+            // The check runs before every read, thus one clear signal replaces a capture failure for each
+            // page. The arm stamps no seen hash, because no eyes saw the page.
+            if (!eyesAvailable) {
+                logger.warn("the composition gives no browser, thus no look can run");
+                return ok({ outcome: "no-browser", detail: NO_BROWSER_DETAIL });
+            }
+
             const opened = await openReportThread(deps.gateway, ctx.session.scope);
             if (opened.isErr()) {
                 return ok({ outcome: "refused", refusal: opened.error });
