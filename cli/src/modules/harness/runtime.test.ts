@@ -698,6 +698,33 @@ describe("bootHarnessRuntime", () => {
         expect(calls).toContain("boot");
     });
 
+    // `imageToolResults` is a fact about the endpoint, not about the wire dialect the config names, and
+    // the harness reads it as "absent means cannot carry". These three pin what each arm states, so a
+    // silent over-assertion (base64 the model never sees) cannot return through a default.
+    test("cliproxy mode states that the wire carries no picture inside a tool result", async () => {
+        const calls: string[] = [];
+        const runtime = (
+            await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig(), connection: cliproxyConnection("anthropic") })
+        )._unsafeUnwrap();
+
+        expect(runtime.conversation.provider.capabilities.imageToolResults).toBe(false);
+    });
+
+    test("a direct anthropic endpoint states that the Messages wire carries the picture", async () => {
+        const calls: string[] = [];
+        const connection = directConnection({ provider: "anthropic", baseURL: "https://api.anthropic.com/v1", protocol: "anthropic" });
+        const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig(), connection }))._unsafeUnwrap();
+
+        expect(runtime.conversation.provider.capabilities.imageToolResults).toBe(true);
+    });
+
+    test("a direct openai-compatible endpoint states that the wire carries no picture", async () => {
+        const calls: string[] = [];
+        const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig(), connection: directConnection() }))._unsafeUnwrap();
+
+        expect(runtime.conversation.provider.capabilities.imageToolResults).toBe(false);
+    });
+
     test("missing skills dir fails before any side effect", async () => {
         const calls: string[] = [];
         const cfg = testConfig();
