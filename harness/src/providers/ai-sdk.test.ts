@@ -640,6 +640,27 @@ describe("createAiSdkProvider chat retry", () => {
         }
     });
 
+    it("bounds the envelope by a configured maxRetries in place of the default", async () => {
+        let attempts = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                attempts += 1;
+                throw apiError503();
+            }),
+            resolveBilling: async () => ({}),
+            maxRetries: 2,
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(attempts).toBe(3);
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("provider");
+            expect(result.error.retryable).toBe(true);
+        }
+    });
+
     it("resolves fresh billing headers on every attempt", async () => {
         let billingInvocations = 0;
         let attempts = 0;

@@ -18,6 +18,26 @@
 
 import { redactSecrets } from "../input-sanitization.js";
 
+/**
+ * The sentinel that the request-timeout guard uses as an abort reason. The guard
+ * arms a timer for each fetch attempt. On expiry the guard aborts the attempt
+ * with this value. The value rides the abort chain, thus the classifier finds it
+ * and marks the attempt as a retryable provider timeout.
+ *
+ * The name is not `AbortError`, thus the abort-detection paths do not swallow a
+ * guard abort as a caller cancellation. The message names the configured value.
+ */
+export class RequestTimeoutError extends Error {
+    /** The configured bound for one silent interval, in milliseconds. */
+    readonly requestTimeoutMs: number;
+
+    constructor(requestTimeoutMs: number) {
+        super(`The provider sent no data within the request timeout of ${requestTimeoutMs} ms.`);
+        this.name = "RequestTimeoutError";
+        this.requestTimeoutMs = requestTimeoutMs;
+    }
+}
+
 export type ProviderErrorKind = "auth" | "budget" | "tenant-blocked" | "provider";
 
 /**
@@ -66,6 +86,18 @@ export function isProviderError(value: unknown): value is ProviderError {
  */
 export function toProviderError(e: unknown, workload: string): ProviderError {
     if (isProviderError(e)) return e;
+    // A guard abort names the configured value in its message. Compose a message
+    // that also names the workload, thus a reader sees both. This runs before the
+    // status walk, because a guard abort carries no HTTP status.
+    const timeout = findRequestTimeout(e);
+    if (timeout !== undefined) {
+        return {
+            type: "provider",
+            retryable: true,
+            message: `The provider sent no data for ${workload} within the request timeout of ${timeout.requestTimeoutMs} ms.`,
+            cause: e,
+        };
+    }
     const { kind, retryable } = classifyProviderError(e);
     const detail = e instanceof Error ? e.message : String(e);
     if (kind === "auth") {
@@ -234,6 +266,24 @@ function extractResponseBody(err: unknown): string | undefined {
     return undefined;
 }
 
+/**
+ * Walk the `cause` chain for the request-timeout sentinel. The guard aborts a
+ * fetch with a `RequestTimeoutError`. The SDK carries the abort reason down the
+ * `cause` chain, thus the sentinel can sit one or more hops down.
+ */
+function findRequestTimeout(err: unknown): RequestTimeoutError | undefined {
+    let cursor: unknown = err;
+    for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
+        if (cursor instanceof RequestTimeoutError) return cursor;
+        // A duplicate class identity across a realm boundary fails `instanceof`,
+        // thus match the name and the field as a fallback.
+        const e = cursor as MaybeErrorChain & { requestTimeoutMs?: unknown };
+        if (e.name === "RequestTimeoutError" && typeof e.requestTimeoutMs === "number") return cursor as RequestTimeoutError;
+        cursor = e.cause;
+    }
+    return undefined;
+}
+
 /** Does any link of the `cause` chain look like a transport-level failure? */
 function looksLikeConnectionError(err: unknown): boolean {
     let cursor: unknown = err;
@@ -263,6 +313,13 @@ function looksLikeConnectionError(err: unknown): boolean {
  * - Other `4xx` and parse / unknown errors → `provider`, not retryable.
  */
 export function classifyProviderError(e: unknown): ProviderErrorClassification {
+    // The request-timeout guard aborts an attempt with a typed sentinel. The
+    // sentinel classifies as a retryable provider timeout, thus the envelope
+    // retries it under the same policy as a connection error. This runs before
+    // the status and the connection paths, because a guard abort carries no HTTP
+    // status, and it must not fall to a non-retryable path.
+    if (findRequestTimeout(e) !== undefined) return { kind: "provider", retryable: true };
+
     const status = extractStatus(e);
 
     // `auth` is its own kind rather than a plain non-retryable 4xx because the

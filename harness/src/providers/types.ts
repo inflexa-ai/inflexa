@@ -117,6 +117,14 @@ export interface AgentChat {
 
 export interface ChatProvider extends AgentChat {
     chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent>;
+    /**
+     * The request-timeout limit that this provider enforces, in milliseconds, or
+     * absent when it enforces none. The value bounds each silent interval of a
+     * request attempt: the wait until the response starts, and each gap between
+     * two body chunks. A consumer that scales a deadline reads this value from the
+     * provider instance, not from a harness constant.
+     */
+    readonly requestTimeoutMs?: number;
 }
 
 export interface EmbeddingProvider {
