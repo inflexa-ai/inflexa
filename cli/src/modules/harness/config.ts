@@ -252,7 +252,16 @@ export function writeAgentModel(agent: AgentName, model: string): Result<void, C
  * connection, exactly as {@link ResolvedHarnessConfig.configError} does for the `harness` block.
  */
 export type ResolvedModelConnection =
-    | { readonly mode: "cliproxy"; readonly provider: string; readonly agents: AgentModelOverrides; readonly configError?: { issues: string } }
+    | {
+          readonly mode: "cliproxy";
+          readonly provider: string;
+          readonly agents: AgentModelOverrides;
+          /** The per-attempt idle bound (ms) the harness provider enforces and advertises. Absent means no guard. */
+          readonly requestTimeoutMs?: number;
+          /** The retry limit of the harness envelope. Absent means the harness keeps its default of 10. */
+          readonly maxRetries?: number;
+          readonly configError?: { issues: string };
+      }
     | {
           readonly mode: "direct";
           readonly provider: string;
@@ -266,6 +275,10 @@ export type ResolvedModelConnection =
            */
           readonly auth?: ModelAuthConfig;
           readonly agents: AgentModelOverrides;
+          /** The per-attempt idle bound (ms) the harness provider enforces and advertises. Absent means no guard. */
+          readonly requestTimeoutMs?: number;
+          /** The retry limit of the harness envelope. Absent means the harness keeps its default of 10. */
+          readonly maxRetries?: number;
           readonly configError?: { issues: string };
       };
 
@@ -315,8 +328,14 @@ export function resolveModelConnection(): ResolvedModelConnection {
     const agents: AgentModelOverrides = parsed.data.agents ?? {};
     const connection = parsed.data.connection;
     if (connection === undefined) return { ...DEFAULT_MODEL_CONNECTION, agents };
+    // The request timeout and the retry count ride through in both modes: an absent field spreads
+    // nothing, so the resolved connection omits it and boot keeps the current provider behavior.
+    const requestBounds = {
+        ...(connection.requestTimeoutMs !== undefined && { requestTimeoutMs: connection.requestTimeoutMs }),
+        ...(connection.maxRetries !== undefined && { maxRetries: connection.maxRetries }),
+    };
     if (connection.mode === "cliproxy") {
-        return { mode: "cliproxy", provider: connection.provider ?? "anthropic", agents };
+        return { mode: "cliproxy", provider: connection.provider ?? "anthropic", agents, ...requestBounds };
     }
     const protocol: ModelWireProtocol = connection.protocol ?? (connection.provider === "anthropic" ? "anthropic" : "openai-compatible");
     // Carry the optional token-free `auth` source verbatim (present only on a well-formed direct block).
@@ -327,5 +346,6 @@ export function resolveModelConnection(): ResolvedModelConnection {
         protocol,
         agents,
         ...(connection.auth !== undefined && { auth: connection.auth }),
+        ...requestBounds,
     };
 }

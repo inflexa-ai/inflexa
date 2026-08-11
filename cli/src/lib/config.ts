@@ -148,6 +148,10 @@ export const modelConnectionSchema = z.discriminatedUnion("mode", [
     z.object({
         mode: z.literal("cliproxy"),
         provider: z.string().optional(),
+        // The per-attempt idle bound and the retry limit for the harness provider (a positive integer each).
+        // Boot carries the two values into the provider config. An absent field keeps the current behavior.
+        requestTimeoutMs: z.number().int().positive().optional(),
+        maxRetries: z.number().int().positive().optional(),
     }),
     z.object({
         mode: z.literal("direct"),
@@ -156,6 +160,10 @@ export const modelConnectionSchema = z.discriminatedUnion("mode", [
         protocol: z.enum(["anthropic", "openai-compatible"]).optional(),
         // An optional refreshing credential source, in place of the static env key (see {@link modelAuthSchema}).
         auth: modelAuthSchema.optional(),
+        // The per-attempt idle bound and the retry limit for the harness provider (a positive integer each).
+        // Boot carries the two values into the provider config. An absent field keeps the current behavior.
+        requestTimeoutMs: z.number().int().positive().optional(),
+        maxRetries: z.number().int().positive().optional(),
     }),
 ]);
 

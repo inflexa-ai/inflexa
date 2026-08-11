@@ -570,6 +570,41 @@ export function buildAuthInjectingFetch(source: CredentialSource, underlying: In
 }
 
 /**
+ * Build the `fetch` that removes the 300-second Bun idle cut. A slow local model can then start its
+ * response after the runtime default but within the window. The wrapper forwards each call to `underlying`
+ * with `timeout: false` in the init. The harness request-timeout guard owns the exact ceiling; this
+ * wrapper lifts only the transport floor. `underlying` is injectable for tests; production passes the Bun
+ * `fetch`.
+ */
+export function buildTimeoutLiftingFetch(underlying: InjectingFetch = fetch): InjectingFetch {
+    return (input, init) =>
+        // `timeout: false` is a Bun fetch extension that removes the 300-second idle-timeout cut. A probe
+        // on Bun 1.3.14 confirms that `signal: AbortSignal.timeout(...)` and a numeric `timeout` do NOT
+        // lift the cut, but `timeout: false` does. bun-types 1.3.x does not declare `timeout` on the fetch
+        // init, so the cast adds the untyped key; the runtime honors it. A future Bun that drops the
+        // extension surfaces as the old 300-second cut, never as data loss.
+        underlying(input, { ...init, timeout: false } as RequestInit);
+}
+
+/**
+ * Build the transport `fetch` for the provider config, or `undefined` when the connection installs no
+ * override. When the connection lifts the request timeout, the base is {@link buildTimeoutLiftingFetch}.
+ * When a credential source exists, the auth-injecting fetch wraps that base, so every auth attempt rides
+ * the raised transport, and it still refreshes exactly once on a 401. With no timeout and no credential
+ * source, the result is `undefined` and the provider behavior matches the behavior before this change.
+ * `underlying` is injectable for tests; production passes the Bun `fetch`.
+ */
+export function buildProviderFetch(
+    requestTimeoutMs: number | undefined,
+    source: CredentialSource | undefined,
+    underlying: InjectingFetch = fetch,
+): InjectingFetch | undefined {
+    const timeoutFetch = requestTimeoutMs !== undefined ? buildTimeoutLiftingFetch(underlying) : undefined;
+    if (source !== undefined) return buildAuthInjectingFetch(source, timeoutFetch ?? underlying);
+    return timeoutFetch;
+}
+
+/**
  * One boot attempt, run under the {@link bootHarnessRuntime} in-flight guard.
  * This root resolves the host-specific inputs — prerequisites → Postgres
  * readiness → callback ingress → providers/models → instance lock → pool — then
@@ -825,21 +860,41 @@ async function bootHarnessRuntimeOnce(
         // toolCalling: true }`), so the proxy path is indistinguishable from a bare
         // Anthropic connection. direct resolves to the configured protocol kind at the
         // configured endpoint with the env secret.
-        // The auth-injecting fetch, present only when a credential source is configured (undefined for
-        // cliproxy and for the static env key, which the SDK sends as-is). One instance shared by every
-        // per-model provider over this connection, so all agents refresh/rotate through the same cached token.
-        const authFetch = credentialSource !== undefined ? buildAuthInjectingFetch(credentialSource) : undefined;
+        // The provider transport fetch, present only when the connection lifts the request timeout OR
+        // configures a credential source. The timeout wrapper removes the 300-second Bun idle cut so a
+        // slow local model can start late; the harness guard then owns the exact ceiling. With a credential
+        // source, the auth-injecting fetch wraps the timeout base, so all agents refresh/rotate through the
+        // same cached token and ride the same raised transport. One instance shared by every per-model
+        // provider over this connection. An absent timeout and an absent credential source install nothing
+        // (undefined for cliproxy and for the static env key, which the SDK sends as-is), exactly as before.
+        const providerFetch = buildProviderFetch(connection.requestTimeoutMs, credentialSource);
+        // The request bounds the harness enforces and advertises: the per-attempt idle guard and the retry
+        // limit. Spread conditionally so an absent config field yields an absent provider field, and the
+        // harness then keeps its own default.
+        const requestBounds = {
+            ...(connection.requestTimeoutMs !== undefined && { requestTimeoutMs: connection.requestTimeoutMs }),
+            ...(connection.maxRetries !== undefined && { maxRetries: connection.maxRetries }),
+        };
         const providerConfigFor = (agentModel: string): AiSdkProviderConfig =>
             connection.mode === "cliproxy"
-                ? { kind: "anthropic", baseURL: env.cliproxyApiUrl, apiKey: providerApiKey, model: agentModel, capabilities: { toolCalling: true } }
+                ? {
+                      kind: "anthropic",
+                      baseURL: env.cliproxyApiUrl,
+                      apiKey: providerApiKey,
+                      model: agentModel,
+                      fetch: providerFetch,
+                      capabilities: { toolCalling: true },
+                      ...requestBounds,
+                  }
                 : connection.protocol === "anthropic"
                   ? {
                         kind: "anthropic",
                         baseURL: connection.baseURL,
                         apiKey: providerApiKey,
                         model: agentModel,
-                        fetch: authFetch,
+                        fetch: providerFetch,
                         capabilities: { toolCalling: true },
+                        ...requestBounds,
                     }
                   : {
                         kind: "openai-compatible",
@@ -847,8 +902,9 @@ async function bootHarnessRuntimeOnce(
                         baseURL: connection.baseURL,
                         apiKey: providerApiKey,
                         model: agentModel,
-                        fetch: authFetch,
+                        fetch: providerFetch,
                         capabilities: { toolCalling: true },
+                        ...requestBounds,
                     };
         // The logger is what makes the retry envelope visible. It backs off up to 10 times
         // at up to 30s a wait, so a provider outage shows up as minutes of apparent silence
