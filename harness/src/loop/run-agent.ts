@@ -16,7 +16,7 @@ import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/p
 import { resultStep } from "./run-step.js";
 import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
-import { isToolError, type Tool, type ToolContext } from "../tools/define-tool.js";
+import { isToolError, readToolResultImage, type Tool, type ToolContext } from "../tools/define-tool.js";
 import { addChatUsage, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import { computeDetail, type ToolCallDetail } from "./tool-detail.js";
 import { toolOutcomeForOutputType, type ToolOutcome } from "./tool-outcome.js";
@@ -155,6 +155,10 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // `callPath` rides as an array rather than a joined string — the queryable form;
     // rendering `parent > child` is the sink's choice, not a published package's.
     const log = (opts.logger ?? createNoopLogger()).named("loop").with({ agentId: source.agentId, callPath: source.callPath });
+    // The picture of a tool result rides as an image content block only when the
+    // wire carries one. Absent means "cannot carry", thus the loop degrades to
+    // text and records the drop.
+    const encoding: ResultEncoding = { carriesImage: provider.capabilities.imageToolResults === true, log };
     const toolsById = new Map<string, Tool>(agent.tools.map((t) => [t.id, t]));
     const toolDefs: ToolSet = Object.fromEntries(
         agent.tools.map((t) => [
@@ -374,7 +378,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             for (const [idx, tu] of earlier.entries()) {
                 await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(earlierDetails[idx]) });
             }
-            const { results, durations } = await dispatchTools(earlier, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool);
+            const { results, durations } = await dispatchTools(earlier, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool, encoding);
             const errored = await settleRound(earlier, results, earlierDetails, durations);
             results.push(errorResult(trailing, TRUNCATED_TOOL_USE_ERROR));
             // The trailing call was never dispatched, but it reaches the model as an error
@@ -404,7 +408,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         for (const [idx, tu] of toolCalls.entries()) {
             await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(details[idx]) });
         }
-        const { results, durations } = await dispatchTools(toolCalls, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool);
+        const { results, durations } = await dispatchTools(toolCalls, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool, encoding);
         const errored = await settleRound(toolCalls, results, details, durations);
         if (errored.length > 0) log.debug("tool results returned errors", { iteration: i, tools: errored });
         messages.push({ role: "tool", content: results });
@@ -536,6 +540,16 @@ function markLastLoopAssistant(messages: LoopMessage[], initialCount: number): v
  * wrapper. The wrapper is part of what the call cost, and a cached replay of a step
  * is genuinely fast. A bracket inside the step would report a body that did not run.
  */
+/**
+ * How a completed tool result is encoded onto the provider message. `carriesImage`
+ * says whether the wire renders an image content block in a tool result, and `log`
+ * is the sink for the drop record when it does not.
+ */
+interface ResultEncoding {
+    readonly carriesImage: boolean;
+    readonly log: Logger;
+}
+
 async function dispatchTools(
     toolUses: readonly ToolCallPart[],
     toolsById: Map<string, Tool>,
@@ -543,6 +557,7 @@ async function dispatchTools(
     isFatalLoopError: (err: unknown) => boolean,
     runStep: RunStep,
     toolStepName: (toolName: string, toolUseId: string) => string,
+    encoding: ResultEncoding,
 ): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[] }> {
     const results = new Array<ToolResultPart>(toolUses.length);
     // The array starts with holes, which read as `undefined`. The element type
@@ -563,7 +578,7 @@ async function dispatchTools(
     await Promise.all(
         stepTools.map(({ tu, idx }) => {
             const startedAt = performance.now();
-            return runStep(toolStepName(tu.toolName, tu.toolCallId), () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError)).then((r) => {
+            return runStep(toolStepName(tu.toolName, tu.toolCallId), () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding)).then((r) => {
                 durations[idx] = elapsedMs(startedAt);
                 results[idx] = r;
             });
@@ -572,12 +587,12 @@ async function dispatchTools(
 
     for (const { tu, idx } of workflowTools) {
         const startedAt = performance.now();
-        results[idx] = await dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError);
+        results[idx] = await dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding);
         durations[idx] = elapsedMs(startedAt);
     }
     for (const { tu, idx } of inlineTools) {
         const startedAt = performance.now();
-        results[idx] = await dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError);
+        results[idx] = await dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding);
         durations[idx] = elapsedMs(startedAt);
     }
 
@@ -594,6 +609,7 @@ async function dispatchTool(
     toolsById: Map<string, Tool>,
     ctx: ToolContext,
     isFatalLoopError: (err: unknown) => boolean,
+    encoding: ResultEncoding,
 ): Promise<ToolResultPart> {
     const tool = toolsById.get(tu.toolName);
     if (tool === undefined) {
@@ -601,7 +617,7 @@ async function dispatchTool(
     }
 
     const parsed = tool.inputSchema.safeParse(tu.input);
-    if (parsed.success) return execute(tu, tool, parsed.data, ctx, isFatalLoopError);
+    if (parsed.success) return execute(tu, tool, parsed.data, ctx, isFatalLoopError, encoding);
 
     // A complete JSON argument can arrive as a string behind function-call
     // markup or a code fence. Repair only makes the schema reachable — the
@@ -609,16 +625,23 @@ async function dispatchTool(
     // still run, so nothing here weakens validation.
     const repairedInput = repairToolInput(tu.input, parsed.error);
     const repaired = repairedInput === undefined ? undefined : tool.inputSchema.safeParse(repairedInput);
-    if (repaired?.success === true) return execute(tu, tool, repaired.data, ctx, isFatalLoopError);
+    if (repaired?.success === true) return execute(tu, tool, repaired.data, ctx, isFatalLoopError, encoding);
 
     return errorResult(tu, `input validation failed: ${formatZodIssues(parsed.error, tu.input)}`);
 }
 
-async function execute(tu: ToolCallPart, tool: Tool, input: unknown, ctx: ToolContext, isFatalLoopError: (err: unknown) => boolean): Promise<ToolResultPart> {
+async function execute(
+    tu: ToolCallPart,
+    tool: Tool,
+    input: unknown,
+    ctx: ToolContext,
+    isFatalLoopError: (err: unknown) => boolean,
+    encoding: ResultEncoding,
+): Promise<ToolResultPart> {
     try {
         const output = await tool.execute(input, ctx);
         if (output.isErr()) return errorResult(tu, toolErrorContent(output.error));
-        return successResult(tu, output.value);
+        return successResult(tu, output.value, encoding);
     } catch (err) {
         if (isFatalLoopError(err)) throw err;
         if (isAskRejected(err)) return deniedResult(tu, err.feedback);
@@ -636,12 +659,38 @@ function jsonValue(value: unknown) {
     return JSON.parse(JSON.stringify(value ?? null), (_key, v: unknown) => (typeof v === "string" ? stripNulCharacters(v) : v));
 }
 
-function successResult(toolCall: ToolCallPart, value: unknown): ToolResultPart {
+/**
+ * Encode a tool ok value onto a tool-result message. A value with no picture
+ * stays a plain JSON result, byte-identical to a value that never carried one.
+ *
+ * A value that carries a picture splits: the JSON data goes to a text part, and
+ * the bytes ride as an image content block. Thus the model sees the picture, and
+ * the JSON text holds no bytes. When the wire carries no picture, the block drops
+ * and the text stays, because base64 text floods the context and the model cannot
+ * see it. The drop rides the log, thus an operator sees that the picture did not
+ * reach the model.
+ */
+function successResult(toolCall: ToolCallPart, value: unknown, encoding: ResultEncoding): ToolResultPart {
+    const jsonData = jsonValue(value);
+    const image = readToolResultImage(value);
+    if (image === undefined) {
+        return { type: "tool-result", toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, output: { type: "json", value: jsonData } };
+    }
+    if (!encoding.carriesImage) {
+        encoding.log.warn("the wired provider carries no picture in a tool result, thus the picture is dropped", { toolName: toolCall.toolName });
+        return { type: "tool-result", toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, output: { type: "json", value: jsonData } };
+    }
     return {
         type: "tool-result",
         toolCallId: toolCall.toolCallId,
         toolName: toolCall.toolName,
-        output: { type: "json", value: jsonValue(value) },
+        output: {
+            type: "content",
+            value: [
+                { type: "text", text: JSON.stringify(jsonData) },
+                { type: "file", mediaType: image.mediaType, data: { type: "data", data: image.base64 } },
+            ],
+        },
     };
 }
 

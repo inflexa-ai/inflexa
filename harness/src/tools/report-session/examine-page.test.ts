@@ -22,7 +22,7 @@ import type {
     StampResult,
 } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
-import type { ToolContext } from "../define-tool.js";
+import { readToolResultImage, type ToolContext } from "../define-tool.js";
 import { createExaminePageTool, type CapturePage, type PageCapture } from "./examine-page.js";
 
 const DEFAULT_ANALYSIS_ID = "analysis-001";
@@ -149,7 +149,7 @@ describe("the missed stamp", () => {
 });
 
 describe("the seen-stamp copy", () => {
-    it("captures the page, gives the picture and the faults, and copies the rendered hash onto the seen hash", async () => {
+    it("captures the page, gives the faults on the JSON and the picture on the image path, and copies the rendered hash onto the seen hash", async () => {
         const root = await makeRoot();
         const threadId = "t1";
         await writePage(root, threadId);
@@ -168,10 +168,14 @@ describe("the seen-stamp copy", () => {
 
         expect(result.outcome).toBe("examined");
         if (result.outcome === "examined") {
-            expect(result.screenshotBase64).toBe("BASE64PNG");
             expect(result.consoleErrors).toEqual(["boom"]);
             expect(result.failedRequests).toEqual([{ url: "assets/x.png", reason: "net" }]);
+            expect(result.pagePath).toBe(join("report-sessions", threadId, "index.html"));
         }
+        // The screenshot rides the image path, thus the model sees the picture.
+        expect(readToolResultImage(result)).toEqual({ base64: "BASE64PNG", mediaType: "image/png" });
+        // The JSON text holds no bytes, thus the picture never reaches the JSON by accident.
+        expect(JSON.stringify(result)).not.toContain("BASE64PNG");
         // The tool navigates to the page file through a file URL.
         expect(capturedUrl).toBeDefined();
         expect(fileURLToPath(capturedUrl!)).toBe(join(root, "report-sessions", threadId, "index.html"));
