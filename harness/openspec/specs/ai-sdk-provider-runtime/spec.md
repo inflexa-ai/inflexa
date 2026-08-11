@@ -107,7 +107,7 @@ Both arms of `AiSdkProviderConfig` MUST accept an optional `requestTimeoutMs` fi
 
 ### Requirement: The provider bounds each silent interval of an attempt
 
-When `requestTimeoutMs` is set, the provider MUST bound each silent interval of a request attempt. A silent interval is the wait until the response starts, or a gap between two body chunks. If a silent interval exceeds `requestTimeoutMs`, the provider MUST abort that attempt. The guard MUST compose with the abort signal of the caller, and the caller signal MUST keep its normal effect. The guard MUST apply per attempt, so each retry of the envelope receives a full window. The total length of a stream with steady chunks MUST NOT trip the guard.
+When `requestTimeoutMs` is set, the provider MUST bound each silent interval of a request attempt. A silent interval is the wait until the response starts, or a gap between two content chunks. The response-start wait MUST be bounded by the provider's own guard timer, and the timer MUST clear when the headers arrive. Each content gap of a streamed body MUST be bounded through the SDK `timeout` setting with `chunkMs`. A chunk that carries no content, for example a keep-alive comment, MUST NOT reset the gap bound. The guard MUST compose with the abort signal of the caller, and the caller signal MUST keep its normal effect. The guard MUST apply per attempt, so each retry of the envelope receives a full window. The total length of a stream with steady content MUST NOT trip any bound.
 
 #### Scenario: A slow response start trips the guard
 
@@ -118,14 +118,20 @@ When `requestTimeoutMs` is set, the provider MUST bound each silent interval of 
 #### Scenario: A steady stream does not trip the guard
 
 - **GIVEN** a streamed response whose headers arrived within the window
-- **WHEN** the stream runs longer than `requestTimeoutMs` with each chunk gap under the window
-- **THEN** the guard does not abort the stream
+- **WHEN** the stream runs longer than `requestTimeoutMs` with each content gap under the window
+- **THEN** no bound aborts the stream
 
-#### Scenario: A stalled stream trips the guard
+#### Scenario: A stalled stream trips the SDK bound
 
 - **GIVEN** a streamed response whose headers arrived within the window
-- **WHEN** no body chunk arrives for `requestTimeoutMs`
-- **THEN** the attempt is aborted with the typed request-timeout reason
+- **WHEN** no content chunk arrives for `requestTimeoutMs`
+- **THEN** the attempt is aborted through the SDK chunk bound
+
+#### Scenario: A keep-alive does not feed the stream
+
+- **GIVEN** a streamed response that emits keep-alive comments without content
+- **WHEN** no content chunk arrives for `requestTimeoutMs`
+- **THEN** the attempt is aborted, because a keep-alive does not reset the gap bound
 
 #### Scenario: The caller abort still cancels
 
@@ -135,12 +141,28 @@ When `requestTimeoutMs` is set, the provider MUST bound each silent interval of 
 
 ### Requirement: A guard expiry classifies as a retryable provider timeout
 
-A guard abort MUST surface as a provider error with `retryable: true`, and its message MUST name the configured value. The classification MUST NOT treat a guard abort as a caller cancellation. The envelope MUST retry it under the same policy as a connection error.
+A guard abort MUST surface as a provider error with `retryable: true`, and its message MUST name the configured value. An error named `TimeoutError`, the DOMException that the SDK `timeout` setting raises, MUST classify the same way. The classification MUST NOT treat either as a caller cancellation. The envelope MUST retry them under the same policy as a connection error, within its coverage. For a stream that coverage is the establishment window, so a failure after the first delta propagates un-retried. When the abort signal of the caller is aborted, the envelope MUST rethrow without a retry. Thus a wall-clock expiry that rides the caller signal never loops.
 
 #### Scenario: The envelope retries a guard expiry
 
 - **WHEN** the guard aborts an attempt and the retry limit is not reached
 - **THEN** the envelope makes another attempt with a fresh window
+
+#### Scenario: The envelope retries an SDK chunk timeout at establishment
+
+- **WHEN** the SDK chunk bound aborts a stream before its first delta and the retry limit is not reached
+- **THEN** the envelope makes another attempt with a fresh window
+
+#### Scenario: A mid-stream chunk timeout propagates
+
+- **WHEN** the SDK chunk bound aborts a stream after its first delta
+- **THEN** the provider error propagates without an envelope retry, per the establishment coverage of a stream
+
+#### Scenario: A caller-signal expiry does not loop
+
+- **GIVEN** a caller signal that a wall-clock guard aborted with a `TimeoutError` reason
+- **WHEN** the provider call fails
+- **THEN** the envelope rethrows without a retry
 
 #### Scenario: The retry limit ends the call
 
@@ -161,12 +183,17 @@ Both arms of `AiSdkProviderConfig` MUST accept an optional `maxRetries` field. T
 - **WHEN** a provider is constructed without `maxRetries`
 - **THEN** the envelope retries up to 10 times, as before
 
-### Requirement: The embedder fetch owns the transport floor
+### Requirement: The harness supplies the Bun transport lift
 
-The harness MUST NOT configure the transport of the host runtime. The documentation of `requestTimeoutMs` MUST state the contract: the supplied `fetch` realization must permit a silent wait of at least `requestTimeoutMs`. When the transport of the embedder cuts a request before the guard window closes, the existing connection-error classification MUST apply unchanged.
+When `requestTimeoutMs` is set, the fetch wrapper MUST add `timeout: false` to the fetch init. The key is a Bun extension: it lifts the 300-second idle cut under Bun, and it is inert under Node. The documentation of `requestTimeoutMs` MUST state the Node caveat: the undici floor stays, and a Node embedder above 300 seconds supplies a dispatcher-raised fetch. When the field is absent, the wrapper MUST NOT be installed, and the init MUST stay untouched.
 
-#### Scenario: A transport cut below the guard window
+#### Scenario: A Bun embedder needs no composition work
 
-- **GIVEN** an embedder fetch whose own limit is shorter than `requestTimeoutMs`
-- **WHEN** the transport cuts the request first
-- **THEN** the failure classifies through the existing connection-error path
+- **GIVEN** a Bun host with `requestTimeoutMs` above 300 seconds and no custom fetch
+- **WHEN** the endpoint starts its response after 300 seconds but within the window
+- **THEN** the request completes, because the guard lifted the idle cut
+
+#### Scenario: An absent field touches nothing
+
+- **WHEN** a provider is constructed without `requestTimeoutMs`
+- **THEN** no wrapper is installed and no `timeout` key is added to any fetch init
