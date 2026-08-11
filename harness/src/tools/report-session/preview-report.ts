@@ -15,8 +15,9 @@
  * this tree. A hosted view of a session page is a later capability, with a URL space of its own.
  *
  * Each degraded condition is a typed outcome in the ok channel: a session refusal, a gap list, a resolver
- * absence, an unresolved reference, a bridge mismatch, a render problem, a figure that escapes the
- * workspace root, a write failure, and a stamp failure. The tool never throws for one of them. When the page
+ * absence, an unresolvable root at resolver construction, an unresolved reference, a bridge mismatch, a
+ * render problem, a figure that escapes the workspace root, a write failure, and a stamp failure. The tool
+ * never throws for one of them. When the page
  * lands, the tool stamps the hash of the rendered draft on the session state, thus the eyes and the record
  * know which draft the page shows. The filesystem speaks the
  * throw protocol, and the workspace-root seam signals an unresolvable resource the same way. Thus the
@@ -58,6 +59,7 @@ export type PreviewReportResult =
     | { outcome: "refused"; refusal: SessionRefusal }
     | { outcome: "gaps"; gaps: FinishGap[] }
     | { outcome: "resolver-unavailable" }
+    | { outcome: "root-unresolvable"; detail: string }
     | { outcome: "unresolved-references"; unresolved: ResolutionFailure[] }
     | { outcome: "bridge-mismatch"; mismatches: BridgeMismatch[] }
     | { outcome: "render-problems"; problems: RenderProblem[] }
@@ -277,7 +279,16 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
             if (deps.makeResolver === undefined) {
                 return ok({ outcome: "resolver-unavailable" });
             }
-            const resolver = deps.makeResolver({ analysisId, auth: ctx.session.auth });
+            // The resolver construction resolves the workspace root inside, and that seam throws on an
+            // unresolvable root. The guard turns the throw into a typed outcome that names the fault, thus a
+            // control-flow exception propagates and the unresolvable root does not.
+            let resolver: ReferenceResolver;
+            try {
+                resolver = deps.makeResolver({ analysisId, auth: ctx.session.auth });
+            } catch (cause) {
+                logger.warn("the workspace root did not resolve", { threadId, analysisId, ...defaultErrorFields(cause) });
+                return ok({ outcome: "root-unresolvable", detail: "the workspace root did not resolve" });
+            }
 
             const { resolutions, unresolved } = await resolveDocument(document, resolver, snapshot);
             if (unresolved.length > 0) {

@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import type { ArtifactTableReference, ArtifactValueReference, Reference } from "../contracts/report-reference.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
 import { createFixtureResolver } from "./fixture-resolver.js";
-import { createProductionResolver, type ExtractionArm, type ExtractionArtifact, type ExtractionRequest } from "./production-resolver.js";
+import { coerceCell, createProductionResolver, type ExtractionArm, type ExtractionArtifact, type ExtractionRequest } from "./production-resolver.js";
 import type { ArtifactSnapshot, ReportSnapshot } from "./reference-resolver.js";
 
 type Row = Record<string, string | number>;
@@ -412,5 +412,96 @@ describe("production resolver, the prepare batch of fall-throughs", () => {
         expect(outA._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.11" });
         expect(outB._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.22" });
         expect(batches.length).toBe(1);
+    });
+});
+
+describe("production resolver, the numeric row filter", () => {
+    test("a numeric filter value selects a string cell, and both realizations agree", async () => {
+        // A CSV holds the cluster id as the string "3". A filter value of the number 3 must select it, thus
+        // the compare reads both sides as a number.
+        const rows: Row[] = [
+            { cluster: "3", score: "0.90" },
+            { cluster: "10", score: "0.80" },
+        ];
+        const hash = await writeArtifact("cluster.csv", "cluster,score\n3,0.90\n10,0.80\n");
+        const reference: ArtifactValueReference = {
+            kind: "artifact-value",
+            path: "cluster.csv",
+            hash,
+            locator: { column: "score", rowFilter: { column: "cluster", op: "eq", value: 3 } },
+        };
+
+        const production = await createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS }).resolve(
+            reference,
+            snapshotOf([{ path: "cluster.csv", hash }]),
+        );
+        const fixture = await createFixtureResolver().resolve(reference, snapshotOf([{ path: "cluster.csv", hash, rows }]));
+
+        expect(production._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.90" });
+        expect(production._unsafeUnwrap()).toEqual(fixture._unsafeUnwrap());
+    });
+
+    test("a non-numeric filter value still selects by its exact text", async () => {
+        // A label that no side reads as a number compares by exact text, thus the string path is unchanged.
+        const hash = await writeArtifact("label.csv", "label,score\nc3,0.90\nc10,0.80\n");
+        const reference = valueRef("label.csv", hash, "score", "label", "c10");
+
+        const result = await createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS }).resolve(
+            reference,
+            snapshotOf([{ path: "label.csv", hash }]),
+        );
+
+        expect(result._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.80" });
+    });
+});
+
+describe("production resolver, a non-finite cell", () => {
+    test("coerceCell drops a NaN and an Infinity, the same as the extraction script", () => {
+        // The extraction script drops a NaN or an Infinity to `None`. The host coercion drops the same, thus
+        // the two arms read one parquet float column the same way. A finite number stays a cell.
+        expect(coerceCell(Number.NaN)).toBeUndefined();
+        expect(coerceCell(Number.POSITIVE_INFINITY)).toBeUndefined();
+        expect(coerceCell(Number.NEGATIVE_INFINITY)).toBeUndefined();
+        expect(coerceCell(0.7)).toBe(0.7);
+    });
+
+    test("a JSON Infinity cell reads as absent, thus the reference fails locator-out-of-range", async () => {
+        // `JSON.parse` reads an over-large literal as Infinity. The coercion drops it, thus the row omits the
+        // column and the scalar reference finds no value.
+        const hash = await writeArtifact("inf.json", '[{"gene":"BRCA1","score":1e999}]');
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const reference = valueRef("inf.json", hash, "score", "gene", "BRCA1");
+
+        const result = await resolver.resolve(reference, snapshotOf([{ path: "inf.json", hash }]));
+
+        expect(result._unsafeUnwrapErr().reason).toBe("locator-out-of-range");
+    });
+});
+
+describe("production resolver, a blank line in a delimited file", () => {
+    test("a blank line in the middle of a CSV parses clean in process", async () => {
+        // The blank line drops, thus the file parses in process and needs no arm. A resolver with no arm
+        // proves the in-process read, because a fall-through would fail extraction-unavailable.
+        const hash = await writeArtifact("blank-mid.csv", "gene,score\nBRCA1,0.9\n\nTP53,0.8\n");
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const snapshot = snapshotOf([{ path: "blank-mid.csv", hash }]);
+
+        const first = await resolver.resolve(valueRef("blank-mid.csv", hash, "score", "gene", "BRCA1"), snapshot);
+        const second = await resolver.resolve(valueRef("blank-mid.csv", hash, "score", "gene", "TP53"), snapshot);
+
+        expect(first._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.9" });
+        expect(second._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.8" });
+    });
+
+    test("a doubled trailing newline parses clean in process", async () => {
+        const hash = await writeArtifact("double-newline.csv", "gene,score\nBRCA1,0.9\nTP53,0.8\n\n");
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+
+        const result = await resolver.resolve(
+            valueRef("double-newline.csv", hash, "score", "gene", "TP53"),
+            snapshotOf([{ path: "double-newline.csv", hash }]),
+        );
+
+        expect(result._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.8" });
     });
 });

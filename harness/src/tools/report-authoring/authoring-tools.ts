@@ -214,6 +214,14 @@ export type SessionStatePersist = { outcome: "persisted" } | { outcome: "conflic
 export type StampResult = { outcome: "stamped" } | { outcome: "absent" } | { outcome: "failed"; detail: string };
 
 /**
+ * The outcome of the seen stamp through the gateway. `stamped` copied a rendered hash onto the seen hash.
+ * `no-rendered` means that the row holds no rendered hash to copy, thus no preview stamped one. `absent`
+ * means that no row holds the thread. `failed` is a transient store fault that names its cause. Each arm is
+ * plain data, thus a stamp never throws for one of them.
+ */
+export type SeenStampResult = { outcome: "stamped" } | { outcome: "no-rendered" } | { outcome: "absent" } | { outcome: "failed"; detail: string };
+
+/**
  * The session-state gateway that the tools read and write.
  *
  * The tool layer is the one consumer, thus the interface lives here. The interface speaks a plain
@@ -231,9 +239,10 @@ export interface ReportSessionStateGateway {
     stampRendered(threadId: string, hash: string): Promise<StampResult>;
     /**
      * Copy the rendered hash onto the seen hash. The eyes call it after a capture, thus the seen hash holds
-     * the hash of the draft that the picture shows, and never the current one.
+     * the hash of the draft that the picture shows, and never the current one. The outcome names whether a
+     * rendered hash existed to copy, thus the eyes tell a real stamp from a missed one.
      */
-    stampSeen(threadId: string): Promise<StampResult>;
+    stampSeen(threadId: string): Promise<SeenStampResult>;
 }
 
 /**

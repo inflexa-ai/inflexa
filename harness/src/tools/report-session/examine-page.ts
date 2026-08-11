@@ -13,6 +13,10 @@
  * counts, and the record tool lets the current draft record. The copy takes the rendered hash and never the
  * current one, thus a later edit makes the look stale and the record refuses.
  *
+ * The gateway reports whether a rendered hash existed to copy. When the row holds none, no preview stamped
+ * one and the look cannot count. The tool then gives a missed-stamp outcome that directs a new preview,
+ * because a repeated look never stamps a marker that no preview wrote.
+ *
  * The chrome navigation and the workspace-root seam each speak the throw protocol. The tool runs the capture
  * inside a guard, thus a genuine fault becomes a typed outcome and a control-flow exception propagates.
  */
@@ -58,10 +62,13 @@ export type ExaminePageInput = z.infer<typeof examinePageInput>;
 /**
  * The typed outcome of the eyes tool. Each arm is ok-channel data, thus the tool never throws for a
  * degraded condition. `examined` carries the screenshot, the console errors, and the failed requests.
+ * `missed-stamp` means that the row holds no rendered hash, thus no preview stamped one and the agent must
+ * run a new preview before the next look.
  */
 export type ExaminePageResult =
     | { outcome: "refused"; refusal: SessionRefusal }
     | { outcome: "no-page" }
+    | { outcome: "missed-stamp" }
     | { outcome: "capture-failed"; detail: string }
     | { outcome: "examined"; screenshotBase64: string; consoleErrors: string[]; failedRequests: FailedRequest[] };
 
@@ -145,7 +152,8 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
             "Open the rendered report page in a real headless browser, and report what you see. " +
             "Give back a screenshot, the console errors, and the failed requests. " +
             "Run it after the preview to look at the current page, and to confirm that the layout and the charts read clean. " +
-            "The report tool records a version only after you look at the current page.",
+            "The report tool records a version only after you look at the current page. " +
+            "If the page has no confirmed render, run the preview again first.",
         inputSchema: examinePageInput,
         executionMode: "inline",
         describeCall: "none",
@@ -184,10 +192,17 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 return ok({ outcome: "capture-failed", detail: cause instanceof Error ? cause.message : String(cause) });
             }
 
-            // The look counts only when the seen hash lands. A failed stamp is a transient store fault, and
-            // the record gate refuses a never-seen page, thus a later look re-stamps the marker. The picture
-            // stays valid, thus the tool gives it back either way.
             const stamped = await deps.gateway.stampSeen(threadId);
+            if (stamped.outcome === "no-rendered") {
+                // The row holds no rendered hash, thus no preview stamped one and the look cannot count. A
+                // repeated look never fixes this, because it copies a marker that no preview wrote. The agent
+                // runs a new preview, which stamps the rendered hash for the next look.
+                logger.warn("the seen stamp found no rendered hash", { threadId, analysisId });
+                return ok({ outcome: "missed-stamp" });
+            }
+            // A transient stamp fault and an absent row each leave the seen hash short, and the record gate
+            // then refuses a never-seen page. A later look re-stamps the marker, thus the picture stays valid
+            // and the tool gives it back.
             if (stamped.outcome !== "stamped") {
                 const detail = stamped.outcome === "failed" ? stamped.detail : "the session state row is absent";
                 logger.warn("the seen hash did not stamp", { threadId, analysisId, detail });

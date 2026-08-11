@@ -42,6 +42,27 @@ export function asFiniteNumber(value: string | number): number | undefined {
     return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+/**
+ * Match a row-filter value against a resolved cell.
+ *
+ * A text-backed artifact such as a CSV holds every cell as a string, thus a filter value of `3` must
+ * select the cell `"3"`. The compare reads both sides as a finite number, and it selects the row where the
+ * two numbers are equal. A side that is not a finite number compares by exact value, thus a text key
+ * selects by its exact text. The match is exact and carries no tolerance, because a filter names a
+ * discrete key and not a computed value with float noise.
+ */
+export function cellMatchesFilterValue(cell: string | number | null | undefined, filterValue: string | number): boolean {
+    if (cell === null || cell === undefined) {
+        return false;
+    }
+    const cellNumber = asFiniteNumber(cell);
+    const filterNumber = asFiniteNumber(filterValue);
+    if (cellNumber !== undefined && filterNumber !== undefined) {
+        return cellNumber === filterNumber;
+    }
+    return cell === filterValue;
+}
+
 /** Name a value with its type, so that a failed match never reads as two identical values. */
 function describeValue(value: string | number): string {
     return typeof value === "string" ? `the string ${JSON.stringify(value)}` : `the number ${value}`;

@@ -148,6 +148,49 @@ describe("createRecordVersionTool", () => {
         expect((await store.getThreadVersion(threadId))._unsafeUnwrap()).toBeNull();
     });
 
+    it("makes no resolver for a never-seen page", async () => {
+        const threadId = "thread-order-never-seen";
+        const gateway = gatewayFor(threadId, metricDoc(), metricSnapshot, null);
+        // The counting factory proves that the look refuses before the resolver constructs.
+        let constructions = 0;
+        const makeResolver = () => {
+            constructions += 1;
+            return createFixtureResolver();
+        };
+        const tool = createRecordVersionTool({ gateway, store, threads, makeResolver });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("never-seen");
+        // The never-seen look refuses before the expensive validation, thus no resolver constructs.
+        expect(constructions).toBe(0);
+        expect((await store.getThreadVersion(threadId))._unsafeUnwrap()).toBeNull();
+    });
+
+    it("names the unresolvable root when the resolver construction throws after a clean look", async () => {
+        const threadId = "thread-root-unresolvable";
+        const doc = metricDoc();
+        const gateway = gatewayFor(threadId, doc, metricSnapshot, computeDraftHash(doc));
+        // The clean look holds, thus the record reaches the resolver construction, which throws on an
+        // unresolvable root.
+        const tool = createRecordVersionTool({
+            gateway,
+            store,
+            threads,
+            makeResolver: () => {
+                throw new Error("the workspace root did not resolve");
+            },
+        });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("root-unresolvable");
+        if (result.outcome === "root-unresolvable") {
+            expect(result.detail).toContain("workspace root");
+        }
+        expect((await store.getThreadVersion(threadId))._unsafeUnwrap()).toBeNull();
+    });
+
     it("records one version and returns its id after a clean look", async () => {
         const parentId = "parent-conv";
         const threadId = "thread-record";

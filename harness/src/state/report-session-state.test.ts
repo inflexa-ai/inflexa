@@ -232,6 +232,19 @@ describe("createReportSessionStateStore", () => {
         expect(afterSeen!.renderedDocumentHash).toBe("hash-rendered");
     });
 
+    it("gives a no-rendered outcome when the seen stamp finds no rendered hash", async () => {
+        const analysisId = "analysis-seen-no-rendered";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-seen-no-rendered";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        // A fresh row holds no rendered hash, thus the seen stamp finds none to copy.
+        expect((await store.stampSeen(threadId))._unsafeUnwrap()).toBe("no-rendered");
+        // The seen hash stays null, because the copy had no rendered hash to take.
+        const after = (await store.readState(threadId))._unsafeUnwrap();
+        expect(after!.seenDocumentHash).toBeNull();
+    });
+
     it("gives an absence for a stamp against a thread with no row", async () => {
         expect((await store.stampRendered("thread-stamp-absent", "h"))._unsafeUnwrap()).toBe("absent");
         expect((await store.stampSeen("thread-stamp-absent"))._unsafeUnwrap()).toBe("absent");

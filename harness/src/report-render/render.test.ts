@@ -208,6 +208,16 @@ describe("renderReportPage navigation and references", () => {
     });
 });
 
+describe("renderReportPage readiness signal", () => {
+    it("carries the theme-ready dispatch and the sentinel in the page markup", () => {
+        const html = renderReportPage(fullDocument, fullValues)._unsafeUnwrap();
+        // The bootstrap signals readiness when it completes, thus a capture keys on a real event and returns
+        // when the page is ready instead of at a timeout.
+        expect(html).toContain("window.__inflexaThemeReady = true");
+        expect(html).toContain('document.dispatchEvent(new Event("inflexa-theme-ready"))');
+    });
+});
+
 describe("renderReportPage escaping", () => {
     it("keeps a script tag in the title as text in the title and the heading", () => {
         const document: ReportDocument = {

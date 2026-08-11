@@ -88,6 +88,13 @@ export type PersistOutcome = "persisted" | "conflict" | "absent";
 export type StampOutcome = "stamped" | "absent";
 
 /**
+ * The outcome of the seen stamp. `stamped` copied a rendered hash onto the seen hash. `no-rendered`
+ * means that the row holds no rendered hash, thus no preview stamped one and the copy found none.
+ * `absent` means that no row holds the thread.
+ */
+export type SeenStampOutcome = "stamped" | "no-rendered" | "absent";
+
+/**
  * A stored row that a read cannot parse with the current schemas. It names the
  * thread id and the part that failed, and it carries the reduced issues.
  */
@@ -131,10 +138,11 @@ export interface ReportSessionStateStore {
     stampRendered(threadId: string, hash: string): ResultAsync<StampOutcome, DbError>;
     /**
      * Copy the rendered hash onto the seen hash. The eyes call it after a capture, thus the seen hash holds
-     * the hash of the draft that the picture shows, and never the current one. `absent` means that no row
-     * holds the thread.
+     * the hash of the draft that the picture shows, and never the current one. The operation reports whether
+     * a rendered hash existed to copy. `no-rendered` means that the row holds none, thus no preview stamped
+     * one. `absent` means that no row holds the thread.
      */
-    stampSeen(threadId: string): ResultAsync<StampOutcome, DbError>;
+    stampSeen(threadId: string): ResultAsync<SeenStampOutcome, DbError>;
 }
 
 export interface ReportSessionStateStoreDeps {
@@ -285,15 +293,19 @@ export function createReportSessionStateStore({ pool }: ReportSessionStateStoreD
         });
     }
 
-    function stampSeen(threadId: string): ResultAsync<StampOutcome, DbError> {
+    function stampSeen(threadId: string): ResultAsync<SeenStampOutcome, DbError> {
         return tryMutation("report-session-state.stampSeen", async () => {
             // The seen hash takes the rendered hash of the same row. A copy inside the statement keeps the
-            // two markers on one row, thus the eyes copy the rendered hash and never the current one.
-            const { rowCount } = await pool.query({
-                text: "UPDATE cortex_report_session_state SET seen_document_hash = rendered_document_hash WHERE thread_id = $1",
+            // two markers on one row, thus the eyes copy the rendered hash and never the current one. The
+            // `RETURNING` clause reads the copied rendered hash back, thus the caller tells a real stamp from
+            // a row that holds no rendered hash to copy.
+            const { rows } = await pool.query<{ copied: string | null }>({
+                text: "UPDATE cortex_report_session_state SET seen_document_hash = rendered_document_hash WHERE thread_id = $1 RETURNING rendered_document_hash AS copied",
                 values: [threadId],
             });
-            return (rowCount ?? 0) > 0 ? "stamped" : "absent";
+            const row = rows[0];
+            if (row === undefined) return "absent";
+            return row.copied === null ? "no-rendered" : "stamped";
         });
     }
 
