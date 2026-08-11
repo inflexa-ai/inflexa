@@ -45,6 +45,7 @@
     },
     "dependencies": {
         "@ai-sdk/anthropic": "^4.0.20",
+        "@ai-sdk/openai": "^4.0.38",
         "@ai-sdk/openai-compatible": "^3.0.10",
         "@ai-sdk/provider": "^4.0.3",
         "@ai-sdk/provider-utils": "5.0.10",

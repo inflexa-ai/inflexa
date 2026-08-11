@@ -41,6 +41,19 @@ function openaiJson(text: string, model: string): Response {
     );
 }
 
+function responsesJson(text: string, model: string): Response {
+    return new Response(
+        JSON.stringify({
+            id: "resp_test_1",
+            created_at: 1_700_000_000,
+            model,
+            output: [{ type: "message", role: "assistant", id: "msg_test_1", content: [{ type: "output_text", text, annotations: [] }] }],
+            usage: { input_tokens: 12, output_tokens: 3 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+    );
+}
+
 /**
  * Records each outbound request body so a test can assert on the wire model the
  * provider bound at construction (the request itself carries no model field),
@@ -96,6 +109,27 @@ describe("provider configuration front door", () => {
             fetch: cap.fetch,
         };
         const provider = createConfiguredAiSdkProvider({ config, resolveBilling: async () => ({}) });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        expect(result._unsafeUnwrap()).toMatchObject({
+            finishReason: "stop",
+            message: { role: "assistant", content: [{ type: "text", text: "Hello, world" }] },
+        });
+        expect(provider.capabilities.toolCalling).toBe(true);
+    });
+
+    it("constructs a working openai ChatProvider from the package root", async () => {
+        const cap = capturingFetch(responsesJson);
+        const config: AiSdkProviderConfig = {
+            kind: "openai",
+            apiKey: "test-key",
+            model: "gpt-5.1",
+            fetch: cap.fetch,
+        };
+        const deps: ConfiguredAiSdkProviderDeps = { config, resolveBilling: async () => ({}) };
+        const provider = createConfiguredAiSdkProvider(deps);
 
         const result = await provider.chat(request, makeSession());
 
