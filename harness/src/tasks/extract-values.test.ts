@@ -33,6 +33,21 @@ describe("the extraction script", () => {
         expect(EXTRACTION_SCRIPT).toContain('"error"');
         expect(EXTRACTION_SCRIPT).toContain("read_parquet");
     });
+
+    it("hashes the file before the read and refuses a drifted file", () => {
+        // The script streams a sha256 in the host "sha256:<hex>" form, and it refuses a mismatch as a
+        // typed per-path error. A static check of the markers is enough.
+        expect(EXTRACTION_SCRIPT).toContain("hashlib");
+        expect(EXTRACTION_SCRIPT).toContain("hash-mismatch");
+    });
+
+    it("keeps a literal NA cell as text for each pandas text read", () => {
+        // keep_default_na=False keeps a literal cell such as "NA" or an empty string as its text, thus a
+        // text cell survives the extraction the same as the host parser keeps it. The two text reads each
+        // set the flag, thus the regex anchors on the closing paren of the read call.
+        const matches = EXTRACTION_SCRIPT.match(/keep_default_na=False\)/g);
+        expect(matches).toHaveLength(2);
+    });
 });
 
 describe("buildExtractionExec", () => {
@@ -51,12 +66,13 @@ describe("buildExtractionExec", () => {
         expect(body.cwd).toBe("/an-1");
 
         // The request list rides in one environment variable. The format derives from the extension. An
-        // unknown extension reads as csv, which is the general reader.
+        // unknown extension reads as csv, which is the general reader. Each request carries its pinned
+        // hash, thus the script can refuse a file that drifted from the pin.
         const parsed = JSON.parse(body.env![EXTRACTION_INPUT_ENV]);
         expect(parsed).toEqual([
-            { path: "data/x.tsv", format: "tsv" },
-            { path: "/an-1/data/y.parquet", format: "parquet" },
-            { path: "data/z.dat", format: "csv" },
+            { path: "data/x.tsv", format: "tsv", hash: "h1" },
+            { path: "/an-1/data/y.parquet", format: "parquet", hash: "h2" },
+            { path: "data/z.dat", format: "csv", hash: "h3" },
         ]);
     });
 });

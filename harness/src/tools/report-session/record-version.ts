@@ -5,14 +5,17 @@
  * the gate did not accept must never exist. The tool runs the whole gate first, and only a pass reaches the
  * store.
  *
- * The gate has three parts. The finish gates the schema, the unique ids, and the structural tier, and a gap
- * list returns as data. The full validation resolves every reference through the injected resolver, matches
- * each chart encoding, and matches each assert. A failure names the block that holds the failed part, thus
- * the agent repairs one block and not the report at large.
+ * The gate has three parts, in order of cost. The finish gates the schema, the unique ids, and the
+ * structural tier, and a gap list returns as data. The look-before-record rule then compares the seen hash
+ * against the hash of the current draft, on the state that the load already read. A never-seen page and a
+ * stale look each refuse with a distinct reason, and the rule reads no model judgment. The full validation
+ * resolves every reference through the injected resolver, matches each chart encoding, and matches each
+ * assert. A failure names the block that holds the failed part, thus the agent repairs one block and not the
+ * report at large.
  *
- * The look-before-record rule rides after the gate. The record compares the seen hash against the hash of
- * the current draft. A never-seen page and a stale look each refuse with a distinct reason, and the rule
- * reads no model judgment.
+ * The look runs before the validation on purpose. The validation builds the resolver and its prepare pass
+ * can start a container, thus the cheap look guards the expensive pass. A never-seen or stale draft refuses
+ * before the resolver constructs.
  *
  * On a pass the store records the document that the gate validated, the pinned snapshot, and the anchor from
  * the thread row. The one-per-thread rule of the store bounds a concurrent race, and that refusal returns as
@@ -44,18 +47,20 @@ export type RecordVersionInput = z.infer<typeof recordVersionInput>;
  * The typed outcome of the record tool. Each arm is ok-channel data, thus the tool never throws for a
  * degraded condition.
  *
- * `gaps` names each completeness gap of the draft. `invalid` names each gate failure, and a resolution
- * failure carries the block that holds it. `never-seen` means that no eyes ran on the current draft.
- * `stale-look` means that the eyes ran, and the agent then changed the draft. `already-recorded` means that
- * the thread already holds a version. `recorded` carries the version id.
+ * `gaps` names each completeness gap of the draft. `never-seen` means that no eyes ran on the current draft.
+ * `stale-look` means that the eyes ran, and the agent then changed the draft. `root-unresolvable` means that
+ * the resolver construction cannot resolve the workspace root. `invalid` names each gate failure, and a
+ * resolution failure carries the block that holds it. `already-recorded` means that the thread already holds
+ * a version. `recorded` carries the version id.
  */
 export type RecordVersionResult =
     | { outcome: "refused"; refusal: SessionRefusal }
     | { outcome: "gaps"; gaps: FinishGap[] }
-    | { outcome: "resolver-unavailable" }
-    | { outcome: "invalid"; schemaIssues?: SchemaIssue[]; duplicateIds?: string[]; resolutionFailures?: ResolutionFailure[] }
     | { outcome: "never-seen" }
     | { outcome: "stale-look" }
+    | { outcome: "resolver-unavailable" }
+    | { outcome: "root-unresolvable"; detail: string }
+    | { outcome: "invalid"; schemaIssues?: SchemaIssue[]; duplicateIds?: string[]; resolutionFailures?: ResolutionFailure[] }
     | { outcome: "already-recorded" }
     | { outcome: "record-failed"; detail: string }
     | { outcome: "recorded"; versionId: string };
@@ -125,10 +130,31 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
                 return ok({ outcome: "gaps", gaps: finished.gaps });
             }
 
+            // The look-before-record rule runs before the resolver and the validation, on the state that the
+            // load already read. The preview stamps the rendered hash, and the eyes copy it onto the seen
+            // hash. A never-seen page carries no seen hash. A stale look carries the hash of an earlier draft,
+            // thus a mismatch against the current draft refuses. Each refusal skips the expensive validation.
+            const currentHash = computeDraftHash(draft);
+            if (seenDocumentHash === null) {
+                return ok({ outcome: "never-seen" });
+            }
+            if (seenDocumentHash !== currentHash) {
+                return ok({ outcome: "stale-look" });
+            }
+
             if (deps.makeResolver === undefined) {
                 return ok({ outcome: "resolver-unavailable" });
             }
-            const resolver = deps.makeResolver({ analysisId, auth: ctx.session.auth });
+            // The resolver construction resolves the workspace root inside, and that seam throws on an
+            // unresolvable root. The guard turns the throw into a typed outcome that names the fault, thus a
+            // control-flow exception propagates and the unresolvable root does not.
+            let resolver: ReferenceResolver;
+            try {
+                resolver = deps.makeResolver({ analysisId, auth: ctx.session.auth });
+            } catch (cause) {
+                logger.warn("the workspace root did not resolve", { threadId, analysisId, ...logger.errorFields(cause) });
+                return ok({ outcome: "root-unresolvable", detail: "the workspace root did not resolve" });
+            }
 
             const validation = await validateReport(finished.document, snapshot, resolver);
             if (!validation.valid) {
@@ -138,17 +164,6 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
                     ...(validation.duplicateIds ? { duplicateIds: validation.duplicateIds } : {}),
                     ...(validation.resolutionFailures ? { resolutionFailures: validation.resolutionFailures } : {}),
                 });
-            }
-
-            // The look-before-record rule. The preview stamps the rendered hash, and the eyes copy it onto the
-            // seen hash. A never-seen page carries no seen hash. A stale look carries the hash of an earlier
-            // draft, thus a mismatch against the current draft refuses.
-            const currentHash = computeDraftHash(draft);
-            if (seenDocumentHash === null) {
-                return ok({ outcome: "never-seen" });
-            }
-            if (seenDocumentHash !== currentHash) {
-                return ok({ outcome: "stale-look" });
             }
 
             const thread = await deps.threads.getThread(threadId);

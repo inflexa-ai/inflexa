@@ -318,6 +318,32 @@ describe("the resolver absence", () => {
     });
 });
 
+describe("the unresolvable root", () => {
+    it("names the unresolvable root when the resolver construction throws, and no page lands", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        // The resolver construction resolves the workspace root inside, and an unresolvable root throws.
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => {
+                throw new Error("the workspace root did not resolve");
+            },
+            resolveWorkspaceRoot: () => root,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("root-unresolvable");
+        if (result.outcome === "root-unresolvable") {
+            expect(result.detail).toContain("workspace root");
+        }
+        // The construction refuses before any write, thus no page lands.
+        expect(existsSync(join(root, "report-sessions"))).toBe(false);
+        assertNoLegacyDirs(root);
+    });
+});
+
 describe("the unresolved reference", () => {
     it("names each unresolved reference with its block id, and no page lands", async () => {
         const root = await makeRoot();

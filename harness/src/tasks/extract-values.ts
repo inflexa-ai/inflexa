@@ -88,10 +88,13 @@ export interface ExtractValuesWorkflowInput {
  * The working directory is the analysis mount, thus a relative request path reads the correct file. The
  * request list rides in one environment variable.
  *
+ * Each request carries its pinned hash. Thus the script can hash the file first and refuse a file that
+ * drifted from the pin, before the pandas read gives back drifted bytes.
+ *
  * The function is pure, thus a test asserts the command shape without a sandbox.
  */
 export function buildExtractionExec(analysisId: string, requests: readonly ExtractionRequest[], execId: string): SubmitExecBody {
-    const scriptRequests = requests.map((request) => ({ path: request.path, format: detectExtractionFormat(request.path) }));
+    const scriptRequests = requests.map((request) => ({ path: request.path, format: detectExtractionFormat(request.path), hash: request.hash }));
     return {
         command: ["python3", "-c", EXTRACTION_SCRIPT],
         execId,

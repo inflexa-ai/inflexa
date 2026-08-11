@@ -32,7 +32,7 @@ import type {
 import { allWithConcurrency } from "../lib/async-utils.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
 import { resolveWorkspacePath } from "../workspace/paths.js";
-import { asFiniteNumber, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
+import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
 import {
     columnsHeldByNoRow,
     fileTypeHoldsNoCell,
@@ -156,16 +156,24 @@ function detectFormat(path: string): TabularFormat | undefined {
  * absent value is not a cell, thus it drops and the row omits the key. The fixture row omits an empty cell
  * the same way. An object or an array is structural doubt, thus it drops too and the format falls through
  * where the caller detects the loss.
+ *
+ * A non-finite number is not a cell either. A parquet float column holds a `NaN` or an `Infinity`, thus the
+ * coercion drops it and the row omits the key. The extraction script (`tasks/extract-values-script.ts`)
+ * drops the same value to `None`, thus the host arm and the sandbox arm read the same bytes the same way.
  */
-function coerceCell(value: unknown): string | number | undefined {
+export function coerceCell(value: unknown): string | number | undefined {
     if (value === null || value === undefined) {
         return undefined;
     }
-    if (typeof value === "number" || typeof value === "string") {
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? value : undefined;
+    }
+    if (typeof value === "string") {
         return value;
     }
     if (typeof value === "bigint") {
-        return Number(value);
+        const narrowed = Number(value);
+        return Number.isFinite(narrowed) ? narrowed : undefined;
     }
     if (typeof value === "boolean") {
         return String(value);
@@ -277,6 +285,12 @@ function parseDelimited(text: string, delimiter: string): Row[] | undefined {
     const rows: Row[] = [];
     for (let r = 1; r < records.length; r += 1) {
         const fields = records[r];
+        // A blank line parses as one empty field, thus the walk drops it and reads no dialect into it. A
+        // record with more than one field, or one non-empty field, still obeys the count check, thus a
+        // genuinely ragged record falls through.
+        if (fields.length === 1 && fields[0] === "") {
+            continue;
+        }
         if (fields.length !== header.length) {
             return undefined;
         }
@@ -573,7 +587,7 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
             selectedRow = rows[locator.row];
         } else if (locator.rowFilter !== undefined) {
             const filter = locator.rowFilter;
-            const matches = rows.filter((row) => row[filter.column] === filter.value);
+            const matches = rows.filter((row) => cellMatchesFilterValue(row[filter.column], filter.value));
             if (matches.length === 0) {
                 return fail(reference, "locator-out-of-range", `no row where ${filter.column} equals ${String(filter.value)}`);
             }

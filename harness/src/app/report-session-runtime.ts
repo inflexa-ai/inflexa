@@ -39,6 +39,7 @@ import { pinReportSnapshot } from "../report-model/pin-snapshot.js";
 import { createReportSessionStateStore, type ReportSessionState as StoredSessionState, type SessionStateReadError } from "../state/report-session-state.js";
 import type {
     ReportSessionStateGateway,
+    SeenStampResult,
     SessionStateLoad,
     SessionStatePersist,
     SessionStateToken,
@@ -218,11 +219,22 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
                 },
             );
         },
-        async stampSeen(threadId: string): Promise<StampResult> {
+        async stampSeen(threadId: string): Promise<SeenStampResult> {
             const result = await store.stampSeen(threadId);
             return result.match(
-                (outcome): StampResult => (outcome === "stamped" ? { outcome: "stamped" } : { outcome: "absent" }),
-                (error): StampResult => {
+                (outcome): SeenStampResult => {
+                    switch (outcome) {
+                        case "stamped":
+                            return { outcome: "stamped" };
+                        case "no-rendered":
+                            // The row holds no rendered hash, thus no preview stamped one and the copy found
+                            // none. The eyes direct a new preview from this arm.
+                            return { outcome: "no-rendered" };
+                        case "absent":
+                            return { outcome: "absent" };
+                    }
+                },
+                (error): SeenStampResult => {
                     log.error("the seen-hash stamp failed", { threadId, ...log.errorFields(error.cause) });
                     return { outcome: "failed", detail: describeDbError(error) };
                 },

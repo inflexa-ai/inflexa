@@ -17,7 +17,7 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
-import { asFiniteNumber, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
+import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
 import {
     columnsHeldByNoRow,
     fileTypeHoldsNoCell,
@@ -66,7 +66,7 @@ function resolveArtifactValue(reference: ArtifactValueReference, snapshot: Repor
         selectedRow = rows[locator.row];
     } else if (locator.rowFilter !== undefined) {
         const filter = locator.rowFilter;
-        const matches = rows.filter((row) => row[filter.column] === filter.value);
+        const matches = rows.filter((row) => cellMatchesFilterValue(row[filter.column], filter.value));
         if (matches.length === 0) {
             return fail(reference, "locator-out-of-range", `no row where ${filter.column} equals ${String(filter.value)}`);
         }

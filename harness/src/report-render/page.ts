@@ -284,9 +284,20 @@ export const ECHARTS_THEME = {
  * the sibling `<script type="application/json">` element, and initializes ECharts with the registered
  * theme. The skeleton registers the theme before this script runs. A resize handler keeps each chart
  * fit to the window.
+ *
+ * The script signals readiness when the bootstrap completes, and immediately when no chart exists. It sets
+ * the `window.__inflexaThemeReady` sentinel and dispatches the `inflexa-theme-ready` event on the document.
+ * A reader that captures the page keys on this signal, thus the capture returns when the page is ready and
+ * not at a timeout. The sentinel guards a listener that registers after the dispatch, thus a late listener
+ * still resolves.
  */
 export const CHART_BOOTSTRAP = `(function () {
+  function signalReady() {
+    window.__inflexaThemeReady = true;
+    document.dispatchEvent(new Event("inflexa-theme-ready"));
+  }
   if (typeof echarts === "undefined") {
+    signalReady();
     return;
   }
   var containers = document.querySelectorAll("[data-echarts-id]");
@@ -309,4 +320,5 @@ export const CHART_BOOTSTRAP = `(function () {
       }
     }
   });
+  signalReady();
 })();`;

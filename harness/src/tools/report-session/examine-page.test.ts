@@ -13,7 +13,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { Scope } from "../../auth/types.js";
-import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
+import type {
+    ReportSessionState,
+    ReportSessionStateGateway,
+    SeenStampResult,
+    SessionStateLoad,
+    SessionStatePersist,
+    StampResult,
+} from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
 import { createExaminePageTool, type CapturePage, type PageCapture } from "./examine-page.js";
@@ -83,10 +90,14 @@ function makeFakeGateway(): FakeGateway {
             row.rendered = hash;
             return Promise.resolve({ outcome: "stamped" });
         },
-        stampSeen(threadId): Promise<StampResult> {
+        stampSeen(threadId): Promise<SeenStampResult> {
             const row = rows.get(threadId);
             if (row === undefined) {
                 return Promise.resolve({ outcome: "absent" });
+            }
+            if (row.rendered === null) {
+                // No preview stamped a rendered hash, thus the seen stamp finds none to copy.
+                return Promise.resolve({ outcome: "no-rendered" });
             }
             row.seen = row.rendered;
             return Promise.resolve({ outcome: "stamped" });
@@ -114,6 +125,26 @@ describe("the no-page outcome", () => {
         expect(result.outcome).toBe("no-page");
         // No look ran, thus the seen hash stays null.
         expect(gateway.seenOf("t1")).toBeNull();
+    });
+});
+
+describe("the missed stamp", () => {
+    it("directs a new preview when the row holds no rendered hash, and stamps no seen hash", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        // The preview stamped no rendered hash, thus the seen stamp finds none to copy.
+        gateway.seed(threadId, null);
+        const stub: PageCapture = { screenshotBase64: "BASE64PNG", consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = () => Promise.resolve(stub);
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("missed-stamp");
+        // The seen hash stays null, thus the record still refuses until a new preview stamps a rendered hash.
+        expect(gateway.seenOf(threadId)).toBeNull();
     });
 });
 
