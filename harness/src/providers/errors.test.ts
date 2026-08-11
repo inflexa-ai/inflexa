@@ -124,6 +124,39 @@ describe("the request-timeout sentinel", () => {
     });
 });
 
+describe("the SDK timeout", () => {
+    /** The abort reason of the SDK chunk bound: a bare DOMException, no cause. */
+    function sdkChunkTimeout(ms: number): DOMException {
+        return new DOMException(`Chunk timeout of ${ms}ms exceeded`, "TimeoutError");
+    }
+
+    it("classifies a bare TimeoutError as a retryable provider timeout", () => {
+        expect(classifyProviderError(sdkChunkTimeout(30_000))).toEqual({ kind: "provider", retryable: true });
+    });
+
+    it("reads a TimeoutError nested on the cause chain", () => {
+        const wrapped = new Error("AI_APICallError", { cause: sdkChunkTimeout(30_000) });
+        expect(classifyProviderError(wrapped)).toEqual({ kind: "provider", retryable: true });
+    });
+
+    it("falls back to the message of the SDK, which names the configured value", () => {
+        const err = toProviderError(sdkChunkTimeout(45_000), "analysis:abc");
+        expect(err.type).toBe("provider");
+        expect(err.retryable).toBe(true);
+        expect(err.message).toContain("45000");
+        expect(err.message).toContain("analysis:abc");
+    });
+
+    it("keeps a wrapped TimeoutError retryable, where an unknown throwable is not", () => {
+        // The retry envelope wraps the last failure of an exhausted attempt. The
+        // wrapper carries no status and no connection text, thus only the timeout
+        // probe on the cause chain keeps the classification retryable.
+        const exhausted = new Error("Failed after 3 attempts.", { cause: sdkChunkTimeout(20_000) });
+        expect(classifyProviderError(exhausted).retryable).toBe(true);
+        expect(classifyProviderError(new Error("Failed after 3 attempts.")).retryable).toBe(false);
+    });
+});
+
 describe("toProviderError idempotency", () => {
     it("returns an already-constructed ProviderError unchanged", () => {
         // chatStream throws this; streaming-chat's catch re-wraps it. The second
