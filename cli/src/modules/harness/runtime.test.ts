@@ -18,7 +18,15 @@ import { env } from "../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../lib/credential.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { bootHarnessRuntime, buildAuthInjectingFetch, describeBootError, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
+import {
+    bootHarnessRuntime,
+    buildAuthInjectingFetch,
+    buildProviderFetch,
+    buildTimeoutLiftingFetch,
+    describeBootError,
+    __resetHarnessRuntimeForTest,
+    type BootSeams,
+} from "./runtime.ts";
 import { agentProviderInner } from "./agent_switch.ts";
 import type { ResolvedHarnessConfig, ResolvedModelConnection } from "./config.ts";
 import type { ExecIngress } from "./ingress.ts";
@@ -1014,6 +1022,90 @@ describe("buildAuthInjectingFetch", () => {
             forceRefresh: () => Promise.resolve(err<Credential, CredentialError>({ type: "env_var_unset", var: "MISSING" })),
         };
         await expect(buildAuthInjectingFetch(source, underlying)("https://x/messages", {})).rejects.toThrow(/MISSING/);
+    });
+});
+
+// The transport realization that lifts the Bun 300-second idle cut, plus its composition with the
+// auth-injecting fetch. Driven with a recording underlying fetch so the forwarded init (the `timeout`
+// key) and the retry count are the assertions — no real network, no provider boot.
+describe("buildTimeoutLiftingFetch / buildProviderFetch", () => {
+    /** A recording underlying fetch: captures each request's init and returns the queued statuses in order. */
+    function recordingFetch(statuses: number[]): {
+        fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+        seen: (RequestInit | undefined)[];
+    } {
+        const seen: (RequestInit | undefined)[] = [];
+        let i = 0;
+        return {
+            seen,
+            fetch: (_input, init) => {
+                seen.push(init);
+                return Promise.resolve(new Response(null, { status: statuses[i++] ?? 200 }));
+            },
+        };
+    }
+
+    /** A fixed, expiry-less credential source (get and forceRefresh yield the same token). */
+    function fixedSource(token: string): CredentialSource {
+        const cred = ok<Credential, CredentialError>({ token, scheme: "bearer" });
+        return { get: () => Promise.resolve(cred), forceRefresh: () => Promise.resolve(cred) };
+    }
+
+    // The Bun `timeout` extension is not declared on RequestInit, so read it through a widened view. The
+    // assertion is safe because every RequestInit satisfies an optional `timeout`.
+    function forwardedTimeout(init: RequestInit | undefined): unknown {
+        return (init as { timeout?: unknown } | undefined)?.timeout;
+    }
+
+    test("buildTimeoutLiftingFetch forwards the call with timeout: false and keeps the other init fields", async () => {
+        const { fetch: underlying, seen } = recordingFetch([200]);
+        await buildTimeoutLiftingFetch(underlying)("https://api.deepseek.com/v1/messages", { method: "POST" });
+        expect(forwardedTimeout(seen[0])).toBe(false);
+        expect(seen[0]!.method).toBe("POST");
+    });
+
+    test("buildProviderFetch installs no wrapper when the timeout is absent and there is no credential source", () => {
+        expect(buildProviderFetch(undefined, undefined)).toBeUndefined();
+    });
+
+    test("buildProviderFetch with a timeout and no credential source lifts the transport without auth", async () => {
+        const { fetch: underlying, seen } = recordingFetch([200]);
+        const providerFetch = buildProviderFetch(1_800_000, undefined, underlying)!;
+        await providerFetch("https://api.deepseek.com/v1/messages", {});
+        expect(forwardedTimeout(seen[0])).toBe(false);
+    });
+
+    test("buildProviderFetch with a credential source but no timeout installs the auth fetch and rides no timeout key", async () => {
+        const { fetch: underlying, seen } = recordingFetch([200]);
+        const providerFetch = buildProviderFetch(undefined, fixedSource("tok"), underlying)!;
+        await providerFetch("https://api.anthropic.com/v1/messages", {});
+        // No timeout wrapper ⇒ the auth fetch forwards to the underlying unchanged, so no `timeout` key rides.
+        expect(forwardedTimeout(seen[0])).toBeUndefined();
+        expect(new Headers(seen[0]!.headers).get("authorization")).toBe("Bearer tok");
+    });
+
+    test("buildProviderFetch composes the auth fetch over the timeout base: timeout: false rides AND a 401 refreshes exactly once", async () => {
+        const { fetch: underlying, seen } = recordingFetch([401, 200]);
+        let refreshCount = 0;
+        let token = "tok-1";
+        const source: CredentialSource = {
+            get: () => Promise.resolve(ok<Credential, CredentialError>({ token, scheme: "bearer" })),
+            forceRefresh: () => {
+                refreshCount++;
+                token = "tok-2";
+                return Promise.resolve(ok<Credential, CredentialError>({ token, scheme: "bearer" }));
+            },
+        };
+        const providerFetch = buildProviderFetch(1_800_000, source, underlying)!;
+        const response = await providerFetch("https://api.anthropic.com/v1/messages", { method: "POST" });
+
+        expect(response.status).toBe(200);
+        expect(refreshCount).toBe(1); // exactly one forced refresh
+        expect(seen).toHaveLength(2); // one retry only
+        // Both attempts ride the raised transport, and the retry carries the refreshed token.
+        expect(forwardedTimeout(seen[0])).toBe(false);
+        expect(forwardedTimeout(seen[1])).toBe(false);
+        expect(new Headers(seen[1]!.headers).get("authorization")).toBe("Bearer tok-2");
     });
 });
 

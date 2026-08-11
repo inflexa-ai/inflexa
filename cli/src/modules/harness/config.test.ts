@@ -263,6 +263,54 @@ describe("resolveModelConnection — fail closed", () => {
     });
 });
 
+// The request timeout and the retry count: both are optional positive integers on both connection arms,
+// and boot carries the resolved values into the harness provider config. A valid value rides through, an
+// absent value is omitted, and a zero, a negative, or a non-integer value fails the models parse closed
+// (the same fail-closed pattern as a malformed connection above).
+describe("resolveModelConnection — request timeout and retry count", () => {
+    test("a valid requestTimeoutMs and maxRetries ride onto a direct connection", () => {
+        writeConfigWithModels({
+            connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", requestTimeoutMs: 1_800_000, maxRetries: 3 },
+        });
+        const resolved = resolveModelConnection();
+        expect(resolved).toMatchObject({ mode: "direct", requestTimeoutMs: 1_800_000, maxRetries: 3 });
+        expect(resolved.configError).toBeUndefined();
+    });
+
+    test("a valid requestTimeoutMs rides onto a cliproxy connection", () => {
+        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic", requestTimeoutMs: 1_800_000 } });
+        const resolved = resolveModelConnection();
+        expect(resolved).toMatchObject({ mode: "cliproxy", requestTimeoutMs: 1_800_000 });
+        expect(resolved.maxRetries).toBeUndefined();
+        expect(resolved.configError).toBeUndefined();
+    });
+
+    test("an absent requestTimeoutMs and maxRetries resolve to a connection without them", () => {
+        writeConfigWithModels({ connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1" } });
+        const resolved = resolveModelConnection();
+        expect(resolved.requestTimeoutMs).toBeUndefined();
+        expect(resolved.maxRetries).toBeUndefined();
+        expect(resolved.configError).toBeUndefined();
+    });
+
+    test("a zero requestTimeoutMs fails closed to the default connection, carrying a configError", () => {
+        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic", requestTimeoutMs: 0 } });
+        const resolved = resolveModelConnection();
+        expect(resolved).toMatchObject({ mode: "cliproxy", provider: "anthropic" });
+        expect(resolved.configError?.issues).toContain("models.connection");
+    });
+
+    test("a negative maxRetries fails closed, carrying a configError", () => {
+        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic", maxRetries: -1 } });
+        expect(resolveModelConnection().configError).toBeDefined();
+    });
+
+    test("a non-integer requestTimeoutMs fails closed, carrying a configError", () => {
+        writeConfigWithModels({ connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", requestTimeoutMs: 1.5 } });
+        expect(resolveModelConnection().configError).toBeDefined();
+    });
+});
+
 // The write side of the agent-model config surface: the palette pick persists
 // immediately, spread-preserving. Read back through the real config file so the test asserts the exact
 // on-disk shape resolveModelConnection then consumes.
