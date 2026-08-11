@@ -571,41 +571,6 @@ export function buildAuthInjectingFetch(source: CredentialSource, underlying: In
 }
 
 /**
- * Build the `fetch` that removes the 300-second Bun idle cut. A slow local model can then start its
- * response after the runtime default but within the window. The wrapper forwards each call to `underlying`
- * with `timeout: false` in the init. The harness request-timeout guard owns the exact ceiling; this
- * wrapper lifts only the transport floor. `underlying` is injectable for tests; production passes the Bun
- * `fetch`.
- */
-export function buildTimeoutLiftingFetch(underlying: InjectingFetch = fetch): InjectingFetch {
-    return (input, init) =>
-        // `timeout: false` is a Bun fetch extension that removes the 300-second idle-timeout cut. A probe
-        // on Bun 1.3.14 confirms that `signal: AbortSignal.timeout(...)` and a numeric `timeout` do NOT
-        // lift the cut, but `timeout: false` does. bun-types 1.3.x does not declare `timeout` on the fetch
-        // init, so the cast adds the untyped key; the runtime honors it. A future Bun that drops the
-        // extension surfaces as the old 300-second cut, never as data loss.
-        underlying(input, { ...init, timeout: false } as RequestInit);
-}
-
-/**
- * Build the transport `fetch` for the provider config, or `undefined` when the connection installs no
- * override. When the connection lifts the request timeout, the base is {@link buildTimeoutLiftingFetch}.
- * When a credential source exists, the auth-injecting fetch wraps that base, so every auth attempt rides
- * the raised transport, and it still refreshes exactly once on a 401. With no timeout and no credential
- * source, the result is `undefined`, and the provider receives no fetch override.
- * `underlying` is injectable for tests; production passes the Bun `fetch`.
- */
-export function buildProviderFetch(
-    requestTimeoutMs: number | undefined,
-    source: CredentialSource | undefined,
-    underlying: InjectingFetch = fetch,
-): InjectingFetch | undefined {
-    const timeoutFetch = requestTimeoutMs !== undefined ? buildTimeoutLiftingFetch(underlying) : undefined;
-    if (source !== undefined) return buildAuthInjectingFetch(source, timeoutFetch ?? underlying);
-    return timeoutFetch;
-}
-
-/**
  * One boot attempt, run under the {@link bootHarnessRuntime} in-flight guard.
  * This root resolves the host-specific inputs — prerequisites → Postgres
  * readiness → callback ingress → providers/models → instance lock → pool — then
@@ -861,14 +826,12 @@ async function bootHarnessRuntimeOnce(
         // toolCalling: true }`), so the proxy path is indistinguishable from a bare
         // Anthropic connection. direct resolves to the configured protocol kind at the
         // configured endpoint with the env secret.
-        // The provider transport fetch, present only when the connection lifts the request timeout OR
-        // configures a credential source. The timeout wrapper removes the 300-second Bun idle cut so a
-        // slow local model can start late; the harness guard then owns the exact ceiling. With a credential
-        // source, the auth-injecting fetch wraps the timeout base, so all agents refresh/rotate through the
-        // same cached token and ride the same raised transport. One instance shared by every per-model
-        // provider over this connection. An absent timeout and an absent credential source install nothing
-        // (undefined for cliproxy and for the static env key, which the SDK sends as-is), exactly as before.
-        const providerFetch = buildProviderFetch(connection.requestTimeoutMs, credentialSource);
+        // The auth-injecting fetch, present only when the connection gives a credential source. One
+        // instance serves each per-model provider over this connection. Thus each agent shares the same
+        // cached token and the same refresh. cliproxy and the static env key install nothing, because the
+        // SDK sends that key as it is. The harness owns the transport lift for a long request, thus the
+        // CLI adds no wrapper of its own. The CLI supplies the connection values and this fetch only.
+        const authFetch = credentialSource !== undefined ? buildAuthInjectingFetch(credentialSource) : undefined;
         // The request bounds the harness enforces and advertises: the per-attempt idle guard and the retry
         // limit. The helper spreads a field only when it is present, so an absent config field yields an
         // absent provider field, and the harness then keeps its own default.
@@ -880,7 +843,7 @@ async function bootHarnessRuntimeOnce(
                       baseURL: env.cliproxyApiUrl,
                       apiKey: providerApiKey,
                       model: agentModel,
-                      fetch: providerFetch,
+                      fetch: authFetch,
                       capabilities: { toolCalling: true },
                       ...requestBounds,
                   }
@@ -890,7 +853,7 @@ async function bootHarnessRuntimeOnce(
                         baseURL: connection.baseURL,
                         apiKey: providerApiKey,
                         model: agentModel,
-                        fetch: providerFetch,
+                        fetch: authFetch,
                         capabilities: { toolCalling: true },
                         ...requestBounds,
                     }
@@ -900,7 +863,7 @@ async function bootHarnessRuntimeOnce(
                         baseURL: connection.baseURL,
                         apiKey: providerApiKey,
                         model: agentModel,
-                        fetch: providerFetch,
+                        fetch: authFetch,
                         capabilities: { toolCalling: true },
                         ...requestBounds,
                     };
