@@ -34,7 +34,7 @@ import { DEFAULT_SALVAGE_ITERATIONS, runToTerminal, type RunToTerminalResult } f
 import { passthroughStep } from "../../loop/run-step.js";
 import type { AgentDefinition, LoopMessage } from "../../loop/types.js";
 import { forSubAgent, scopeResource } from "../../auth/types.js";
-import { type ChatProvider } from "../../providers/types.js";
+import { effectiveDeadlineMs, type ChatProvider } from "../../providers/types.js";
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
@@ -68,18 +68,6 @@ const PLANNER_MAX_ITERATIONS = 13;
 
 /** Wall-clock guard for a single plan-generation invocation. */
 const PLAN_TIMEOUT_MS = 600_000;
-
-/**
- * The effective wall-clock guard in milliseconds for one plan-generation
- * invocation.
- *
- * The guard is the maximum of {@link PLAN_TIMEOUT_MS} and the request-timeout
- * limit that the planner provider advertises. A configured value can make the
- * guard longer. It cannot make the guard shorter.
- */
-export function effectivePlanTimeoutMs(provider: Pick<ChatProvider, "requestTimeoutMs">): number {
-    return Math.max(PLAN_TIMEOUT_MS, provider.requestTimeoutMs ?? 0);
-}
 
 // ── Diagnostic bounds ───────────────────────────────────────────────
 //
@@ -1048,7 +1036,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 ...(input.userConstraints ? ["", "## User Constraints", input.userConstraints] : []),
             ].join("\n");
 
-            const planTimeoutMs = effectivePlanTimeoutMs(deps.conversation.provider);
+            const planTimeoutMs = effectiveDeadlineMs(deps.conversation.provider, PLAN_TIMEOUT_MS);
 
             // Opens the invocation. Two things are only knowable here and both are
             // first-order suspects when a planner runs long and returns nothing: the size

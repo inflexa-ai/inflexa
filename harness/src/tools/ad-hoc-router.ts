@@ -10,7 +10,7 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { resourceEstimationSection } from "../prompts/planner.js";
-import type { ChatProvider } from "../providers/types.js";
+import { effectiveDeadlineMs, type ChatProvider } from "../providers/types.js";
 import { loadDataProfileStatus } from "../state/index.js";
 
 export const AD_HOC_ROUTER_AGENT_ID = "adhoc-router";
@@ -48,17 +48,6 @@ export interface AdHocRouterDeps {
      * provider advertises.
      */
     readonly timeoutMs?: number;
-}
-
-/**
- * The effective router deadline in milliseconds.
- *
- * An explicit value overrides the derived deadline. The derived deadline is the
- * maximum of {@link AD_HOC_ROUTER_TIMEOUT_MS} and the request-timeout limit that
- * the provider advertises.
- */
-export function effectiveAdHocTimeoutMs(provider: Pick<ChatProvider, "requestTimeoutMs">, explicit?: number): number {
-    return explicit ?? Math.max(AD_HOC_ROUTER_TIMEOUT_MS, provider.requestTimeoutMs ?? 0);
 }
 
 export function defaultAdHocResources(policy?: ResourcePolicy): ResourceSpec {
@@ -119,7 +108,10 @@ export async function routeAdHocRequest(
     ).join("\n");
     const orientation = await profileOrientation(deps.pool, input.analysisId, logger);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error("ad hoc routing timed out")), effectiveAdHocTimeoutMs(deps.provider, deps.timeoutMs));
+    const timer = setTimeout(
+        () => controller.abort(new Error("ad hoc routing timed out")),
+        effectiveDeadlineMs(deps.provider, AD_HOC_ROUTER_TIMEOUT_MS, deps.timeoutMs),
+    );
     const signal = AbortSignal.any([input.signal, controller.signal]);
     let raw: unknown;
     let failure: AdHocRoute["fallbackClass"];

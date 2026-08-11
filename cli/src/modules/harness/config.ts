@@ -304,6 +304,18 @@ export type ModelConnectionIdentity = {
 const DEFAULT_MODEL_CONNECTION: ResolvedModelConnection = { mode: "cliproxy", provider: "anthropic", agents: {} };
 
 /**
+ * Pick the optional request bounds from a connection. An absent field spreads nothing, so the result
+ * omits it, and the consumer keeps the current provider behavior. The resolver and boot both spread the
+ * result into their provider config, thus the two sites share one rule.
+ */
+export function pickRequestBounds(connection: { requestTimeoutMs?: number; maxRetries?: number }): { requestTimeoutMs?: number; maxRetries?: number } {
+    return {
+        ...(connection.requestTimeoutMs !== undefined && { requestTimeoutMs: connection.requestTimeoutMs }),
+        ...(connection.maxRetries !== undefined && { maxRetries: connection.maxRetries }),
+    };
+}
+
+/**
  * Resolve the `models.connection` block the boot builds the chat provider from. The raw value comes
  * through lib/config.ts as `unknown` and is validated here (same pattern as {@link resolveHarnessConfig}):
  * an absent block — or a present block with no `connection` — resolves to {@link DEFAULT_MODEL_CONNECTION};
@@ -330,10 +342,7 @@ export function resolveModelConnection(): ResolvedModelConnection {
     if (connection === undefined) return { ...DEFAULT_MODEL_CONNECTION, agents };
     // The request timeout and the retry count ride through in both modes: an absent field spreads
     // nothing, so the resolved connection omits it and boot keeps the current provider behavior.
-    const requestBounds = {
-        ...(connection.requestTimeoutMs !== undefined && { requestTimeoutMs: connection.requestTimeoutMs }),
-        ...(connection.maxRetries !== undefined && { maxRetries: connection.maxRetries }),
-    };
+    const requestBounds = pickRequestBounds(connection);
     if (connection.mode === "cliproxy") {
         return { mode: "cliproxy", provider: connection.provider ?? "anthropic", agents, ...requestBounds };
     }

@@ -127,6 +127,17 @@ export interface ChatProvider extends AgentChat {
     readonly requestTimeoutMs?: number;
 }
 
+/**
+ * The effective deadline in milliseconds for a provider-bound operation.
+ *
+ * An explicit value wins. Absent an explicit value, the deadline is the maximum
+ * of `floorMs` and the request-timeout limit that the provider advertises. Thus
+ * a configured request timeout can raise the floor. It cannot lower the floor.
+ */
+export function effectiveDeadlineMs(provider: Pick<ChatProvider, "requestTimeoutMs">, floorMs: number, explicitMs?: number): number {
+    return explicitMs ?? Math.max(floorMs, provider.requestTimeoutMs ?? 0);
+}
+
 export interface EmbeddingProvider {
     /**
      * Width of every vector `embed` returns. The write-side index paths create

@@ -231,20 +231,34 @@ interface MaybeErrorChain {
 }
 
 /**
+ * Walk the `cause` chain up to {@link MAX_CAUSE_HOPS} links, and return the first
+ * result that `probe` gives. `probe` gives a value for a link that matches, or
+ * `undefined` for a link that does not. The walk stops at the first match, at
+ * the hop cap, or at the end of the chain.
+ */
+function findInCauseChain<T>(err: unknown, probe: (link: unknown) => T | undefined): T | undefined {
+    let cursor: unknown = err;
+    for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
+        const found = probe(cursor);
+        if (found !== undefined) return found;
+        cursor = (cursor as MaybeErrorChain).cause;
+    }
+    return undefined;
+}
+
+/**
  * Walk the `cause` chain for the first numeric HTTP status. The single status
  * walker: `classifyProviderError` keys on what this returns, so a caller asking
  * "did the provider layer have a status to classify on?" must ask it here rather
  * than re-implement the traversal.
  */
 export function extractStatus(err: unknown): number | undefined {
-    let cursor: unknown = err;
-    for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
-        const e = cursor as MaybeErrorChain;
+    return findInCauseChain(err, (link) => {
+        const e = link as MaybeErrorChain;
         if (typeof e.status === "number") return e.status;
         if (typeof e.statusCode === "number") return e.statusCode;
-        cursor = e.cause;
-    }
-    return undefined;
+        return undefined;
+    });
 }
 
 /**
@@ -272,35 +286,27 @@ function extractResponseBody(err: unknown): string | undefined {
  * `cause` chain, thus the sentinel can sit one or more hops down.
  */
 function findRequestTimeout(err: unknown): RequestTimeoutError | undefined {
-    let cursor: unknown = err;
-    for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
-        if (cursor instanceof RequestTimeoutError) return cursor;
+    return findInCauseChain(err, (link) => {
+        if (link instanceof RequestTimeoutError) return link;
         // A duplicate class identity across a realm boundary fails `instanceof`,
         // thus match the name and the field as a fallback.
-        const e = cursor as MaybeErrorChain & { requestTimeoutMs?: unknown };
-        if (e.name === "RequestTimeoutError" && typeof e.requestTimeoutMs === "number") return cursor as RequestTimeoutError;
-        cursor = e.cause;
-    }
-    return undefined;
+        const e = link as MaybeErrorChain & { requestTimeoutMs?: unknown };
+        if (e.name === "RequestTimeoutError" && typeof e.requestTimeoutMs === "number") return link as RequestTimeoutError;
+        return undefined;
+    });
 }
 
 /** Does any link of the `cause` chain look like a transport-level failure? */
 function looksLikeConnectionError(err: unknown): boolean {
-    let cursor: unknown = err;
-    for (let i = 0; i < MAX_CAUSE_HOPS && cursor; i++) {
-        const e = cursor as MaybeErrorChain;
-        if (typeof e.code === "string" && CONNECTION_ERROR_CODES.has(e.code)) {
-            return true;
-        }
-        if (typeof e.name === "string" && /^APIConnection/.test(e.name)) {
-            return true;
-        }
-        if (typeof e.message === "string" && CONNECTION_ERROR_PATTERN.test(e.message)) {
-            return true;
-        }
-        cursor = e.cause;
-    }
-    return false;
+    return (
+        findInCauseChain(err, (link) => {
+            const e = link as MaybeErrorChain;
+            if (typeof e.code === "string" && CONNECTION_ERROR_CODES.has(e.code)) return true;
+            if (typeof e.name === "string" && /^APIConnection/.test(e.name)) return true;
+            if (typeof e.message === "string" && CONNECTION_ERROR_PATTERN.test(e.message)) return true;
+            return undefined;
+        }) ?? false
+    );
 }
 
 /**
