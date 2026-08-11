@@ -821,11 +821,10 @@ async function bootHarnessRuntimeOnce(
         // construction path for both connection modes: the
         // resolved connection + a bound model becomes an `AiSdkProviderConfig`. cliproxy
         // resolves to the Anthropic kind at the owned proxy URL with the proxy client key
-        // — deliberately identical to what the harness's `createAnthropicProvider`
-        // convenience wrapper emits (same kind/baseURL/apiKey/model and `capabilities: {
-        // toolCalling: true }`), so the proxy path is indistinguishable from a bare
-        // Anthropic connection. direct resolves to the configured protocol kind at the
-        // configured endpoint with the env secret.
+        // — the same kind/baseURL/apiKey/model shape the harness's `createAnthropicProvider`
+        // convenience wrapper emits, so the proxy path takes the bare-Anthropic connection
+        // route through the harness. The capabilities are per-arm (below). direct resolves
+        // to the configured protocol kind at the configured endpoint with the env secret.
         // The auth-injecting fetch, present only when the connection gives a credential source. One
         // instance serves each per-model provider over this connection. Thus each agent shares the same
         // cached token and the same refresh. cliproxy and the static env key install nothing, because the
@@ -836,6 +835,11 @@ async function bootHarnessRuntimeOnce(
         // limit. The helper spreads a field only when it is present, so an absent config field yields an
         // absent provider field, and the harness then keeps its own default.
         const requestBounds = pickRequestBounds(connection);
+        // `imageToolResults` is a fact about the endpoint, thus each arm states its own value. The proxy
+        // translates each request onto the account that `inflexa setup` authenticated. That account can be
+        // a model of a different vendor, and such a wire carries no picture inside a tool result. A direct
+        // endpoint with the Anthropic protocol speaks the Messages wire, which renders an image block
+        // inside a `tool_result`. The chat-completions wire carries a tool result as text only.
         const providerConfigFor = (agentModel: string): AiSdkProviderConfig =>
             connection.mode === "cliproxy"
                 ? {
@@ -843,7 +847,7 @@ async function bootHarnessRuntimeOnce(
                       baseURL: env.cliproxyApiUrl,
                       apiKey: providerApiKey,
                       model: agentModel,
-                      capabilities: { toolCalling: true },
+                      capabilities: { toolCalling: true, imageToolResults: false },
                       ...requestBounds,
                   }
                 : connection.protocol === "anthropic"
@@ -853,7 +857,7 @@ async function bootHarnessRuntimeOnce(
                         apiKey: providerApiKey,
                         model: agentModel,
                         fetch: authFetch,
-                        capabilities: { toolCalling: true },
+                        capabilities: { toolCalling: true, imageToolResults: true },
                         ...requestBounds,
                     }
                   : {
@@ -863,7 +867,7 @@ async function bootHarnessRuntimeOnce(
                         apiKey: providerApiKey,
                         model: agentModel,
                         fetch: authFetch,
-                        capabilities: { toolCalling: true },
+                        capabilities: { toolCalling: true, imageToolResults: false },
                         ...requestBounds,
                     };
         // The logger is what makes the retry envelope visible. It backs off up to 10 times
