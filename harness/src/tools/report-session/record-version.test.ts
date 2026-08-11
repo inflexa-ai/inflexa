@@ -7,6 +7,9 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Pool } from "pg";
 
 import type { Scope } from "../../auth/types.js";
@@ -21,9 +24,13 @@ import { createReportVersionStore, type ReportVersionStore } from "../../state/r
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
 import type { ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
+import { createPreviewReportTool } from "./preview-report.js";
 import { createRecordVersionTool } from "./record-version.js";
 
 const ANALYSIS_ID = "analysis-001";
+
+/** Each workspace root that a test made. The cleanup removes them after the suite. */
+const createdRoots: string[] = [];
 
 /** A snapshot with one readable artifact that the metric binds to. */
 const metricSnapshot: ReportSnapshot = { artifacts: { "data/x.csv": { hash: "sha256:aaa", rows: [{ n: 42 }] } } };
@@ -95,6 +102,9 @@ describe("createRecordVersionTool", () => {
     });
 
     afterAll(async () => {
+        for (const root of createdRoots) {
+            await rm(root, { recursive: true, force: true });
+        }
         await drop();
     });
 
@@ -163,5 +173,51 @@ describe("createRecordVersionTool", () => {
         expect(stored!.parentThreadId).toBe(parentId);
         expect(stored!.parentSeq).toBe(7);
         expect(stored!.document.title).toBe("Report");
+    });
+
+    it("serves the preview and the record gate through one resolver factory on the same reference", async () => {
+        const parentId = "parent-shared";
+        const threadId = "thread-shared";
+        (await threads.createThread({ threadId: parentId, analysisId: ANALYSIS_ID }))._unsafeUnwrap();
+        (await threads.createThread({ threadId, analysisId: ANALYSIS_ID, type: "report", parentThreadId: parentId, parentSeq: 3 }))._unsafeUnwrap();
+
+        const doc = metricDoc();
+        const gateway = gatewayFor(threadId, doc, metricSnapshot, computeDraftHash(doc));
+
+        // The one factory serves both tools. It counts how many times a tool builds the resolver, and it
+        // gives one fixture realization.
+        const resolver = createFixtureResolver();
+        let constructions = 0;
+        const makeResolver = () => {
+            constructions += 1;
+            return resolver;
+        };
+
+        const root = await mkdtemp(join(tmpdir(), "record-shared-"));
+        createdRoots.push(root);
+
+        const previewTool = createPreviewReportTool({ gateway, makeResolver, resolveWorkspaceRoot: () => root });
+        const preview = (await previewTool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+        expect(preview.outcome).toBe("rendered");
+
+        const recordTool = createRecordVersionTool({ gateway, store, threads, makeResolver });
+        const record = (await recordTool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+        expect(record.outcome).toBe("recorded");
+
+        // Both tools built the resolver through the one factory.
+        expect(constructions).toBe(2);
+
+        // The page shows the resolved metric, and the recorded version binds the reference that gives it.
+        if (preview.outcome === "rendered") {
+            const page = await readFile(preview.pagePath, "utf8");
+            expect(page).toContain("42");
+        }
+        const stored = (await store.getThreadVersion(threadId))._unsafeUnwrap();
+        const block = stored!.document.sections[0].blocks[0];
+        expect(block.kind).toBe("metric");
+        if (block.kind === "metric") {
+            const resolved = (await resolver.resolve(block.value, metricSnapshot))._unsafeUnwrap();
+            expect(resolved).toEqual({ type: "scalar", value: 42 });
+        }
     });
 });

@@ -376,3 +376,41 @@ describe("production resolver, the prepare cache", () => {
         expect(result._unsafeUnwrapErr().reason).toBe("unreadable-artifact");
     });
 });
+
+describe("production resolver, the prepare batch of fall-throughs", () => {
+    test("prepare sends every fall-through in one arm batch, and each later resolve answers from the arm", async () => {
+        // Each file has an unknown format, thus the host arm cannot read it and the file falls through.
+        const hashA = await writeArtifact("fall-a.dat", "some bytes that are not a table");
+        const hashB = await writeArtifact("fall-b.dat", "more bytes that are not a table");
+        const { arm, batches } = stubArm({
+            "fall-a.dat": [{ gene: "BRCA1", score: "0.11" }],
+            "fall-b.dat": [{ gene: "BRCA1", score: "0.22" }],
+        });
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS, extractionArm: arm });
+        const refA = valueRef("fall-a.dat", hashA, "score", "gene", "BRCA1");
+        const refB = valueRef("fall-b.dat", hashB, "score", "gene", "BRCA1");
+        const snapshot = snapshotOf([
+            { path: "fall-a.dat", hash: hashA },
+            { path: "fall-b.dat", hash: hashB },
+        ]);
+
+        await resolver.prepare?.([refA, refB], snapshot);
+
+        // One arm call covers the whole batch, and the batch holds each fall-through request.
+        expect(batches.length).toBe(1);
+        expect(batches[0]).toHaveLength(2);
+        expect(batches[0]).toEqual(
+            expect.arrayContaining([
+                { path: "fall-a.dat", hash: hashA },
+                { path: "fall-b.dat", hash: hashB },
+            ]),
+        );
+
+        // The later resolve reads the arm value from the cache, and it opens no new batch.
+        const outA = await resolver.resolve(refA, snapshot);
+        const outB = await resolver.resolve(refB, snapshot);
+        expect(outA._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.11" });
+        expect(outB._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.22" });
+        expect(batches.length).toBe(1);
+    });
+});
