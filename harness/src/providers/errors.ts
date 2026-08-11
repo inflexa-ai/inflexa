@@ -88,7 +88,9 @@ export function toProviderError(e: unknown, workload: string): ProviderError {
     if (isProviderError(e)) return e;
     // A guard abort names the configured value in its message. Compose a message
     // that also names the workload, thus a reader sees both. This runs before the
-    // status walk, because a guard abort carries no HTTP status.
+    // status walk, because a guard abort carries no HTTP status. A timeout of the
+    // SDK carries no sentinel, thus it falls to the composed arm below, which
+    // forwards the message of the SDK.
     const timeout = findRequestTimeout(e);
     if (timeout !== undefined) {
         return {
@@ -296,6 +298,27 @@ function findRequestTimeout(err: unknown): RequestTimeoutError | undefined {
     });
 }
 
+/**
+ * The name of the abort reason that the `timeout` setting of the SDK raises. The
+ * SDK bounds each gap between two content chunks of a stream. On expiry it
+ * aborts the call with a bare `DOMException` that has this name, no cause, and
+ * no HTTP status. The message of that `DOMException` names the configured value.
+ */
+const SDK_TIMEOUT_ERROR_NAME = "TimeoutError";
+
+/**
+ * Walk the `cause` chain for the timeout that the SDK raises. The `DOMException`
+ * carries no field of its own, thus the name is the one signal. The SDK carries
+ * an abort reason down the `cause` chain, thus the reason can sit one or more
+ * hops down.
+ */
+function findSdkTimeout(err: unknown): Error | undefined {
+    return findInCauseChain(err, (link) => {
+        const e = link as MaybeErrorChain;
+        return e.name === SDK_TIMEOUT_ERROR_NAME ? (link as Error) : undefined;
+    });
+}
+
 /** Does any link of the `cause` chain look like a transport-level failure? */
 function looksLikeConnectionError(err: unknown): boolean {
     return (
@@ -319,12 +342,13 @@ function looksLikeConnectionError(err: unknown): boolean {
  * - Other `4xx` and parse / unknown errors → `provider`, not retryable.
  */
 export function classifyProviderError(e: unknown): ProviderErrorClassification {
-    // The request-timeout guard aborts an attempt with a typed sentinel. The
-    // sentinel classifies as a retryable provider timeout, thus the envelope
-    // retries it under the same policy as a connection error. This runs before
-    // the status and the connection paths, because a guard abort carries no HTTP
-    // status, and it must not fall to a non-retryable path.
-    if (findRequestTimeout(e) !== undefined) return { kind: "provider", retryable: true };
+    // The request-timeout guard aborts an attempt with a typed sentinel, and the
+    // chunk bound of the SDK aborts one with a `TimeoutError`. Each classifies as
+    // a retryable provider timeout, thus the envelope retries it under the same
+    // policy as a connection error. This runs before the status and the
+    // connection paths, because a timeout carries no HTTP status, and it must not
+    // fall to a non-retryable path.
+    if (findRequestTimeout(e) !== undefined || findSdkTimeout(e) !== undefined) return { kind: "provider", retryable: true };
 
     const status = extractStatus(e);
 

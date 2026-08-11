@@ -714,6 +714,34 @@ describe("createAiSdkProvider abort during backoff", () => {
         expect(Date.now() - startedAt).toBeLessThan(2_000);
         expect(attempts).toBe(1);
     }, 10_000);
+
+    it("does not loop when a wall-clock guard of the caller expires", async () => {
+        // A wall-clock guard of a caller aborts with a `TimeoutError` reason, which
+        // the taxonomy marks as a retryable timeout. The aborted caller signal
+        // stops the envelope, thus one attempt runs and the throwable rides out
+        // unchanged.
+        let attempts = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                attempts += 1;
+                throw new DOMException("The operation timed out.", "TimeoutError");
+            }),
+            resolveBilling: async () => ({}),
+        });
+
+        const controller = new AbortController();
+        controller.abort(new DOMException("The operation timed out.", "TimeoutError"));
+
+        try {
+            const outcome = await provider.chat(request, makeSession(), controller.signal);
+            throw new Error(`expected the expiry to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
+        } catch (err) {
+            expect(err).toBeInstanceOf(DOMException);
+            expect((err as DOMException).name).toBe("TimeoutError");
+        }
+
+        expect(attempts).toBe(1);
+    });
 });
 
 describe("createAiSdkProvider chatStream retry", () => {

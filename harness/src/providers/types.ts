@@ -121,8 +121,8 @@ export interface ChatProvider extends AgentChat {
      * The request-timeout limit that this provider enforces, in milliseconds, or
      * absent when it enforces none. The value bounds each silent interval of a
      * request attempt: the wait until the response starts, and each gap between
-     * two body chunks. A consumer that scales a deadline reads this value from the
-     * provider instance, not from a harness constant.
+     * two content chunks of a stream. A consumer that scales a deadline reads this
+     * value from the provider instance, not from a harness constant.
      */
     readonly requestTimeoutMs?: number;
 }

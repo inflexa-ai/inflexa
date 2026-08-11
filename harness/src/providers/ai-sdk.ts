@@ -1,4 +1,14 @@
-import { generateText, streamText, wrapLanguageModel, type FinishReason, type LanguageModel, type LanguageModelUsage, type ModelMessage } from "ai";
+import {
+    generateText,
+    streamText,
+    wrapLanguageModel,
+    type FinishReason,
+    type LanguageModel,
+    type LanguageModelUsage,
+    type ModelMessage,
+    type TextStreamPart,
+    type ToolSet,
+} from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { APICallError, type LanguageModelV4StreamPart } from "@ai-sdk/provider";
@@ -66,6 +76,14 @@ export interface AiSdkProviderDeps {
     readonly maxOutputTokens?: number;
     /** The retry limit of the harness envelope. Defaults to {@link RETRY_MAX_RETRIES}. */
     readonly maxRetries?: number;
+    /**
+     * The bound for each silent interval of a request attempt, in milliseconds.
+     * The provider hands the value to the SDK as the bound for each gap between
+     * two content chunks of a stream. The value also names itself in the error of
+     * a stream that the bound stopped. When the field is absent, the provider
+     * hands the SDK no bound.
+     */
+    readonly requestTimeoutMs?: number;
 }
 
 /**
@@ -91,14 +109,16 @@ export type AiSdkProviderConfig =
           /**
            * The bound for each silent interval of a request attempt, in
            * milliseconds. The value bounds the wait until the response starts, and
-           * each gap between two body chunks, per attempt. When the field is
-           * absent, the provider installs no guard, and its behavior does not
-           * change.
+           * each gap between two content chunks of a stream, per attempt. A chunk
+           * that carries no content, for example a keep-alive comment, does not
+           * reset the gap bound. When the field is absent, the provider installs no
+           * guard, and its behavior does not change.
            *
-           * The embedder fetch owns the transport floor. The supplied `fetch` must
-           * permit a silent wait of at least this value. When the transport cuts
-           * the request first, the connection-error classification applies
-           * unchanged.
+           * The harness lifts the transport floor of Bun: the guard adds
+           * `timeout: false` to the fetch init, thus the idle cut of 300 seconds
+           * does not apply. Under Node the floor of undici stays. Thus a Node
+           * embedder that sets a value above 300 seconds supplies a `fetch` whose
+           * dispatcher raises that limit.
            */
           readonly requestTimeoutMs?: number;
           /**
@@ -121,14 +141,16 @@ export type AiSdkProviderConfig =
           /**
            * The bound for each silent interval of a request attempt, in
            * milliseconds. The value bounds the wait until the response starts, and
-           * each gap between two body chunks, per attempt. When the field is
-           * absent, the provider installs no guard, and its behavior does not
-           * change.
+           * each gap between two content chunks of a stream, per attempt. A chunk
+           * that carries no content, for example a keep-alive comment, does not
+           * reset the gap bound. When the field is absent, the provider installs no
+           * guard, and its behavior does not change.
            *
-           * The embedder fetch owns the transport floor. The supplied `fetch` must
-           * permit a silent wait of at least this value. When the transport cuts
-           * the request first, the connection-error classification applies
-           * unchanged.
+           * The harness lifts the transport floor of Bun: the guard adds
+           * `timeout: false` to the fetch init, thus the idle cut of 300 seconds
+           * does not apply. Under Node the floor of undici stays. Thus a Node
+           * embedder that sets a value above 300 seconds supplies a `fetch` whose
+           * dispatcher raises that limit.
            */
           readonly requestTimeoutMs?: number;
           /**
@@ -279,6 +301,11 @@ function unwrapForClassification(e: unknown): unknown {
  * that, once retries are exhausted, `toProviderError`'s status walk reaches the
  * true HTTP status instead of stopping at a synthetic wrapper. The attempt
  * counter is per-instance because each call builds its own retry.
+ *
+ * An aborted caller signal also stops the retry. A wall-clock guard of a caller
+ * aborts with a `TimeoutError` reason, which the taxonomy marks as a retryable
+ * timeout. Without this guard the envelope would loop an expiry that the caller
+ * itself declared.
  */
 function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number) {
     let retryCount = 0;
@@ -287,7 +314,7 @@ function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries
         initialDelayInMs: RETRY_INITIAL_DELAY_MS,
         backoffFactor: RETRY_BACKOFF_FACTOR,
         abortSignal: signal,
-        shouldRetry: (e) => !(e instanceof BillingSeamFailure) && classifyProviderError(e).retryable,
+        shouldRetry: (e) => !(e instanceof BillingSeamFailure) && signal?.aborted !== true && classifyProviderError(e).retryable,
         getDelayInMs: ({ error, exponentialBackoffDelay }) => {
             const delayMs = computeRetryDelayMs(error, exponentialBackoffDelay);
             retryCount += 1;
@@ -446,11 +473,54 @@ function sanitizeMessages(messages: readonly ModelMessage[]): ModelMessage[] {
     return out;
 }
 
+/**
+ * The result of one advance of the SDK stream up to the next text delta.
+ *
+ * `delta` carries the text of one content part. `aborted` marks the `abort`
+ * part, which the SDK emits when the chunk bound or the caller signal stops the
+ * stream. `end` marks a stream that closed with no further text.
+ */
+type StreamPull = { readonly kind: "delta"; readonly text: string } | { readonly kind: "aborted"; readonly reason?: string } | { readonly kind: "end" };
+
+/**
+ * Advance the SDK stream to the next text delta.
+ *
+ * The full stream carries one part for each event of a turn, and only a text
+ * part reaches the consumer of the harness. Thus the pull skips each other part.
+ * The `abort` part stops the pull, because the SDK closes the stream directly
+ * after it. Thus a timeout can never end the stream in silence with the text
+ * that arrived before it.
+ */
+async function pullNextDelta(iterator: AsyncIterator<TextStreamPart<ToolSet>>): Promise<StreamPull> {
+    for (let next = await iterator.next(); next.done !== true; next = await iterator.next()) {
+        const part = next.value;
+        if (part.type === "text-delta") return { kind: "delta", text: part.text };
+        if (part.type === "abort") return { kind: "aborted", reason: part.reason };
+    }
+    return { kind: "end" };
+}
+
+/**
+ * The failure that an `abort` part of the SDK stream stands for.
+ *
+ * The part carries a message only, thus the caller signal is the one thing that
+ * separates a cancellation from a timeout. When the caller signal is aborted,
+ * the reason of that signal rides out, and the cancellation path applies
+ * unchanged. Otherwise the SDK chunk bound stopped the stream, and the sentinel
+ * names the configured value for the classifier.
+ */
+function abortedStreamFailure(signal: AbortSignal | undefined, reason: string | undefined, requestTimeoutMs: number | undefined): unknown {
+    if (signal?.aborted === true) return signal.reason;
+    if (requestTimeoutMs !== undefined) return new RequestTimeoutError(requestTimeoutMs);
+    return new Error(reason ?? "The provider aborted the stream.");
+}
+
 export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const capabilities: ProviderCapabilities = { toolCalling: deps.capabilities?.toolCalling ?? true };
     const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
     const maxOutputTokens = deps.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     const maxRetries = deps.maxRetries ?? RETRY_MAX_RETRIES;
+    const requestTimeoutMs = deps.requestTimeoutMs;
     const requestedModelId = requestedModelIdOf(deps.model);
     routeSdkWarningsTo(logger);
 
@@ -476,6 +546,10 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         maxRetries: 0,
                         headers,
                         abortSignal: signal,
+                        // No SDK timeout rides here. `chunkMs` bounds a stream only,
+                        // thus it is inert on this call. The fetch guard is the full
+                        // bound, because the headers of a non-streaming response arrive
+                        // when the model completes.
                         providerOptions: req.providerOptions,
                     });
                 });
@@ -513,11 +587,21 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     maxRetries: 0,
                     headers,
                     abortSignal: signal,
+                    // The SDK bounds each gap between two content chunks of the body.
+                    // Its timer arms at the first part of the provider stream, thus the
+                    // wait until the response starts stays with the fetch guard. A
+                    // chunk that carries no content, for example a keep-alive comment,
+                    // produces no part, thus it does not reset this bound.
+                    ...(requestTimeoutMs !== undefined ? { timeout: { chunkMs: requestTimeoutMs } } : {}),
                     providerOptions: req.providerOptions,
                 });
-                const iterator = result.textStream[Symbol.asyncIterator]();
-                const first = await iterator.next();
-                if (first.done) {
+                const iterator = result.fullStream[Symbol.asyncIterator]();
+                const first = await pullNextDelta(iterator);
+                // The chunk bound can stop the stream before any content arrives. The
+                // throw carries the sentinel, thus the envelope gives the attempt a
+                // fresh window under the retry policy of a connection error.
+                if (first.kind === "aborted") throw abortedStreamFailure(signal, first.reason, requestTimeoutMs);
+                if (first.kind === "end") {
                     // A doStream promise rejection — the shape a real connection
                     // failure takes — does NOT surface at this first pull: streamText
                     // resolves it `{ done: true }` and defers the rejection to the
@@ -526,8 +610,8 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     // retried; a genuine text-less turn resolves them, and the terminal
                     // event is built from these already-resolved values without a
                     // second await. (These promises only settle once the stream is
-                    // fully drained, so they can be awaited here only because the first
-                    // pull already reported the stream done.)
+                    // fully drained, so they can be awaited here only because the pull
+                    // already reported the stream done.)
                     return {
                         kind: "completed" as const,
                         messages: await result.responseMessages,
@@ -536,7 +620,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         usage: await result.usage,
                     };
                 }
-                return { kind: "streaming" as const, result, iterator, firstDelta: first.value };
+                return { kind: "streaming" as const, result, iterator, firstDelta: first.text };
             });
 
             if (opened.kind === "completed") {
@@ -558,9 +642,13 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             yield { type: "text-delta", text: firstDelta };
             // Drain the same iterator: past the first delta, errors propagate
             // unchanged (no retry, no re-emit).
-            for (let next = await iterator.next(); !next.done; next = await iterator.next()) {
-                text += next.value;
-                yield { type: "text-delta", text: next.value };
+            for (let pull = await pullNextDelta(iterator); pull.kind !== "end"; pull = await pullNextDelta(iterator)) {
+                // A mid-stream abort ends the turn with an error, never with the
+                // partial text that arrived before it. The catch below builds the
+                // terminal `ProviderError` from the throwable.
+                if (pull.kind === "aborted") throw abortedStreamFailure(signal, pull.reason, requestTimeoutMs);
+                text += pull.text;
+                yield { type: "text-delta", text: pull.text };
             }
             const response = responseFromMessages({
                 messages: await result.responseMessages,
@@ -584,20 +672,19 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 }
 
 /**
- * Wrap a fetch so that no silent interval of a request attempt exceeds
+ * Wrap a fetch so that the wait until the response starts does not exceed
  * `requestTimeoutMs`. The wrapper arms one timer for each fetch call. The timer
- * bounds the wait until the response starts. On expiry the wrapper aborts a
- * dedicated controller with a `RequestTimeoutError` reason, and it composes that
- * controller with the caller signal through `AbortSignal.any`. Thus the caller
- * signal keeps its normal effect, and a caller abort stays a cancellation.
+ * runs from the send until the fetch promise settles, and the headers of the
+ * response settle it. On expiry the wrapper aborts a dedicated controller with a
+ * `RequestTimeoutError` reason, and it composes that controller with the caller
+ * signal through `AbortSignal.any`. Thus the caller signal keeps its normal
+ * effect, and a caller abort stays a cancellation.
  *
- * When the response starts, the wrapper wraps the body. It re-arms the timer at
- * the response start, and again on each received chunk, and it clears the timer
- * at the end of the body. A caller abort also clears the timer, thus a
- * cancellation frees the guard at once, even between two body reads. Thus a
- * stream with steady chunks does not trip the guard, whatever its total length,
- * but a stalled stream does. One fetch call is one attempt, because the SDK
- * retries are off, thus the window is per attempt.
+ * The guard bounds the response start only. The SDK bounds each later gap of a
+ * streamed body with its own `chunkMs` setting, thus no timer of the wrapper
+ * survives the headers. Thus a stream with steady content does not trip the
+ * guard, whatever its total length. One fetch call is one attempt, because the
+ * SDK retries are off, thus the window is per attempt.
  *
  * When the field is absent, `createConfiguredAiSdkProvider` installs no wrapper,
  * and the behavior stays byte-identical.
@@ -606,18 +693,13 @@ export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeout
     return async (input, init) => {
         const controller = new AbortController();
         const callerSignal = init?.signal ?? undefined;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const arm = (): void => {
-            if (timer !== undefined) clearTimeout(timer);
-            timer = setTimeout(() => controller.abort(new RequestTimeoutError(requestTimeoutMs)), requestTimeoutMs);
-            // The harness runs on Node, where a timer has `unref`. Unref the guard
-            // timer, thus an armed guard does not keep a short-lived process alive.
-            // The DOM type of `setTimeout` declares no `unref`, thus guard the call.
-            timer.unref?.();
-        };
+        const timer = setTimeout(() => controller.abort(new RequestTimeoutError(requestTimeoutMs)), requestTimeoutMs);
+        // The harness runs on Node, where a timer has `unref`. Unref the guard
+        // timer, thus an armed guard does not keep a short-lived process alive.
+        // The DOM type of `setTimeout` declares no `unref`, thus guard the call.
+        timer.unref?.();
         const clear = (): void => {
-            if (timer !== undefined) clearTimeout(timer);
-            timer = undefined;
+            clearTimeout(timer);
             // The harness runs on Node, where a caller signal can outlive one fetch
             // attempt. Remove the abort listener when the attempt settles, thus a
             // long-lived signal does not retain this closure.
@@ -631,51 +713,17 @@ export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeout
         const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal;
         callerSignal?.addEventListener("abort", clear, { once: true });
 
-        arm();
-        let response: Response;
+        // `timeout: false` is an extension of the fetch init of Bun. Bun cuts a
+        // request that stays idle for 300 seconds, and this key lifts that cut. Node
+        // ignores an unknown member of the init, thus the key is inert there. A
+        // probe on Bun 1.3.14 proved both results. The `RequestInit` type declares
+        // no such member, thus the cast.
+        const forwarded = { ...init, signal, timeout: false } as RequestInit;
         try {
-            response = await fetchImpl(input, { ...init, signal });
-        } catch (e) {
+            return await fetchImpl(input, forwarded);
+        } finally {
             clear();
-            throw e;
         }
-
-        // A body-less response, for example a 204, has no chunk to guard.
-        const body = response.body;
-        if (body === null) {
-            clear();
-            return response;
-        }
-
-        const source = body.getReader();
-        const guarded = new ReadableStream<Uint8Array>({
-            start() {
-                // Re-arm at the response start, thus the first chunk gap gets a
-                // full window even after a slow header wait.
-                arm();
-            },
-            async pull(streamController) {
-                try {
-                    const { done, value } = await source.read();
-                    if (done) {
-                        clear();
-                        streamController.close();
-                        return;
-                    }
-                    arm();
-                    streamController.enqueue(value);
-                } catch (e) {
-                    clear();
-                    streamController.error(e);
-                }
-            },
-            cancel(reason) {
-                clear();
-                return source.cancel(reason);
-            },
-        });
-
-        return new Response(guarded, { status: response.status, statusText: response.statusText, headers: response.headers });
     };
 }
 
@@ -687,9 +735,10 @@ export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeout
  * single model it was built with.
  *
  * When the config sets `requestTimeoutMs`, the provider wraps the effective fetch
- * (`config.fetch ?? globalThis.fetch`) with the request-timeout guard, and it
- * advertises the value on the returned instance. When the field is absent, it
- * installs no wrapper, and it advertises no value.
+ * (`config.fetch ?? globalThis.fetch`) with the response-start guard, it hands
+ * the value to the stream call as the SDK chunk bound, and it advertises the
+ * value on the returned instance. When the field is absent, it installs no
+ * wrapper, it hands the SDK no bound, and it advertises no value.
  */
 export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps): ChatProvider {
     const config = deps.config;
@@ -715,6 +764,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
                 logger: deps.logger,
                 ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
                 ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
+                ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
             }),
         );
     }
@@ -733,6 +783,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             logger: deps.logger,
             ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
             ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
+            ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
         }),
     );
 }
