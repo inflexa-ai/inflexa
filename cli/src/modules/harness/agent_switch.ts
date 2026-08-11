@@ -56,6 +56,12 @@ export function createSwappableProvider(initial: ChatProvider): SwappableChatPro
         get capabilities() {
             return inner.capabilities;
         },
+        // The advertised request-timeout limit reads through to the current inner. A getter, not a
+        // snapshot, because a swap re-points the inner and the harness deadline helpers
+        // (`effectiveDeadlineMs`) read the value at call time from this stable handle.
+        get requestTimeoutMs() {
+            return inner.requestTimeoutMs;
+        },
         get current() {
             return inner;
         },

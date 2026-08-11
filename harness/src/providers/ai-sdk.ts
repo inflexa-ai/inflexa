@@ -668,7 +668,9 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
         }
     }
 
-    return { capabilities, chat, chatStream };
+    // The provider advertises the guard limit on its own instance, thus a
+    // consumer that scales a deadline reads it from the provider in its deps.
+    return { capabilities, chat, chatStream, ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}) };
 }
 
 /**
@@ -746,27 +748,21 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
     const effectiveFetch =
         requestTimeoutMs === undefined ? config.fetch : wrapFetchWithRequestTimeout(config.fetch ?? (globalThis.fetch as FetchLike), requestTimeoutMs);
 
-    // The provider advertises the guard limit on its own instance, thus a
-    // consumer that scales a deadline reads it from the provider in its deps.
-    const advertise = (provider: ChatProvider): ChatProvider => (requestTimeoutMs === undefined ? provider : { ...provider, requestTimeoutMs });
-
     if (config.kind === "anthropic") {
         const provider = createAnthropic({
             baseURL: config.baseURL,
             apiKey: config.apiKey,
             fetch: effectiveFetch as typeof fetch | undefined,
         });
-        return advertise(
-            createAiSdkProvider({
-                model: provider.chat(config.model),
-                resolveBilling: deps.resolveBilling,
-                capabilities: config.capabilities,
-                logger: deps.logger,
-                ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
-                ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
-                ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
-            }),
-        );
+        return createAiSdkProvider({
+            model: provider.chat(config.model),
+            resolveBilling: deps.resolveBilling,
+            capabilities: config.capabilities,
+            logger: deps.logger,
+            ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
+            ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
+            ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
+        });
     }
 
     const provider = createOpenAICompatible({
@@ -775,15 +771,13 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         apiKey: config.apiKey,
         fetch: effectiveFetch as typeof fetch | undefined,
     });
-    return advertise(
-        createAiSdkProvider({
-            model: provider.chatModel(config.model),
-            resolveBilling: deps.resolveBilling,
-            capabilities: config.capabilities,
-            logger: deps.logger,
-            ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
-            ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
-            ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
-        }),
-    );
+    return createAiSdkProvider({
+        model: provider.chatModel(config.model),
+        resolveBilling: deps.resolveBilling,
+        capabilities: config.capabilities,
+        logger: deps.logger,
+        ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
+        ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
+        ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
+    });
 }

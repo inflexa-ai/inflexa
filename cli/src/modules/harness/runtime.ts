@@ -843,7 +843,6 @@ async function bootHarnessRuntimeOnce(
                       baseURL: env.cliproxyApiUrl,
                       apiKey: providerApiKey,
                       model: agentModel,
-                      fetch: authFetch,
                       capabilities: { toolCalling: true },
                       ...requestBounds,
                   }
