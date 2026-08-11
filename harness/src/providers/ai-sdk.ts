@@ -10,8 +10,9 @@ import {
     type ToolSet,
 } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { APICallError, type LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { APICallError, type LanguageModelV4, type LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { retryWithExponentialBackoff } from "@ai-sdk/provider-utils";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
@@ -88,7 +89,7 @@ export interface AiSdkProviderDeps {
 
 /**
  * Connection + model configuration for one `ChatProvider`, discriminated by
- * wire protocol (`anthropic` | `openai-compatible`). The `model` is the wire
+ * wire protocol (`anthropic` | `openai` | `openai-compatible`). The `model` is the wire
  * model bound into the provider at construction: `ChatRequest` carries no model
  * field (see `./types.ts`), so a config value describes exactly one model over
  * one connection. An embedder running distinct models builds one provider per
@@ -127,6 +128,69 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
+      }
+    | {
+          readonly kind: "openai";
+          readonly baseURL?: string;
+          readonly apiKey: string;
+          readonly model: string;
+          readonly fetch?: FetchLike;
+          readonly capabilities?: Partial<ProviderCapabilities>;
+          /** Output-token ceiling per request. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. */
+          readonly maxOutputTokens?: number;
+          /**
+           * The bound for each silent interval of a request attempt, in
+           * milliseconds. The value bounds the wait until the response starts, and
+           * each gap between two content chunks of a stream, per attempt. A chunk
+           * that carries no content, for example a keep-alive comment, does not
+           * reset the gap bound. When the field is absent, the provider installs no
+           * guard, and its behavior does not change.
+           *
+           * The harness lifts the transport floor of Bun: the guard adds
+           * `timeout: false` to the fetch init, thus the idle cut of 300 seconds
+           * does not apply. Under Node the floor of undici stays. Thus a Node
+           * embedder that sets a value above 300 seconds supplies a `fetch` whose
+           * dispatcher raises that limit.
+           */
+          readonly requestTimeoutMs?: number;
+          /**
+           * The retry limit of the harness envelope. The envelope uses this value
+           * in place of the default limit. When the field is absent, the envelope
+           * keeps the default of 10.
+           */
+          readonly maxRetries?: number;
+          /**
+           * NOTICE: this value is the retention directive of the Responses wire.
+           *
+           * An unset value lets the OpenAI server keep the response for 30 days.
+           * The dashboard logs show that response, and a caller can retrieve it by
+           * id. Thus the arm always sends an explicit value. The default is
+           * `false`, and an analysis payload does not persist at OpenAI.
+           *
+           * An unset value is also not neutral inside the SDK. When the SDK sees
+           * no explicit `false`, its input converter assumes storage. It then
+           * replaces a round-tripped item with an `item_reference` entry. Such a
+           * reference fails with a 404 under Zero Data Retention, and it fails
+           * after the 30-day expiry.
+           *
+           * An explicit `false` selects the stateless reasoning path of the SDK.
+           * The SDK adds `include: ["reasoning.encrypted_content"]` for a
+           * reasoning-family model id. It captures the blob on `providerMetadata`,
+           * and it replays the blob from the history of the thread. The SDK strips
+           * a reasoning part that lost its blob, and it warns. That warning reaches
+           * the harness logger through the SDK warning hook.
+           *
+           * One thread must keep one mode. The wire captures the history of a turn
+           * under the mode of that turn. If a later turn replays a history of the
+           * `false` mode under storage, the SDK emits a reference onto an item that
+           * the server never stored.
+           *
+           * An operator can override the default with `true`. The dashboard then
+           * shows the trail of the thread, and a caller can retrieve a response by
+           * id. The harness does not use `previous_response_id`, and it does not
+           * use `conversation`. This is true for the two modes.
+           */
+          readonly store?: boolean;
       }
     | {
           readonly kind: "openai-compatible";
@@ -736,6 +800,29 @@ export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeout
 }
 
 /**
+ * Bind one explicit `store` directive onto each call of a model.
+ *
+ * The middleware merges the value into the `openai` namespace of
+ * `providerOptions`. It keeps each other namespace, and it keeps each other key
+ * of the `openai` namespace, thus a cache directive of a different vendor rides
+ * through untouched. The arm value wins over a request-level `store`, because
+ * the retention mode belongs to the connection and not to one turn — a thread
+ * that mixes the two modes replays a reference onto an item that the server
+ * never stored.
+ */
+function withStoreDirective(model: LanguageModelV4, store: boolean): LanguageModelV4 {
+    return wrapLanguageModel({
+        model,
+        middleware: {
+            transformParams: async ({ params }) => ({
+                ...params,
+                providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, store } },
+            }),
+        },
+    });
+}
+
+/**
  * Realize an `AiSdkProviderConfig` into a `ChatProvider` bound to that config's
  * connection and model. The model is closed into the returned provider here (it
  * is never passed per `ChatRequest`), so N models require N provider
@@ -770,6 +857,34 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         const pictureDefault: Partial<ProviderCapabilities> = config.baseURL === undefined ? { imageToolResults: true } : {};
         return createAiSdkProvider({
             model: provider.chat(config.model),
+            resolveBilling: deps.resolveBilling,
+            capabilities: { ...pictureDefault, ...config.capabilities },
+            logger: deps.logger,
+            ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
+            ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
+            ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
+        });
+    }
+
+    if (config.kind === "openai") {
+        const provider = createOpenAI({
+            baseURL: config.baseURL,
+            apiKey: config.apiKey,
+            fetch: effectiveFetch as typeof fetch | undefined,
+        });
+        // The Responses wire renders an image block inside a function-call
+        // output, thus the loop can send a picture. A custom baseURL can front
+        // a different backend that stringifies the block. Thus the harness
+        // asserts the capability only for the default endpoint. An absent flag
+        // means "cannot carry", thus a config with a custom baseURL must
+        // declare the capability. A config value overrides this default in both
+        // directions.
+        const pictureDefault: Partial<ProviderCapabilities> = config.baseURL === undefined ? { imageToolResults: true } : {};
+        return createAiSdkProvider({
+            // The explicit Responses binding pins the wire here. The bare
+            // factory callable of the package resolves to the same path today,
+            // but nothing in the package holds it there.
+            model: withStoreDirective(provider.responses(config.model), config.store ?? false),
             resolveBilling: deps.resolveBilling,
             capabilities: { ...pictureDefault, ...config.capabilities },
             logger: deps.logger,
