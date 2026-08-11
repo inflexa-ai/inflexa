@@ -53,10 +53,29 @@ const SELECTOR_TIMEOUT_MS = 5_000;
  * the event before this wait registered, thus a plain listener never blocks forever. The timer arm bounds a
  * page that never signals.
  *
- * The two interpolated values are compile-time constants of the emitting module. Never interpolate a value
- * that a caller supplies into this body, because the browser runs the body as source text.
+ * The browser runs this body as source text. Thus the body reads no module binding, and each value that it
+ * needs arrives as a parameter. The page evaluation sends a parameter as data, thus no value becomes code.
  */
-const THEME_READY_WAIT = `return new Promise(function(resolve){if(window[${JSON.stringify(THEME_READY_SENTINEL)}]){resolve();return;}var t=setTimeout(resolve,timeout);document.addEventListener(${JSON.stringify(THEME_READY_EVENT)},function(){clearTimeout(t);resolve();},{once:true});});`;
+function waitForThemeReady(sentinel: string, event: string, timeout: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+        // The sentinel name arrives as a value, thus no declared property of the global object describes it.
+        if ((window as unknown as Record<string, unknown>)[sentinel]) {
+            resolve();
+            return;
+        }
+        const timer = setTimeout(() => {
+            resolve();
+        }, timeout);
+        document.addEventListener(
+            event,
+            () => {
+                clearTimeout(timer);
+                resolve();
+            },
+            { once: true },
+        );
+    });
+}
 
 /**
  * Capture one page: the screenshot, the console errors, and the failed requests.
@@ -79,8 +98,8 @@ export function capturePage(chrome: ChromeConfig, url: string, options: CaptureO
 
         await page.goto(url, { waitUntil: "networkidle2", timeout: PAGE_NAV_TIMEOUT_MS });
 
-        // The callback runs in the browser context, thus it arrives as source text and not as a closure.
-        await page.evaluate(new Function("timeout", THEME_READY_WAIT) as (timeout: number) => Promise<void>, PAGE_READY_TIMEOUT_MS).catch(() => {
+        // The two names and the budget ride as arguments, because the browser context has no module scope.
+        await page.evaluate(waitForThemeReady, THEME_READY_SENTINEL, THEME_READY_EVENT, PAGE_READY_TIMEOUT_MS).catch(() => {
             /* the picture captures as it stands */
         });
 
