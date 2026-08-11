@@ -571,7 +571,7 @@ settings files or offer detected helpers.
 
 ### Requirement: The connection accepts a request timeout and a retry count
 
-Both arms of `models.connection` MUST accept optional `requestTimeoutMs` and `maxRetries` fields. The schema MUST accept only a positive integer for each. Boot MUST carry the values into the harness provider configuration for every per-model provider over the connection. An absent field MUST keep the current behavior.
+Both arms of `models.connection` MUST accept optional `requestTimeoutMs` and `maxRetries` fields. `requestTimeoutMs` accepts only a positive integer. `maxRetries` accepts only a non-negative integer, and zero means no retries. Boot MUST carry the values into the harness provider configuration for every per-model provider over the connection. An absent field MUST keep the current behavior.
 
 #### Scenario: A configured timeout reaches the provider
 
@@ -588,6 +588,12 @@ Both arms of `models.connection` MUST accept optional `requestTimeoutMs` and `ma
 - **WHEN** the connection carries `maxRetries: 3`
 - **THEN** each harness provider config that boot builds carries `maxRetries: 3`
 
+#### Scenario: A zero retry count reaches the provider
+
+- **WHEN** the connection carries `maxRetries: 0`
+- **THEN** the config resolution reports no config error, and each harness provider config that boot
+  builds carries `maxRetries: 0`
+
 #### Scenario: An absent field changes nothing
 
 - **WHEN** the connection carries neither field
@@ -596,6 +602,7 @@ Both arms of `models.connection` MUST accept optional `requestTimeoutMs` and `ma
 
 #### Scenario: An invalid value fails closed
 
-- **WHEN** the config carries a zero, negative, or non-integer value in either field
+- **WHEN** the config carries a zero, negative, or non-integer `requestTimeoutMs`, or a negative or
+  non-integer `maxRetries`
 - **THEN** the config resolution reports a config error through the existing config-schema pattern
 

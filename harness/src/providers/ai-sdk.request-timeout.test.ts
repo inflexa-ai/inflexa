@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { makeSession } from "./__fixtures__/session.js";
-import { createConfiguredAiSdkProvider, type AiSdkProviderConfig } from "./ai-sdk.js";
+import { createConfiguredAiSdkProvider, wrapFetchWithRequestTimeout, type AiSdkProviderConfig } from "./ai-sdk.js";
 import type { ChatRequest, FetchLike } from "./types.js";
 
 const request: ChatRequest = {
@@ -213,6 +213,68 @@ describe("request-timeout guard", () => {
             expect(result.error.message).toContain("20");
         }
     }, 10_000);
+
+    it("clears the armed guard timer when the caller aborts between two body reads", async () => {
+        // Instrument the global timer so the test asserts on the live guard-timer
+        // set as state, not on a call count. The wrapper arms and clears through
+        // these globals, thus the set reflects the guard timer directly.
+        const realSetTimeout = globalThis.setTimeout;
+        const realClearTimeout = globalThis.clearTimeout;
+        const live = new Set<ReturnType<typeof setTimeout>>();
+        let lastArmed: ReturnType<typeof setTimeout> | undefined;
+        globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+            const handle = realSetTimeout(...args);
+            live.add(handle);
+            lastArmed = handle;
+            return handle;
+        }) as typeof globalThis.setTimeout;
+        globalThis.clearTimeout = ((handle?: ReturnType<typeof setTimeout>) => {
+            if (handle !== undefined) live.delete(handle);
+            realClearTimeout(handle);
+        }) as typeof globalThis.clearTimeout;
+
+        try {
+            // A body that gives one chunk, then stalls and ignores the signal. After
+            // the chunk, the guard timer is armed and no pending `source.read()`
+            // rejects on the abort. Thus only the caller-abort listener can clear it.
+            const oneChunkThenStall: FetchLike = () => {
+                const body = new ReadableStream<Uint8Array>({
+                    start(controller) {
+                        controller.enqueue(new TextEncoder().encode("chunk"));
+                    },
+                    pull() {
+                        return new Promise<void>(() => {});
+                    },
+                });
+                return Promise.resolve(new Response(body, { status: 200, headers: { "content-type": "application/json" } }));
+            };
+
+            const wrapped = wrapFetchWithRequestTimeout(oneChunkThenStall, 10_000);
+            const caller = new AbortController();
+            const response = await wrapped("http://models.local/v1", { signal: caller.signal });
+
+            const stream = response.body;
+            if (stream === null) throw new Error("expected a response body to guard");
+            const reader = stream.getReader();
+            await reader.read();
+
+            expect(lastArmed).toBeDefined();
+            const guardTimer = lastArmed as ReturnType<typeof setTimeout>;
+            expect(live.has(guardTimer)).toBe(true);
+
+            caller.abort(new DOMException("caller cancelled", "AbortError"));
+
+            // The caller abort clears the armed guard timer at once, thus it leaves
+            // the live set and cannot reach a late, pointless expiry.
+            expect(live.has(guardTimer)).toBe(false);
+
+            await reader.cancel();
+        } finally {
+            for (const handle of live) realClearTimeout(handle);
+            globalThis.setTimeout = realSetTimeout;
+            globalThis.clearTimeout = realClearTimeout;
+        }
+    });
 });
 
 describe("request-timeout advertisement", () => {

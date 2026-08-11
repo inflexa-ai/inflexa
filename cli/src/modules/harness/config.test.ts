@@ -263,10 +263,11 @@ describe("resolveModelConnection — fail closed", () => {
     });
 });
 
-// The request timeout and the retry count: both are optional positive integers on both connection arms,
-// and boot carries the resolved values into the harness provider config. A valid value rides through, an
-// absent value is omitted, and a zero, a negative, or a non-integer value fails the models parse closed
-// (the same fail-closed pattern as a malformed connection above).
+// The request timeout and the retry count: both are optional integer fields on both connection arms, and
+// boot carries the resolved values into the harness provider config. requestTimeoutMs is a positive
+// integer. maxRetries is a non-negative integer, so zero is a valid no-retries setting. A valid value
+// rides through, an absent value is omitted, and an out-of-range or non-integer value fails the models
+// parse closed (the same fail-closed pattern as a malformed connection above).
 describe("resolveModelConnection — request timeout and retry count", () => {
     test("a valid requestTimeoutMs and maxRetries ride onto a direct connection", () => {
         writeConfigWithModels({
@@ -298,6 +299,13 @@ describe("resolveModelConnection — request timeout and retry count", () => {
         const resolved = resolveModelConnection();
         expect(resolved).toMatchObject({ mode: "cliproxy", provider: "anthropic" });
         expect(resolved.configError?.issues).toContain("models.connection");
+    });
+
+    test("a zero maxRetries parses and rides onto the connection as a no-retries setting", () => {
+        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic", maxRetries: 0 } });
+        const resolved = resolveModelConnection();
+        expect(resolved).toMatchObject({ mode: "cliproxy", provider: "anthropic", maxRetries: 0 });
+        expect(resolved.configError).toBeUndefined();
     });
 
     test("a negative maxRetries fails closed, carrying a configError", () => {

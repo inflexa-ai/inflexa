@@ -54,6 +54,7 @@ import { modelMatchesProvider, readApiKey, resolveModelId, type ChatSetupError }
 import {
     resolveHarnessConfig,
     resolveModelConnection,
+    pickRequestBounds,
     AGENT_NAMES,
     type ResolvedHarnessConfig,
     type ResolvedModelConnection,
@@ -591,7 +592,7 @@ export function buildTimeoutLiftingFetch(underlying: InjectingFetch = fetch): In
  * override. When the connection lifts the request timeout, the base is {@link buildTimeoutLiftingFetch}.
  * When a credential source exists, the auth-injecting fetch wraps that base, so every auth attempt rides
  * the raised transport, and it still refreshes exactly once on a 401. With no timeout and no credential
- * source, the result is `undefined` and the provider behavior matches the behavior before this change.
+ * source, the result is `undefined`, and the provider receives no fetch override.
  * `underlying` is injectable for tests; production passes the Bun `fetch`.
  */
 export function buildProviderFetch(
@@ -869,12 +870,9 @@ async function bootHarnessRuntimeOnce(
         // (undefined for cliproxy and for the static env key, which the SDK sends as-is), exactly as before.
         const providerFetch = buildProviderFetch(connection.requestTimeoutMs, credentialSource);
         // The request bounds the harness enforces and advertises: the per-attempt idle guard and the retry
-        // limit. Spread conditionally so an absent config field yields an absent provider field, and the
-        // harness then keeps its own default.
-        const requestBounds = {
-            ...(connection.requestTimeoutMs !== undefined && { requestTimeoutMs: connection.requestTimeoutMs }),
-            ...(connection.maxRetries !== undefined && { maxRetries: connection.maxRetries }),
-        };
+        // limit. The helper spreads a field only when it is present, so an absent config field yields an
+        // absent provider field, and the harness then keeps its own default.
+        const requestBounds = pickRequestBounds(connection);
         const providerConfigFor = (agentModel: string): AiSdkProviderConfig =>
             connection.mode === "cliproxy"
                 ? {

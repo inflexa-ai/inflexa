@@ -593,29 +593,43 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
  *
  * When the response starts, the wrapper wraps the body. It re-arms the timer at
  * the response start, and again on each received chunk, and it clears the timer
- * at the end of the body. Thus a stream with steady chunks does not trip the
- * guard, whatever its total length, but a stalled stream does. One fetch call is
- * one attempt, because the SDK retries are off, thus the window is per attempt.
+ * at the end of the body. A caller abort also clears the timer, thus a
+ * cancellation frees the guard at once, even between two body reads. Thus a
+ * stream with steady chunks does not trip the guard, whatever its total length,
+ * but a stalled stream does. One fetch call is one attempt, because the SDK
+ * retries are off, thus the window is per attempt.
  *
  * When the field is absent, `createConfiguredAiSdkProvider` installs no wrapper,
  * and the behavior stays byte-identical.
  */
-function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeoutMs: number): FetchLike {
+export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeoutMs: number): FetchLike {
     return async (input, init) => {
         const controller = new AbortController();
+        const callerSignal = init?.signal ?? undefined;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const arm = (): void => {
             if (timer !== undefined) clearTimeout(timer);
             timer = setTimeout(() => controller.abort(new RequestTimeoutError(requestTimeoutMs)), requestTimeoutMs);
+            // The harness runs on Node, where a timer has `unref`. Unref the guard
+            // timer, thus an armed guard does not keep a short-lived process alive.
+            // The DOM type of `setTimeout` declares no `unref`, thus guard the call.
+            timer.unref?.();
         };
         const clear = (): void => {
             if (timer !== undefined) clearTimeout(timer);
             timer = undefined;
+            // The harness runs on Node, where a caller signal can outlive one fetch
+            // attempt. Remove the abort listener when the attempt settles, thus a
+            // long-lived signal does not retain this closure.
+            callerSignal?.removeEventListener("abort", clear);
         };
 
         // Compose the guard controller with the caller signal, thus either one
-        // can abort the wire, and the abort reason names its own source.
-        const signal = init?.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
+        // can abort the wire, and the abort reason names its own source. A caller
+        // abort also clears the guard timer at once. Thus an armed timer does not
+        // reach a pointless expiry after the caller cancels.
+        const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal;
+        callerSignal?.addEventListener("abort", clear, { once: true });
 
         arm();
         let response: Response;
