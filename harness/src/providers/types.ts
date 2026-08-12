@@ -27,6 +27,14 @@ export interface ProviderCapabilities {
      * see it. Absent means "cannot carry", never "unknown".
      */
     readonly imageToolResults?: boolean;
+    /**
+     * Whether the wire can carry a picture inside a user message. The loop uses
+     * this placement only when the tool result cannot carry the picture. The tool
+     * result then keeps its JSON text, and one user message after the tool message
+     * of the round carries the bytes. Absent means "cannot carry", never
+     * "unknown".
+     */
+    readonly imageUserMessages?: boolean;
 }
 
 export interface ChatRequest {

@@ -582,10 +582,11 @@ function abortedStreamFailure(signal: AbortSignal | undefined, reason: string | 
 export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const capabilities: ProviderCapabilities = {
         toolCalling: deps.capabilities?.toolCalling ?? true,
-        // Propagate the picture flag only when the caller states it. An absent
-        // flag stays absent, thus the loop degrades to text for a wire that does
-        // not carry a picture in a tool result.
+        // Propagate a picture flag only when the caller states it. An absent
+        // flag stays absent, thus the loop degrades to the next placement for a
+        // wire that carries no picture there.
         ...(deps.capabilities?.imageToolResults !== undefined ? { imageToolResults: deps.capabilities.imageToolResults } : {}),
+        ...(deps.capabilities?.imageUserMessages !== undefined ? { imageUserMessages: deps.capabilities.imageUserMessages } : {}),
     };
     const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
     const maxOutputTokens = deps.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;

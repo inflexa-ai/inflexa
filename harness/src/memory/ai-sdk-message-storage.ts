@@ -1,4 +1,4 @@
-import { modelMessageSchema, type ModelMessage } from "ai";
+import { modelMessageSchema, type ModelMessage, type UserContent } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { z } from "zod";
 
@@ -87,8 +87,9 @@ export function isInterruptedMessage(message: ModelMessage): boolean {
 }
 
 /**
- * Build a `user` message the LOOP synthesized rather than a human typing it — today, the nudge that
- * continues a reply the model truncated at its output-token limit.
+ * Build a `user` message the LOOP synthesized rather than a human typing it — the nudge that
+ * continues a reply the model truncated at its output-token limit, and the message that carries a
+ * tool picture the tool result could not.
  *
  * It has to carry the `user` role because the wire format requires a user turn after a truncated
  * assistant message, but it is not user input, and the difference is load-bearing: a `user` message is
@@ -96,14 +97,18 @@ export function isInterruptedMessage(message: ModelMessage): boolean {
  * splitting one turn into two for the token window and, worse, giving a tail-turn removal a cut point in
  * the middle of a turn. Marking it is what lets {@link isSyntheticUserMessage} keep those readers honest.
  *
+ * `content` takes prose or the parts of a user message, because a picture rides a file part and no
+ * string can carry one. The marker is the same either way: what makes a message synthetic is who wrote
+ * it, not what it holds.
+ *
  * This one is loop MACHINERY and is not rendered: showing it would put words on screen nobody typed.
  * An embedder recording out-of-band work — an analysis run's outcome — wants
  * {@link syntheticRecordMessage} instead, which is equally non-turn-opening but IS displayed.
  */
-export function syntheticUserMessage(text: string): ModelMessage {
+export function syntheticUserMessage(content: UserContent): ModelMessage {
     return {
         role: "user",
-        content: text,
+        content,
         providerOptions: { [HARNESS_PROVIDER_NAMESPACE]: { [SYNTHETIC_MESSAGE_KEY]: true } },
     };
 }
