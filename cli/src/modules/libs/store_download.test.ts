@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -22,6 +22,7 @@ import {
     resolveStoreArch,
     runLibStoreTransfer,
     startLibStoreDownloadProcess,
+    verifyStagedLayer,
     DETACHED_TRANSFER_FLAG,
     type LibStoreDownloadError,
     type LibStoreDownloadOutcome,
@@ -49,8 +50,14 @@ type LayerEntry = { readonly path: string; readonly content?: string; readonly s
 /** One built layer: the compressed bytes, and the descriptor a manifest would carry for it. */
 type BuiltLayer = { readonly mediaType: string; readonly digest: string; readonly size: number; readonly bytes: Uint8Array };
 
-/** Build a zstd-compressed tar layer from a set of members, and its content-address descriptor. */
-function buildLayer(entries: readonly LayerEntry[], mediaType: string): BuiltLayer {
+/**
+ * Build a zstd-compressed tar layer from a set of members, and its content-address descriptor.
+ *
+ * `damage` rewrites the raw tar bytes before the compression. The descriptor digest is then taken over the
+ * compressed damaged bytes, thus the blob passes the digest check and the fault reaches the extraction.
+ * That is the shape of the real defect: the published blob was sound, and the store was still partial.
+ */
+function buildLayer(entries: readonly LayerEntry[], mediaType: string, damage?: (tar: Uint8Array) => Uint8Array): BuiltLayer {
     const src = mkdtempSync(join(work, "layer-src-"));
     for (const entry of entries) {
         const full = join(src, entry.path);
@@ -60,10 +67,105 @@ function buildLayer(entries: readonly LayerEntry[], mediaType: string): BuiltLay
     }
     const tar = Bun.spawnSync(["tar", "-c", "-C", src, "-f", "-", "."]);
     if (tar.exitCode !== 0) throw new Error(`fixture tar failed: ${new TextDecoder().decode(tar.stderr)}`);
-    const bytes = new Uint8Array(Bun.zstdCompressSync(tar.stdout));
+    const raw = new Uint8Array(tar.stdout);
+    const bytes = new Uint8Array(Bun.zstdCompressSync(damage === undefined ? raw : damage(raw)));
     const digest = `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
     rmSync(src, { recursive: true, force: true });
     return { mediaType, digest, size: bytes.length, bytes };
+}
+
+/** The offset of the nth 512-byte block that carries the `ustar` magic, or `-1`. A tar header sits at such a block. */
+function headerOffset(tar: Uint8Array, nth: number): number {
+    const magic = "ustar";
+    let seen = 0;
+    for (let offset = 0; offset + 512 <= tar.length; offset += 512) {
+        let isHeader = true;
+        for (let i = 0; i < magic.length; i += 1) {
+            if (tar[offset + 257 + i] !== magic.charCodeAt(i)) {
+                isHeader = false;
+                break;
+            }
+        }
+        if (!isHeader) continue;
+        seen += 1;
+        if (seen === nth) return offset;
+    }
+    return -1;
+}
+
+/**
+ * Overwrite one tar header with a constant non-zero pattern, which makes its checksum fail.
+ *
+ * `tar` then reports `Damaged tar archive`, and the exit code it picks depends on the header and on the
+ * implementation. This fixture therefore pins only that the download refuses the layer. {@link garbleArchive}
+ * is the one that searches for the exit-0 mood. The fill is never zero, because two zero blocks are the
+ * legitimate end-of-archive marker and they would read as a clean early end.
+ */
+function garbleHeader(tar: Uint8Array): Uint8Array {
+    const offset = headerOffset(tar, 3);
+    if (offset < 0) throw new Error("fixture tar carried too few headers to garble");
+    const copy = new Uint8Array(tar);
+    copy.fill(0xa5, offset, offset + 512);
+    return copy;
+}
+
+/** Cut a tar in half at a block boundary, which leaves a member header with no body behind it. */
+function truncateTar(tar: Uint8Array): Uint8Array {
+    return tar.slice(0, Math.floor(tar.length / 2 / 512) * 512);
+}
+
+/** What `tar -tf` said about one archive: its exit code, the members it named, and its warnings. */
+type ArchiveListing = { readonly code: number; readonly members: number; readonly stderr: string };
+
+/** Write an archive to `path` and ask `tar` to list it. */
+function listArchive(path: string, bytes: Uint8Array): ArchiveListing {
+    writeFileSync(path, bytes);
+    const run = Bun.spawnSync(["tar", "-tf", path]);
+    return {
+        code: run.exitCode,
+        members: new TextDecoder()
+            .decode(run.stdout)
+            .split("\n")
+            .filter((line) => line !== "").length,
+        stderr: new TextDecoder().decode(run.stderr),
+    };
+}
+
+/** A damaged archive, with the mood that `tar` took over it. */
+type DamagedArchive = { readonly bytes: Uint8Array; readonly listing: ArchiveListing; readonly recovered: boolean };
+
+/**
+ * Garble one header of an archive, and prefer a header that `tar` recovers from.
+ *
+ * `tar` answers a damaged archive in two moods. It stops with a non-zero exit, or it resynchronizes,
+ * prints `Damaged tar archive`, names every member, and STILL exits 0. Only the second mood proves that
+ * an exit code is not a verdict, thus this search takes the first header that produces it. A `tar` that
+ * never recovers leaves `recovered` false, and the caller then asserts the refusal alone.
+ */
+function garbleArchive(good: Uint8Array, probePath: string): DamagedArchive {
+    const clean = listArchive(probePath, good);
+    let fallback: DamagedArchive | undefined;
+    for (let nth = 1; ; nth += 1) {
+        const offset = headerOffset(good, nth);
+        if (offset < 0) break;
+        const bytes = new Uint8Array(good);
+        bytes.fill(0xa5, offset, offset + 512);
+        const listing = listArchive(probePath, bytes);
+        if (listing.code === 0 && listing.members === clean.members && tarWarned(listing.stderr)) return { bytes, listing, recovered: true };
+        if (fallback === undefined && (listing.code !== 0 || tarWarned(listing.stderr))) fallback = { bytes, listing, recovered: false };
+    }
+    if (fallback === undefined) throw new Error("fixture tar never reported damage, thus the verdict cannot be exercised");
+    return fallback;
+}
+
+/** Whether a `tar` diagnostic text reports damage, in the wording of either implementation. */
+function tarWarned(stderr: string): boolean {
+    return /damaged|retrying|truncated|unexpected eof|skipping to next header/i.test(stderr);
+}
+
+/** A layer with enough members and enough body bytes that a mid-archive header exists to damage. */
+function bulkyEntries(): readonly LayerEntry[] {
+    return Array.from({ length: 8 }, (_unused, index) => ({ path: `store/pkg-${index}-abc/data.txt`, content: `payload ${index}\n`.repeat(2048) }));
 }
 
 /** Encode an OCI image manifest that references the built layers by their descriptors. */
@@ -339,6 +441,208 @@ describe("downloadLibStore — the GHCR pull", () => {
         // The moved version did not land: the store still holds the first track content.
         expect(existsSync(join(storeRoot, "store", "foo-2.0-def"))).toBe(false);
         expect(existsSync(join(storeRoot, "store", "foo-1.0-abc"))).toBe(true);
+    });
+});
+
+/**
+ * The extraction of a layer, which once landed a partial store under an ok result.
+ *
+ * A published 1.33 GB layer extracted 142 of 451 store directories, and `tar` reported exit 0 over it. The
+ * store then carried a receipt that called it installed, and no error existed anywhere. Each test here
+ * pins one half of the remedy: a damaged archive must never return ok, and a tree that is short of what
+ * the archive declares must never return ok either.
+ */
+describe("extractLayer — a partial extraction is a failure, never a silent ok", () => {
+    /** The base layer that accompanies a track layer under test, so the download reaches the extraction. */
+    function plainBase(): BuiltLayer {
+        return buildLayer(
+            [
+                { path: "current", symlink: "farms/catalog" },
+                { path: "farms/catalog/meta.json", content: "{}\n" },
+            ],
+            BASE_MEDIA_TYPE,
+        );
+    }
+
+    /** Run one download whose track layer carries the damage under test. */
+    async function downloadWith(storeRoot: string, track: BuiltLayer): Promise<Result<LibStoreDownloadOutcome, LibStoreDownloadError>> {
+        const base = plainBase();
+        const log: StubLog = { tokenCalls: 0, authHeaders: [] };
+        const stub = makeStub({
+            token: "T",
+            manifest: manifestBytes([base, track]),
+            blobs: new Map([
+                [base.digest, base.bytes],
+                [track.digest, track.bytes],
+            ]),
+            log,
+        });
+        return downloadLibStore({ storeRoot, arch: "amd64", fetch: stub, retry: NO_RETRY });
+    }
+
+    test("a damaged archive is refused, although the blob matches its descriptor digest", async () => {
+        const storeRoot = join(work, "store-root");
+        const result = await downloadWith(storeRoot, buildLayer(bulkyEntries(), TRACK_MEDIA_TYPE, garbleHeader));
+
+        // Never ok. The whole defect was an ok result over a store that was short of its content.
+        expect(result.isErr()).toBe(true);
+        const error = result._unsafeUnwrapErr();
+        expect(error.type).toBe("extract_failed");
+        // The two implementations word it differently: bsdtar says `Damaged tar archive` and exits 0, and
+        // GNU tar says `Skipping to next header`. The verdict must be the same on both.
+        expect(error.message.toLowerCase()).toMatch(/damaged|retrying|skipping to next header|unexpected eof/);
+
+        // Nothing was activated: no receipt, and the state never reads installed.
+        expect(existsSync(libStoreDownloadPaths(storeRoot).receipt)).toBe(false);
+        expect(await inspectLibStoreDownload(storeRoot)).not.toBe("installed");
+    });
+
+    test("a truncated archive is refused, and the store never reads as installed", async () => {
+        const storeRoot = join(work, "store-root");
+        const result = await downloadWith(storeRoot, buildLayer(bulkyEntries(), TRACK_MEDIA_TYPE, truncateTar));
+
+        expect(result.isErr()).toBe(true);
+        const error = result._unsafeUnwrapErr();
+        expect(error.type).toBe("extract_failed");
+        expect(error.message.toLowerCase()).toMatch(/truncated|unexpected eof|damaged/);
+        expect(existsSync(libStoreDownloadPaths(storeRoot).receipt)).toBe(false);
+        expect(await inspectLibStoreDownload(storeRoot)).not.toBe("installed");
+    });
+
+    test("a good archive extracts every member, and each symlink stays a symlink", async () => {
+        // The absolute `/mnt/libs/...` link is what a real farm bakes. It dangles on the host, thus the
+        // extraction verdict must read the link itself and never the target it points at.
+        const base = buildLayer(
+            [
+                { path: "current", symlink: "farms/catalog" },
+                { path: "farms/catalog/meta.json", content: "{}\n" },
+                { path: "farms/catalog/lib/python3.11/site-packages/foo", symlink: "/mnt/libs/store/foo-1.0-abc/foo" },
+            ],
+            BASE_MEDIA_TYPE,
+        );
+        const track = buildLayer(
+            [
+                { path: "store/foo-1.0-abc/foo/__init__.py", content: "x = 1\n" },
+                { path: "store/foo-1.0-abc/.inflexa-pin", content: "pin\n" },
+                { path: "store/bar-2.0-def/bar.py", content: "y = 2\n" },
+            ],
+            TRACK_MEDIA_TYPE,
+        );
+        const log: StubLog = { tokenCalls: 0, authHeaders: [] };
+        const stub = makeStub({
+            token: "T",
+            manifest: manifestBytes([base, track]),
+            blobs: new Map([
+                [base.digest, base.bytes],
+                [track.digest, track.bytes],
+            ]),
+            log,
+        });
+
+        const storeRoot = join(work, "store-root");
+        const result = await downloadLibStore({ storeRoot, arch: "amd64", fetch: stub, retry: NO_RETRY });
+        expect(result._unsafeUnwrap().type).toBe("downloaded");
+
+        // Every regular member landed with its bytes.
+        expect(readFileSync(join(storeRoot, "store", "foo-1.0-abc", "foo", "__init__.py"), "utf8")).toBe("x = 1\n");
+        expect(readFileSync(join(storeRoot, "store", "foo-1.0-abc", ".inflexa-pin"), "utf8")).toBe("pin\n");
+        expect(readFileSync(join(storeRoot, "store", "bar-2.0-def", "bar.py"), "utf8")).toBe("y = 2\n");
+        expect(readFileSync(join(storeRoot, "farms", "catalog", "meta.json"), "utf8")).toBe("{}\n");
+        // Both store directories arrived, thus no alphabetical prefix was dropped.
+        expect(readdirSync(join(storeRoot, "store")).sort()).toEqual(["bar-2.0-def", "foo-1.0-abc"]);
+
+        // The relative pointer stays a symlink with its target verbatim.
+        expect(lstatSync(join(storeRoot, "current")).isSymbolicLink()).toBe(true);
+        expect(readlinkSync(join(storeRoot, "current"))).toBe("farms/catalog");
+
+        // The absolute farm link stays a symlink, it keeps its target, and it dangles — which the download
+        // accepted, because a farm link resolves inside the sandbox and never on the host.
+        const farmLink = join(storeRoot, "farms", "catalog", "lib", "python3.11", "site-packages", "foo");
+        expect(lstatSync(farmLink).isSymbolicLink()).toBe(true);
+        expect(readlinkSync(farmLink)).toBe("/mnt/libs/store/foo-1.0-abc/foo");
+        expect(existsSync(farmLink)).toBe(false);
+
+        expect(await inspectLibStoreDownload(storeRoot)).toBe("installed");
+    });
+
+    test("a damaged archive is refused although tar reports success, thus the exit code is not the verdict", async () => {
+        const src = mkdtempSync(join(work, "damaged-src-"));
+        for (const index of [0, 1, 2, 3, 4, 5]) {
+            const dir = join(src, "store", `pkg-${index}-abc`);
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(join(dir, "data.txt"), `payload ${index}\n`.repeat(2048));
+        }
+        const good = Bun.spawnSync(["tar", "-c", "-C", src, "-f", "-", "."]);
+        expect(good.exitCode).toBe(0);
+
+        // The staged tree comes from the SOUND archive, thus it is complete. Only the reading of the
+        // warnings can refuse the damaged archive, because nothing is absent from disk.
+        const goodPath = join(work, "damaged-good.tar");
+        writeFileSync(goodPath, good.stdout);
+        const stage = join(work, "damaged-stage");
+        mkdirSync(stage, { recursive: true });
+        expect(Bun.spawnSync(["tar", "-x", "-f", goodPath, "-C", stage]).exitCode).toBe(0);
+
+        const damagedPath = join(work, "damaged.tar");
+        const damaged = garbleArchive(new Uint8Array(good.stdout), damagedPath);
+        writeFileSync(damagedPath, damaged.bytes);
+
+        // The sound archive over the same tree is the control: the check passes it.
+        expect((await verifyStagedLayer(goodPath, stage))._unsafeUnwrap()).toBeGreaterThan(0);
+
+        // The damaged archive over that same complete tree is refused.
+        const verdict = await verifyStagedLayer(damagedPath, stage);
+        expect(verdict.isErr()).toBe(true);
+        expect(verdict._unsafeUnwrapErr().type).toBe("extract_failed");
+
+        // This platform resynchronized and answered exit 0 over a damaged archive, and it named every
+        // member. An exit code of 0 therefore proves nothing, and the warning text is the whole verdict.
+        if (damaged.recovered) {
+            expect(damaged.listing.code).toBe(0);
+            expect(tarWarned(damaged.listing.stderr)).toBe(true);
+            expect(verdict._unsafeUnwrapErr().message.toLowerCase()).toMatch(/damaged|retrying|skipping to next header/);
+        }
+    });
+
+    test("the completeness check counts the members of the archive and fails a partial tree", async () => {
+        const src = mkdtempSync(join(work, "verify-src-"));
+        for (const index of [0, 1, 2, 3]) {
+            const dir = join(src, "store", `pkg-${index}-abc`);
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(join(dir, "data.txt"), `payload ${index}\n`);
+        }
+        symlinkSync("/mnt/libs/store/pkg-0-abc", join(src, "store", "link"));
+        const tarPath = join(work, "verify.tar");
+        const packed = Bun.spawnSync(["tar", "-c", "-C", src, "-f", tarPath, "."]);
+        expect(packed.exitCode).toBe(0);
+
+        const stage = join(work, "verify-stage");
+        mkdirSync(stage, { recursive: true });
+        const unpacked = Bun.spawnSync(["tar", "-x", "-f", tarPath, "-C", stage]);
+        expect(unpacked.exitCode).toBe(0);
+
+        // A complete tree reports the member count that the archive itself declares, and no other number.
+        const listed = Bun.spawnSync(["tar", "-tf", tarPath]);
+        const declared = new TextDecoder()
+            .decode(listed.stdout)
+            .split("\n")
+            .filter((line) => line !== "").length;
+        expect(declared).toBeGreaterThan(0);
+        expect((await verifyStagedLayer(tarPath, stage))._unsafeUnwrap()).toBe(declared);
+
+        // A tree that lost one package is the exact shape of the defect: a clean prefix landed, and the
+        // rest did not. The check names the count and an example, so the failure is actionable.
+        rmSync(join(stage, "store", "pkg-3-abc"), { recursive: true, force: true });
+        const partial = await verifyStagedLayer(tarPath, stage);
+        expect(partial.isErr()).toBe(true);
+        const error = partial._unsafeUnwrapErr();
+        expect(error.type).toBe("extract_failed");
+        expect(error.message).toContain("pkg-3-abc");
+
+        // A dangling absolute symlink is present content, thus its removal is what fails the check and its
+        // unresolvable target is not.
+        rmSync(join(stage, "store", "link"), { force: true });
+        expect((await verifyStagedLayer(tarPath, stage))._unsafeUnwrapErr().message).toContain("link");
     });
 });
 

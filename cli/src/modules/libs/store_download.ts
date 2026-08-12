@@ -31,10 +31,10 @@
  * configuration value suppresses any of them, because the runtime image bakes no library.
  */
 
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { lstat, mkdir, readFile, readdir, rename, rm, stat, statfs, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { createZstdDecompress } from "node:zlib";
 
 import { randomUUIDv7 } from "bun";
@@ -468,31 +468,153 @@ async function downloadLayerBlob(
 }
 
 /**
+ * The `tar` diagnostics that report a damaged, a truncated, or a resynchronized archive.
+ *
+ * `tar` answered exit 0 over an archive that it also called `Damaged tar archive`, and it printed
+ * `Retrying...` more than a thousand times over that same run. Thus the exit code alone is not a verdict,
+ * and a run that prints one of these words extracted less than the archive holds. Each marker is compared
+ * in lower case, because the two `tar` implementations differ in their capitals.
+ */
+const TAR_DAMAGE_MARKERS = ["damaged", "truncated", "unexpected eof", "retrying", "skipping to next header"] as const;
+
+/** How many `lstat` calls {@link verifyStagedLayer} keeps in flight. A window of 64 reads 78,000 members in about 90 ms, against about 900 ms one at a time. */
+const COMPLETENESS_WINDOW = 64;
+
+/** How many absent members a completeness failure names. The count carries the scale, thus a few examples are enough to act on. */
+const MISSING_EXAMPLE_LIMIT = 3;
+
+/** What one `tar` run produced. Both streams are read every time, because a warning is the only signal of a damaged archive. */
+type TarRun = { readonly code: number; readonly stdout: string; readonly stderr: string };
+
+/**
+ * Run `tar` and collect its exit code and both of its streams.
+ *
+ * The two reads and the exit wait run together. A sequential read would let the other pipe fill and stop
+ * the child, and a member list of a large layer is several megabytes.
+ */
+async function runTar(args: readonly string[]): Promise<TarRun> {
+    const proc = Bun.spawn(["tar", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    return { code, stdout, stderr };
+}
+
+/** The first damage diagnostic in a `tar` stderr text, or `undefined` when the text holds none. */
+function tarDamage(stderr: string): string | undefined {
+    return stderr
+        .split("\n")
+        .find((line) => {
+            const lower = line.toLowerCase();
+            return TAR_DAMAGE_MARKERS.some((marker) => lower.includes(marker));
+        })
+        ?.trim();
+}
+
+/**
+ * Confirm that a staged tree carries every member of the archive that filled it.
+ *
+ * WHAT THIS PROVES. The blob hashed to its descriptor digest before the extraction, and the decompression
+ * of a zstd frame is total, thus the inflated tar is byte-for-byte what the publisher made. The archive is
+ * therefore the one authority on what the layer holds, and it states its own member list. This check reads
+ * that list and confirms that each name is an entry on disk. As a result, a `tar` that stopped part-way is
+ * refused, which is the exact fault this module carried.
+ *
+ * WHAT THIS DOES NOT PROVE. It reads the presence of an entry, never its bytes: a member whose body landed
+ * short still counts as present. It does not read the mode, the owner, or the timestamp. It does not
+ * resolve a symlink, because a farm link bakes an absolute `/mnt/libs/...` target that dangles on the host
+ * by design. It says nothing about the store as a whole, because a layer descriptor carries a size and a
+ * digest and no entry count, thus no count is invented from outside the archive.
+ *
+ * The one known limit is a member name that carries a newline. `tar -t` writes one name for each line,
+ * thus such a name reads as two absent names. The publisher feeds `tar` a newline-delimited member list,
+ * so such a name cannot reach a layer in the first place.
+ *
+ * Exported so a test proves the guarantee directly against a tree that the test made partial. This check
+ * is the only thing between a partial extraction and a receipt that calls it installed.
+ */
+export async function verifyStagedLayer(tarPath: string, stageRoot: string): Promise<Result<number, LibStoreDownloadError>> {
+    const listed = await runTar(["-tf", tarPath]);
+    const listDamage = tarDamage(listed.stderr);
+    if (listed.code !== 0 || listDamage !== undefined) {
+        const detail = listDamage ?? listed.stderr.trim();
+        return err({
+            type: "extract_failed",
+            message: `Could not list a store layer to verify it (tar exit ${listed.code})${detail === "" ? "" : `: ${detail}`}.`,
+        });
+    }
+    const members = listed.stdout.split("\n").filter((line) => line !== "");
+    if (members.length === 0) return err({ type: "extract_failed", message: "A store layer declared no members, thus the extraction cannot be verified." });
+
+    let missing = 0;
+    const examples: string[] = [];
+    for (let start = 0; start < members.length; start += COMPLETENESS_WINDOW) {
+        await Promise.all(
+            members.slice(start, start + COMPLETENESS_WINDOW).map(async (member) => {
+                if (await entryExists(join(stageRoot, member))) return;
+                missing += 1;
+                if (examples.length < MISSING_EXAMPLE_LIMIT) examples.push(member);
+            }),
+        );
+    }
+    if (missing > 0) {
+        return err({
+            type: "extract_failed",
+            message: `A store layer extracted only part of its content: ${missing} of ${members.length} members are absent, for example ${examples.join(", ")}. Run \`inflexa store download\` again.`,
+        });
+    }
+    return ok(members.length);
+}
+
+/**
  * Extract one layer into the staged root.
  *
- * The layer is a zstd-compressed tar. `node:zlib` decompresses zstd in-runtime, so the stream is
- * inflated here and piped straight into the system `tar`, which restores every member and its symlinks
- * verbatim (the extractArchive precedent in `modules/embedding/llama_runtime.ts`). The stream form keeps
- * a multi-gigabyte layer off the heap.
+ * THE ROUTE, AND THE REASON. The layer is a zstd-compressed tar. The runtime decompressor writes the
+ * inflated tar to a temporary file, then `tar -xf` reads that file. The operating system moves every byte,
+ * and no stream crosses the JS bridge. That bridge is exactly what failed before: a `Readable.toWeb` pump
+ * into the stdin of `tar` broke with `EINVAL` on `send` part-way through a 1.33 GB layer, and it left 142
+ * of 451 store directories on disk under an exit code of 0.
+ *
+ * THE REJECTED ALTERNATIVE. A shell pipeline, `zstd -d -c <blob> | tar -x`, moves the same bytes through
+ * the operating system. It is refused because `zstd` is not a system program. macOS ships `tar` at
+ * `/usr/bin/tar` and ships no `zstd`, thus the pipeline adds a dependency that a user machine does not
+ * carry. `tar --zstd` is refused for the same reason: the system libarchive links zlib, liblzma, and
+ * bz2lib, and it falls back to the same absent `zstd` program. A pipeline also hides the exit code of its
+ * left side behind `PIPESTATUS`, which is one more thing to get right for no gain.
+ *
+ * THE ACCEPTED COST. The temporary file is the whole inflated layer: about 4.3 GB for the python layer,
+ * written in about 7 seconds. It is removed as soon as `tar` has read it, thus the peak cost is one layer
+ * and never the whole store. The download already holds the compressed store in its blob cache and the
+ * inflated store in its staged tree, so this is a bounded increment over what the transfer already wants.
+ *
+ * THE VERDICT. The exit code is not trusted on its own, and the stderr text is read on every run — refer
+ * to {@link TAR_DAMAGE_MARKERS}. A clean run then goes to {@link verifyStagedLayer}, thus a partial
+ * extraction returns an error and never an ok.
  */
 async function extractLayer(blobPath: string, stageRoot: string): Promise<Result<void, LibStoreDownloadError>> {
+    // The temporary tar sits beside its blob, thus it lands on the filesystem of the store root rather than
+    // on a small system temp volume. The uuid keeps two attempts over one blob apart.
+    const tarPath = `${blobPath}.${randomUUIDv7()}.tar`;
     try {
-        const inflating = createReadStream(blobPath).pipe(createZstdDecompress());
-        // `Readable.toWeb` yields the node stream/web ReadableStream that Bun.spawn's stdin consumes; the
-        // cast bridges the node and DOM ReadableStream declarations, which describe the same runtime object.
-        const proc = Bun.spawn(["tar", "-x", "-f", "-", "-C", stageRoot], {
-            stdin: Readable.toWeb(inflating) as unknown as ReadableStream<Uint8Array>,
-            stdout: "ignore",
-            stderr: "pipe",
-        });
-        const code = await proc.exited;
-        if (code !== 0) {
-            const stderr = await new Response(proc.stderr).text();
-            return err({ type: "extract_failed", message: `Extracting a store layer failed (tar exit ${code})${stderr ? `: ${stderr.trim()}` : ""}.` });
+        try {
+            // `pipeline` propagates a decompressor fault and a write fault, thus a truncated zstd frame or a
+            // disk that ran out fails here and never reaches `tar` as a short archive.
+            await pipeline(createReadStream(blobPath), createZstdDecompress(), createWriteStream(tarPath));
+        } catch (cause) {
+            return err({ type: "extract_failed", message: `Could not decompress a store layer: ${errorText(cause)}.`, cause });
         }
-        return ok(undefined);
+        const extracted = await runTar(["-x", "-f", tarPath, "-C", stageRoot]);
+        const damage = tarDamage(extracted.stderr);
+        if (extracted.code !== 0 || damage !== undefined) {
+            const detail = damage ?? extracted.stderr.trim();
+            return err({
+                type: "extract_failed",
+                message: `Extracting a store layer failed (tar exit ${extracted.code})${detail === "" ? "" : `: ${detail}`}.`,
+            });
+        }
+        return (await verifyStagedLayer(tarPath, stageRoot)).map(() => undefined);
     } catch (cause) {
         return err({ type: "extract_failed", message: `Extracting a store layer failed: ${errorText(cause)}.`, cause });
+    } finally {
+        await rm(tarPath, { force: true }).catch(() => undefined);
     }
 }
 
