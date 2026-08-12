@@ -331,6 +331,10 @@ When the tool returns \`existing-session\`, no new session started. Tell the
 user to continue the report in that chat. Pass \`newSessionAnyway: true\`
 only when the user explicitly wants a separate new report.
 
+When the tool returns any other outcome, no session started and the report
+is not available in this build. Say that in one line, and give the detail
+that the outcome carries. Do not compose the report here instead.
+
 Confirm first only when scope is genuinely ambiguous: several analyses to
 choose from, the user is still exploring options, or the audience matters
 and has not been established.
