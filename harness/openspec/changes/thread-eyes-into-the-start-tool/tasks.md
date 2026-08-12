@@ -24,3 +24,11 @@
 - [x] 4.1 Run `bun run format:file` on each changed source file.
 - [x] 4.2 Run `tsc -p tsconfig.json`, and run the targeted files of the changed modules against `CORTEX_TEST_PG_URL`.
 - [x] 4.3 Run `openspec validate thread-eyes-into-the-start-tool --strict`.
+
+## 5. The findings of the verification
+
+- [x] 5.1 Divide the long sentence in the doc of `ConversationAssemblyDeps`, and sweep each changed file with the language gate.
+- [x] 5.2 Cover the one resolved answer: one resolution, and both consumers over it. Narrow the scenario of the delta to that shape. A case cannot call `assembleCoreRuntime`, because a registration after the shared DBOS launch throws.
+- [x] 5.3 State the invariant at `compositionHasEyes`: the predicate is the one gate expression, and a new route belongs in it.
+- [x] 5.4 Correct the module header of the start tool, and correct the comment of the thread-count read in its test.
+- [x] 5.5 Record the decision that keeps `compositionHasEyes` off the barrel.
