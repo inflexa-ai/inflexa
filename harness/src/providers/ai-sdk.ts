@@ -45,6 +45,11 @@ export const RETRY_MAX_DELAY_MS = 30_000;
  *
  * Lower it per-config for servers that validate `prompt + max_tokens <= context`
  * (vLLM and similar) against a small-context model.
+ *
+ * The openai arm takes no value from this default. `@ai-sdk/openai` clamps
+ * nothing per model, and it puts the number on the wire as it is. Thus a model
+ * whose own cap is smaller answers 400 on each call. That arm sends no ceiling,
+ * and the server then enforces the true cap of the model.
  */
 export const DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
 
@@ -73,8 +78,14 @@ export interface AiSdkProviderDeps {
     readonly resolveBilling: ResolveBilling;
     readonly capabilities?: Partial<ProviderCapabilities>;
     readonly logger?: Logger;
-    /** Output-token ceiling per request. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. */
-    readonly maxOutputTokens?: number;
+    /**
+     * Output-token ceiling per request. Defaults to
+     * {@link DEFAULT_MAX_OUTPUT_TOKENS}. The value `"provider-maximum"` sends the
+     * SDK no ceiling, and the server then enforces the true cap of the model. Use
+     * the sentinel for a wire whose SDK puts the number on the request as it is,
+     * because a ceiling above the cap of the model fails the call.
+     */
+    readonly maxOutputTokens?: number | "provider-maximum";
     /** The retry limit of the harness envelope. Defaults to {@link RETRY_MAX_RETRIES}. */
     readonly maxRetries?: number;
     /**
@@ -136,7 +147,12 @@ export type AiSdkProviderConfig =
           readonly model: string;
           readonly fetch?: FetchLike;
           readonly capabilities?: Partial<ProviderCapabilities>;
-          /** Output-token ceiling per request. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. */
+          /**
+           * Output-token ceiling per request. An unset value sends no ceiling, and
+           * the model cap of the server governs the reply. The Responses wire holds
+           * no low default, thus the omission cannot truncate a reply. Set a number
+           * to hold the reply under a lower ceiling than the cap of the model.
+           */
           readonly maxOutputTokens?: number;
           /**
            * The bound for each silent interval of a request attempt, in
@@ -590,6 +606,10 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     };
     const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
     const maxOutputTokens = deps.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    // The sentinel hands the SDK no ceiling, thus the request carries none and the
+    // server enforces the cap of the model. One binding feeds the call and the
+    // stream, thus the two cannot disagree about the ceiling of a request.
+    const outputCeiling: { maxOutputTokens?: number } = maxOutputTokens === "provider-maximum" ? {} : { maxOutputTokens };
     const maxRetries = deps.maxRetries ?? RETRY_MAX_RETRIES;
     const requestTimeoutMs = deps.requestTimeoutMs;
     const requestedModelId = requestedModelIdOf(deps.model);
@@ -610,7 +630,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         messages: sanitizeMessages(req.messages),
                         tools: req.tools,
                         toolChoice: req.toolChoice ?? "auto",
-                        maxOutputTokens,
+                        ...outputCeiling,
                         stopWhen: [],
                         // The harness envelope owns retries; leaving the SDK default in
                         // place would multiply attempts (10 outer × 3 inner).
@@ -653,7 +673,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     messages: sanitizeMessages(req.messages),
                     tools: req.tools,
                     toolChoice: req.toolChoice ?? "auto",
-                    maxOutputTokens,
+                    ...outputCeiling,
                     stopWhen: [],
                     maxRetries: 0,
                     headers,
@@ -809,7 +829,7 @@ export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeout
  * `providerOptions`. It keeps each other namespace, and it keeps each other key
  * of the `openai` namespace, thus a cache directive of a different vendor rides
  * through untouched. The arm value wins over a request-level `store`, because
- * the retention mode belongs to the connection and not to one turn — a thread
+ * the retention mode belongs to the connection and not to one turn. A thread
  * that mixes the two modes replays a reference onto an item that the server
  * never stored.
  */
@@ -891,7 +911,12 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             resolveBilling: deps.resolveBilling,
             capabilities: { ...pictureDefault, ...config.capabilities },
             logger: deps.logger,
-            ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
+            // The package puts this number on the wire as it is, and it clamps
+            // nothing per model. Thus the shared default of 64000 breaks each call
+            // to a model with a smaller cap, with a 400 that no retry can pass. An
+            // unset config sends no ceiling, and the server holds the reply at the
+            // cap of the model.
+            maxOutputTokens: config.maxOutputTokens ?? "provider-maximum",
             ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
             ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
         });

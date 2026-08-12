@@ -28,6 +28,7 @@ interface ResponsesRequestBody {
     readonly model?: string;
     readonly store?: boolean;
     readonly user?: string;
+    readonly max_output_tokens?: number;
     readonly input?: readonly ResponsesInputItem[];
 }
 
@@ -46,7 +47,7 @@ function capturingFetch(respond: () => Response): { readonly fetch: FetchLike; r
 }
 
 /** Build an `openai` arm config over a stubbed wire, with the fields of one test. */
-function openaiArm(fetch: FetchLike, opts: { store?: boolean; maxRetries?: number } = {}): AiSdkProviderConfig {
+function openaiArm(fetch: FetchLike, opts: { store?: boolean; maxRetries?: number; maxOutputTokens?: number } = {}): AiSdkProviderConfig {
     return {
         kind: "openai",
         apiKey: "test-key",
@@ -54,6 +55,7 @@ function openaiArm(fetch: FetchLike, opts: { store?: boolean; maxRetries?: numbe
         fetch,
         ...(opts.store !== undefined ? { store: opts.store } : {}),
         ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+        ...(opts.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
     };
 }
 
@@ -258,6 +260,31 @@ describe("openai arm store directive", () => {
         expect(result.isOk()).toBe(true);
         expect(cap.bodies[0]?.store).toBe(false);
         expect(cap.bodies[0]?.user).toBe("user-001");
+    });
+});
+
+describe("openai arm output ceiling", () => {
+    it("sends no ceiling when the config names none", async () => {
+        // The package puts a ceiling on the wire as it is. A shared default above
+        // the cap of the model fails each call, thus the arm sends none and the
+        // server holds the reply at the cap.
+        const cap = capturingFetch(() => responsesJson("Hello, world"));
+        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch), resolveBilling: async () => ({}) });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        expect(cap.bodies[0]).not.toHaveProperty("max_output_tokens");
+    });
+
+    it("sends the ceiling that the config names", async () => {
+        const cap = capturingFetch(() => responsesJson("Hello, world"));
+        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch, { maxOutputTokens: 4_096 }), resolveBilling: async () => ({}) });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        expect(cap.bodies[0]?.max_output_tokens).toBe(4_096);
     });
 });
 
