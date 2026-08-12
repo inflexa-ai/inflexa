@@ -1,10 +1,12 @@
 /**
- * Headless Chrome connection — process-lifetime singleton connected to the
- * Chrome sidecar reachable at `CHROME_BROWSER_URL`. Used by the iterate-report
- * preview-snapshot tool for visual validation.
+ * The connection to a headless Chrome endpoint.
  *
- * Connection is lazy and reconnect-on-disconnect; pages are gated through a
- * semaphore so the sidecar isn't overwhelmed by concurrent reports.
+ * Two callers name an endpoint. A composition names a standing sidecar at assembly, and a lease of the eyes
+ * seam names a browser for one look. Thus the module holds one connection for each endpoint, and it holds no
+ * connection for the process.
+ *
+ * A connection is lazy, and an endpoint connects again after a disconnect. Each endpoint also carries its own
+ * page gate. The gate bounds the pages that run at the same time against that one sidecar.
  */
 
 import puppeteer from "puppeteer-core";
@@ -29,18 +31,57 @@ export interface ChromeConfig {
     readonly maxPages?: number;
 }
 
+/** Whether a value names an endpoint. An absent value and a blank value each name none. */
+function namesEndpoint(browserUrl: string | undefined): browserUrl is string {
+    return browserUrl !== undefined && browserUrl.trim().length > 0;
+}
+
 /**
  * Whether the config names a browser to connect to. A composition with no endpoint has no eyes, and a
  * caller reads that up front instead of failing once for each attempted connection.
+ *
+ * The predicate narrows the config. Thus a caller that reads the endpoint after the gate needs no type
+ * assertion for a field that the gate proved.
  */
-export function hasBrowserUrl(cfg: ChromeConfig): boolean {
-    return cfg.browserUrl !== undefined && cfg.browserUrl.trim().length > 0;
+export function hasBrowserUrl(cfg: ChromeConfig): cfg is ChromeConfig & { readonly browserUrl: string } {
+    return namesEndpoint(cfg.browserUrl);
 }
 
-let browser: Browser | undefined;
-let connecting: Promise<Browser> | undefined;
+/**
+ * The endpoint of a connection, or the refusal of a config that names none.
+ *
+ * The refusal and {@link hasBrowserUrl} read the same rule. Thus the gate that a caller reads up front is the
+ * gate that the connection applies.
+ */
+function requireBrowserUrl(browserUrl: string | undefined): string {
+    if (namesEndpoint(browserUrl)) return browserUrl;
+    throw new Error("CHROME_BROWSER_URL is not set — Cortex requires the chrome sidecar to be reachable");
+}
 
-let semaphore: Semaphore | undefined;
+/** The connect operation of one endpoint. */
+export type BrowserConnector = (browserUrl: string) => Promise<Browser>;
+
+const connectOverPuppeteer: BrowserConnector = (browserUrl) => puppeteer.connect({ browserURL: browserUrl });
+
+let connector: BrowserConnector = connectOverPuppeteer;
+
+/**
+ * Replace the connect operation, and give back the restore of the previous one.
+ *
+ * The cache keeps no state that a caller can read, because a connection is the only product of the module.
+ * Thus a real browser is the only other way to drive the cache, and a unit test of the keys needs this seam.
+ *
+ * Two facts make the seam safe. The module reads the binding at each connect, and no module under `src/`
+ * calls the setter. Thus a deployment always runs the connect of puppeteer. The caller restores the previous
+ * binding, thus a replacement never reaches a later file of the same test run.
+ */
+export function setBrowserConnector(next: BrowserConnector): () => void {
+    const previous = connector;
+    connector = next;
+    return () => {
+        connector = previous;
+    };
+}
 
 interface Semaphore {
     acquire(): Promise<() => void>;
@@ -68,52 +109,87 @@ function createSemaphore(max: number): Semaphore {
     };
 }
 
-function getSemaphore(maxPages?: number): Semaphore {
-    if (!semaphore) {
-        const max = maxPages && maxPages > 0 ? maxPages : 4;
-        semaphore = createSemaphore(max);
-    }
-    return semaphore;
+/** The cap on the pages that run at the same time against one endpoint, when a config names none. */
+const DEFAULT_MAX_PAGES = 4;
+
+/**
+ * The live state of one endpoint: the connection, the connect in flight, and the page gate. The three share
+ * one lifetime, thus one entry holds them and one eviction drops them together.
+ */
+interface EndpointEntry {
+    browser?: Browser;
+    connecting?: Promise<Browser>;
+    readonly semaphore: Semaphore;
+}
+
+/**
+ * The entry of each endpoint that the process reached, keyed by the endpoint URL. A disconnect evicts an
+ * entry, thus a browser that appears for one look leaves nothing behind.
+ */
+const endpoints = new Map<string, EndpointEntry>();
+
+/**
+ * The entry of one endpoint, made on the first call for that endpoint.
+ *
+ * The first caller fixes the cap of the gate. A later caller with a different cap reads the gate that is
+ * already in place, because one endpoint answers to one gate.
+ */
+function entryFor(browserUrl: string, maxPages?: number): EndpointEntry {
+    const existing = endpoints.get(browserUrl);
+    if (existing) return existing;
+    const max = maxPages && maxPages > 0 ? maxPages : DEFAULT_MAX_PAGES;
+    const fresh: EndpointEntry = { semaphore: createSemaphore(max) };
+    endpoints.set(browserUrl, fresh);
+    return fresh;
 }
 
 export async function getBrowser(browserUrl?: string, injected?: Logger): Promise<Browser> {
     const logger = (injected ?? createNoopLogger()).named("chrome");
-    if (browser && browser.connected) return browser;
-    if (connecting) return connecting;
-
-    const browserURL = browserUrl;
-    if (!browserURL) {
-        throw new Error("CHROME_BROWSER_URL is not set — Cortex requires the chrome sidecar to be reachable");
-    }
+    const browserURL = requireBrowserUrl(browserUrl);
+    const entry = entryFor(browserURL);
+    if (entry.browser?.connected) return entry.browser;
+    if (entry.connecting) return entry.connecting;
 
     logger.info("connecting to browser", { browserURL });
-    connecting = puppeteer
-        .connect({ browserURL })
+    entry.connecting = connector(browserURL)
         .then((b) => {
-            browser = b;
+            entry.browser = b;
             b.on("disconnected", () => {
                 logger.info("browser disconnected; will reconnect on next request");
-                if (browser === b) browser = undefined;
+                // A reconnect can hold the key again by the time that the dead browser reports. The two
+                // guards keep the eviction on the entry of this browser alone.
+                if (endpoints.get(browserURL) === entry && entry.browser === b) endpoints.delete(browserURL);
             });
             logger.info("connected", { wsEndpoint: b.wsEndpoint() });
             return b;
         })
         .catch((err) => {
             logger.error("failed to connect to browser", logger.errorFields(err));
+            // A failed connect leaves nothing to reuse. The entry goes, thus a run of looks that each name a
+            // new endpoint and each fail cannot grow the map. The two guards match the disconnect listener,
+            // thus a reconnect that already took the key survives.
+            //
+            // A waiter that already holds a slot of the evicted gate keeps running, and a later caller makes
+            // a fresh gate. Thus the page cap of this endpoint can be exceeded for a moment. That is
+            // acceptable, because the connect just failed and no browser exists for either gate to bound.
+            if (endpoints.get(browserURL) === entry && entry.browser === undefined) endpoints.delete(browserURL);
             throw err;
         })
         .finally(() => {
-            connecting = undefined;
+            entry.connecting = undefined;
         });
 
-    return connecting;
+    return entry.connecting;
 }
 
 export async function withPage<T>(cfg: ChromeConfig, fn: (page: Page, context: BrowserContext) => Promise<T>): Promise<T> {
-    const release = await getSemaphore(cfg.maxPages).acquire();
+    // The gate belongs to one endpoint, thus the endpoint must be known before the gate. A config that names
+    // none refuses here, the same as the connection below refuses it.
+    const browserURL = requireBrowserUrl(cfg.browserUrl);
+    const release = await entryFor(browserURL, cfg.maxPages).semaphore.acquire();
     let context: BrowserContext | undefined;
     try {
-        const b = await getBrowser(cfg.browserUrl, cfg.logger);
+        const b = await getBrowser(browserURL, cfg.logger);
         context = await b.createBrowserContext();
         const page = await context.newPage();
         return await fn(page, context);
