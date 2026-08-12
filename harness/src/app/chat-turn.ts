@@ -57,7 +57,8 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
         return { kind: "not_found" };
     }
 
-    // The type a caller resolves the turn's agent from. An existing row carries
+    // The type a caller resolves the turn's agent from, and the type that the
+    // message assembly reads for its tail. An existing row carries
     // its own. An absent one defaults to `conversation` — the store's own
     // default — so a best-effort create that fails non-fatally still leaves a
     // usable type; a successful create overrides it from the returned row.
@@ -94,6 +95,7 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
     const history = createThreadHistory(pool);
     const { messages, userMessage } = await assembleMessages({
         threadId,
+        threadType,
         analysisId,
         userInput,
         analysisContext: analysisState?.context ?? null,

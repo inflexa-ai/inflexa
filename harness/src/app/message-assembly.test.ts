@@ -45,6 +45,7 @@ describe("assembleMessages", () => {
         ];
         const { messages, userMessage } = await assembleMessages({
             threadId: "thread-1",
+            threadType: "conversation",
             analysisId: "analysis-1",
             userInput: "what is BRCA1?",
             analysisContext: "RNA-seq of tumor vs normal.",
@@ -68,6 +69,7 @@ describe("assembleMessages", () => {
     test("the assembled sequence is a valid Anthropic message sequence", async () => {
         const { messages } = await assembleMessages({
             threadId: "thread-1",
+            threadType: "conversation",
             analysisId: "analysis-1",
             userInput: "hello",
             analysisContext: null,
@@ -85,6 +87,7 @@ describe("assembleMessages", () => {
     test("redacts a secret in the user input", async () => {
         const { userMessage } = await assembleMessages({
             threadId: "t",
+            threadType: "conversation",
             analysisId: "a",
             userInput: "my key is AKIAIOSFODNN7EXAMPLE keep it safe",
             analysisContext: null,
@@ -101,6 +104,7 @@ describe("assembleMessages", () => {
         expect(fortyMer.length).toBe(40);
         const { userMessage } = await assembleMessages({
             threadId: "t",
+            threadType: "conversation",
             analysisId: "a",
             userInput: `align this sequence ${fortyMer} please`,
             analysisContext: null,
@@ -111,11 +115,48 @@ describe("assembleMessages", () => {
         expect(userMessage.content).toContain(fortyMer);
     });
 
+    test("a report thread drops the working-memory tail and keeps the other two", async () => {
+        const { messages, userMessage } = await assembleMessages({
+            threadId: "thread-report",
+            threadType: "report",
+            analysisId: "analysis-1",
+            userInput: "draft the summary",
+            analysisContext: "RNA-seq of tumor vs normal.",
+            runActivityContext: RUN_ACTIVITY,
+            history: stubHistory([]),
+            workingMemory: stubWorkingMemory(),
+        });
+
+        // Tail: analysis context, run activity, user input. No live render.
+        expect(messages.length).toBe(3);
+        expect(messages.map(contentText)).not.toContain(WM_RENDER);
+        expect(contentText(messages[0]!)).toContain("[Analysis Context]");
+        expect(contentText(messages[1]!)).toBe(RUN_ACTIVITY);
+        expect(messages[2]).toEqual(userMessage);
+    });
+
+    test("a conversation thread keeps the working-memory tail", async () => {
+        const { messages } = await assembleMessages({
+            threadId: "thread-conversation",
+            threadType: "conversation",
+            analysisId: "analysis-1",
+            userInput: "draft the summary",
+            analysisContext: "RNA-seq of tumor vs normal.",
+            runActivityContext: RUN_ACTIVITY,
+            history: stubHistory([]),
+            workingMemory: stubWorkingMemory(),
+        });
+
+        expect(messages.length).toBe(4);
+        expect(messages.map(contentText)).toContain(WM_RENDER);
+    });
+
     test("sanitization is not applied to history or analysis context", async () => {
         const secret = "AKIAIOSFODNN7EXAMPLE";
         const window: MessageParam[] = [{ role: "user", content: `prior turn mentioned ${secret}` }];
         const { messages } = await assembleMessages({
             threadId: "t",
+            threadType: "conversation",
             analysisId: "a",
             userInput: "continue",
             analysisContext: `context references ${secret}`,
