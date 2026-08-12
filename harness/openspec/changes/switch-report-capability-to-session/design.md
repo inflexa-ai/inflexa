@@ -89,6 +89,14 @@ The spawn takes the anchor operation as an optional dep, and it runs the operati
 
 A failed pin keeps the child, because the operation is idempotent and a later call pins again. A purge on a transient store fault would cost the user the whole session. Thus the failure rides the logger, and the outcome vocabulary of the spawn does not grow. The dep crosses the tool and `ConversationAgentDeps`, and the assembly binds it, thus no embedder changes.
 
+### D11. The window of a report turn keeps its first turn
+
+The seed is the one record of the brief and of the working memory, because the report turn injects no live render. The window evicts the oldest turn first, in blocks (`src/memory/thread-history.ts:504-522`). Thus a long session drops its own charter, and the agent keeps its tools and loses its objective.
+
+The read takes an option that keeps the first turn, and the assembly passes it for a `report` thread. Two alternatives were rejected. A tail copy of the seed duplicates it on each turn, until the eviction makes the copy the only one. A store column for the brief adds a migration for text that the transcript already holds.
+
+The retained turn can carry the window past its token budget. The cost is bounded, because the brief carries a length bound and the render is one row. The retained head also holds `messages[0]` byte-identical for the life of the session, thus the cache prefix of the provider stays still.
+
 ## Risks / Trade-offs
 
 - [The CLI passes `chrome: {}` (`cli/src/modules/harness/runtime.ts:1080`), thus every local spawn refuses `no_browser` until #312 wires the sidecar] → the refusal is typed and names the absent capability. The delivery branch merges as one unit, thus no release carries the gap.

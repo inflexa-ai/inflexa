@@ -142,6 +142,19 @@ export interface MessagePage {
 export type RetractOutcome = { kind: "retracted"; messages: number } | { kind: "empty-thread" } | { kind: "no-user-turn" };
 
 /**
+ * The read options of {@link ThreadHistory.loadRecent}. An absent option gives
+ * the default window.
+ */
+export interface LoadRecentOptions {
+    /**
+     * Keep the first turn of the thread in the window, past the eviction. The
+     * default is `false`, and the eviction then drops the first turn with the
+     * rest of the oldest block.
+     */
+    readonly keepFirstTurn?: boolean;
+}
+
+/**
  * The conversation message store. Two methods, by design — no generic row
  * insert (see the harness-thread-store spec). `threadId` is the conversation scope — one UI thread.
  */
@@ -160,8 +173,18 @@ export interface ThreadHistory {
      * in whole `EVICTION_BLOCK_TURNS` blocks (see the constant) so the prompt-cache
      * prefix stays byte-stable across appends; the window may therefore carry a
      * little less than the budget would strictly allow, but never more.
+     *
+     * `keepFirstTurn` keeps the first turn of the thread. The eviction then drops
+     * the oldest turns after it, and the window holds the first turn and that
+     * retained suffix. The first turn appears one time only.
+     *
+     * The retained turn can carry the window past `tokenBudget`. The cost is
+     * bounded. A report session seeds one turn, its brief carries a length bound,
+     * and its copy of the working-memory render is one row. The retained head also
+     * holds `messages[0]` byte-identical for the life of the thread, thus the
+     * prompt-cache prefix of the provider stays still.
      */
-    loadRecent(threadId: string, tokenBudget: number): ResultAsync<ModelMessage[], DbError>;
+    loadRecent(threadId: string, tokenBudget: number, options?: LoadRecentOptions): ResultAsync<ModelMessage[], DbError>;
     /**
      * Return one page of a thread's messages oldest-first for UI display —
      * NOT token-windowed (that is `loadRecent`'s job for the agent loop). No
@@ -478,7 +501,7 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         );
     }
 
-    function loadRecent(threadId: string, tokenBudget: number): ResultAsync<ModelMessage[], DbError> {
+    function loadRecent(threadId: string, tokenBudget: number, options?: LoadRecentOptions): ResultAsync<ModelMessage[], DbError> {
         return tryQuery("thread-history.loadRecent", async () => {
             const { rows } = await pool.query<MessageRow>(
                 // ORDER BY must qualify `messages.seq` — a bare `seq` would bind to the
@@ -535,15 +558,24 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
             // suffix is a subset of the budget-minimal one and stays within budget.
             const turnsEvicted = turns.length === 0 ? 0 : Math.min(Math.ceil(minimalEvicted / EVICTION_BLOCK_TURNS) * EVICTION_BLOCK_TURNS, turns.length - 1);
 
-            const { totalTokens, turnsEvicted: turnsEvictedHist } = getInstruments();
-            const attributes = { eviction: turnsEvicted > 0 };
-            totalTokens.record(threadTotal, attributes);
-            turnsEvictedHist.record(turnsEvicted, attributes);
+            // The retained head. The first turn of a report session carries the
+            // brief and the copy of the working-memory render, and no tail message
+            // replaces them. Thus `keepFirstTurn` puts that turn in front of the
+            // retained suffix, and `messages[0]` never moves again. An eviction of
+            // zero already holds the first turn at the head, thus the option adds
+            // nothing there and the window never carries the turn two times.
+            const keepsFirstTurn = options?.keepFirstTurn === true && turnsEvicted > 0;
 
-            return turns
-                .slice(turnsEvicted)
-                .flat()
-                .map((row) => row.message);
+            const { totalTokens, turnsEvicted: turnsEvictedHist } = getInstruments();
+            // A retained head gives one evicted turn back to the window, thus the
+            // metric reports one turn less than the budget walk cut.
+            const turnsDropped = keepsFirstTurn ? turnsEvicted - 1 : turnsEvicted;
+            const attributes = { eviction: turnsDropped > 0 };
+            totalTokens.record(threadTotal, attributes);
+            turnsEvictedHist.record(turnsDropped, attributes);
+
+            const retained = turns.slice(turnsEvicted);
+            return (keepsFirstTurn ? [turns[0]!, ...retained] : retained).flat().map((row) => row.message);
         });
     }
 

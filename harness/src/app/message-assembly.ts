@@ -19,6 +19,12 @@
  * sees state past that anchor, and that breaks the knowledge cap of a report
  * session. The analysis context and the run activity stay on both thread types.
  *
+ * The history window of a `report` thread also keeps the first turn. That turn
+ * is the seed, and it is the one record of the brief and of the copied render.
+ * The window evicts the oldest turn first, thus a long session would drop its
+ * own charter and keep only its tools. A `conversation` thread evicts as before,
+ * because its live tail carries the working memory on each turn.
+ *
  * Sanitization (`redactSecrets`, `normalizeUnicode`) is applied **once**, to
  * the new user input only — never to history, assistant messages, tool
  * results, the analysis context, or the rendered working memory.
@@ -48,7 +54,7 @@ export const DEFAULT_HISTORY_TOKEN_BUDGET = 120_000;
 export interface AssembleMessagesArgs {
     /** The conversation thread — a UI-generated UUID, never the analysisId. */
     readonly threadId: string;
-    /** The type of the thread. A `report` thread drops the working-memory tail. */
+    /** The type of the thread. A `report` thread drops the working-memory tail, and its window keeps the seed. */
     readonly threadType: ThreadType;
     /** The analysis scope — keys working memory and (separately) the context. */
     readonly analysisId: string;
@@ -84,7 +90,7 @@ export interface AssembledMessages {
 export async function assembleMessages(args: AssembleMessagesArgs): Promise<AssembledMessages> {
     const budget = args.tokenBudget ?? DEFAULT_HISTORY_TOKEN_BUDGET;
 
-    const history = unwrapOrThrow(await args.history.loadRecent(args.threadId, budget));
+    const history = unwrapOrThrow(await args.history.loadRecent(args.threadId, budget, { keepFirstTurn: args.threadType === "report" }));
 
     // Sanitization — applied once, here, to the new user input only.
     const userMessage: ModelMessage = {
