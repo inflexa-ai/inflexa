@@ -40,7 +40,7 @@ The port takes the tokens and the components, and it also takes the page archite
 
 The renderer emits `assets/<name>` references for the ECharts runtime and the fonts. It exports one asset manifest: each entry names the file and its package source. The caller stages the bytes into `assets/`, in the same write pipeline that stages the figures.
 
-The bytes come from three exact-pinned dependencies: `echarts`, `@fontsource-variable/space-grotesk`, and `@fontsource-variable/ibm-plex-mono`. The renderer stays a pure function, and it reads no file.
+The bytes come from three exact-pinned dependencies: `echarts`, `@fontsource-variable/space-grotesk`, and `@fontsource/ibm-plex-mono`. The renderer stays a pure function, and it reads no file.
 
 Two alternatives were rejected:
 
@@ -82,6 +82,16 @@ The block grammar names content and its grounding, never presentation. A present
 ### D8. The evolution path of the design
 
 A person edits `design.ts` and the views. The gates protect the edit: the HTML validity gate, the CSS validity gate, and the determinism gate. One fixture document covers every block kind. A package script renders the fixture to a file and prints the path, thus a person looks at the page directly.
+
+### D9. The page-asset lookup is a seam of the preview tool
+
+`preview_report` takes an optional `resolvePageAsset` dep. The dep maps the module specifier of a manifest entry onto an absolute file path. Absent, the tool keeps the current behavior: `createRequire(import.meta.url).resolve(...)` against the installation of the harness.
+
+The default serves an npm consumer and a Node.js consumer, because both have a `node_modules` tree beside the harness. A compiled single-file binary has none. There `import.meta.url` names a virtual root, the resolution walks the working directory upward, and each specifier fails. The whole preview then fails with `write-failed`, and the fault has nothing to do with the workspace.
+
+Thus an embedder that packs the asset bytes into its binary materializes them to disk at boot, and it binds its own lookup. The dep crosses `PreviewReportToolDeps`, `ReportSessionAgentDeps`, and `CoreRuntimeDeps` (as `resolveReportPageAsset`). Each bag holds it as optional, thus no current caller changes.
+
+`report-render/assets.ts` stays pure data. The manifest names the specifier alone, and the caller owns the lookup. A lookup that throws keeps the `fs` failure kind, thus the outcome vocabulary of the tool does not grow.
 
 ## Risks / Trade-offs
 

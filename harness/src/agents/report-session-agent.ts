@@ -34,7 +34,7 @@ import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import type { ReportVersionStore } from "../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../tools/report-authoring/authoring-tools.js";
 import { createReportAuthoringTools } from "../tools/report-authoring/authoring-tools.js";
-import { createExaminePageTool, createPreviewReportTool, createRecordVersionTool } from "../tools/report-session/index.js";
+import { createExaminePageTool, createPreviewReportTool, createRecordVersionTool, type ResolvePageAsset } from "../tools/report-session/index.js";
 import { createFileStatTool, createGrepTool, createListFilesTool, createReadFileTool, createWorkspaceSearchTool } from "../tools/workspace/index.js";
 import { createInspectDataProfileTool, createInspectRunTool } from "../tools/research/index.js";
 import { reportSessionPrompt } from "../prompts/report-session.js";
@@ -79,13 +79,19 @@ export interface ReportSessionAgentDeps {
      * degrade as data. The factory binds one analysis, thus a tool makes the resolver over the scope of the call.
      */
     readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
+    /**
+     * Page-asset lookup -- the preview tool maps the module specifier of a manifest
+     * entry onto a file on disk. Omitted falls back to the module resolution of the
+     * installation of the harness.
+     */
+    readonly resolvePageAsset?: ResolvePageAsset;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
 }
 
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
-    const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, makeResolver, logger } = deps;
+    const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, makeResolver, resolvePageAsset, logger } = deps;
     const authoring = createReportAuthoringTools(gateway);
 
     const tools: Tool[] = [
@@ -112,6 +118,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             gateway,
             resolveWorkspaceRoot,
             ...(makeResolver ? { makeResolver } : {}),
+            ...(resolvePageAsset ? { resolvePageAsset } : {}),
             ...(logger ? { logger } : {}),
         }),
         // The eyes tool. It opens the rendered page in headless Chrome.

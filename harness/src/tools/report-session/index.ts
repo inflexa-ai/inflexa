@@ -6,7 +6,13 @@
  * the factories and their public types for the composition root.
  */
 
-export { createPreviewReportTool, type PreviewReportInput, type PreviewReportResult, type PreviewReportToolDeps } from "./preview-report.js";
+export {
+    createPreviewReportTool,
+    type PreviewReportInput,
+    type PreviewReportResult,
+    type PreviewReportToolDeps,
+    type ResolvePageAsset,
+} from "./preview-report.js";
 export {
     createExaminePageTool,
     type CapturePage,
