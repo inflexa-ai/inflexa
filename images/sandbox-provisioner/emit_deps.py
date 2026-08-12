@@ -14,8 +14,12 @@ package give two nodes, and each edge lands on the version of its own farm.
 Python nodes come from importlib.metadata. Each environment marker evaluates in
 this image, thus a marker gives its runtime truth. No extra is active, thus a
 requirement under `extra == "test"` drops. R nodes come from the DESCRIPTION
-fields Depends, Imports, and LinkingTo, which one Rscript call reads with
-read.dcf.
+fields Depends and Imports, which one Rscript call reads with read.dcf.
+
+LinkingTo gives no edge. LinkingTo is a build-time field, and it names the
+headers of a source build. R never loads such a package at run time, and pak
+omits it from a binary install. Thus a LinkingTo name enters no pool, and an
+edge to it would always dangle.
 
 An edge into a package that the image owns drops against the fixed list in
 base-packages.json. Each other edge must land on a node. The emitter fails and
@@ -70,7 +74,7 @@ NOT_AN_IMPORT_NAME = {"bin", "__pycache__"}
 # script reads one package directory for each line of stdin, and it writes one
 # line for each package: the directory, a tab, and the raw field values.
 R_READ_DCF = (
-    'fields <- c("Depends", "Imports", "LinkingTo"); '
+    'fields <- c("Depends", "Imports"); '
     'for (p in readLines(file("stdin"))) { '
     'd <- tryCatch(read.dcf(file.path(p, "DESCRIPTION"), fields = fields), '
     'error = function(e) NULL); '
@@ -415,11 +419,15 @@ def entry_point_names(dist: Distribution) -> list[str]:
 
 
 def r_fields(inner_dirs: list[Path]) -> dict[str, list[str]]:
-    """The Depends, Imports, and LinkingTo names of each installed R package.
+    """The Depends and Imports names of each installed R package.
 
     One Rscript call reads every DESCRIPTION, thus the emitter starts R one time
     for a whole closure. Each entry can carry a version constraint in parentheses,
     and this function removes it to keep the bare name.
+
+    LinkingTo gives no name, because it is a build-time field. It names the
+    headers of a source build, and R never loads such a package at run time. pak
+    omits it from a binary install, thus the pool holds no store directory for it.
     """
     if not inner_dirs:
         return {}

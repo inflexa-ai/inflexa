@@ -117,10 +117,15 @@ The emitter runs inside the provisioner image, once after the CI bulk build and
 once after each acquisition run. Python edges come from `importlib.metadata`
 with markers evaluated in-image — the build environment is the sandbox
 environment, so each marker evaluates to its runtime truth. R edges come from
-the `DESCRIPTION` fields `Depends`, `Imports`, and `LinkingTo`, read with
+the two runtime `DESCRIPTION` fields `Depends` and `Imports`, read with
 `read.dcf`.
 Edges into image-owned base packages are dropped against a fixed list. CI gates:
 every remaining edge lands inside the node set.
+
+`LinkingTo` gives no edge. `LinkingTo` is a build-time field, and it names the
+headers of a source build. R never loads such a package at run time, and pak
+omits it from a binary install. Thus the pool holds no store directory for such
+a name, and an edge to it would always dangle.
 
 Alternative — parse `METADATA` and `DESCRIPTION` on the host at compose time:
 rejected. It duplicates marker evaluation outside the environment of record, and

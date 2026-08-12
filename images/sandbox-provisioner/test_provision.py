@@ -1921,8 +1921,8 @@ class DependencyGraphTests(StoreTestCase):
         self.assertFalse((provision.LIBS / "deps.json").exists())
 
     def test_an_r_node_carries_its_inner_directory_and_its_dcf_edges(self):
-        """§6.2: the R edges come from Depends, Imports, and LinkingTo, which one
-        Rscript call reads with read.dcf."""
+        """§6.2: the R edges come from Depends and Imports, which one Rscript call
+        reads with read.dcf."""
         rcpp = self._r_store_dir("Rcpp", "1.0.13")
         pkg = self._r_store_dir("myRpkg", "1.2.3")
         farm = provision.FARMS / "an1"
@@ -1955,6 +1955,51 @@ class DependencyGraphTests(StoreTestCase):
         self.assertEqual(node["entry_points"], [])
         # R, stats, and MASS belong to the image; only the store package stays.
         self.assertEqual(node["edges"], [rcpp.name])
+
+    def test_a_linkingto_package_gives_no_edge(self):
+        """§6.2: LinkingTo is a build-time field. It names the headers of a source
+        build, and R never loads such a package at run time. pak omits it from a
+        binary install, thus the pool holds no node for it and an edge to it would
+        always dangle."""
+        # The field list of the Rscript expression is the whole of the exclusion.
+        self.assertIn('c("Depends", "Imports")', emit_deps.R_READ_DCF)
+        self.assertNotIn("LinkingTo", emit_deps.R_READ_DCF)
+
+        rcpp = self._r_store_dir("Rcpp", "1.0.13")
+        pkg = self._r_store_dir("myRpkg", "1.2.3")
+        # StanHeaders is a LinkingTo name only, and no store directory holds it.
+        (pkg / "myRpkg" / "DESCRIPTION").write_text(
+            "Package: myRpkg\nVersion: 1.2.3\n"
+            "Imports: Rcpp (>= 1.0.0)\n"
+            "LinkingTo: Rcpp, StanHeaders\n")
+        farm = provision.FARMS / "an1"
+        provision.build_r_farm(farm, {"cran": [("Rcpp", rcpp), ("myRpkg", pkg)],
+                                      "bioconductor": [], "github": []})
+
+        def fake(cmd, *args, **kwargs):
+            """Read each DESCRIPTION, and give back the requested fields only.
+
+            This stands in for read.dcf. It honors the field list of the caller,
+            thus a request for LinkingTo would put StanHeaders into the answer.
+            """
+            head = list(cmd)[-1].split(";", 1)[0]
+            wanted = [part for i, part in enumerate(head.split('"')) if i % 2 == 1]
+            lines = []
+            for path in kwargs["input"].splitlines():
+                text = (Path(path) / "DESCRIPTION").read_text()
+                values = [line.split(":", 1)[1].strip()
+                          for line in text.splitlines()
+                          if line.split(":", 1)[0] in wanted]
+                lines.append("{}\t{}\n".format(path, ",".join(values)))
+            return SimpleNamespace(returncode=0, stdout="".join(lines), stderr="")
+
+        provision.subprocess.run = fake
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph = emit_deps.append_for_farm(provision.LIBS, farm)
+
+        # Rcpp is an Imports name, thus its edge stays. StanHeaders is a LinkingTo
+        # name, thus no edge names it and the gate passes.
+        self.assertEqual(graph["nodes"][pkg.name]["edges"], [rcpp.name])
 
     def test_the_standalone_emitter_covers_every_farm(self):
         """§6.4: the emitter runs standalone, and it reads every farm of the store."""

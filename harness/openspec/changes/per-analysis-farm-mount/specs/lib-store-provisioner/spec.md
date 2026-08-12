@@ -62,7 +62,9 @@ Reclaim SHALL be exclusive against every acquisition run: it waits for zero live
 
 The provisioner SHALL publish a dependency graph at the store root, as `deps.json`. The store-directory name of a distribution SHALL be the key of its node. A node SHALL carry the track, the import names, the entry points, and, for an R package, the inner-directory name. An edge SHALL name another node exactly. The graph SHALL NOT carry a version range, because every constraint resolves at build time.
 
-Python edges come from the installed distribution metadata, with each environment marker evaluated in the build environment. The build environment is the sandbox environment, thus each marker evaluates to its runtime truth. R edges come from the `Depends`, `Imports`, and `LinkingTo` fields of each installed `DESCRIPTION`. An edge into an image-owned base package SHALL be dropped against a fixed list.
+Python edges come from the installed distribution metadata, with each environment marker evaluated in the build environment. The build environment is the sandbox environment, thus each marker evaluates to its runtime truth. R edges come from the two runtime fields of each installed `DESCRIPTION`, which are `Depends` and `Imports`. An edge into an image-owned base package SHALL be dropped against a fixed list.
+
+`LinkingTo` gives no edge. `LinkingTo` is a build-time field, and it names the headers of a source build. R never loads such a package at run time, and pak omits it from a binary install. Thus the pool holds no store directory for such a name, and an edge to it would always dangle.
 
 One emitter SHALL serve the CI catalog build and every acquisition run. An acquisition run SHALL append its nodes and edges under the commit mutex. The build SHALL fail when an edge names a node that the graph does not hold.
 
