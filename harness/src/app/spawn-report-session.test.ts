@@ -6,7 +6,8 @@ import type { DbError } from "../lib/db-result.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore, type ThreadStore } from "../memory/thread-store.js";
-import { createReportSessionSpawn, type ReportSessionSpawn } from "./spawn-report-session.js";
+import { createWorkingMemory, type WorkingMemoryStore } from "../memory/working-memory.js";
+import { createReportSessionSpawn, REPORT_CHILD_PAGE_SIZE, type ReportBrief, type ReportSessionSpawn } from "./spawn-report-session.js";
 
 const ANALYSIS_A = "analysis-a";
 const ANALYSIS_B = "analysis-b";
@@ -14,14 +15,25 @@ const ANALYSIS_B = "analysis-b";
 let pool: Pool;
 let drop: () => Promise<void>;
 let store: ThreadStore;
+let memory: WorkingMemoryStore;
 let spawn: ReportSessionSpawn;
 
 /** A chrome config that names a browser, thus the eyes gate passes and the spawn reaches its own rules. */
 const WITH_BROWSER = { browserUrl: "http://localhost:9222" };
 
+/** The intent brief that each spawn carries. Every field is present, thus the seed shows each label. */
+const BRIEF: ReportBrief = {
+    objective: "Explain the sample quality outcome",
+    audience: "The lab lead",
+    angle: "The samples that the study keeps",
+    exclusions: "The raw alignment logs",
+    openQuestions: "The threshold of the batch correction",
+};
+
 beforeEach(async () => {
     ({ pool, drop } = await withSchema("spawn-report-session"));
     store = createThreadStore(pool);
+    memory = createWorkingMemory(pool);
     spawn = createReportSessionSpawn({ pool, chrome: WITH_BROWSER });
 });
 
@@ -59,13 +71,44 @@ async function reportThreadCount(): Promise<number> {
     return Number(rows[0]!.count);
 }
 
+/** The text of each message of a transcript, oldest first. */
+async function transcriptOf(threadId: string): Promise<string[]> {
+    const page = (await createThreadHistory(pool).loadPage(threadId, 0, 50))._unsafeUnwrap();
+    return page.messages.map((row) => (typeof row.message.content === "string" ? row.message.content : JSON.stringify(row.message.content)));
+}
+
+/**
+ * Make each later insert into `messages` fail. The trigger is real database
+ * state, thus the seed write fails the same way that a driver fault fails it. A
+ * delete stays permitted, thus the purge of the child still runs.
+ */
+async function refuseMessageInserts(): Promise<void> {
+    await pool.query("CREATE FUNCTION refuse_message_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'seed write refused'; END; $$");
+    await pool.query("CREATE TRIGGER refuse_message_insert BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION refuse_message_insert()");
+}
+
+/**
+ * Insert report children of one parent directly. One statement seeds a whole
+ * page, thus the walk over the pages gets its coverage with no spawn for each
+ * row. `updatedSecondsAgo` places the row in the listing, which orders by
+ * `updated_at`.
+ */
+async function insertReportChildren(prefix: string, count: number, parentThreadId: string, anchor: number, updatedSecondsAgo: number): Promise<void> {
+    await pool.query(
+        `INSERT INTO cortex_analysis_threads (thread_id, analysis_id, title, thread_type, parent_thread_id, parent_seq, created_at, updated_at)
+         SELECT $1 || '-' || g, $2, $1 || ' ' || g, 'report', $3, $4::bigint, NOW(), NOW() - ($5::int * INTERVAL '1 second')
+           FROM generate_series(1, $6::int) AS g`,
+        [prefix, ANALYSIS_A, parentThreadId, anchor, updatedSecondsAgo, count],
+    );
+}
+
 describe("spawnReportSession child shape", () => {
     it("makes a report child holding the parent id, the parent analysis, and the anchor", async () => {
         await seedConversation("p1", ANALYSIS_A, "RNA-seq QC");
         const anchor = await latestSeqOf("p1");
         expect(anchor).not.toBeNull();
 
-        const child = (await spawn.spawnReportSession("p1"))._unsafeUnwrap();
+        const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
 
         expect(child.threadType).toBe("report");
         expect(child.parentThreadId).toBe("p1");
@@ -82,7 +125,7 @@ describe("spawnReportSession child shape", () => {
     it("lists the child under its parent", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
 
-        const child = (await spawn.spawnReportSession("p1"))._unsafeUnwrap();
+        const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
 
         const page = (await store.listThreads({ analysisId: ANALYSIS_A, type: "report", parentThreadId: "p1" }))._unsafeUnwrap();
         expect(page.threads.map((t) => t.threadId)).toEqual([child.threadId]);
@@ -97,14 +140,14 @@ describe("spawnReportSession anchor", () => {
         (await appendTurn("p1"))._unsafeUnwrap();
         const anchor = await latestSeqOf("p1");
 
-        const child = (await spawn.spawnReportSession("p1"))._unsafeUnwrap();
+        const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
 
         expect(child.parentSeq).toBe(anchor);
     });
 
     it("keeps the child anchor when the parent appends a later turn", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
-        const child = (await spawn.spawnReportSession("p1"))._unsafeUnwrap();
+        const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
         const anchorAtSpawn = child.parentSeq;
 
         // The parent moves on. The child records the spawn point, so its anchor
@@ -122,7 +165,7 @@ describe("spawnReportSession refusals", () => {
         // The parent is legal in every other way, thus only the absent eyes route refuses.
         const blind = createReportSessionSpawn({ pool, chrome: {} });
 
-        const failed = (await blind.spawnReportSession("p1"))._unsafeUnwrapErr();
+        const failed = (await blind.spawnReportSession("p1", BRIEF))._unsafeUnwrapErr();
 
         expect(failed.type).toBe("no_browser");
         expect(await reportThreadCount()).toBe(0);
@@ -137,14 +180,14 @@ describe("spawnReportSession refusals", () => {
             capture: () => Promise.resolve({ screenshotBase64: "", consoleErrors: [], failedRequests: [] }),
         });
 
-        const child = (await seamed.spawnReportSession("p1"))._unsafeUnwrap();
+        const child = (await seamed.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
 
         expect(child.threadType).toBe("report");
         expect(await reportThreadCount()).toBe(1);
     });
 
     it("refuses an unknown parent with parent_not_found and writes no row", async () => {
-        const failed = (await spawn.spawnReportSession("ghost"))._unsafeUnwrapErr();
+        const failed = (await spawn.spawnReportSession("ghost", BRIEF))._unsafeUnwrapErr();
 
         expect(failed).toEqual({ type: "parent_not_found", op: "spawn-report-session", parentThreadId: "ghost" });
         expect(await reportThreadCount()).toBe(0);
@@ -154,7 +197,7 @@ describe("spawnReportSession refusals", () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
         (await store.archiveThread("p1"))._unsafeUnwrap();
 
-        const failed = (await spawn.spawnReportSession("p1"))._unsafeUnwrapErr();
+        const failed = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrapErr();
 
         expect(failed).toEqual({ type: "parent_not_found", op: "spawn-report-session", parentThreadId: "p1" });
         expect(await reportThreadCount()).toBe(0);
@@ -165,7 +208,7 @@ describe("spawnReportSession refusals", () => {
         // The type gate refuses before any transcript read, so it needs no messages.
         (await store.createThread({ threadId: "r1", analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
 
-        const failed = (await spawn.spawnReportSession("r1"))._unsafeUnwrapErr();
+        const failed = (await spawn.spawnReportSession("r1", BRIEF))._unsafeUnwrapErr();
 
         expect(failed).toEqual({ type: "parent_not_a_conversation", op: "spawn-report-session", parentThreadId: "r1", threadType: "report" });
         // Only the seed report exists — the spawn added none.
@@ -175,7 +218,7 @@ describe("spawnReportSession refusals", () => {
     it("refuses an empty parent transcript with empty_parent_transcript and writes no row", async () => {
         (await store.createThread({ threadId: "p1", analysisId: ANALYSIS_A, title: "Empty" }))._unsafeUnwrap();
 
-        const failed = (await spawn.spawnReportSession("p1"))._unsafeUnwrapErr();
+        const failed = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrapErr();
 
         expect(failed).toEqual({ type: "empty_parent_transcript", op: "spawn-report-session", parentThreadId: "p1" });
         expect(await reportThreadCount()).toBe(0);
@@ -186,10 +229,10 @@ describe("spawnReportSession title", () => {
     it("composes 'T — Report 1' then 'T — Report 2' across two spawns", async () => {
         await seedConversation("p1", ANALYSIS_A, "RNA-seq QC");
 
-        const first = (await spawn.spawnReportSession("p1"))._unsafeUnwrap();
+        const first = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
         expect(first.title).toBe("RNA-seq QC — Report 1");
 
-        const second = (await spawn.spawnReportSession("p1"))._unsafeUnwrap();
+        const second = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
         expect(second.title).toBe("RNA-seq QC — Report 2");
     });
 
@@ -198,7 +241,7 @@ describe("spawnReportSession title", () => {
         // title stays null so the fallback branch composes the whole title.
         await seedConversation("p1", ANALYSIS_A, null);
 
-        const child = (await spawn.spawnReportSession("p1"))._unsafeUnwrap();
+        const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
         expect(child.title).toBe("Report 1");
     });
 });
@@ -208,7 +251,7 @@ describe("listReportSessions", () => {
         // Two conversations and one report session under one analysis.
         await seedConversation("c1", ANALYSIS_A, "Conversation one");
         (await store.createThread({ threadId: "c2", analysisId: ANALYSIS_A, title: "Conversation two" }))._unsafeUnwrap();
-        const report = (await spawn.spawnReportSession("c1"))._unsafeUnwrap();
+        const report = (await spawn.spawnReportSession("c1", BRIEF))._unsafeUnwrap();
 
         const page = (await spawn.listReportSessions(ANALYSIS_A))._unsafeUnwrap();
 
@@ -220,8 +263,8 @@ describe("listReportSessions", () => {
     it("scopes to one analysis", async () => {
         await seedConversation("a1", ANALYSIS_A, "A parent");
         await seedConversation("b1", ANALYSIS_B, "B parent");
-        (await spawn.spawnReportSession("a1"))._unsafeUnwrap();
-        (await spawn.spawnReportSession("b1"))._unsafeUnwrap();
+        (await spawn.spawnReportSession("a1", BRIEF))._unsafeUnwrap();
+        (await spawn.spawnReportSession("b1", BRIEF))._unsafeUnwrap();
 
         const page = (await spawn.listReportSessions(ANALYSIS_A))._unsafeUnwrap();
 
@@ -230,13 +273,129 @@ describe("listReportSessions", () => {
     });
 });
 
+describe("spawnReportSession seed", () => {
+    it("writes one seed message that holds the brief and the working-memory render", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        (await memory.updateSection(ANALYSIS_A, "goal", { text: "Find the batch effect" }))._unsafeUnwrap();
+
+        const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+
+        const transcript = await transcriptOf(child.threadId);
+        expect(transcript).toHaveLength(1);
+        expect(transcript[0]).toContain(`Objective: ${BRIEF.objective}`);
+        expect(transcript[0]).toContain(`Audience: ${BRIEF.audience}`);
+        expect(transcript[0]).toContain(`Angle: ${BRIEF.angle}`);
+        expect(transcript[0]).toContain(`Exclusions: ${BRIEF.exclusions}`);
+        expect(transcript[0]).toContain(`Open questions: ${BRIEF.openQuestions}`);
+        expect(transcript[0]).toContain("# Working Memory");
+        expect(transcript[0]).toContain("Find the batch effect");
+    });
+
+    it("keeps the seed as it is when the working memory changes after the spawn", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        (await memory.updateSection(ANALYSIS_A, "goal", { text: "The goal at the spawn" }))._unsafeUnwrap();
+        const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+
+        (await memory.updateSection(ANALYSIS_A, "goal", { text: "The goal after the spawn" }))._unsafeUnwrap();
+
+        const transcript = await transcriptOf(child.threadId);
+        expect(transcript).toHaveLength(1);
+        expect(transcript[0]).toContain("The goal at the spawn");
+        expect(transcript[0]).not.toContain("The goal after the spawn");
+    });
+
+    it("purges the child when the seed write fails, and returns the fault", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        // The parent transcript is complete before the refusal, thus only the seed
+        // write fails, and it fails after the thread insert.
+        await refuseMessageInserts();
+
+        const failed = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrapErr();
+
+        expect(failed.type).toBe("mutation_failed");
+        expect(await reportThreadCount()).toBe(0);
+    });
+});
+
+describe("reportSessionDelta", () => {
+    it("gives no child and the latest seq for a parent with no report child", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+
+        const delta = (await spawn.reportSessionDelta("p1"))._unsafeUnwrap();
+
+        expect(delta.newestChild).toBeNull();
+        expect(delta.latestSeq).toBe(await latestSeqOf("p1"));
+    });
+
+    it("gives the anchor of the one child at the end of the transcript", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+
+        const delta = (await spawn.reportSessionDelta("p1"))._unsafeUnwrap();
+
+        expect(delta.newestChild?.threadId).toBe(child.threadId);
+        expect(delta.newestChild?.title).toBe(child.title);
+        expect(delta.newestChild?.anchor).toBe(delta.latestSeq);
+    });
+
+    it("gives an anchor below the latest seq after a later turn on the parent", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+        (await appendTurn("p1"))._unsafeUnwrap();
+
+        const delta = (await spawn.reportSessionDelta("p1"))._unsafeUnwrap();
+
+        expect(delta.newestChild?.threadId).toBe(child.threadId);
+        expect(delta.newestChild!.anchor).toBeLessThan(delta.latestSeq!);
+    });
+
+    it("finds the greatest anchor on a later page of the children listing", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        const anchor = (await latestSeqOf("p1"))!;
+        // The listing orders by `updated_at`, thus the oldest stamp puts the child
+        // with the greatest anchor on the second page, behind one full page.
+        await insertReportChildren("filler", REPORT_CHILD_PAGE_SIZE, "p1", 0, 0);
+        await insertReportChildren("winner", 1, "p1", anchor, 3600);
+
+        const delta = (await spawn.reportSessionDelta("p1"))._unsafeUnwrap();
+
+        expect(delta.newestChild?.threadId).toBe("winner-1");
+        expect(delta.newestChild?.anchor).toBe(anchor);
+        expect(delta.latestSeq).toBe(anchor);
+    });
+
+    it("names the child with the newest createdAt when two children share the greatest anchor", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        const first = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+        const second = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+        expect(second.parentSeq).toBe(first.parentSeq);
+        // The second child takes the older stamp, thus the tie rule and the order of
+        // the two inserts point at different rows.
+        await pool.query("UPDATE cortex_analysis_threads SET created_at = NOW() - INTERVAL '1 hour' WHERE thread_id = $1", [second.threadId]);
+
+        const delta = (await spawn.reportSessionDelta("p1"))._unsafeUnwrap();
+
+        expect(delta.newestChild?.threadId).toBe(first.threadId);
+    });
+
+    it("gives no child when the one report child is archived", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+        (await store.archiveThread(child.threadId))._unsafeUnwrap();
+
+        const delta = (await spawn.reportSessionDelta("p1"))._unsafeUnwrap();
+
+        expect(delta.newestChild).toBeNull();
+    });
+});
+
 describe("report children narrowed by parent", () => {
     it("gives only the children of the named parent", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent one");
         await seedConversation("p2", ANALYSIS_A, "Parent two");
-        const p1a = (await spawn.spawnReportSession("p1"))._unsafeUnwrap();
-        const p1b = (await spawn.spawnReportSession("p1"))._unsafeUnwrap();
-        (await spawn.spawnReportSession("p2"))._unsafeUnwrap();
+        const p1a = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+        const p1b = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+        (await spawn.spawnReportSession("p2", BRIEF))._unsafeUnwrap();
 
         const page = (await store.listThreads({ analysisId: ANALYSIS_A, type: "report", parentThreadId: "p1" }))._unsafeUnwrap();
 
