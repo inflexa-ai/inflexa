@@ -4,7 +4,7 @@ import type { Pool } from "pg";
 
 import type { DbError } from "../lib/db-result.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
-import { createThreadHistory } from "../memory/thread-history.js";
+import { conversationRecordTurn, createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore, type ThreadStore } from "../memory/thread-store.js";
 import { createWorkingMemory, type WorkingMemoryStore } from "../memory/working-memory.js";
 import { createReportSessionSpawn, REPORT_CHILD_PAGE_SIZE, type ReportBrief, type ReportSessionSpawn } from "./spawn-report-session.js";
@@ -52,6 +52,11 @@ function appendTurn(threadId: string): ResultAsync<void, DbError> {
         ],
         displayMessages: [],
     });
+}
+
+/** Append one record of out-of-band work — a synthetic message that opens no turn. */
+function appendRecord(threadId: string, text: string): ResultAsync<void, DbError> {
+    return createThreadHistory(pool).appendTurn(threadId, conversationRecordTurn(text));
 }
 
 /** A live conversation parent with a first turn — the shape a legal spawn needs. */
@@ -318,16 +323,17 @@ describe("spawnReportSession seed", () => {
 });
 
 describe("reportSessionDelta", () => {
-    it("gives no child and the latest seq for a parent with no report child", async () => {
+    it("gives no child and no count for a parent with no report child", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
 
         const delta = (await spawn.reportSessionDelta("p1"))._unsafeUnwrap();
 
         expect(delta.newestChild).toBeNull();
-        expect(delta.latestSeq).toBe(await latestSeqOf("p1"));
+        // No child gives no anchor to count from, thus the count is absent.
+        expect(delta.userTurnsSinceAnchor).toBeNull();
     });
 
-    it("gives the anchor of the one child at the end of the transcript", async () => {
+    it("gives the anchor of the one child at the end of the transcript, and a count of zero", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
         const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
 
@@ -335,18 +341,22 @@ describe("reportSessionDelta", () => {
 
         expect(delta.newestChild?.threadId).toBe(child.threadId);
         expect(delta.newestChild?.title).toBe(child.title);
-        expect(delta.newestChild?.anchor).toBe(delta.latestSeq);
+        expect(delta.newestChild?.anchor).toBe(await latestSeqOf("p1"));
+        expect(delta.userTurnsSinceAnchor).toBe(0);
     });
 
-    it("gives an anchor below the latest seq after a later turn on the parent", async () => {
+    it("counts the turns of the parent past the anchor", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
         const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+
         (await appendTurn("p1"))._unsafeUnwrap();
+        expect((await spawn.reportSessionDelta("p1"))._unsafeUnwrap().userTurnsSinceAnchor).toBe(1);
 
+        (await appendTurn("p1"))._unsafeUnwrap();
         const delta = (await spawn.reportSessionDelta("p1"))._unsafeUnwrap();
-
         expect(delta.newestChild?.threadId).toBe(child.threadId);
-        expect(delta.newestChild!.anchor).toBeLessThan(delta.latestSeq!);
+        expect(delta.newestChild!.anchor).toBeLessThan((await latestSeqOf("p1"))!);
+        expect(delta.userTurnsSinceAnchor).toBe(2);
     });
 
     it("finds the greatest anchor on a later page of the children listing", async () => {
@@ -361,7 +371,9 @@ describe("reportSessionDelta", () => {
 
         expect(delta.newestChild?.threadId).toBe("winner-1");
         expect(delta.newestChild?.anchor).toBe(anchor);
-        expect(delta.latestSeq).toBe(anchor);
+        // The count reads the anchor of the winner, not the anchor of a filler
+        // row: a count from seq 0 would report the one turn of the parent.
+        expect(delta.userTurnsSinceAnchor).toBe(0);
     });
 
     it("names the child with the newest createdAt when two children share the greatest anchor", async () => {
@@ -378,7 +390,7 @@ describe("reportSessionDelta", () => {
         expect(delta.newestChild?.threadId).toBe(first.threadId);
     });
 
-    it("gives no child when the one report child is archived", async () => {
+    it("gives no child and no count when the one report child is archived", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
         const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
         (await store.archiveThread(child.threadId))._unsafeUnwrap();
@@ -386,6 +398,20 @@ describe("reportSessionDelta", () => {
         const delta = (await spawn.reportSessionDelta("p1"))._unsafeUnwrap();
 
         expect(delta.newestChild).toBeNull();
+        expect(delta.userTurnsSinceAnchor).toBeNull();
+    });
+
+    it("does not count a record of the host past the anchor", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+        // One ask, then one record of out-of-band work. The record carries the
+        // `user` role, and nobody typed it, thus the count stays at the one ask.
+        (await appendTurn("p1"))._unsafeUnwrap();
+        (await appendRecord("p1", "Run GSEA cross-species comparison completed: 3/3 steps."))._unsafeUnwrap();
+
+        const delta = (await spawn.reportSessionDelta("p1"))._unsafeUnwrap();
+
+        expect(delta.userTurnsSinceAnchor).toBe(1);
     });
 });
 

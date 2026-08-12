@@ -6,7 +6,7 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import type { Scope } from "../auth/types.js";
 import { createReportSessionSpawn } from "../app/spawn-report-session.js";
 import type { DbError } from "../lib/db-result.js";
-import { createThreadHistory } from "../memory/thread-history.js";
+import { conversationRecordTurn, createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore, type ThreadStore } from "../memory/thread-store.js";
 import { makeToolContext } from "./__fixtures__/tool-context.js";
 import type { Tool, ToolContext } from "./define-tool.js";
@@ -52,6 +52,11 @@ function appendTurn(threadId: string): ResultAsync<void, DbError> {
         ],
         displayMessages: [],
     });
+}
+
+/** Append one record of out-of-band work — a synthetic message that opens no turn. */
+function appendRecord(threadId: string, text: string): ResultAsync<void, DbError> {
+    return createThreadHistory(pool).appendTurn(threadId, conversationRecordTurn(text));
 }
 
 /** A live conversation parent with a first turn — the shape a legal start needs. */
@@ -158,10 +163,10 @@ describe("the eyes gate", () => {
         expect(await reportThreadCount()).toBe(0);
     });
 
-    it("has priority over the advice: a zero delta under a blind composition gives no_browser", async () => {
+    it("has priority over the advice: an advised parent under a blind composition gives no_browser", async () => {
         await seedConversation("p1", "Parent");
-        // The one child sits at the end of the parent transcript, thus the delta is
-        // zero and the advice would return, if the gate ran second.
+        // The one child sits at the end of the parent transcript, thus no user
+        // turn follows the anchor and the advice would return, if the gate ran second.
         const started = await run(INPUT, ctxForThread("p1"));
         expect(started.outcome).toBe("started");
         const blind = createStartReportSessionTool({ pool, chrome: {} });
@@ -174,7 +179,7 @@ describe("the eyes gate", () => {
 });
 
 describe("the existing-session arm", () => {
-    it("names the newest child on a zero delta, and starts no second session", async () => {
+    it("names the newest child when no user turn follows the anchor, and starts no second session", async () => {
         await seedConversation("p1", "Parent");
         const started = await run(INPUT, ctxForThread("p1"));
         expect(started.outcome).toBe("started");
@@ -189,10 +194,42 @@ describe("the existing-session arm", () => {
         expect(await reportThreadCount()).toBe(1);
     });
 
-    it("starts a session again after a later turn on the parent", async () => {
+    it("keeps the advice when the turn of the ask that started the session lands past the anchor", async () => {
+        await seedConversation("p1", "Parent");
+        const started = await run(INPUT, ctxForThread("p1"));
+        expect(started.outcome).toBe("started");
+        if (started.outcome !== "started") return;
+        // The caller appends the whole turn after the loop of that turn runs, thus
+        // the ask that started the session lands one user turn past the anchor.
+        (await appendTurn("p1"))._unsafeUnwrap();
+
+        const result = await run(INPUT, ctxForThread("p1"));
+
+        expect(result.outcome).toBe("existing-session");
+        if (result.outcome !== "existing-session") return;
+        expect(result.threadId).toBe(started.threadId);
+        expect(await reportThreadCount()).toBe(1);
+    });
+
+    it("keeps the advice when a record of the host lands past the anchor", async () => {
         await seedConversation("p1", "Parent");
         expect((await run(INPUT, ctxForThread("p1"))).outcome).toBe("started");
-        // The parent moves past the anchor of the child, thus the delta is not zero.
+        // The turn of the ask, and then one record of out-of-band work. A record
+        // opens no turn, thus it never clears the advice on its own.
+        (await appendTurn("p1"))._unsafeUnwrap();
+        (await appendRecord("p1", "Run GSEA cross-species comparison completed: 3/3 steps."))._unsafeUnwrap();
+
+        const result = await run(INPUT, ctxForThread("p1"));
+
+        expect(result.outcome).toBe("existing-session");
+        expect(await reportThreadCount()).toBe(1);
+    });
+
+    it("starts a session again after a second user turn on the parent", async () => {
+        await seedConversation("p1", "Parent");
+        expect((await run(INPUT, ctxForThread("p1"))).outcome).toBe("started");
+        // The turn of the ask, and then one turn of real work past the anchor.
+        (await appendTurn("p1"))._unsafeUnwrap();
         (await appendTurn("p1"))._unsafeUnwrap();
 
         const result = await run(INPUT, ctxForThread("p1"));
@@ -203,7 +240,7 @@ describe("the existing-session arm", () => {
 });
 
 describe("the override", () => {
-    it("starts a second session on a zero delta when newSessionAnyway is true", async () => {
+    it("starts a second session on an advised parent when newSessionAnyway is true", async () => {
         await seedConversation("p1", "Parent");
         const started = await run(INPUT, ctxForThread("p1"));
         expect(started.outcome).toBe("started");

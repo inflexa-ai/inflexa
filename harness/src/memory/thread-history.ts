@@ -202,6 +202,25 @@ export interface ThreadHistory {
      * no guarantee, because the tail can move one append later without it.
      */
     latestSeq(threadId: string): ResultAsync<number | null, DbError>;
+    /**
+     * The count of the thread turns that a person opened past `seq`. A caller
+     * reads it as the new work of the thread past an anchor.
+     *
+     * The unit is a turn, not a row. One turn writes a user row, an assistant
+     * row for each step, and a tool row for each result. Thus a row count of one
+     * span reports the shape of a turn, not the count of the asks.
+     *
+     * A seq comparison alone reports even less. An anchor taken during a turn
+     * sits below the rows of that same turn, thus the difference never reads as
+     * zero again.
+     *
+     * The count reads {@link GENUINE_USER_START_SQL}, the one predicate the turn
+     * grouping and the tail retraction already cut on. Thus the count and the
+     * grouping cannot drift. A synthetic nudge of the loop and a record of the
+     * host both carry the `user` role, and neither one is new work. Thus neither
+     * one adds to the count.
+     */
+    countUserTurnsAfter(threadId: string, seq: number): ResultAsync<number, DbError>;
 }
 
 /**
@@ -655,5 +674,27 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         });
     }
 
-    return { appendTurn, loadRecent, loadPage, retractLastTurn, latestSeq };
+    function countUserTurnsAfter(threadId: string, seq: number): ResultAsync<number, DbError> {
+        // `GENUINE_USER_START_SQL` is the stored-envelope twin of
+        // `isGenuineUserStart`, and the tail retraction cuts on the same text.
+        // Thus one row matches for each turn that a person opened, and a
+        // synthetic nudge of the loop or a record of the host matches none.
+        //
+        // `$2::bigint` compares the bigint column against a bigint, never against
+        // a text projection, thus an anchor past 2^53 still compares exactly.
+        // `COUNT(*)` is a bigint as well, and the driver hands a bigint back as
+        // text. The explicit cast says so, and `Number` makes the crossing in one
+        // place — the way every other read of this column does.
+        return tryQuery("thread-history.countUserTurnsAfter", () =>
+            pool.query<{ turns: string }>(
+                `SELECT COUNT(*)::text AS turns FROM messages
+              WHERE thread_id = $1
+                AND seq > $2::bigint
+                AND ${GENUINE_USER_START_SQL}`,
+                [threadId, seq],
+            ),
+        ).map(({ rows }) => Number(rows[0]!.turns));
+    }
+
+    return { appendTurn, loadRecent, loadPage, retractLastTurn, latestSeq, countUserTurnsAfter };
 }
