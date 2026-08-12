@@ -8,9 +8,9 @@
  *
  * The order of the checks is fixed. The eyes gate runs first, because a
  * composition with no browser is a permanent condition and the advice is
- * transient state. The advice runs next: when the parent holds no message after
- * the anchor of the newest report child, the tool starts nothing and it names
- * that child. The spawn runs last.
+ * transient state. The advice runs next. At one user turn or less of the parent
+ * past the anchor of the newest report child, the tool starts nothing and it
+ * names that child. The spawn runs last.
  *
  * Each degraded condition is a typed outcome in the ok channel: a scope with no
  * thread id, a composition with no eyes, the advice, each refusal of the spawn,
@@ -44,7 +44,9 @@ const startReportSessionInput = z.object({
     newSessionAnyway: z
         .boolean()
         .optional()
-        .describe("Set it to true to start a new session when the conversation holds no message after the last report session. The default is false."),
+        .describe(
+            "Set it to true to start a new session when the conversation holds no user turn of new work after the last report session. The default is false.",
+        ),
 });
 
 export type StartReportSessionInput = z.infer<typeof startReportSessionInput>;
@@ -144,8 +146,9 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
             "The brief carries intent only. Do not name a path, a dataset, or a format in it, " +
             "because the session reads those from the workspace. " +
             "Keep the whole brief under approximately 2000 tokens. " +
-            "When the conversation holds no message after the last report session, the tool starts " +
-            "nothing and it names that session. Then tell the user to continue in that chat.",
+            "When the conversation holds no user turn of new work after the last report session, the tool " +
+            "starts nothing and it names that session. The ask that started that session is not new work. " +
+            "Then tell the user to continue in that chat.",
         inputSchema: startReportSessionInput,
         executionMode: "inline",
         describeCall: "none",
@@ -179,12 +182,13 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
                     });
                     return ok(toOutcome(delta.error));
                 }
-                const { newestChild, latestSeq } = delta.value;
-                // The rule is exact at zero: the parent holds no message past the
-                // anchor of the newest child. A small non-zero delta stays a
-                // judgment of the agent, because each non-zero threshold is
-                // arbitrary.
-                if (input.newSessionAnyway !== true && newestChild !== null && latestSeq !== null && latestSeq <= newestChild.anchor) {
+                const { newestChild, userTurnsSinceAnchor } = delta.value;
+                // The rule admits one turn. A turn appends after its own loop
+                // runs, thus the ask that made the child is itself one user turn
+                // past the anchor. A rule at zero would never advise again after
+                // that turn commits. A second user turn is real work, and a new
+                // session can report on it.
+                if (input.newSessionAnyway !== true && newestChild !== null && userTurnsSinceAnchor !== null && userTurnsSinceAnchor <= 1) {
                     return ok({ outcome: "existing-session", threadId: newestChild.threadId, title: newestChild.title });
                 }
             }
