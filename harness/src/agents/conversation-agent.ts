@@ -14,14 +14,9 @@
  * `execute_analysis` is wired here — it launches the DBOS `executeAnalysis` parent
  * workflow under `workflowId = runId` (the bare run UUID) through the
  * `RunLauncher` seam and returns the runId (results are pull-only via
- * `inspectRun` on a later turn). Report authoring is wired here as the
- * pair `plan_report` (returns the report-brief schema + authoring rules
- * just-in-time as its result) + `submit_report` (validates the composed brief
- * and drives in-process Nunjucks rendering via the `report-builder` agent, no
- * sandbox). The 4 custom tools the builder itself drives (`build_report`, its
- * own terminal `submit_report`, `preview_snapshot`, `mint_preview_url`) are
- * constructed inside the runner so they share closure-captured outcome state +
- * preview-dir paths.
+ * `inspectRun` on a later turn). `start_report_session` is the one report path.
+ * It starts a report thread as a child of the conversation, and the Report
+ * Builder composes the report in that thread.
  * The workspace read surface (`read_file`, `grep`, `workspace_search`) is
  * wired here over the `WorkspaceFilesystem` seam.
  */
@@ -81,7 +76,8 @@ import { createListAvailableRefsTool } from "../tools/sandbox/list-available-ref
 import { createExecuteAnalysisTool } from "../tools/execute-analysis.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
-import { planReportTool, createReportSubmitTool, type SubmitReportDeps } from "../tools/iterate-report.js";
+import type { SubmitReportDeps } from "../tools/iterate-report.js";
+import { createStartReportSessionTool } from "../tools/start-report-session.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
@@ -144,16 +140,16 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
      */
     readonly runLauncher: RunLauncher;
     /**
-     * Preview-publishing seam factory for `submit_report` — injected, not
-     * constructed here. The managed root closes its platform deps over this; the
-     * OSS root returns the "unavailable" publisher.
+     * Preview-publishing seam factory. No tool of the roster reads it. The field
+     * stays, because a change to the deps breaks an embedder at its composition
+     * root.
      */
     readonly createPreviewPublisher: SubmitReportDeps["createPreviewPublisher"];
     /** API keys for the external bio/chem data sources. */
     readonly bioKeys: BioToolKeys;
-    /** Root templates dir for in-process report rendering (`submit_report`). */
+    /** Root templates dir. No tool of the roster reads it. */
     readonly templatesDir: string;
-    /** Skills root; the in-process report-builder gets `report-html` skill tools. */
+    /** Skills root. No tool of the roster reads it. */
     readonly skillsDir: string;
     /** Headless-Chrome config for report snapshot/preview rendering. */
     readonly chrome: ChromeConfig;
@@ -184,13 +180,9 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         utilityProvider,
         utilityModel,
         executeAnalysisWorkflow,
-        resolveWorkspaceRoot,
         runAuthorizer,
         runLauncher,
-        createPreviewPublisher,
         bioKeys,
-        templatesDir,
-        skillsDir,
         chrome,
         resourcePolicy,
         hostTools,
@@ -266,22 +258,10 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             utilityModel,
             ...(deps.logger ? { logger: deps.logger } : {}),
         }),
-        // Report authoring: the always-on `plan_report` trigger delivers the
-        // heavy brief schema + rules just-in-time as its result; `submit_report`
-        // takes the composed brief as `unknown` and validates it in-execute, so
-        // the ~12k schema never rides the always-on tool surface.
-        planReportTool,
-        createReportSubmitTool({
-            provider,
-            pool,
-            resolveWorkspaceRoot,
-            model,
-            templatesDir,
-            skillsDir,
-            chrome,
-            createPreviewPublisher,
-            usageRecorder,
-        }),
+        // The one report path. The tool starts a report thread as a child of the
+        // conversation, and the user composes the report there with the Report
+        // Builder.
+        createStartReportSessionTool({ pool, chrome, ...(deps.logger ? { logger: deps.logger } : {}) }),
         // Display.
         showUserTool,
         createShowPlanTool(pool),

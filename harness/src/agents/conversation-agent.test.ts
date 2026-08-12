@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Pool } from "pg";
 
 import { createConversationAgent, CONVERSATION_AGENT_ID } from "./conversation-agent.js";
+import { conversationPrompt } from "../prompts/conversation.js";
 import { createRegistry } from "../tools/registry.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
 import { AskRejectedError } from "../tools/approval/contract.js";
@@ -114,14 +115,31 @@ describe("createConversationAgent", () => {
             "inspect_run",
             "inspect_data_profile",
             "execute_analysis",
-            "plan_report",
-            "submit_report",
+            "start_report_session",
             "show_user",
             "show_plan",
             "show_file",
         ]) {
             expect(ids.has(expected)).toBe(true);
         }
+    });
+
+    // The roster is the whole guarantee of one report path. No runtime guard
+    // blocks the old pair; the roster omits it.
+    test("holds one report path and neither tool of the old pair", () => {
+        const ids = new Set(buildAgent().tools.map((tool) => tool.id));
+        expect(ids.has("start_report_session")).toBe(true);
+        expect(ids.has("plan_report")).toBe(false);
+        expect(ids.has("submit_report")).toBe(false);
+    });
+
+    // The prompt is agent-facing copy, and no typechecker reads it. A name of a
+    // tool that the roster does not hold spends a turn on a call that cannot
+    // dispatch.
+    test("the prompt names the one report path and neither tool of the old pair", () => {
+        expect(conversationPrompt).toContain("start_report_session");
+        expect(conversationPrompt).not.toContain("plan_report");
+        expect(conversationPrompt).not.toContain("submit_report");
     });
 
     test("places citation verification beside literature discovery", () => {
