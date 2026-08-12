@@ -18,6 +18,24 @@ The assembly MUST read the thread type from the row that the turn preparation al
 - **WHEN** a turn runs on a `conversation` thread
 - **THEN** the assembled tail holds the working-memory render, as before
 
+### Requirement: The window of a report turn keeps the seed
+
+The history window of a report turn MUST keep the first turn of the thread. The seed is that first turn, and it is the one record of the brief and of the working memory. No tail message replaces it.
+
+The window evicts the oldest turn first. Thus a long session would drop the seed, and the agent would keep its tools and lose its objective. The retained seed can carry the window past its token budget. The cost is bounded, because the brief carries a length bound and the render is one row.
+
+A `conversation` thread MUST keep the eviction that it has. The live tail of that thread carries the memory on each turn, thus its first turn holds no record that a later turn needs.
+
+#### Scenario: A long report session keeps its seed
+
+- **WHEN** a report thread holds more turns than the token budget admits
+- **THEN** the window holds the seed, and it holds the most recent turns
+
+#### Scenario: A conversation window evicts its oldest turn
+
+- **WHEN** a conversation thread holds more turns than the token budget admits
+- **THEN** the window drops the oldest turns, as before
+
 ## MODIFIED Requirements
 
 ### Requirement: The snapshot pins at session start

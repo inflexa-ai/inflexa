@@ -43,6 +43,9 @@ export type {
     ReportSessionDelta,
     NewestReportChild,
 } from "./app/spawn-report-session.js";
+// The outcome of the report-session anchor operation. `ConversationAgentDeps`
+// names it, thus an embedder cannot type that dep without this name.
+export type { EnsureSessionStateResult } from "./app/report-session-runtime.js";
 // The harness-owned boot sequence: ordered boot steps around `assembleCoreRuntime`
 // (skill validation → state init → connection budget → assemble → launch) + a
 // `shutdown` handle the embedder wires to its process signals.
