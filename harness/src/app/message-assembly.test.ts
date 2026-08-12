@@ -25,6 +25,28 @@ function stubHistory(window: MessageParam[]): ThreadHistory {
     };
 }
 
+const SEED = "the report brief";
+const RECENT = "a recent turn";
+
+/**
+ * A store that stands in for an over-budget thread: the seed message survives
+ * the eviction only when the read keeps the first turn.
+ */
+function seedKeepingHistory(): ThreadHistory {
+    return {
+        ...stubHistory([]),
+        loadRecent: (_threadId, _budget, options) =>
+            okAsync(
+                options?.keepFirstTurn === true
+                    ? [
+                          { role: "user", content: SEED },
+                          { role: "user", content: RECENT },
+                      ]
+                    : [{ role: "user", content: RECENT }],
+            ),
+    };
+}
+
 function stubWorkingMemory(render = WM_RENDER): WorkingMemoryStore {
     return {
         load: () => okAsync(emptyWorkingMemory()),
@@ -133,6 +155,36 @@ describe("assembleMessages", () => {
         expect(contentText(messages[0]!)).toContain("[Analysis Context]");
         expect(contentText(messages[1]!)).toBe(RUN_ACTIVITY);
         expect(messages[2]).toEqual(userMessage);
+    });
+
+    test("a report thread loads a window that keeps the seed", async () => {
+        const { messages } = await assembleMessages({
+            threadId: "thread-report",
+            threadType: "report",
+            analysisId: "analysis-1",
+            userInput: "draft the summary",
+            analysisContext: null,
+            runActivityContext: RUN_ACTIVITY,
+            history: seedKeepingHistory(),
+            workingMemory: stubWorkingMemory(),
+        });
+
+        expect(contentText(messages[0]!)).toBe(SEED);
+    });
+
+    test("a conversation thread loads a window that evicts the seed", async () => {
+        const { messages } = await assembleMessages({
+            threadId: "thread-conversation",
+            threadType: "conversation",
+            analysisId: "analysis-1",
+            userInput: "draft the summary",
+            analysisContext: null,
+            runActivityContext: RUN_ACTIVITY,
+            history: seedKeepingHistory(),
+            workingMemory: stubWorkingMemory(),
+        });
+
+        expect(messages.map(contentText)).not.toContain(SEED);
     });
 
     test("a conversation thread keeps the working-memory tail", async () => {

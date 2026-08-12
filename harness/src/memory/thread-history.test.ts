@@ -466,6 +466,65 @@ describe("loadRecent prefix stability", () => {
     });
 });
 
+// --- the retained first turn ------------------------------------------------
+
+describe("loadRecent retained first turn", () => {
+    const K = EVICTION_BLOCK_TURNS;
+
+    /** Seed 3K equal-cost turns and give a budget that fits K of them. */
+    async function seedOverBudget(): Promise<{ turns: ModelMessage[][]; budget: number }> {
+        const turns = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            .slice(0, 3 * K)
+            .split("")
+            .map(labeledTurn);
+        for (const turn of turns) {
+            (await append(THREAD, turn))._unsafeUnwrap();
+        }
+        return { turns, budget: K * turnCost(turns[0]!) };
+    }
+
+    it("keeps the first turn in front of the retained suffix when the thread is over budget", async () => {
+        const { turns, budget } = await seedOverBudget();
+
+        const evicting = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
+        const loaded = (await history.loadRecent(THREAD, budget, { keepFirstTurn: true }))._unsafeUnwrap();
+
+        // The window is the first turn plus exactly the suffix the default read
+        // retains — the seed rides at the head, and it rides one time only.
+        expect(loaded).toEqual([...turns[0]!, ...evicting]);
+        expect(loaded.slice(0, 2)).toEqual(turns[0]!);
+        expect(loaded.slice(-2)).toEqual(turns.at(-1)!);
+        assertValidSequence(loaded);
+        // The retained head is the accepted cost: it carries the window past the
+        // budget, and the default read stays under it.
+        expect(windowCost(loaded)).toBeGreaterThan(budget);
+        expect(windowCost(evicting)).toBeLessThanOrEqual(budget);
+    });
+
+    it("evicts the oldest turns when the option is absent", async () => {
+        const { turns, budget } = await seedOverBudget();
+
+        const loaded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
+
+        // Two whole blocks go, and the first turn goes with them.
+        expect(loaded).toEqual(turns.slice(2 * K).flat());
+        expect(windowCost(loaded)).toBeLessThanOrEqual(budget);
+        assertValidSequence(loaded);
+    });
+
+    it("returns the whole thread when nothing is evicted", async () => {
+        const turns = ["A", "B", "C"].map(labeledTurn);
+        for (const turn of turns) {
+            (await append(THREAD, turn))._unsafeUnwrap();
+        }
+
+        const loaded = (await history.loadRecent(THREAD, 1_000_000, { keepFirstTurn: true }))._unsafeUnwrap();
+
+        expect(loaded).toEqual(turns.flat());
+        assertValidSequence(loaded);
+    });
+});
+
 // --- boundary snapping ------------------------------------------------------
 
 describe("loadRecent boundary snapping", () => {

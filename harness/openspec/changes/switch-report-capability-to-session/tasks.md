@@ -52,8 +52,15 @@
 - [x] 7.4 Bound each brief field in the schema of the tool.
 - [x] 7.5 Cover the pin: the spawn pins, a later artifact is no member, and a failed pin keeps the child.
 
-## 8. Verification
+## 8. The retained seed and the barrel
 
-- [x] 8.1 Run `tsc -p tsconfig.json` and `bun test` in `harness/`.
-- [x] 8.2 Run `bun run format:file` on each changed source file.
-- [x] 8.3 Search the prompts and the tool descriptions for a stale name of the old pair, per the agent-facing-copy rule.
+- [x] 8.1 Add the option that keeps the first turn to `loadRecent` in `src/memory/thread-history.ts`.
+- [x] 8.2 Pass the option for a `report` thread in `src/app/message-assembly.ts`.
+- [x] 8.3 Export `EnsureSessionStateResult` from `src/index.ts`, because `ConversationAgentDeps` names it.
+- [x] 8.4 Cover the window: a report thread over budget keeps its seed, and a conversation thread evicts as before.
+
+## 9. Verification
+
+- [x] 9.1 Run `tsc -p tsconfig.json` and `bun test` in `harness/`.
+- [x] 9.2 Run `bun run format:file` on each changed source file.
+- [x] 9.3 Search the prompts and the tool descriptions for a stale name of the old pair, per the agent-facing-copy rule.
