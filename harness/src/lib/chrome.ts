@@ -125,6 +125,11 @@ interface EndpointEntry {
 /**
  * The entry of each endpoint that the process reached, keyed by the endpoint URL. A disconnect evicts an
  * entry, thus a browser that appears for one look leaves nothing behind.
+ *
+ * The eviction is event-driven, and no sweep runs over this map. The socket close of a dead browser raises
+ * the disconnect event, thus a browser that dies in the normal way evicts its own entry. A browser that dies
+ * with no event leaves one entry that nothing removes. The cost is one dead entry for one endpoint URL that
+ * no later look names again.
  */
 const endpoints = new Map<string, EndpointEntry>();
 
