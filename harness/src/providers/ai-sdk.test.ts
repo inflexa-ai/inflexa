@@ -267,6 +267,25 @@ describe("createAiSdkProvider", () => {
         expect(provider.capabilities.toolCalling).toBe(false);
         expect(calls).toHaveLength(0);
     });
+
+    // An absent picture flag means "cannot carry", never "unknown". Thus the
+    // factory copies a stated flag, and it invents no value for an absent one.
+    it("copies a stated user-message picture flag, and leaves an absent one absent", () => {
+        const declared = createAiSdkProvider({
+            model: fakeModel(async () => okResult()),
+            resolveBilling: async () => ({}),
+            capabilities: { imageUserMessages: true },
+        });
+        const silent = createAiSdkProvider({
+            model: fakeModel(async () => okResult()),
+            resolveBilling: async () => ({}),
+            capabilities: { toolCalling: true },
+        });
+
+        expect(declared.capabilities.imageUserMessages).toBe(true);
+        expect(silent.capabilities.imageUserMessages).toBeUndefined();
+        expect(silent.capabilities.imageToolResults).toBeUndefined();
+    });
 });
 
 describe("empty text block sanitization", () => {
@@ -557,6 +576,36 @@ describe("createConfiguredAiSdkProvider", () => {
 
         expect(declared.capabilities.imageToolResults).toBe(true);
         expect(refused.capabilities.imageToolResults).toBe(false);
+    });
+
+    // The user-message placement has no endpoint default at all. The embedder
+    // states the fact about its own wire, because a proxy can front anything.
+    it("copies a stated user-message picture flag, and leaves an absent one absent", () => {
+        const declared = createConfiguredAiSdkProvider({
+            config: {
+                kind: "openai-compatible",
+                name: "self-hosted",
+                baseURL: "http://models.local/v1",
+                apiKey: "test-key",
+                model: "local-tool-model",
+                capabilities: { toolCalling: true, imageUserMessages: true },
+            },
+            resolveBilling: async () => ({}),
+        });
+        const silent = createConfiguredAiSdkProvider({
+            config: {
+                kind: "openai-compatible",
+                name: "self-hosted",
+                baseURL: "http://models.local/v1",
+                apiKey: "test-key",
+                model: "local-tool-model",
+                capabilities: { toolCalling: true },
+            },
+            resolveBilling: async () => ({}),
+        });
+
+        expect(declared.capabilities.imageUserMessages).toBe(true);
+        expect(silent.capabilities.imageUserMessages).toBeUndefined();
     });
 });
 

@@ -476,6 +476,8 @@ describe("runAgent — a picture on a tool result", () => {
         expect(outputValue(result)).toEqual({ faults: ["boom"] });
         // No picture bytes reach the transcript.
         expect(JSON.stringify(messages)).not.toContain("PNGBYTES");
+        // The wire renders a picture in no place at all, thus the loop appends no fallback message.
+        expect(messages.filter((m) => m.role === "user")).toEqual([...GO]);
         // The drop rides the log, thus an operator sees that the picture did not reach the model.
         expect(logger.records.some((r) => r.level === "warn" && r.msg.includes("carries no picture"))).toBe(true);
     });
@@ -491,6 +493,115 @@ describe("runAgent — a picture on a tool result", () => {
 
         const result = toolResultParts(messages[2])[0]!;
         expect(result.output).toEqual({ type: "json", value: { label: "x" } });
+    });
+});
+
+// ── A picture on a user message ─────────────────────────────────────
+
+/** A scripted provider whose wire renders a picture in a user message only. */
+function fallbackImagingProvider(script: ChatResponse[]): ScriptedProvider {
+    return { ...scriptedProvider(script), capabilities: { toolCalling: true, imageUserMessages: true } };
+}
+
+/** The content parts of a user message that carries a picture. */
+function userParts(message: ModelMessage | undefined): unknown[] {
+    expect(message).toBeDefined();
+    expect(message!.role).toBe("user");
+    expect(Array.isArray(message!.content)).toBe(true);
+    return message!.content as unknown[];
+}
+
+/** The delay of the slow call of the batch case, in milliseconds. */
+const SLOW_EYES_MS = 40;
+
+/** An `eyes` tool whose picture bytes name the page. A delay of `ms` holds the reply back. */
+function pagingEyesTool(): Tool {
+    return defineTool({
+        id: "eyes",
+        description: "Look at one page and give a picture of it.",
+        inputSchema: z.object({ page: z.string(), ms: z.number().default(0) }),
+        describeCall: "none",
+        execute: async ({ page, ms }) => {
+            if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+            return ok(withToolResultImage({ page }, { base64: `BYTES-${page}`, mediaType: "image/png" }));
+        },
+    });
+}
+
+describe("runAgent — a picture on a user message", () => {
+    it("keeps the JSON text on the tool result and carries the picture in the next user message", async () => {
+        const provider = fallbackImagingProvider([makeMessage([toolUseBlock("tu-1", "eyes", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
+
+        const { messages } = await runAgent(agentDef([eyesTool()]), GO, makeSession(), opts(provider));
+
+        // [user, assistant(tool-call), tool(result), user(picture), assistant(text)]
+        expect(messages).toHaveLength(5);
+        // The tool result stays plain JSON, thus the bytes ride the fallback message alone.
+        const result = toolResultParts(messages[2])[0]!;
+        expect(result.output).toEqual({ type: "json", value: { faults: ["boom"] } });
+        // The text part names the tool call, because the wire holds no structural link to it.
+        expect(userParts(messages[3])).toEqual([
+            { type: "text", text: "The picture of the tool result tu-1 of eyes." },
+            { type: "file", mediaType: "image/png", data: { type: "data", data: "PNGBYTES" } },
+        ]);
+    });
+
+    it("batches the pictures of one round into one user message, in the order of the tool calls", async () => {
+        // The slow call comes first, thus the two calls settle in the reverse order.
+        // The message order comes from the tool calls, and not from the settle order.
+        const provider = fallbackImagingProvider([
+            makeMessage([toolUseBlock("tu-A", "eyes", { page: "first", ms: SLOW_EYES_MS }), toolUseBlock("tu-B", "eyes", { page: "second" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const { messages } = await runAgent(agentDef([pagingEyesTool()]), GO, makeSession(), opts(provider));
+
+        // [user, assistant(2 tool-calls), tool(2 results), user(2 pictures), assistant(text)]
+        expect(messages).toHaveLength(5);
+        // One message batches the round, and it comes directly after the tool message.
+        expect(messages[2]!.role).toBe("tool");
+        expect(userParts(messages[3])).toEqual([
+            { type: "text", text: "The picture of the tool result tu-A of eyes." },
+            { type: "file", mediaType: "image/png", data: { type: "data", data: "BYTES-first" } },
+            { type: "text", text: "The picture of the tool result tu-B of eyes." },
+            { type: "file", mediaType: "image/png", data: { type: "data", data: "BYTES-second" } },
+        ]);
+    });
+
+    it("carries the picture on the tool result alone when the wire renders it in both places", async () => {
+        const provider: ScriptedProvider = {
+            ...scriptedProvider([makeMessage([toolUseBlock("tu-1", "eyes", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]),
+            capabilities: { toolCalling: true, imageToolResults: true, imageUserMessages: true },
+        };
+
+        const { messages } = await runAgent(agentDef([eyesTool()]), GO, makeSession(), opts(provider));
+
+        // [user, assistant(tool-call), tool(result), assistant(text)] — the fallback message is absent.
+        expect(messages).toHaveLength(4);
+        const result = toolResultParts(messages[2])[0]!;
+        expect(result.output).toEqual({
+            type: "content",
+            value: [
+                { type: "text", text: JSON.stringify({ faults: ["boom"] }) },
+                { type: "file", mediaType: "image/png", data: { type: "data", data: "PNGBYTES" } },
+            ],
+        });
+        // The tool-result path is exclusive, thus the opening prompt stays the one user message.
+        expect(messages.filter((m) => m.role === "user")).toEqual([...GO]);
+    });
+
+    it("marks the fallback message synthetic, thus a turn-boundary reader passes over it", async () => {
+        const provider = fallbackImagingProvider([makeMessage([toolUseBlock("tu-1", "eyes", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
+
+        const { messages } = await runAgent(agentDef([eyesTool()]), GO, makeSession(), opts(provider));
+
+        // The message holds the `user` role because a picture rides no other role. An unmarked one
+        // reads as a turn start, and it then splits one stored turn in two.
+        const fallback = messages[3]!;
+        expect(fallback.role).toBe("user");
+        expect(isSyntheticUserMessage(fallback)).toBe(true);
+        // The opening prompt is real user input, thus the one true boundary of the turn stays.
+        expect(isSyntheticUserMessage(messages[0]!)).toBe(false);
     });
 });
 

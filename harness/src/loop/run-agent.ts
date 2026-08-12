@@ -1,6 +1,16 @@
 import { randomUUID } from "node:crypto";
 
-import { jsonSchema, tool as aiTool, type FinishReason, type ToolSet, type ToolCallPart, type ToolResultPart, type ModelMessage } from "ai";
+import {
+    jsonSchema,
+    tool as aiTool,
+    type FilePart,
+    type FinishReason,
+    type ToolSet,
+    type TextPart,
+    type ToolCallPart,
+    type ToolResultPart,
+    type ModelMessage,
+} from "ai";
 import type { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
@@ -14,9 +24,9 @@ import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-m
 import { classifyProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
 import { resultStep } from "./run-step.js";
-import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy } from "../providers/types.js";
+import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
-import { isToolError, readToolResultImage, type Tool, type ToolContext } from "../tools/define-tool.js";
+import { isToolError, readToolResultImage, type Tool, type ToolContext, type ToolResultImage } from "../tools/define-tool.js";
 import { addChatUsage, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import { computeDetail, type ToolCallDetail } from "./tool-detail.js";
 import { toolOutcomeForOutputType, type ToolOutcome } from "./tool-outcome.js";
@@ -155,10 +165,10 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // `callPath` rides as an array rather than a joined string — the queryable form;
     // rendering `parent > child` is the sink's choice, not a published package's.
     const log = (opts.logger ?? createNoopLogger()).named("loop").with({ agentId: source.agentId, callPath: source.callPath });
-    // The picture of a tool result rides as an image content block only when the
-    // wire carries one. Absent means "cannot carry", thus the loop degrades to
-    // text and records the drop.
-    const encoding: ResultEncoding = { carriesImage: provider.capabilities.imageToolResults === true, log };
+    // The picture of a tool result rides where the wire renders it. Absent flags
+    // mean "cannot carry", thus the loop degrades to text and records the drop.
+    // The collector belongs to this run, thus two loops never share one.
+    const encoding: ResultEncoding = { placement: imagePlacementFor(provider.capabilities), deferredImages: [], log };
     const toolsById = new Map<string, Tool>(agent.tools.map((t) => [t.id, t]));
     const toolDefs: ToolSet = Object.fromEntries(
         agent.tools.map((t) => [
@@ -390,6 +400,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             errored.push(trailing.toolName);
             log.debug("tool results returned errors", { iteration: i, tools: errored });
             messages.push({ role: "tool", content: results });
+            appendDeferredImages(messages, results, encoding.deferredImages);
             if (hasDenial(results)) return stopOnDenial(i);
             if (opts.resolved?.()) return stopOnResolved(i);
             continue;
@@ -412,6 +423,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         const errored = await settleRound(toolCalls, results, details, durations);
         if (errored.length > 0) log.debug("tool results returned errors", { iteration: i, tools: errored });
         messages.push({ role: "tool", content: results });
+        appendDeferredImages(messages, results, encoding.deferredImages);
         if (hasDenial(results)) return stopOnDenial(i);
         if (opts.resolved?.()) return stopOnResolved(i);
     }
@@ -540,14 +552,68 @@ function markLastLoopAssistant(messages: LoopMessage[], initialCount: number): v
  * wrapper. The wrapper is part of what the call cost, and a cached replay of a step
  * is genuinely fast. A bracket inside the step would report a body that did not run.
  */
+/** Where the picture of a tool result goes on the wire. */
+type ImagePlacement = "tool-result" | "user-message" | "drop";
+
 /**
- * How a completed tool result is encoded onto the provider message. `carriesImage`
- * says whether the wire renders an image content block in a tool result, and `log`
- * is the sink for the drop record when it does not.
+ * Where a tool picture goes for this wire. The tool result wins, because it is
+ * the native place and the correlation to the tool call stays implicit. The user
+ * message is the fallback. When the wire renders neither, the loop drops the
+ * picture.
+ */
+function imagePlacementFor(capabilities: ProviderCapabilities): ImagePlacement {
+    if (capabilities.imageToolResults === true) return "tool-result";
+    if (capabilities.imageUserMessages === true) return "user-message";
+    return "drop";
+}
+
+/** A picture that a tool result cannot carry, with the tool call that produced it. */
+interface DeferredImage {
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly image: ToolResultImage;
+}
+
+/**
+ * How a completed tool result is encoded onto the provider message. `placement`
+ * says where the picture of a tool result goes, and `log` is the sink for the drop
+ * record. `deferredImages` collects the picture of each tool result of the round
+ * under the user-message placement, and the round assembly empties it.
  */
 interface ResultEncoding {
-    readonly carriesImage: boolean;
+    readonly placement: ImagePlacement;
     readonly log: Logger;
+    readonly deferredImages: DeferredImage[];
+}
+
+/**
+ * Append one user message that carries each deferred picture of the round, then
+ * empty the collector.
+ *
+ * The wire needs the tool message directly after the assistant message with the
+ * tool calls. Thus a picture rides a separate message after the whole tool
+ * message, and one message batches the round. The parts obey the order of
+ * `results`, which is the order of the tool calls. Each deferred picture has a
+ * result of this round, because the collector fills during the dispatch and it
+ * empties here. A text part names the tool call of each picture, because the wire
+ * holds no structural link between a user message and a tool call.
+ *
+ * The message carries the synthetic marker, because a `user` message opens a
+ * conversation turn. An unmarked one is loop machinery that reads as a turn
+ * boundary, and it splits one stored turn in two.
+ */
+function appendDeferredImages(messages: LoopMessage[], results: readonly ToolResultPart[], deferredImages: DeferredImage[]): void {
+    if (deferredImages.length === 0) return;
+    const byToolCallId = new Map(deferredImages.map((deferred) => [deferred.toolCallId, deferred]));
+    const content: (TextPart | FilePart)[] = [];
+    for (const result of results) {
+        const deferred = byToolCallId.get(result.toolCallId);
+        if (deferred === undefined) continue;
+        content.push({ type: "text", text: `The picture of the tool result ${deferred.toolCallId} of ${deferred.toolName}.` });
+        content.push({ type: "file", mediaType: deferred.image.mediaType, data: { type: "data", data: deferred.image.base64 } });
+    }
+    messages.push(syntheticUserMessage(content));
+    deferredImages.length = 0;
 }
 
 async function dispatchTools(
@@ -669,16 +735,28 @@ function jsonValue(value: unknown) {
  * and the text stays, because base64 text floods the context and the model cannot
  * see it. The drop rides the log, thus an operator sees that the picture did not
  * reach the model.
+ *
+ * A wire that renders a picture on a user message only gets the fallback: the
+ * result keeps its JSON text, and the picture goes to the collector of the round.
+ * The round then sends the bytes after the tool message.
  */
 function successResult(toolCall: ToolCallPart, value: unknown, encoding: ResultEncoding): ToolResultPart {
     const jsonData = jsonValue(value);
+    const jsonOnly: ToolResultPart = {
+        type: "tool-result",
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName,
+        output: { type: "json", value: jsonData },
+    };
     const image = readToolResultImage(value);
-    if (image === undefined) {
-        return { type: "tool-result", toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, output: { type: "json", value: jsonData } };
-    }
-    if (!encoding.carriesImage) {
+    if (image === undefined) return jsonOnly;
+    if (encoding.placement === "drop") {
         encoding.log.warn("the wired provider carries no picture in a tool result, thus the picture is dropped", { toolName: toolCall.toolName });
-        return { type: "tool-result", toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, output: { type: "json", value: jsonData } };
+        return jsonOnly;
+    }
+    if (encoding.placement === "user-message") {
+        encoding.deferredImages.push({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, image });
+        return jsonOnly;
     }
     return {
         type: "tool-result",
