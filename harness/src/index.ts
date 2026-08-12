@@ -31,9 +31,13 @@ export type { ResolvePageAsset } from "./tools/report-session/index.js";
 // the assembly wraps it. A host with no sidecar starts a browser for one look, thus it binds
 // its own realization. The names of the acquire, the scope, and the lease then belong on the
 // front door. `createStaticEyes` is the shipped realization over a standing sidecar, and an
-// embedder that wires the spawn itself binds the same eyes there.
+// embedder that wires the spawn itself binds the same eyes there. That embedder reads the same
+// precedence through `resolveCompositionEyes`: the bound seam first, then a chrome config that
+// names a browser. Thus the gate of the spawn and the gate of the look cannot disagree. A
+// runtime that can look never carries a spawn that refuses with `no_browser`.
 export { createStaticEyes } from "./lib/eyes.js";
 export type { AcquireEyes, EyesScope, EyesLease } from "./lib/eyes.js";
+export { resolveCompositionEyes } from "./runtime/assemble.js";
 // Thread→agent resolution surface `CoreRuntime.agents` carries: an embedder
 // resolves a turn's agent by thread type and matches the typed refusal for a
 // type whose agent is not registered yet.
