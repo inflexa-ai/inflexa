@@ -1,13 +1,32 @@
+# lib-store Delta — Per-Analysis Farm Mount
+
 ## MODIFIED Requirements
 
 ### Requirement: The library store is a read-only mount at /mnt/libs
 
 When a library store is configured, the sandbox container SHALL receive it as a
-**read-only** mount at `/mnt/libs`, with the farm of the sandbox at
-`/mnt/libs/current`. The Docker backend SHALL bind-mount the host directory named
-by `libStorePath`. The Kubernetes backend SHALL mount the PVC named by
-`libStorePvc`. When neither is configured, the container SHALL receive no
-`/mnt/libs` mount and no lib-store env.
+**read-only** mount at `/mnt/libs`. The Docker backend SHALL bind-mount the host
+directory named by `libStorePath`. The Kubernetes backend SHALL mount the PVC
+named by `libStorePvc`. When neither is configured, the container SHALL receive
+no `/mnt/libs` mount and no lib-store env.
+
+The active farm is a property of each sandbox, not of the store. The sandbox
+container SHALL receive its analysis's farm as a second **read-only** mount at
+`/mnt/libs/current`, nested inside the store mount. The embedder SHALL supply
+the farm location through a provider seam, resolved for each sandbox: the
+analysis id in, the farm location out. On Docker the location is a host path.
+On Kubernetes it is a subPath under the store PVC. The harness SHALL NOT derive
+a farm location from a naming rule of its own.
+
+When the provider names no farm for the analysis, the harness SHALL refuse the
+sandbox with a named state. The shape of the refusal is the shape of the
+incomplete-store refusal. The refusal SHALL NOT fail the boot, and it SHALL NOT
+affect any surface other than the sandbox action.
+
+The store root SHALL NOT carry an active-farm pointer. A `current` symlink at
+the store root, left by an earlier store, SHALL be ignored: the mount at
+`/mnt/libs/current` shadows it inside the container, and no harness read
+follows it on the host.
 
 No runtime image bakes an R library or a Python library. Thus the mounted store
 SHALL be the one source of a library for a sandbox. A sandbox that receives no
@@ -40,13 +59,13 @@ stored compiled package matches the ABI of the interpreter the image carries. A
 change of the interpreter obliges a rebuild of the compiled packages of the store.
 A change of the store SHALL NOT oblige a change of the image.
 
-The store root MAY hold a content-addressed package
-directory at `/mnt/libs/store` and one or more per-analysis farms under
-`/mnt/libs/farms`. A farm SHALL
-present the same interior layout as an extracted-tarball store, so the resolver
-env and the Python `.pth` retain their meaning whichever way the store was
-assembled. Because the whole store root is a single mount, farm links into
-`/mnt/libs/store` SHALL resolve without an additional mount.
+The store root MAY hold a content-addressed package directory at
+`/mnt/libs/store` and one or more per-analysis farms under `/mnt/libs/farms`. A
+farm SHALL present the same interior layout as an extracted-tarball store, so the
+resolver env and the Python `.pth` retain their meaning whichever way the store
+was assembled. Because the whole store root is a single mount, farm links into
+`/mnt/libs/store` SHALL resolve without a mount beyond the two this requirement
+names.
 
 #### Scenario: Docker bind-mounts the host lib store read-only
 
@@ -65,6 +84,30 @@ assembled. Because the whole store root is a single mount, farm links into
 - **GIVEN** neither `libStorePath` nor `libStorePvc` is set
 - **WHEN** a sandbox is created
 - **THEN** the container has no `/mnt/libs` mount, no lib-store env vars, and no importable R or Python library
+
+#### Scenario: Two analyses resolve two farms at the same time
+
+- **GIVEN** two analyses whose farms hold two different versions of one package
+- **WHEN** a sandbox of each analysis runs concurrently
+- **THEN** each sandbox imports the version its own farm links, through the same container path `/mnt/libs/current`
+
+#### Scenario: The provider names the farm of the sandbox
+
+- **GIVEN** an embedder-supplied farm provider
+- **WHEN** a sandbox is created for an analysis
+- **THEN** the mount at `/mnt/libs/current` is the farm location the provider returned for that analysis id
+
+#### Scenario: No farm refuses the sandbox action only
+
+- **GIVEN** an analysis for which the provider names no farm
+- **WHEN** a sandbox action starts
+- **THEN** the action is refused with a named state, and no other surface is affected
+
+#### Scenario: A stale pointer is ignored
+
+- **GIVEN** a store root that still carries a `current` symlink from an earlier layout
+- **WHEN** a sandbox is created with a farm mount
+- **THEN** the sandbox resolves the mounted farm, and no read follows the symlink
 
 #### Scenario: The image-owned tracks survive a mount
 
@@ -94,29 +137,3 @@ assembled. Because the whole store root is a single mount, farm links into
 - **GIVEN** two stores holding the same package set, one extracted from tarballs and one assembled as a farm
 - **WHEN** a sandbox resolves an import in each
 - **THEN** the resolved module and its version are the same in both
-
-### Requirement: The lib-store resolver env is injected only when the store is mounted
-
-When the lib store is mounted, the mount plan SHALL emit the package-resolver
-env so language runtimes resolve imports against `/mnt/libs/current`:
-`R_LIBS_SITE` covering the github/bioconductor/cran subtrees, and `PATH`
-including `/opt/conda/bin`. `NODE_PATH` SHALL be `/opt/node/node_modules`.
-`PYTHONPATH` SHALL NOT be set — system Python resolves the store through a `.pth`
-file. When the store is not mounted, none of these vars SHALL be emitted.
-
-`PATH` and `NODE_PATH` name a path in the runtime image, not a path under
-`/mnt/libs`. The image owns the conda track and the Node track, thus the injected
-env SHALL name the image paths. An injected `PATH` that named a store path would
-remove the command-line tools of the image from each sandbox that has a store.
-
-#### Scenario: Resolver env present with the store mounted
-
-- **GIVEN** the lib store is mounted
-- **WHEN** the mount plan is built
-- **THEN** `R_LIBS_SITE`, `NODE_PATH`, and a conda-`bin` `PATH` are emitted and `PYTHONPATH` is absent
-
-#### Scenario: The injected env names the image paths
-
-- **GIVEN** the lib store is mounted
-- **WHEN** the mount plan is built
-- **THEN** `PATH` carries `/opt/conda/bin`, `NODE_PATH` is `/opt/node/node_modules`, and neither names a path under `/mnt/libs`
