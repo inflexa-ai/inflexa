@@ -1,8 +1,11 @@
 /**
- * Resource limits — ported from orchestrator/src/config/resource-limits.ts.
+ * Resource limits — validates sandbox resource requests against cluster
+ * maximums.
  *
- * Validates sandbox resource requests against cluster maximums.
- * Used by K8sSandbox.
+ * The ceilings themselves are the embedder's: they arrive as
+ * `SandboxClientConfig.resourceLimits` and as the `resourcePolicy` this module
+ * validates. Nothing here reads the environment, so a host keeps one validated
+ * view of its own configuration rather than two that can disagree.
  */
 
 import { z } from "zod";
@@ -53,54 +56,6 @@ export class ResourceLimitsConfigError extends Error {
         super(message);
         this.name = "ResourceLimitsConfigError";
     }
-}
-
-// ── Parsing ─────────────────────────────────────────────────────────
-
-function parsePositiveNumber(name: string, value: string | undefined): number {
-    if (!value) {
-        throw new ResourceLimitsConfigError(`${name} environment variable is required`);
-    }
-    const num = Number(value);
-    if (isNaN(num) || num <= 0) {
-        throw new ResourceLimitsConfigError(`${name} must be a positive number, got: ${value}`);
-    }
-    return num;
-}
-
-function parseNonNegativeInt(name: string, value: string | undefined): number {
-    if (!value) {
-        throw new ResourceLimitsConfigError(`${name} environment variable is required`);
-    }
-    const num = Number(value);
-    if (isNaN(num) || num < 0) {
-        throw new ResourceLimitsConfigError(`${name} must be a non-negative number, got: ${value}`);
-    }
-    if (!Number.isInteger(num)) {
-        throw new ResourceLimitsConfigError(`${name} must be an integer, got: ${value}`);
-    }
-    return num;
-}
-
-/**
- * Load resource limits from environment variables.
- *
- * Required: SANDBOX_MAX_CPU, SANDBOX_MAX_MEMORY_GB, SANDBOX_MAX_GPU_COUNT
- * @throws ResourceLimitsConfigError if configuration is invalid
- */
-export function loadResourceLimits(): ResourceLimits {
-    const maxCpu = parsePositiveNumber("SANDBOX_MAX_CPU", process.env.SANDBOX_MAX_CPU);
-    const maxMemoryGb = parsePositiveNumber("SANDBOX_MAX_MEMORY_GB", process.env.SANDBOX_MAX_MEMORY_GB);
-    const maxGpuCount = parseNonNegativeInt("SANDBOX_MAX_GPU_COUNT", process.env.SANDBOX_MAX_GPU_COUNT);
-
-    const limits: ResourceLimits = { maxCpu, maxMemoryGb, maxGpuCount };
-
-    const result = ResourceLimitsSchema.safeParse(limits);
-    if (!result.success) {
-        throw new ResourceLimitsConfigError(`Invalid resource limits configuration: ${result.error.message}`);
-    }
-
-    return result.data;
 }
 
 /**
