@@ -632,6 +632,11 @@ img {
   opacity: 1;
   transform: translateY(0);
 }
+/* The first pass of the observer reveals what is already in view. That reveal drops the transition, thus
+   the page is settled when it signals readiness and a capture shows the final state. */
+.fade-in-instant {
+  transition: none;
+}
 
 /* ── Scrollbar ────────────────────────────────────────── */
 ::-webkit-scrollbar {
