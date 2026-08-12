@@ -1,0 +1,274 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { ResultAsync } from "neverthrow";
+import type { Pool } from "pg";
+
+import { withSchema } from "../__tests__/setup/postgres.js";
+import type { Scope } from "../auth/types.js";
+import { createReportSessionSpawn } from "../app/spawn-report-session.js";
+import type { DbError } from "../lib/db-result.js";
+import { createThreadHistory } from "../memory/thread-history.js";
+import { createThreadStore, type ThreadStore } from "../memory/thread-store.js";
+import { makeToolContext } from "./__fixtures__/tool-context.js";
+import type { Tool, ToolContext } from "./define-tool.js";
+import { createStartReportSessionTool, type StartReportSessionInput, type StartReportSessionResult } from "./start-report-session.js";
+
+const ANALYSIS = "analysis-a";
+
+/** A chrome config that names a browser. The tool never connects, thus the eyes gate passes with no sidecar. */
+const WITH_BROWSER = { browserUrl: "http://localhost:9222" };
+
+/** The brief of one call. Each field is present, thus the seed of the child shows each label. */
+const INPUT: StartReportSessionInput = {
+    objective: "Explain the sample quality outcome",
+    audience: "The lab lead",
+    angle: "The samples that the study keeps",
+    exclusions: "The raw alignment logs",
+    openQuestions: "The threshold of the batch correction",
+};
+
+let pool: Pool;
+let drop: () => Promise<void>;
+let store: ThreadStore;
+let tool: Tool<StartReportSessionInput, StartReportSessionResult>;
+
+beforeEach(async () => {
+    ({ pool, drop } = await withSchema("start-report-session"));
+    store = createThreadStore(pool);
+    tool = createStartReportSessionTool({ pool, chrome: WITH_BROWSER });
+});
+
+afterEach(async () => {
+    await drop();
+});
+
+// --- seeding ----------------------------------------------------------------
+
+/** Persist one two-message turn on a thread, giving it a transcript to anchor into. */
+function appendTurn(threadId: string): ResultAsync<void, DbError> {
+    return createThreadHistory(pool).appendTurn(threadId, {
+        modelMessages: [
+            { role: "user", content: [{ type: "text", text: "hi" }] },
+            { role: "assistant", content: [{ type: "text", text: "hello" }] },
+        ],
+        displayMessages: [],
+    });
+}
+
+/** A live conversation parent with a first turn — the shape a legal start needs. */
+async function seedConversation(threadId: string, title: string | null): Promise<void> {
+    (await store.createThread({ threadId, analysisId: ANALYSIS, ...(title === null ? {} : { title }) }))._unsafeUnwrap();
+    (await appendTurn(threadId))._unsafeUnwrap();
+}
+
+/** A tool context whose scope names one conversation thread of the analysis. */
+function ctxForThread(threadId: string): ToolContext {
+    const { ctx } = makeToolContext();
+    const scope: Scope = { kind: "analysis", analysisId: ANALYSIS, threadId };
+    return { ...ctx, session: { ...ctx.session, scope } };
+}
+
+/** The count of `report` rows in the schema — 0 says that a refusal wrote nothing. */
+async function reportThreadCount(): Promise<number> {
+    const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_analysis_threads WHERE thread_type = 'report'");
+    return Number(rows[0]!.count);
+}
+
+/**
+ * Make each later insert into `messages` fail. The trigger is real database
+ * state, thus the seed write of the spawn fails the same way that a driver fault
+ * fails it. A delete stays permitted, thus the purge of the child still runs.
+ */
+async function refuseMessageInserts(): Promise<void> {
+    await pool.query("CREATE FUNCTION refuse_message_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'seed write refused'; END; $$");
+    await pool.query("CREATE TRIGGER refuse_message_insert BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION refuse_message_insert()");
+}
+
+/** Run the tool and unwrap the ok channel, which each degraded condition also rides. */
+async function run(input: StartReportSessionInput, ctx: ToolContext): Promise<StartReportSessionResult> {
+    return (await tool.execute(input, ctx))._unsafeUnwrap();
+}
+
+describe("the started arm", () => {
+    it("starts a child session and gives its thread id and its title", async () => {
+        await seedConversation("p1", "RNA-seq QC");
+
+        const result = await run(INPUT, ctxForThread("p1"));
+
+        expect(result.outcome).toBe("started");
+        if (result.outcome !== "started") return;
+        expect(result.title).toBe("RNA-seq QC — Report 1");
+        // The row is on disk, not only in the returned value.
+        const child = (await store.getThread(result.threadId))._unsafeUnwrap();
+        expect(child!.threadType).toBe("report");
+        expect(child!.parentThreadId).toBe("p1");
+        expect(await reportThreadCount()).toBe(1);
+    });
+
+    it("starts a session for a parent that holds no report child", async () => {
+        await seedConversation("p1", "Parent");
+        // The brief carries the two optional fields as absent, thus the input with
+        // three fields alone also starts a session.
+        const brief: StartReportSessionInput = { objective: INPUT.objective, audience: INPUT.audience, angle: INPUT.angle };
+
+        const result = await run(brief, ctxForThread("p1"));
+
+        expect(result.outcome).toBe("started");
+        expect(await reportThreadCount()).toBe(1);
+    });
+});
+
+describe("the refused arm", () => {
+    it("refuses a scope that carries no thread id, and writes no row", async () => {
+        await seedConversation("p1", "Parent");
+        const { ctx } = makeToolContext();
+
+        const result = await run(INPUT, { ...ctx, session: { ...ctx.session, scope: { kind: "analysis", analysisId: ANALYSIS } } });
+
+        expect(result.outcome).toBe("refused");
+        if (result.outcome !== "refused") return;
+        expect(result.detail.length).toBeGreaterThan(0);
+        expect(await reportThreadCount()).toBe(0);
+    });
+
+    it("refuses a scope of a different kind, and writes no row", async () => {
+        const { ctx } = makeToolContext();
+        const scope: Scope = { kind: "target-assessment", targetAssessmentId: "ta-1", billingContextId: "b-1" };
+
+        const result = await run(INPUT, { ...ctx, session: { ...ctx.session, scope } });
+
+        expect(result.outcome).toBe("refused");
+        expect(await reportThreadCount()).toBe(0);
+    });
+});
+
+describe("the eyes gate", () => {
+    it("gives the no_browser arm with the detail of the spawn, and writes no row", async () => {
+        await seedConversation("p1", "Parent");
+        const blind = createStartReportSessionTool({ pool, chrome: {} });
+        // The detail comes from the spawn, thus the test reads the one line from
+        // there and no literal drifts between the two modules.
+        const refusal = (await createReportSessionSpawn({ pool, chrome: {} }).spawnReportSession("p1", INPUT))._unsafeUnwrapErr();
+
+        const result = (await blind.execute(INPUT, ctxForThread("p1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("no_browser");
+        if (result.outcome !== "no_browser") return;
+        expect(refusal.type).toBe("no_browser");
+        expect(result.detail).toBe(refusal.type === "no_browser" ? refusal.detail : "");
+        expect(await reportThreadCount()).toBe(0);
+    });
+
+    it("has priority over the advice: a zero delta under a blind composition gives no_browser", async () => {
+        await seedConversation("p1", "Parent");
+        // The one child sits at the end of the parent transcript, thus the delta is
+        // zero and the advice would return, if the gate ran second.
+        const started = await run(INPUT, ctxForThread("p1"));
+        expect(started.outcome).toBe("started");
+        const blind = createStartReportSessionTool({ pool, chrome: {} });
+
+        const result = (await blind.execute(INPUT, ctxForThread("p1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("no_browser");
+        expect(await reportThreadCount()).toBe(1);
+    });
+});
+
+describe("the existing-session arm", () => {
+    it("names the newest child on a zero delta, and starts no second session", async () => {
+        await seedConversation("p1", "Parent");
+        const started = await run(INPUT, ctxForThread("p1"));
+        expect(started.outcome).toBe("started");
+        if (started.outcome !== "started") return;
+
+        const result = await run(INPUT, ctxForThread("p1"));
+
+        expect(result.outcome).toBe("existing-session");
+        if (result.outcome !== "existing-session") return;
+        expect(result.threadId).toBe(started.threadId);
+        expect(result.title).toBe(started.title);
+        expect(await reportThreadCount()).toBe(1);
+    });
+
+    it("starts a session again after a later turn on the parent", async () => {
+        await seedConversation("p1", "Parent");
+        expect((await run(INPUT, ctxForThread("p1"))).outcome).toBe("started");
+        // The parent moves past the anchor of the child, thus the delta is not zero.
+        (await appendTurn("p1"))._unsafeUnwrap();
+
+        const result = await run(INPUT, ctxForThread("p1"));
+
+        expect(result.outcome).toBe("started");
+        expect(await reportThreadCount()).toBe(2);
+    });
+});
+
+describe("the override", () => {
+    it("starts a second session on a zero delta when newSessionAnyway is true", async () => {
+        await seedConversation("p1", "Parent");
+        const started = await run(INPUT, ctxForThread("p1"));
+        expect(started.outcome).toBe("started");
+
+        const result = await run({ ...INPUT, newSessionAnyway: true }, ctxForThread("p1"));
+
+        expect(result.outcome).toBe("started");
+        if (result.outcome !== "started") return;
+        expect(result.title).toBe("Parent — Report 2");
+        expect(await reportThreadCount()).toBe(2);
+    });
+
+    it("keeps the advice when newSessionAnyway is false", async () => {
+        await seedConversation("p1", "Parent");
+        expect((await run(INPUT, ctxForThread("p1"))).outcome).toBe("started");
+
+        const result = await run({ ...INPUT, newSessionAnyway: false }, ctxForThread("p1"));
+
+        expect(result.outcome).toBe("existing-session");
+        expect(await reportThreadCount()).toBe(1);
+    });
+});
+
+describe("the refusals of the spawn", () => {
+    it("passes parent_not_found through, and writes no row", async () => {
+        const result = await run(INPUT, ctxForThread("ghost"));
+
+        expect(result.outcome).toBe("parent_not_found");
+        expect(await reportThreadCount()).toBe(0);
+    });
+
+    it("passes parent_not_a_conversation through, and names the type of the thread", async () => {
+        (await store.createThread({ threadId: "r1", analysisId: ANALYSIS, title: "A report", type: "report" }))._unsafeUnwrap();
+
+        const result = await run(INPUT, ctxForThread("r1"));
+
+        expect(result.outcome).toBe("parent_not_a_conversation");
+        if (result.outcome !== "parent_not_a_conversation") return;
+        expect(result.threadType).toBe("report");
+        // Only the seed report exists — the tool added none.
+        expect(await reportThreadCount()).toBe(1);
+    });
+
+    it("passes empty_parent_transcript through, and writes no row", async () => {
+        (await store.createThread({ threadId: "p1", analysisId: ANALYSIS, title: "Empty" }))._unsafeUnwrap();
+
+        const result = await run(INPUT, ctxForThread("p1"));
+
+        expect(result.outcome).toBe("empty_parent_transcript");
+        expect(await reportThreadCount()).toBe(0);
+    });
+});
+
+describe("the failed arm", () => {
+    it("gives a short detail when the seed write fails, and no child survives", async () => {
+        await seedConversation("p1", "Parent");
+        // The parent transcript is complete before the refusal, thus only the seed
+        // write of the spawn fails, and it fails after the thread insert.
+        await refuseMessageInserts();
+
+        const result = await run(INPUT, ctxForThread("p1"));
+
+        expect(result.outcome).toBe("failed");
+        if (result.outcome !== "failed") return;
+        expect(result.detail).toContain("database write failed");
+        expect(await reportThreadCount()).toBe(0);
+    });
+});
