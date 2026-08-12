@@ -568,9 +568,15 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
 
             const { totalTokens, turnsEvicted: turnsEvictedHist } = getInstruments();
             // A retained head gives one evicted turn back to the window, thus the
-            // metric reports one turn less than the budget walk cut.
+            // histogram reports one turn less than the budget walk cut.
             const turnsDropped = keepsFirstTurn ? turnsEvicted - 1 : turnsEvicted;
-            const attributes = { eviction: turnsDropped > 0 };
+            // The flag reads the cut of the budget walk, and never the count that
+            // the retained head reduced. The two answer different questions: the
+            // flag says that the window lost a turn, and the histogram says how
+            // many. A walk that cut one block, under a block size of one, drops
+            // its whole cut back into the window. The flag must still report the
+            // eviction, because the thread crossed its budget.
+            const attributes = { eviction: turnsEvicted > 0 };
             totalTokens.record(threadTotal, attributes);
             turnsEvictedHist.record(turnsDropped, attributes);
 
