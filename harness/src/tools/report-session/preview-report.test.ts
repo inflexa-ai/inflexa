@@ -220,6 +220,30 @@ describe("the pass path", () => {
         expect(absent).toEqual([]);
         expect(PAGE_ASSETS.length).toBeGreaterThan(0);
     });
+
+    it("stages the bytes that the injected asset lookup names", async () => {
+        const root = await makeRoot();
+        // An embedder that ships the asset bytes packed materializes them to disk and binds its own lookup.
+        // The temp file stands for one materialized asset, thus each staged manifest entry holds its bytes.
+        const packedDir = await makeRoot();
+        const packed = join(packedDir, "packed-asset.bin");
+        await writeFile(packed, "PACKED-ASSET-BYTES");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+            resolvePageAsset: () => packed,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        const assetsDir = join(root, "report-sessions", "t1", "assets");
+        const staged = await Promise.all(PAGE_ASSETS.map((asset) => readFile(join(assetsDir, asset.file), "utf8")));
+        expect(staged).toEqual(PAGE_ASSETS.map(() => "PACKED-ASSET-BYTES"));
+    });
 });
 
 describe("the rendered stamp", () => {

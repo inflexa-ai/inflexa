@@ -49,6 +49,7 @@ import { createThreadStore } from "../memory/thread-store.js";
 import { createArtifactReadStore, createProductionResolver } from "../report-model/production-resolver.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import { createReportVersionStore } from "../state/report-versions.js";
+import type { ResolvePageAsset } from "../tools/report-session/index.js";
 
 /** Registered child sandbox-step callable the parent's child dispatch closes over. */
 export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -136,6 +137,15 @@ export interface CoreRuntimeDeps {
      * factory replaces that wiring, thus `reportHostReadCapBytes` then governs nothing.
      */
     readonly makeReportReferenceResolver?: MakeReportReferenceResolver;
+    /**
+     * The page-asset lookup of the report preview. The preview tool stages the chart
+     * runtime and the fonts beside the page, and it names each source by its module
+     * specifier. Absent, the tool resolves each specifier against the installation of the
+     * harness, which is the npm path and the whole OSS path. An embedder that ships the
+     * bytes packed, for example a compiled single-file binary with no `node_modules` tree,
+     * materializes them to disk and binds its own lookup here.
+     */
+    readonly resolveReportPageAsset?: ResolvePageAsset;
 }
 
 /**
@@ -287,6 +297,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         threads: reportThreads,
         chrome: conversation.chrome,
         makeResolver: makeReportResolver,
+        ...(deps.resolveReportPageAsset ? { resolvePageAsset: deps.resolveReportPageAsset } : {}),
         ...(conversation.logger ? { logger: conversation.logger } : {}),
     });
 

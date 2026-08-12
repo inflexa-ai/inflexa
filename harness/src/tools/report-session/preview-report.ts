@@ -71,17 +71,28 @@ export type PreviewReportResult =
     | { outcome: "rendered"; pagePath: string };
 
 /**
+ * The lookup of the source file of one staged asset. It maps the module specifier of a manifest entry
+ * (`report-render/assets.ts`) onto an absolute path on disk.
+ */
+export type ResolvePageAsset = (specifier: string) => string;
+
+/**
  * The construction deps of the preview tool.
  *
  * `resolveWorkspaceRoot` maps the analysis of the call onto its workspace root, thus one singleton tool
  * serves every analysis and it resolves the root per call from the scope. `makeResolver` is optional, because
  * a resolver realization can be absent. It binds one analysis, thus the tool makes the resolver over the
  * scope of the call.
+ *
+ * `resolvePageAsset` is optional, and absent it resolves each specifier against the installation of the
+ * harness. An embedder that ships the asset bytes packed, for example a compiled single-file binary with no
+ * `node_modules` tree, materializes them to disk and binds its own lookup here.
  */
 export interface PreviewReportToolDeps {
     readonly gateway: ReportSessionStateGateway;
     readonly makeResolver?: (scope: { analysisId: string; auth: AuthContext }) => ReferenceResolver;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
+    readonly resolvePageAsset?: ResolvePageAsset;
     readonly logger?: Logger;
 }
 
@@ -107,6 +118,9 @@ function figureSourcePolicy(file: ResolvedFile): string {
  * the installation of the harness. Thus the staged bytes are the bytes of the pinned version.
  */
 const moduleResolver = createRequire(import.meta.url);
+
+/** The default asset lookup: the module resolution of the installation of the harness. */
+const resolvePageAssetFromInstallation: ResolvePageAsset = (specifier) => moduleResolver.resolve(specifier);
 
 /**
  * Pair each block with the resolved value of its binding, in document order.
@@ -197,6 +211,7 @@ type PreviewWriteFailure = { kind: "fs"; error: FsError } | { kind: "figure-out-
  */
 async function renderToWorkspace(args: {
     resolveWorkspaceRoot: ResolveWorkspaceRoot;
+    resolvePageAsset: ResolvePageAsset;
     analysisId: string;
     threadId: string;
     resolutions: readonly BlockResolution[];
@@ -231,11 +246,11 @@ async function renderToWorkspace(args: {
         sources.set(name, resolved.absolute);
     }
 
-    // Each manifest entry, mapped from its staged name to the file of its package. A specifier that does
-    // not resolve is a fault of the installation, thus it rides the `fs` kind.
+    // Each manifest entry, mapped from its staged name to the file that the asset lookup gives. A specifier
+    // that does not resolve is a fault of the installation, thus it rides the `fs` kind.
     for (const asset of PAGE_ASSETS) {
         try {
-            sources.set(asset.file, moduleResolver.resolve(asset.specifier));
+            sources.set(asset.file, args.resolvePageAsset(asset.specifier));
         } catch (cause) {
             return err({ kind: "fs", error: { type: "read_failed", op: "preview.resolveAsset", path: asset.specifier, cause } });
         }
@@ -271,6 +286,7 @@ async function renderToWorkspace(args: {
  */
 export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<PreviewReportInput, PreviewReportResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("preview-report");
+    const resolvePageAsset = deps.resolvePageAsset ?? resolvePageAssetFromInstallation;
 
     return defineTool({
         id: "preview_report",
@@ -327,6 +343,7 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
 
             const written = await renderToWorkspace({
                 resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
+                resolvePageAsset,
                 analysisId,
                 threadId,
                 resolutions,

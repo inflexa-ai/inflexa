@@ -22,6 +22,10 @@ export type {
 // of the resolver and of the two values that it reads belong on the front door,
 // because an embedder cannot type its realization without them.
 export type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "./report-model/reference-resolver.js";
+// Seam: the page-asset lookup of the report preview. An embedder that ships the asset
+// bytes packed materializes them to disk and binds its own lookup, thus the name of the
+// lookup belongs on the front door.
+export type { ResolvePageAsset } from "./tools/report-session/index.js";
 // Thread→agent resolution surface `CoreRuntime.agents` carries: an embedder
 // resolves a turn's agent by thread type and matches the typed refusal for a
 // type whose agent is not registered yet.

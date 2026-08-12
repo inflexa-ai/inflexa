@@ -2,7 +2,7 @@
 
 ## 1. The assets and the manifest
 
-- [x] 1.1 Add the exact-pinned dependencies: `echarts`, `@fontsource-variable/space-grotesk`, and `@fontsource-variable/ibm-plex-mono`.
+- [x] 1.1 Add the exact-pinned dependencies: `echarts`, `@fontsource-variable/space-grotesk`, and `@fontsource/ibm-plex-mono`.
 - [x] 1.2 Export the asset manifest from `src/report-render`. Each entry names the staged file and its package source.
 - [x] 1.3 Replace `CDN_HEAD` with relative `assets/<name>` script references, and remove the font links.
 - [x] 1.4 Stage each manifest entry into `assets/` in the write pipeline of `preview-report.ts`, beside the figures.
