@@ -25,15 +25,13 @@ The merge obeys these rules:
   leave an existing `store/` child and `farms/` child as it is. A store directory
   name carries the hash of its content, thus a skip is correct.
 - On a farm name collision, it SHALL keep the local farm.
-- When the store root has no `current`, it SHALL point `current` at the farm the
-  download brought. When `current` is there, it SHALL leave it, because a
-  download SHALL NOT switch the active farm of the user.
+- It SHALL NOT write a `current` symlink. The catalog farm arrives as the
+  template: composition reads its lock for the default closure and links its
+  warm caches.
 
 The merged root SHALL hold the published tree, so the harness check accepts it.
 The download SHALL report what the merge did: the store directories added, the
-farms added, the farms kept, and whether `current` moved. When the merge added a
-farm and left `current` where it was, the CLI SHALL name that farm and the command
-that switches to it.
+farms added, and the farms kept.
 
 #### Scenario: The app is usable during the download
 
@@ -47,8 +45,8 @@ that switches to it.
 
 #### Scenario: A download over a locally provisioned store
 
-- **WHEN** the user provisioned packages into a farm and then a download completes
-- **THEN** each local package and each local farm is still there, the published content sits beside it, and the active farm did not change
+- **WHEN** the user provisioned packages into the pool and then a download completes
+- **THEN** each local package and each local farm is still there, and the published content sits beside it
 
 #### Scenario: No configuration value stops the download
 
@@ -56,11 +54,10 @@ that switches to it.
 - **WHEN** the download runs
 - **THEN** the transfer completes, because no configuration value suppresses it
 
-#### Scenario: An unreachable added farm is named
+#### Scenario: The merge writes no pointer
 
-- **GIVEN** a store root whose `current` already selects a local farm
-- **WHEN** the merge adds a published farm and leaves `current` alone
-- **THEN** the CLI names the added farm and the command that switches to it
+- **WHEN** the merge completes on a fresh store root
+- **THEN** no `current` symlink exists at the store root, and the catalog farm is present as the template
 
 ### Requirement: Sandbox creation waits on a complete store
 
@@ -126,6 +123,6 @@ hold without end, and it SHALL NOT start a sandbox against an incomplete store.
 
 #### Scenario: An unusable store refuses the action
 
-- **GIVEN** a store on disk whose active farm carries no records
+- **GIVEN** a store on disk whose mounted farm carries no records
 - **WHEN** a sandbox action arrives
 - **THEN** the gate reports the store as unusable, names the remedy, and starts no sandbox

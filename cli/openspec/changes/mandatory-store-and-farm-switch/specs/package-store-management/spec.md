@@ -39,21 +39,21 @@ configure a reference.
 The CLI SHALL start the provisioner container only for an operation that installs
 packages or mutates the store under the store lock. Four operations SHALL be
 host filesystem actions the CLI does directly, with no container: the read of the
-active farm, the list of what the store holds, the preview of a reclamation, and
-the switch of the active farm.
+store, the list of what the store holds, the preview of a reclamation, and the
+composition of a farm.
 
 The provisioner image is large, so a container start is a real cost. A read or a
-pointer move SHALL NOT pay it.
+link operation SHALL NOT pay it.
 
 #### Scenario: Listing starts no container
 
 - **WHEN** `inflexa store ls` runs
 - **THEN** it reads the store on the host and starts no container
 
-#### Scenario: Switching the active farm starts no container
+#### Scenario: Composing a farm starts no container
 
-- **WHEN** `inflexa store use <farm>` runs
-- **THEN** it writes the active-farm pointer on the host and starts no container
+- **WHEN** composition makes or extends a farm
+- **THEN** it links on the host and starts no container
 
 #### Scenario: A reclaim preview starts no container
 
@@ -65,126 +65,16 @@ pointer move SHALL NOT pay it.
 - **WHEN** `inflexa store add <spec>` runs
 - **THEN** the provisioner container starts with a network, and it installs the closure
 
-### Requirement: `inflexa store use <farm>` switches the active farm
-
-The CLI SHALL give `inflexa store use <farm>`, which makes the named farm the
-active farm of the store. It SHALL take the `approval` policy, because it writes
-the active-farm pointer and thereby changes what every later sandbox mounts.
-
-The write SHALL be atomic. The CLI SHALL make the new link at a temporary name in
-the store root, then SHALL rename that name over the active-farm pointer. The
-pointer SHALL NOT be absent at any moment, because a sandbox created while it is
-absent silently drops the store mount.
-
-The command SHALL switch the active farm and SHALL NOT merge two farms. There
-SHALL be no option that joins the contents of two farms.
-
-The command SHALL refuse, with a message naming what to do, in each of these
-cases:
-
-- The harness runtime is live, which the machine-wide runtime instance lock
-  reports. A `--force` option SHALL cover a lock that a killed process left
-  behind. That option SHALL name the risk to a live sandbox before it writes.
-- A store download is in flight, which the download state reports as incomplete.
-- The named farm is absent under the farms path.
-- The named farm is incomplete. A complete farm carries the shape the harness
-  mount check needs: a directory that holds both the package inventory and the
-  store metadata file.
-- The named farm has a dot-prefixed name, which marks staging or superseded
-  debris rather than a farm.
-
-`--force` SHALL bypass the live-runtime refusal, and it SHALL bypass no other
-refusal. It SHALL NOT bypass the refusal for an absent farm. It SHALL NOT bypass
-the refusal for an incomplete farm. It SHALL NOT bypass the refusal for an
-in-flight download, and it SHALL NOT bypass the refusal for a dot-prefixed name.
-
-Those four refusals protect the pointer itself. A forced pointer that no sandbox
-can mount trades a clear refusal for a store the harness rejects at every later
-sandbox.
-
-#### Scenario: A switch is atomic
-
-- **GIVEN** a store whose active farm is `default`
-- **WHEN** `inflexa store use catalog` runs
-- **THEN** the pointer resolves to `default` before the rename and to `catalog` after it, and it resolves at every moment in between
-
-#### Scenario: A live runtime refuses the switch
-
-- **GIVEN** a live harness runtime that holds the machine-wide runtime lock
-- **WHEN** `inflexa store use catalog` runs without `--force`
-- **THEN** the command refuses, names the live runtime, and leaves the pointer unchanged
-
-#### Scenario: A stale lock yields to `--force`
-
-- **GIVEN** a runtime lock whose holder process is gone
-- **WHEN** `inflexa store use catalog --force` runs
-- **THEN** the command names the risk to a live sandbox, switches the farm, and reports the new active farm
-
-#### Scenario: An in-flight download refuses the switch
-
-- **GIVEN** a store download that reports an incomplete state
-- **WHEN** `inflexa store use catalog` runs
-- **THEN** the command refuses, names the download, and leaves the pointer unchanged
-
-#### Scenario: A farm the harness would not mount is refused
-
-- **GIVEN** a directory under the farms path that carries no package inventory
-- **WHEN** `inflexa store use` names it
-- **THEN** the command refuses, names the missing records, and leaves the pointer unchanged
-
-#### Scenario: `--force` still refuses an incomplete farm
-
-- **GIVEN** a directory under the farms path that carries no package inventory
-- **WHEN** `inflexa store use` names it with `--force`
-- **THEN** the command refuses, names the missing records, and leaves the pointer unchanged
-
-#### Scenario: `--force` still refuses an absent farm and an in-flight download
-
-- **GIVEN** a farm name that no directory under the farms path carries, and separately a download that reports an incomplete state
-- **WHEN** `inflexa store use` runs with `--force` in each case
-- **THEN** the command refuses in both, and it leaves the pointer unchanged in both
-
-#### Scenario: A dot-prefixed name is refused
-
-- **WHEN** `inflexa store use .catalog-staging` runs
-- **THEN** the command refuses, says the name marks staging or superseded debris, and leaves the pointer unchanged
-
-#### Scenario: The command never merges
-
-- **GIVEN** an active farm and a second farm with different packages
-- **WHEN** the user switches to the second farm
-- **THEN** the store resolves the second farm only, and no command joins the two
-
-### Requirement: A download that adds an unreachable farm names the remedy
-
-The CLI SHALL report, by name, each farm a store download added while it left the
-active-farm pointer alone. It SHALL name the command that switches to that farm.
-The CLI SHALL NOT switch the active farm by itself, because a switch changes what
-every later sandbox mounts.
-
-#### Scenario: An added farm is reported with its remedy
-
-- **GIVEN** a store whose active-farm pointer already selects a local farm
-- **WHEN** a download adds a published farm and leaves the pointer alone
-- **THEN** the CLI reports the added farm by name and names `inflexa store use <farm>`
-
-#### Scenario: A download that set the pointer suggests nothing
-
-- **GIVEN** a store root that carried no active-farm pointer
-- **WHEN** a download adds a farm and sets the pointer to it
-- **THEN** the CLI reports the active farm and suggests no switch
-
 ## MODIFIED Requirements
 
 ### Requirement: The store can be inspected and reclaimed
 
 The CLI SHALL report what a store holds — its packages, the farms defined against it, and the disk each occupies. It SHALL give a way to remove a farm, and a way to remove store content that no farm references. Reclamation SHALL never run implicitly as a side effect of another command.
 
-The inspection SHALL also report the state of the active-farm pointer and the
-track set of each farm. It SHALL say when the pointer resolves to nothing, because
-that state makes every sandbox unusable and the user cannot see it otherwise. It
-SHALL say which tracks each farm carries. A farm with fewer tracks than another is
-the reason an import fails after a switch.
+The inspection SHALL name the analysis of each analysis farm, and it SHALL mark
+the catalog template farm as the template. It SHALL say which tracks each farm
+carries. A farm with fewer tracks than another is the reason an import fails in
+one analysis and not in another.
 
 An update of the store SHALL remove nothing. The pool is content-addressed, thus
 an update adds only the content whose hash changed, and an old version stays on
@@ -212,11 +102,11 @@ passive diagnostic stays passive.
 - **WHEN** any command other than the reclamation command runs
 - **THEN** no store content is removed
 
-#### Scenario: A pointer that resolves to nothing is reported
+#### Scenario: Each farm reports its analysis
 
-- **GIVEN** a store whose active-farm pointer names a farm that is gone
+- **GIVEN** a store holding the template farm and two analysis farms
 - **WHEN** the user inspects the store
-- **THEN** the output says the pointer resolves to nothing, and names the command that switches to a farm
+- **THEN** the output names the analysis of each analysis farm and marks the template
 
 #### Scenario: Each farm reports its tracks
 

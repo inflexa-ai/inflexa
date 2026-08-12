@@ -143,7 +143,7 @@ The CLI SHALL NOT force a container platform for the local path.
 
 - **GIVEN** a sandbox launched with the store mounted
 - **WHEN** `list_available_packages` runs
-- **THEN** it reads the active farm's `packages.txt` from the mounted store
+- **THEN** it reads the `packages.txt` the CLI supplies for the store
 
 #### Scenario: The CLI does not duplicate the store validity check
 
@@ -167,11 +167,11 @@ remain as a fallback for a locally-tagged custom image.
 
 ### Requirement: The package inventory describes what will actually be mounted
 
-`list_available_packages` reads its inventory from the host paths the CLI supplies. The CLI SHALL supply the inventory as the merge of two sources: the store's active farm, and the runtime image's baked fragment.
+`list_available_packages` reads its inventory from the host paths the CLI supplies. The CLI SHALL supply the inventory as the merge of two sources: the store's pool, and the runtime image's baked fragment.
 
 The store is the first source. It carries the two farm tracks, which are the Python
-packages and the R packages. The CLI SHALL supply the inventory of the store's
-active farm, which is the one store a sandbox mounts.
+packages and the R packages. The CLI SHALL supply the pool inventory of the store,
+because composition can link any pool package into an analysis farm on demand.
 
 The runtime image is the second source. It bakes a fragment that lists the two
 image-owned tracks, which are the bioconda command-line tools and the Node packages.
@@ -190,21 +190,21 @@ start a sandbox that would carry no library.
 
 #### Scenario: The store supplies the inventory
 
-- **GIVEN** a store whose active farm carries a package inventory
+- **GIVEN** a store whose pool carries a package inventory
 - **WHEN** a sandbox launches and `list_available_packages` runs
-- **THEN** it reads the farm's inventory
+- **THEN** it reads the pool inventory
 
 #### Scenario: An unreadable inventory refuses the action
 
-- **GIVEN** a store whose active farm inventory cannot be read
+- **GIVEN** a store whose inventory cannot be read
 - **WHEN** a sandbox action runs
 - **THEN** the CLI reports the store as unusable, names the remedy, and starts no sandbox
 
 #### Scenario: The image fragment supplies the image-owned tracks
 
-- **GIVEN** a store whose active farm carries a package inventory, and a runtime image with the baked fragment
+- **GIVEN** a store whose pool carries a package inventory, and a runtime image with the baked fragment
 - **WHEN** a sandbox launches and `list_available_packages` runs
-- **THEN** it reads the farm's inventory merged with the image fragment, which the CLI extracted and cached by the image digest
+- **THEN** it reads the pool inventory merged with the image fragment, which the CLI extracted and cached by the image digest
 
 #### Scenario: An absent fragment degrades to the store tracks alone
 
