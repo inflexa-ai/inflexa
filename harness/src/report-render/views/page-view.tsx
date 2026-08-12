@@ -2,9 +2,11 @@
  * The page assembly: the hero, the bands, the reference band, and the footer.
  *
  * The skeleton inlines the style rules in the head, and it puts the three scripts at the end of the body.
- * The theme registration runs before the chart bootstrap, thus each chart finds its theme. The navigation,
- * the main content, and the reference frame arrive as already-escaped markup strings, thus `raw()` inserts
- * them byte for byte.
+ * The order of the three scripts is a contract. The theme registration runs before the chart bootstrap,
+ * thus each chart finds its theme. The fade-in observer also runs before the chart bootstrap, thus the
+ * bootstrap finds the reveal gate and it signals readiness after the first reveal pass. The navigation, the
+ * main content, and the reference frame arrive as already-escaped markup strings, thus `raw()` inserts them
+ * byte for byte.
  *
  * One band holds one top-level section. The band index drives the alternation of the background and of the
  * texture, thus a caller that adds a band passes the next index.
@@ -105,8 +107,8 @@ export function assemblePage(title: string, nav: string, content: string, refere
                         </div>
                     </footer>
                     <script>{raw(THEME_REGISTRATION)}</script>
-                    <script>{raw(CHART_BOOTSTRAP)}</script>
                     <script>{raw(FADE_IN_OBSERVER)}</script>
+                    <script>{raw(CHART_BOOTSTRAP)}</script>
                 </body>
             </html>,
         )
