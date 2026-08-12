@@ -6,13 +6,18 @@
  *   [ ...loadRecent(threadId, budget)            ← stable, cacheable prefix
  *     {user: cortex_analysis_state.context},     ← tail
  *     {user: runActivityContext},                 ← tail
- *     {user: render(workingMemory)},             ← tail
+ *     {user: render(workingMemory)},             ← tail, `conversation` thread only
  *     {user: normalizeUnicode(redactSecrets(input))} ]  ← tail
  *
  * `system + tools + history` is the cacheable prefix — it only extends
  * turn-to-turn. Run activity, working memory, and analysis context go in the
  * **tail** as `user` messages: they change every turn, so a system-message
  * placement would bust the Anthropic cache prefix.
+ *
+ * A `report` thread does not get the working-memory tail. The spawn copies the
+ * working-memory render into the child transcript at the anchor. A live render
+ * sees state past that anchor, and that breaks the knowledge cap of a report
+ * session. The analysis context and the run activity stay on both thread types.
  *
  * Sanitization (`redactSecrets`, `normalizeUnicode`) is applied **once**, to
  * the new user input only — never to history, assistant messages, tool
@@ -29,6 +34,7 @@ import type { ModelMessage } from "ai";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { LoopMessage } from "../loop/types.js";
 import type { ThreadHistory } from "../memory/thread-history.js";
+import type { ThreadType } from "../memory/thread-store.js";
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
 import { normalizeUnicode, redactSecrets } from "../input-sanitization.js";
 
@@ -42,6 +48,8 @@ export const DEFAULT_HISTORY_TOKEN_BUDGET = 120_000;
 export interface AssembleMessagesArgs {
     /** The conversation thread — a UI-generated UUID, never the analysisId. */
     readonly threadId: string;
+    /** The type of the thread. A `report` thread drops the working-memory tail. */
+    readonly threadType: ThreadType;
     /** The analysis scope — keys working memory and (separately) the context. */
     readonly analysisId: string;
     /** The raw, untrusted user input for this turn. */
@@ -99,12 +107,15 @@ export async function assembleMessages(args: AssembleMessagesArgs): Promise<Asse
         content: args.runActivityContext,
     });
 
-    // Working memory — agent-authored, trusted. Always injected (its rendered
-    // form names the sections even when empty).
-    tail.push({
-        role: "user",
-        content: unwrapOrThrow(await args.workingMemory.render(args.analysisId)),
-    });
+    // Working memory — agent-authored and trusted. A `conversation` thread
+    // always gets it, because the render names each section even when it is
+    // empty. A `report` thread reads the frozen copy in its seed message.
+    if (args.threadType !== "report") {
+        tail.push({
+            role: "user",
+            content: unwrapOrThrow(await args.workingMemory.render(args.analysisId)),
+        });
+    }
 
     tail.push(userMessage);
 
