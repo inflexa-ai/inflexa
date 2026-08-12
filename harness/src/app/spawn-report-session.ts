@@ -219,6 +219,24 @@ export interface ReportSessionSpawnDeps {
     readonly logger?: Logger;
 }
 
+/**
+ * Whether the composition gives a route to a look at the rendered page. The
+ * three routes are the eyes seam, the capture seam, and a chrome config that
+ * names a browser. One present route opens the gate.
+ *
+ * The spawn reads the rule before it writes a row. A caller that runs work
+ * before the spawn reads the same rule, thus it skips that work under a closed
+ * gate. The refusal itself stays with the spawn, and a caller copies no line of
+ * it.
+ *
+ * The parameter names the route fields alone. Thus a caller passes the deps
+ * value that it gives to `createReportSessionSpawn`, and the two answers cannot
+ * disagree.
+ */
+export function compositionHasEyes(deps: Pick<ReportSessionSpawnDeps, "chrome" | "capture" | "eyes">): boolean {
+    return deps.eyes !== undefined || deps.capture !== undefined || hasBrowserUrl(deps.chrome);
+}
+
 export interface ReportSessionSpawn {
     /**
      * Make a `report` child of the parent conversation and return the full row.
@@ -340,10 +358,9 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
     const store = createThreadStore(pool);
     const history = createThreadHistory(pool);
     const workingMemory = createWorkingMemory(pool);
-    // Any one of the three routes gives a look, thus one present route opens the
-    // gate. The routes are fixed at construction, thus the gate reads one boolean
-    // and never a live probe of the sidecar.
-    const eyesAvailable = deps.eyes !== undefined || deps.capture !== undefined || hasBrowserUrl(deps.chrome);
+    // The routes are fixed at construction, thus the gate reads one boolean and
+    // never a live probe of the sidecar.
+    const eyesAvailable = compositionHasEyes(deps);
 
     /**
      * Write the one seed message of the child and give the child back. The

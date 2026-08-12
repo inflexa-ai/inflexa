@@ -6,6 +6,7 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import type { Scope } from "../auth/types.js";
 import { createReportSessionSpawn } from "../app/spawn-report-session.js";
 import type { DbError } from "../lib/db-result.js";
+import type { AcquireEyes } from "../lib/eyes.js";
 import { conversationRecordTurn, createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore, type ThreadStore } from "../memory/thread-store.js";
 import { makeToolContext } from "./__fixtures__/tool-context.js";
@@ -16,6 +17,9 @@ const ANALYSIS = "analysis-a";
 
 /** A chrome config that names a browser. The tool never connects, thus the eyes gate passes with no sidecar. */
 const WITH_BROWSER = { browserUrl: "http://localhost:9222" };
+
+/** A bound eyes seam. The tool hands it to the spawn, thus no lease of it ever opens. */
+const EYES_SEAM: AcquireEyes = () => Promise.resolve({ browserUrl: WITH_BROWSER.browserUrl, release: () => Promise.resolve() });
 
 /** The brief of one call. Each field is present, thus the seed of the child shows each label. */
 const INPUT: StartReportSessionInput = {
@@ -86,6 +90,25 @@ async function reportThreadCount(): Promise<number> {
 async function refuseMessageInserts(): Promise<void> {
     await pool.query("CREATE FUNCTION refuse_message_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'seed write refused'; END; $$");
     await pool.query("CREATE TRIGGER refuse_message_insert BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION refuse_message_insert()");
+}
+
+/**
+ * A pool that forwards each statement to the real one and records its text. The
+ * advice of the tool costs two reads, thus an empty record says that the closed
+ * gate skipped them.
+ *
+ * The cast names the whole surface that the spawn reads: `query` for each read
+ * and each insert, and `connect` for the transaction of the seed write. Thus the
+ * two members carry every call that a case makes.
+ */
+function watchedPool(): { watched: Pool; statements: string[] } {
+    const statements: string[] = [];
+    const forward = pool.query.bind(pool) as unknown as (text: unknown, values?: unknown) => Promise<unknown>;
+    const query = (text: unknown, values?: unknown): Promise<unknown> => {
+        statements.push(typeof text === "string" ? text : JSON.stringify(text));
+        return forward(text, values);
+    };
+    return { watched: { query, connect: () => pool.connect() } as unknown as Pool, statements };
 }
 
 /** Run the tool and unwrap the ok channel, which each degraded condition also rides. */
@@ -160,6 +183,37 @@ describe("the eyes gate", () => {
         if (result.outcome !== "no_browser") return;
         expect(refusal.type).toBe("no_browser");
         expect(result.detail).toBe(refusal.type === "no_browser" ? refusal.detail : "");
+        expect(await reportThreadCount()).toBe(0);
+    });
+
+    it("starts a session when the composition binds the seam and names no browser", async () => {
+        await seedConversation("p1", "Parent");
+        const { watched, statements } = watchedPool();
+        const seeing = createStartReportSessionTool({ pool: watched, chrome: {}, eyes: EYES_SEAM });
+
+        const result = (await seeing.execute(INPUT, ctxForThread("p1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("started");
+        // The thread listing holds the child. Thus the seam opened the gate of the
+        // tool and the gate of the spawn.
+        expect(await reportThreadCount()).toBe(1);
+        // The open gate runs the advice. Thus this record is the positive control
+        // of the empty record in the case below.
+        expect(statements.length).toBeGreaterThan(0);
+    });
+
+    it("runs no advice read under a composition with no route", async () => {
+        await seedConversation("p1", "Parent");
+        const { watched, statements } = watchedPool();
+        const blind = createStartReportSessionTool({ pool: watched, chrome: {} });
+
+        const result = (await blind.execute(INPUT, ctxForThread("p1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("no_browser");
+        // The gate of the tool exists to skip the two reads of the advice. The
+        // spawn refuses before its own reads, thus the whole call sends no
+        // statement at all.
+        expect(statements).toEqual([]);
         expect(await reportThreadCount()).toBe(0);
     });
 
