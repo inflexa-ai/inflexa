@@ -48,6 +48,14 @@
       ],
       "track": "python"
     },
+    "extradep-1.0.0-00000000000ex001": {
+      "edges": [],
+      "entry_points": [],
+      "imports": [
+        "extradep"
+      ],
+      "track": "python"
+    },
     "gamma-3.0.0-000000000000cccc": {
       "edges": [
         "delta-0.9-000000000000dddd"

@@ -29,6 +29,8 @@ const AIRR_LIKE = "airr-like-2.0.0-00000000000ab002";
 const DELTA = "delta-0.9-000000000000dddd";
 const TYPING = "typing-ext-4.9.0-00000000000eeeee";
 const OMEGA = "omega-9.9-0000000000009999";
+/** In the template and in the graph, with NO edge pointing at it — the shape an extra gives. */
+const EXTRADEP = "extradep-1.0.0-00000000000ex001";
 const RPKGA = "rpkga-1.0-000000000000fff0";
 const RPKGB = "rpkgb-2.1-000000000000fff1";
 
@@ -61,7 +63,7 @@ function tempStore(): string {
     }
     writeFileSync(
         join(template, "lock.json"),
-        `${JSON.stringify({ requested: ["beta", "gamma", "typing_ext"], resolved: ["beta==0.4.1", "gamma==3.0.0", "typing_ext==4.9.0"], store_dirs: [ALPHA, BETA, GAMMA, DELTA, TYPING] }, null, 2)}\n`,
+        `${JSON.stringify({ requested: ["beta", "gamma", "typing_ext"], resolved: ["beta==0.4.1", "gamma==3.0.0", "typing_ext==4.9.0"], store_dirs: [ALPHA, BETA, GAMMA, DELTA, TYPING, EXTRADEP] }, null, 2)}\n`,
     );
     writeFileSync(join(template, "meta.json"), `${JSON.stringify({ version: "catalog", arch: "linux-arm64", tracks: ["python", "r"] }, null, 2)}\n`);
     return root;
@@ -118,7 +120,7 @@ describe("readDepsGraph", () => {
         const graph = readDepsGraph(tempStore())._unsafeUnwrap();
 
         expect(graph.version).toBe(1);
-        expect(graph.nodes.size).toBe(11);
+        expect(graph.nodes.size).toBe(12);
         expect(graph.nodes.get(BETA)).toEqual({ track: "python", imports: ["beta", "nsroot"], entryPoints: ["beta-run"], edges: [ALPHA], rDir: null });
         expect(graph.nodes.get(RPKGA)?.rDir).toBe("Rpkga");
         expect(graph.nodes.get(ALPHA)?.rDir).toBeNull();
@@ -177,16 +179,18 @@ describe("closureOf", () => {
 // --- 1.3 to 1.5 The link pass, the markers, and the warm caches ---------------
 
 describe("composeFarm", () => {
-    test("links the closure of the template's requested set, with each of the three link shapes", async () => {
+    test("links every store directory of the template, with each of the three link shapes", async () => {
         const root = tempStore();
         const analysisId = randomUUIDv7();
 
         const farm = (await composeFarm({ storeRoot: root, analysisId }))._unsafeUnwrap();
 
         expect(farm.farmPath).toBe(join(root, "farms", analysisId));
-        // The requested set of the template is beta, gamma, and typing_ext. The walk
-        // adds alpha and delta, and it leaves omega outside.
-        expect([...farm.storeDirs].sort()).toEqual([ALPHA, BETA, DELTA, GAMMA, RPKGA, RPKGB, TYPING].sort());
+        // A default composition is a COPY of what the template links, thus it holds
+        // extradep, which no edge reaches. It leaves omega outside, because the
+        // template does not link it.
+        expect([...farm.storeDirs].sort()).toEqual([ALPHA, BETA, DELTA, EXTRADEP, GAMMA, RPKGA, RPKGB, TYPING].sort());
+        expect(farm.storeDirs).not.toContain(OMEGA);
 
         const tree = treeOf(farm.farmPath);
         // A top-level entry that ONE store directory gives stays a link into the pool.
@@ -237,15 +241,47 @@ describe("composeFarm", () => {
         expect(inventory.indexOf("## R (CRAN)")).toBeLessThan(inventory.indexOf("## Python (pip)"));
         expect(inventory).toContain("Rpkga, Rpkgb");
         // The producer replaces an underscore with a hyphen in a distribution name.
-        expect(inventory).toContain("alpha, beta, delta, gamma, typing-ext");
-        expect(readFileSync(join(farmPath, "python.packages.txt"), "utf8")).toBe("## Python (pip)\nalpha, beta, delta, gamma, typing-ext\n");
+        expect(inventory).toContain("alpha, beta, delta, extradep, gamma, typing-ext");
+        expect(readFileSync(join(farmPath, "python.packages.txt"), "utf8")).toBe("## Python (pip)\nalpha, beta, delta, extradep, gamma, typing-ext\n");
 
         const meta = JSON.parse(readFileSync(join(farmPath, "meta.json"), "utf8")) as { version: string; arch: string; tracks: string[] };
         expect(meta).toEqual({ version: analysisId, arch: "linux-arm64", tracks: ["python", "r"] });
 
         const lock = JSON.parse(readFileSync(join(farmPath, "lock.json"), "utf8")) as { requested: string[]; store_dirs: string[] };
-        expect(lock.requested).toEqual([BETA, GAMMA, RPKGA, RPKGB, TYPING].sort());
-        expect(lock.store_dirs).toEqual([ALPHA, BETA, DELTA, GAMMA, RPKGA, RPKGB, TYPING].sort());
+        // A default composition records the whole set of the template as its request,
+        // because the template IS the ask and no closure narrows it.
+        expect(lock.requested).toEqual([ALPHA, BETA, DELTA, EXTRADEP, GAMMA, RPKGA, RPKGB, TYPING].sort());
+        expect(lock.store_dirs).toEqual([ALPHA, BETA, DELTA, EXTRADEP, GAMMA, RPKGA, RPKGB, TYPING].sort());
+    });
+
+    test("a default farm holds a distribution that NO edge reaches, because a closure walk would drop it", async () => {
+        // The real shape this pins: a requirement under an extra carries a marker, the
+        // emitter evaluates the marker with no extra active, thus the graph records no
+        // edge. The distribution still reaches the pool, because a manifest spec named
+        // the extra. Measured on the published catalog, a closure walk lost 16 such
+        // distributions and `import scanpy` then failed inside the sandbox.
+        const root = tempStore();
+        const analysisId = randomUUIDv7();
+        // The premise of the test: nothing in the graph points at it.
+        const graph = readDepsGraph(root)._unsafeUnwrap();
+        expect([...graph.nodes.values()].some((node) => node.edges.includes(EXTRADEP))).toBe(false);
+
+        const farm = (await composeFarm({ storeRoot: root, analysisId }))._unsafeUnwrap();
+
+        expect(farm.storeDirs).toContain(EXTRADEP);
+        expect(treeOf(farm.farmPath).get("python/site-packages/extradep")).toBe(`link:${MOUNT}/store/${EXTRADEP}/extradep`);
+    });
+
+    test("an explicit root set still takes its closure, thus an extension stays narrow", async () => {
+        const root = tempStore();
+        const analysisId = randomUUIDv7();
+
+        const farm = (await composeFarm({ storeRoot: root, analysisId, roots: [BETA] }))._unsafeUnwrap();
+
+        // beta names alpha, and nothing else. The template holds more, but a named root
+        // asks for what it needs and not for the environment.
+        expect([...farm.storeDirs].sort()).toEqual([ALPHA, BETA].sort());
+        expect(farm.storeDirs).not.toContain(EXTRADEP);
     });
 
     test("links the warm caches of the template, and it copies no cache file", async () => {

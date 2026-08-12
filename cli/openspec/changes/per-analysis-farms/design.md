@@ -61,10 +61,12 @@ farm, then it returns the path. Thus "make at first sandbox" is not a separate
 hook — the first sandbox action triggers composition by construction. A
 composition failure returns no farm, and the harness gate names the state.
 
-The default closure of a new farm is the requested set of the catalog template.
-That is the same set `current` served before, so the first sandbox behaves as
-today.
-The profiling flow narrows or extends it later through the same composer.
+A new farm holds every store directory that the catalog template links. It does
+not hold the closure of the requested set of the template: a requirement under an
+extra gives no edge, thus its distribution is a node that no edge names, and a
+walk drops it although the template links it. A copy of the template cannot lose
+what the template holds. The profiling flow narrows or extends it later through
+the same composer, and a named root still takes its closure.
 
 Alternative — compose at `analysis new`: rejected, a chat-only analysis would
 pay for a farm it never mounts.
@@ -135,13 +137,15 @@ links never involved the pointer.
 - [Layout parity drift] The TS composer and the Python farm builder diverge
   silently. → The golden-fixture parity test compares full trees on every CI
   run. A divergence fails with a path diff.
-- [Default-closure size] The catalog template closure links the whole catalog
-  set into every farm, at some thousands of symlinks per farm. → Links are
-  cheap, measured in milliseconds and kilobytes. If profiling later narrows
-  defaults, the composer already accepts any root set.
-- [Import-failure loop latency] An on-demand extension costs a round trip
-  through the agent. → The default closure makes the loop rare. The loop is the
-  net, not the norm.
+- [Default-farm size] A default farm links the whole catalog set, at some
+  thousands of symlinks per farm. → Links are cheap: 2020 links in 122 ms,
+  measured on the published catalog. If profiling later narrows the default, the
+  composer already accepts any root set.
+- [Extras under-linking on an extension] The no-extra marker evaluation drops the
+  optional-extra edges of Python, thus a closure walk from a named root can miss
+  an optional dependency. A DEFAULT farm is unaffected, because it copies the
+  template rather than walking. → The import-failure loop extends the farm on
+  demand.
 - [Two writers of one farm] A flight commit extends a farm while its analysis
   composes. → The per-farm mutex serializes them, and both writers are
   additive.

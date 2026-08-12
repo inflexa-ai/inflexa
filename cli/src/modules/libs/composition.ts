@@ -127,9 +127,6 @@ const DIST_INFO_NAME = /^(.+?)-[^-]+\.dist-info$/;
 /** The canonical name that a store directory name records: `<canon-name>-<version>-<digest>`. */
 const STORE_DIR_NAME = /^(.+)-[^-]+-[0-9a-f]{16}$/;
 
-/** The start of a requirement, before an extra, a specifier, or a marker. */
-const REQUIREMENT_NAME = /^\s*([A-Za-z0-9][A-Za-z0-9._-]*)/;
-
 // --- The per-farm mutex -------------------------------------------------------
 
 /** The instance-lock key of one farm. The analysis id is a UUIDv7, thus it collides with no sentinel key. */
@@ -631,12 +628,16 @@ function applyLinkPlan(ops: readonly LinkOp[]): void {
 
 // --- The template -------------------------------------------------------------
 
-/** What the catalog template gives a new farm: its default roots, its R subtree map, and its warm caches. */
+/** What the catalog template gives a new farm: its store directories, its R subtree map, and its warm caches. */
 type Template = {
     /** The farm of the template on the host. */
     readonly path: string;
-    /** The store directories that the template requested, which are the default roots. */
-    readonly roots: readonly string[];
+    /**
+     * EVERY store directory that the template links, of both tracks. It is the default
+     * content of a new farm, and it is content and not a set of roots — refer to
+     * {@link readTemplate}.
+     */
+    readonly storeDirs: readonly string[];
     /** Which R subtree each R store directory of the template belongs to. */
     readonly rSubtrees: ReadonlyMap<string, RSubtree>;
     /** The `arch` field of the template metadata, which every farm of the store shares. */
@@ -650,11 +651,6 @@ const farmLockSchema = z.object({
 });
 
 const farmMetaSchema = z.object({ arch: z.string().optional() });
-
-/** The canonical distribution name of a requirement, under the rule of PEP 503. */
-function canonicalName(name: string): string {
-    return name.replace(/[-_.]+/g, "-").toLowerCase();
-}
 
 /**
  * The canonical name that a store-directory name records, or `null` when the name
@@ -695,16 +691,29 @@ function readRSubtrees(farmPath: string): Map<string, RSubtree> {
 /**
  * Read the catalog template.
  *
- * The default roots of a new farm are the requested set of the template, thus the
- * first sandbox of a new analysis resolves the same packages that one shared farm
- * served before. The lock records the request as a pip specifier, and the graph is
- * keyed by store directory, thus the two meet through the canonical name: a store
- * directory of the closure of the template whose name is a requested name is a
- * root, and the walk finds the rest.
+ * A new farm gets EVERY store directory that the template holds, and it does not get
+ * the closure of the requested set of the template. The two are not the same set,
+ * and the difference is a silent loss.
  *
- * The R track of the template rides beside them. The lock of the provisioner
- * records counts for R and never names, thus the R roots come from the links of the
- * template, which also give the subtree of each R store directory.
+ * A requirement under an extra carries a marker, for example
+ * `Requires-Dist: pydantic-settings; extra == "settings"`. The emitter evaluates a
+ * marker with NO extra active, thus such a requirement gives no edge. The
+ * distribution still reaches the pool, because a manifest spec names the extra
+ * (`dask[array,dataframe]`), so it becomes a node that no edge points at. A closure
+ * walk from the requested roots never reaches it. Measured on the published catalog:
+ * 16 distributions are lost that way, and `import scanpy` then fails inside the
+ * sandbox, because `scverse_misc` hides its `Settings` export behind an
+ * `ImportError` of `pydantic-settings`.
+ *
+ * The template is the reference environment, thus a copy of what it links cannot
+ * lose a package that it holds. A closure walk can. The graph stays necessary for
+ * the metadata of each node, and for the closure of a root that
+ * {@link extendFarm} adds later.
+ *
+ * The Python store directories come from the lock, which records each one. The R
+ * store directories come from the links of the template, because the lock of the
+ * provisioner records counts for R and never names. The links also give the subtree
+ * of each R store directory.
  */
 function readTemplate(storeRoot: string): Result<Template, FarmCompositionError> {
     const path = join(storeRoot, FARMS_DIR, CATALOG_FARM);
@@ -724,17 +733,11 @@ function readTemplate(storeRoot: string): Result<Template, FarmCompositionError>
             const lock = JSON.parseWith(raw, farmLockSchema);
             if (lock === null) return err<Template, FarmCompositionError>({ type: "template_unusable", path, detail: "the lock of the template is malformed" });
 
-            const requested = new Set(lock.requested.map((spec) => canonicalName(REQUIREMENT_NAME.exec(spec)?.[1] ?? spec)));
-            const pythonRoots = lock.store_dirs.filter((dir) => {
-                const name = nameOfStoreDir(dir);
-                return name !== null && requested.has(name);
-            });
-
-            const roots = [...new Set([...pythonRoots, ...rSubtrees.keys()])].sort();
-            if (roots.length === 0) {
+            const storeDirs = [...new Set([...lock.store_dirs, ...rSubtrees.keys()])].sort();
+            if (storeDirs.length === 0) {
                 return err<Template, FarmCompositionError>({ type: "template_unusable", path, detail: "the lock of the template names no store directory" });
             }
-            return ok<Template, FarmCompositionError>({ path, roots, rSubtrees, arch });
+            return ok<Template, FarmCompositionError>({ path, storeDirs, rSubtrees, arch });
         });
 }
 
@@ -1037,8 +1040,14 @@ export async function composeFarm(params: ComposeFarmParams): Promise<Result<Far
     const composed = await underFarmMutex(params.analysisId, () =>
         readTemplate(params.storeRoot).andThen((template) =>
             readDepsGraph(params.storeRoot).andThen((graph) => {
-                const roots = params.roots ?? template.roots;
-                return closureOf(graph, roots).andThen((closure) =>
+                const roots = params.roots ?? template.storeDirs;
+                // An explicit root set takes its closure, because a caller names a package and
+                // wants what it needs. The DEFAULT takes no closure: the store directories of
+                // the template are already the content, and a walk over them would drop a node
+                // that no edge reaches (refer to `readTemplate`).
+                const content =
+                    params.roots === undefined ? ok<ReadonlySet<string>, FarmCompositionError>(new Set(template.storeDirs)) : closureOf(graph, roots);
+                return content.andThen((closure) =>
                     tryFs("make the farm directory", () => mkdirSync(analysisFarmPath(params.storeRoot, params.analysisId), { recursive: true })).andThen(() =>
                         linkClosure(
                             params.storeRoot,

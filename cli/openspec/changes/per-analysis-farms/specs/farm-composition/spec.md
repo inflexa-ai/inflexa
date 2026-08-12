@@ -32,11 +32,15 @@ Composition SHALL NOT resolve a version constraint. The graph carries resolved e
 - **WHEN** composition runs
 - **THEN** no container starts, and no network call opens
 
-### Requirement: Composition is lazy and the default closure is the template
+### Requirement: Composition is lazy and a default farm copies the template
 
 The first sandbox action of an analysis SHALL trigger composition, through the farm provider. An analysis that starts no sandbox SHALL get no farm.
 
-The default roots of a new farm SHALL be the requested set of the catalog template farm, read from its `lock.json`. Thus the first sandbox of a new analysis resolves the same set the single active farm served before this change.
+A new farm SHALL hold EVERY store directory that the catalog template links, of both tracks. It SHALL NOT hold the closure of the requested set of the template, because the two sets are not the same and the difference is a silent loss.
+
+A requirement under an extra carries a marker, and the emitter evaluates a marker with no extra active. Thus such a requirement gives no edge, and its distribution becomes a node that no edge names. A walk from the requested roots never reaches it, although the template links it. Measured on the published catalog, a walk lost 16 distributions and `import scanpy` then failed inside the sandbox.
+
+Thus the first sandbox of a new analysis resolves the same set the single active farm served before this change. An explicit root set SHALL still take its closure, because a caller that names a package asks for what that package needs.
 
 #### Scenario: The first sandbox composes the farm
 
@@ -50,11 +54,23 @@ The default roots of a new farm SHALL be the requested set of the catalog templa
 - **WHEN** no sandbox action runs
 - **THEN** no farm exists for the analysis
 
-#### Scenario: The default closure matches the template
+#### Scenario: A default farm matches the template
 
 - **GIVEN** a fresh analysis and a catalog template farm
 - **WHEN** the first composition runs with no explicit roots
-- **THEN** the farm's lock records the template's requested set
+- **THEN** the farm holds each store directory of the template, and its lock records that set
+
+#### Scenario: A distribution that no edge reaches is still held
+
+- **GIVEN** a template that links a distribution which the graph names and no edge points at
+- **WHEN** the first composition runs with no explicit roots
+- **THEN** the farm links that distribution, thus an import of it succeeds in the sandbox
+
+#### Scenario: An explicit root takes its closure
+
+- **GIVEN** a template that holds more than one package
+- **WHEN** composition runs with one named root
+- **THEN** the farm holds that root and its closure, and it holds nothing else of the template
 
 ### Requirement: A farm extends additively and safely under a live sandbox
 
