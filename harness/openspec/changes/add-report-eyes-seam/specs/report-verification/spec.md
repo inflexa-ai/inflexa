@@ -7,6 +7,8 @@ The seam owns provisioning alone. The page behavior stays in the harness: the na
 
 A realization MUST bound the life of what it provisions. A lease that no release ends MUST still end at that bound. Thus a crash between the acquire and the release leaks nothing.
 
+A realization MUST bound how many browsers it provisions at one time. The page gate of the harness bounds one endpoint. Thus a realization that starts a browser at a new endpoint for each look meets no harness-side bound. Only the realization knows its own resource, and the count bound sits there.
+
 The harness MUST ship the static realization over a standing sidecar. It returns the configured endpoint, and its release does nothing. The assembly MUST wrap a configured browser endpoint into the static realization. Thus a composition that names a standing sidecar changes nothing.
 
 #### Scenario: The static realization gives the configured endpoint
@@ -28,6 +30,11 @@ The harness MUST ship the static realization over a standing sidecar. It returns
 
 - **WHEN** a lease is acquired and no release ever runs
 - **THEN** the provisioned browser ends at the bound of the realization
+
+#### Scenario: A realization bounds the count of its browsers
+
+- **WHEN** a realization starts a browser at a new endpoint for each look
+- **THEN** the realization bounds how many of those browsers run at one time
 
 ## MODIFIED Requirements
 

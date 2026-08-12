@@ -41,9 +41,19 @@ The release in the finally is hygiene, and it is not the guarantee. A process ca
 
 A failed release logs, and it does not change the outcome of the look. The capture already succeeded, and the bound of the realization reaps the endpoint.
 
+### D4b. The realization bounds the count of its browsers
+
+D4 bounds the life of one lease. It does not bound how many browsers live at one time. The page gate of `chrome.ts` bounds one endpoint. Thus a realization that starts a browser at a new endpoint for each look meets no bound in the harness.
+
+The count bound sits on the realization, and not in the harness. The harness has no sensible default for an arbitrary realization: a container runtime, a remote browser pool, and a standing sidecar each hold a different resource. A realization knows its own resource, thus it sets the number. The static realization provisions nothing, and one standing sidecar answers every look.
+
 ### D5. The chrome connection cache keys on the endpoint
 
 Today `getBrowser` pins the first endpoint forever, and one module semaphore covers every page. The cache becomes a map keyed by `browserUrl`, and each endpoint gets its own semaphore. A disconnect evicts its entry. The old path names one endpoint, thus its behavior does not change. An ephemeral endpoint disconnects when its container dies, thus the map does not grow.
+
+The eviction is event-driven, and no sweep runs over the map. The socket close of a dead browser raises the disconnect event, thus a browser that dies in the normal way evicts its own entry. A browser that dies with no event leaves one entry that nothing removes. The cost is one dead entry for one endpoint URL that no later look names again.
+
+The design rejects two other evictions. A blanket forget after each release reconnects on every look: the static realization must keep its connection to the standing sidecar across looks, thus that eviction regresses the managed path. A per-lease disposable flag puts a detail of the connection cache into the seam, and the seam answers one question alone.
 
 ### D6. The gates widen additively
 
