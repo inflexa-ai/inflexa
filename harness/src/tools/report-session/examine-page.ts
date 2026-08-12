@@ -35,6 +35,10 @@
  *
  * The eyes seam, the chrome navigation, and the workspace-root seam each speak the throw protocol. The tool
  * guards each of them, thus a fault of a look becomes a typed outcome and the loop never sees a throw.
+ *
+ * A hang is not a throw, and a guard alone never ends one. Thus the acquire and the release each carry a
+ * deadline. A realization that hangs while it starts a browser would otherwise hold the whole agent turn,
+ * and no outcome would ever arrive.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -94,6 +98,12 @@ export interface ExaminePageToolDeps {
     readonly eyes?: AcquireEyes;
     readonly capture?: CapturePage;
     readonly logger?: Logger;
+    /**
+     * The two budgets of one look, in milliseconds. A test seam: it shortens the budgets, thus a hung
+     * realization settles inside one test run. Absent, the tool reads {@link ACQUIRE_DEADLINE_MS} and
+     * {@link RELEASE_DEADLINE_MS}, which no composition tunes.
+     */
+    readonly deadlines?: { readonly acquireMs?: number; readonly releaseMs?: number };
 }
 
 /**
@@ -146,6 +156,90 @@ const LOOK_FAULT_MESSAGE: Record<LookStage, string> = {
 };
 
 /**
+ * The deadline of one acquire, in milliseconds.
+ *
+ * A realization can start a container and boot a browser inside it, and that cold start costs seconds. The
+ * budget covers a slow cold start with a wide margin. It also ends a realization that hangs: one look sits
+ * inside one agent turn, and a hung acquire holds that whole turn with no outcome at all.
+ */
+const ACQUIRE_DEADLINE_MS = 60_000;
+
+/**
+ * The deadline of one release, in milliseconds.
+ *
+ * A release stops what one acquire started, and the look already holds its picture. Thus the budget is short.
+ * A release that runs past the budget costs nothing, because the realization bounds the life of what it
+ * provisions.
+ */
+const RELEASE_DEADLINE_MS = 10_000;
+
+/** The fault of one operation that ran against a deadline: the cause that it raised, or the expiry. */
+type DeadlineFault = { readonly kind: "threw"; readonly cause: unknown } | { readonly kind: "expired" };
+
+/** The win of the timer arm. A symbol cannot collide with a value that the operation gives. */
+const EXPIRED = Symbol("expired");
+
+/**
+ * Run one operation against a deadline, and give the value, the cause, or the expiry.
+ *
+ * The eyes seam takes no abort signal, thus a race is the whole bound. The loser of the race stays in
+ * flight, and the caller of an expired operation owns whatever arrives late.
+ *
+ * Each path clears the timer. `sleep` of `async-utils.ts` holds a timer that nothing can clear. Thus an
+ * operation that wins its race would still keep the process alive for the rest of the budget.
+ */
+async function withDeadline<T>(work: Promise<T>, ms: number): Promise<Result<T, DeadlineFault>> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // The settled arm never rejects. Thus a fault that arrives after the expiry stays contained here, and it
+    // never reaches the process as an unhandled rejection.
+    const settled: Promise<Result<T, DeadlineFault>> = work.then(
+        (value) => ok(value),
+        (cause: unknown) => err({ kind: "threw" as const, cause }),
+    );
+    const expiry = new Promise<typeof EXPIRED>((resolve) => {
+        timer = setTimeout(() => resolve(EXPIRED), ms);
+    });
+    const winner = await Promise.race([settled, expiry]);
+    clearTimeout(timer);
+    return winner === EXPIRED ? err({ kind: "expired" }) : winner;
+}
+
+/** The cause of one such fault. An expiry names its budget, thus the detail of the outcome names it too. */
+function faultCause(fault: DeadlineFault, expiry: string, ms: number): unknown {
+    return fault.kind === "threw" ? fault.cause : new Error(`${expiry} within ${ms} ms`);
+}
+
+/**
+ * Start one seam call, and give the promise of its outcome.
+ *
+ * A realization comes from the embedder, and one that is hand-written can throw before it gives its promise.
+ * The catch turns that throw into a rejection. Thus the deadline below reads one shape, and a look keeps the
+ * no-throw contract of the tool.
+ */
+function startSeamCall<T>(call: () => Promise<T>): Promise<T> {
+    try {
+        return call();
+    } catch (cause) {
+        return Promise.reject(cause);
+    }
+}
+
+/**
+ * Release a lease that arrived after the deadline of its acquire.
+ *
+ * The acquire stays in flight past that deadline, thus a browser can still arrive with no owner. The
+ * realization bounds the life of that browser, and this release ends it sooner. The look already gave its
+ * outcome, thus a fault here reaches the log alone.
+ */
+function releaseLateLease(pending: Promise<EyesLease>, logger: Logger): void {
+    void pending
+        .then((lease) => lease.release())
+        .catch((cause: unknown) => {
+            logger.warn("the eyes lease did not release", logger.errorFields(cause));
+        });
+}
+
+/**
  * Run one look over the resolved transport, and give the picture or the typed fault.
  *
  * The lease arm acquires one browser, captures against the endpoint of that lease, and releases in a
@@ -154,12 +248,18 @@ const LOOK_FAULT_MESSAGE: Record<LookStage, string> = {
  *
  * A failed release changes no outcome of the look. The capture already ran, and the realization bounds the
  * life of what it provisions. Thus the log is the whole record of a failed release.
+ *
+ * The two seam calls each run against a deadline. An expired acquire reads as an acquire fault, thus a hung
+ * realization gives the same outcome as a refused one. An expired release reads as a failed release, thus it
+ * reaches the log and it changes no outcome.
  */
 async function runLook(args: {
     readonly transport: ResolvedEyes;
     readonly chrome: ChromeConfig;
     readonly scope: EyesScope;
     readonly url: string;
+    readonly acquireMs: number;
+    readonly releaseMs: number;
     readonly logger: Logger;
 }): Promise<Result<PageCapture, LookFault>> {
     const { transport } = args;
@@ -171,20 +271,26 @@ async function runLook(args: {
         }
     }
 
-    let lease: EyesLease;
-    try {
-        lease = await transport.acquire(args.scope);
-    } catch (cause) {
-        return err({ stage: "acquire", cause });
+    // The pending acquire stays apart from its deadline. An expiry leaves the acquire in flight, and a lease
+    // that arrives late still gets a release.
+    const pending = startSeamCall(() => transport.acquire(args.scope));
+    const acquired = await withDeadline(pending, args.acquireMs);
+    if (acquired.isErr()) {
+        if (acquired.error.kind === "expired") releaseLateLease(pending, args.logger);
+        return err({ stage: "acquire", cause: faultCause(acquired.error, "the eyes gave no browser", args.acquireMs) });
     }
+    const lease = acquired.value;
     try {
         return ok(await capturePage({ ...args.chrome, browserUrl: lease.browserUrl }, args.url));
     } catch (cause) {
         return err({ stage: "capture", cause });
     } finally {
-        try {
-            await lease.release();
-        } catch (cause) {
+        const released = await withDeadline(
+            startSeamCall(() => lease.release()),
+            args.releaseMs,
+        );
+        if (released.isErr()) {
+            const cause = faultCause(released.error, "the eyes lease did not release", args.releaseMs);
             args.logger.warn("the eyes lease did not release", args.logger.errorFields(cause));
         }
     }
@@ -207,6 +313,8 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
     // The eyes of the composition are fixed here, thus one look reads one resolved transport and never the
     // precedence again.
     const transport = resolveEyes(deps);
+    const acquireMs = deps.deadlines?.acquireMs ?? ACQUIRE_DEADLINE_MS;
+    const releaseMs = deps.deadlines?.releaseMs ?? RELEASE_DEADLINE_MS;
 
     return defineTool({
         id: "examine_page",
@@ -262,6 +370,8 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 chrome: deps.chrome,
                 scope: { analysisId, workspaceRoot: root },
                 url: pathToFileURL(pagePath).href,
+                acquireMs,
+                releaseMs,
                 logger,
             });
             if (looked.isErr()) {
