@@ -107,6 +107,7 @@ function recordingHistory(append: () => ResultAsync<void, DbError> = () => okAsy
         loadPage: () => okAsync({ messages: [], total: 0, page: 1, perPage: 200, hasMore: false }),
         retractLastTurn: () => okAsync({ kind: "empty-thread" }),
         latestSeq: () => okAsync(null),
+        countUserTurnsAfter: () => okAsync(0),
     };
     return { history, appended };
 }
@@ -493,6 +494,7 @@ function stagedHistory(turns: ModelMessage[][]): { history: ThreadHistory; retra
             return okAsync({ kind: "retracted", messages: turns[turns.length - 1]?.length ?? 0 });
         },
         latestSeq: () => okAsync(null),
+        countUserTurnsAfter: () => okAsync(0),
     };
     return { history, retracts: () => retracts };
 }

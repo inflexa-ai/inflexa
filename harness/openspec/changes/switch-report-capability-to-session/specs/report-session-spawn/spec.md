@@ -6,7 +6,7 @@
 
 The conversation agent MUST offer the tool `start_report_session`. The tool MUST run the spawn operation with the thread id of the call scope as the parent. The tool MUST NOT accept a parent id as input.
 
-The input MUST carry the intent brief: `objective`, `audience`, `angle`, optional `exclusions`, and optional `openQuestions`. The brief holds intent only, and no field names a path, a dataset, or a format. The input MUST also carry the optional override of the thin-delta advice.
+The input MUST carry the intent brief: `objective`, `audience`, `angle`, optional `exclusions`, and optional `openQuestions`. The brief holds intent only, and no field names a path, a dataset, or a format. Each field MUST carry a length bound in the schema, because the brief lands in a durable message row. The input MUST also carry the optional override of the thin-delta advice.
 
 A call whose scope carries no thread id MUST refuse as typed data in the ok channel. A spawn refusal MUST pass through as typed data, and the arm names the reason. The `no_browser` arm MUST carry the detail of the spawn, thus the agent can tell the user that the deployment has no eyes. A store fault MUST return as typed data with a short detail. A success MUST return the thread id and the title of the child. The tool MUST NOT throw for a degraded condition.
 

@@ -35,6 +35,12 @@
  * fails, the spawn purges the child, because a report thread with no context is
  * a dead end.
  *
+ * The spawn mints one moment, and that moment carries two pins. The anchor pins
+ * the transcript of the parent, and the injected anchor operation pins the data
+ * of the analysis. A pin at the first tool call of a later turn reads a
+ * different moment, thus the session can cite an artifact that the anchor never
+ * held.
+ *
  * The delta read gives the state that a caller reads before a new spawn. It
  * gives the report child with the greatest anchor. It also gives the count of
  * user turns of the parent past that anchor. The listing orders by `updated_at`
@@ -48,16 +54,19 @@
 
 import { randomUUID } from "node:crypto";
 
-import { type ResultAsync, errAsync, okAsync } from "neverthrow";
+import { ResultAsync, errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import type { DbError } from "../lib/db-result.js";
 import { hasBrowserUrl, type ChromeConfig } from "../lib/chrome.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import type { CapturePage } from "../lib/page-capture.js";
 import type { DomainError } from "../lib/result.js";
 import { conversationRecordTurn, createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore, type Thread, type ThreadInputError, type ThreadPage, type ThreadType } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
+import type { EnsureSessionStateResult } from "./report-session-runtime.js";
 
 /**
  * A spawn the operation refuses before it writes a row. Distinct from
@@ -173,6 +182,18 @@ export interface ReportSessionSpawnDeps {
      * satisfies the gate on its own.
      */
     readonly capture?: CapturePage;
+    /**
+     * The anchor operation of the report session runtime. The spawn runs it
+     * after the seed of the child lands, thus the transcript anchor and the data
+     * snapshot pin at one moment.
+     *
+     * The dep is optional. A composition that binds none pins no snapshot at the
+     * spawn, and the first session tool call pins instead, because the operation
+     * is idempotent.
+     */
+    readonly anchorSession?: (threadId: string) => Promise<EnsureSessionStateResult>;
+    /** Operational logging seam. An omitted logger falls back to the no-op. */
+    readonly logger?: Logger;
 }
 
 export interface ReportSessionSpawn {
@@ -181,6 +202,10 @@ export interface ReportSessionSpawn {
      * The child takes the analysis of the parent, the parent thread id, and the
      * anchor — the parent's latest `messages.seq` at this moment. It also takes
      * one seed message that holds the brief and the working-memory render.
+     *
+     * The seed lands first, and the injected anchor operation then pins the data
+     * snapshot of the child. A failed pin keeps the child and it keeps this
+     * result on the ok channel, thus the outcome vocabulary holds no pin arm.
      *
      * Refused with a `SpawnRefusal`, no row written: a composition with no
      * eyes, an absent or archived parent, a parent that is not a conversation,
@@ -288,6 +313,7 @@ function pickNewestChild(children: readonly Thread[]): NewestReportChild | null 
  */
 export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSessionSpawn {
     const { pool } = deps;
+    const log = (deps.logger ?? createNoopLogger()).named("spawn-report-session");
     const store = createThreadStore(pool);
     const history = createThreadHistory(pool);
     const workingMemory = createWorkingMemory(pool);
@@ -315,6 +341,44 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
                     .andThen((): ResultAsync<Thread, DbError> => errAsync(fault))
                     .orElse((): ResultAsync<Thread, DbError> => errAsync(fault)),
             );
+    }
+
+    /**
+     * Pin the data snapshot of the child, through the injected anchor operation.
+     * The spawn mints one moment, and the transcript anchor and this snapshot are
+     * the two pins of that moment.
+     *
+     * The pin runs after the seed. A failed seed purges the child, and
+     * `cortex_report_session_state` carries no foreign key to the thread table,
+     * thus a pin before a purged seed would leave an orphan row.
+     *
+     * A failed pin keeps the child. The operation is idempotent, thus the first
+     * session tool call pins again, and a purge on a transient store fault would
+     * cost the user the whole session. Thus the failure rides the logger alone.
+     */
+    async function pinSessionSnapshot(child: Thread): Promise<Thread> {
+        const anchor = deps.anchorSession;
+        if (anchor === undefined) return child;
+        try {
+            const pinned = await anchor(child.threadId);
+            if (pinned.outcome === "failed") {
+                log.warn("the snapshot pin of the new session failed", {
+                    threadId: child.threadId,
+                    analysisId: child.analysisId,
+                    kind: pinned.kind,
+                    detail: pinned.detail,
+                });
+            }
+        } catch (cause) {
+            // The dep speaks a promise, thus a foreign realization can reject.
+            // The spawn keeps the child on that route as well.
+            log.warn("the snapshot pin of the new session did not complete", {
+                threadId: child.threadId,
+                analysisId: child.analysisId,
+                ...log.errorFields(cause),
+            });
+        }
+        return child;
     }
 
     /**
@@ -381,7 +445,10 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
                             })
                             // The seed follows the insert, thus the copy of the working
                             // memory is the state at the anchor.
-                            .andThen((child) => seedChildContext(child, brief)),
+                            .andThen((child) => seedChildContext(child, brief))
+                            // The pin follows the seed. `pinSessionSnapshot` never
+                            // rejects, thus the safe bridge adds no error variant.
+                            .andThen((child) => ResultAsync.fromSafePromise(pinSessionSnapshot(child))),
                     );
             });
         });
