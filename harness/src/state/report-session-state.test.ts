@@ -52,7 +52,7 @@ describe("createReportSessionStateStore", () => {
 
     /** Seed the `cortex_analysis_state` row the session-state foreign key needs. */
     async function seedAnalysis(analysisId: string): Promise<void> {
-        (await upsertAnalysis(pool, analysisId, null, null))._unsafeUnwrap();
+        (await upsertAnalysis(pool, analysisId, null))._unsafeUnwrap();
     }
 
     it("keeps the snapshot and the document across two store instances", async () => {

@@ -35,6 +35,7 @@ import type { Pool } from "pg";
 import { insertStepExecution, updateStepExecution } from "../state/index.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import type { ResolveBilling } from "../billing/resolver.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -131,6 +132,9 @@ export interface SandboxStepInput {
  * declare it explicitly.
  */
 export const DEFAULT_STEP_TIMEOUT_SECONDS = 3600;
+
+/** Resolved-header key carrying the billing-context id (see `ResolveBilling`). */
+const BILLING_CONTEXT_HEADER = "X-Inflexa-Billing-Context";
 
 export type SandboxStepStatus = "complete" | "failed" | "canceled" | "blocked";
 
@@ -270,6 +274,9 @@ export interface SandboxStepDeps {
     /** Write-side embedder for the post-step vector index. */
     readonly embedding: EmbeddingProvider;
     readonly sandboxClient: SandboxClient;
+    /** Resolves the billing context stamped as the sandbox pod's OpenCost
+     *  labels. Absent in upstream-less (dev/OSS) wiring — pods spawn unlabeled. */
+    readonly resolveBilling?: ResolveBilling;
     /**
      * External artifact registration + sync seam. The harness's post-step pipeline
      * registers each step's outputs through it (filesystem index in the
@@ -428,7 +435,9 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     // (2b) sandbox.create — spawn (or adopt) the machine under the minted
     // identity. The handle (secret included) is cached so recovery picks the
-    // same machine back up without re-provisioning.
+    // same machine back up without re-provisioning. Billing resolution lives
+    // INSIDE this step (not as its own step) so the child's step sequence is
+    // unchanged — in-flight workflows resumed across a deploy replay cleanly.
     const sandboxMeta: CreateSandboxMeta = {
         runId: input.runId,
         stepId: input.stepId,
@@ -438,7 +447,22 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         extraEnv: input.extraEnv,
         resources: input.resources,
     };
-    const sandbox = await DBOS.runStep(() => deps.sandboxClient.createSandbox(sandboxMeta, identity), { name: "sandbox.create" });
+    const sandbox = await DBOS.runStep(
+        async () => {
+            let billing: CreateSandboxMeta["billing"];
+            if (deps.resolveBilling) {
+                try {
+                    const bcId = (await deps.resolveBilling(session))[BILLING_CONTEXT_HEADER];
+                    if (bcId) billing = { billingContextId: bcId, userId: input.runSession.identity.user };
+                } catch (err) {
+                    logger.error("[billing] step billing resolution failed", { analysisId: input.analysisId, ...logger.errorFields(err) });
+                }
+                if (!billing) logger.error("[billing] sandbox spawned without billing labels", { analysisId: input.analysisId });
+            }
+            return deps.sandboxClient.createSandbox({ ...sandboxMeta, billing }, identity);
+        },
+        { name: "sandbox.create" },
+    );
 
     // Recovery path: re-check `isAlive` on the persisted ref before continuing.
     // A classified-dead sandbox triggers a fresh `createSandbox` (task 4.6).

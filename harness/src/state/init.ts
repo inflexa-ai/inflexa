@@ -16,7 +16,7 @@ import type { Logger } from "../lib/logger.js";
 // splitting on ';' (see `DDL.split` below), so a semicolon inside a comment cuts
 // the statement it precedes in half and Postgres rejects the fragment.
 const DDL = `
--- Analysis-level state (status, context, data-profile tracking, billing identity).
+-- Analysis-level state (status, context, data-profile tracking).
 --
 -- User identity is derived from the ambient credential's JWT sub claim
 -- at request time — not persisted in this table.
@@ -24,7 +24,6 @@ CREATE TABLE IF NOT EXISTS cortex_analysis_state (
   analysis_id               TEXT PRIMARY KEY,
   status                    TEXT NOT NULL,
   context                   TEXT,
-  billing_context           JSONB,
   -- Nullable: NULL is the honest "no profile" state, which loadDataProfileStatus
   -- collapses to null so a cleared profile is indistinguishable from one that never
   -- existed. The 'pending' default still applies to a row inserted without a status --
@@ -501,6 +500,8 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                 "ALTER TABLE cortex_analysis_state DROP COLUMN IF EXISTS profile",
                 "ALTER TABLE cortex_analysis_state DROP COLUMN IF EXISTS input_files",
                 "ALTER TABLE cortex_analysis_state DROP COLUMN IF EXISTS user_id",
+                // Billing identity is resolved lazily at charge-open time, never persisted.
+                "ALTER TABLE cortex_analysis_state DROP COLUMN IF EXISTS billing_context",
                 // v2 vestiges on cortex_runs.
                 "ALTER TABLE cortex_runs DROP COLUMN IF EXISTS plan",
                 "ALTER TABLE cortex_runs DROP COLUMN IF EXISTS plan_version",
@@ -536,7 +537,6 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                 "ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS synthesis_status TEXT",
                 "ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS synthesis_reason TEXT",
                 "ALTER TABLE cortex_analysis_state ADD COLUMN IF NOT EXISTS data_profile_result JSONB",
-                "ALTER TABLE cortex_analysis_state ADD COLUMN IF NOT EXISTS billing_context JSONB",
                 // Sandbox reliability telemetry (from sandbox-reliability change on main).
                 "ALTER TABLE cortex_step_executions ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 1",
                 "ALTER TABLE cortex_step_executions ADD COLUMN IF NOT EXISTS last_error_class TEXT",

@@ -53,7 +53,7 @@ describe("createReportVersionStore", () => {
 
     /** Seed the `cortex_analysis_state` row the version foreign key needs. */
     async function seedAnalysis(analysisId: string): Promise<void> {
-        (await upsertAnalysis(pool, analysisId, null, null))._unsafeUnwrap();
+        (await upsertAnalysis(pool, analysisId, null))._unsafeUnwrap();
     }
 
     it("records a version and reads the triple back by its id", async () => {

@@ -703,6 +703,107 @@ describe("sanitizeLabelValue", () => {
         const long = "x".repeat(80);
         expect(sanitizeLabelValue(long).length).toBe(63);
     });
+
+    test("UUIDs pass through unaltered and trailing non-alnum is trimmed after the cap", () => {
+        const uuid = "2f9c1f6e-9f4b-4c1e-8a3d-0b1c2d3e4f5a";
+        expect(sanitizeLabelValue(uuid)).toBe(uuid);
+        // 62 alnum chars + "-" at position 63: the cap keeps the dash, the tail trim removes it.
+        expect(sanitizeLabelValue(`${"x".repeat(62)}-tail`)).toBe("x".repeat(62));
+        expect(sanitizeLabelValue("---")).toBe("");
+    });
+});
+
+describe("k8s billing labels", () => {
+    const READY_POD = [
+        {
+            status: { phase: "Running" as const, podIP: "10.0.0.1" },
+            metadata: { name: "sbx-x-abc" },
+        },
+    ];
+
+    function opsWith(stub: ReturnType<typeof stubApis>) {
+        return createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://cortex.internal:443",
+            namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
+            sessionPvc: "cortex-sessions",
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+    }
+
+    test("billing meta stamps the four labels on pod template and Job metadata", async () => {
+        const stub = stubApis(READY_POD);
+        (
+            await opsWith(stub).createSandbox(
+                {
+                    runId: "run-1",
+                    stepId: "step-a",
+                    analysisId: "an-1",
+                    childWorkflowId: "run-1-0",
+                    resources: { cpu: 2, memoryGb: 4 },
+                    billing: { billingContextId: "bc-123", userId: "user-9" },
+                },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        const job = stub.createdJobs[0]!;
+        for (const labels of [job.metadata!.labels!, job.spec!.template.metadata!.labels!]) {
+            expect(labels["cortex/billing-context"]).toBe("bc-123");
+            expect(labels["cortex/user-id"]).toBe("user-9");
+            expect(labels["cortex/analysis-id"]).toBe("an-1");
+            expect(labels["cortex/run-id"]).toBe("run-1");
+        }
+    });
+
+    test("billing label values are sanitized", async () => {
+        const stub = stubApis(READY_POD);
+        (
+            await opsWith(stub).createSandbox(
+                {
+                    runId: "data-profile",
+                    stepId: "profile",
+                    analysisId: "an-1",
+                    childWorkflowId: "data-profile:x",
+                    resources: { cpu: 1, memoryGb: 1 },
+                    billing: { billingContextId: "bc:123", userId: "user@example.com" },
+                },
+                mintSandboxIdentity("data-profile"),
+            )
+        )._unsafeUnwrap();
+
+        const podLabels = stub.createdJobs[0]!.spec!.template.metadata!.labels!;
+        expect(podLabels["cortex/billing-context"]).toBe("bc-123");
+        expect(podLabels["cortex/user-id"]).toBe("user-example.com");
+        expect(podLabels["cortex/run-id"]).toBe("data-profile");
+    });
+
+    test("absent billing meta stamps no billing labels and still spawns", async () => {
+        const stub = stubApis(READY_POD);
+        const ref = (
+            await opsWith(stub).createSandbox(
+                {
+                    runId: "run-1",
+                    stepId: "step-a",
+                    analysisId: "an-1",
+                    childWorkflowId: "run-1-0",
+                    resources: { cpu: 2, memoryGb: 4 },
+                },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        expect(ref.host).toBe("10.0.0.1");
+        for (const labels of [stub.createdJobs[0]!.metadata!.labels!, stub.createdJobs[0]!.spec!.template.metadata!.labels!]) {
+            expect(labels["cortex/billing-context"]).toBeUndefined();
+            expect(labels["cortex/user-id"]).toBeUndefined();
+        }
+        expect(stub.createdJobs[0]!.spec!.template.metadata!.labels!["cortex/analysis-id"]).toBeUndefined();
+    });
 });
 
 describe("k8s teardown", () => {

@@ -11,7 +11,7 @@ export { initCortexState } from "./init.js";
 
 export type { Querier } from "./db.js";
 
-export { upsertAnalysis, resolveAnalysisBilling, suspendAnalysis, resumeAnalysis, loadAnalysisStatus } from "./analyses.js";
+export { upsertAnalysis, suspendAnalysis, resumeAnalysis, loadAnalysisStatus } from "./analyses.js";
 
 export {
     upsertArtifact,
@@ -31,6 +31,7 @@ export {
     RunDedupCollisionError,
     RunIdentityCollisionError,
     updateRunStatus,
+    markRunCanceledIfActive,
     promoteFailedToPartial,
     setRunMandate, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     setRunSynthesisOutcome,

@@ -33,6 +33,7 @@ import { runToTerminal } from "../loop/run-to-terminal.js";
 import { durableStep } from "../loop/run-step.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import type { ResolveBilling } from "../billing/resolver.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { defineTool } from "../tools/define-tool.js";
@@ -69,6 +70,9 @@ import { DATA_PROFILE_RUN_LITERAL } from "../contracts/data-profile.js";
 const DATA_PROFILE_STEP_LITERAL = "profile" as const;
 const DATA_PROFILE_AGENT_ID = "data-profiler" as const;
 
+/** Resolved-header key carrying the billing-context id (see `ResolveBilling`). */
+const BILLING_CONTEXT_HEADER = "X-Inflexa-Billing-Context";
+
 /** Sandbox-server exec budget for the profile run. */
 const DEFAULT_DEADLINE_MS = 300_000;
 
@@ -98,6 +102,9 @@ export interface DataProfileDeps extends EnvironmentStorePaths {
     readonly skillsDir: string;
     /** LLM usage-accounting seam for the profiler agent loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** Resolves the billing context stamped as the sandbox pod's OpenCost
+     *  labels. Absent in upstream-less (dev/OSS) wiring — pods spawn unlabeled. */
+    readonly resolveBilling?: ResolveBilling;
 }
 
 /**
@@ -333,6 +340,16 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         // run panel's activity readout was built to remove.
         await activity.sandboxInit();
 
+        let billingContextId: string | undefined;
+        if (deps.resolveBilling) {
+            try {
+                billingContextId = (await deps.resolveBilling(childSession))[BILLING_CONTEXT_HEADER];
+            } catch (err) {
+                logger.error("[billing] data-profile billing resolution failed", logger.errorFields(err));
+            }
+            if (!billingContextId) logger.error("[billing] sandbox spawned without billing labels");
+        }
+
         const sandbox = await deps.sandboxClient.createSandbox(
             {
                 runId: DATA_PROFILE_RUN_LITERAL,
@@ -340,6 +357,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 analysisId,
                 childWorkflowId: workflowId,
                 resources: estimateDataProfileResources(stagedInputs),
+                billing: billingContextId ? { billingContextId, userId: childSession.identity.user } : undefined,
             },
             mintSandboxIdentity(DATA_PROFILE_RUN_LITERAL),
         );

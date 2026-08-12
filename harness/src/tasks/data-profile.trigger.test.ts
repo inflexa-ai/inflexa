@@ -74,6 +74,7 @@ function parkedDispatchDeps(pool: Pool): DataProfileTriggerDeps {
         runAuthorizer: {
             authorize: () => new Promise(() => {}),
             async revoke() {},
+            async revokeByJti() {},
         },
         workflow: async () => {},
     };

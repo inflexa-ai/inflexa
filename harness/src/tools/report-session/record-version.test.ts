@@ -98,7 +98,7 @@ describe("createRecordVersionTool", () => {
         drop = ctx.drop;
         store = createReportVersionStore({ pool });
         threads = createThreadStore(pool);
-        (await upsertAnalysis(pool, ANALYSIS_ID, null, null))._unsafeUnwrap();
+        (await upsertAnalysis(pool, ANALYSIS_ID, null))._unsafeUnwrap();
     });
 
     afterAll(async () => {

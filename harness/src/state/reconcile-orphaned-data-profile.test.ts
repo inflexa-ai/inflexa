@@ -23,7 +23,7 @@ describe("reconcileOrphanedDataProfile", () => {
         // The seed set is what makes the row claimable: every claim into `running` requires
         // a non-empty `seed_input_file_ids`, so an analysis upserted with no inputs stays
         // at `pending` and there is no orphaned `running` row to reconcile.
-        (await upsertAnalysis(rig.pool, analysisId, null, null, ["file-aaa"]))._unsafeUnwrap();
+        (await upsertAnalysis(rig.pool, analysisId, null, ["file-aaa"]))._unsafeUnwrap();
         const claimed = (await tryStartDataProfile(rig.pool, analysisId))._unsafeUnwrap();
         expect(claimed).toBe(true);
     }

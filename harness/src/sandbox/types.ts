@@ -237,6 +237,9 @@ export interface CreateSandboxMeta {
     /** Enforced read-only: provision with no read-write step mount, only the
      *  read-only analysis tree for generic read-only agents. */
     readOnly?: boolean;
+    /** Billing attribution stamped as pod labels for OpenCost compute metering.
+     *  Absent ⇒ the pod is invisible to the metering reconciler (filter-level). */
+    billing?: { billingContextId: string; userId: string };
 }
 
 /**

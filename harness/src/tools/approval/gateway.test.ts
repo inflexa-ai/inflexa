@@ -335,12 +335,14 @@ describe("createAskGateway — abort", () => {
 // ── 5.5 — boot sweep ─────────────────────────────────────────────────
 
 describe("createAskGateway — sweep", () => {
-    it("expires orphaned pending rows and returns the count swept", async () => {
-        const now = new Date().toISOString();
-        const rows: AskRow[] = [
-            { id: uuidv7(), analysisId: "analysis-A", threadId: null, title: "t1", command: "c1", detail: null, grantKey: null, createdAt: now },
-            { id: uuidv7(), analysisId: "analysis-A", threadId: null, title: "t2", command: "c2", detail: null, grantKey: null, createdAt: now },
-        ];
+    const STALE = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+
+    function pendingRow(createdAt: string): AskRow {
+        return { id: uuidv7(), analysisId: "analysis-A", threadId: null, title: "t", command: "c", detail: null, grantKey: null, createdAt };
+    }
+
+    it("expires orphaned pending rows past the max age and returns the count swept", async () => {
+        const rows = [pendingRow(STALE), pendingRow(STALE)];
         for (const row of rows) {
             (await insertPendingAsk(pool, row))._unsafeUnwrap();
         }
@@ -351,5 +353,34 @@ describe("createAskGateway — sweep", () => {
             expect((await selectRow(row.id))?.status).toBe("expired");
         }
         expect(await gateway.pending()).toHaveLength(0);
+    });
+
+    it("leaves a fresh pending ask untouched — a boot sweep cannot kill a live ask", async () => {
+        const fresh = pendingRow(new Date().toISOString());
+        (await insertPendingAsk(pool, fresh))._unsafeUnwrap();
+
+        expect(await gateway.sweepExpired()).toBe(0);
+        expect((await selectRow(fresh.id))?.status).toBe("pending");
+        expect(await gateway.pending()).toHaveLength(1);
+    });
+
+    it("counts only the rows it swept when stale and fresh pend together", async () => {
+        const stale = pendingRow(STALE);
+        const fresh = pendingRow(new Date().toISOString());
+        for (const row of [stale, fresh]) {
+            (await insertPendingAsk(pool, row))._unsafeUnwrap();
+        }
+
+        expect(await gateway.sweepExpired()).toBe(1);
+        expect((await selectRow(stale.id))?.status).toBe("expired");
+        expect((await selectRow(fresh.id))?.status).toBe("pending");
+    });
+
+    it("honors an explicit maxAgeMs", async () => {
+        const row = pendingRow(new Date(Date.now() - 60_000).toISOString());
+        (await insertPendingAsk(pool, row))._unsafeUnwrap();
+
+        expect(await gateway.sweepExpired(30_000)).toBe(1);
+        expect((await selectRow(row.id))?.status).toBe("expired");
     });
 });
