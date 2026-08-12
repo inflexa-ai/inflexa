@@ -193,9 +193,9 @@ describe("spawnReportSession anchor", () => {
 });
 
 describe("spawnReportSession refusals", () => {
-    it("refuses every spawn with no_browser when the composition names no browser, and writes no row", async () => {
+    it("refuses with no_browser when the composition gives no eyes seam, no capture seam, and no browser, and writes no row", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
-        // The parent is legal in every other way, thus only the absent eyes route refuses.
+        // The parent is legal in every other way, thus only the absent routes to a look refuse.
         const blind = createReportSessionSpawn({ pool, chrome: {} });
 
         const failed = (await blind.spawnReportSession("p1", BRIEF))._unsafeUnwrapErr();
@@ -214,6 +214,22 @@ describe("spawnReportSession refusals", () => {
         });
 
         const child = (await seamed.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+
+        expect(child.threadType).toBe("report");
+        expect(await reportThreadCount()).toBe(1);
+    });
+
+    it("spawns when the composition binds an eyes seam and names no browser", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        // A bound seam gives a browser for one look, thus the gate passes with no browser endpoint and
+        // no capture seam. The spawn reads the presence of the seam, thus this lease never opens.
+        const seeing = createReportSessionSpawn({
+            pool,
+            chrome: {},
+            eyes: () => Promise.resolve({ browserUrl: WITH_BROWSER.browserUrl, release: () => Promise.resolve() }),
+        });
+
+        const child = (await seeing.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
 
         expect(child.threadType).toBe("report");
         expect(await reportThreadCount()).toBe(1);
