@@ -18,7 +18,7 @@
 - [x] 3.1 Make `src/tools/start-report-session.ts` with `defineTool`. The input carries the brief fields and the optional `newSessionAnyway` boolean.
 - [x] 3.2 Read the parent from `scope.threadId`. A scope with no thread id refuses as typed data in the ok channel.
 - [x] 3.3 Run the eyes gate first, from `hasBrowserUrl(chrome)`. A composition without eyes returns the `no_browser` arm before the advice.
-- [x] 3.4 Run the zero-delta advice before the spawn. On a zero delta with no override, return the `existing-session` arm that names the newest child.
+- [x] 3.4 Run the thin-delta advice before the spawn. At one user turn or less past the anchor, and with no override, return the `existing-session` arm that names the newest child.
 - [x] 3.5 Run the spawn with the brief, and pass each refusal through as a typed arm.
 - [x] 3.6 Return the thread id and the title on a success. The tool never throws for a degraded condition.
 - [x] 3.7 Cover the tool with tests: each arm of the union, the gate order, and the override path.
@@ -37,8 +37,15 @@
 - [x] 5.4 Add the roster test: `start_report_session` is present, and neither `plan_report` nor `submit_report` is present.
 - [x] 5.5 Add the prompt test: the report section names the new tool, and no brief tool is named.
 
-## 6. Verification
+## 6. The unit of the delta
 
-- [x] 6.1 Run `tsc -p tsconfig.json` and `bun test` in `harness/`.
-- [x] 6.2 Run `bun run format:file` on each changed source file.
-- [x] 6.3 Search the prompts and the tool descriptions for a stale name of the old pair, per the agent-facing-copy rule.
+- [x] 6.1 Add the count of user turns past a seq to `src/memory/thread-history.ts`. It reuses the genuine-user-start predicate.
+- [x] 6.2 Change `reportSessionDelta` to give that count in place of the latest seq.
+- [x] 6.3 Advise at one turn or less in `src/tools/start-report-session.ts`.
+- [x] 6.4 Cover the rule: the ask of the spawn does not clear the advice, a second user turn clears it, and a synthetic record does not.
+
+## 7. Verification
+
+- [x] 7.1 Run `tsc -p tsconfig.json` and `bun test` in `harness/`.
+- [x] 7.2 Run `bun run format:file` on each changed source file.
+- [x] 7.3 Search the prompts and the tool descriptions for a stale name of the old pair, per the agent-facing-copy rule.
