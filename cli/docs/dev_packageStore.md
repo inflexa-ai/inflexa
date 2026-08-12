@@ -30,35 +30,22 @@ One location keeps the writers and the reader in agreement. The store commands a
 the store download write there. Boot reads there. As a result, a store that you
 populate is the store that a sandbox mounts.
 
-## Opt in
+## No configuration key
 
-To opt in, set two keys in the `harness` block of `config.json`:
+The store is mandatory, and no key turns it on or off. The runtime image bakes no R
+library and no Python library, thus a sandbox with no store could import nothing.
+The CLI passes the store root to the harness for every sandbox.
 
-- `libStore` — the switch for the package store. It is a boolean, and it is `false`
-  by default. Set it to `true`, and the harness mounts the store root read-only at
-  `/mnt/libs` in each sandbox. It also lets the CLI download the store. `false`, or
-  absent, passes no store to the harness and makes no bind mount. The key controls
-  the mount only, not the location.
-- `provisionerImage` — the provisioner image reference that the store commands run.
-  This key has no default. The source of the provisioner image for a user machine
-  is an open decision. Thus a store command that provisions or removes content
-  stops with guidance when this key is unset.
+The provisioner image reference is a constant of the CLI, and no key moves it.
 
-Example:
+Two keys governed this before, and both are dead: `libStore` and
+`provisionerImage`. A configuration file can still carry one, because the schema is
+not strict and an unknown key is inert. The CLI names a dead key one time at boot
+and says why it governs nothing — refer to `REMOVED_HARNESS_KEYS` in
+`src/modules/harness/config.ts`.
 
-```json
-{
-  "harness": {
-    "libStore": true,
-    "provisionerImage": "inflexa-provisioner:local"
-  }
-}
-```
-
-To roll back, set `libStore` to `false`, or remove the key. Boot then passes no
-store root, and no sandbox mounts the store. The image is unchanged, and it is the
-working fallback. The store content stays on disk, thus a later opt-in needs no
-second download. To recover the disk space, remove the store root.
+There is no roll back to a sandbox with no store. To recover the disk space, remove
+the store root.
 
 ## The store commands
 

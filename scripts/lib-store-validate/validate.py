@@ -172,10 +172,10 @@ def find_store_dir(store_root: Path) -> Path | None:
     """Return the content-addressed ``store/`` directory that backs a farm, or None.
 
     A farm is a directory of symbolic links whose targets live in a sibling
-    ``store/`` directory. The root can be ``current`` (a symlink to a farm) or a
-    farm path itself. Resolve the root, then walk up until a ``store/`` directory
-    appears beside it. A baked tree holds real package directories and no such
-    sibling, so it returns None."""
+    ``store/`` directory. The root is ``/mnt/libs/current``, which is a mount of the
+    farm of the analysis, or a farm path itself. Resolve the root, then walk up until
+    a ``store/`` directory appears beside it. A baked tree holds real package
+    directories and no such sibling, so it returns None."""
     try:
         real = store_root.resolve()
     except OSError:

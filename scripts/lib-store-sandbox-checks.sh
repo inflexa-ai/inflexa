@@ -60,8 +60,8 @@ for img in "$PROVISIONER_IMAGE" "$SANDBOX_IMAGE"; do
         echo "error: no image $img" >&2; exit 1; }
 done
 
-# A throwaway root, never the store of the user. The checks tamper with content and
-# swing `current`, so they must not touch a store that a real sandbox reads.
+# A throwaway root, never the store of the user. The checks tamper with the content of
+# the store, so they must not touch a store that a real sandbox reads.
 STORE_ROOT="${LIB_STORE:-$(mktemp -d)}"
 # The uid 1000 sandbox must traverse the store root. mktemp makes it mode 700, so
 # open it, the same as the harness makes the store root the sandbox reads.

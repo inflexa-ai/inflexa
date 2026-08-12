@@ -174,9 +174,11 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-head2 "the per-store lock"
-# A second run must report the conflict, and it must not queue behind a build of
-# unknown length. The holder takes the same advisory lock that the Provisioner
+head2 "the exclusive holder of the store lock"
+# An EXCLUSIVE holder is what reclaim takes, and it excludes each acquisition run. The
+# run must report the conflict, and it must not queue behind work of unknown length.
+# Two acquisition runs do NOT conflict — they share the lock, which the parallel-runs
+# check below proves. The holder takes the same advisory lock that the provisioner
 # takes, thus this is the real contention and not a simulation.
 "$CTR" run --rm -d --name "$LOCK_HOLDER" \
     -v "$STORE_ROOT:/mnt/libs:rw" \
@@ -208,32 +210,29 @@ in_store 'rm -f /mnt/libs/.lock-held' >/dev/null 2>&1
 
 # ---------------------------------------------------------------------------
 head2 "the mount lease"
-# A live sandbox resolves /mnt/libs/current. To move that symlink breaks its view
-# of the path, thus a re-point is an operation between sandboxes.
-run_off --add-lease sbx-1 >/dev/null 2>&1
-was=$(current_target)
-out=$(run_net --farm alpha "$PKG_A"); rc=$?
-now=$(current_target)
-if [[ $rc -ne 0 ]] && grep -q "lease" <<<"$out"; then ok "the re-point is refused, with exit $rc"
-else bad "the re-point gave exit $rc" "$(tail -2 <<<"$out")"; fi
-if [[ "$was" == "$now" ]]; then ok "current did not move (still $now)"
-else bad "current moved from $was to $now"; fi
+# Each sandbox mounts the farm of its analysis, thus the store carries no pointer and
+# no run moves one. A lease keeps ONE job: it blocks the removal of the farm that it
+# names. A lease blocks no acquisition run and no extension of a farm.
+run_off --add-lease sbx-1 --farm alpha >/dev/null 2>&1
+if [[ ! -e "$STORE_ROOT/current" ]]; then ok "the store carries no active-farm pointer"
+else bad "the store root still holds current -> $(current_target)"; fi
 
-# The refusal is a designed outcome, not a crash. Thus the farm must keep the
-# records that a later run and libStoreUsable both read.
+out=$(run_net --farm alpha "$PKG_A"); rc=$?
+if [[ $rc -eq 0 ]]; then ok "a lease blocks no extension of the farm that it names"
+else bad "the extension under a lease gave exit $rc" "$(tail -2 <<<"$out")"; fi
+
+# The extension is additive, thus the farm keeps the records that a later run and the
+# gate of the harness both read.
 missing=""
 for f in lock.json meta.json packages.txt; do
     [[ -f "$STORE_ROOT/farms/alpha/$f" ]] || missing="$missing $f"
 done
-if [[ -z "$missing" ]]; then ok "the refused re-point left the records of the farm intact"
-else bad "the refused re-point destroyed$missing" "a later run then answers nothing to do"; fi
+if [[ -z "$missing" ]]; then ok "the extension left the records of the farm intact"
+else bad "the extension destroyed$missing" "a later run then answers nothing to do"; fi
 
-out=$(run_net --farm alpha --force-repoint "$PKG_A"); rc=$?
-if [[ $rc -eq 0 ]] && [[ "$(current_target)" == "farms/alpha" ]]; then
-    ok "--force-repoint moves current for a stale lease"
-else
-    bad "--force-repoint gave exit $rc and current is $(current_target)" "$(tail -2 <<<"$out")"
-fi
+out=$(run_off --remove-farm alpha); rc=$?
+if [[ $rc -ne 0 ]] && grep -q "lease" <<<"$out"; then ok "the leased farm cannot be removed"
+else bad "the removal of the leased farm gave exit $rc" "$(tail -2 <<<"$out")"; fi
 run_off --drop-lease sbx-1 >/dev/null 2>&1
 
 # ---------------------------------------------------------------------------
@@ -250,11 +249,13 @@ fi
 
 # ---------------------------------------------------------------------------
 head2 "removal of a farm"
+# The lease guard is checked above, under "the mount lease". With no lease, a farm
+# removes and the pool keeps what another farm still links.
 out=$(run_off --remove-farm alpha); rc=$?
-if [[ $rc -ne 0 ]] && grep -q "current points at it" <<<"$out"; then
-    ok "the farm that current selects cannot be removed"
+if [[ $rc -eq 0 ]] && [[ ! -d "$STORE_ROOT/farms/alpha" ]]; then
+    ok "a farm with no lease is removed"
 else
-    bad "the live farm gave exit $rc" "$(tail -2 <<<"$out")"
+    bad "the removal of alpha gave exit $rc" "$(tail -2 <<<"$out")"
 fi
 out=$(run_off --remove-farm beta); rc=$?
 if [[ $rc -eq 0 ]] && [[ ! -d "$STORE_ROOT/farms/beta" ]]; then ok "another farm is removed"
@@ -371,11 +372,11 @@ else bad "the message does not name the full disk" "$(tail -2 <<<"$out")"; fi
 
 # ---------------------------------------------------------------------------
 head2 "two provisioners at once"
-# Two real provisioning runs contend for one store. The per-store lock is
-# non-blocking, thus exactly one runs and the other reports the conflict at once
-# rather than queueing behind a build of unknown length. A private store root keeps
-# the timing deterministic: the larger package is a fresh install for the first run,
-# so it still holds the lock when the second run starts.
+# Two real provisioning runs contend for one store. Content addressing makes the pool
+# writes race-safe, thus an acquisition run takes the store lock SHARED and BOTH runs
+# complete. Only the commit of the shared metadata serializes, under its own mutex. A
+# private store root keeps the timing deterministic: the larger package is a fresh
+# install for the first run, so it still runs when the second run starts.
 race_root=$(mktemp -d)
 race_log=$(mktemp)
 "$CTR" run --rm --name race1 -v "$race_root:/mnt/libs:rw" \
@@ -384,22 +385,27 @@ race_bg=$!
 sleep 1.5
 out2=$("$CTR" run --rm -v "$race_root:/mnt/libs:rw" "$PROVISIONER_IMAGE" --farm race2 "$PKG_B" 2>&1); rc2=$?
 wait "$race_bg"; rc1=$?
-if [[ $rc1 -eq 0 && $rc2 -ne 0 ]] && grep -q "store lock" <<<"$out2"; then
-    ok "one run completes and the other reports the store lock (exit $rc1 / $rc2)"
-elif [[ $rc1 -ne 0 && $rc2 -eq 0 ]] && grep -q "store lock" "$race_log"; then
-    ok "one run completes and the other reports the store lock (exit $rc1 / $rc2)"
+if [[ $rc1 -eq 0 && $rc2 -eq 0 ]]; then
+    ok "both runs complete in parallel (exit $rc1 / $rc2)"
 else
-    bad "the two runs did not serialize (exit $rc1 / $rc2)" \
+    bad "a run did not complete (exit $rc1 / $rc2)" \
         "$(tail -1 "$race_log"; tail -1 <<<"$out2")"
 fi
-# The winning run left a complete farm: the concurrent refusal did not corrupt the store.
-winner=race1; [[ $rc1 -eq 0 ]] || winner=race2
+# Each run left a complete farm, thus the parallel commits corrupted nothing.
 wmissing=""
-for f in lock.json meta.json packages.txt; do
-    [[ -f "$race_root/farms/$winner/$f" ]] || wmissing="$wmissing $f"
+for farm in race1 race2; do
+    for f in lock.json meta.json packages.txt; do
+        [[ -f "$race_root/farms/$farm/$f" ]] || wmissing="$wmissing $farm/$f"
+    done
 done
-if [[ -z "$wmissing" ]]; then ok "the winning run left a complete farm"
-else bad "the winning farm is missing$wmissing"; fi
+if [[ -z "$wmissing" ]]; then ok "both runs left a complete farm"
+else bad "a farm is missing$wmissing"; fi
+# The graph is the one shared record, and the commit mutex is what keeps it readable.
+if python3 -c "import json,sys; json.load(open('$race_root/deps.json'))" 2>/dev/null; then
+    ok "deps.json is readable after two parallel commits"
+else
+    bad "deps.json is damaged or absent after two parallel commits"
+fi
 "$CTR" run --rm --network none -v "$race_root:/mnt/libs:rw" --entrypoint sh \
     "$PROVISIONER_IMAGE" -c 'rm -rf /mnt/libs/* /mnt/libs/.[!.]*' >/dev/null 2>&1
 rm -f "$race_log"; rmdir "$race_root" 2>/dev/null

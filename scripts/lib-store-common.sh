@@ -11,9 +11,10 @@
 #   <track>.packages.txt          (one fragment per track, at the root)
 #   packages.txt                  (the concatenation the harness reads)
 
-# The runtime mount contract path: where the assembled store lives inside a
-# sandbox image (baked or read-only-mounted). INFLEXA_LIB_ROOT overrides it to
-# match the image's baked env var; the default is the mount contract.
+# The runtime mount contract path: where the farm of the sandbox is mounted, read
+# only. Each sandbox mounts the farm of its analysis at this one path, thus the path
+# is a constant of the contract and never a pointer that a run moves.
+# INFLEXA_LIB_ROOT overrides it to match the image's baked env var.
 # shellcheck disable=SC2034 # consumed by the scripts that source this file
 LIB_STORE_ROOT="${INFLEXA_LIB_ROOT:-/mnt/libs/current}"
 
