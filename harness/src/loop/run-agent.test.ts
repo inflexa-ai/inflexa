@@ -603,6 +603,33 @@ describe("runAgent — a picture on a user message", () => {
         // The opening prompt is real user input, thus the one true boundary of the turn stays.
         expect(isSyntheticUserMessage(messages[0]!)).toBe(false);
     });
+
+    it("carries the picture after the tool message of a round that the output limit cut", async () => {
+        // The truncated round is the second dispatch path of the loop. It assembles its
+        // own tool message, thus the fallback must land there too.
+        const provider = fallbackImagingProvider([
+            makeMessage([toolUseBlock("tu-1", "eyes", {}), toolUseBlock("tu-cut", "eyes", {})], "max_tokens"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const { messages } = await runAgent(agentDef([eyesTool()]), GO, makeSession(), opts(provider));
+
+        // [user, assistant(2 tool-calls), tool(2 results), user(picture), assistant(text)]
+        expect(messages).toHaveLength(5);
+        // The complete call gives its JSON result, and the trailing call gives the refusal.
+        const results = toolResultParts(messages[2]);
+        expect(results.map((r) => r.toolCallId)).toEqual(["tu-1", "tu-cut"]);
+        expect(results[0]!.output).toEqual({ type: "json", value: { faults: ["boom"] } });
+        expect(isErrorResult(results[1]!)).toBe(true);
+        expect(String(outputValue(results[1]!))).toContain("cut off");
+        // One fallback message trails the tool message, and it names the call that ran.
+        const fallback = messages[3]!;
+        expect(userParts(fallback)).toEqual([
+            { type: "text", text: "The picture of the tool result tu-1 of eyes." },
+            { type: "file", mediaType: "image/png", data: { type: "data", data: "PNGBYTES" } },
+        ]);
+        expect(isSyntheticUserMessage(fallback)).toBe(true);
+    });
 });
 
 // ── max_tokens is a recoverable soft-error (see the harness-agent-loop spec) ───────────────
