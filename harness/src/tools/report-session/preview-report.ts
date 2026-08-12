@@ -6,7 +6,7 @@
  * resolves each reference through the injected resolver, bridges the resolved values into the render model,
  * and renders the page.
  *
- * The page and its staged image assets land in `report-sessions/{threadId}/` under the workspace root. That
+ * The page and its staged assets land in `report-sessions/{threadId}/` under the workspace root. That
  * namespace belongs to this path alone, thus the tool never writes under the old `previews/` or `reports/`
  * trees. The result carries the absolute page path, thus a local host shows the page with no seam.
  *
@@ -27,6 +27,7 @@
 
 import { err, ok, type Result } from "neverthrow";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { extname, join } from "node:path";
 import { z } from "zod";
 
@@ -41,6 +42,7 @@ import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js"
 import type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "../../report-model/reference-resolver.js";
 import { resolveDocumentReferences, type ResolutionFailure } from "../../report-model/validate.js";
 import { bridgeValues, type BlockResolution, type BridgeMismatch, type ResolvedFile } from "../../report-render/value-bridge.js";
+import { PAGE_ASSETS } from "../../report-render/assets.js";
 import { renderReportPage } from "../../report-render/render.js";
 import type { RenderProblem } from "../../report-render/types.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
@@ -99,6 +101,12 @@ function assetFileName(file: ResolvedFile): string {
 function figureSourcePolicy(file: ResolvedFile): string {
     return `assets/${assetFileName(file)}`;
 }
+
+/**
+ * The resolver of a package source. A manifest entry names a module specifier, and the resolution reads
+ * the installation of the harness. Thus the staged bytes are the bytes of the pinned version.
+ */
+const moduleResolver = createRequire(import.meta.url);
 
 /**
  * Pair each block with the resolved value of its binding, in document order.
@@ -172,7 +180,7 @@ async function resolveDocument(
 type PreviewWriteFailure = { kind: "fs"; error: FsError } | { kind: "figure-out-of-scope"; blockId: string; path: string };
 
 /**
- * Resolve the page root, stage each bound image, and write the page.
+ * Resolve the page root, stage each bound image and each manifest entry, and write the page.
  *
  * The workspace-root seam signals an unresolvable resource by a throw, thus the resolution sits inside
  * the protection and its throw becomes a value. Each `fs` call runs through `tryFsWrite`, the one
@@ -182,6 +190,10 @@ type PreviewWriteFailure = { kind: "fs"; error: FsError } | { kind: "figure-out-
  * A bound figure names a snapshot path, which is untrusted. A registered `../../` path escapes the root,
  * thus the containment test runs before any copy and reuses the one workspace-path resolver. A source
  * outside the root refuses and names the block, and no copy runs.
+ *
+ * The page references the chart runtime and the fonts under the same `assets/` directory, thus one copy
+ * loop stages the figures and the manifest entries together. The manifest is never empty, thus the assets
+ * directory exists beside every page.
  */
 async function renderToWorkspace(args: {
     resolveWorkspaceRoot: ResolveWorkspaceRoot;
@@ -219,20 +231,28 @@ async function renderToWorkspace(args: {
         sources.set(name, resolved.absolute);
     }
 
+    // Each manifest entry, mapped from its staged name to the file of its package. A specifier that does
+    // not resolve is a fault of the installation, thus it rides the `fs` kind.
+    for (const asset of PAGE_ASSETS) {
+        try {
+            sources.set(asset.file, moduleResolver.resolve(asset.specifier));
+        } catch (cause) {
+            return err({ kind: "fs", error: { type: "read_failed", op: "preview.resolveAsset", path: asset.specifier, cause } });
+        }
+    }
+
     const madeSession = await tryFsWrite("preview.mkdir", () => mkdir(sessionDir, { recursive: true }), { path: sessionDir });
     if (madeSession.isErr()) {
         return err({ kind: "fs", error: madeSession.error });
     }
-    if (sources.size > 0) {
-        const madeAssets = await tryFsWrite("preview.mkdir", () => mkdir(assetsDir, { recursive: true }), { path: assetsDir });
-        if (madeAssets.isErr()) {
-            return err({ kind: "fs", error: madeAssets.error });
-        }
-        for (const [name, source] of sources) {
-            const copied = await tryFsWrite("preview.copyFile", () => copyFile(source, join(assetsDir, name)), { path: source });
-            if (copied.isErr()) {
-                return err({ kind: "fs", error: copied.error });
-            }
+    const madeAssets = await tryFsWrite("preview.mkdir", () => mkdir(assetsDir, { recursive: true }), { path: assetsDir });
+    if (madeAssets.isErr()) {
+        return err({ kind: "fs", error: madeAssets.error });
+    }
+    for (const [name, source] of sources) {
+        const copied = await tryFsWrite("preview.copyFile", () => copyFile(source, join(assetsDir, name)), { path: source });
+        if (copied.isErr()) {
+            return err({ kind: "fs", error: copied.error });
         }
     }
     const wrote = await tryFsWrite("preview.writeFile", () => writeFile(pagePath, args.page, "utf8"), { path: pagePath });

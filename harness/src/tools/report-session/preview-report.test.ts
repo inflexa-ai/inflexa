@@ -18,6 +18,7 @@ import type { DraftDocument } from "../../report-model/draft.js";
 import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { createFixtureResolver } from "../../report-model/fixture-resolver.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
+import { PAGE_ASSETS } from "../../report-render/assets.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
@@ -197,6 +198,27 @@ describe("the pass path", () => {
             expect(content).toContain("42");
         }
         assertNoLegacyDirs(root);
+    });
+
+    it("stages every manifest asset beside the page", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        // The page names the chart runtime and each font under the sibling directory. A missing entry is a
+        // failed request at view time, thus each manifest entry must be a real file beside the page.
+        const assetsDir = join(root, "report-sessions", "t1", "assets");
+        const absent = PAGE_ASSETS.filter((asset) => !existsSync(join(assetsDir, asset.file))).map((asset) => asset.file);
+        expect(absent).toEqual([]);
+        expect(PAGE_ASSETS.length).toBeGreaterThan(0);
     });
 });
 
