@@ -34,6 +34,7 @@
     },
     "scripts": {
         "build": "tsc -p tsconfig.json",
+        "design:fixture": "bun scripts/render-fixture.ts",
         "format": "prettier --write src/",
         "format:file": "prettier --write",
         "lint": "eslint .",
