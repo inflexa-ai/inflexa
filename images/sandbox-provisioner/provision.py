@@ -456,6 +456,56 @@ TRACK_ENTRIES: dict[str, tuple[str, ...]] = {
 }
 
 
+def carry_tree_forward(src: Path, dst: Path) -> None:
+    """Write the tree at `src` again under `dst`, one directory and one link at a time.
+
+    A farm track is a view of the store, and it is not content. Its meaning is the
+    shape of the tree and the target text of each link, and the sandbox resolves that
+    text. Thus this walk writes a directory and a link only, and it copies no
+    metadata. The walk goes to any depth, because r/cran, r/bioconductor, and
+    r/github each hold one more level.
+
+    shutil.copytree cannot do this work. It calls copystat on each new link, and
+    copystat reads the extended attributes of the source link with llistxattr. On a
+    macOS directory that podman bind-mounts through virtiofs, that call returns ENOENT
+    for a link that is present and valid. Thus copytree named the source path as the
+    absent one, and every entry of a real R track failed.
+
+    A regular file is not part of a track today, because build_farm and build_r_farm
+    write a directory and a link only. But the warm step can write a bytecode cache
+    into the farm. Thus the walk copies the bytes of a regular file, and nothing more.
+    """
+    try:
+        dst.mkdir(parents=True)
+    except OSError as exc:
+        raise SystemExit(
+            f"[provision] cannot make the directory {dst} for the carry-forward: {exc}"
+        ) from exc
+    for name in sorted(os.listdir(src)):
+        src_entry = src / name
+        dst_entry = dst / name
+        try:
+            if src_entry.is_symlink():
+                os.symlink(os.readlink(src_entry), dst_entry)
+            elif src_entry.is_dir():
+                carry_tree_forward(src_entry, dst_entry)
+            elif src_entry.is_file():
+                # copyfile, not copy2. copy2 adds copystat, and the mode of one
+                # entry is not necessary. The run gives the whole farm one mode.
+                shutil.copyfile(src_entry, dst_entry)
+            else:
+                raise SystemExit(
+                    f"[provision] cannot carry the farm entry {src_entry} forward: "
+                    f"it is not a directory, a link, or a file")
+        except OSError as exc:
+            # Name the entry and the true cause. The old message named the source
+            # path as absent, but the source was present, and the metadata layer of
+            # the mount was the cause. A wrong blame hides the true cause.
+            raise SystemExit(
+                f"[provision] cannot carry the farm entry {src_entry} forward to "
+                f"{dst_entry}: {exc}") from exc
+
+
 def carry_tracks_forward(farm: Path, staging: Path, builds: set[str]) -> list[str]:
     """Carry each track that the run does not build into the staging farm.
 
@@ -477,11 +527,14 @@ def carry_tracks_forward(farm: Path, staging: Path, builds: set[str]) -> list[st
         for entry in entries:
             src = farm / entry
             if src.is_dir() and not src.is_symlink():
-                # symlinks=True keeps each link as a link. As a result the copy
+                # The walk keeps each link as a link. As a result the carry-forward
                 # reads no package byte, and it cannot follow a link into the store.
-                shutil.copytree(src, staging / entry, symlinks=True)
+                carry_tree_forward(src, staging / entry)
                 carried = True
             elif src.is_file():
+                # r-bulk.lock is a record beside the track, and it is a regular file.
+                # copy2 reads the source as a file, thus it never calls llistxattr on
+                # a link, and it holds no risk on virtiofs. Measured in the container.
                 shutil.copy2(src, staging / entry)
                 carried = True
         if carried:

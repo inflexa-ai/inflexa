@@ -73,6 +73,7 @@ tools / a running host, i.e. CI- or container-gated, not unit-verifiable):
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import io
 import json
@@ -1056,6 +1057,120 @@ class TrackPreservationTests(StoreTestCase):
         for name, store_dir in r_dirs.items():
             self.assertTrue(store_dir.is_dir(), f"reclaim removed {name}")
         self.assertFalse(orphan.exists())
+
+
+class CarryTreeForwardTests(StoreTestCase):
+    """``carry_tree_forward`` writes a track again as links, and it stops loudly.
+
+    These tests run on the host, thus they cannot reproduce virtiofs. The defect
+    appears only on a macOS directory that podman bind-mounts, where llistxattr on a
+    valid link returns ENOENT. ``shutil.copytree`` calls ``copystat`` on each new
+    link, ``copystat`` reads the extended attributes of the source link, and the
+    whole carry-forward failed with the source path named as the absent one.
+
+    The real proof is the container check: bind-mount a farm-shaped macOS directory
+    into ``ghcr.io/inflexa-ai/sandbox-provisioner`` and carry a track forward inside
+    it. What these tests hold is the contract that the fix depends on. The walk
+    reaches neither ``copytree`` nor ``copystat``, thus no call reaches the metadata
+    layer of the mount, and a failure names the entry and the cause.
+    """
+
+    def _farm_shaped_track(self) -> tuple[Path, dict[str, str]]:
+        """A track with the shape of a real one, and the target text of each link.
+
+        The R subtrees are one level below ``r``, and one link is dangling, because
+        a store directory that reclaim removed leaves one. The bytecode cache is the
+        one regular file that a track can hold, and the warm step writes it.
+        """
+        src = self.root / "old-farm" / "r"
+        targets = {
+            "cran/rpkgA": f"{provision.STORE}/rpkga-1.0-000000000000aa01/rpkgA",
+            "cran/rpkgB": f"{provision.STORE}/rpkgb-1.0-000000000000bb02/rpkgB",
+            "bioconductor/deep/rpkgC": f"{provision.STORE}/rpkgc-1.0-000000000000cc03/rpkgC",
+        }
+        for rel, target in targets.items():
+            link = src / rel
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(target)
+        # rpkgA resolves, rpkgB does not. Thus the walk carries a dangling link too.
+        Path(targets["cran/rpkgA"]).mkdir(parents=True)
+        Path(targets["bioconductor/deep/rpkgC"]).mkdir(parents=True)
+        cache = src / "__pycache__"
+        cache.mkdir()
+        (cache / "mod.cpython-312.pyc").write_bytes(b"\x00bytecode\n")
+        return src, targets
+
+    def test_a_tree_of_links_carries_forward_verbatim(self):
+        """Each link keeps its target text, the nesting keeps its depth, and the
+        walk touches no metadata."""
+        src, targets = self._farm_shaped_track()
+        dst = self.root / "staging-farm" / "r"
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("the carry-forward reached the metadata layer")
+
+        original = (provision.shutil.copytree, provision.shutil.copystat)
+        provision.shutil.copytree, provision.shutil.copystat = refuse, refuse
+        try:
+            provision.carry_tree_forward(src, dst)
+        finally:
+            provision.shutil.copytree, provision.shutil.copystat = original
+
+        for rel, target in targets.items():
+            link = dst / rel
+            self.assertTrue(link.is_symlink(), f"{rel} is not a link")
+            self.assertEqual(os.readlink(link), target, f"{rel} changed its target")
+        # rpkgB has no store directory, thus the carried link stays dangling and it
+        # never becomes a copy of anything.
+        self.assertFalse((dst / "cran" / "rpkgB").exists())
+        self.assertTrue((dst / "cran" / "rpkgB").is_symlink())
+        # The one regular file goes across as bytes.
+        self.assertEqual((dst / "__pycache__" / "mod.cpython-312.pyc").read_bytes(),
+                         b"\x00bytecode\n")
+        # The destination holds the shape of the source, and nothing more.
+        self.assertEqual(sorted(p.name for p in dst.iterdir()),
+                         ["__pycache__", "bioconductor", "cran"])
+        self.assertTrue((dst / "bioconductor" / "deep").is_dir())
+        # The source stays complete, thus a stop before the swap costs no track.
+        self.assertEqual(sorted(p.name for p in src.iterdir()),
+                         ["__pycache__", "bioconductor", "cran"])
+
+    def test_a_link_that_cannot_be_written_stops_the_run(self):
+        """A refused link stops the run, and the message names the entry.
+
+        The fault of the mount is modeled here, because the host cannot produce it.
+        The old message named the source path alone, and the source was present.
+        """
+        src, _ = self._farm_shaped_track()
+        dst = self.root / "staging-farm" / "r"
+
+        def refuse(target, link):
+            raise OSError(errno.ENOENT, "No such file or directory", str(link))
+
+        original = provision.os.symlink
+        provision.os.symlink = refuse
+        try:
+            with self.assertRaises(SystemExit) as caught:
+                provision.carry_tree_forward(src, dst)
+        finally:
+            provision.os.symlink = original
+
+        # The walk reads each name in order, thus bioconductor comes before cran.
+        message = str(caught.exception)
+        self.assertIn(str(src / "bioconductor" / "deep" / "rpkgC"), message)
+        self.assertIn(str(dst / "bioconductor" / "deep" / "rpkgC"), message)
+        self.assertIn("No such file or directory", message)
+
+    def test_a_destination_that_exists_stops_the_run(self):
+        """A destination that a prior run left stops the walk, and the message names
+        the directory. A merge into it would mix two farms."""
+        src, _ = self._farm_shaped_track()
+        dst = self.root / "staging-farm" / "r"
+        dst.mkdir(parents=True)
+
+        with self.assertRaises(SystemExit) as caught:
+            provision.carry_tree_forward(src, dst)
+        self.assertIn(str(dst), str(caught.exception))
 
 
 class FailureMessageTests(StoreTestCase):
