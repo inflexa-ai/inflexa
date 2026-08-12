@@ -21,7 +21,7 @@ The assembly MUST resolve the eyes one time. That one answer MUST reach the agen
 - **WHEN** the composition binds no eyes seam, no capture seam, and no browser endpoint
 - **THEN** the tool gives the `no_browser` arm, and it runs no advice read
 
-#### Scenario: One resolved seam reaches both consumers
+#### Scenario: One resolved answer serves both consumers
 
-- **WHEN** the assembly resolves the eyes of a composition
-- **THEN** the agent that looks at a page and the tool that starts a session read one answer
+- **WHEN** the harness builds the agent that looks at a page and the tool that starts a session over one resolved answer
+- **THEN** the agent looks through the browser of that answer, and the tool starts a session with no configured endpoint
