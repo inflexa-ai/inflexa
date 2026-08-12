@@ -11,6 +11,10 @@
  * every leak. The release of a caller is hygiene, and it is not the guarantee. This bound is the load-bearing
  * contract of the seam, and each new realization obeys it.
  *
+ * A realization must also bound how many browsers it provisions at one time. The page gate of the chrome
+ * module bounds one endpoint alone. Thus a realization that starts a browser at a new endpoint for each look
+ * meets no bound in the harness. Only the realization knows its own resource, and the count bound sits there.
+ *
  * The seam speaks the throw protocol, the same as the capture seam beside it. A caller that needs a typed
  * outcome guards the acquire and the release.
  */
