@@ -30,6 +30,11 @@ export type { ResolvePageAsset } from "./tools/report-session/index.js";
 // resolves a turn's agent by thread type and matches the typed refusal for a
 // type whose agent is not registered yet.
 export type { ThreadAgentResolver, UnregisteredThreadType } from "./runtime/assemble.js";
+// The report-session spawn makes a `report` child thread, and its listing gives
+// the report sessions of one analysis. An embedder reaches the listing for its
+// navigation surface, thus these names belong on the front door.
+export { createReportSessionSpawn } from "./app/spawn-report-session.js";
+export type { ReportSessionSpawn, ReportSessionSpawnDeps, ReportSessionPaging, SpawnRefusal } from "./app/spawn-report-session.js";
 // The harness-owned boot sequence: ordered boot steps around `assembleCoreRuntime`
 // (skill validation → state init → connection budget → assemble → launch) + a
 // `shutdown` handle the embedder wires to its process signals.
