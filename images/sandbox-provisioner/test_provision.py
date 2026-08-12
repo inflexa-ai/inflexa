@@ -525,6 +525,56 @@ class FarmAssemblyTests(StoreTestCase):
         finally:
             provision.SANDBOX_MOUNT = saved
 
+    def _pkg(self, store_dir_name, module, extra_top=None):
+        """A store directory holding one regular package, and an optional second one."""
+        d = provision.STORE / store_dir_name
+        (d / module).mkdir(parents=True)
+        (d / module / "__init__.py").write_text(f"# {module}\n")
+        if extra_top is not None:
+            (d / extra_top).mkdir(parents=True)
+            (d / extra_top / "__init__.py").write_text("# a top-level package the wheel ships\n")
+            (d / extra_top / f"{module}_case.py").write_text("# case\n")
+        return d
+
+    def test_two_distributions_that_share_a_top_level_package_merge(self):
+        """The published catalog holds `tests`, `benchmarks`, and `resources` from two
+        distributions each, and each carries its own `__init__.py`. A merge is what an
+        install into one site-packages gives, thus a refusal would refuse the catalog."""
+        a = self._pkg("spectrum-like-0.5.0-00000000000ab001", "speclike", extra_top="tests")
+        b = self._pkg("airr-like-2.0.0-00000000000ab002", "airrlike", extra_top="tests")
+
+        farm = provision.FARMS / "an-merge"
+        provision.build_farm(farm, [a, b])
+
+        site = farm / "python" / "site-packages"
+        self.assertTrue((site / "tests").is_dir())
+        self.assertFalse((site / "tests").is_symlink())
+        self.assertTrue((site / "tests" / "speclike_case.py").is_symlink())
+        self.assertTrue((site / "tests" / "airrlike_case.py").is_symlink())
+
+    def test_two_versions_of_one_distribution_refuse(self):
+        """A farm resolves one version for a name. The second version would shadow the
+        first, thus the run refuses rather than publish a farm that no lock describes.
+        The composer of the CLI refuses at the same point."""
+        a = self._pkg("demo-1.0-00000000000ab010", "demo")
+        b = self._pkg("demo-2.0-00000000000ab011", "demo")
+
+        with self.assertRaises(SystemExit) as cm:
+            provision.build_farm(provision.FARMS / "an-collide", [a, b])
+
+        self.assertIn("two versions of demo", str(cm.exception))
+
+    def test_a_farm_under_a_hyphenated_root_still_merges(self):
+        """The store directory of a path is read from the `store` component and never
+        from a scan of each part. A temporary root whose own name carries two hyphens
+        would otherwise read as a store directory and give a false refusal."""
+        a = self._pkg("alpha-1.0-00000000000ab020", "alpha", extra_top="tests")
+        b = self._pkg("beta-1.0-00000000000ab021", "beta", extra_top="tests")
+
+        provision.build_farm(provision.FARMS / "an-hyphen", [a, b])
+
+        self.assertTrue((provision.FARMS / "an-hyphen" / "python" / "site-packages" / "tests").is_dir())
+
     def test_farm_holds_no_conda_and_no_node(self):
         """§6.7: a farm the provisioner builds holds no conda directory and no node
         directory. The image owns both tracks, at a path outside the store mount, and

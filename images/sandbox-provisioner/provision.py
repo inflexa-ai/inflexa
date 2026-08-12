@@ -347,6 +347,24 @@ def _publish_store_dir(staging: Path, final: Path) -> tuple[Path, bool]:
     return final, True
 
 
+def store_dir_name(path: str) -> str | None:
+    """The distribution name of the store directory that `path` sits inside.
+
+    A store directory is named `<canonical name>-<version>-<hash16>`, thus the name
+    is everything before the last two hyphen-separated fields.
+
+    It anchors on the `store` component of the path, and it never scans each part.
+    A farm builds under a temporary root whose own name can carry two hyphens, thus
+    a scan would read that root as a store directory and report a false collision.
+    """
+    parts = Path(path).parts
+    for i, part in enumerate(parts):
+        if part == STORE.name and i + 1 < len(parts):
+            head = parts[i + 1].rsplit("-", 2)[0]
+            return head or None
+    return None
+
+
 def link_tree(dst: Path, src: str, collisions: list[str]) -> None:
     """Symlink every entry of `src` into `dst`, merging directories on collision.
 
@@ -354,6 +372,17 @@ def link_tree(dst: Path, src: str, collisions: list[str]) -> None:
     `mpl_toolkits` or `google` — cannot both be a symlink at the same point, so
     the shared prefix is promoted to a real directory and both sides are linked
     beneath it. That promotion is the only reason the farm holds real directories.
+
+    A shared name is NOT always a namespace package. A wheel that is packaged
+    loosely ships a top-level `tests`, `benchmarks`, or `resources` directory with
+    its own `__init__.py`, and the catalog holds each of those three from two
+    distributions. A merge is what an install into one `site-packages` produces, so
+    a merge is what happens here.
+
+    Two versions of ONE distribution are the exception, and they raise. A farm links
+    one directory for a top-level name, thus the second version would shadow the
+    first and an import would read a version that no lock names. The composer of the
+    CLI refuses at the same point, and the parity fixture holds the two together.
 
     Linking at top-level-entry granularity, rather than per file, is what keeps
     `$ORIGIN`-relative RPATHs working: a wheel's vendored `numpy.libs` and its
@@ -370,6 +399,12 @@ def link_tree(dst: Path, src: str, collisions: list[str]) -> None:
             link.symlink_to(target)
         elif link.is_symlink():
             previous = os.readlink(link)
+            previous_name, target_name = store_dir_name(previous), store_dir_name(target)
+            if previous_name is not None and previous_name == target_name:
+                raise SystemExit(
+                    f"[provision] refusing to farm {entry}: two versions of {previous_name} "
+                    f"reach one farm ({previous} vs {target}). A farm resolves one version "
+                    f"for a name, thus one version would shadow the other.")
             if os.path.isdir(previous) and os.path.isdir(target):
                 link.unlink()
                 link.mkdir()

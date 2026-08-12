@@ -27,7 +27,7 @@
  * exactly as it was, and an extension can prove that it touches no existing link.
  */
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
@@ -449,16 +449,28 @@ function isHostDir(path: string): boolean {
 }
 
 /**
- * Whether a directory is a namespace portion, which two distributions can share.
+ * Whether two store directories are two versions of ONE distribution.
  *
- * A regular package carries `__init__.py`, and exactly one distribution owns it. A
- * namespace portion (PEP 420) carries none, thus two distributions each give a part
- * of one import name and the farm must merge them. A directory that is not a Python
- * package at all, for example `bin` or a data directory, carries no `__init__.py`
- * either, and a merge of two such directories is what the provisioner does.
+ * This is the one condition that a farm cannot express. A farm links one directory
+ * for a top-level name, thus two versions of one distribution would shadow each
+ * other, and an import would read a version that no lock names.
+ *
+ * A shared top-level name between two DIFFERENT distributions is a separate thing,
+ * and it is common in the real catalog. Two distributions share a namespace portion
+ * (`mpl_toolkits`, `sphinxcontrib`), and a wheel that is packaged loosely ships a
+ * top-level `tests`, `benchmarks`, or `resources` directory that carries its own
+ * `__init__.py`. The published catalog holds each of those three, from two
+ * distributions each. A merge is what the provisioner does with them, and what an
+ * install into one `site-packages` produces. Thus a refusal there would refuse the
+ * whole default closure, and no analysis could compose a farm.
  */
-function isNamespacePortion(hostDir: string): boolean {
-    return !existsSync(join(hostDir, "__init__.py"));
+function isVersionCollision(existingTarget: string, incomingTarget: string): boolean {
+    const existingDir = storeDirOf(existingTarget);
+    const incomingDir = storeDirOf(incomingTarget);
+    if (existingDir === null || incomingDir === null) return false;
+    const existing = nameOfStoreDir(existingDir);
+    const incoming = nameOfStoreDir(incomingDir);
+    return existing !== null && existing === incoming && existingDir !== incomingDir;
 }
 
 // --- The link plan ------------------------------------------------------------
@@ -479,6 +491,12 @@ type LinkPlan = {
     /** The planned state of a path that the plan already changed. It shadows the disk. */
     readonly planned: Map<string, FarmEntry>;
     collision: { readonly name: string; readonly existing: string; readonly incoming: string } | null;
+    /**
+     * A name that two store directories give, where no merge can hold both — one side
+     * is a file. The plan keeps the first side, exactly as the provisioner does, and it
+     * records the name so the caller can report it.
+     */
+    readonly keptFirst: string[];
 };
 
 /** What a path holds right now, reading the plan overlay before the disk. */
@@ -490,6 +508,17 @@ function entryAt(plan: LinkPlan, path: string): FarmEntry {
     if (stat.isSymbolicLink()) return { kind: "link", target: readlinkSync(path) };
     if (stat.isDirectory()) return { kind: "dir" };
     return { kind: "other" };
+}
+
+/**
+ * Record a name where the plan keeps the side that arrived first.
+ *
+ * It is not a refusal. Two distributions give one name, and one side is a file, thus
+ * no merge holds both. The provisioner keeps the first side and logs, and a farm that
+ * refused here would refuse the default closure of the published catalog.
+ */
+function keepFirst(plan: LinkPlan, name: string, existing: string, incoming: string): void {
+    plan.keptFirst.push(`${name}: ${storeDirOf(existing) ?? existing} over ${storeDirOf(incoming) ?? incoming}`);
 }
 
 /** Record a refusal. The first one stops the plan, and the farm stays as it was. */
@@ -515,9 +544,9 @@ function refuse(plan: LinkPlan, name: string, existing: string, incoming: string
  * `numpy` package come from one store directory, thus `$ORIGIN/../numpy.libs`
  * resolves inside that directory exactly as the wheel intended.
  *
- * The composer refuses where the provisioner keeps the first side and logs. A
- * collision between two regular packages is a version collision, and a farm that
- * silently shadows one version with another is worse than a farm that refuses.
+ * A merge of two directories is the rule, and the one refusal is a collision of two
+ * versions of ONE distribution — refer to {@link isVersionCollision}. A farm that
+ * shadows one version with another in silence is worse than a farm that refuses.
  */
 function planLinkTree(plan: LinkPlan, dst: string, hostSrc: string, bakedSrc: string): void {
     for (const entry of readdirSync(hostSrc).sort()) {
@@ -542,25 +571,32 @@ function planLinkTree(plan: LinkPlan, dst: string, hostSrc: string, bakedSrc: st
                 // Python track again from an empty tree.
                 if (at.target === target) break;
                 const hostPrevious = hostPathOf(plan.storeRoot, at.target);
-                if (isHostDir(hostPrevious) && isHostDir(hostTarget) && isNamespacePortion(hostPrevious) && isNamespacePortion(hostTarget)) {
+                if (isVersionCollision(at.target, target)) refuse(plan, entry, at.target, target);
+                else if (isHostDir(hostPrevious) && isHostDir(hostTarget)) {
                     plan.ops.push({ kind: "unlink", path: link }, { kind: "mkdir", path: link });
                     plan.planned.set(link, { kind: "dir" });
                     planLinkTree(plan, link, hostPrevious, at.target);
                     planLinkTree(plan, link, hostTarget, target);
                 } else {
-                    refuse(plan, entry, at.target, target);
+                    keepFirst(plan, entry, at.target, target);
                 }
                 break;
             }
             case "dir": {
                 // A promotion of an earlier composition made this directory. A merge
                 // into it adds links and touches none, thus it stays additive.
-                if (isHostDir(hostTarget) && isNamespacePortion(hostTarget)) planLinkTree(plan, link, hostTarget, target);
-                else refuse(plan, entry, link, target);
+                //
+                // A promoted directory carries no one store directory, thus a version
+                // collision against it cannot be read here. The closure walk is what
+                // prevents one: a graph closure names one version of a distribution.
+                // The refusal of the `link` case above is the net for the pair, and the
+                // provisioner has the same limit at the same point.
+                if (isHostDir(hostTarget)) planLinkTree(plan, link, hostTarget, target);
+                else keepFirst(plan, entry, link, target);
                 break;
             }
             case "other": {
-                refuse(plan, entry, link, target);
+                keepFirst(plan, entry, link, target);
                 break;
             }
             default: {
@@ -842,7 +878,7 @@ function linkClosure(
     const python = ordered.filter((key) => graph.nodes.get(key)?.track === "python");
     const rNodes = ordered.filter((key) => graph.nodes.get(key)?.track === "r");
 
-    const plan: LinkPlan = { storeRoot, ops: [], planned: new Map(), collision: null };
+    const plan: LinkPlan = { storeRoot, ops: [], planned: new Map(), collision: null, keptFirst: [] };
     const planned = tryFs("plan the links of the farm", () => {
         plan.ops.push({ kind: "mkdir", path: site });
         for (const key of python) {

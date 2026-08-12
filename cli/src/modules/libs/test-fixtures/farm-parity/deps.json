@@ -1,5 +1,14 @@
 {
   "nodes": {
+    "airr-like-2.0.0-00000000000ab002": {
+      "edges": [],
+      "entry_points": [],
+      "imports": [
+        "airrlike",
+        "tests"
+      ],
+      "track": "python"
+    },
     "alpha-1.2.0-000000000000aaaa": {
       "edges": [],
       "entry_points": [
@@ -76,6 +85,15 @@
       ],
       "r_dir": "Rpkgb",
       "track": "r"
+    },
+    "spectrum-like-0.5.0-00000000000ab001": {
+      "edges": [],
+      "entry_points": [],
+      "imports": [
+        "speclike",
+        "tests"
+      ],
+      "track": "python"
     },
     "typing-ext-4.9.0-00000000000eeeee": {
       "edges": [],

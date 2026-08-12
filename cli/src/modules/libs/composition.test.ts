@@ -23,6 +23,9 @@ const ALPHA = "alpha-1.2.0-000000000000aaaa";
 const ALPHA_2 = "alpha-2.0.0-00000000000a2222";
 const BETA = "beta-0.4.1-000000000000bbbb";
 const GAMMA = "gamma-3.0.0-000000000000cccc";
+/** Two distributions that each ship a top-level `tests` package, as the real catalog does. */
+const SPECTRUM_LIKE = "spectrum-like-0.5.0-00000000000ab001";
+const AIRR_LIKE = "airr-like-2.0.0-00000000000ab002";
 const DELTA = "delta-0.9-000000000000dddd";
 const TYPING = "typing-ext-4.9.0-00000000000eeeee";
 const OMEGA = "omega-9.9-0000000000009999";
@@ -115,7 +118,7 @@ describe("readDepsGraph", () => {
         const graph = readDepsGraph(tempStore())._unsafeUnwrap();
 
         expect(graph.version).toBe(1);
-        expect(graph.nodes.size).toBe(9);
+        expect(graph.nodes.size).toBe(11);
         expect(graph.nodes.get(BETA)).toEqual({ track: "python", imports: ["beta", "nsroot"], entryPoints: ["beta-run"], edges: [ALPHA], rDir: null });
         expect(graph.nodes.get(RPKGA)?.rDir).toBe("Rpkga");
         expect(graph.nodes.get(ALPHA)?.rDir).toBeNull();
@@ -356,6 +359,33 @@ describe("a version collision", () => {
 
         expect(extended.isOk()).toBe(true);
         expect(treeOf(join(root, "farms", analysisId)).get("python/site-packages/nsroot")).toBe("dir");
+    });
+
+    test("two distributions that each ship a top-level `tests` package merge, because neither is a second version", async () => {
+        // The published catalog holds this shape: `tests`, `benchmarks`, and `resources`
+        // each arrive from two distributions, and each carries its own `__init__.py`. A
+        // refusal here would refuse the default closure, thus no analysis could compose.
+        const root = tempStore();
+        const analysisId = randomUUIDv7();
+        (await composeFarm({ storeRoot: root, analysisId, roots: [SPECTRUM_LIKE] }))._unsafeUnwrap();
+
+        const extended = await extendFarm({ storeRoot: root, analysisId, roots: [AIRR_LIKE] });
+
+        expect(extended.isOk()).toBe(true);
+        const tree = treeOf(join(root, "farms", analysisId));
+        expect(tree.get("python/site-packages/tests")).toBe("dir");
+        expect(tree.get("python/site-packages/tests/test_speclike.py")).toBe(`link:${MOUNT}/store/${SPECTRUM_LIKE}/tests/test_speclike.py`);
+        expect(tree.get("python/site-packages/tests/test_airrlike.py")).toBe(`link:${MOUNT}/store/${AIRR_LIKE}/tests/test_airrlike.py`);
+    });
+
+    test("one composition of both distributions merges the shared name in one pass", async () => {
+        const root = tempStore();
+        const analysisId = randomUUIDv7();
+
+        const composed = await composeFarm({ storeRoot: root, analysisId, roots: [SPECTRUM_LIKE, AIRR_LIKE] });
+
+        expect(composed.isOk()).toBe(true);
+        expect(treeOf(join(root, "farms", analysisId)).get("python/site-packages/tests")).toBe("dir");
     });
 });
 
