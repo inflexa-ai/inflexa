@@ -44,8 +44,16 @@
 - [x] 6.3 Advise at one turn or less in `src/tools/start-report-session.ts`.
 - [x] 6.4 Cover the rule: the ask of the spawn does not clear the advice, a second user turn clears it, and a synthetic record does not.
 
-## 7. Verification
+## 7. The one moment of the spawn
 
-- [x] 7.1 Run `tsc -p tsconfig.json` and `bun test` in `harness/`.
-- [x] 7.2 Run `bun run format:file` on each changed source file.
-- [x] 7.3 Search the prompts and the tool descriptions for a stale name of the old pair, per the agent-facing-copy rule.
+- [x] 7.1 Add the optional anchor dep to `createReportSessionSpawn`. The spawn runs it after the seed lands.
+- [x] 7.2 Keep the child on a failed pin, and send the failure to the logger.
+- [x] 7.3 Thread the dep from the assembly through `ConversationAgentDeps` and the tool. The embedder supplies nothing.
+- [x] 7.4 Bound each brief field in the schema of the tool.
+- [x] 7.5 Cover the pin: the spawn pins, a later artifact is no member, and a failed pin keeps the child.
+
+## 8. Verification
+
+- [x] 8.1 Run `tsc -p tsconfig.json` and `bun test` in `harness/`.
+- [x] 8.2 Run `bun run format:file` on each changed source file.
+- [x] 8.3 Search the prompts and the tool descriptions for a stale name of the old pair, per the agent-facing-copy rule.

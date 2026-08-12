@@ -24,6 +24,7 @@
 import type { Pool } from "pg";
 
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
+import type { EnsureSessionStateResult } from "../app/report-session-runtime.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import type { AgentDefinition } from "../loop/types.js";
@@ -125,6 +126,13 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
      * launches it through the `RunLauncher` seam to start the run.
      */
     readonly executeAnalysisWorkflow: (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
+    /**
+     * The anchor operation of the report session runtime — produced by
+     * `createReportSessionRuntime` and wired by `assembleCoreRuntime`. The spawn
+     * of `start_report_session` runs it after the seed of the child lands, thus
+     * the transcript anchor and the data snapshot pin at one moment.
+     */
+    readonly anchorReportSession: (threadId: string) => Promise<EnsureSessionStateResult>;
     /** Workspace-root resolution seam (see workspace/paths.ts). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /**
@@ -261,7 +269,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // The one report path. The tool starts a report thread as a child of the
         // conversation, and the user composes the report there with the Report
         // Builder.
-        createStartReportSessionTool({ pool, chrome, ...(deps.logger ? { logger: deps.logger } : {}) }),
+        createStartReportSessionTool({ pool, chrome, anchorSession: deps.anchorReportSession, ...(deps.logger ? { logger: deps.logger } : {}) }),
         // Display.
         showUserTool,
         createShowPlanTool(pool),

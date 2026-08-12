@@ -7,6 +7,9 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import { conversationRecordTurn, createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore, type ThreadStore } from "../memory/thread-store.js";
 import { createWorkingMemory, type WorkingMemoryStore } from "../memory/working-memory.js";
+import { upsertAnalysis } from "../state/analyses.js";
+import { upsertArtifact, type RegisterArtifactInput } from "../state/artifacts.js";
+import { createReportSessionRuntime } from "./report-session-runtime.js";
 import { createReportSessionSpawn, REPORT_CHILD_PAGE_SIZE, type ReportBrief, type ReportSessionSpawn } from "./spawn-report-session.js";
 
 const ANALYSIS_A = "analysis-a";
@@ -105,6 +108,31 @@ async function insertReportChildren(prefix: string, count: number, parentThreadI
            FROM generate_series(1, $6::int) AS g`,
         [prefix, ANALYSIS_A, parentThreadId, anchor, updatedSecondsAgo, count],
     );
+}
+
+/** Seed the analysis-state row that the foreign key of the session state needs. */
+async function seedAnalysisRow(analysisId: string): Promise<void> {
+    (await upsertAnalysis(pool, analysisId, null, null))._unsafeUnwrap();
+}
+
+/** One artifact of the ledger, which the pin reads into the snapshot. */
+function artifact(analysisId: string, path: string, hash: string): RegisterArtifactInput {
+    return { resourceId: analysisId, path, hash, size: 128, role: "step_output", fileType: "output" };
+}
+
+/**
+ * The artifact paths of the stored snapshot of one thread, or `null` when no
+ * session-state row exists. The read goes to the row itself, thus it shows the
+ * state that the spawn left and not a value that a later pin composed.
+ */
+async function storedSnapshotPaths(threadId: string): Promise<string[] | null> {
+    const { rows } = await pool.query<{ snapshot: { artifacts: Record<string, unknown> } | null }>(
+        "SELECT snapshot FROM cortex_report_session_state WHERE thread_id = $1",
+        [threadId],
+    );
+    const row = rows[0];
+    if (row === undefined || row.snapshot === null) return null;
+    return Object.keys(row.snapshot.artifacts);
 }
 
 describe("spawnReportSession child shape", () => {
@@ -319,6 +347,70 @@ describe("spawnReportSession seed", () => {
 
         expect(failed.type).toBe("mutation_failed");
         expect(await reportThreadCount()).toBe(0);
+    });
+});
+
+describe("spawnReportSession pin", () => {
+    const EARLY = "runs/r1/output/de.csv";
+    const LATE = "runs/r2/output/late.csv";
+
+    /** A spawn whose anchor operation is the real session runtime over the same pool. */
+    function pinningSpawn(): ReportSessionSpawn {
+        const runtime = createReportSessionRuntime({ pool });
+        return createReportSessionSpawn({ pool, chrome: WITH_BROWSER, anchorSession: runtime.ensureSessionState });
+    }
+
+    it("pins the snapshot of the child before any turn of the child runs", async () => {
+        await seedAnalysisRow(ANALYSIS_A);
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        await upsertArtifact(pool, artifact(ANALYSIS_A, EARLY, "sha256:aaa"));
+
+        const child = (await pinningSpawn().spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+
+        // The row holds the snapshot at the moment of the spawn, thus the session
+        // anchors with no turn and no tool call.
+        expect(await storedSnapshotPaths(child.threadId)).toEqual([EARLY]);
+    });
+
+    it("keeps an artifact that lands after the spawn out of the stored snapshot", async () => {
+        await seedAnalysisRow(ANALYSIS_A);
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        await upsertArtifact(pool, artifact(ANALYSIS_A, EARLY, "sha256:aaa"));
+        const child = (await pinningSpawn().spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+
+        // A run registers an artifact between the spawn and the first turn.
+        await upsertArtifact(pool, artifact(ANALYSIS_A, LATE, "sha256:bbb"));
+        // The first turn anchors again. The operation is idempotent, thus it reads
+        // the stored snapshot and it pins nothing.
+        const firstTurn = await createReportSessionRuntime({ pool }).ensureSessionState(child.threadId);
+
+        expect(firstTurn.outcome).toBe("ready");
+        if (firstTurn.outcome !== "ready") return;
+        expect(Object.keys(firstTurn.state.snapshot?.artifacts ?? {})).toEqual([EARLY]);
+        expect(await storedSnapshotPaths(child.threadId)).toEqual([EARLY]);
+    });
+
+    it("keeps the child when the pin fails, and the next call pins", async () => {
+        await seedAnalysisRow(ANALYSIS_A);
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+        await upsertArtifact(pool, artifact(ANALYSIS_A, EARLY, "sha256:aaa"));
+        // The anchor operation fails the same way a transient store fault fails it.
+        const failing = createReportSessionSpawn({
+            pool,
+            chrome: WITH_BROWSER,
+            anchorSession: () => Promise.resolve({ outcome: "failed" as const, kind: "unavailable" as const, detail: "the artifact ledger read failed" }),
+        });
+
+        const child = (await failing.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+
+        // The spawn gives the child, and the child stays on disk.
+        expect((await store.getThread(child.threadId))._unsafeUnwrap()).not.toBeNull();
+        expect(await reportThreadCount()).toBe(1);
+        // A failed pin writes no row, thus a later call pins again.
+        expect(await storedSnapshotPaths(child.threadId)).toBeNull();
+        const later = await createReportSessionRuntime({ pool }).ensureSessionState(child.threadId);
+        expect(later.outcome).toBe("ready");
+        expect(await storedSnapshotPaths(child.threadId)).toEqual([EARLY]);
     });
 });
 

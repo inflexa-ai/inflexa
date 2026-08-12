@@ -31,6 +31,9 @@ function buildAgent(hostTools?: readonly Tool[]) {
         executeAnalysisWorkflow: (async () => {
             throw new Error("not used at composition time");
         }) as never,
+        anchorReportSession: (async () => {
+            throw new Error("not used at composition time");
+        }) as never,
         resolveWorkspaceRoot: (id: string) => join("/sessions", id),
         runAuthorizer: {} as RunAuthorizer,
         runLauncher: {} as RunLauncher,

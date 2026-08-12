@@ -294,6 +294,21 @@ describe("the refusals of the spawn", () => {
     });
 });
 
+describe("the bounds of the brief", () => {
+    it("refuses a field past its bound, and accepts the same field at the bound", async () => {
+        // The bound of `audience` is the smallest of the five, thus one long value
+        // shows the rule with no dependence on the number itself.
+        const atBound = { ...INPUT, audience: "x".repeat(200) };
+        const pastBound = { ...INPUT, audience: "x".repeat(201) };
+
+        expect(tool.inputSchema.safeParse(atBound).success).toBe(true);
+        expect(tool.inputSchema.safeParse(pastBound).success).toBe(false);
+        // The bound is a schema rule, thus the registry refuses the call before the
+        // brief can reach the durable message row.
+        expect(await reportThreadCount()).toBe(0);
+    });
+});
+
 describe("the failed arm", () => {
     it("gives a short detail when the seed write fails, and no child survives", async () => {
         await seedConversation("p1", "Parent");

@@ -84,12 +84,16 @@ export interface RegisteredWorkflows {
 }
 
 /**
- * Conversation-agent deps minus the workflow callable, the resource policy, and
- * the usage recorder — `assembleCoreRuntime` supplies those itself so a caller
- * cannot wire a stale callable, a policy that diverges from the one the
- * workflows see, or a recorder that only half the agent tree reports to.
+ * Conversation-agent deps minus the workflow callable, the resource policy, the
+ * usage recorder, and the report-session anchor — `assembleCoreRuntime` supplies
+ * those itself so a caller cannot wire a stale callable, a policy that diverges
+ * from the one the workflows see, a recorder that only half the agent tree
+ * reports to, or an anchor over a different session runtime.
  */
-export type ConversationAssemblyDeps = Omit<ConversationAgentDeps, "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder" | "citationResolver">;
+export type ConversationAssemblyDeps = Omit<
+    ConversationAgentDeps,
+    "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder" | "citationResolver" | "anchorReportSession"
+>;
 
 /**
  * What binds one reference resolver: the analysis whose pinned artifacts it reads, and the auth of the tool
@@ -243,20 +247,24 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         ...(wf.dataProfile.logger ? { logger: wf.dataProfile.logger } : {}),
     });
 
+    // The session runtime binds the per-session state to the thread behind the
+    // tool boundary, thus one instance serves every report thread. It comes before
+    // the conversation agent, because `start_report_session` takes its anchor
+    // operation and pins the snapshot of a new session at the spawn.
+    const reportSession = createReportSessionRuntime({ pool: conversation.pool, ...(conversation.logger ? { logger: conversation.logger } : {}) });
+
     const conversationAgent = createConversationAgent({
         ...conversation,
         executeAnalysisWorkflow: executeAnalysis,
+        anchorReportSession: reportSession.ensureSessionState,
         resourcePolicy,
         usageRecorder,
         citationResolver,
     });
 
-    // The report agent is a singleton over the conversation deps. The session
-    // runtime binds the per-session state to the thread behind the tool boundary,
-    // thus one definition serves every report thread. Its preview tool writes the
-    // page into the analysis tree and returns the path, thus the page write reaches
-    // no host seam.
-    const reportSession = createReportSessionRuntime({ pool: conversation.pool, ...(conversation.logger ? { logger: conversation.logger } : {}) });
+    // The report agent is a singleton over the conversation deps, the same way the
+    // session runtime is. Its preview tool writes the page into the analysis tree
+    // and returns the path, thus the page write reaches no host seam.
     const reportVersionStore = createReportVersionStore({ pool: conversation.pool, ...(conversation.logger ? { logger: conversation.logger } : {}) });
     const reportThreads = createThreadStore(conversation.pool);
 

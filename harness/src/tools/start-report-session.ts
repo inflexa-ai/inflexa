@@ -21,6 +21,7 @@ import { ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 
+import type { EnsureSessionStateResult } from "../app/report-session-runtime.js";
 import { createReportSessionSpawn, type ReportBrief, type SpawnRefusal } from "../app/spawn-report-session.js";
 import { hasBrowserUrl, type ChromeConfig } from "../lib/chrome.js";
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -30,17 +31,37 @@ import type { ThreadInputError, ThreadType } from "../memory/thread-store.js";
 import { defineTool, type Tool, type ToolError } from "./define-tool.js";
 
 /**
+ * The character bound of each brief field. The whole brief lands in one durable
+ * message row, thus the schema holds no unbounded string out of the store.
+ *
+ * The description caps the brief at approximately 2000 tokens, and a token is
+ * about four characters. Thus the five bounds sum to 8000 characters, and the
+ * widest brief that the schema admits still meets the cap that the agent reads.
+ *
+ * The share of each field follows its role. `audience` names one reader, thus a
+ * phrase is enough. `objective` and `angle` carry a sentence or two. Each
+ * optional field carries a list of items, thus it takes the largest share.
+ */
+const BRIEF_MAX = {
+    objective: 1500,
+    audience: 200,
+    angle: 1500,
+    exclusions: 2400,
+    openQuestions: 2400,
+} as const;
+
+/**
  * The brief of the ask, plus the one override of the advice.
  *
  * Each brief field is short prose. No field names a path, a dataset, or a
  * format, because the report session reads those from the workspace itself.
  */
 const startReportSessionInput = z.object({
-    objective: z.string().min(1).describe("The question that the report must answer."),
-    audience: z.string().min(1).describe("The reader of the report."),
-    angle: z.string().min(1).describe("The line that the report takes through the evidence."),
-    exclusions: z.string().optional().describe("The material that the report must leave out."),
-    openQuestions: z.string().optional().describe("The points that the user did not decide yet."),
+    objective: z.string().min(1).max(BRIEF_MAX.objective).describe("The question that the report must answer."),
+    audience: z.string().min(1).max(BRIEF_MAX.audience).describe("The reader of the report."),
+    angle: z.string().min(1).max(BRIEF_MAX.angle).describe("The line that the report takes through the evidence."),
+    exclusions: z.string().max(BRIEF_MAX.exclusions).optional().describe("The material that the report must leave out."),
+    openQuestions: z.string().max(BRIEF_MAX.openQuestions).optional().describe("The points that the user did not decide yet."),
     newSessionAnyway: z
         .boolean()
         .optional()
@@ -81,6 +102,12 @@ export type StartReportSessionResult =
 export interface StartReportSessionToolDeps {
     readonly pool: Pool;
     readonly chrome: ChromeConfig;
+    /**
+     * The anchor operation of the report session runtime, which the spawn runs
+     * after the seed of the child lands. The composition binds it, thus the tool
+     * carries no stale value of its own.
+     */
+    readonly anchorSession?: (threadId: string) => Promise<EnsureSessionStateResult>;
     readonly logger?: Logger;
 }
 
@@ -132,7 +159,12 @@ function causeOf(fault: SpawnRefusal | DbError | ThreadInputError): unknown {
  */
 export function createStartReportSessionTool(deps: StartReportSessionToolDeps): Tool<StartReportSessionInput, StartReportSessionResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("start-report-session");
-    const spawn = createReportSessionSpawn({ pool: deps.pool, chrome: deps.chrome });
+    const spawn = createReportSessionSpawn({
+        pool: deps.pool,
+        chrome: deps.chrome,
+        ...(deps.anchorSession ? { anchorSession: deps.anchorSession } : {}),
+        ...(deps.logger ? { logger: deps.logger } : {}),
+    });
     // The eyes of the composition are fixed at construction, thus the gate reads
     // one boolean and never a live probe of the sidecar.
     const eyesAvailable = hasBrowserUrl(deps.chrome);
