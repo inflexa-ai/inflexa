@@ -2,12 +2,13 @@
  * Report-session spawn — the host-agnostic operation that makes a `report`
  * child thread from a conversation.
  *
- * The operation owns no table. It composes four reads and writes the store and
- * the thread history already give: `getThread` for the parent, `latestSeq` for
- * the anchor, `listThreads` for the count of report children, and
- * `createThread` for the insert. The one storage read this capability adds,
- * `latestSeq`, lives on the thread history, because that module owns the
- * `messages` table.
+ * The operation owns no table. It composes the reads and the writes that the
+ * store, the thread history, and the working memory already give. `getThread`
+ * finds the parent, and `latestSeq` gives the anchor. `listThreads` counts the
+ * report children, and `createThread` writes the insert. `render` and
+ * `appendTurn` make the seed, and `purgeThread` removes a child that holds no
+ * seed. The one storage read this capability adds, `latestSeq`, lives on the
+ * thread history, because that module owns the `messages` table.
  *
  * The reads and the insert take no lock and no transaction. A concurrent turn
  * can append between the anchor read and the insert, and a retract can cut the
@@ -25,19 +26,32 @@
  * draft that no gate ever accepts. The spawn refuses that session before it
  * writes a row, because a dead-end thread is worse than a refusal that names the
  * absent capability.
+ *
+ * The spawn seeds the context of the child at the anchor. It writes one message
+ * that holds the brief and a copy of the working-memory render. The transcript
+ * is append-only, thus the copy stays frozen at the anchor by construction, and
+ * a later change to the working memory leaves it as it is. When the seed write
+ * fails, the spawn purges the child, because a report thread with no context is
+ * a dead end.
+ *
+ * The delta read gives the two values that a caller compares before a new spawn:
+ * the report child with the greatest anchor, and the latest seq of the parent.
+ * The listing orders by `updated_at` and not by the anchor, thus the read walks
+ * each page of the children.
  */
 
 import { randomUUID } from "node:crypto";
 
-import { type ResultAsync, errAsync } from "neverthrow";
+import { type ResultAsync, errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import type { DbError } from "../lib/db-result.js";
 import { hasBrowserUrl, type ChromeConfig } from "../lib/chrome.js";
 import type { CapturePage } from "../lib/page-capture.js";
 import type { DomainError } from "../lib/result.js";
-import { createThreadHistory } from "../memory/thread-history.js";
+import { conversationRecordTurn, createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore, type Thread, type ThreadInputError, type ThreadPage, type ThreadType } from "../memory/thread-store.js";
+import { createWorkingMemory } from "../memory/working-memory.js";
 
 /**
  * A spawn the operation refuses before it writes a row. Distinct from
@@ -88,6 +102,50 @@ export interface ReportSessionPaging {
     readonly perPage?: number;
 }
 
+/**
+ * The intent brief of one report session. The caller writes it at the moment of
+ * the ask, and each field is short prose.
+ *
+ * The brief carries intent alone. No field names a path, a dataset, or a format,
+ * because the report session reads those from the workspace itself.
+ */
+export interface ReportBrief {
+    /** The question that the report must answer. */
+    readonly objective: string;
+    /** The reader of the report. */
+    readonly audience: string;
+    /** The line that the report takes through the evidence. */
+    readonly angle: string;
+    /** The material that the report must leave out. */
+    readonly exclusions?: string;
+    /** The points that the user did not decide yet. */
+    readonly openQuestions?: string;
+}
+
+/**
+ * The report child that carries the greatest anchor. A tie on the anchor comes
+ * from two concurrent spawns, and the newest `createdAt` wins it.
+ */
+export interface NewestReportChild {
+    readonly threadId: string;
+    readonly title: string | null;
+    /** The `parentSeq` of the child — the point of the parent transcript that it was built on. */
+    readonly anchor: number;
+    readonly createdAt: Date;
+}
+
+/**
+ * The two values that a caller compares before a new spawn. `newestChild` is
+ * `null` when the parent holds no live report child, and an archived child reads
+ * the same way, because a steer into hidden state is not permitted. `latestSeq`
+ * is `null` when the parent holds no message, and an absent parent reads the
+ * same way.
+ */
+export interface ReportSessionDelta {
+    readonly newestChild: NewestReportChild | null;
+    readonly latestSeq: number | null;
+}
+
 export interface ReportSessionSpawnDeps {
     readonly pool: Pool;
     /**
@@ -108,26 +166,48 @@ export interface ReportSessionSpawn {
     /**
      * Make a `report` child of the parent conversation and return the full row.
      * The child takes the analysis of the parent, the parent thread id, and the
-     * anchor — the parent's latest `messages.seq` at this moment.
+     * anchor — the parent's latest `messages.seq` at this moment. It also takes
+     * one seed message that holds the brief and the working-memory render.
      *
      * Refused with a `SpawnRefusal`, no row written: a composition with no
      * eyes, an absent or archived parent, a parent that is not a conversation,
      * and a parent with no messages. A store refusal (`DbError`,
-     * `ThreadInputError`) passes through unchanged.
+     * `ThreadInputError`) passes through unchanged. A failed seed write purges
+     * the child and returns the fault, thus no context-less thread survives.
      */
-    spawnReportSession(parentThreadId: string): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError>;
+    spawnReportSession(parentThreadId: string, brief: ReportBrief): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError>;
     /**
      * The report sessions of one analysis, through the thread listing narrowed
      * to the type `report`. It adds no predicate of its own, so its answer and
      * the thread listing cannot disagree.
      */
     listReportSessions(analysisId: string, paging?: ReportSessionPaging): ResultAsync<ThreadPage, DbError>;
+    /**
+     * The state that a caller reads before a new spawn: the live report child of
+     * the parent with the greatest anchor, and the latest seq of the parent. A
+     * caller compares the two values, and an equal pair says that the parent
+     * holds no message past the anchor of that child.
+     *
+     * The read walks each page of the children listing, because the listing
+     * orders by `updated_at` and not by the anchor. It reads no model judgment,
+     * and it writes nothing.
+     */
+    reportSessionDelta(parentThreadId: string): ResultAsync<ReportSessionDelta, DbError>;
 }
 
 const OP = "spawn-report-session";
 
 /** The line that the caller reads when the composition gives no eyes. */
 const NO_BROWSER_DETAIL = "the composition gives no browser, thus a report session can never record a version";
+
+/**
+ * The page size of the walk over the report children of one parent. The
+ * one-version policy keeps the count of children small, thus the walk reads one
+ * page on each real parent. It is exported because a test seeds one row more
+ * than one page, and a hard-coded count in the test would not follow a change
+ * here.
+ */
+export const REPORT_CHILD_PAGE_SIZE = 100;
 
 /**
  * Compose the child title. N counts the existing report children of the parent
@@ -139,20 +219,112 @@ function composeTitle(parentTitle: string | null, n: number): string {
     return parentTitle && parentTitle.length > 0 ? `${parentTitle} — ${suffix}` : suffix;
 }
 
+/** Whether the caller gave text for an optional field of the brief. */
+function hasText(field: string | undefined): field is string {
+    return field !== undefined && field.trim().length > 0;
+}
+
+/**
+ * Compose the seed message: the brief as short labeled prose, then the copy of
+ * the working-memory render. An empty render adds nothing, because
+ * `renderWorkingMemory` gives the empty string for a memory with no entry.
+ */
+function composeSeed(brief: ReportBrief, workingMemoryRender: string): string {
+    const lines = [`Objective: ${brief.objective}`, `Audience: ${brief.audience}`, `Angle: ${brief.angle}`];
+    if (hasText(brief.exclusions)) lines.push(`Exclusions: ${brief.exclusions}`);
+    if (hasText(brief.openQuestions)) lines.push(`Open questions: ${brief.openQuestions}`);
+    const briefBlock = `# Report Brief\n\n${lines.join("\n")}\n`;
+    const memory = workingMemoryRender.trim();
+    return memory.length === 0 ? briefBlock : `${briefBlock}\n${memory}\n`;
+}
+
+/**
+ * The child with the greatest anchor, or `null` for no candidate. Two concurrent
+ * spawns can write one anchor, and the newest `createdAt` then wins.
+ */
+function pickNewestChild(children: readonly Thread[]): NewestReportChild | null {
+    let newest: NewestReportChild | null = null;
+    for (const child of children) {
+        // The store writes `parentThreadId` and `parentSeq` as one pair, thus a
+        // child with no anchor names no point of the parent transcript and it
+        // cannot advise.
+        if (child.parentSeq === null) continue;
+        const candidate: NewestReportChild = {
+            threadId: child.threadId,
+            title: child.title,
+            anchor: child.parentSeq,
+            createdAt: child.createdAt,
+        };
+        const wins =
+            newest === null ||
+            candidate.anchor > newest.anchor ||
+            (candidate.anchor === newest.anchor && candidate.createdAt.getTime() > newest.createdAt.getTime());
+        if (wins) newest = candidate;
+    }
+    return newest;
+}
+
 /**
  * Build the report-session operations bound to a Postgres pool. The factory
- * closure captures `pool` and constructs the store and the thread history from
- * it, the same way the chat-turn preparation does.
+ * closure captures `pool` and constructs the store, the thread history, and the
+ * working memory from it, the same way the chat-turn preparation does.
  */
 export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSessionSpawn {
     const { pool } = deps;
     const store = createThreadStore(pool);
     const history = createThreadHistory(pool);
+    const workingMemory = createWorkingMemory(pool);
     // The eyes of the composition are fixed at construction, thus the gate reads
     // one boolean and never a live probe of the sidecar.
     const eyesAvailable = deps.capture !== undefined || hasBrowserUrl(deps.chrome);
 
-    function spawnReportSession(parentThreadId: string): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError> {
+    /**
+     * Write the one seed message of the child and give the child back. The
+     * message rides as a record, not as user input: nobody typed it in the child
+     * thread, and a record is displayed but it never opens a turn.
+     */
+    function seedChildContext(child: Thread, brief: ReportBrief): ResultAsync<Thread, DbError> {
+        return workingMemory
+            .render(child.analysisId)
+            .andThen((memory) => history.appendTurn(child.threadId, conversationRecordTurn(composeSeed(brief, memory))))
+            .map(() => child)
+            .orElse((fault) =>
+                // A report thread with no context is a dead end, thus the purge
+                // removes the child. The seed fault is the cause, thus it returns
+                // from each route. A failed purge leaves the child, and the caller
+                // still reads why the seed stopped.
+                store
+                    .purgeThread(child.threadId)
+                    .andThen((): ResultAsync<Thread, DbError> => errAsync(fault))
+                    .orElse((): ResultAsync<Thread, DbError> => errAsync(fault)),
+            );
+    }
+
+    /**
+     * Each live report child of the parent, across every page of the listing. The
+     * listing orders by `updated_at`, thus one page can hide the child with the
+     * greatest anchor. The default listing excludes an archived child, and this
+     * walk keeps that scope.
+     */
+    function collectReportChildren(
+        analysisId: string,
+        parentThreadId: string,
+        page: number,
+        found: readonly Thread[],
+    ): ResultAsync<readonly Thread[], DbError> {
+        return store
+            .listThreads({ analysisId, type: "report", parentThreadId, page, perPage: REPORT_CHILD_PAGE_SIZE })
+            .andThen((result): ResultAsync<readonly Thread[], DbError> => {
+                const all = [...found, ...result.threads];
+                // An empty page also stops the walk. `hasMore` compares the offset
+                // against a count from a second statement, thus a concurrent purge
+                // can hold the flag true after the last row.
+                if (!result.hasMore || result.threads.length === 0) return okAsync(all);
+                return collectReportChildren(analysisId, parentThreadId, page + 1, all);
+            });
+    }
+
+    function spawnReportSession(parentThreadId: string, brief: ReportBrief): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError> {
         // The gate runs before the parent read. A session with no route to a look
         // reaches the record gate and refuses there forever, thus the spawn is the
         // one honest place to say so.
@@ -181,14 +353,18 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
                 return store
                     .listThreads({ analysisId: parent.analysisId, type: "report", parentThreadId })
                     .andThen((children): ResultAsync<Thread, DbError | ThreadInputError> =>
-                        store.createThread({
-                            threadId: randomUUID(),
-                            analysisId: parent.analysisId,
-                            title: composeTitle(parent.title, children.total + 1),
-                            type: "report",
-                            parentThreadId,
-                            parentSeq: anchor,
-                        }),
+                        store
+                            .createThread({
+                                threadId: randomUUID(),
+                                analysisId: parent.analysisId,
+                                title: composeTitle(parent.title, children.total + 1),
+                                type: "report",
+                                parentThreadId,
+                                parentSeq: anchor,
+                            })
+                            // The seed follows the insert, thus the copy of the working
+                            // memory is the state at the anchor.
+                            .andThen((child) => seedChildContext(child, brief)),
                     );
             });
         });
@@ -198,5 +374,20 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
         return store.listThreads({ analysisId, type: "report", ...paging });
     }
 
-    return { spawnReportSession, listReportSessions };
+    function reportSessionDelta(parentThreadId: string): ResultAsync<ReportSessionDelta, DbError> {
+        // The children listing takes the analysis of the parent, thus the parent
+        // read comes first. An absent or archived parent gives no advice, and the
+        // spawn refuses it later with `parent_not_found`.
+        return store.getThread(parentThreadId).andThen((parent): ResultAsync<ReportSessionDelta, DbError> => {
+            if (parent === null) return okAsync({ newestChild: null, latestSeq: null });
+            return history.latestSeq(parentThreadId).andThen((latestSeq) =>
+                collectReportChildren(parent.analysisId, parentThreadId, 0, []).map((children) => ({
+                    newestChild: pickNewestChild(children),
+                    latestSeq,
+                })),
+            );
+        });
+    }
+
+    return { spawnReportSession, listReportSessions, reportSessionDelta };
 }
