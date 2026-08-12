@@ -39,6 +39,25 @@ type Channel = "x" | "y" | "group" | "value";
 const VIRIDIS = ["#440154", "#482777", "#3e4989", "#31688e", "#26828e", "#1f9e89", "#35b779", "#6ece58", "#b5de2b", "#fde725"];
 
 /**
+ * The distance in pixels between the x axis line and its name.
+ *
+ * The name sits under the middle of the axis, thus the gap must clear the axis labels below the line. The
+ * value is a fixed constant, thus the derivation stays deterministic.
+ */
+const X_AXIS_NAME_GAP = 34;
+
+/**
+ * The name fields of an x axis.
+ *
+ * `normalizeEchartSpec` holds the grid to a right margin of 5 percent. The ECharts default `nameLocation`
+ * of `"end"` puts the name at the right end of the axis, thus the name runs past that margin and the panel
+ * clips it. A centered name sits under the middle of the axis, and no margin can cut it.
+ */
+function xAxisName(column: string): EchartOption {
+    return { name: column, nameLocation: "middle", nameGap: X_AXIS_NAME_GAP };
+}
+
+/**
  * Derive the ECharts option for a chart block, then pass it through `normalizeEchartSpec`.
  *
  * The normalizer owns the bottom legend, the save action, and the axis-label discipline. Thus the
@@ -89,7 +108,7 @@ function deriveBar(block: ChartBlock, rows: readonly ChartRow[], columns: readon
     }));
 
     return ok({
-        xAxis: { type: "category", data: categories, name: x },
+        xAxis: { type: "category", data: categories, ...xAxisName(x) },
         yAxis: { type: "value", name: y },
         series,
     });
@@ -112,8 +131,8 @@ function deriveLine(block: ChartBlock, rows: readonly ChartRow[], columns: reado
     }));
 
     return ok({
-        xAxis: inferAxis(rows, x),
-        yAxis: inferAxis(rows, y),
+        xAxis: inferAxis(rows, x, "x"),
+        yAxis: inferAxis(rows, y, "y"),
         series,
     });
 }
@@ -136,8 +155,8 @@ function deriveScatter(block: ChartBlock, rows: readonly ChartRow[], columns: re
     }));
 
     return ok({
-        xAxis: inferAxis(rows, x),
-        yAxis: inferAxis(rows, y),
+        xAxis: inferAxis(rows, x, "x"),
+        yAxis: inferAxis(rows, y, "y"),
         series,
     });
 }
@@ -234,7 +253,7 @@ function deriveBox(block: ChartBlock, rows: readonly ChartRow[], columns: readon
     }
 
     return ok({
-        xAxis: { type: "category", data: categories, name: x },
+        xAxis: { type: "category", data: categories, ...xAxisName(x) },
         yAxis: { type: "value", name: y },
         series,
     });
@@ -278,7 +297,7 @@ function deriveHeatmap(block: ChartBlock, rows: readonly ChartRow[], columns: re
     const max = finite.length > 0 ? Math.max(...finite) : 1;
 
     return ok({
-        xAxis: { type: "category", data: xCategories.map(String), name: x, splitArea: { show: true } },
+        xAxis: { type: "category", data: xCategories.map(String), ...xAxisName(x), splitArea: { show: true } },
         yAxis: { type: "category", data: yCategories.map(String), name: y, splitArea: { show: true } },
         visualMap: {
             type: "continuous",
@@ -396,12 +415,16 @@ function numericColumn(rows: readonly ChartRow[], column: string): number[] {
 /**
  * The axis for a line or a scatter column. A column with any non-numeric string cell is a category axis
  * with its distinct values as strings. Any other column is a value axis with `scale: true`.
+ *
+ * The `axis` argument names the channel that the column feeds. An x column takes the centered name, and a
+ * y column keeps the default name placement.
  */
-function inferAxis(rows: readonly ChartRow[], column: string): EchartOption {
+function inferAxis(rows: readonly ChartRow[], column: string, axis: "x" | "y"): EchartOption {
+    const nameFields = axis === "x" ? xAxisName(column) : { name: column };
     if (rows.some((row) => isNonNumericString(row[column]))) {
-        return { type: "category", data: firstAppearance(rows.map((row) => row[column])).map(String), name: column };
+        return { type: "category", data: firstAppearance(rows.map((row) => row[column])).map(String), ...nameFields };
     }
-    return { type: "value", scale: true, name: column };
+    return { type: "value", scale: true, ...nameFields };
 }
 
 /**

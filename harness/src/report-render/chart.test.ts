@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChartBlock } from "../contracts/report-blocks.js";
 import { renderChart } from "./views/chart-view.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "./chart.js";
+import { DESIGN_CSS } from "./design.js";
 
 type Encoding = ChartBlock["encoding"];
 type ChartType = ChartBlock["chartType"];
@@ -297,6 +298,48 @@ describe("deriveChartOption refusals", () => {
     });
 });
 
+describe("the axis name placement", () => {
+    /** Each chart type that names its x axis, with the rows and the encoding that give it a name. */
+    const namedX: Array<{ chartType: ChartType; encoding: Encoding; rows: ChartRow[] }> = [
+        { chartType: "bar", encoding: { x: "day", y: "count" }, rows: [{ day: "Mon", count: 1 }] },
+        { chartType: "line", encoding: { x: "t", y: "v" }, rows: [{ t: 1, v: 2 }] },
+        { chartType: "scatter", encoding: { x: "t", y: "v" }, rows: [{ t: 1, v: 2 }] },
+        { chartType: "box", encoding: { x: "cat", y: "val" }, rows: [{ cat: "A", val: 1 }] },
+        { chartType: "heatmap", encoding: { x: "r", y: "c", value: "v" }, rows: [{ r: "A", c: "P", v: 1 }] },
+    ];
+
+    /** The ECharts default `nameGap`. A centered name at this gap sits on top of the axis labels. */
+    const DEFAULT_NAME_GAP = 15;
+
+    for (const entry of namedX) {
+        it(`centers the x axis name of a ${entry.chartType} chart under its axis`, () => {
+            const xAxis = asObj(derive(chartBlock(entry.chartType, entry.encoding), entry.rows).xAxis);
+            expect(xAxis.name).toBe(entry.encoding.x);
+            // The ECharts default `nameLocation` of `"end"` puts the name at the right end of the axis, past
+            // the right grid margin that the shared normalizer sets. The panel then clips the name. The
+            // assertion also proves that the normalizer carries both fields through untouched.
+            expect(xAxis.nameLocation).toBe("middle");
+            expect(typeof xAxis.nameGap).toBe("number");
+            expect(xAxis.nameGap as number).toBeGreaterThan(DEFAULT_NAME_GAP);
+        });
+    }
+
+    it("keeps the y axis name at the default placement, which the panel does not clip", () => {
+        const yAxis = asObj(derive(chartBlock("bar", { x: "day", y: "count" }), [{ day: "Mon", count: 1 }]).yAxis);
+        expect(yAxis.name).toBe("count");
+        // A measurement of the rendered fixture puts the y axis name inside the container at the default
+        // `"end"` location. Thus the y axis needs no move, and the derivation adds no field.
+        expect("nameLocation" in yAxis).toBe(false);
+        expect("nameGap" in yAxis).toBe(false);
+    });
+
+    it("adds no name field to the unnamed histogram x axis", () => {
+        const xAxis = asObj(derive(chartBlock("histogram", { x: "n" }), [{ n: 1 }, { n: 2 }]).xAxis);
+        expect("name" in xAxis).toBe(false);
+        expect("nameLocation" in xAxis).toBe(false);
+    });
+});
+
 describe("renderChart", () => {
     it("places the JSON script as the immediate next sibling of the container", () => {
         const block = chartBlock("bar", { x: "day", y: "count" }, { id: "b1" });
@@ -314,5 +357,42 @@ describe("renderChart", () => {
         // The hostile close sequence never reaches the page as raw markup.
         expect(html).not.toContain("a</script>b");
         expect(html).toContain("a\\u003c/script>b");
+    });
+
+    it("puts the sized container class on the element that carries the option id", () => {
+        const block = chartBlock("bar", { x: "day", y: "count" }, { id: "b3" });
+        const html = renderChart(block, derive(block, [{ day: "Mon", count: 1 }]));
+        // The bootstrap finds the container by `data-echarts-id`, and the style sheet sizes it by the
+        // `chart-container` class. The two must sit on one element. A class on a different element, or no
+        // class at all, gives the chart runtime a box of zero height and the chart draws into nothing.
+        expect(html).toMatch(/<div[^>]*\bdata-echarts-id="b3"[^>]*\bclass="chart-container"[^>]*>/);
+    });
+
+    it("wraps the chart in the chrome header with its three dots and the product badge", () => {
+        const block = chartBlock("bar", { x: "day", y: "count" }, { id: "b4", title: "Panel title" });
+        const html = renderChart(block, derive(block, [{ day: "Mon", count: 1 }]));
+        expect(html).toContain(`class="window-chrome-bar"`);
+        // The three dots are the window-chrome signature of the panel.
+        expect(html.match(/class="chrome-dot dot-\d"/g)).toHaveLength(3);
+        expect(html).toContain(`<span class="window-chrome-badge">CORTEX</span>`);
+        expect(html).toContain(`<span class="window-chrome-title">Panel title</span>`);
+    });
+});
+
+describe("the chart container style rule", () => {
+    /** The declaration body of each `.chart-container` rule of a style sheet. */
+    function chartContainerRules(css: string): string[] {
+        return [...css.matchAll(/\.chart-container\s*\{([^}]*)\}/g)].map((match) => match[1]);
+    }
+
+    it("declares a height on the chart container", () => {
+        const rules = chartContainerRules(DESIGN_CSS);
+        expect(rules.length).toBeGreaterThan(0);
+
+        // The chart runtime measures the container at initialization. A rule with no height, or a height of
+        // zero, gives a box that shows no chart even though every other gate stays green.
+        const heights = rules.flatMap((body) => [...body.matchAll(/(?:^|;)\s*height\s*:\s*([^;]+)/g)].map((match) => match[1].trim()));
+        expect(heights.length).toBeGreaterThan(0);
+        expect(heights.some((height) => /^[1-9][\d.]*(?:px|rem|em|vh|%)$/.test(height))).toBe(true);
     });
 });

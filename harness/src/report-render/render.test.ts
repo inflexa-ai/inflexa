@@ -1,11 +1,13 @@
 import { describe, expect, it } from "bun:test";
+import { load } from "cheerio";
 
-import type { CitationBlock, MetricBlock, ReportDocument, TextBlock } from "../contracts/report-blocks.js";
+import type { Block, CitationBlock, MetricBlock, ReportDocument, TextBlock } from "../contracts/report-blocks.js";
 import { ASSETS_DIR, PAGE_ASSETS } from "./assets.js";
 import { DESIGN_CSS } from "./design.js";
 import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "./fixture.js";
 import { CHART_BOOTSTRAP } from "./page.js";
 import { renderReportPage } from "./render.js";
+import type { RenderValues } from "./types.js";
 
 /** One citation reference. A claim binding and a citation binding both admit it. */
 const citation: CitationBlock["binding"] = { kind: "citation", idKind: "pmid", id: "12345", raw: "Doe 2020" };
@@ -13,21 +15,74 @@ const citation: CitationBlock["binding"] = { kind: "citation", idKind: "pmid", i
 /** One scalar reference for a metric block. The renderer never reads it. */
 const scalarRef: MetricBlock["value"] = { kind: "artifact-value", path: "runs/r1/de.csv", hash: "sha256:aaa", locator: { column: "padj", row: 0 } };
 
+/** The descriptor form of one `srcset` candidate: a pixel ratio such as `2x`, or a width such as `600w`. */
+const SRCSET_DESCRIPTOR = /^\d+(?:\.\d+)?[wx]$/;
+
 /**
- * Each `src` value and each `href` value of the page, in document order. The markup runtime quotes every
- * attribute value with a double quote, thus one pattern reads them all.
+ * Each candidate URL of one `srcset` value.
+ *
+ * A candidate URL holds no whitespace, and its descriptor follows it after whitespace. Thus whitespace
+ * divides the list into a URL token and a descriptor token, and a comma divides two candidates that no
+ * whitespace separates. A `data:` candidate holds its own commas, thus it stays whole.
  */
-function attributeReferences(html: string): string[] {
-    return [...html.matchAll(/(?:src|href)="([^"]*)"/g)].map((match) => match[1]);
+function srcsetCandidates(list: string): string[] {
+    const candidates: string[] = [];
+    for (const token of list.split(/\s+/)) {
+        const trimmed = token.replace(/^,+|,+$/g, "");
+        if (trimmed === "" || SRCSET_DESCRIPTOR.test(trimmed)) continue;
+        if (trimmed.startsWith("data:")) {
+            candidates.push(trimmed);
+            continue;
+        }
+        for (const part of trimmed.split(",")) {
+            if (part !== "") candidates.push(part);
+        }
+    }
+    return candidates;
 }
 
 /**
- * Each `url(...)` value of a style sheet, without its quotes. The `@font-face` rules reach the page through
- * the inline sheet, thus the font references live here and not in an attribute.
+ * Each `src`, `href`, and `srcset` value of the page, in document order.
+ *
+ * An attribute value rides a double quote or a single quote, and both forms are valid HTML. Thus the
+ * pattern reads both, and a single-quoted remote source cannot pass the gate unread. A `srcset` value holds
+ * a candidate list, thus it divides into its candidates.
+ */
+function attributeReferences(html: string): string[] {
+    const references: string[] = [];
+    for (const match of html.matchAll(/\b(srcset|src|href)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+        const value = match[2] ?? match[3];
+        if (match[1] === "srcset") references.push(...srcsetCandidates(value));
+        else references.push(value);
+    }
+    return references;
+}
+
+/**
+ * Each remote-capable reference of a style sheet, without its quotes. The `@font-face` rules reach the page
+ * through the inline sheet, thus the font references live here and not in an attribute.
+ *
+ * Three forms name a source. `url(...)` is the common one. A bare `@import` string and an `image-set()`
+ * candidate each name a source with no `url()` wrapper, thus the `url(...)` pattern alone reads neither one.
  */
 function styleReferences(css: string): string[] {
-    const pattern = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^'")]*))\s*\)/g;
-    return [...css.matchAll(pattern)].map((match) => match[1] ?? match[2] ?? match[3]);
+    const references: string[] = [];
+    for (const match of css.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^'")]*))\s*\)/g)) {
+        references.push(match[1] ?? match[2] ?? match[3]);
+    }
+    for (const match of css.matchAll(/@import\s+(?:"([^"]*)"|'([^']*)')/g)) {
+        references.push(match[1] ?? match[2]);
+    }
+    // One declaration ends at its semicolon, thus the scan of a list stops there. A comma divides the
+    // candidates, and each candidate leads with its quoted source. Thus a `type(...)` hint inside a
+    // candidate never reads as a source of its own.
+    for (const list of css.matchAll(/image-set\(([^;]*)/g)) {
+        for (const candidate of list[1].split(",")) {
+            const quoted = /^\s*(?:"([^"]*)"|'([^']*)')/.exec(candidate);
+            if (quoted !== null) references.push(quoted[1] ?? quoted[2]);
+        }
+    }
+    return references;
 }
 
 describe("renderReportPage assembly", () => {
@@ -76,6 +131,114 @@ describe("the page stands alone", () => {
         // would open with a failed request.
         const unstaged = stagedReferences.filter((value) => !staged.has(value.slice(prefix.length)));
         expect(unstaged).toEqual([]);
+    });
+});
+
+describe("the stands-alone extraction", () => {
+    /** The remote references of a value list. The test reads the start of a value, as the gate does. */
+    function remote(values: string[]): string[] {
+        return values.filter((value) => /^https?:/i.test(value));
+    }
+
+    it("reads a remote source out of each attribute form that HTML admits", () => {
+        // Each line carries one remote source in a form that the double-quoted `src`/`href` pattern misses.
+        const doctored = [
+            `<img srcset="assets/one.png 1x, https://cdn.example.com/two.png 2x"/>`,
+            `<img src='https://cdn.example.com/single.png'/>`,
+            `<a href="#top">anchor</a>`,
+        ].join("");
+        expect(remote(attributeReferences(doctored))).toEqual(["https://cdn.example.com/two.png", "https://cdn.example.com/single.png"]);
+    });
+
+    it("reads a remote source out of each style form that CSS admits", () => {
+        const doctored = [
+            `@import "https://cdn.example.com/sheet.css";`,
+            `.a { background-image: image-set("https://cdn.example.com/one.avif" 1x, "assets/one.png" 2x); }`,
+            `.b { background-image: url("assets/local.svg"); }`,
+        ].join("\n");
+        expect(remote(styleReferences(doctored))).toEqual(["https://cdn.example.com/sheet.css", "https://cdn.example.com/one.avif"]);
+    });
+
+    it("keeps a data URI whole and reads no scheme out of the middle of one", () => {
+        // The namespace URI inside the data URI names no host to fetch. The value must stay one value, thus
+        // no fragment of it reaches the gate as a reference of its own.
+        const dataUri = `data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E`;
+        const references = [
+            ...attributeReferences(`<img srcset="${dataUri} 1x, assets/one.png 2x"/>`),
+            ...styleReferences(`.a { background-image: url("${dataUri}"); }`),
+        ];
+        expect(references).toEqual([dataUri, "assets/one.png", dataUri]);
+        expect(remote(references)).toEqual([]);
+    });
+});
+
+describe("renderReportPage metric grouping", () => {
+    /** One metric block. The label doubles as the id, thus a failure names the block that it renders. */
+    function metric(id: string): Block {
+        return { kind: "metric", id, label: id, value: scalarRef };
+    }
+
+    /** One text block. A block of a different kind ends a metric run. */
+    function text(id: string): Block {
+        return { kind: "text", id, content: { prose: id } };
+    }
+
+    /** A one-section document over the given blocks. */
+    function pageOf(blocks: Block[]): ReportDocument {
+        return { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks }] };
+    }
+
+    /** One scalar entry for each metric id. */
+    function scalars(...ids: string[]): RenderValues {
+        const values: RenderValues = {};
+        for (const id of ids) {
+            values[id] = { type: "scalar", value: 1 };
+        }
+        return values;
+    }
+
+    /** The grid count, the card count, and the count of the cards inside a grid. */
+    function counts(html: string): { grids: number; cards: number; grouped: number } {
+        const page = load(html);
+        return {
+            grids: page(".report-metric-grid").length,
+            cards: page(".stat-card").length,
+            grouped: page(".report-metric-grid .stat-card").length,
+        };
+    }
+
+    it("groups a run of three metrics into one grid of three cards", () => {
+        const html = renderReportPage(pageOf([metric("m1"), metric("m2"), metric("m3")]), scalars("m1", "m2", "m3"))._unsafeUnwrap();
+        expect(counts(html)).toEqual({ grids: 1, cards: 3, grouped: 3 });
+    });
+
+    it("leaves a lone metric between two texts as a bare card", () => {
+        const html = renderReportPage(pageOf([text("t1"), metric("m1"), text("t2")]), scalars("m1"))._unsafeUnwrap();
+        // One metric reads as one statistic, not as a row of statistics. Thus no grid wraps it.
+        expect(counts(html)).toEqual({ grids: 0, cards: 1, grouped: 0 });
+    });
+
+    it("groups a run of two that ends the section", () => {
+        const html = renderReportPage(pageOf([text("t1"), metric("m1"), metric("m2")]), scalars("m1", "m2"))._unsafeUnwrap();
+        expect(counts(html)).toEqual({ grids: 1, cards: 2, grouped: 2 });
+    });
+
+    it("groups a run inside a nested section", () => {
+        const nested: Block = {
+            kind: "section",
+            id: "inner",
+            title: "Inner",
+            blocks: [metric("m1"), metric("m2"), text("t1")],
+        };
+        const html = renderReportPage(pageOf([text("t0"), nested]), scalars("m1", "m2"))._unsafeUnwrap();
+        expect(counts(html)).toEqual({ grids: 1, cards: 2, grouped: 2 });
+    });
+
+    it("reports the missing value of one metric inside a run", () => {
+        const problems = renderReportPage(pageOf([metric("m1"), metric("m2"), metric("m3")]), scalars("m1", "m3"))._unsafeUnwrapErr();
+        expect(problems.length).toBe(1);
+        expect(problems[0].kind).toBe("missing-value");
+        expect(problems[0].blockId).toBe("m2");
     });
 });
 
