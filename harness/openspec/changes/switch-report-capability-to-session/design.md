@@ -15,7 +15,7 @@ The #223 decision record binds the context transfer, and its #309 delta names th
 - One report path on the roster: a tool that starts a report session.
 - The intent brief rides the tool, and the spawn seeds the child context at the anchor.
 - The typed refusals of the spawn reach the agent as data.
-- The zero-delta advice steers to the existing report chat.
+- The thin-delta advice steers to the existing report chat.
 - The prompt describes the session path, and only that path.
 
 **Non-Goals:**
@@ -35,15 +35,19 @@ The tool id follows the verb-noun form of the conversation roster (`execute_anal
 
 The tool reads `scope.threadId` as the parent conversation. Every chat turn carries it (`cli/src/modules/harness/turn.ts:188`, and `auth/types.ts:37` declares it). A call whose scope carries no thread id refuses as typed data, the same rule as the authoring tools (`src/tools/report-authoring/authoring-tools.ts:277`). An input field for the parent would let the agent name a different thread, thus no such field exists.
 
-### D3. The advice is mechanical, zero-delta, and overridable
+### D3. The advice counts user turns, and it is overridable
 
-The #221 policy says "thin delta", and a prompt cannot compare sequence numbers. Thus the tool computes the delta. The rule is exact at zero. When the parent holds no message past the anchor of the newest report child, the tool spawns nothing. It returns an `existing-session` arm that names that child.
+The #221 policy says "thin delta", and a prompt cannot compare sequence numbers. Thus the tool computes the delta. The unit is the user turn of the parent past the anchor of the newest report child. The tool spawns nothing at a count of one or less, and it names that child.
 
-The input carries one optional boolean, `newSessionAnyway`, and a true value skips the advice. A small non-zero delta stays a prompt judgment, because any non-zero threshold is arbitrary.
+The unit is a turn, and it is not a raw sequence number. The turn appends after its own loop runs (`app/chat-turn.ts` gives the messages, and the caller appends). Thus the anchor of a child sits before the rows of the ask that made it, and the ask lands one turn later. A rule at zero over the raw sequence would then never fire again after the spawn. The count admits that one turn, and a second user turn is real investigation.
+
+The count reads the genuine-user-start predicate that the thread history already holds (`src/memory/thread-history.ts:230`). Thus a synthetic record of a host never counts as investigation. The rejected alternative was a fixed non-zero sequence threshold, which no fact of the transcript supports.
+
+The input carries one optional boolean, `newSessionAnyway`, and a true value skips the advice.
 
 The eyes gate wins over the advice. A composition without a browser is a permanent condition, and the advice is transient state. Thus the tool checks `hasBrowserUrl(chrome)` first, the same value that the spawn gate reads at its construction (`src/app/spawn-report-session.ts:153`). An advice that masks the permanent fault would hide the deployment gap from the user.
 
-The tool computes the delta from two reads: the children listing narrowed by the parent, and `latestSeq` of the parent (`src/memory/thread-history.ts:204`). Two concurrent spawns can give two children with one anchor (`src/app/spawn-report-session.ts:179-183`), and the newest `created_at` then wins.
+The tool computes the delta from two reads: the children listing narrowed by the parent, and the count of user turns past the anchor. Two concurrent spawns can give two children with one anchor (`src/app/spawn-report-session.ts:179-183`), and the newest `created_at` then wins.
 
 The greatest child anchor comes from a walk of the listing pages, because the listing orders by `updated_at` and not by anchor (`src/memory/thread-store.ts:622`). The walk is cheap: the one-version policy keeps the child count small. The two reads land on the spawn module (`ReportSessionSpawn`), because that module already composes the store and the history over one pool.
 
@@ -80,7 +84,7 @@ The report turn must not inject the live working-memory render, because a live r
 - [The CLI passes `chrome: {}` (`cli/src/modules/harness/runtime.ts:1080`), thus every local spawn refuses `no_browser` until #312 wires the sidecar] → the refusal is typed and names the absent capability. The delivery branch merges as one unit, thus no release carries the gap.
 - [The compiled binary fails `preview_report` without the packed assets] → the #312 asset binding lands on the same branch, before any release (decision D9 of `add-report-design-system`).
 - [An agent can call `submit_report` from habit after the swap] → the loop refuses the unknown tool, and the prompt names the one path.
-- [Two concurrent turns can both pass the zero-delta gate] → the one-per-thread store rule bounds the cost to one extra empty session.
+- [Two concurrent turns can both pass the delta gate] → the one-per-thread store rule bounds the cost to one extra empty session.
 - [The seed write fails after the thread insert] → the spawn purges the child and returns the fault, thus no context-less thread survives.
 - [A weak brief starves the Report Builder] → the transcript stays readable, and the interactive session is the repair path per the #223 record.
 
