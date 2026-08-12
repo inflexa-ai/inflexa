@@ -89,7 +89,7 @@ export function isInterruptedMessage(message: ModelMessage): boolean {
 /**
  * Build a `user` message the LOOP synthesized rather than a human typing it — the nudge that
  * continues a reply the model truncated at its output-token limit, and the message that carries a
- * tool picture the tool result could not.
+ * tool picture that the tool result cannot carry.
  *
  * It has to carry the `user` role because the wire format requires a user turn after a truncated
  * assistant message, but it is not user input, and the difference is load-bearing: a `user` message is

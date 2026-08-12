@@ -542,16 +542,6 @@ function markLastLoopAssistant(messages: LoopMessage[], initialCount: number): v
     }
 }
 
-/**
- * Dispatch one round of tool calls, and measure the time of each call.
- *
- * `results` and `durations` are positionally aligned with `toolUses`.
- *
- * Each measurement brackets the same unit that the loop awaits for that call. For a
- * step-mode call that unit is `runStep`, thus the figure includes the durable-step
- * wrapper. The wrapper is part of what the call cost, and a cached replay of a step
- * is genuinely fast. A bracket inside the step would report a body that did not run.
- */
 /** Where the picture of a tool result goes on the wire. */
 type ImagePlacement = "tool-result" | "user-message" | "drop";
 
@@ -579,6 +569,16 @@ interface DeferredImage {
  * says where the picture of a tool result goes, and `log` is the sink for the drop
  * record. `deferredImages` collects the picture of each tool result of the round
  * under the user-message placement, and the round assembly empties it.
+ *
+ * CAUTION: the collector fills as a side effect inside the tool step body. A
+ * replayed durable step returns its cached result, and it does not run the body.
+ * Thus a recovered run omits the fallback picture of a replayed round.
+ *
+ * TODO(define): the hole is latent, because no durable agent wires an image
+ * tool today. The structural fix moves the picture into the cached step
+ * return, and a replay then rebuilds the same fallback message. That fix
+ * changes the contract of the durable step and the specs, thus it waits for
+ * its own change.
  */
 interface ResultEncoding {
     readonly placement: ImagePlacement;
@@ -590,7 +590,7 @@ interface ResultEncoding {
  * Append one user message that carries each deferred picture of the round, then
  * empty the collector.
  *
- * The wire needs the tool message directly after the assistant message with the
+ * The tool message must come directly after the assistant message with the
  * tool calls. Thus a picture rides a separate message after the whole tool
  * message, and one message batches the round. The parts obey the order of
  * `results`, which is the order of the tool calls. Each deferred picture has a
@@ -616,6 +616,16 @@ function appendDeferredImages(messages: LoopMessage[], results: readonly ToolRes
     deferredImages.length = 0;
 }
 
+/**
+ * Dispatch one round of tool calls, and measure the time of each call.
+ *
+ * `results` and `durations` are positionally aligned with `toolUses`.
+ *
+ * Each measurement brackets the same unit that the loop awaits for that call. For a
+ * step-mode call that unit is `runStep`, thus the figure includes the durable-step
+ * wrapper. The wrapper is part of what the call cost, and a cached replay of a step
+ * is genuinely fast. A bracket inside the step would report a body that did not run.
+ */
 async function dispatchTools(
     toolUses: readonly ToolCallPart[],
     toolsById: Map<string, Tool>,
