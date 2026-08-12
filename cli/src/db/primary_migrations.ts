@@ -214,6 +214,62 @@ export const migrations: Migration[] = [
             );
         `,
     },
+    {
+        // The acquisition flights of `inflexa store add`: one row for each live flight, in the shape of
+        // the download lifecycle row above. A flight is the work of acquiring ONE normalized spec into the
+        // pool, and a second request for that spec subscribes to the flight rather than starting a second
+        // provisioner container.
+        //
+        // `id` IS the flight key — the ecosystem, the PEP 503 canonical name, and the specifier, joined.
+        // The key is the whole identity of the flight, so a minted id beside it would make two things that
+        // must agree about which row is "the flight for this spec". This is the argument `llm_usage` makes
+        // for `record_key` and `lib_store_downloads` makes for its fixed id. A single-column key also lets
+        // the subscription table carry one foreign key instead of three.
+        //
+        // The three parts ride their own columns as well, because a reader renders the spec: `inflexa
+        // store ls` and the sidebar name the flight, and neither must take the key apart to do it.
+        //
+        // ONLY the two live states are permitted. A finished flight is not a cache: the owner REMOVES the
+        // row when the flight ends, thus a failed acquisition leaves nothing that would dedup the next
+        // request for the same spec. The CHECK is what makes the reader's cast of the column sound.
+        //
+        // `holder_pid` is NOT NULL, because a row exists only while a process owns the flight. That pid is
+        // the liveness signal: a row whose holder is dead is debris from a killed process, and the next
+        // request sweeps it. The download lifecycle takes the same signal from its instance lock, but a
+        // flight key is minted at runtime and a lock file for each key would carry no more truth than this
+        // column.
+        //
+        // A subscription is a reference row, not an entity, thus it carries no identity triple — the same
+        // exception `analysis_inputs` takes. `analysis_id` is nullable, because a plain `inflexa store
+        // add` in a terminal belongs to no analysis and has no farm to extend. SQLite treats each NULL as
+        // distinct in a UNIQUE constraint, so a partial index pair covers the two cases, exactly as it
+        // does for the nullable anchor of an input.
+        version: 5,
+        up: `
+            CREATE TABLE lib_store_flights (
+                id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                state TEXT NOT NULL CHECK (state IN ('queued', 'running')),
+                ecosystem TEXT NOT NULL CHECK (ecosystem IN ('python', 'r')),
+                name TEXT NOT NULL,
+                specifier TEXT NOT NULL,
+                progress TEXT,
+                holder_pid INTEGER NOT NULL
+            );
+            CREATE TABLE lib_store_flight_subscriptions (
+                flight_id TEXT NOT NULL REFERENCES lib_store_flights(id) ON DELETE CASCADE,
+                analysis_id TEXT REFERENCES analyses(id) ON DELETE CASCADE
+            );
+            CREATE INDEX idx_lib_store_flight_subs_flight ON lib_store_flight_subscriptions(flight_id);
+            CREATE UNIQUE INDEX uq_lib_store_flight_subs_analysis
+                ON lib_store_flight_subscriptions(flight_id, analysis_id)
+                WHERE analysis_id IS NOT NULL;
+            CREATE UNIQUE INDEX uq_lib_store_flight_subs_host
+                ON lib_store_flight_subscriptions(flight_id)
+                WHERE analysis_id IS NULL;
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

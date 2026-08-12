@@ -29,8 +29,8 @@ export type LockOutcome = { acquired: true } | { acquired: false; holderPid: num
  * collides with an analysis lock, because analysis ids are UUIDv7.
  *
  * It lives here rather than beside the runtime because a live runtime is a fact other commands must read.
- * `inflexa store use` refuses to move the active-farm pointer while the lock is held, and it must not
- * import the harness runtime module to learn the key.
+ * A command that must not disturb a live sandbox reads the lock, and it must not import the harness
+ * runtime module to learn the key.
  */
 export const HARNESS_RUNTIME_LOCK_KEY = "harness-runtime";
 
@@ -44,6 +44,25 @@ export const HARNESS_RUNTIME_LOCK_KEY = "harness-runtime";
  * and this is the only sound signal that needs no heartbeat and no clock.
  */
 export const LIB_STORE_DOWNLOAD_LOCK_KEY = "lib-store-download";
+
+/**
+ * Advisory-lock key for a reclamation of the package store.
+ *
+ * A reclamation is exclusive against the acquisition flights: it waits for zero live flights, and it
+ * blocks a new one while it scans and deletes. This key is that block. A flight yields while a live
+ * process holds it, thus a reclaim never frees a store directory that a flight is about to reference.
+ */
+export const LIB_STORE_RECLAIM_LOCK_KEY = "lib-store-reclaim";
+
+/**
+ * Advisory-lock key for the store-level metadata of the package store — the dependency graph
+ * `deps.json` at the store root.
+ *
+ * Two writers touch that record. A download with `--update` replaces the graph of the old catalog with
+ * the graph of the new one. A flight commit appends the nodes that it acquired. The two must not
+ * interleave, thus each takes this key for the write and releases it after.
+ */
+export const LIB_STORE_METADATA_LOCK_KEY = "lib-store-metadata";
 
 /** Absolute path of a lock file for `key`. Exported for the unit test, which seeds and inspects it directly. */
 export function instanceLockPath(key: string): string {
@@ -65,8 +84,13 @@ function readHolderPid(path: string): number | null {
  * existence. ESRCH is the one unambiguous "dead" answer; EPERM (exists but owned by another user) and
  * any other error are treated as ALIVE, because the dangerous direction is declaring a live holder
  * dead (that would let two instances share the resource). When in doubt, keep the lock.
+ *
+ * Exported for the second holder-of-record in the codebase: an acquisition flight records its owner pid
+ * on its own row rather than in a lock file, because a flight key is minted at runtime and a file for
+ * each key would carry no more truth than that column. The probe must stay ONE implementation, so that
+ * "dead" means the same thing to a lock file and to a row.
  */
-function isPidAlive(pid: number): boolean {
+export function isPidAlive(pid: number): boolean {
     try {
         process.kill(pid, 0);
         return true;

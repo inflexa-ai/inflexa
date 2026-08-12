@@ -1,75 +1,105 @@
 /**
- * The `inflexa store` command actions — add, ls, use, remove-farm, reclaim — over the host package store.
+ * The `inflexa store` command actions — add, ls, remove-farm, reclaim — over the host package store.
  *
  * The store is a host directory the harness bind-mounts read-only at `/mnt/libs` for EVERY sandbox. Its
  * root is `env.libStoreDir`, a CLI-owned path: these commands write exactly where boot reads, and no
  * config value moves either side. The store is not optional. The runtime image bakes no R library and no
  * Python library, so a sandbox with no store mounted can import nothing.
  *
- * The store holds one content-addressed `store/` pool, per-farm symlink trees under `farms/`, and the
- * `current` symlink that selects the active farm. A sandbox mounts whatever `current` resolves to.
+ * The store holds one content-addressed `store/` pool and per-farm symlink trees under `farms/`. There is
+ * NO active farm at the store level. Each analysis owns the farm `farms/<analysisId>`, composition makes
+ * it, and the sandbox of that analysis mounts it. The farm the download brings, {@link CATALOG_FARM}, is
+ * the template: composition reads its lock for the default closure and links its warm caches.
+ *
+ * `inflexa store add` is ACQUISITION and it does no farm work. It resolves a spec, downloads it into the
+ * pool, and appends the resolved edges to the dependency graph. The farm of an analysis changes only
+ * through composition. Two requests for one spec share one flight — refer to `store_flight.ts`.
  *
  * The provisioner container starts ONLY for an operation that installs packages or mutates the store
  * under the store lock. It is the one container with network access and a compiler, and it owns the
  * per-store lock, so `add`, `reclaim`, and `remove-farm` start it through `lib/container.ts` — the same
  * engine wrapper the image pull uses, so engine selection and socket resolution are not duplicated.
  *
- * The other operations are host filesystem work and start NO container: the read of the active farm, the
- * list of what the store holds, the reclaim preview, and the switch of the active farm. The provisioner
- * image is measured in gigabytes, so a container start is a real cost that a read or a pointer move must
- * not pay.
+ * The other operations are host filesystem work and start NO container: the list of what the store holds,
+ * the reclaim preview, and the composition of a farm. The provisioner image is measured in gigabytes, so
+ * a container start is a real cost that a read or a link must not pay.
  *
  * The provisioner image reference is the {@link PROVISIONER_IMAGE} constant. No configuration value names
  * it and none can move it: the provisioner offers no variant, so a user chooses nothing. A command that
  * must start the container obtains the image when the machine does not hold it, rather than refusing.
- *
- * `store use` SWITCHES the active farm and it never merges two farms. A link-level union is unsafe: the
- * provisioner keeps the first link on a collision, so a union of two farms that pin different versions of
- * one distribution would give an environment that no resolver validated, and a lock file that describes
- * neither input. There is deliberately no merge option.
  */
 
-import { existsSync, mkdirSync, readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs";
-import { lstat, readFile, readdir, readlink, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
+import { lstat, readFile, readdir, readlink } from "node:fs/promises";
+import { join } from "node:path";
 
-import { randomUUIDv7 } from "bun";
 import { err, ok, type Result } from "neverthrow";
 
 import { ensureRuntime } from "../../lib/config.ts";
 import { stream, type CaptureResult } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
-import { acquireInstanceLock, releaseInstanceLock, HARNESS_RUNTIME_LOCK_KEY } from "../../lib/lock.ts";
+import { acquireInstanceLock, releaseInstanceLock, LIB_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
+import { listAnalyses } from "../../db/primary_query.ts";
+import {
+    analysisFarmPath,
+    describeFarmCompositionError,
+    extendFarm,
+    nameOfStoreDir,
+    readDepsGraph,
+    removeAnalysisFarm,
+    type DepsGraph,
+} from "./composition.ts";
 import { PROVISIONER_IMAGE } from "./images.ts";
 import { ensureProvisionerImage } from "./pull.ts";
 import {
     cancelLibStoreDownload,
-    inspectLibStoreDownload,
     installedLibStoreManifest,
     readLibStoreDownloadReport,
     runLibStoreTransfer,
     startLibStoreDownloadProcess,
     type LibStoreDownloadStatus,
 } from "./store_download.ts";
+import {
+    canonicalDistributionName,
+    describeLibStoreFlightSpec,
+    parseLibStoreFlightSpec,
+    readLibStoreFlights,
+    withLibStoreFlight,
+    type LibStoreFlightError,
+    type LibStoreFlightOutcome,
+    type LibStoreFlightSpec,
+    type LibStoreFlightStatus,
+} from "./store_flight.ts";
 
 /** The path the store is mounted at in both the provisioner (read-write) and the sandbox (read-only). */
 const LIB_MOUNT = "/mnt/libs";
 
 /**
- * The farm a bare `store add` extends when the store has no active one and the user names none. The store
- * is per-installation today (one `current` pointer), so a single default farm is the whole surface until
- * the per-analysis mount work lands.
+ * The farm the published catalog brings. It is the TEMPLATE and never an environment: composition reads
+ * its lock for the default closure of a new analysis farm, and it links the warm caches of this farm into
+ * each one. The publisher writes the name (`.github/workflows/lib-store-provisioner.yml`).
  */
-const DEFAULT_FARM = "default";
+const CATALOG_FARM = "catalog";
+
+/**
+ * The active-farm pointer of the OLD store layout, at the store root.
+ *
+ * Nothing writes it and nothing reads it. It is named here so the first store command after the upgrade
+ * removes it — refer to {@link removeStaleActiveFarmPointer}.
+ */
+const LEGACY_ACTIVE_FARM_POINTER = "current";
 
 /** The pin marker the provisioner writes inside each store directory, recording its `name==version`. */
 const PIN_MARKER = ".inflexa-pin";
 
-/** The package inventory a complete farm carries. The harness mount check requires it, and so does `store use`. */
-const FARM_INVENTORY = "packages.txt";
-
 /** The store metadata a complete farm carries, recording its version, its architecture, and its tracks. */
 const FARM_METADATA = "meta.json";
+
+/** How long a reclamation waits for the live acquisition flights to finish before it refuses. */
+const FLIGHT_WAIT_MS = 600_000;
+
+/** How often a reclamation tests whether the flights finished. */
+const FLIGHT_POLL_MS = 250;
 
 /**
  * The message the provisioner prints when a second run finds the store lock held. Matched so the CLI turns
@@ -83,6 +113,8 @@ export type ProvisionError =
     | { readonly type: "image_unavailable"; readonly message: string }
     | { readonly type: "store_locked"; readonly message: string }
     | { readonly type: "download_in_flight"; readonly message: string }
+    | { readonly type: "reclaim_in_flight"; readonly message: string }
+    | { readonly type: "acquisition_in_flight"; readonly message: string }
     | { readonly type: "farm_not_found"; readonly farm: string; readonly message: string }
     | { readonly type: "provisioner_failed"; readonly code: number; readonly message: string }
     | { readonly type: "io_failed"; readonly message: string; readonly cause: unknown };
@@ -101,15 +133,26 @@ export type ProvisionDeps = {
     readonly run?: ProvisionerRunner;
     readonly ensureImage?: () => Promise<Result<void, ProvisionError>>;
     readonly onProgress?: (event: ProvisionProgress) => void;
+    /**
+     * Stop the container in flight. An acquisition flight whose last subscriber cancelled aborts through
+     * this, so the work does not finish for nobody.
+     */
+    readonly signal?: AbortSignal;
+    /** Report what a reclamation would remove, INSIDE the exclusivity window, before it removes anything. */
+    readonly onPreview?: (candidates: readonly string[]) => void;
+    /** How long a reclamation waits for the live flights. Default: {@link FLIGHT_WAIT_MS}. Injected by a test. */
+    readonly flightWaitMs?: number;
+    /** How long one wait step of a reclamation is. Default: {@link FLIGHT_POLL_MS}. Injected by a test. */
+    readonly flightPollMs?: number;
 };
 
 /** What the provisioner container is asked to do: the image, the store to mount, the network, and its arguments. */
 export type ProvisionerInvocation = {
     readonly image: string;
     readonly storeRoot: string;
-    /** `online` for provisioning (it reaches the package index); `offline` for reclaim and farm removal, which touch only local disk. */
+    /** `online` for acquisition (it reaches the package index); `offline` for reclaim and farm removal, which touch only local disk. */
     readonly network: "online" | "offline";
-    /** The arguments passed to the provisioner entry point (for example `--farm default scanpy`, `--reclaim`, `--remove-farm x`). */
+    /** The arguments passed to the provisioner entry point (for example `scanpy`, `--reclaim`, `--remove-farm x`). */
     readonly args: readonly string[];
 };
 
@@ -121,38 +164,57 @@ export type RuntimeUnavailableError = { readonly type: "runtime_unavailable"; re
  * streams the provisioner through `lib/container.ts`. Injected so a test drives the command logic against
  * a fake, and so no test ever starts a real container.
  */
-export type ProvisionerRunner = (invocation: ProvisionerInvocation, onLine: (line: string) => void) => Promise<Result<CaptureResult, RuntimeUnavailableError>>;
+export type ProvisionerRunner = (
+    invocation: ProvisionerInvocation,
+    onLine: (line: string) => void,
+    signal?: AbortSignal,
+) => Promise<Result<CaptureResult, RuntimeUnavailableError>>;
 
-/** A completed provisioning run. */
-export type ProvisionOutcome = { readonly farm: string; readonly specs: readonly string[] };
+/** A completed acquisition run, carrying the specs it acquired into the pool. */
+export type ProvisionOutcome = { readonly specs: readonly string[] };
 
-/** A completed reclamation run, carrying the store directories it removed. */
-export type ReclaimOutcome = { readonly reclaimed: readonly string[] };
+/** A completed reclamation run, carrying the store directories it removed and the orphan farms it reaped. */
+export type ReclaimOutcome = {
+    readonly reclaimed: readonly string[];
+    /** The farms whose analysis the database no longer holds. The reaper removed them before the preview. */
+    readonly farmsReaped: readonly string[];
+};
 
 /** One stored distribution, by its store directory name and the pin it records (`name==version`, or `null` when the marker is absent). */
 export type StorePackage = { readonly dir: string; readonly pin: string | null };
 
-/** One farm: its name, whether `current` selects it, how many symlinks it holds, and the tracks it carries. */
+/** One farm: its name, what it belongs to, how many symlinks it holds, and the tracks it carries. */
 export type StoreFarm = {
+    /** The directory name under `farms/`. For an analysis farm that name IS the analysis id. */
     readonly name: string;
-    readonly active: boolean;
+    /** True for the catalog farm the download brings, which composition reads as the template. */
+    readonly template: boolean;
+    /**
+     * The name of the analysis that owns the farm, or `null`.
+     *
+     * `null` covers the template, and it also covers an analysis farm whose analysis the database no
+     * longer holds — a normal disagreement between the folders and the database, and the orphan-farm
+     * reaper of the reclamation is what settles it.
+     */
+    readonly analysisName: string | null;
     readonly links: number;
     /**
      * The track names the farm's `meta.json` records, for example `python` and `r`. Empty when the file
      * records none or cannot be read. A farm with fewer tracks than another is the reason an import fails
-     * after a switch, so the inspection reports it.
+     * in one analysis and not in another, so the inspection reports it.
      */
     readonly tracks: readonly string[];
 };
 
-/**
- * The state of the active-farm pointer, which decides what every sandbox mounts.
- *
- * `dangling` is its own state and not an absence: the pointer names a farm, and the farm is gone. It
- * makes every sandbox unusable, and the user cannot see it from the farm list alone.
- */
-export type ActiveFarmPointer =
-    { readonly state: "absent" } | { readonly state: "dangling"; readonly farm: string } | { readonly state: "resolved"; readonly farm: string };
+/** One live acquisition flight as the listing reports it. */
+export type StoreFlightInspection = {
+    /** The normalized spec of the flight, as a user reads it. */
+    readonly spec: string;
+    /** The live state: waiting for a slot under the cap, or running. */
+    readonly state: LibStoreFlightStatus;
+    /** The analyses subscribed, by name where the database holds one and by id where it does not. */
+    readonly analyses: readonly string[];
+};
 
 /**
  * What the inspection reports about the detached catalog download.
@@ -178,10 +240,10 @@ export type StoreDownloadInspection = {
 export type StoreInspection = {
     readonly root: string;
     readonly exists: boolean;
-    /** What the active-farm pointer selects. */
-    readonly active: ActiveFarmPointer;
     readonly packages: readonly StorePackage[];
     readonly farms: readonly StoreFarm[];
+    /** The acquisition flights that are live now. Empty is the common state. */
+    readonly flights: readonly StoreFlightInspection[];
     /** Bytes the deduplicated store content occupies (`store/` only — the farms are symlinks). */
     readonly storeBytes: number;
     /**
@@ -217,13 +279,13 @@ const defaultEnsureImage = async (): Promise<Result<void, ProvisionError>> => {
 };
 
 /** The default runner: resolve and pin a container runtime, then stream the provisioner through `lib/container.ts`. */
-const defaultRunner: ProvisionerRunner = async (invocation, onLine) => {
+const defaultRunner: ProvisionerRunner = async (invocation, onLine, signal) => {
     const rtResult = await ensureRuntime();
     if (rtResult.isErr()) return err({ type: "runtime_unavailable", message: rtResult.error.message });
     const rt = rtResult.value;
     // The store mounts read-write here — the sandbox mounts the same root read-only — because the
-    // provisioner writes packages and farms into it. `mountArg` already yields a read-write bind for both
-    // engines (Podman's `:z` adds a shared SELinux relabel, never a read-only flag). Provisioning needs the
+    // provisioner writes packages into it. `mountArg` already yields a read-write bind for both engines
+    // (Podman's `:z` adds a shared SELinux relabel, never a read-only flag). An acquisition needs the
     // network to reach the package index; reclaim and farm removal touch only local disk, so they run with
     // no network at all.
     const args = [
@@ -236,7 +298,7 @@ const defaultRunner: ProvisionerRunner = async (invocation, onLine) => {
         ...invocation.args,
     ];
     try {
-        return ok(await stream(rt, args, onLine));
+        return ok(await stream(rt, args, onLine, signal));
     } catch (cause) {
         // The runtime was ready a moment ago, so a spawn failure now means it became unavailable.
         return err({ type: "runtime_unavailable", message: `Could not start the provisioner with ${rt.label}: ${errorText(cause)}` });
@@ -257,45 +319,45 @@ function classifyRun(res: CaptureResult): Result<void, ProvisionError> {
 }
 
 /**
- * The farm a bare `store add` extends: the explicit `--farm`, else the farm `current` selects, else
- * {@link DEFAULT_FARM}. Reading `current` is a passive host lookup; a missing or dangling pointer means
- * there is no active farm, which is the normal first-run state, not an error.
+ * Remove the active-farm pointer of the old store layout, one time and in silence.
+ *
+ * The layout carried a `current` symlink at the store root, and a sandbox mounted whatever it resolved
+ * to. Each sandbox now mounts the farm of its analysis, thus the pointer selects nothing and it means
+ * nothing. Each store command calls this, so an installed store upgrades in place at its first use.
+ *
+ * It removes a SYMLINK and nothing else. A real directory named `current` is content that somebody else
+ * put there, and this is a migration step, not a cleanup of the store root. A second call changes
+ * nothing, and an absent pointer is the normal state after the first one.
+ *
+ * No farm is rebuilt: a farm link names a store directory under `store/`, thus no link ever involved the
+ * pointer.
  */
-export function resolveActiveFarm(storeRoot: string, explicit?: string): string {
-    if (explicit !== undefined && explicit.trim() !== "") return explicit.trim();
-    return readCurrentTarget(storeRoot) ?? DEFAULT_FARM;
-}
-
-/** The farm name `current` points at (`farms/<name>`), or `null` when there is no usable pointer. */
-function readCurrentTarget(storeRoot: string): string | null {
+export function removeStaleActiveFarmPointer(storeRoot: string): void {
+    const pointer = join(storeRoot, LEGACY_ACTIVE_FARM_POINTER);
     try {
-        const name = basename(readlinkSync(join(storeRoot, "current")));
-        return name === "" ? null : name;
+        if (!lstatSync(pointer).isSymbolicLink()) return;
+        rmSync(pointer, { force: true });
     } catch {
-        return null;
+        // An absent pointer is the normal state, and an unreadable store root is a fault that the command
+        // itself reports with its own message. A migration step must fail no command.
     }
 }
 
-/** What the active-farm pointer selects: nothing, a farm that is gone, or a farm that is there. */
-function readActiveFarmPointer(storeRoot: string): ActiveFarmPointer {
-    const farm = readCurrentTarget(storeRoot);
-    if (farm === null) return { state: "absent" };
-    return existsSync(join(storeRoot, "farms", farm)) ? { state: "resolved", farm } : { state: "dangling", farm };
-}
-
 /**
- * Provision packages into a farm, extending its closure. The provisioner unions the new specs with the
- * farm's earlier requests, so this passes only the new specs and the harness re-resolves the whole set —
- * an add is additive by design.
+ * Acquire packages into the content-addressed pool.
+ *
+ * It does NO farm work. The provisioner resolves the specs, downloads the closure into `store/`, and
+ * appends the resolved edges to the dependency graph. The farm of an analysis changes only through
+ * composition, which links from the pool on the host.
  */
 export async function provisionPackages(
-    params: { readonly storeRoot: string; readonly farm: string; readonly specs: readonly string[] },
+    params: { readonly storeRoot: string; readonly specs: readonly string[] },
     deps: ProvisionDeps = {},
 ): Promise<Result<ProvisionOutcome, ProvisionError>> {
-    // A live download merges its staged tree into the store root ONE CHILD AT A TIME, so a provisioning
+    // A live download merges its staged tree into the store root ONE CHILD AT A TIME, so an acquisition
     // run that writes into the same pool during that merge can meet a half-merged root. The refusal covers
-    // the whole live period, exactly as `storeUse` refuses. A row of `running` whose holder is gone reads
-    // as failed, thus a dead downloader refuses nothing.
+    // the whole live period. A row of `running` whose holder is gone reads as failed, thus a dead
+    // downloader refuses nothing.
     const download = readLibStoreDownloadReport();
     if (download.live) {
         return err({
@@ -313,11 +375,12 @@ export async function provisionPackages(
     if (image.isErr()) return err(image.error);
     const run = deps.run ?? defaultRunner;
     const ran = await run(
-        { image: PROVISIONER_IMAGE, storeRoot: params.storeRoot, network: "online", args: ["--farm", params.farm, ...params.specs] },
+        { image: PROVISIONER_IMAGE, storeRoot: params.storeRoot, network: "online", args: [...params.specs] },
         (line) => reportProgress(deps, { type: "log", line }),
+        deps.signal,
     );
     if (ran.isErr()) return err(ran.error);
-    return classifyRun(ran.value).map(() => ({ farm: params.farm, specs: params.specs }));
+    return classifyRun(ran.value).map(() => ({ specs: params.specs }));
 }
 
 /** Remove a farm's symlinks. The store directories it referenced stay until reclaim runs. */
@@ -360,47 +423,159 @@ export async function reclaimPreview(storeRoot: string): Promise<Result<readonly
 }
 
 /**
- * Remove store content no farm references, holding the store lock through the provisioner so a concurrent
- * add cannot race the delete. Runs the container only when there is something to remove, so a clean store
- * costs no engine start. The caller reports {@link reclaimPreview} before this runs, so the removal is
- * never a surprise.
+ * Remove store content no farm references, EXCLUSIVELY against the acquisition flights.
+ *
+ * The exclusivity has two halves, and both are necessary. The reclaim lock blocks a NEW flight for the
+ * whole run, because a flight acquires into the pool and it would reference a directory that this run is
+ * about to free. The wait then holds this run until each flight that is already live finishes, thus a
+ * reclaim deletes nothing a flight wrote.
+ *
+ * The preview runs INSIDE that window and it is reported through `deps.onPreview`, so the set the user
+ * reads is the set the provisioner removes. A preview outside the window could name a directory that a
+ * flight referenced a moment later.
+ *
+ * The orphan-farm reaper runs FIRST, inside the same window. A farm holds the store directories that it
+ * links, thus a farm whose analysis is gone keeps pool content alive for nobody. The reaper removes it,
+ * and the preview that follows then names the content that the removal freed.
+ *
+ * The provisioner holds the store lock for the delete, so a concurrent write from another process cannot
+ * race it. It runs only when there is something to remove, thus a clean store costs no engine start.
  */
 export async function reclaimStore(params: { readonly storeRoot: string }, deps: ProvisionDeps = {}): Promise<Result<ReclaimOutcome, ProvisionError>> {
-    const preview = await reclaimPreview(params.storeRoot);
-    if (preview.isErr()) return err(preview.error);
-    const candidates = preview.value;
-    if (candidates.length === 0) return ok({ reclaimed: [] });
-    const image = await (deps.ensureImage ?? defaultEnsureImage)();
-    if (image.isErr()) return err(image.error);
-    const run = deps.run ?? defaultRunner;
-    const ran = await run({ image: PROVISIONER_IMAGE, storeRoot: params.storeRoot, network: "offline", args: ["--reclaim"] }, (line) =>
-        reportProgress(deps, { type: "log", line }),
-    );
-    if (ran.isErr()) return err(ran.error);
-    return classifyRun(ran.value).map(() => ({ reclaimed: candidates }));
+    const lock = acquireInstanceLock(LIB_STORE_RECLAIM_LOCK_KEY);
+    if (!lock.acquired) {
+        return err({
+            type: "reclaim_in_flight",
+            message: `Another \`inflexa\` process (pid ${lock.holderPid}) is reclaiming this package store. Wait for it to finish, then run this command again.`,
+        });
+    }
+    try {
+        const settled = await waitForNoFlights(deps.flightWaitMs ?? FLIGHT_WAIT_MS, deps.flightPollMs ?? FLIGHT_POLL_MS);
+        if (settled.isErr()) return err(settled.error);
+        const farmsReaped = await reapOrphanFarms(params.storeRoot, deps);
+        const preview = await reclaimPreview(params.storeRoot);
+        if (preview.isErr()) return err(preview.error);
+        const candidates = preview.value;
+        deps.onPreview?.(candidates);
+        if (candidates.length === 0) return ok({ reclaimed: [], farmsReaped });
+        const image = await (deps.ensureImage ?? defaultEnsureImage)();
+        if (image.isErr()) return err(image.error);
+        const run = deps.run ?? defaultRunner;
+        const ran = await run({ image: PROVISIONER_IMAGE, storeRoot: params.storeRoot, network: "offline", args: ["--reclaim"] }, (line) =>
+            reportProgress(deps, { type: "log", line }),
+        );
+        if (ran.isErr()) return err(ran.error);
+        return classifyRun(ran.value).map(() => ({ reclaimed: candidates, farmsReaped }));
+    } finally {
+        releaseInstanceLock(LIB_STORE_RECLAIM_LOCK_KEY);
+    }
 }
 
 /**
- * Inspect the store from the host filesystem: the active-farm pointer, its packages, its farms with their
- * tracks, and the disk the content occupies. Read-only by construction — it takes no container seam, so no
- * command routed through it can remove content. An absent root is a normal state, reported as
- * `exists: false`, not an error.
+ * Remove each farm whose analysis the database no longer holds.
+ *
+ * `analysis delete` removes the farm of the analysis, thus this pass exists for the case that route
+ * cannot cover: a database that the user replaced or removed, and a delete that a crash stopped between
+ * the two stores. The folders and the database are entitled to disagree, and a farm that nothing can
+ * reach again would otherwise hold pool content for ever.
+ *
+ * It runs ONLY here, because reclamation is never implicit. The template farm is never an orphan: it
+ * belongs to the catalog and to no analysis. A farm that a lease holds is not removed either — a live
+ * sandbox resolves those links right now — and {@link removeAnalysisFarm} is what makes that check.
+ *
+ * A database that cannot answer names NO orphan. The alternative would read an unreadable table as an
+ * empty one, and it would then remove every farm of the store.
+ */
+async function reapOrphanFarms(storeRoot: string, deps: ProvisionDeps): Promise<string[]> {
+    const analyses = listAnalyses();
+    if (analyses.isErr()) {
+        reportProgress(deps, { type: "log", line: "[reap] the analyses table could not be read; no farm was reaped" });
+        return [];
+    }
+    const farmsDir = join(storeRoot, "farms");
+    if (!existsSync(farmsDir)) return [];
+    const known = new Set(analyses.value.map((analysis) => analysis.id));
+    const reaped: string[] = [];
+    for (const entry of await readdir(farmsDir, { withFileTypes: true })) {
+        // A dot-directory is a staging or a superseded farm from an interrupted swap of the provisioner,
+        // and `--repair` owns it.
+        if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+        if (entry.name === CATALOG_FARM || known.has(entry.name)) continue;
+        const removed = await removeAnalysisFarm({ storeRoot, analysisId: entry.name });
+        removed.match(
+            (outcome) => {
+                if (!outcome.removed) return;
+                reaped.push(entry.name);
+                reportProgress(deps, { type: "log", line: `[reap] removed the farm of the analysis ${entry.name}, which the database no longer holds` });
+            },
+            (error) => reportProgress(deps, { type: "log", line: `[reap] kept the farm ${entry.name}: ${describeFarmCompositionError(error)}` }),
+        );
+    }
+    return reaped;
+}
+
+/** Hold a reclamation until no acquisition flight is live, and refuse when the wait runs out. */
+async function waitForNoFlights(waitMs: number, pollMs: number): Promise<Result<void, ProvisionError>> {
+    for (let waited = 0; ; waited += pollMs) {
+        const flights = readLibStoreFlights();
+        if (flights.length === 0) return ok(undefined);
+        if (waited >= waitMs) {
+            const names = flights.map((flight) => `${flight.row.name}${flight.row.specifier}`).join(", ");
+            return err({
+                type: "acquisition_in_flight",
+                message: `A package acquisition is still in flight (${names}), and a reclaim must not free what it is about to reference. Wait for it to finish, then run this command again.`,
+            });
+        }
+        await Promise.sleep(pollMs);
+    }
+}
+
+/**
+ * Inspect the store from the host filesystem: its packages, its farms with their owners and their tracks,
+ * the live acquisition flights, and the disk the content occupies. Read-only by construction — it takes no
+ * container seam, so no command routed through it can remove content. An absent root is a normal state,
+ * reported as `exists: false`, not an error.
+ *
+ * The farms and the flights each name an analysis, thus this reads the analyses table. A name the table
+ * does not hold degrades to `null` and to the id, because the folders and the database can disagree and
+ * a listing that failed on that would be worse than a listing that reports it.
  */
 export async function inspectStore(storeRoot: string): Promise<Result<StoreInspection, ProvisionError>> {
     try {
         const download = await inspectStoreDownload(storeRoot);
+        const flights = readStoreFlights();
         if (!existsSync(storeRoot)) {
-            return ok({ root: storeRoot, exists: false, active: { state: "absent" }, packages: [], farms: [], storeBytes: 0, reclaimableBytes: 0, download });
+            return ok({ root: storeRoot, exists: false, packages: [], farms: [], flights, storeBytes: 0, reclaimableBytes: 0, download });
         }
-        const active = readActiveFarmPointer(storeRoot);
         const packages = await readStorePackages(storeRoot);
-        const farms = await readFarms(storeRoot, active);
+        const farms = await readFarms(storeRoot);
         const storeBytes = await dirBytes(join(storeRoot, "store"));
         const reclaimableBytes = await reclaimableStoreBytes(storeRoot);
-        return ok({ root: storeRoot, exists: true, active, packages, farms, storeBytes, reclaimableBytes, download });
+        return ok({ root: storeRoot, exists: true, packages, farms, flights, storeBytes, reclaimableBytes, download });
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not inspect the package store at ${storeRoot}.`, cause });
     }
+}
+
+/** The analysis names by id, or an empty map when the database cannot answer. A miss is a name the listing does without. */
+function analysisNamesById(): ReadonlyMap<string, string> {
+    return new Map(
+        listAnalyses()
+            .unwrapOr([])
+            .map((analysis) => [analysis.id, String(analysis.name)]),
+    );
+}
+
+/** The live acquisition flights, with each subscriber named where the database holds a name for it. */
+function readStoreFlights(): readonly StoreFlightInspection[] {
+    const flights = readLibStoreFlights();
+    if (flights.length === 0) return [];
+    const names = analysisNamesById();
+    return flights.map((flight) => ({
+        spec: describeLibStoreFlightSpec(flight.row),
+        state: flight.row.state,
+        analyses: flight.analysisIds.map((id) => names.get(id) ?? id),
+    }));
 }
 
 /**
@@ -422,135 +597,6 @@ async function inspectStoreDownload(storeRoot: string): Promise<StoreDownloadIns
         message: report.row?.message ?? null,
         updateAvailable: installed !== null && latest !== null && installed !== latest,
     };
-}
-
-// --- the active-farm switch ---------------------------------------------------
-
-/** Why `inflexa store use` refused. Each variant maps to one actionable user message. */
-export type StoreUseError =
-    | { readonly type: "runtime_live"; readonly holderPid: number; readonly message: string }
-    | { readonly type: "download_in_flight"; readonly message: string }
-    | { readonly type: "farm_not_found"; readonly farm: string; readonly message: string }
-    | { readonly type: "farm_incomplete"; readonly farm: string; readonly missing: readonly string[]; readonly message: string }
-    | { readonly type: "reserved_name"; readonly farm: string; readonly message: string }
-    | { readonly type: "io_failed"; readonly message: string; readonly cause: unknown };
-
-/** A completed switch: the farm now active, and the one it replaced (`null` when there was no pointer). */
-export type StoreUseOutcome = { readonly farm: string; readonly previous: string | null };
-
-/** Caller-supplied hooks for {@link storeUse}. */
-export type StoreUseDeps = {
-    /** Report one line to the user. The forced switch names its risk through this, BEFORE the write. */
-    readonly onNotice?: (line: string) => void;
-};
-
-/** The risk a forced switch takes, named before the pointer moves. */
-const FORCE_RISK_NOTICE =
-    "A live sandbox keeps its own resolved mount of /mnt/libs/current. This switch re-points it, and that sandbox then reads nothing from the store.";
-
-/**
- * Switch the active farm of the store, atomically and with no container.
- *
- * The write makes the new link at a temporary name in the store root, then renames that name over
- * `current`. A rename over an existing name is atomic within one filesystem, and the store root is one
- * filesystem. The pointer therefore resolves at every moment: it names the old farm, then the new one, and
- * it is never absent. That matters because the harness refuses a store whose `current` does not resolve
- * and then drops the mount with a warning only, so a sandbox created inside an unlink-then-relink window
- * would hold no package and report nothing.
- *
- * It refuses, and leaves the pointer untouched, in five cases. `force` bypasses the live-runtime refusal
- * and NOTHING else: the other four protect the pointer itself, and a forced pointer that no sandbox can
- * mount would trade a clear refusal for a store the harness rejects at every later sandbox.
- */
-export async function storeUse(
-    params: { readonly storeRoot: string; readonly farm: string; readonly force?: boolean },
-    deps: StoreUseDeps = {},
-): Promise<Result<StoreUseOutcome, StoreUseError>> {
-    const farm = params.farm.trim();
-    // A dot name marks staging debris or a farm a swap superseded, never a farm to select. Checked first
-    // because it is a fact about the name alone, so it costs no disk read.
-    if (farm.startsWith(".")) {
-        return err({
-            type: "reserved_name",
-            farm,
-            message: `"${farm}" is a dot-prefixed name, which marks staging or superseded debris rather than a farm. Run \`inflexa store ls\` to see the farms.`,
-        });
-    }
-
-    const farmPath = join(params.storeRoot, "farms", farm);
-    let missing: readonly string[];
-    try {
-        if (!existsSync(farmPath) || !(await stat(farmPath)).isDirectory()) {
-            return err({
-                type: "farm_not_found",
-                farm,
-                message: `No farm named "${farm}" under ${join(params.storeRoot, "farms")}. Run \`inflexa store ls\` to see the farms.`,
-            });
-        }
-        // The shape the harness mount check requires. The CLI applies it HERE, and nowhere else, because
-        // the refusal is the point of this command: a refusal before the write beats a broken pointer.
-        missing = [FARM_INVENTORY, FARM_METADATA].filter((name) => !existsSync(join(farmPath, name)));
-    } catch (cause) {
-        return err({ type: "io_failed", message: `Could not read the farm at ${farmPath}.`, cause });
-    }
-    if (missing.length > 0) {
-        return err({
-            type: "farm_incomplete",
-            farm,
-            missing,
-            message: `The farm "${farm}" carries no ${missing.join(" and no ")}, so the harness would refuse to mount it. Run \`inflexa store add\` to build it, or select a complete farm.`,
-        });
-    }
-
-    // A download merges its staged tree into the store root, so it can add a farm while this switch runs.
-    // The two must not overlap.
-    if ((await inspectLibStoreDownload(params.storeRoot)) === "incomplete") {
-        return err({
-            type: "download_in_flight",
-            message:
-                "A package-store download is in flight or was interrupted. Wait for it to finish, or open `inflexa` to repair it, then run this command again.",
-        });
-    }
-
-    // A sandbox can exist only under a live harness runtime, and that runtime holds the machine-wide
-    // instance lock for its whole life. The held lock is therefore a sound "a sandbox may be live" guard,
-    // and it needs no per-sandbox lease. `acquireInstanceLock` reclaims a lock whose holder pid is dead,
-    // so `force` covers only the case that survives that check.
-    const lock = acquireInstanceLock(HARNESS_RUNTIME_LOCK_KEY);
-    if (!lock.acquired && params.force !== true) {
-        return err({
-            type: "runtime_live",
-            holderPid: lock.holderPid,
-            message: `Another \`inflexa\` process (pid ${lock.holderPid}) is running the harness runtime, and a switch re-points the store under any sandbox it holds. Stop that process, or pass \`--force\` to switch anyway.`,
-        });
-    }
-    // Naming the risk is what `--force` buys the user: they asked to bypass the guard, so say what the
-    // guard protects before the pointer moves, not after.
-    if (params.force === true) deps.onNotice?.(FORCE_RISK_NOTICE);
-
-    try {
-        const previous = readCurrentTarget(params.storeRoot);
-        const link = join(params.storeRoot, "current");
-        // A dot name for the temporary link, so a concurrent walk of the store root skips it exactly as it
-        // skips staging debris. The uuid keeps two switches from choosing the same name.
-        const temp = join(params.storeRoot, `.current-${randomUUIDv7()}`);
-        // Relative, matching what the provisioner writes: the link is read inside the container at
-        // /mnt/libs/current, where an absolute host path would resolve to nothing.
-        symlinkSync(`farms/${farm}`, temp);
-        try {
-            renameSync(temp, link);
-        } catch (cause) {
-            rmSync(temp, { force: true });
-            throw cause;
-        }
-        return ok({ farm, previous });
-    } catch (cause) {
-        return err({ type: "io_failed", message: `Could not point the active farm at "${farm}" in ${params.storeRoot}.`, cause });
-    } finally {
-        // Release only a lock this call took. `releaseInstanceLock` checks the holder pid, so a lock a
-        // foreign live process holds — the `--force` path — is left exactly as it was.
-        if (lock.acquired) releaseInstanceLock(HARNESS_RUNTIME_LOCK_KEY);
-    }
 }
 
 // --- host reads ---------------------------------------------------------------
@@ -607,7 +653,7 @@ async function readPin(dir: string): Promise<string | null> {
 /**
  * The track names a farm records in its `meta.json`, or an empty list when the file is absent, malformed,
  * or records no track. An unreadable file is not an error here: the inspection describes what is there,
- * and a farm with no readable metadata is one `store use` refuses anyway.
+ * and a farm the harness would refuse to mount is exactly what the reader must see.
  */
 async function readTracks(farmDir: string): Promise<readonly string[]> {
     try {
@@ -620,17 +666,26 @@ async function readTracks(farmDir: string): Promise<readonly string[]> {
     }
 }
 
-/** The farms with their link counts and their tracks, marking the one the pointer resolves to. */
-async function readFarms(storeRoot: string, active: ActiveFarmPointer): Promise<StoreFarm[]> {
+/**
+ * The farms with their owners, their link counts, and their tracks.
+ *
+ * The directory name carries the identity: the catalog farm is the template, and each other name is the
+ * id of the analysis that owns the farm. The analyses table gives the name of that analysis. A farm whose
+ * analysis the table no longer holds reports no name, which is the state the orphan-farm reaper settles.
+ */
+async function readFarms(storeRoot: string): Promise<StoreFarm[]> {
     const farmsDir = join(storeRoot, "farms");
     if (!existsSync(farmsDir)) return [];
+    const names = analysisNamesById();
     const farms: StoreFarm[] = [];
     for (const entry of await readdir(farmsDir, { withFileTypes: true })) {
         if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
         const dir = join(farmsDir, entry.name);
+        const template = entry.name === CATALOG_FARM;
         farms.push({
             name: entry.name,
-            active: active.state === "resolved" && active.farm === entry.name,
+            template,
+            analysisName: template ? null : (names.get(entry.name) ?? null),
             links: await countSymlinks(dir),
             tracks: await readTracks(dir),
         });
@@ -717,16 +772,148 @@ function reportError(error: { readonly message: string }): void {
     process.exitCode = 1;
 }
 
-/** `inflexa store add` — provision packages into the active farm. */
-export async function runStoreAdd(specs: string[], options: { farm?: string }): Promise<void> {
+/**
+ * `inflexa store add` — acquire package specs into the content-addressed pool.
+ *
+ * Each spec becomes ONE flight, keyed by its normalized form. Thus a spec that another request is
+ * already acquiring starts no second container: this call subscribes and it reports the progress of that
+ * flight. The flights of different specs run at the same time, under the configured concurrency cap.
+ *
+ * The command does NO farm work. The farm of an analysis changes only through composition.
+ *
+ * The subscription of this command belongs to no analysis, because the command takes none: it is a
+ * terminal that asked for a package, and it has no farm to extend.
+ */
+export async function runStoreAdd(specs: string[]): Promise<void> {
     const storeRoot = env.libStoreDir;
-    const farm = resolveActiveFarm(storeRoot, options.farm);
-    console.log(`Provisioning into farm "${farm}" (network on). This can take some minutes.`);
-    const result = await provisionPackages({ storeRoot, farm, specs }, { onProgress: (event) => console.log(event.line) });
-    result.match(
-        (outcome) => console.log(`Farm "${outcome.farm}" is ready.`),
-        (error) => reportError(error),
+    removeStaleActiveFarmPointer(storeRoot);
+    const parsed: LibStoreFlightSpec[] = [];
+    for (const raw of specs) {
+        const spec = parseLibStoreFlightSpec(raw, "python");
+        if (spec.isErr()) {
+            reportError(spec.error);
+            return;
+        }
+        parsed.push(spec.value);
+    }
+    console.log(`Acquiring ${parsed.length} spec(s) into the package pool (network on). This can take some minutes.`);
+    // Concurrently, because the cap is what bounds the parallelism and a sequential loop would ignore it.
+    // A spec whose flight another caller owns waits inside its own call, thus it holds up no other spec.
+    const outcomes = await Promise.all(parsed.map((spec) => acquireOneSpec(storeRoot, spec)));
+    for (const outcome of outcomes) {
+        outcome.match((flight) => {
+            switch (flight.type) {
+                case "flew":
+                    console.log(`Acquired ${describeLibStoreFlightSpec(flight.spec)} into the pool.`);
+                    return;
+                case "joined":
+                    console.log(`${describeLibStoreFlightSpec(flight.spec)} was already in flight, and that flight finished.`);
+                    console.log("Run `inflexa store ls` to see what the store holds now.");
+                    return;
+                case "canceled":
+                    console.log(`The flight for ${describeLibStoreFlightSpec(flight.spec)} stopped, because no analysis waits for it.`);
+                    return;
+                default: {
+                    const exhaustive: never = flight;
+                    throw new Error(`unhandled flight outcome: ${JSON.stringify(exhaustive)}`);
+                }
+            }
+        }, reportError);
+    }
+}
+
+/**
+ * Acquire one spec as a flight, streaming the provisioner output of whichever caller owns that flight.
+ *
+ * The baseline is read BEFORE the flight, thus the store directories that appear while the flight runs are
+ * what the acquisition added — refer to {@link extendFarmsForFlight}.
+ */
+function acquireOneSpec(
+    storeRoot: string,
+    spec: LibStoreFlightSpec,
+): Promise<Result<LibStoreFlightOutcome<ProvisionOutcome>, ProvisionError | LibStoreFlightError>> {
+    const baseline = new Set(
+        readDepsGraph(storeRoot).match(
+            (graph) => [...graph.nodes.keys()],
+            () => [],
+        ),
     );
+    return withLibStoreFlight(
+        {
+            spec,
+            analysisId: null,
+            onProgress: (line) => console.log(line),
+            extendSubscriberFarms: ({ spec: acquired, analysisIds }) => extendFarmsForFlight({ storeRoot, spec: acquired, analysisIds, baseline }),
+        },
+        async ({ signal, onProgress }) =>
+            provisionPackages(
+                { storeRoot, specs: [`${spec.name}${spec.specifier}`] },
+                {
+                    signal,
+                    onProgress: (event) => {
+                        console.log(event.line);
+                        onProgress(event.line);
+                    },
+                },
+            ),
+    );
+}
+
+/**
+ * Extend the farm of each analysis that subscribed to a flight, with what the flight acquired.
+ *
+ * The flight knows the SPEC and never the store directories: the provisioner resolves the spec, writes the
+ * pool, and appends the resolved edges to the graph under its commit mutex. Thus the graph is what names
+ * the result, and the canonical name of the spec is what finds it there. A store directory of that name
+ * that the baseline did not hold is what this acquisition added, and it is the root of the extension. When
+ * the pool already held the distribution, nothing appears, and the store directories of that name are the
+ * roots — that is the same package, acquired again for a second analysis.
+ *
+ * An analysis with NO farm is skipped, and that is the lazy rule and not an omission: an analysis that
+ * started no sandbox owns no farm, and a farm made here would be a farm that nothing asked for. Its first
+ * sandbox composes the default closure, and the import failure of the package extends it on demand.
+ *
+ * Nothing here can fail the acquisition. The packages are in the pool whatever the farms do, thus a
+ * refused extension is a report and never an error: `inflexa store ls` shows what the store holds now.
+ */
+export async function extendFarmsForFlight(params: {
+    readonly storeRoot: string;
+    readonly spec: LibStoreFlightSpec;
+    readonly analysisIds: readonly string[];
+    /** The store directories that the graph held before the flight ran. */
+    readonly baseline: ReadonlySet<string>;
+}): Promise<void> {
+    if (params.analysisIds.length === 0) return;
+    const graph = readDepsGraph(params.storeRoot);
+    if (graph.isErr()) {
+        console.log(`  No farm was extended: ${describeFarmCompositionError(graph.error)}.`);
+        return;
+    }
+    const named = storeDirsOfName(graph.value, params.spec.name);
+    const appeared = named.filter((storeDir) => !params.baseline.has(storeDir));
+    const roots = appeared.length > 0 ? appeared : named;
+    if (roots.length === 0) {
+        console.log(`  No farm was extended: the dependency graph names no store directory for ${params.spec.name}.`);
+        return;
+    }
+    for (const analysisId of params.analysisIds) {
+        if (!existsSync(analysisFarmPath(params.storeRoot, analysisId))) continue;
+        const extended = await extendFarm({ storeRoot: params.storeRoot, analysisId, roots });
+        extended.match(
+            () => console.log(`  Extended the farm of the analysis ${analysisId}.`),
+            (error) => console.log(`  The farm of the analysis ${analysisId} was not extended: ${describeFarmCompositionError(error)}.`),
+        );
+    }
+}
+
+/** The store directories of the graph that record one canonical distribution name. */
+function storeDirsOfName(graph: DepsGraph, name: string): string[] {
+    return [...graph.nodes.keys()]
+        .filter((storeDir) => {
+            const recorded = nameOfStoreDir(storeDir);
+            return recorded !== null && canonicalDistributionName(recorded) === name;
+        })
+        .sort();
 }
 
 /**
@@ -744,6 +931,7 @@ export async function runStoreAdd(specs: string[], options: { farm?: string }): 
  */
 export async function runStoreDownload(options: { update?: boolean; runTransfer?: boolean }): Promise<void> {
     const storeRoot = env.libStoreDir;
+    removeStaleActiveFarmPointer(storeRoot);
     if (options.runTransfer === true) {
         await runLibStoreTransfer({ storeRoot, update: options.update ?? false });
         return;
@@ -787,6 +975,7 @@ export async function runStoreDownload(options: { update?: boolean; runTransfer?
  * nothing. It removes no installed content, thus each child that the store root holds stays where it is.
  */
 export async function runStoreCancel(): Promise<void> {
+    removeStaleActiveFarmPointer(env.libStoreDir);
     const outcome = await cancelLibStoreDownload(env.libStoreDir);
     if (outcome.type === "no_run") {
         console.log("No package-store download is running. Nothing changed.");
@@ -796,8 +985,9 @@ export async function runStoreCancel(): Promise<void> {
     console.log("Each package and farm the store already holds stays. Run `inflexa store download` to start again.");
 }
 
-/** `inflexa store ls` — report the store's active farm, packages, farms, and disk use. */
+/** `inflexa store ls` — report the packages, the farms, the live flights, and the disk use of the store. */
 export async function runStoreLs(): Promise<void> {
+    removeStaleActiveFarmPointer(env.libStoreDir);
     const result = await inspectStore(env.libStoreDir);
     result.match(
         (inspection) => printInspection(inspection),
@@ -805,22 +995,9 @@ export async function runStoreLs(): Promise<void> {
     );
 }
 
-/** `inflexa store use` — switch the active farm on the host. */
-export async function runStoreUse(farm: string, options: { force?: boolean }): Promise<void> {
-    const result = await storeUse({ storeRoot: env.libStoreDir, farm, force: options.force ?? false }, { onNotice: (line) => console.log(`  ${line}`) });
-    result.match(
-        (outcome) =>
-            console.log(
-                outcome.previous === null || outcome.previous === outcome.farm
-                    ? `The active farm is "${outcome.farm}".`
-                    : `The active farm is "${outcome.farm}" (it was "${outcome.previous}").`,
-            ),
-        (error) => reportError(error),
-    );
-}
-
 /** `inflexa store remove-farm` — remove a farm's symlinks. */
 export async function runStoreRemoveFarm(farm: string): Promise<void> {
+    removeStaleActiveFarmPointer(env.libStoreDir);
     const result = await removeFarm({ storeRoot: env.libStoreDir, farm }, { onProgress: (event) => console.log(event.line) });
     result.match(
         () => console.log(`Removed farm "${farm}". Run \`inflexa store reclaim\` to drop the packages it alone referenced.`),
@@ -828,39 +1005,36 @@ export async function runStoreRemoveFarm(farm: string): Promise<void> {
     );
 }
 
-/** `inflexa store reclaim` — report, then remove, store content no farm references. */
+/**
+ * `inflexa store reclaim` — report, then remove, store content no farm references.
+ *
+ * The report comes from `onPreview`, thus it lands INSIDE the exclusivity window that `reclaimStore`
+ * holds. A preview that this action took itself, before that window, could name a directory that a
+ * flight referenced a moment later.
+ */
 export async function runStoreReclaim(): Promise<void> {
     const storeRoot = env.libStoreDir;
-    const preview = await reclaimPreview(storeRoot);
-    if (preview.isErr()) return reportError(preview.error);
-    const candidates = preview.value;
-    if (candidates.length === 0) {
-        console.log("No unreferenced packages. Nothing to reclaim.");
-        return;
-    }
-    console.log("These store packages have no farm and will be removed:");
-    for (const name of candidates) console.log(`  ${name}`);
-    const result = await reclaimStore({ storeRoot }, { onProgress: (event) => console.log(event.line) });
-    result.match(
-        (outcome) => console.log(`Reclaimed ${outcome.reclaimed.length} package(s).`),
-        (error) => reportError(error),
+    removeStaleActiveFarmPointer(storeRoot);
+    const result = await reclaimStore(
+        { storeRoot },
+        {
+            onProgress: (event) => console.log(event.line),
+            onPreview: (candidates) => {
+                if (candidates.length === 0) {
+                    console.log("No unreferenced packages. Nothing to reclaim.");
+                    return;
+                }
+                console.log("These store packages have no farm and will be removed:");
+                for (const name of candidates) console.log(`  ${name}`);
+            },
+        },
     );
-}
-
-/** Render the active-farm pointer as its one report line. */
-function describeActive(active: ActiveFarmPointer): string {
-    switch (active.state) {
-        case "resolved":
-            return active.farm;
-        case "dangling":
-            return `none — the pointer names "${active.farm}", which is not there. Run \`inflexa store use <farm>\` to select one.`;
-        case "absent":
-            return "none — run `inflexa store use <farm>` to select one.";
-        default: {
-            const exhaustive: never = active;
-            throw new Error(`unhandled active-farm pointer: ${JSON.stringify(exhaustive)}`);
-        }
-    }
+    result.match((outcome) => {
+        // The reaped farms come first, because they are the reason that some of the packages below had no
+        // farm left at the preview.
+        if (outcome.farmsReaped.length > 0) console.log(`Removed ${outcome.farmsReaped.length} farm(s) whose analysis is gone.`);
+        if (outcome.reclaimed.length > 0) console.log(`Reclaimed ${outcome.reclaimed.length} package(s).`);
+    }, reportError);
 }
 
 /** Render the bytes moved against the bytes the manifest declares. Before the manifest resolves there is no total, thus no ratio. */
@@ -910,22 +1084,35 @@ function printDownload(download: StoreDownloadInspection): void {
     if (download.updateAvailable) console.log("  Update   a newer package store is available — run `inflexa store download --update` to apply it.");
 }
 
+/**
+ * Render what one farm belongs to.
+ *
+ * The template is the catalog farm, and composition reads it for each analysis. Each other farm belongs
+ * to one analysis, thus its name is what a reader recognizes. A farm whose analysis the database no
+ * longer holds says so, because that farm is exactly what the orphan-farm reaper removes.
+ */
+function describeFarmOwner(farm: StoreFarm): string {
+    if (farm.template) return "template";
+    return farm.analysisName === null ? "no analysis — a reclaim removes it" : `analysis "${farm.analysisName}"`;
+}
+
 /** Print a store inspection as an aligned report. */
 function printInspection(inspection: StoreInspection): void {
     console.log(`  Store    ${inspection.root}`);
     if (!inspection.exists) {
-        console.log("  Present  no — run `inflexa store add <packages...>` to create it.");
+        console.log("  Present  no — run `inflexa store download` to obtain the published catalog.");
+        printFlights(inspection.flights);
         printDownload(inspection.download);
         return;
     }
-    console.log(`  Active   ${describeActive(inspection.active)}`);
     console.log(`  Packages ${inspection.packages.length}`);
     for (const pkg of inspection.packages) console.log(`    ${pkg.pin ?? pkg.dir}`);
     console.log(`  Farms    ${inspection.farms.length}`);
     for (const farm of inspection.farms) {
         const tracks = farm.tracks.length === 0 ? "no tracks recorded" : `tracks: ${farm.tracks.join(", ")}`;
-        console.log(`    ${farm.name}${farm.active ? " (active)" : ""}  ${farm.links} link(s)  ${tracks}`);
+        console.log(`    ${farm.name}  ${describeFarmOwner(farm)}  ${farm.links} link(s)  ${tracks}`);
     }
+    printFlights(inspection.flights);
     console.log(`  Disk     ${formatBytes(inspection.storeBytes)}`);
     // An update keeps each old version, thus a reclaimable total shows the disk that `inflexa store reclaim`
     // frees. A zero total is the common state, and printing it would be noise, so the line stays silent then.
@@ -933,6 +1120,22 @@ function printInspection(inspection: StoreInspection): void {
         console.log(`  Reclaim  ${formatBytes(inspection.reclaimableBytes)} unreferenced — run \`inflexa store reclaim\` to recover it`);
     }
     printDownload(inspection.download);
+}
+
+/**
+ * Print the acquisition flights that are live now.
+ *
+ * No flight is the common state, and a "Flights 0" line would be noise, thus the block stays silent
+ * then. A live flight names its spec, its state, and the analyses subscribed, because those three answer
+ * "what is this machine doing, and for whom".
+ */
+function printFlights(flights: readonly StoreFlightInspection[]): void {
+    if (flights.length === 0) return;
+    console.log(`  Flights  ${flights.length}`);
+    for (const flight of flights) {
+        const analyses = flight.analyses.length === 0 ? "no analysis subscribed" : `analyses: ${flight.analyses.join(", ")}`;
+        console.log(`    ${flight.spec}  ${flight.state}  ${analyses}`);
+    }
 }
 
 /** Render a byte count in the largest unit that keeps it readable. */

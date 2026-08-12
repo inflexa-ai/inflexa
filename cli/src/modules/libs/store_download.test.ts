@@ -228,14 +228,18 @@ function makeStub(options: StubOptions): FetchLike {
 }
 
 /**
- * The two-layer store the publisher emits: a base layer (farms + `current`) and one track layer. The farm
- * name is a parameter, because the publisher ships `catalog` while a local farm carries the name the user
- * chose, and the merge tests need both.
+ * The two-layer store the publisher emits: a base layer (the farms, the graph, and the pointer of the old
+ * layout) and one track layer. The farm name is a parameter, because the publisher ships `catalog` while a
+ * local farm carries the name the user chose, and the merge tests need both.
+ *
+ * The base layer still carries `current`, deliberately. A published layer can carry it, and the merge must
+ * SKIP it rather than move it in — that skip is what the merge tests read.
  */
-function storeLayers(farm = "default"): { readonly base: BuiltLayer; readonly track: BuiltLayer } {
+function storeLayers(farm = "catalog"): { readonly base: BuiltLayer; readonly track: BuiltLayer } {
     const base = buildLayer(
         [
             { path: "current", symlink: `farms/${farm}` },
+            { path: "deps.json", content: '{"version":1,"nodes":{}}\n' },
             { path: `farms/${farm}/packages.txt`, content: "foo==1.0\n" },
             { path: `farms/${farm}/meta.json`, content: "{}\n" },
         ],
@@ -311,11 +315,12 @@ describe("downloadLibStore — the GHCR pull", () => {
         expect(log.authHeaders.length).toBeGreaterThan(0);
         expect(log.authHeaders.every((header) => header === "Bearer TESTTOKEN")).toBe(true);
 
-        // The reassembled root: the track content, the base farm files, and the symlinks kept verbatim.
+        // The reassembled root: the track content, the base farm files, and the dependency graph.
         expect(readFileSync(join(storeRoot, "store", "foo-1.0-abc", "data.txt"), "utf8")).toBe("hello store\n");
-        expect(readFileSync(join(storeRoot, "farms", "default", "packages.txt"), "utf8")).toBe("foo==1.0\n");
-        expect(lstatSync(join(storeRoot, "current")).isSymbolicLink()).toBe(true);
-        expect(readlinkSync(join(storeRoot, "current"))).toBe("farms/default");
+        expect(readFileSync(join(storeRoot, "farms", "catalog", "packages.txt"), "utf8")).toBe("foo==1.0\n");
+        expect(readFileSync(join(storeRoot, "deps.json"), "utf8")).toContain('"version":1');
+        // The pointer of the old layout is skipped, thus the store root gains no name that means nothing.
+        expect(existsSync(join(storeRoot, "current"))).toBe(false);
 
         // The receipt is present and pins the resolved manifest, so the state reads back installed.
         expect(await inspectLibStoreDownload(storeRoot)).toBe("installed");
@@ -551,9 +556,8 @@ describe("extractLayer — a partial extraction is a failure, never a silent ok"
         // Both store directories arrived, thus no alphabetical prefix was dropped.
         expect(readdirSync(join(storeRoot, "store")).sort()).toEqual(["bar-2.0-def", "foo-1.0-abc"]);
 
-        // The relative pointer stays a symlink with its target verbatim.
-        expect(lstatSync(join(storeRoot, "current")).isSymbolicLink()).toBe(true);
-        expect(readlinkSync(join(storeRoot, "current"))).toBe("farms/catalog");
+        // The pointer of the old layout is skipped: it is staged, and the merge moves it in no case.
+        expect(existsSync(join(storeRoot, "current"))).toBe(false);
 
         // The absolute farm link stays a symlink, it keeps its target, and it dangles — which the download
         // accepted, because a farm link resolves inside the sandbox and never on the host.
@@ -647,9 +651,9 @@ describe("extractLayer — a partial extraction is a failure, never a silent ok"
 });
 
 describe("downloadLibStore — the merge into a shared store root", () => {
-    test("keeps a locally added package, its farm, and the active-farm pointer", async () => {
+    test("keeps a locally added package and its farm, and it reports what the merge did", async () => {
         const storeRoot = join(work, "store-root");
-        makeLocalStore(storeRoot, { farm: "default", current: true });
+        makeLocalStore(storeRoot, { farm: "0197ffff-dead-7000-8000-000000000001", current: false });
 
         const result = await downloadStore(storeRoot, storeLayers("catalog"));
 
@@ -659,20 +663,18 @@ describe("downloadLibStore — the merge into a shared store root", () => {
 
         // The local content survives: the package, the farm file, and the farm symlink into the store.
         expect(readFileSync(join(storeRoot, "store", "six-1.16-local", "data.txt"), "utf8")).toBe("local six\n");
-        expect(readFileSync(join(storeRoot, "farms", "default", "local.txt"), "utf8")).toBe("mine\n");
-        expect(lstatSync(join(storeRoot, "farms", "default", "six")).isSymbolicLink()).toBe(true);
+        expect(readFileSync(join(storeRoot, "farms", "0197ffff-dead-7000-8000-000000000001", "local.txt"), "utf8")).toBe("mine\n");
+        expect(lstatSync(join(storeRoot, "farms", "0197ffff-dead-7000-8000-000000000001", "six")).isSymbolicLink()).toBe(true);
 
         // The published content landed beside it.
         expect(readFileSync(join(storeRoot, "store", "foo-1.0-abc", "data.txt"), "utf8")).toBe("hello store\n");
         expect(readFileSync(join(storeRoot, "farms", "catalog", "packages.txt"), "utf8")).toBe("foo==1.0\n");
 
-        // The active farm of the user did not move.
-        expect(readlinkSync(join(storeRoot, "current"))).toBe("farms/default");
-
+        // The report is the three fields of the merge, and it names no pointer.
         expect(outcome.merge.storeDirsAdded).toEqual(["foo-1.0-abc"]);
         expect(outcome.merge.farmsAdded).toEqual(["catalog"]);
         expect(outcome.merge.farmsKept).toEqual([]);
-        expect(outcome.merge.currentSet).toBe(false);
+        expect("currentSet" in outcome.merge).toBe(false);
         expect(await inspectLibStoreDownload(storeRoot)).toBe("installed");
     });
 
@@ -696,17 +698,55 @@ describe("downloadLibStore — the merge into a shared store root", () => {
         expect(outcome.merge.farmsAdded).toEqual([]);
     });
 
-    test("sets `current` when the store root carries no pointer", async () => {
+    // Task 5.4. A fresh merge writes NO pointer, and it brings the template farm — the two facts a
+    // per-analysis mount depends on. Composition reads that template for the default closure.
+    test("a fresh merge leaves no `current`, and the template farm is present", async () => {
         const storeRoot = join(work, "store-root");
-        makeLocalStore(storeRoot, { farm: "default", current: false });
 
         const result = await downloadStore(storeRoot, storeLayers("catalog"));
 
         const outcome = result._unsafeUnwrap();
         if (outcome.type !== "downloaded") throw new Error("the download did not complete");
 
-        expect(readlinkSync(join(storeRoot, "current"))).toBe("farms/catalog");
-        expect(outcome.merge.currentSet).toBe(true);
+        expect(existsSync(join(storeRoot, "current"))).toBe(false);
+        expect(existsSync(join(storeRoot, "farms", "catalog", "meta.json"))).toBe(true);
+        expect(outcome.merge.farmsAdded).toEqual(["catalog"]);
+        // The store reads back installed with no pointer at all, thus nothing downstream waits for one.
+        expect(await inspectLibStoreDownload(storeRoot)).toBe("installed");
+    });
+
+    // Task 5.2. The graph is a top-level store record: it merges when the root carries none, and
+    // `--update` — the consent that applies a moved tag — replaces it with the graph of the new catalog.
+    test("`deps.json` merges as a store record, and `--update` replaces it", async () => {
+        const storeRoot = join(work, "store-root");
+        await downloadStore(storeRoot, storeLayers("catalog"));
+        expect(readFileSync(join(storeRoot, "deps.json"), "utf8")).toContain('"nodes":{}');
+
+        // A second catalog, whose graph names a node the first one did not.
+        const base = buildLayer(
+            [
+                { path: "deps.json", content: '{"version":1,"nodes":{"bar-2.0-def":{}}}\n' },
+                { path: "farms/catalog/meta.json", content: "{}\n" },
+            ],
+            BASE_MEDIA_TYPE,
+        );
+        const track = buildLayer([{ path: "store/bar-2.0-def/data.txt", content: "hello bar\n" }], TRACK_MEDIA_TYPE);
+        const log: StubLog = { tokenCalls: 0, authHeaders: [] };
+        const stub = makeStub({
+            token: "T",
+            manifest: manifestBytes([base, track]),
+            blobs: new Map([
+                [base.digest, base.bytes],
+                [track.digest, track.bytes],
+            ]),
+            log,
+        });
+
+        const updated = await downloadLibStore({ storeRoot, arch: "amd64", fetch: stub, retry: NO_RETRY, force: true });
+        expect(updated._unsafeUnwrap().type).toBe("downloaded");
+        // The old graph is gone rather than merged: the two catalogs resolved different sets.
+        expect(readFileSync(join(storeRoot, "deps.json"), "utf8")).toContain("bar-2.0-def");
+        expect(readFileSync(join(storeRoot, "deps.json"), "utf8")).not.toContain('"nodes":{}');
     });
 });
 

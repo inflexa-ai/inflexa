@@ -20,7 +20,7 @@ import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
 import { __resetSidebarLiveForTest, absTime, absTimeShort, idTail, refreshSidebarData, relAge, type RefreshSeams } from "../hooks/sidebar_live.ts";
 import { __resetOpenThreadForTest, refreshOpenThread, type ThreadSeams } from "../hooks/thread.ts";
 import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
-import { __resetSandboxGateForTest, __setLibStoreGateStateForTest } from "../hooks/sandbox_gate.tsx";
+import { __resetSandboxGateForTest, __setLibStoreFlightsForTest, __setLibStoreGateStateForTest } from "../hooks/sandbox_gate.tsx";
 import { setChatStatus } from "../hooks/status.ts";
 import { entityFigureOf, Sidebar, usageSectionOf } from "./sidebar.tsx";
 import { tokenFigureDetail } from "../../lib/usage_format.ts";
@@ -1607,5 +1607,37 @@ describe("Sidebar PACKAGES — the package-store transfer", () => {
         } finally {
             setup.renderer.destroy();
         }
+    });
+});
+
+// The live acquisitions, under the catalog line in the same section. They report work and they decide
+// nothing: the store stays usable while a package acquires into it.
+describe("Sidebar PACKAGES — the live acquisition flights", () => {
+    afterEach(() => __resetSandboxGateForTest());
+
+    /** The sidebar mounted over an analysis, with the gate state and the flights seeded. */
+    async function flightFrame(flights: Parameters<typeof __setLibStoreFlightsForTest>[0]): Promise<string> {
+        const analysis = createAnalysis({ cwd: dirA, name: str256("flights")._unsafeUnwrap(), inputPaths: [] })._unsafeUnwrap();
+        __setLibStoreGateStateForTest({ phase: "installed", updateAvailable: false });
+        __setLibStoreFlightsForTest(flights);
+        return renderFrame(sidebarNode(wsFor(analysis, dirA)), { width: 44, height: 40 });
+    }
+
+    test("a running flight names its spec and its state on one rail row", async () => {
+        const frame = await flightFrame([{ spec: "python scanpy>=1.9", state: "running", progress: "[provision] resolving", subscribers: 1 }]);
+        expect(lineContaining(frame, "python scanpy>=1.9 running")).not.toBe("");
+        // The catalog line keeps its own verdict beside it: a flight is work, never a fault of the store.
+        expect(frame).toContain("installed");
+    });
+
+    test("a queued flight says that it waits, and it names how many analyses share it", async () => {
+        const frame = await flightFrame([{ spec: "python anndata", state: "queued", progress: null, subscribers: 2 }]);
+        expect(lineContaining(frame, "python anndata queued (2)")).not.toBe("");
+    });
+
+    test("no flight prints no line at all", async () => {
+        const frame = await flightFrame([]);
+        expect(frame).toContain("PACKAGES");
+        expect(frame).not.toContain("queued");
     });
 });

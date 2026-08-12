@@ -21,7 +21,17 @@ function tableNames(db: Database): string[] {
 describe("runMigrations", () => {
     test("creates the full schema", () => {
         const tables = tableNames(migratedMemoryDb());
-        for (const table of ["anchors", "projects", "analyses", "analysis_inputs", "llm_usage", "_migrations"]) {
+        for (const table of [
+            "anchors",
+            "projects",
+            "analyses",
+            "analysis_inputs",
+            "llm_usage",
+            "lib_store_downloads",
+            "lib_store_flights",
+            "lib_store_flight_subscriptions",
+            "_migrations",
+        ]) {
             expect(tables).toContain(table);
         }
     });
@@ -82,7 +92,7 @@ describe("runMigrations", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4]);
+        expect(versions).toEqual([1, 2, 3, 4, 5]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
@@ -107,7 +117,9 @@ describe("runMigrations", () => {
         // appearing, or one of these quietly disappearing, has to fail here. `sql IS NOT NULL` excludes
         // SQLite's implicit sqlite_autoindex_* entries — they back the PRIMARY KEY / UNIQUE constraints
         // and are not indexes this schema declares. The ledger contributes exactly one: no run_id or
-        // served_model_id index, because nothing queries by either without a scope.
+        // served_model_id index, because nothing queries by either without a scope. The flight
+        // subscriptions contribute three: one lookup by flight, and the partial pair that makes a
+        // subscriber unique although `analysis_id` is nullable.
         const indexes = migratedMemoryDb()
             .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL ORDER BY name")
             .all()
@@ -116,9 +128,12 @@ describe("runMigrations", () => {
             "idx_analyses_anchor",
             "idx_analyses_project",
             "idx_analysis_inputs_analysis",
+            "idx_lib_store_flight_subs_flight",
             "idx_llm_usage_scope",
             "uq_analysis_inputs_anchored",
             "uq_analysis_inputs_unanchored",
+            "uq_lib_store_flight_subs_analysis",
+            "uq_lib_store_flight_subs_host",
         ]);
         // Redundant against the set equality above, but names the chat indexes so a regression that
         // re-created one reads as exactly that rather than as an anonymous set mismatch.
@@ -194,7 +209,7 @@ describe("migration 2: dropping the chat tables", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4]);
+        expect(versions).toEqual([1, 2, 3, 4, 5]);
 
         const tables = tableNames(db);
         for (const table of ["sessions", "messages", "parts"]) {

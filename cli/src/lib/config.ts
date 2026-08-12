@@ -39,6 +39,17 @@ const configSchema = z.object({
         })
         .catch({})
         .optional(),
+    // The package store. `flightConcurrency` caps how many acquisition flights run at one time, because
+    // an R source compile can exhaust the memory of a small machine. Optional with NO block default, in
+    // the shape of the `postgres` block: an absent key must read back absent, so a config that names
+    // nothing about the store keeps its bytes. The default of 2 lives at the reader
+    // (`modules/libs/store_flight.ts`), which is the one place that has to know it.
+    store: z
+        .object({
+            flightConcurrency: z.number().int().positive().optional().catch(undefined),
+        })
+        .catch({})
+        .optional(),
     // The embedded harness runtime's settings (data-profile runs). Declared as opaque `unknown` and
     // validated downstream in modules/harness/config.ts (`resolveHarnessConfig`), NOT shaped inline:
     //

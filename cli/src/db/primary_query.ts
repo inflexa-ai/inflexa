@@ -20,6 +20,7 @@ import type { Analysis, AnalysisInput } from "../types/analysis.ts";
 // consumer under `modules/libs/`, while this layer must never take a runtime dependency on a feature
 // module. A type import erases at build time, thus the edge exists for the compiler alone.
 import type { LibStoreDownloadRow, LibStoreDownloadStatus } from "../modules/libs/store_download.ts";
+import type { LibStoreEcosystem, LibStoreFlightRow, LibStoreFlightStatus } from "../modules/libs/store_flight.ts";
 import { asStr256, type IdOrName } from "../lib/types.ts";
 import { tryQuery } from "./util.ts";
 
@@ -807,5 +808,116 @@ export function getLibStoreDownload(): Result<LibStoreDownloadRow | null, DbErro
             .query(`SELECT ${LIB_STORE_DOWNLOAD_COLS} FROM lib_store_downloads WHERE id = ?`)
             .get(LIB_STORE_DOWNLOAD_ID) as LibStoreDownloadDbRow | null;
         return row ? libStoreDownloadFromRow(row) : null;
+    });
+}
+
+// --- Data model: the package-store acquisition flights ---
+
+/** The columns of `lib_store_flights`, in the house order: identity, then core data. The table has no foreign key. */
+const LIB_STORE_FLIGHT_COLS = "id, created_at, updated_at, state, ecosystem, name, specifier, progress, holder_pid";
+
+/** A row of the columnar `lib_store_flights` table — one typed column for each field, so a reader filters on the state in SQL. */
+type LibStoreFlightDbRow = {
+    id: string;
+    created_at: number;
+    updated_at: number;
+    state: string;
+    ecosystem: string;
+    name: string;
+    specifier: string;
+    progress: string | null;
+    holder_pid: number;
+};
+
+function libStoreFlightFromRow(r: LibStoreFlightDbRow): LibStoreFlightRow {
+    return {
+        id: r.id,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        // Each of the two columns carries a CHECK constraint that names exactly the members of its union,
+        // thus SQLite refuses any other value and neither cast can widen.
+        state: r.state as LibStoreFlightStatus,
+        ecosystem: r.ecosystem as LibStoreEcosystem,
+        name: r.name,
+        specifier: r.specifier,
+        progress: r.progress,
+        holderPid: r.holder_pid,
+    };
+}
+
+/** One flight row, or `null` when no process owns a flight for that key. Absence rides the ok channel, because no flight is a normal state. */
+export function getLibStoreFlight(id: string): Result<LibStoreFlightRow | null, DbError> {
+    return tryQuery("getLibStoreFlight", (conn) => {
+        const row = conn.query(`SELECT ${LIB_STORE_FLIGHT_COLS} FROM lib_store_flights WHERE id = ?`).get(id) as LibStoreFlightDbRow | null;
+        return row ? libStoreFlightFromRow(row) : null;
+    });
+}
+
+/** One flight row joined to one subscription of it, so the whole readout comes from a single query. */
+type LibStoreFlightWithSubscriberRow = LibStoreFlightDbRow & { analysis_id: string | null };
+
+/**
+ * Every flight row with the analyses subscribed to it, oldest flight first.
+ *
+ * ONE query with a LEFT JOIN, then a group in JS: the readout wants the two facts together, and a read
+ * of each flight and then of its subscriptions would be a round trip for each row. A LEFT JOIN keeps a
+ * flight whose only subscriber cancelled, which is exactly the state the owner is about to act on.
+ *
+ * A `null` analysis id is a subscription that belongs to no analysis — a plain `inflexa store add` in a
+ * terminal — and it is dropped from the named set rather than reported as an unnamed analysis.
+ */
+export function listLibStoreFlights(): Result<{ flight: LibStoreFlightRow; analysisIds: readonly string[] }[], DbError> {
+    return tryQuery("listLibStoreFlights", (conn) => {
+        const rows = conn
+            .query(
+                `SELECT ${LIB_STORE_FLIGHT_COLS.split(", ")
+                    .map((c) => `f.${c} AS ${c}`)
+                    .join(", ")}, s.analysis_id AS analysis_id
+                 FROM lib_store_flights f
+                 LEFT JOIN lib_store_flight_subscriptions s ON s.flight_id = f.id
+                 ORDER BY f.created_at, s.analysis_id`,
+            )
+            .all() as LibStoreFlightWithSubscriberRow[];
+        const grouped: { flight: LibStoreFlightRow; analysisIds: string[] }[] = [];
+        const byId = new Map<string, { flight: LibStoreFlightRow; analysisIds: string[] }>();
+        for (const row of rows) {
+            let entry = byId.get(row.id);
+            if (entry === undefined) {
+                entry = { flight: libStoreFlightFromRow(row), analysisIds: [] };
+                byId.set(row.id, entry);
+                grouped.push(entry);
+            }
+            if (row.analysis_id !== null) entry.analysisIds.push(row.analysis_id);
+        }
+        return grouped;
+    });
+}
+
+/** How many subscriptions a flight still carries. The owner stops the flight when this reaches zero. */
+export function countLibStoreFlightSubscribers(flightId: string): Result<number, DbError> {
+    return tryQuery("countLibStoreFlightSubscribers", (conn) => {
+        const row = conn.query("SELECT COUNT(*) AS n FROM lib_store_flight_subscriptions WHERE flight_id = ?").get(flightId) as { n: number } | null;
+        return row?.n ?? 0;
+    });
+}
+
+/**
+ * Whether one subscriber still holds a subscription to a flight.
+ *
+ * A subscriber that waits on somebody else's flight asks this: a cancel removed its own subscription
+ * while the flight goes on for another analysis, and only this answer separates that from the flight
+ * ending. The two branches are one statement each, because SQLite compares a bound NULL with `=` as
+ * unknown and the terminal subscription would never match.
+ */
+export function hasLibStoreFlightSubscriber(params: { flightId: string; analysisId: string | null }): Result<boolean, DbError> {
+    return tryQuery("hasLibStoreFlightSubscriber", (conn) => {
+        const row = (
+            params.analysisId === null
+                ? conn.query("SELECT COUNT(*) AS n FROM lib_store_flight_subscriptions WHERE flight_id = ? AND analysis_id IS NULL").get(params.flightId)
+                : conn
+                      .query("SELECT COUNT(*) AS n FROM lib_store_flight_subscriptions WHERE flight_id = ? AND analysis_id = ?")
+                      .get(params.flightId, params.analysisId)
+        ) as { n: number } | null;
+        return (row?.n ?? 0) > 0;
     });
 }

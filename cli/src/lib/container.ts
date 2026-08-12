@@ -104,9 +104,19 @@ export async function inherit(rt: ContainerRuntime, args: string[]): Promise<num
  * `onLine` is a notification, never a control channel. A caller that must not let a failing observer
  * abort a run in flight wraps it before it reaches here (the reference-store installer's `reportProgress`
  * pattern); this function does not guard the callback itself.
+ *
+ * `signal` is the control channel, and it is the ONLY one: an aborted signal kills the child, both pumps
+ * then reach end of stream, and the run reports the exit code that the signal produced. A caller that
+ * must stop work in flight — an acquisition flight whose last subscriber cancelled — needs a handle on
+ * the process, and only this function holds one.
  */
-export async function stream(rt: ContainerRuntime, args: string[], onLine: (line: string) => void): Promise<CaptureResult> {
+export async function stream(rt: ContainerRuntime, args: string[], onLine: (line: string) => void, signal?: AbortSignal): Promise<CaptureResult> {
     const proc = Bun.spawn({ cmd: [rt.bin, ...args], stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    // A signal that was already aborted kills the child at once, because `addEventListener` fires for a
+    // later abort only and the caller asked for no work.
+    const onAbort = (): void => proc.kill();
+    if (signal?.aborted === true) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
     const captured = { stdout: "", stderr: "" };
     // Read a piped stream to end, splitting on newlines so the observer sees whole lines. `stream: true`
     // decoding keeps a multi-byte character that straddles two chunks intact.
@@ -133,9 +143,13 @@ export async function stream(rt: ContainerRuntime, args: string[], onLine: (line
             onLine(pending);
         }
     };
-    await Promise.all([pump(proc.stdout, "stdout"), pump(proc.stderr, "stderr")]);
-    const code = await proc.exited;
-    return { code, stdout: captured.stdout, stderr: captured.stderr };
+    try {
+        await Promise.all([pump(proc.stdout, "stdout"), pump(proc.stderr, "stderr")]);
+        const code = await proc.exited;
+        return { code, stdout: captured.stdout, stderr: captured.stderr };
+    } finally {
+        signal?.removeEventListener("abort", onAbort);
+    }
 }
 
 /**

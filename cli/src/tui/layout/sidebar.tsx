@@ -22,8 +22,8 @@ import {
 } from "../hooks/sidebar_live.ts";
 import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import { agentModels, bootState } from "../hooks/boot.ts";
-import { libStoreGateState } from "../hooks/sandbox_gate.tsx";
-import type { LibStoreGateState } from "../hooks/sandbox_gate.tsx";
+import { libStoreFlights, libStoreGateState } from "../hooks/sandbox_gate.tsx";
+import type { LibStoreFlightLine, LibStoreGateState } from "../hooks/sandbox_gate.tsx";
 import { chatStatus } from "../hooks/status.ts";
 import type { ChatStatus } from "../hooks/status.ts";
 import { openThread } from "../hooks/thread.ts";
@@ -138,6 +138,33 @@ function storeMeterOf(gate: LibStoreGateState): { filled: string; empty: string 
     const partial = gate.bytes > 0 && gate.bytes < gate.totalBytes;
     const filled = partial ? Math.min(STORE_BAR_CELLS - 1, Math.max(1, proportional)) : Math.min(STORE_BAR_CELLS, Math.max(0, proportional));
     return { filled: GLYPHS.bar.repeat(filled), empty: GLYPHS.bar.repeat(STORE_BAR_CELLS - filled) };
+}
+
+/**
+ * One line for each live acquisition flight, in the shape of the catalog line above it.
+ *
+ * The line carries the spec and the state. A flight that waits for a slot under the concurrency cap reads
+ * `queued`, and a flight whose container runs reads `running`. A count follows the state when more than
+ * one analysis subscribes, because that is what makes one flight serve two analyses legible.
+ *
+ * The rail is {@link size.railWidth} columns, thus the NAMES of the subscribers do not fit and the spec
+ * is clamped to {@link FLIGHT_SPEC_CHARS}. `inflexa store ls` names each analysis in full. The newest
+ * provisioner line is not on the rail either, for the same reason.
+ */
+function storeFlightLinesOf(flights: readonly LibStoreFlightLine[]): LiveLine[] {
+    return flights.map((flight) => ({
+        glyph: GLYPHS.warning,
+        role: "warning" as const,
+        text: `${clampSpec(flight.spec)} ${flight.state}${flight.subscribers > 1 ? ` (${flight.subscribers})` : ""}`,
+    }));
+}
+
+/** How much of a flight spec the rail carries. Past this the line wraps and it costs the rail a second row. */
+const FLIGHT_SPEC_CHARS = 24;
+
+/** The spec of a flight, clamped to the rail budget. */
+function clampSpec(spec: string): string {
+    return spec.length <= FLIGHT_SPEC_CHARS ? spec : `${spec.slice(0, FLIGHT_SPEC_CHARS)}${GLYPHS.ellipsis}`;
 }
 
 /** Map a {@link ProfileSnapshot} to its display line: muted placeholders, warn "profiling…", success count+age, error one-liner. */
@@ -615,6 +642,7 @@ export function Sidebar(props: SidebarProps) {
     // must describe the SAME read — three independent calls could straddle a poll tick and disagree.
     const storeLine = createMemo(() => storeLineOf(libStoreGateState()));
     const storeMeter = createMemo(() => storeMeterOf(libStoreGateState()));
+    const storeFlightLines = createMemo(() => storeFlightLinesOf(libStoreFlights()));
     const storeUpdateAvailable = createMemo((): boolean => {
         const gate = libStoreGateState();
         return gate.phase === "installed" && gate.updateAvailable;
@@ -827,6 +855,18 @@ export function Sidebar(props: SidebarProps) {
                             </text>
                         )}
                     </Show>
+                    {/* The live acquisitions, under the catalog line and in the same colored-glyph plus
+                        muted-label shape. They report work and they decide nothing: a store stays usable
+                        while a package acquires into it, thus the gate line above keeps its own verdict.
+                        No flight is the common state, and the rows then take no rail height at all. */}
+                    <For each={storeFlightLines()}>
+                        {(line: LiveLine) => (
+                            <text>
+                                {line.glyph !== null ? <Fg role={line.role}>{`${line.glyph} `}</Fg> : null}
+                                <Fg role="fgMuted">{line.text}</Fg>
+                            </text>
+                        )}
+                    </For>
                     {/* The user owns the update decision, so the rail NAMES the command and opens no prompt. */}
                     <Show when={storeUpdateAvailable()}>
                         <text>

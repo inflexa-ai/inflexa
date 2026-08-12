@@ -9,15 +9,20 @@
  * refused.
  *
  * The layers are zstd-compressed tars: one for each track plus one base layer with the farms and the
- * `current` pointer. Extraction of every layer into one staged root reassembles the `/mnt/libs` tree
+ * dependency graph. Extraction of every layer into one staged root reassembles the `/mnt/libs` tree
  * exactly, with the symlinks kept verbatim, so the harness `libStoreUsable` check accepts it. The
  * activation obeys the receipt pattern of the reference store (`modules/refs/store.ts`): stage, rename,
  * then write the receipt last. Thus a crash before the receipt reads back as incomplete, and the next
  * run repairs it.
  *
+ * The catalog farm arrives as a TEMPLATE and never as an active environment. No pointer selects a farm
+ * at the store level, because each sandbox mounts the farm of its own analysis. Composition reads the
+ * lock of the template for the default closure, and it links the warm caches of the template into each
+ * analysis farm.
+ *
  * The activation MERGES the staged tree into the store root, and it removes nothing. The root is shared
- * with `inflexa store add`, which provisions into the same `store/` pool and writes its own farms beside
- * the published ones ({@link mergeStagedRoot}).
+ * with `inflexa store add`, which acquires into the same `store/` pool, and with composition, which
+ * writes an analysis farm beside the published ones ({@link mergeStagedRoot}).
  *
  * The transfer runs in a DETACHED process that `inflexa setup` and `inflexa store download` start and
  * that outlives both ({@link startLibStoreDownloadProcess}). The lifecycle of that process — its state,
@@ -45,7 +50,7 @@ import { recordLibStoreDownloadManifest, recordLibStoreDownloadProgress, settleL
 import { downloadToFile, type DownloadError, type DownloadProgress, type DownloadRetry, type FetchLike } from "../../lib/download.ts";
 import { env } from "../../lib/env.ts";
 import { sha256File } from "../../lib/hash.ts";
-import { acquireInstanceLock, instanceLockHolder, releaseInstanceLock, LIB_STORE_DOWNLOAD_LOCK_KEY } from "../../lib/lock.ts";
+import { acquireInstanceLock, instanceLockHolder, releaseInstanceLock, LIB_STORE_DOWNLOAD_LOCK_KEY, LIB_STORE_METADATA_LOCK_KEY } from "../../lib/lock.ts";
 
 /** The registry host the store publishes to. */
 const STORE_REGISTRY = "ghcr.io";
@@ -71,6 +76,27 @@ const RECEIPT_VERSION = 1;
 
 /** The installer-owned metadata directory below the store root. Its dot name keeps it out of the store content. */
 const METADATA_DIR = ".inflexa-download";
+
+/**
+ * The dependency graph of the catalog, at the store root. The name is part of the store contract, because
+ * composition reads the closure of a farm from it (`images/sandbox-provisioner/emit_deps.py`).
+ */
+const STORE_GRAPH = "deps.json";
+
+/**
+ * The active-farm pointer of the OLD store layout.
+ *
+ * The merge writes it no more, and it is named here for exactly one reason: a published base layer can
+ * still carry it, and a staged entry that the merge does not name would move into the store root. Refer
+ * to {@link mergeStagedRoot}.
+ */
+const LEGACY_ACTIVE_FARM_POINTER = "current";
+
+/** How long the merge waits for the store-level metadata mutex before it reports a conflict. */
+const METADATA_MUTEX_WAIT_MS = 30_000;
+
+/** How often the merge tests whether the metadata mutex freed. */
+const METADATA_MUTEX_POLL_MS = 100;
 
 /**
  * The default retry schedule for a blob GET. GHCR names no contractual rate limit, so a shed or a
@@ -187,8 +213,6 @@ export type LibStoreMergeReport = {
     readonly farmsAdded: readonly string[];
     /** The farm names the download left alone, because the store root already holds a farm of each name. */
     readonly farmsKept: readonly string[];
-    /** True when the merge set `current`, because the store root carried no active-farm pointer. */
-    readonly currentSet: boolean;
 };
 
 /**
@@ -654,36 +678,96 @@ async function mergeChildren(stagedDir: string, targetDir: string): Promise<{ re
 }
 
 /**
+ * Take the store-level metadata mutex, run `fn`, and release it.
+ *
+ * Two writers touch the dependency graph at the store root: a download with `--update` replaces it, and
+ * an acquisition flight appends to it. The mutex is what keeps the two apart. The wait is bounded,
+ * because a flight commit is short, and a mutex that never freed means a holder that is stuck rather
+ * than a holder that is busy.
+ *
+ * The lock is re-entrant for one pid, thus it separates PROCESSES and not two overlapping calls inside
+ * one process. That is the whole surface it needs: the downloader runs detached, and a flight runs in
+ * the terminal of the user.
+ */
+async function withStoreMetadataMutex<T>(fn: () => Promise<Result<T, LibStoreDownloadError>>): Promise<Result<T, LibStoreDownloadError>> {
+    for (let waited = 0; ; waited += METADATA_MUTEX_POLL_MS) {
+        const lock = acquireInstanceLock(LIB_STORE_METADATA_LOCK_KEY);
+        if (lock.acquired) {
+            try {
+                return await fn();
+            } finally {
+                releaseInstanceLock(LIB_STORE_METADATA_LOCK_KEY);
+            }
+        }
+        if (waited >= METADATA_MUTEX_WAIT_MS) {
+            return err({
+                type: "io_failed",
+                message: `Another \`inflexa\` process (pid ${lock.holderPid}) holds the package-store metadata lock. Wait for it to finish, then run \`inflexa store download\` again.`,
+            });
+        }
+        await Promise.sleep(METADATA_MUTEX_POLL_MS);
+    }
+}
+
+/**
+ * Merge the dependency graph of the catalog into the store root, under the metadata mutex.
+ *
+ * On a plain download the graph moves in only when the root carries none, exactly as any other
+ * top-level record does. On `--update` the graph of the NEW catalog replaces the graph of the old one:
+ * the two describe different resolved sets, and a merge of the two would name edges that no single
+ * catalog ever resolved.
+ */
+async function mergeStoreGraph(stagedGraph: string, target: string, replace: boolean): Promise<Result<void, LibStoreDownloadError>> {
+    return withStoreMetadataMutex(async () => {
+        try {
+            if (await entryExists(target)) {
+                if (!replace) return ok(undefined);
+                await rm(target, { force: true });
+            }
+            await rename(stagedGraph, target);
+            return ok(undefined);
+        } catch (cause) {
+            return err({ type: "io_failed", message: `Could not merge ${STORE_GRAPH} into ${target}.`, cause });
+        }
+    });
+}
+
+/**
  * Merge each staged top-level entry into the store root, and remove nothing.
  *
- * The whole `/mnt/libs` tree lives directly at the store root — the harness reads `<root>/current` — and
- * the root is shared. `inflexa store add` provisions into the same `store/` pool and writes its own farms
- * beside the published ones. A replacement would destroy that work, so the download moves in only what the
- * root does not have. `store/` and `farms/` merge one level deeper, because both owners write into them.
- * Any other top-level entry, for example an empty mount point, moves in only when it is absent.
+ * The whole `/mnt/libs` tree lives directly at the store root, and the root is shared. `inflexa store
+ * add` provisions into the same `store/` pool, and composition writes an analysis farm beside the
+ * published ones. A replacement would destroy that work, so the download moves in only what the root
+ * does not have. `store/` and `farms/` merge one level deeper, because both owners write into them.
+ * `deps.json` is the one record with its own rule ({@link mergeStoreGraph}). Any other top-level entry,
+ * for example an empty mount point, moves in only when it is absent.
  *
- * `current` is the active-farm pointer, and it lands last. An absent pointer takes the farm the download
- * brought, so a fresh install is usable at once. A pointer that is already there stays, because a download
- * must never move the user onto a different environment without a word. The last position also keeps a
- * concurrent reader from seeing a `current` that points past content which is still on its way.
+ * The merge writes NO active-farm pointer, and it moves a staged `current` in no case. There is no
+ * active farm at the store level: each sandbox mounts the farm of its analysis, and the catalog farm is
+ * the template that composition reads. A published base layer that still carries the pointer therefore
+ * meets a skip here, and the store root gains no name that means nothing.
  *
  * The merge keeps the crash safety of the receipt pattern. Each move is a `rename` inside one filesystem,
  * thus a child is complete or absent and never half-written. A crash part-way leaves the receipt unwritten,
  * so the store reads back as incomplete and the next run merges again — where each child that already
  * landed is simply skipped.
  */
-async function mergeStagedRoot(stageRoot: string, storeRoot: string, metadataName: string): Promise<Result<LibStoreMergeReport, LibStoreDownloadError>> {
+async function mergeStagedRoot(
+    stageRoot: string,
+    storeRoot: string,
+    metadataName: string,
+    replaceGraph: boolean,
+): Promise<Result<LibStoreMergeReport, LibStoreDownloadError>> {
     let entries: readonly string[];
     try {
-        entries = (await readdir(stageRoot)).filter((name) => name !== metadataName);
+        entries = (await readdir(stageRoot)).filter((name) => name !== metadataName && name !== LEGACY_ACTIVE_FARM_POINTER);
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not read the staged store at ${stageRoot}.`, cause });
     }
-    const ordered = [...entries].sort((a, b) => (a === "current" ? 1 : b === "current" ? -1 : a.localeCompare(b)));
+    const ordered = [...entries].sort((a, b) => a.localeCompare(b));
     const storeDirsAdded: string[] = [];
     const farmsAdded: string[] = [];
     const farmsKept: string[] = [];
-    let currentSet = false;
     try {
         for (const name of ordered) {
             const to = join(storeRoot, name);
@@ -697,11 +781,15 @@ async function mergeStagedRoot(stageRoot: string, storeRoot: string, metadataNam
                 farmsKept.push(...merged.kept);
                 continue;
             }
+            if (name === STORE_GRAPH) {
+                const graph = await mergeStoreGraph(join(stageRoot, name), to, replaceGraph);
+                if (graph.isErr()) return err(graph.error);
+                continue;
+            }
             if (await entryExists(to)) continue;
             await rename(join(stageRoot, name), to);
-            if (name === "current") currentSet = true;
         }
-        return ok({ storeDirsAdded, farmsAdded, farmsKept, currentSet });
+        return ok({ storeDirsAdded, farmsAdded, farmsKept });
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not merge the staged store into ${storeRoot}.`, cause });
     }
@@ -713,6 +801,7 @@ async function stageAndMerge(
     paths: LibStoreDownloadPaths,
     layers: readonly LibStoreLayer[],
     attemptId: string,
+    replaceGraph: boolean,
 ): Promise<Result<LibStoreMergeReport, LibStoreDownloadError>> {
     const attemptRoot = join(paths.staging, attemptId);
     try {
@@ -722,7 +811,7 @@ async function stageAndMerge(
             const extracted = await extractLayer(join(paths.blobs, blobFileName(layer.digest)), attemptRoot);
             if (extracted.isErr()) return err(extracted.error);
         }
-        return await mergeStagedRoot(attemptRoot, storeRoot, paths.metadataName);
+        return await mergeStagedRoot(attemptRoot, storeRoot, paths.metadataName, replaceGraph);
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not stage the package store under ${storeRoot}.`, cause });
     } finally {
@@ -794,8 +883,9 @@ async function writeLibStoreReceipt(receiptPath: string, receipt: LibStoreReceip
  * The cheap local state of the store download, read without the network.
  *
  * The receipt is written last, so its presence attests the content landed. But the content is a
- * directory on the user machine and can be removed, so a vanished `current` degrades to incomplete
- * rather than a false `installed`.
+ * directory on the user machine and can be removed, so a store whose pool or whose farms are gone
+ * degrades to incomplete rather than to a false `installed`. Those two ARE the store: the pool holds
+ * every distribution, and the catalog farm under `farms/` is the template that composition reads.
  *
  * With no receipt there are three states, and only content separates them. A staging directory is the
  * fingerprint of a download that started, thus the store is an interrupted one that the next run repairs.
@@ -809,10 +899,11 @@ export async function inspectLibStoreDownload(storeRoot: string): Promise<LibSto
     const paths = libStoreDownloadPaths(storeRoot);
     const receiptRead = await readLibStoreReceipt(paths.receipt);
     if (receiptRead.exists && receiptRead.receipt === undefined) return "invalid_receipt";
-    if (receiptRead.receipt !== undefined) return existsSync(join(storeRoot, "current")) ? "installed" : "incomplete";
+    const pool = existsSync(join(storeRoot, "store"));
+    const farms = existsSync(join(storeRoot, "farms"));
+    if (receiptRead.receipt !== undefined) return pool && farms ? "installed" : "incomplete";
     if (existsSync(paths.staging)) return "incomplete";
-    const hasContent = existsSync(join(storeRoot, "store")) || existsSync(join(storeRoot, "farms")) || existsSync(join(storeRoot, "current"));
-    return hasContent ? "local" : "missing";
+    return pool || farms ? "local" : "missing";
 }
 
 /** Prepare the store root and the installer-owned directories the download writes into. */
@@ -882,7 +973,9 @@ export async function downloadLibStore(deps: LibStoreDownloadDeps): Promise<Resu
 
     reportProgress(deps.onProgress, { type: "staging" });
     const attemptId = deps.attemptId?.() ?? randomUUIDv7();
-    const staged = await stageAndMerge(deps.storeRoot, paths, manifest.value.layers, attemptId);
+    // `force` IS the `--update` consent, thus it is also the consent that replaces the dependency graph:
+    // the new catalog resolved a different set, and the two graphs must not merge.
+    const staged = await stageAndMerge(deps.storeRoot, paths, manifest.value.layers, attemptId, deps.force === true);
     if (staged.isErr()) return err(staged.error);
 
     const receipt: LibStoreReceipt = {
@@ -1199,8 +1292,8 @@ export async function runLibStoreTransfer(params: {
         }
 
         // Each ok outcome leaves the published bytes on disk: `downloaded` activated them, and the two
-        // no-op outcomes mean a receipt already pins them. Whether the active farm is one a sandbox can
-        // mount is a separate question, which the sandbox gate asks against the filesystem.
+        // no-op outcomes mean a receipt already pins them. Whether a sandbox can mount the farm of its
+        // analysis is a separate question, which the sandbox gate asks against the filesystem.
         writeProgress(true);
         settleLibStoreDownload({ state: "installed", message: null }).unwrapOr(undefined);
     } finally {

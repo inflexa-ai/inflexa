@@ -827,53 +827,34 @@ export function buildProgram(): Command {
         },
     );
 
-    // The host package store: provision packages into a farm, inspect it, switch the active farm, remove a
-    // farm, and reclaim disk. The store is bind-mounted read-only at /mnt/libs in every sandbox. `add`,
-    // `reclaim`, and `remove-farm` mutate it through the provisioner container and `use` writes the
-    // active-farm pointer, so each is approval-gated like `sandbox pull`; `ls` only reads the store on the
-    // host, so it stays auto.
+    // The host package store: acquire packages into the pool, inspect it, remove a farm, and reclaim disk.
+    // The store is bind-mounted read-only at /mnt/libs in every sandbox. There is NO active farm at the
+    // store level: each sandbox mounts the farm of its analysis, and composition makes that farm. `add`,
+    // `reclaim`, and `remove-farm` mutate the store through the provisioner container, so each is
+    // approval-gated like `sandbox pull`; `ls` only reads the store on the host, so it stays auto.
     const store = cli.command("store").description("Manage the host package store mounted read-only in sandboxes at /mnt/libs");
 
     // Stays `approval` (not `auto`): `add` starts the network-enabled provisioner container and writes to disk.
     registerAction(
         store
             .command("add")
-            .description("Provision Python packages into the store's active farm, extending its closure")
-            .argument("<packages...>", "Python package specs to add (for example scanpy or 'numpy==1.26.4')")
-            .option("--farm <name>", "Provision into a named farm instead of the active one"),
+            .description("Acquire Python packages into the store pool. It does no farm work — composition links a farm from the pool")
+            .argument("<packages...>", "Python package specs to add (for example scanpy or 'numpy==1.26.4')"),
         { kind: "approval" },
-        async (packages: string[], options: { farm?: string }) => {
+        async (packages: string[]) => {
             const { runStoreAdd } = await import("../modules/libs/store.ts");
-            await runStoreAdd(packages, { farm: options.farm });
+            await runStoreAdd(packages);
         },
     );
 
     // Read-only: walks the store directory on the host and reports it (store.ts `inspectStore`); writes no
     // config and starts no container. It gains NO option, because a passive diagnostic stays passive.
     registerAction(
-        store.command("ls").description("List the store's active farm, packages, farms with their tracks, and disk use"),
+        store.command("ls").description("List the store's packages, its farms with their analyses and tracks, its live acquisitions, and its disk use"),
         { kind: "auto", safeFlags: [] },
         async () => {
             const { runStoreLs } = await import("../modules/libs/store.ts");
             await runStoreLs();
-        },
-    );
-
-    // Stays `approval` (not `auto`): `use` writes the active-farm pointer, which changes what every later
-    // sandbox mounts.
-    registerAction(
-        store
-            .command("use")
-            .description("Switch the active farm the sandboxes mount. It writes the pointer on the host and starts no container")
-            .argument("<farm>", "Name of the farm to make active")
-            .option(
-                "--force",
-                "Switch although the harness runtime holds the machine-wide lock. It covers a stale runtime lock only, and it bypasses no other refusal",
-            ),
-        { kind: "approval" },
-        async (farm: string, options: { force?: boolean }) => {
-            const { runStoreUse } = await import("../modules/libs/store.ts");
-            await runStoreUse(farm, { force: options.force ?? false });
         },
     );
 

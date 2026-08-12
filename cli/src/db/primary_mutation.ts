@@ -412,3 +412,110 @@ export function settleLibStoreDownload(params: { state: "installed" | "failed" |
         ).run(LIB_STORE_DOWNLOAD_ID, now, now, params.state, params.message);
     });
 }
+
+// --- Data model: the package-store acquisition flights ---
+
+/**
+ * Claim the flight for one normalized spec, and report whether this process owns it.
+ *
+ * The insert IS the single-flight decision. `ON CONFLICT DO NOTHING` over the primary key makes it one
+ * atomic statement, thus two processes — and two calls inside one process — cannot both own the flight
+ * for a key. `true` means "this call owns the flight and must run the work"; `false` means "a flight is
+ * already live, thus subscribe to it".
+ *
+ * The row starts `queued`, never `running`: a slot under the concurrency cap is a second decision, and
+ * {@link promoteLibStoreFlight} makes it.
+ */
+export function claimLibStoreFlight(params: {
+    id: string;
+    ecosystem: "python" | "r";
+    name: string;
+    specifier: string;
+    holderPid: number;
+}): Result<boolean, DbError> {
+    const now = Date.now();
+    return tryMutation("claimLibStoreFlight", (conn) => {
+        return (
+            conn
+                .query(
+                    `INSERT INTO lib_store_flights (
+                     id, created_at, updated_at, state, ecosystem, name, specifier, progress, holder_pid
+                 )
+                 VALUES (?, ?, ?, 'queued', ?, ?, ?, NULL, ?)
+                 ON CONFLICT(id) DO NOTHING`,
+                )
+                .run(params.id, now, now, params.ecosystem, params.name, params.specifier, params.holderPid).changes === 1
+        );
+    });
+}
+
+/**
+ * Move a queued flight to `running`, but only while fewer than `cap` flights already run.
+ *
+ * The cap lives in the WHERE clause rather than in a read-then-decide pair, because two owners that each
+ * read the count and then wrote would both pass a cap of one. One statement is one write transaction, so
+ * the count and the promotion cannot straddle another writer. Returns rows changed: `0` means that every
+ * slot is taken, thus the caller waits and asks again.
+ */
+export function promoteLibStoreFlight(params: { id: string; cap: number }): Result<number, DbError> {
+    return tryMutation("promoteLibStoreFlight", (conn) => {
+        return conn
+            .query(
+                `UPDATE lib_store_flights SET updated_at = ?, state = 'running'
+                 WHERE id = ? AND state = 'queued'
+                   AND (SELECT COUNT(*) FROM lib_store_flights WHERE state = 'running') < ?`,
+            )
+            .run(Date.now(), params.id, params.cap).changes;
+    });
+}
+
+/** Record the newest provisioner line of a live flight, so a subscriber reports the same progress. Returns rows changed. */
+export function recordLibStoreFlightProgress(params: { id: string; progress: string }): Result<number, DbError> {
+    return tryMutation("recordLibStoreFlightProgress", (conn) => {
+        return conn.query("UPDATE lib_store_flights SET updated_at = ?, progress = ? WHERE id = ?").run(Date.now(), params.progress, params.id).changes;
+    });
+}
+
+/**
+ * Remove a flight row, with its subscriptions.
+ *
+ * This is how a flight ends, in every outcome. A finished flight is not a cache: a row that survived a
+ * failure would dedup the next request for the same spec against work that never landed. The
+ * subscriptions go with it through the cascade. It is also the sweep of debris that a killed owner left.
+ */
+export function deleteLibStoreFlight(id: string): Result<number, DbError> {
+    return tryMutation("deleteLibStoreFlight", (conn) => {
+        return conn.query("DELETE FROM lib_store_flights WHERE id = ?").run(id).changes;
+    });
+}
+
+/**
+ * Subscribe an analysis to a live flight, or record the terminal subscription that belongs to no analysis.
+ *
+ * `analysisId` of `null` is the plain `inflexa store add` in a terminal: it keeps the flight alive and it
+ * has no farm to extend. A second subscription of the same subscriber is a no-op, because a request that
+ * repeats must not make the flight outlive one cancel for each repeat.
+ */
+export function subscribeLibStoreFlight(params: { flightId: string; analysisId: string | null }): Result<number, DbError> {
+    return tryMutation("subscribeLibStoreFlight", (conn) => {
+        return conn.query("INSERT OR IGNORE INTO lib_store_flight_subscriptions (flight_id, analysis_id) VALUES (?, ?)").run(params.flightId, params.analysisId)
+            .changes;
+    });
+}
+
+/**
+ * Remove one subscription. Returns rows changed: `0` when that subscriber was not subscribed.
+ *
+ * A cancel removes one subscription and never the flight. The flight stops when the count reaches zero,
+ * and its owner is what reads that count — refer to `countLibStoreFlightSubscribers`.
+ *
+ * The two branches are one statement each rather than `analysis_id IS ?`, because SQLite compares a bound
+ * NULL with `=` as unknown, thus the terminal subscription would never match.
+ */
+export function unsubscribeLibStoreFlight(params: { flightId: string; analysisId: string | null }): Result<number, DbError> {
+    return tryMutation("unsubscribeLibStoreFlight", (conn) => {
+        return params.analysisId === null
+            ? conn.query("DELETE FROM lib_store_flight_subscriptions WHERE flight_id = ? AND analysis_id IS NULL").run(params.flightId).changes
+            : conn.query("DELETE FROM lib_store_flight_subscriptions WHERE flight_id = ? AND analysis_id = ?").run(params.flightId, params.analysisId).changes;
+    });
+}
