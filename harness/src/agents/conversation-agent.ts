@@ -27,6 +27,7 @@ import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../workflows/e
 import type { EnsureSessionStateResult } from "../app/report-session-runtime.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import type { ChromeConfig } from "../lib/chrome.js";
+import type { AcquireEyes } from "../lib/eyes.js";
 import type { AgentDefinition } from "../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
@@ -162,6 +163,14 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
     /** Headless-Chrome config for report snapshot/preview rendering. */
     readonly chrome: ChromeConfig;
     /**
+     * The eyes of a report session — where a browser comes from for one look at
+     * the rendered page. `start_report_session` hands it to its spawn, thus a
+     * composition that binds the seam and names no browser still starts a
+     * session. The assembly resolves the eyes one time, and the agent that looks
+     * at a page reads that same answer.
+     */
+    readonly eyes?: AcquireEyes;
+    /**
      * Host resource policy — per-step ceilings + machine budget. `generate_plan`
      * states the ceilings to the planner and validates against them;
      * `execute_analysis` snapshots the budget into the workflow input. Absent,
@@ -269,7 +278,13 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // The one report path. The tool starts a report thread as a child of the
         // conversation, and the user composes the report there with the Report
         // Builder.
-        createStartReportSessionTool({ pool, chrome, anchorSession: deps.anchorReportSession, ...(deps.logger ? { logger: deps.logger } : {}) }),
+        createStartReportSessionTool({
+            pool,
+            chrome,
+            anchorSession: deps.anchorReportSession,
+            ...(deps.eyes ? { eyes: deps.eyes } : {}),
+            ...(deps.logger ? { logger: deps.logger } : {}),
+        }),
         // Display.
         showUserTool,
         createShowPlanTool(pool),

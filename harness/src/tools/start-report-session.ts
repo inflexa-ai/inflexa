@@ -22,10 +22,11 @@ import type { Pool } from "pg";
 import { z } from "zod";
 
 import type { EnsureSessionStateResult } from "../app/report-session-runtime.js";
-import { createReportSessionSpawn, type ReportBrief, type SpawnRefusal } from "../app/spawn-report-session.js";
-import { hasBrowserUrl, type ChromeConfig } from "../lib/chrome.js";
+import { compositionHasEyes, createReportSessionSpawn, type ReportBrief, type ReportSessionSpawnDeps, type SpawnRefusal } from "../app/spawn-report-session.js";
+import type { ChromeConfig } from "../lib/chrome.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { describeDbError, type DbError } from "../lib/db-result.js";
+import type { AcquireEyes } from "../lib/eyes.js";
 import type { Logger } from "../lib/logger.js";
 import type { ThreadInputError, ThreadType } from "../memory/thread-store.js";
 import { defineTool, type Tool, type ToolError } from "./define-tool.js";
@@ -94,14 +95,25 @@ export type StartReportSessionResult =
 /**
  * The construction deps of the tool.
  *
- * `pool` and `chrome` build the spawn operation inside the factory, thus one
- * singleton tool serves every conversation and it reads the parent from the
- * scope of each call. The composition binds no capture seam here, thus the
- * browser endpoint is the one route to the eyes.
+ * The fields build the spawn operation inside the factory. Thus one singleton
+ * tool serves every conversation, and it reads the parent from the scope of each
+ * call.
+ *
+ * Two of the fields name a route to a look at the rendered page: `eyes` and a
+ * `chrome` config that names a browser. The tool binds no capture seam. That
+ * seam replaces the transport of the eyes tool, and the tool here never looks at
+ * a page. A composition that binds a capture seam straight to the spawn still
+ * opens the gate of that spawn.
  */
 export interface StartReportSessionToolDeps {
     readonly pool: Pool;
     readonly chrome: ChromeConfig;
+    /**
+     * The eyes seam of the composition. A bound seam gives a browser for one
+     * look, thus the spawn accepts a session with no configured endpoint. The
+     * tool passes the seam to the spawn, and it acquires no lease.
+     */
+    readonly eyes?: AcquireEyes;
     /**
      * The anchor operation of the report session runtime, which the spawn runs
      * after the seed of the child lands. The composition binds it, thus the tool
@@ -151,23 +163,26 @@ function causeOf(fault: SpawnRefusal | DbError | ThreadInputError): unknown {
 
 /**
  * Make the tool that starts a report session, over one Postgres pool and the
- * chrome config of the composition.
+ * eyes of the composition.
  *
- * The factory builds the spawn operation with the same two values, thus the
- * spawn and the gate of the tool read one browser endpoint. The tool holds no
- * per-conversation value.
+ * The factory builds the deps of the spawn one time. The spawn and the gate of
+ * the tool read that one value, thus the two gates cannot disagree. The tool
+ * holds no per-conversation value.
  */
 export function createStartReportSessionTool(deps: StartReportSessionToolDeps): Tool<StartReportSessionInput, StartReportSessionResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("start-report-session");
-    const spawn = createReportSessionSpawn({
+    const spawnDeps: ReportSessionSpawnDeps = {
         pool: deps.pool,
         chrome: deps.chrome,
+        ...(deps.eyes ? { eyes: deps.eyes } : {}),
         ...(deps.anchorSession ? { anchorSession: deps.anchorSession } : {}),
         ...(deps.logger ? { logger: deps.logger } : {}),
-    });
-    // The eyes of the composition are fixed at construction, thus the gate reads
-    // one boolean and never a live probe of the sidecar.
-    const eyesAvailable = hasBrowserUrl(deps.chrome);
+    };
+    const spawn = createReportSessionSpawn(spawnDeps);
+    // The gate reads the routes of the very spawn below, thus the two answers
+    // come from one value. The routes are fixed at construction, thus the gate
+    // reads one boolean and never a live probe of the sidecar.
+    const eyesAvailable = compositionHasEyes(spawnDeps);
 
     return defineTool({
         id: "start_report_session",
