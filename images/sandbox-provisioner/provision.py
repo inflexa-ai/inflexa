@@ -358,12 +358,30 @@ def build_farm(farm: Path, store_dirs: list[Path]) -> list[str]:
     for store_dir in store_dirs:
         link_tree(site, str(store_dir), collisions)
 
-    # Console scripts land in <target>/bin under `uv pip install --target`; hoist
-    # them so the sandbox can put a single directory on PATH.
+    # Console scripts land in <target>/bin under `uv pip install --target`. Hoist
+    # them, so the sandbox can put one directory on PATH.
+    #
+    # Each hoisted link is RELATIVE to the farm's own site-packages. build_farm writes
+    # the farm at a staging path, and publish_farm renames it to the live name. Thus a
+    # link that names the farm by an absolute path keeps the staging path, and it
+    # dangles after the rename. A relative link moves with the tree.
+    #
+    # link_tree cannot express this hoist. It writes the same path that it reads, and
+    # it decides a collision from that path, but a relative path does not resolve from
+    # the working directory. The hoist needs no merge: it reads one directory, and each
+    # name in that directory is unique.
     if (site / "bin").is_dir():
         binroot = farm / "python" / "bin"
         binroot.mkdir(parents=True, exist_ok=True)
-        link_tree(binroot, str((site / "bin").resolve()), collisions)
+        for entry in sorted(os.listdir(site / "bin")):
+            if entry in NOT_CONTENT:
+                continue
+            link = binroot / entry
+            # A run that builds no Python track carries the old bin forward. Write each
+            # link again, thus an absolute link from an earlier run becomes relative.
+            if link.is_symlink() or link.exists():
+                link.unlink()
+            link.symlink_to(f"../site-packages/bin/{entry}")
 
     log(f"farm: {len(list(site.iterdir()))} top-level entries, {len(collisions)} collision(s)")
     for c in collisions:

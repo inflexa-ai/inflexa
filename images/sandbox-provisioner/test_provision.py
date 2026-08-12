@@ -492,6 +492,45 @@ class FarmAssemblyTests(StoreTestCase):
         self.assertTrue((farm / "r" / "bioconductor" / "rpkgB").is_symlink())
         self.assertFalse((farm / "r" / "github").exists())  # empty subtree skipped
 
+    def test_published_farm_holds_no_dangling_link(self):
+        """A published farm resolves every link that it holds.
+
+        build_farm writes the farm at a staging path, and publish_farm renames it to
+        the live name. Thus a link that names the farm by an absolute path keeps the
+        staging path, and it dangles after the rename. Two distributions that both
+        carry console scripts promote site-packages/bin to a real directory, which is
+        the shape that the hoisted bin links have to survive.
+        """
+        store_dirs = []
+        for name, script in (("alpha", "alpha-cli"), ("beta", "beta-cli")):
+            store_dir = provision.STORE / f"{name}-1.0-00000000000000{name[0]}0"
+            (store_dir / name).mkdir(parents=True)
+            (store_dir / name / "__init__.py").write_text(f"x = '{name}'\n")
+            (store_dir / "bin").mkdir()
+            (store_dir / "bin" / script).write_text("#!/usr/bin/env python3\n")
+            store_dirs.append(store_dir)
+
+        staging = provision.FARMS / (provision.FARM_STAGING + "an1")
+        staging.mkdir(parents=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            provision.build_farm(staging, store_dirs)
+        farm = provision.FARMS / "an1"
+        provision.publish_farm(staging, farm)
+
+        # Both scripts are hoisted, thus the check below has something to resolve.
+        self.assertTrue((farm / "python" / "bin" / "alpha-cli").is_symlink())
+        self.assertTrue((farm / "python" / "bin" / "beta-cli").is_symlink())
+
+        # os.walk does not follow a link, thus the sweep stays inside the farm and it
+        # reports the link itself and never the tree behind it.
+        dangling = []
+        for parent, subdirs, files in os.walk(farm):
+            for entry in sorted(subdirs + files):
+                path = Path(parent) / entry
+                if path.is_symlink() and not path.exists():
+                    dangling.append(f"{path} -> {os.readlink(path)}")
+        self.assertEqual(dangling, [], "the published farm holds a dangling link")
+
 
 class BiocReleaseTests(StoreTestCase):
     """§6.4 — the Bioconductor releases come from the pak lock, not from a query to R.
