@@ -9,13 +9,21 @@
  * page lives at `report-sessions/{threadId}/index.html` under the workspace root, which the preview writes.
  * A missed page means that no preview ran, and it is a typed outcome, not a throw.
  *
- * The `file://` URL resolves on the filesystem of the Chrome sidecar, because the connection is out of
- * process. Thus the sidecar must mount the workspace tree of the harness host at the same path. A sidecar
+ * The composition says where a browser comes from, and the eyes seam is that answer. One look acquires one
+ * lease, and the tool captures against the endpoint of that lease.
+ *
+ * The `file://` URL resolves on the filesystem of the browser, because the connection is out of process.
+ * Thus the browser of a lease must hold the workspace tree of the harness host at the same path. A browser
  * with no such mount reports the page as an unreachable request, and the tool gives back that fault.
  *
- * A composition that names no browser and injects no capture seam has no eyes at all. The tool reports that
- * condition once, up front, and it stamps nothing. A per-attempt capture failure would instead read as a
- * transient fault and invite a repeat of a call that can never pass.
+ * The tool releases the lease after the look. The release runs on a pass and on a failed capture alike. That
+ * release is hygiene, and it is not the guarantee against a leak. A process can die between the acquire and
+ * the release, thus the realization bounds the life of what it provisions. As a result a failed release
+ * changes no outcome, and the log is its whole record.
+ *
+ * A composition with no capture seam, no eyes seam, and no configured endpoint has no eyes at all. The tool
+ * reports that condition one time, up front, and it stamps nothing. A per-attempt capture failure would
+ * instead read as a transient fault, and it would invite a repeat of a call that can never pass.
  *
  * On a capture the tool copies the rendered hash onto the seen hash through the gateway. Thus the look
  * counts, and the record tool lets the current draft record. The copy takes the rendered hash and never the
@@ -25,11 +33,11 @@
  * one and the look cannot count. The tool then gives a missed-stamp outcome that directs a new preview,
  * because a repeated look never stamps a marker that no preview wrote.
  *
- * The chrome navigation and the workspace-root seam each speak the throw protocol. The tool runs the capture
- * inside a guard, thus a genuine fault becomes a typed outcome and a control-flow exception propagates.
+ * The eyes seam, the chrome navigation, and the workspace-root seam each speak the throw protocol. The tool
+ * guards each of them, thus a fault of a look becomes a typed outcome and the loop never sees a throw.
  */
 
-import { ok, type Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -37,6 +45,7 @@ import { z } from "zod";
 
 import { hasBrowserUrl, type ChromeConfig } from "../../lib/chrome.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
+import { createStaticEyes, type AcquireEyes, type EyesLease, type EyesScope } from "../../lib/eyes.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import { capturePage, type CapturePage, type FailedRequest, type PageCapture } from "../../lib/page-capture.js";
 import type { ResolveWorkspaceRoot } from "../../workspace/paths.js";
@@ -72,16 +81,113 @@ export type ExaminePageResult =
  * The construction deps of the eyes tool.
  *
  * `resolveWorkspaceRoot` maps the analysis of the call onto its workspace root, thus one singleton tool
- * serves every analysis. `chrome` configures the headless browser, and the sidecar that it names must mount
- * the workspace tree at the same path, because the tool navigates to a `file://` URL. `capture` is optional
- * and defaults to the shared capture, thus a test injects a seam that reads no browser.
+ * serves every analysis. `eyes` gives a browser for one look, and the scope of the acquire carries that
+ * analysis and its root. `chrome` carries the connection settings of the capture, and the browser that it
+ * names must hold the workspace tree at the same path, because the tool navigates to a `file://` URL.
+ * `capture` is optional and it replaces the whole transport, thus a test injects a seam that reads no
+ * browser.
  */
 export interface ExaminePageToolDeps {
     readonly gateway: ReportSessionStateGateway;
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly chrome: ChromeConfig;
+    readonly eyes?: AcquireEyes;
     readonly capture?: CapturePage;
     readonly logger?: Logger;
+}
+
+/**
+ * The transport of one look, fixed at construction.
+ *
+ * `capture` replaces the whole transport, thus that arm acquires no lease at all. `lease` reaches a browser
+ * through the eyes seam, and each look takes one lease. The two arms are the eyes of the composition.
+ */
+type ResolvedEyes = { readonly kind: "capture"; readonly capture: CapturePage } | { readonly kind: "lease"; readonly acquire: AcquireEyes };
+
+/** The transport, or the absent one. `none` means that the composition gives no route to a browser at all. */
+type EyesTransport = ResolvedEyes | { readonly kind: "none" };
+
+/**
+ * Resolve the transport of the tool from its deps, one time.
+ *
+ * The precedence is `capture`, then `eyes`, then the chrome config as static eyes. An injected capture wins
+ * over the two others, because it replaces the whole transport and a test injects it.
+ *
+ * The chrome arm serves a direct construction alone, for example the tests of this file. The assembled
+ * runtime wraps the configured endpoint into the static realization at its composition root. Thus one wrap
+ * serves that runtime, and this arm never fires there.
+ */
+function resolveEyes(deps: ExaminePageToolDeps): EyesTransport {
+    if (deps.capture !== undefined) {
+        return { kind: "capture", capture: deps.capture };
+    }
+    if (deps.eyes !== undefined) {
+        return { kind: "lease", acquire: deps.eyes };
+    }
+    if (hasBrowserUrl(deps.chrome)) {
+        return { kind: "lease", acquire: createStaticEyes(deps.chrome) };
+    }
+    return { kind: "none" };
+}
+
+/** The stage of a look that raised a fault. Each stage logs its own line, and both give one outcome. */
+type LookStage = "acquire" | "capture";
+
+/** A fault of one look: the stage that raised it, and the cause that it raised. */
+interface LookFault {
+    readonly stage: LookStage;
+    readonly cause: unknown;
+}
+
+/** The log line of each stage. The outcome of the tool is one arm, thus the stage rides in the log alone. */
+const LOOK_FAULT_MESSAGE: Record<LookStage, string> = {
+    acquire: "the eyes gave no browser for the look",
+    capture: "the page capture failed",
+};
+
+/**
+ * Run one look over the resolved transport, and give the picture or the typed fault.
+ *
+ * The lease arm acquires one browser, captures against the endpoint of that lease, and releases in a
+ * `finally`. Thus a failed capture releases too. The shared capture takes a chrome config, thus the endpoint
+ * of the lease replaces the configured one and each other field of the composition stays.
+ *
+ * A failed release changes no outcome of the look. The capture already ran, and the realization bounds the
+ * life of what it provisions. Thus the log is the whole record of a failed release.
+ */
+async function runLook(args: {
+    readonly transport: ResolvedEyes;
+    readonly chrome: ChromeConfig;
+    readonly scope: EyesScope;
+    readonly url: string;
+    readonly logger: Logger;
+}): Promise<Result<PageCapture, LookFault>> {
+    const { transport } = args;
+    if (transport.kind === "capture") {
+        try {
+            return ok(await transport.capture(args.url));
+        } catch (cause) {
+            return err({ stage: "capture", cause });
+        }
+    }
+
+    let lease: EyesLease;
+    try {
+        lease = await transport.acquire(args.scope);
+    } catch (cause) {
+        return err({ stage: "acquire", cause });
+    }
+    try {
+        return ok(await capturePage({ ...args.chrome, browserUrl: lease.browserUrl }, args.url));
+    } catch (cause) {
+        return err({ stage: "capture", cause });
+    } finally {
+        try {
+            await lease.release();
+        } catch (cause) {
+            args.logger.warn("the eyes lease did not release", args.logger.errorFields(cause));
+        }
+    }
 }
 
 /** The IANA media type of the screenshot. `page.screenshot` gives PNG bytes. */
@@ -91,17 +197,16 @@ const SCREENSHOT_MEDIA_TYPE = "image/png";
 const NO_BROWSER_DETAIL = "the composition gives no browser, thus this session cannot look at its page";
 
 /**
- * Make the eyes tool over the session-state gateway, the workspace-root seam, and the chrome config.
+ * Make the eyes tool over the session-state gateway, the workspace-root seam, and the eyes of the composition.
  *
  * The tool reads the thread id from the scope of the call, and it resolves the page path under the workspace
  * root. Thus one factory serves every thread. The tool holds no per-session value.
  */
 export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePageInput, ExaminePageResult> {
     const logger = (deps.logger ?? createNoopLogger()).named("examine-page");
-    // An injected seam is the eyes of a test. A named browser is the eyes of a deployment. With neither, the
-    // composition has no eyes, and that answer is fixed at construction.
-    const eyesAvailable = deps.capture !== undefined || hasBrowserUrl(deps.chrome);
-    const capture: CapturePage = deps.capture ?? ((url) => capturePage(deps.chrome, url));
+    // The eyes of the composition are fixed here, thus one look reads one resolved transport and never the
+    // precedence again.
+    const transport = resolveEyes(deps);
 
     return defineTool({
         id: "examine_page",
@@ -116,8 +221,9 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
         describeCall: "none",
         execute: async (_input, ctx): Promise<Result<ExaminePageResult, ToolError>> => {
             // The check runs before every read, thus one clear signal replaces a capture failure for each
-            // page. The arm stamps no seen hash, because no eyes saw the page.
-            if (!eyesAvailable) {
+            // page. The arm stamps no seen hash, because no eyes saw the page. It also narrows the transport
+            // for the look below, thus the acquire needs no assertion.
+            if (transport.kind === "none") {
                 logger.warn("the composition gives no browser, thus no look can run");
                 return ok({ outcome: "no-browser", detail: NO_BROWSER_DETAIL });
             }
@@ -149,13 +255,21 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 return ok({ outcome: "capture-failed", detail: "the session page could not be read" });
             }
 
-            let captured: PageCapture;
-            try {
-                captured = await capture(pathToFileURL(pagePath).href);
-            } catch (cause) {
-                logger.warn("the page capture failed", { threadId, analysisId, ...defaultErrorFields(cause) });
+            // The scope of the acquire carries the analysis and the root that this call resolved. Thus a
+            // realization that starts a browser mounts the same tree, and it holds no second resolver.
+            const looked = await runLook({
+                transport,
+                chrome: deps.chrome,
+                scope: { analysisId, workspaceRoot: root },
+                url: pathToFileURL(pagePath).href,
+                logger,
+            });
+            if (looked.isErr()) {
+                const { stage, cause } = looked.error;
+                logger.warn(LOOK_FAULT_MESSAGE[stage], { threadId, analysisId, ...defaultErrorFields(cause) });
                 return ok({ outcome: "capture-failed", detail: cause instanceof Error ? cause.message : String(cause) });
             }
+            const captured: PageCapture = looked.value;
 
             const stamped = await deps.gateway.stampSeen(threadId);
             if (stamped.outcome === "no-rendered") {
