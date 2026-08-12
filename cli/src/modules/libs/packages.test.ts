@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { imagePackagesFile } from "./packages.ts";
+import { imagePackagesFile, storePackagesFile } from "./packages.ts";
 import * as container from "../../lib/container.ts";
 import type { CaptureResult } from "../../lib/container.ts";
 
@@ -98,5 +98,116 @@ describe("imagePackagesFile — extract and cache the image inventory fragment",
         const path = await imagePackagesFile(container.runtimes.docker, IMAGE, fileAsDir);
 
         expect(path).toBeNull();
+    });
+});
+
+// --- the pool inventory (task 3.4) -------------------------------------------
+//
+// Planning selects from the POOL and never from one farm, because composition links any pool package on
+// demand. The graph names the pool, thus the graph is the source, and the catalog template gives the true
+// section of each name that it already lists.
+
+const NODE = { imports: [], entry_points: [], edges: [] };
+
+/** A store root with a graph, and with the template inventory when one is asked for. */
+function poolStore(nodes: Record<string, unknown>, templateInventory?: string): string {
+    const root = mkdtempSync(join(tmpdir(), "inflexa-pool-"));
+    roots.push(root);
+    writeFileSync(join(root, "deps.json"), `${JSON.stringify({ version: 1, nodes })}\n`);
+    if (templateInventory !== undefined) {
+        mkdirSync(join(root, "farms", "catalog"), { recursive: true });
+        writeFileSync(join(root, "farms", "catalog", "packages.txt"), templateInventory);
+    }
+    return root;
+}
+
+const roots: string[] = [];
+
+afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe("storePackagesFile — the pool inventory of the store", () => {
+    test("a package the pool holds and no farm links is listed, because composition can link it", () => {
+        const root = poolStore(
+            {
+                "scanpy-1.9.0-000000000000aaaa": { track: "python", ...NODE },
+                "anndata-0.10.0-000000000000bbbb": { track: "python", ...NODE },
+            },
+            "# Available packages in the sandbox environment.\n\n## Python (pip)\nanndata\n",
+        );
+
+        const path = storePackagesFile(root);
+
+        expect(path).toBe(join(root, "packages.txt"));
+        expect(readFileSync(path as string, "utf8")).toContain("## Python (pip)\nanndata, scanpy\n");
+    });
+
+    test("the template decides the section of each name that it lists, thus an R package keeps its subtree", () => {
+        const root = poolStore(
+            {
+                "seurat-5.0-000000000000aaaa": { track: "r", r_dir: "Seurat", ...NODE },
+                "deseq2-1.42-000000000000bbbb": { track: "r", r_dir: "DESeq2", ...NODE },
+            },
+            "# h\n\n## R (CRAN)\nSeurat\n\n## R (Bioconductor)\nDESeq2\n",
+        );
+
+        const body = readFileSync(storePackagesFile(root) as string, "utf8");
+
+        expect(body).toContain("## R (CRAN)\nSeurat\n");
+        expect(body).toContain("## R (Bioconductor)\nDESeq2\n");
+    });
+
+    test("a store with no template still presents the shape the harness parses", () => {
+        const root = poolStore({ "six-1.17.0-000000000000aaaa": { track: "python", ...NODE } });
+
+        const body = readFileSync(storePackagesFile(root) as string, "utf8");
+
+        expect(body.startsWith("# Available packages in the sandbox environment.\n")).toBe(true);
+        expect(body).toContain("## Python (pip)\nsix\n");
+    });
+
+    test("a name that only the template lists is not reported, because composition cannot link it", () => {
+        // The graph decides the set. A farm and a graph that disagree is a store whose farms are ahead of
+        // what composition can reach, and an agent told the farm's name would write an import that fails.
+        const root = poolStore({ "six-1.17.0-000000000000aaaa": { track: "python", ...NODE } }, "# h\n\n## Python (pip)\nghost, six\n");
+
+        const body = readFileSync(storePackagesFile(root) as string, "utf8");
+
+        expect(body).toContain("## Python (pip)\nsix\n");
+        expect(body).not.toContain("ghost");
+    });
+
+    test("a store with no graph reads as unusable, thus the sandbox gate refuses", () => {
+        const root = mkdtempSync(join(tmpdir(), "inflexa-pool-"));
+        roots.push(root);
+
+        expect(storePackagesFile(root)).toBeNull();
+        expect(existsSync(join(root, "packages.txt"))).toBe(false);
+    });
+
+    test("a graph that names no package reads as unusable too", () => {
+        expect(storePackagesFile(poolStore({}))).toBeNull();
+    });
+
+    test("a second read derives nothing, and a newer graph derives again", () => {
+        const root = poolStore({ "six-1.17.0-000000000000aaaa": { track: "python", ...NODE } });
+        const first = storePackagesFile(root) as string;
+        const stamp = statSync(first).mtimeMs;
+
+        expect(storePackagesFile(root)).toBe(first);
+        expect(statSync(first).mtimeMs).toBe(stamp);
+
+        // A `store add` appends to the graph. The next read sees the newer graph and derives again.
+        writeFileSync(
+            join(root, "deps.json"),
+            `${JSON.stringify({
+                version: 1,
+                nodes: { "six-1.17.0-000000000000aaaa": { track: "python", ...NODE }, "attrs-24.2-000000000000cccc": { track: "python", ...NODE } },
+            })}\n`,
+        );
+        utimesSync(join(root, "deps.json"), new Date(), new Date(stamp + 5_000));
+
+        expect(readFileSync(storePackagesFile(root) as string, "utf8")).toContain("attrs, six");
     });
 });

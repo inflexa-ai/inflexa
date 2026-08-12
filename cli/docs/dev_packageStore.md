@@ -67,26 +67,51 @@ It is the one container with network access and a compiler.
 
 | Command | Does |
 |-|-|
-| `inflexa store add <packages...>` | Provision Python packages into the active farm. `--farm <name>` selects a named farm. |
+| `inflexa store add <packages...>` | Acquire Python packages into the pool. It does no farm work, and it takes no farm name. |
 | `inflexa store ls` | List the store's packages, farms, and disk use. This command only reads the host store. |
 | `inflexa store remove-farm <farm>` | Remove a farm's symlinks. The packages stay until reclaim runs. |
-| `inflexa store reclaim` | Remove store packages that no farm references. The command reports them before it removes them. |
+| `inflexa store reclaim` | Remove the farms whose analysis is gone, then remove store packages that no farm references. The command reports them before it removes them. |
 
 `add`, `remove-farm`, and `reclaim` each start the provisioner container, and each
 is approval-gated, the same as `inflexa sandbox pull`. `ls` only reads the host
 filesystem, thus it stays prompt-free.
 
-## The inventory follows the mount
+## One farm for each analysis
 
-`list_available_packages` reads its inventory from a host path. With the store on
-and usable, the inventory is the store's active farm. With the store off, or with a
-store that the harness refuses, the inventory is the image label cache. The rule is
-that the inventory always describes what the sandbox mounts.
+There is no active farm at the store level, and no command switches one. The store
+holds one content-addressed pool (`store/`), the resolved dependency graph
+(`deps.json`), and one farm for each analysis at `farms/<analysisId>`. A farm is a
+tree of symbolic links into the pool.
 
-Boot records one store condition only: a store root that exists and yet carries no
-readable active-farm inventory. That is a broken or a partial store. A store root
-that is not there is the normal state before the first download, thus boot says
-nothing about it.
+The CLI composes a farm on the host, with no container. The first sandbox action of
+an analysis makes its farm, thus an analysis in which the user only chats makes
+none. The default closure is the requested set of the catalog farm, which the
+download brings as the TEMPLATE and never as an environment.
+
+`inflexa store add` acquires into the pool alone. The farm of an analysis changes
+only through composition: the flight extends the farm of each analysis that
+subscribed to it, and an import failure extends a farm on demand. `analysis delete`
+removes the farm, and a removal refuses while a lease records a live sandbox of it.
+
+## The inventory reads the pool
+
+`list_available_packages` reads its inventory from a host path. The CLI supplies
+the POOL inventory of the store, derived from `deps.json` and cached at
+`<store root>/packages.txt`. The pool is the honest answer for planning, because
+composition can link any pool package into a farm on demand. Inside a sandbox the
+truth stays the farm that the sandbox mounts, which is what composition made for
+that analysis.
+
+The CLI reports no inventory from a second source. The runtime image bakes no
+library, thus the per-image label cache describes an empty set.
+
+A store with no dependency graph, or a graph that names no package, is unusable: a
+sandbox of it could import nothing. The boot does not fail on it, because chat, the
+workspace read surface, and the planner use no package. The sandbox gate holds each
+action that would make a sandbox, and it names the remedy.
+
+A farm that cannot be composed is a second such state. The provider records the
+reason, and the gate names it at the next sandbox action.
 
 ## The macOS performance cost
 

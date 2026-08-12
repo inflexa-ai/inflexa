@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
@@ -17,6 +17,7 @@ import { ContainerRuntimeError, runtimes } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../lib/credential.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
+import { takeFarmCompositionFailure } from "../libs/composition.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { bootHarnessRuntime, buildAuthInjectingFetch, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
 import { agentProviderInner } from "./agent_switch.ts";
@@ -75,9 +76,8 @@ function fakeEmbedding(): EmbeddingProvider {
  * Seed the ONE host package store root at `env.libStoreDir` and return it. The root is a CLI-owned path
  * with no config key, so a test cannot point the store somewhere else — it seeds the real location, which
  * the bunfig preload has already redirected into the test sandbox (`assertTestSandbox` proves that here
- * before any write). The store keeps its active version behind `current`; its inventory is
- * `current/packages.txt`. `withInventory` seeds that one file — the shallow shape the CLI reads to decide
- * the inventory source — so an "incomplete" root (no `current`) exercises the fallback.
+ * before any write). The store carries no active farm: its inventory is the POOL, which the dependency
+ * graph names. `withInventory` seeds that graph, so a root without it is a store no sandbox could mount.
  */
 function seedLibStoreRoot(withInventory: boolean): string {
     const root = env.libStoreDir;
@@ -85,9 +85,39 @@ function seedLibStoreRoot(withInventory: boolean): string {
     rmSync(root, { recursive: true, force: true });
     mkdirSync(root, { recursive: true });
     if (withInventory) {
-        mkdirSync(join(root, "current"), { recursive: true });
-        writeFileSync(join(root, "current", "packages.txt"), "numpy==1.26.4\npandas==2.2.2\n");
+        // The graph is what the real `storePackagesFile` derives the pool inventory from. The boot tests
+        // stub that seam, so this only has to be a store that a reader would call usable.
+        writeFileSync(
+            join(root, "deps.json"),
+            JSON.stringify({ version: 1, nodes: { "numpy-1.26.4-0000000000000000": { track: "python", imports: ["numpy"], entry_points: [], edges: [] } } }),
+        );
     }
+    return root;
+}
+
+/**
+ * A store root the composer can work from: the fixture pool of the composition tests, its graph, and a
+ * catalog template farm.
+ *
+ * The template is DERIVED rather than checked in, exactly as `composition.test.ts` derives it: a tree of
+ * links whose targets resolve nowhere on the host would be checked-in debris. Its lock names the default
+ * roots of a new analysis farm.
+ */
+function seedComposableStore(withTemplate: boolean): string {
+    const root = env.libStoreDir;
+    assertTestSandbox(root);
+    assertTestSandbox(env.locksDir);
+    rmSync(root, { recursive: true, force: true });
+    mkdirSync(root, { recursive: true });
+    cpSync(join(import.meta.dir, "..", "libs", "test-fixtures", "farm-parity"), root, { recursive: true });
+    if (!withTemplate) return root;
+    const template = join(root, "farms", "catalog");
+    mkdirSync(join(template, "python", "site-packages"), { recursive: true });
+    writeFileSync(
+        join(template, "lock.json"),
+        JSON.stringify({ requested: ["beta"], resolved: ["beta==0.4.1"], store_dirs: ["alpha-1.2.0-000000000000aaaa", "beta-0.4.1-000000000000bbbb"] }),
+    );
+    writeFileSync(join(template, "meta.json"), JSON.stringify({ version: "catalog", arch: "linux-arm64", tracks: ["python"] }));
     return root;
 }
 
@@ -117,7 +147,7 @@ function recordingSeams(calls: string[]): BootSeams {
         // refusal overrides this seam with `() => null`.
         resolveStorePackages: (root: string) => {
             calls.push("resolveStorePackages");
-            return join(root, "current", "packages.txt");
+            return join(root, "packages.txt");
         },
         // Offline stub: the real seam runs a container to extract the image fragment and caches it. A path
         // is the ordinary answer; a test that wants the degraded case overrides this with `() => null`.
@@ -942,13 +972,13 @@ describe("bootHarnessRuntime", () => {
         }
     });
 
-    test("the inventory comes from the store's active farm, which is the one store a sandbox mounts", async () => {
+    test("the inventory comes from the pool of the store, which is what composition can link", async () => {
         const calls: string[] = [];
         const storeRoot = seedLibStoreRoot(true);
         try {
             const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }))._unsafeUnwrap();
             expect(runtime).toBeDefined();
-            expect(lastCore?.conversation.packagesFile).toBe(join(storeRoot, "current", "packages.txt"));
+            expect(lastCore?.conversation.packagesFile).toBe(join(storeRoot, "packages.txt"));
         } finally {
             clearLibStoreRoot();
         }
@@ -990,7 +1020,7 @@ describe("bootHarnessRuntime", () => {
             expect(runtime).toBeDefined();
             // The store inventory and the image fragment are two distinct sources. Both flow to the
             // composition: the store's `packages.txt`, and the extracted image fragment cache path.
-            expect(lastCore?.conversation.packagesFile).toBe(join(storeRoot, "current", "packages.txt"));
+            expect(lastCore?.conversation.packagesFile).toBe(join(storeRoot, "packages.txt"));
             expect(lastCore?.conversation.imagePackagesFile).toBe(IMAGE_FRAGMENT_PATH);
             expect(lastCore?.workflows.dataProfile.imagePackagesFile).toBe(IMAGE_FRAGMENT_PATH);
         } finally {
@@ -1010,10 +1040,97 @@ describe("bootHarnessRuntime", () => {
             expect(runtime).toBeDefined();
             expect(calls).toContain("boot");
             // The store source is untouched by the fragment outcome, so it still flows.
-            expect(lastCore?.conversation.packagesFile).toBe(join(storeRoot, "current", "packages.txt"));
+            expect(lastCore?.conversation.packagesFile).toBe(join(storeRoot, "packages.txt"));
             // A null fragment is omitted, not passed as null.
             expect(lastCore?.conversation.imagePackagesFile).toBeUndefined();
             expect(lastCore?.workflows.dataProfile.imagePackagesFile).toBeUndefined();
+        } finally {
+            clearLibStoreRoot();
+        }
+    });
+});
+
+// --- the farm provider (tasks 3.1, 3.2, 3.5) ---------------------------------
+//
+// There is no active farm at the store level. The harness learns the farm of a sandbox only through the
+// provider the composition root supplies, and the provider composes on a miss. Thus two analyses that run
+// at the same time mount two farms, and an analysis that only chats composes none.
+//
+// The mount itself belongs to the harness (`docker-client`), thus these tests drive the provider and the
+// mount configuration, and they start no container.
+
+describe("the farm provider the composition root supplies", () => {
+    /** The provider of the last boot, from the sandbox-client configuration the CLI built. */
+    async function bootProvider(): Promise<(analysisId: string) => Promise<string | undefined> | string | undefined> {
+        const captured: { config: CreateSandboxClientConfig | null } = { config: null };
+        const seams: BootSeams = {
+            ...recordingSeams([]),
+            createSandbox: (cfg) => {
+                captured.config = cfg;
+                return createSandboxClient(cfg);
+            },
+        };
+        const result = await bootHarnessRuntime({ seams, config: testConfig() });
+        expect(result.isOk()).toBe(true);
+        const provider = captured.config?.resolveAnalysisFarm;
+        expect(provider).toBeDefined();
+        // The farm bind nests inside the store bind, thus the two must name one store root.
+        expect(captured.config?.libStorePath).toBe(env.libStoreDir);
+        return provider as (analysisId: string) => Promise<string | undefined>;
+    }
+
+    test("two analyses get two farms, and each one carries its own links", async () => {
+        const storeRoot = seedComposableStore(true);
+        try {
+            const provider = await bootProvider();
+            const first = randomUUIDv7();
+            const second = randomUUIDv7();
+
+            const farms = [await provider(first), await provider(second)];
+
+            expect(farms).toEqual([join(storeRoot, "farms", first), join(storeRoot, "farms", second)]);
+            for (const farm of farms) {
+                // The two completeness markers the harness usability gate requires.
+                expect(existsSync(join(farm as string, "packages.txt"))).toBe(true);
+                expect(existsSync(join(farm as string, "meta.json"))).toBe(true);
+                // The closure of the template's requested set: beta, and the alpha that beta names.
+                expect(lstatSync(join(farm as string, "python", "site-packages", "beta")).isSymbolicLink()).toBe(true);
+                expect(lstatSync(join(farm as string, "python", "site-packages", "alpha")).isSymbolicLink()).toBe(true);
+            }
+            // The template belongs to composition and never to a sandbox.
+            expect(farms).not.toContain(join(storeRoot, "farms", "catalog"));
+        } finally {
+            clearLibStoreRoot();
+        }
+    });
+
+    test("a farm that is already there is returned as it is, thus a second sandbox composes nothing again", async () => {
+        const storeRoot = seedComposableStore(true);
+        try {
+            const provider = await bootProvider();
+            const analysisId = randomUUIDv7();
+            const farm = (await provider(analysisId)) as string;
+            const stamp = lstatSync(join(farm, "lock.json")).mtimeMs;
+
+            expect(await provider(analysisId)).toBe(farm);
+            expect(lstatSync(join(storeRoot, "farms", analysisId, "lock.json")).mtimeMs).toBe(stamp);
+        } finally {
+            clearLibStoreRoot();
+        }
+    });
+
+    test("a composition failure returns no farm, and it leaves the reason for the sandbox gate", async () => {
+        // A store with no catalog template: composition has no default root set and no warm cache donor.
+        seedComposableStore(false);
+        try {
+            const provider = await bootProvider();
+            const analysisId = randomUUIDv7();
+
+            expect(await provider(analysisId)).toBeUndefined();
+
+            const failure = takeFarmCompositionFailure();
+            expect(failure?.analysisId).toBe(analysisId);
+            expect(failure?.reason).toContain("catalog template");
         } finally {
             clearLibStoreRoot();
         }

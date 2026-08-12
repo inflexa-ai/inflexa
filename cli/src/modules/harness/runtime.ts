@@ -46,6 +46,7 @@ import { acquireInstanceLock, releaseInstanceLock, HARNESS_RUNTIME_LOCK_KEY } fr
 import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
+import { analysisFarmPath, composeFarm, describeFarmCompositionError } from "../libs/composition.ts";
 import { imagePackagesFile, storePackagesFile } from "../libs/packages.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
@@ -280,6 +281,40 @@ async function resolveSandboxEngineOnce(): Promise<Result<ResolvedSandboxEngine,
 }
 
 /**
+ * The farm-provider seam realization (`lib-store-provisioning` spec): an analysis id
+ * in, the host path of `farms/<analysisId>` out.
+ *
+ * The provider is where LAZY composition lives. The harness resolves it at each
+ * `createSandbox` call, thus the FIRST sandbox action of an analysis makes its farm
+ * by construction, and an analysis in which the user only chats gets none. A farm
+ * that is already there is returned as it is, so a second sandbox costs one `stat`.
+ *
+ * A composition failure returns NO farm. The harness then refuses that one sandbox
+ * with its `farm_unavailable` state, which is a refusal of one action and never a
+ * boot failure. `composeFarm` records the reason, and the sandbox gate
+ * (`tui/hooks/sandbox_gate.tsx`) names it at the next action.
+ *
+ * The provider can only ever name `farms/<analysisId>`, thus it never names the
+ * catalog template: an analysis id is a UUIDv7, and the template is `catalog`.
+ */
+async function resolveAnalysisFarm(storeRoot: string, analysisId: string): Promise<string | undefined> {
+    const farmPath = analysisFarmPath(storeRoot, analysisId);
+    if (existsSync(farmPath)) return farmPath;
+    const composed = await composeFarm({ storeRoot, analysisId });
+    return composed.match(
+        (composition) => composition.farmPath,
+        (error) => {
+            harnessLogger("farm-provider").warn("could not compose the package farm of this analysis — the sandbox is refused", {
+                analysisId,
+                farmPath,
+                reason: describeFarmCompositionError(error),
+            });
+            return undefined;
+        },
+    );
+}
+
+/**
  * The boot sequence's effectful seams, injectable so the sequencing test runs
  * offline (no Postgres, no proxy, no DBOS). Production callers pass nothing.
  */
@@ -292,8 +327,7 @@ export type BootSeams = {
      */
     readonly resolveSandboxEngine: () => Promise<Result<ResolvedSandboxEngine, ContainerRuntimeError>>;
     /**
-     * The active farm's package inventory inside the store, or null when the store
-     * carries none. A seam so the sequencing test drives both branches without a store
+     * The pool inventory of the store, or null when the store carries none. A seam so the sequencing test drives both branches without a store
      * on disk. Real: {@link storePackagesFile}.
      */
     readonly resolveStorePackages: (storeRoot: string) => string | null;
@@ -647,9 +681,10 @@ async function bootHarnessRuntimeOnce(
     // describes whatever the sandbox will actually mount, because an agent told a package exists when the
     // mount does not carry it writes code that fails at import.
     //
-    // The store gives the first source, which is the active farm a sandbox mounts. It carries the Python
-    // packages and the R packages. The runtime image gives the second source below. `null` from the store
-    // is passed straight through, and the sandbox composition omits the field.
+    // The store gives the first source, which is its POOL and never one farm: composition links any pool
+    // package into the farm of an analysis on demand, thus the pool is what planning selects from. The
+    // runtime image gives the second source below. `null` from the store is passed straight through, and
+    // the sandbox composition omits the field.
     //
     // An unreadable inventory does NOT fail this boot. The refusal belongs to whatever is about to make a
     // sandbox: the app gate (`tui/hooks/sandbox_gate.tsx`) holds each such action, and `inflexa profile`
@@ -820,11 +855,14 @@ async function bootHarnessRuntimeOnce(
             //
             // The harness bind-mounts it read-only at `/mnt/libs`, and it re-checks the store at every
             // sandbox creation and drops the mount when the store is incomplete. The CLI does NOT duplicate
-            // that usability check: the boot inventory gate above already refuses the boot when the active
-            // farm carries no inventory, and the sandbox gate refuses the action. The multi-arch image
+            // that usability check: the sandbox gate refuses the action when the store carries no inventory. The multi-arch image
             // resolves the host arch at pull time, so no container platform is forced. Managed mounts the
             // store through its PVC — that lives in infra/harness config, not here.
             libStorePath: env.libStoreDir,
+            // The farm-provider seam. There is no active farm at the store level, thus the harness learns
+            // the farm of a sandbox only through this call. It composes on a miss, so the first sandbox
+            // action of an analysis makes the farm and a chat-only analysis makes none.
+            resolveAnalysisFarm: (analysisId) => resolveAnalysisFarm(env.libStoreDir, analysisId),
             // Pass the configured store location unconditionally: the sandbox backend
             // re-checks this path's existence at every sandbox creation and mounts it
             // only when it is a real directory then. So a store installed mid-session

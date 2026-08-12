@@ -2,9 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { ok, type Result } from "neverthrow";
 
 import type { LibStoreDownloadReport, LibStoreDownloadRow, LibStoreDownloadState, LibStoreDownloadStatus } from "../../modules/libs/store_download.ts";
+import type { FarmCompositionFailure } from "../../modules/libs/composition.ts";
+import type { LibStoreFlightReport } from "../../modules/libs/store_flight.ts";
 import type { Notice } from "../theme.ts";
 import {
     awaitSandboxReady,
+    libStoreFlights,
     libStoreGateState,
     refreshLibStoreGateState,
     type ImageReadiness,
@@ -21,7 +24,7 @@ import {
 afterEach(() => __resetSandboxGateForTest());
 
 const STORE_ROOT = "/tmp/store";
-const INVENTORY = `${STORE_ROOT}/current/packages.txt`;
+const INVENTORY = `${STORE_ROOT}/packages.txt`;
 
 /** A row in one state, with the counters a live transfer would have written. */
 function row(state: LibStoreDownloadStatus, over: Partial<LibStoreDownloadRow> = {}): LibStoreDownloadRow {
@@ -49,12 +52,16 @@ type Recorder = {
     downloadReads: number;
     imageChecks: number;
     pulls: number;
+    /** Every read of the composition-failure record, so a test proves that the gate consumes it one time. */
+    farmReads: number;
 };
 
 type SeamOverrides = {
     readonly inspect?: LibStoreDownloadState;
-    /** The active farm's inventory path, or `null` for a store no sandbox could mount. */
+    /** The pool inventory path of the store, or `null` for a store no sandbox could mount. */
     readonly inventory?: string | null;
+    /** The farm composition that failed and that nothing reported yet. `null` is the ordinary state. */
+    readonly farmFailure?: FarmCompositionFailure | null;
     /** The lifecycle reports, consumed in order; the last one repeats once the list runs out. */
     readonly reports?: LibStoreDownloadReport[];
     /** The manifest digest the receipt pins. */
@@ -63,6 +70,8 @@ type SeamOverrides = {
     readonly confirmAnswers?: boolean[];
     readonly image?: ImageReadiness;
     readonly pull?: Result<void, { message: string }>;
+    /** The acquisition flights that are live. They decide nothing at the gate; they only publish. */
+    readonly flights?: readonly LibStoreFlightReport[];
 };
 
 /** A report with no row at all: the machine on which no download ever ran. */
@@ -79,7 +88,7 @@ function settledReport(state: LibStoreDownloadStatus, over: Partial<LibStoreDown
 }
 
 function makeSeams(over: SeamOverrides = {}): { seams: SandboxGateSeams; rec: Recorder } {
-    const rec: Recorder = { confirms: [], notices: [], downloadReads: 0, imageChecks: 0, pulls: 0 };
+    const rec: Recorder = { confirms: [], notices: [], downloadReads: 0, imageChecks: 0, pulls: 0, farmReads: 0 };
     const answers = [...(over.confirmAnswers ?? [])];
     const reports = [...(over.reports ?? [NO_ROW])];
     const seams: SandboxGateSeams = {
@@ -89,8 +98,14 @@ function makeSeams(over: SeamOverrides = {}): { seams: SandboxGateSeams; rec: Re
             rec.downloadReads += 1;
             return reports.length > 1 ? (reports.shift() ?? NO_ROW) : (reports[0] ?? NO_ROW);
         },
+        readFlights: () => over.flights ?? [],
         installedManifest: async () => over.installedManifest ?? null,
         storeInventory: () => (over.inventory === undefined ? INVENTORY : over.inventory),
+        takeFarmFailure: () => {
+            // The real seam consumes, thus a second read inside one flow answers `null` exactly as it does.
+            rec.farmReads += 1;
+            return rec.farmReads === 1 ? (over.farmFailure ?? null) : null;
+        },
         sandboxImage: () => "ghcr.io/inflexa-ai/sandbox-base:latest",
         imageReadiness: async () => {
             rec.imageChecks += 1;
@@ -276,5 +291,76 @@ describe("awaitSandboxReady — the image half of the gate", () => {
         const { seams, rec } = makeSeams({ inspect: "installed", image: { kind: "engine_error", message: "the Podman machine is not running." } });
         expect(await awaitSandboxReady(seams)).toBe("blocked");
         expect(rec.notices.some((n) => n.kind === "error" && n.text.includes("Podman"))).toBe(true);
+    });
+});
+
+describe("the farm half of the gate — the composition failure the provider recorded", () => {
+    // Composition runs INSIDE the farm provider the harness calls, thus it runs after this gate decided
+    // and its error reaches no user surface of its own. The provider records the reason, and the gate is
+    // where the user reads it.
+
+    test("a recorded failure blocks the action and names the reason", async () => {
+        const { seams, rec } = makeSeams({ inspect: "installed", farmFailure: { analysisId: "an-1", reason: "the catalog template farm is absent" } });
+
+        expect(await awaitSandboxReady(seams)).toBe("blocked");
+
+        expect(rec.notices.some((n) => n.kind === "error" && n.text.includes("the catalog template farm is absent"))).toBe(true);
+        // The image half never ran: a farm that cannot compose refuses the sandbox whatever the image does,
+        // and the image half can open a multi-gigabyte pull consent.
+        expect(rec.imageChecks).toBe(0);
+        expect(rec.pulls).toBe(0);
+    });
+
+    test("the report consumes the record, thus the next action composes again", async () => {
+        const { seams, rec } = makeSeams({ inspect: "installed", farmFailure: { analysisId: "an-1", reason: "a dangling edge" } });
+        expect(await awaitSandboxReady(seams)).toBe("blocked");
+
+        // A gate that held the record would refuse for ever: the composition that clears it is exactly what
+        // the refusal stops.
+        expect(await awaitSandboxReady(seams)).toBe("ready");
+        expect(rec.farmReads).toBe(2);
+    });
+
+    test("no recorded failure changes nothing, which is the ordinary state", async () => {
+        const { seams, rec } = makeSeams({ inspect: "installed" });
+        expect(await awaitSandboxReady(seams)).toBe("ready");
+        expect(rec.notices).toEqual([]);
+    });
+});
+
+describe("the acquisition flights the rail renders", () => {
+    // A flight decides NOTHING at the gate: the store is usable while a package acquires into it, thus a
+    // live flight must not change the phase and must not hold a sandbox action.
+    test("a live flight publishes its line and leaves the gate verdict alone", async () => {
+        const { seams } = makeSeams({
+            inspect: "installed",
+            flights: [
+                {
+                    row: {
+                        id: "python scanpy>=1.9",
+                        createdAt: 1,
+                        updatedAt: 2,
+                        state: "running",
+                        ecosystem: "python",
+                        name: "scanpy",
+                        specifier: ">=1.9",
+                        progress: "[provision] resolving",
+                        holderPid: 4242,
+                    },
+                    analysisIds: ["a1", "a2"],
+                },
+            ],
+        });
+
+        expect(await refreshLibStoreGateState(seams)).toEqual({ phase: "installed", updateAvailable: false });
+        expect(libStoreFlights()).toEqual([{ spec: "python scanpy>=1.9", state: "running", progress: "[provision] resolving", subscribers: 2 }]);
+        // The gate still passes, because a flight is work in progress and never a fault of the store.
+        expect(await awaitSandboxReady(seams)).toBe("ready");
+    });
+
+    test("no flight publishes no line, thus the rail takes no height for it", async () => {
+        const { seams } = makeSeams({ inspect: "installed" });
+        await refreshLibStoreGateState(seams);
+        expect(libStoreFlights()).toEqual([]);
     });
 });

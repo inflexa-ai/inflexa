@@ -6,6 +6,7 @@ import { ensureRuntime } from "../../lib/config.ts";
 import { capture } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { isPublishedSandboxImage } from "../../modules/libs/images.ts";
+import { takeFarmCompositionFailure, type FarmCompositionFailure } from "../../modules/libs/composition.ts";
 import { storePackagesFile } from "../../modules/libs/packages.ts";
 import { resolveHarnessConfig } from "../../modules/harness/config.ts";
 import {
@@ -15,6 +16,7 @@ import {
     type LibStoreDownloadReport,
     type LibStoreDownloadState,
 } from "../../modules/libs/store_download.ts";
+import { describeLibStoreFlightSpec, readLibStoreFlights, type LibStoreFlightReport, type LibStoreFlightStatus } from "../../modules/libs/store_flight.ts";
 import type { Notice } from "../theme.ts";
 import { notify } from "./notice.ts";
 import { dialogClose, dialogPush } from "../components/dialog/dialog_host.tsx";
@@ -51,7 +53,7 @@ import { ConfirmDialog } from "../components/dialog/confirm_dialog.tsx";
  * - `absent` — no download ever ran on this machine, and the store root carries no usable store;
  * - `pending` — a run is starting, and the manifest has not resolved;
  * - `downloading` — a transfer is live, carrying its running counts and the totals the manifest declared;
- * - `installed` — the store is complete and its active farm carries a package inventory;
+ * - `installed` — the store is complete and its pool carries a package inventory;
  * - `failed` — the store could not be completed, carrying the actionable message the gate reports;
  * - `declined` — the user answered no at setup, thus no transfer ever started;
  * - `canceled` — the user stopped a transfer that had started.
@@ -81,6 +83,29 @@ const [state, setState] = createSignal<LibStoreGateState>({ phase: "idle" });
 /** Read the current package-store gate state — call inside a tracking scope for reactivity. */
 export const libStoreGateState = state;
 
+/**
+ * The acquisition flights that are live now, as the sidebar renders them.
+ *
+ * A separate signal from the gate state, because a flight decides NOTHING about whether a sandbox can
+ * start: the store is usable while a package acquires into it. The gate holds a sandbox on the store, and
+ * this only reports work that the machine is doing.
+ */
+export type LibStoreFlightLine = {
+    /** The normalized spec of the flight, as a user reads it. */
+    readonly spec: string;
+    /** The live state: waiting for a slot under the cap, or running. */
+    readonly state: LibStoreFlightStatus;
+    /** The newest line of the acquisition, or `null` before the container writes one. */
+    readonly progress: string | null;
+    /** How many analyses subscribe to the flight. */
+    readonly subscribers: number;
+};
+
+const [flights, setFlights] = createSignal<readonly LibStoreFlightLine[]>([]);
+
+/** Read the live acquisition flights — call inside a tracking scope for reactivity. */
+export const libStoreFlights = flights;
+
 // The in-flight store wait, so two concurrent sandbox actions share one hold rather than each polling the
 // row on its own. The check-and-set below has no await between the read and the write, so two concurrent
 // callers cannot both start a wait.
@@ -98,14 +123,21 @@ export type SandboxGateSeams = {
     readonly inspect: (root: string) => Promise<LibStoreDownloadState>;
     /** The lifecycle of the detached downloader: the row, corrected by the liveness of the lock. Real: {@link readLibStoreDownloadReport}. */
     readonly readDownload: () => LibStoreDownloadReport;
+    /** The acquisition flights that are live now. Real: {@link readLibStoreFlights}. */
+    readonly readFlights: () => readonly LibStoreFlightReport[];
     /** The manifest digest the receipt pins, or `null`. Real: {@link installedLibStoreManifest}. */
     readonly installedManifest: (root: string) => Promise<string | null>;
     /**
-     * The active farm's package inventory, or `null` when the store carries none. This is the one fact
-     * that separates "the bytes arrived" from "a sandbox can import something". Real:
+     * The pool inventory of the store, or `null` when the store carries none. This is the one fact that
+     * separates "the bytes arrived" from "a sandbox can import something". Real:
      * {@link storePackagesFile}.
      */
     readonly storeInventory: (root: string) => string | null;
+    /**
+     * The farm composition that failed and that nothing reported yet, or `null`. The read CONSUMES it —
+     * refer to {@link takeFarmCompositionFailure}. Real: that function.
+     */
+    readonly takeFarmFailure: () => FarmCompositionFailure | null;
     /** The configured sandbox image reference. Real: `resolveHarnessConfig().sandboxImage`. */
     readonly sandboxImage: () => string;
     /** Report the image readiness without a pull. Real: an engine inspect. */
@@ -177,8 +209,10 @@ export const realSandboxGateSeams: SandboxGateSeams = {
     storeRoot: () => env.libStoreDir,
     inspect: inspectLibStoreDownload,
     readDownload: readLibStoreDownloadReport,
+    readFlights: readLibStoreFlights,
     installedManifest: installedLibStoreManifest,
     storeInventory: storePackagesFile,
+    takeFarmFailure: takeFarmCompositionFailure,
     sandboxImage: () => resolveHarnessConfig().sandboxImage,
     imageReadiness: async (image) => {
         const rt = await ensureRuntime();
@@ -214,6 +248,16 @@ const STORE_RETRY_COMMAND = "Run `inflexa store download` to obtain it.";
 export async function refreshLibStoreGateState(seams: SandboxGateSeams = realSandboxGateSeams): Promise<LibStoreGateState> {
     const root = seams.storeRoot();
     const report = seams.readDownload();
+    // The flights ride the same poll, because the two describe one store and a second timer would let the
+    // rail show a flight against a download state that a different tick produced.
+    setFlights(
+        seams.readFlights().map((flight) => ({
+            spec: describeLibStoreFlightSpec(flight.row),
+            state: flight.row.state,
+            progress: flight.row.progress,
+            subscribers: flight.analysisIds.length,
+        })),
+    );
     const usable = (await seams.inspect(root)) === "installed" && seams.storeInventory(root) !== null;
     if (usable) {
         // The last resolve recorded the digest the registry serves now; the receipt pins the digest that is
@@ -253,13 +297,14 @@ function describeUnusableStore(root: string, report: LibStoreDownloadReport): Li
         case "canceled":
             return { phase: "canceled" };
         case "installed":
-            // The row says the bytes landed and the filesystem disagrees: the receipt or the active farm is
-            // gone. The filesystem is what a sandbox mounts, thus it wins and the gate keeps the refusal.
+            // The row says the bytes landed and the filesystem disagrees: the receipt is gone, or the pool
+            // names no package. The filesystem is what a sandbox mounts, thus it wins and the gate keeps the
+            // refusal.
             return {
                 phase: "failed",
                 message:
-                    `The package store at ${root} reports an installed download, but its active farm carries no package inventory, ` +
-                    `so a sandbox would carry no library. Run \`inflexa store ls\` to see the farms, then \`inflexa store use <farm>\` to select a complete one.`,
+                    `The package store at ${root} reports an installed download, but it carries no package inventory, ` +
+                    `so a sandbox would carry no library. Run \`inflexa store ls\` to see the farms, and \`inflexa store download\` to obtain the catalog again.`,
             };
         default: {
             const exhaustive: never = report.state;
@@ -382,13 +427,38 @@ async function ensureImage(seams: SandboxGateSeams): Promise<"ready" | "blocked"
 }
 
 /**
- * Hold a sandbox-making action until the store is complete and the image is present. Returns `ready` when
- * both are satisfied, or `blocked` when the store or the image pull did not complete — the gate reports
- * the reason as it decides, so a `blocked` caller starts no sandbox against an empty store.
+ * Report the farm composition that failed since the last action, and refuse this one.
+ *
+ * Composition runs INSIDE the farm provider that the harness calls, thus it runs after this gate decided
+ * and its error reaches no user surface of its own. The provider records the reason, and this is where the
+ * user reads it.
+ *
+ * The report CONSUMES the record, thus the action after this one composes again. A gate that held the
+ * record would refuse for ever: the store download or the package acquisition that fixes the fault leaves
+ * the record untouched, and the composition that would clear it is exactly what the refusal stops.
+ */
+function reportFarmFailure(seams: SandboxGateSeams): "ready" | "blocked" {
+    const failure = seams.takeFarmFailure();
+    if (failure === null) return "ready";
+    seams.notify({
+        kind: "error",
+        text: `The package farm of this analysis could not be composed: ${failure.reason}. Run \`inflexa store ls\` to see the store, then try again.`,
+    });
+    return "blocked";
+}
+
+/**
+ * Hold a sandbox-making action until the store is complete, the farm of the analysis composes, and the
+ * image is present. Returns `ready` when the three are satisfied, or `blocked` otherwise — the gate
+ * reports the reason as it decides, so a `blocked` caller starts no sandbox against an empty store.
+ *
+ * The farm check sits between the two, because a farm that cannot compose makes the sandbox refuse
+ * whatever the image does, and the image half can open a multi-gigabyte pull consent.
  */
 export async function awaitSandboxReady(seams: SandboxGateSeams = realSandboxGateSeams): Promise<"ready" | "blocked"> {
     const store = await ensureLibStore(seams);
     if (store === "blocked") return "blocked";
+    if (reportFarmFailure(seams) === "blocked") return "blocked";
     return ensureImage(seams);
 }
 
@@ -397,8 +467,14 @@ export function __setLibStoreGateStateForTest(next: LibStoreGateState): void {
     setState(next);
 }
 
-/** Test hook: drop the gate state and the in-flight flow back to idle. Test-only. */
+/** Test hook: publish a set of live flights directly, with no database. Test-only. */
+export function __setLibStoreFlightsForTest(next: readonly LibStoreFlightLine[]): void {
+    setFlights(next);
+}
+
+/** Test hook: drop the gate state, the flights, and the in-flight flow back to idle. Test-only. */
 export function __resetSandboxGateForTest(): void {
     storeFlowInflight = null;
     setState({ phase: "idle" });
+    setFlights([]);
 }

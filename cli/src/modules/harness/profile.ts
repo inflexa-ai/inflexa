@@ -103,8 +103,8 @@ export function describeBootError(e: HarnessBootError): string {
             return e.message;
         case "lib_store_unusable":
             return [
-                `The package store at ${e.root} carries no readable package inventory for its active farm, so a sandbox launched now could import nothing.`,
-                "Run `inflexa store download` to obtain the published catalog, or `inflexa store ls` to see which farm the active-farm pointer selects and `inflexa store use <farm>` to select a complete one.",
+                `The package store at ${e.root} carries no readable package inventory, so a sandbox launched now could import nothing.`,
+                "Run `inflexa store download` to obtain the published catalog, or `inflexa store ls` to see what the store holds.",
             ].join("\n");
         case "postgres_unavailable":
             return e.cause.message;
@@ -126,7 +126,7 @@ export function describeBootError(e: HarnessBootError): string {
 }
 
 /**
- * Pre-flight: the package store must carry a readable inventory for its active farm.
+ * Pre-flight: the package store must carry a readable inventory for its pool.
  *
  * `inflexa profile` and `inflexa run` each make a sandbox at once, and neither passes through the gate of
  * the app. The harness boot refuses nothing about the store — an unreadable inventory must leave chat,

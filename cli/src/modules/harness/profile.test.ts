@@ -94,18 +94,23 @@ describe("ensureLibStoreUsable — the refusal the two direct sandbox commands k
         }
     }
 
-    test("a store whose active farm carries no inventory refuses, and the message names the remedy", () => {
-        // No store root at all, thus `storePackagesFile` resolves to null — the same answer a dangling
-        // `current` pointer and an absent `packages.txt` give.
+    test("a store whose pool carries no package refuses, and the message names the remedy", () => {
+        // No store root at all, thus `storePackagesFile` resolves to null — the same answer a store with no
+        // dependency graph, and a graph that names no package, each give.
         const result = refusal();
         expect(result.exited).toBe(true);
         expect(result.message).toContain(env.libStoreDir);
         expect(result.message).toContain("inflexa store download");
     });
 
-    test("an inventory the CLI can read passes, and the command continues", () => {
-        mkdirSync(join(env.libStoreDir, "current"), { recursive: true });
-        writeFileSync(join(env.libStoreDir, "current", "packages.txt"), "numpy==1.26.4\n");
+    test("a pool the CLI can describe passes, and the command continues", () => {
+        // The graph is the source of the pool inventory, thus a graph with one node is a store from which
+        // composition can make a farm.
+        mkdirSync(env.libStoreDir, { recursive: true });
+        writeFileSync(
+            join(env.libStoreDir, "deps.json"),
+            JSON.stringify({ version: 1, nodes: { "numpy-1.26.4-0000000000000000": { track: "python", imports: ["numpy"], entry_points: [], edges: [] } } }),
+        );
         const result = refusal();
         expect(result.exited).toBe(false);
         expect(result.message).toBe("");

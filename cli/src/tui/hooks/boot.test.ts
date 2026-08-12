@@ -172,7 +172,7 @@ describe("a boot on a machine with no package store", () => {
 
     /**
      * The real boot sequence over offline seams, with the one seam under test giving `null` — the answer
-     * `storePackagesFile` gives when the active farm carries no `packages.txt`, and the answer a machine
+     * `storePackagesFile` gives when the store carries no dependency graph, and the answer a machine
      * whose catalog is still downloading gives. Every seam that would reach a container engine, Postgres,
      * the proxy, or DBOS is stubbed, thus the sequence between them is the production one.
      */
