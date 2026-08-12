@@ -396,6 +396,9 @@ export type { ResolveWorkspaceRoot } from "./workspace/paths.js";
 export { createSandboxClient } from "./sandbox/create-sandbox.js";
 export type { CreateSandboxClientConfig, SandboxBackendConfig } from "./sandbox/create-sandbox.js";
 export type { SandboxClient } from "./sandbox/client.js";
+// The farm seam of `CreateSandboxClientConfig`: the embedder names the farm of
+// each analysis, and the sandbox mounts it at `/mnt/libs/current`.
+export type { FarmLocation, ResolveAnalysisFarm } from "./sandbox/types.js";
 export { MachineBudgetSchema, ResourceLimitsSchema, ResourcePolicySchema, ResourceSpecSchema, parseResourcePolicy } from "./config/resource-limits.js";
 export type { MachineBudget, ResourceLimits, ResourcePolicy, ResourceSpec } from "./config/resource-limits.js";
 export { createWorkspaceFilesystem } from "./workspace/filesystem.js";

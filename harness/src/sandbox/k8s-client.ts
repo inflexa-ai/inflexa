@@ -6,7 +6,9 @@
  * Storage is wired via the shared session PVC: a flat read-only `volumeMount`
  * of the analysis tree at `/{resourceId}` plus a nested read-write mount of the
  * step's artifact dir, with the lib/ref stores mounted read-only at `/mnt/libs`
- * / `/mnt/refs` when their PVCs are set. Container paths and lib-store env come
+ * / `/mnt/refs` when their PVCs are set. The farm of the analysis is a second
+ * read-only mount at `/mnt/libs/current`, a subPath of the store PVC that the
+ * farm provider names. Container paths and lib-store env come
  * from the shared mount plan; the PVC `subPath`s are derived from the same
  * `resolveWorkspaceRoot` seam the harness pre-creates the step tree under, so
  * both sides address one directory by construction.
@@ -15,12 +17,21 @@
 import { relative as relativePath, sep } from "node:path";
 
 import { BatchV1Api, CoreV1Api, KubeConfig, type V1Job, type V1PodSpec, type V1Toleration, type V1Volume, type V1VolumeMount } from "@kubernetes/client-node";
-import { ResultAsync, err, ok } from "neverthrow";
+import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan, buildSessionSubPaths } from "./mount-plan.js";
-import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxTransport } from "./types.js";
+import type {
+    CreateSandboxMeta,
+    FarmLocation,
+    ManagedSandbox,
+    ResolveAnalysisFarm,
+    SandboxIdentity,
+    SandboxLiveness,
+    SandboxRef,
+    SandboxTransport,
+} from "./types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 
@@ -85,6 +96,14 @@ export interface K8sClientConfig {
     resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** PVC claim mounted read-only at `/mnt/libs` when set. */
     libStorePvc?: string;
+    /**
+     * Farm-provider seam: the analysis id in, the subPath of its farm under the
+     * lib-store PVC out. The farm is mounted read-only at `/mnt/libs/current`,
+     * nested inside the store mount. The provider runs at each create, and only
+     * when `libStorePvc` is set. A provider that names no farm refuses the
+     * sandbox. Unset keeps the single mount of the store root.
+     */
+    resolveAnalysisFarm?: ResolveAnalysisFarm;
     /** PVC claim mounted read-only at `/mnt/refs` when set. */
     refStorePvc?: string;
     /** Node selector pinning sandbox pods to the dedicated agent pool. Omit for default scheduling. */
@@ -153,7 +172,7 @@ function workspaceSubPathFor(config: K8sClientConfig, analysisId: string): strin
     return posix;
 }
 
-function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity: SandboxIdentity): V1Job {
+function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity: SandboxIdentity, farm: FarmLocation | undefined): V1Job {
     const { sandboxId } = identity;
     const plan = buildMountPlan(meta, {
         libs: !!config.libStorePvc,
@@ -225,6 +244,19 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
             mountPath: plan.libsPath,
             readOnly: true,
         });
+        // The farm of the analysis is a subPath of the same store volume, nested
+        // inside the store mount. Most-specific path wins, thus the farm shadows
+        // `/mnt/libs/current` and the farm links resolve through the store mount.
+        // The farm mount follows the store mount in the list, the same order the
+        // two binds of the Docker backend hold.
+        if (farm !== undefined && plan.farmPath) {
+            volumeMounts.push({
+                name: LIBS_VOLUME_NAME,
+                mountPath: plan.farmPath,
+                subPath: farm,
+                readOnly: true,
+            });
+        }
     }
 
     if (config.refStorePvc && plan.refsPath) {
@@ -486,7 +518,30 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
             return new ResultAsync(
                 (async () => {
                     const { sandboxId } = identity;
-                    const job = buildJobSpec(meta, config, identity);
+
+                    // The farm of this analysis, resolved AT sandbox-creation time. The
+                    // provider runs only under a configured store PVC, because the farm mount
+                    // nests inside the store mount and the farm links resolve through it.
+                    const farmProvider = config.libStorePvc ? config.resolveAnalysisFarm : undefined;
+                    const farmUnavailable = (cause?: unknown): SandboxError => ({
+                        type: "farm_unavailable",
+                        op: "k8s.createSandbox",
+                        sandboxId,
+                        analysisId: meta.analysisId,
+                        cause,
+                    });
+                    const resolvedFarm: Result<FarmLocation | undefined, SandboxError> = farmProvider
+                        ? await trySandbox(
+                              async () => farmProvider(meta.analysisId),
+                              (_status, cause) => farmUnavailable(cause),
+                          )
+                        : ok(undefined);
+                    if (resolvedFarm.isErr()) return err(resolvedFarm.error);
+                    // No farm refuses this one action. The embedder makes the farm, then the
+                    // next sandbox of the analysis mounts it.
+                    if (farmProvider && resolvedFarm.value === undefined) return err(farmUnavailable());
+
+                    const job = buildJobSpec(meta, config, identity, resolvedFarm.value);
 
                     const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, sanitizeLabelValue(meta.childWorkflowId), job);
                     if (adopted.isErr()) return err(adopted.error);

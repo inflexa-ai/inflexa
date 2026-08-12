@@ -22,6 +22,13 @@ import { assertSafeId } from "../workspace/paths.js";
 export const STEP_SUBDIRS = ["output", "scripts", "figures", "logs", "notebooks"] as const;
 
 const LIBS_CONTAINER_PATH = "/mnt/libs";
+/**
+ * Container path of the farm of the analysis. It nests inside the store mount.
+ * The image bakes this path into `R_LIBS_SITE` and into the Python `.pth`, and
+ * the warm caches key on it. Thus it is a constant of the container contract: a
+ * per-analysis farm arrives as a mount at this path, never at a path of its own.
+ */
+const FARM_CONTAINER_PATH = `${LIBS_CONTAINER_PATH}/current`;
 const REFS_CONTAINER_PATH = "/mnt/refs";
 
 export interface MountPlanCoords {
@@ -57,6 +64,12 @@ export interface MountPlan {
     workingDir: string;
     /** Container path of the lib store, present only when `libs`. */
     libsPath?: string;
+    /**
+     * Container path of the farm of the analysis, nested inside the lib store.
+     * Present only when `libs`. A backend mounts the farm here when its farm
+     * provider names one.
+     */
+    farmPath?: string;
     /** Container path of the ref store, present only when `refs`. */
     refsPath?: string;
     /** Pre-created subdirectories under the writable step path. Empty when
@@ -121,7 +134,7 @@ export function buildSessionSubPaths(coords: MountPlanCoords, workspaceSubPath: 
  */
 function libStoreEnv(): Record<string, string> {
     return {
-        R_LIBS_SITE: "/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran",
+        R_LIBS_SITE: `${FARM_CONTAINER_PATH}/r/github:${FARM_CONTAINER_PATH}/r/bioconductor:${FARM_CONTAINER_PATH}/r/cran`,
         NODE_PATH: "/opt/node/node_modules",
         PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/conda/bin",
     };
@@ -140,6 +153,7 @@ export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores)
         writableStepPath,
         workingDir: writableStepPath ?? readonlyTreePath,
         libsPath: stores.libs ? LIBS_CONTAINER_PATH : undefined,
+        farmPath: stores.libs ? FARM_CONTAINER_PATH : undefined,
         refsPath: stores.refs ? REFS_CONTAINER_PATH : undefined,
         stepSubdirs: readOnly ? [] : STEP_SUBDIRS,
         env: {

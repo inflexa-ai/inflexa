@@ -4,7 +4,9 @@
  * Thin wrapper around `dockerode`. Storage is wired via `HostConfig.Binds`:
  * a flat read-only mount of the analysis tree at `/{resourceId}`, a nested
  * read-write mount of the step's artifact dir, and the lib/ref stores at
- * `/mnt/libs` / `/mnt/refs` when their host paths are configured. Container
+ * `/mnt/libs` / `/mnt/refs` when their host paths are configured. The farm of
+ * the analysis is a second read-only bind at `/mnt/libs/current`, nested inside
+ * the store bind, from the location the farm provider names. Container
  * paths and lib-store env come from the shared mount plan (`mount-plan.ts`).
  *
  * ## Transport and confinement
@@ -44,7 +46,16 @@ import { buildMountPlan } from "./mount-plan.js";
 function statusOf(e: SandboxError): number | undefined {
     return "status" in e ? e.status : undefined;
 }
-import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxTransport } from "./types.js";
+import type {
+    CreateSandboxMeta,
+    FarmLocation,
+    ManagedSandbox,
+    ResolveAnalysisFarm,
+    SandboxIdentity,
+    SandboxLiveness,
+    SandboxRef,
+    SandboxTransport,
+} from "./types.js";
 
 const SANDBOX_SERVER_PORT = 8765;
 const HEALTH_TIMEOUT_MS = 30_000;
@@ -81,6 +92,14 @@ export interface DockerClientConfig {
     /** Host lib store; bind-mounted read-only at `/mnt/libs` when set. */
     libStorePath?: string;
     /**
+     * Farm-provider seam: the analysis id in, the absolute host path of its farm
+     * out. The farm is bind-mounted read-only at `/mnt/libs/current`, nested
+     * inside the store bind. The provider runs at each create, and only when
+     * `libStorePath` is set. A provider that names no farm refuses the sandbox.
+     * Unset keeps the single mount of the store root.
+     */
+    resolveAnalysisFarm?: ResolveAnalysisFarm;
+    /**
      * Host ref store; bind-mounted read-only at `/mnt/refs`. Embedders pass the
      * configured store location unconditionally — existence is (re-)checked at each
      * sandbox creation, so a store installed mid-session is mounted into subsequent
@@ -106,8 +125,8 @@ export interface DockerClientConfig {
     /** Injected for tests so `/health` polling can be stubbed. */
     fetch?: typeof fetch;
     /**
-     * Optional logger so a lib-store degradation (a configured store whose `current`
-     * vanished or went incomplete by sandbox-create time) is observable instead of a
+     * Optional logger so a lib-store degradation (a configured store whose farm
+     * vanished or is incomplete by sandbox-create time) is observable instead of a
      * silent libs-mount drop. Matches the `reaper`/`watchdog` logger seam.
      */
     logger?: Logger;
@@ -116,22 +135,26 @@ export interface DockerClientConfig {
 }
 
 /**
- * Whether the lib store's `current` resolves to a COMPLETE, usable version, not merely a
- * present symlink. By sandbox-create time `current` may be gone (concurrent prune/`rm`), a
- * dangling symlink (its target pruned), or an incomplete tree. Binding a missing source
- * makes Docker auto-create a root-owned dir (bricking a later store refresh); binding a broken
- * one mounts broken content. Require a resolved directory carrying both completeness
- * markers `activate` writes before it flips the pointer.
+ * Whether the farm location resolves to a COMPLETE, usable farm, not merely to a
+ * present path. By sandbox-create time the farm may be gone (concurrent prune/`rm`),
+ * a dangling symlink (its target pruned), or an incomplete tree. Binding a missing
+ * source makes Docker auto-create a root-owned dir (bricking a later store refresh);
+ * binding a broken one mounts broken content. Require a resolved directory carrying
+ * both completeness markers the publish writes.
+ *
+ * The gate follows the farm the provider names, and it never follows a `current`
+ * symlink at the store root: the active farm is a property of the sandbox, not of
+ * the store. With no provider the caller names `<libStorePath>/current` itself.
+ *
+ * `statSync` FOLLOWS a symlink, so a dangling farm location throws here and is rejected.
  */
-function libStoreUsable(libStorePath: string): boolean {
-    const current = join(libStorePath, "current");
+function libStoreUsable(farmPath: string): boolean {
     try {
-        // statSync FOLLOWS the symlink, so a dangling `current` throws here and is rejected.
-        if (!statSync(current).isDirectory()) return false;
+        if (!statSync(farmPath).isDirectory()) return false;
     } catch {
         return false;
     }
-    return existsSync(join(current, "packages.txt")) && existsSync(join(current, "meta.json"));
+    return existsSync(join(farmPath, "packages.txt")) && existsSync(join(farmPath, "meta.json"));
 }
 
 /**
@@ -278,15 +301,42 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                 (async () => {
                     const { sandboxId, callbackSecret } = identity;
 
+                    // The farm of this analysis, resolved AT sandbox-creation time: a farm the
+                    // embedder makes between two sandboxes reaches the second one with no
+                    // restart. The provider runs only under a configured store. The farm bind
+                    // nests inside the store bind, thus a farm with no store root under it
+                    // resolves none of its links.
+                    const farmProvider = config.libStorePath ? config.resolveAnalysisFarm : undefined;
+                    const farmUnavailable = (cause?: unknown): SandboxError => ({
+                        type: "farm_unavailable",
+                        op: "docker.createSandbox",
+                        sandboxId,
+                        analysisId: meta.analysisId,
+                        cause,
+                    });
+                    const resolvedFarm: Result<FarmLocation | undefined, SandboxError> = farmProvider
+                        ? await trySandbox(
+                              async () => farmProvider(meta.analysisId),
+                              (_status, cause) => farmUnavailable(cause),
+                          )
+                        : ok(undefined);
+                    if (resolvedFarm.isErr()) return err(resolvedFarm.error);
+                    const farm = resolvedFarm.value;
+                    // No farm refuses this one action. The embedder makes the farm, then the
+                    // next sandbox of the analysis mounts it.
+                    if (farmProvider && farm === undefined) return err(farmUnavailable());
+
                     // Re-check AT sandbox-creation time: `config.libStorePath` was fixed at CLI
                     // boot and the store may have gone away since (see libStoreUsable). Not
-                    // usable → skip the mount (sandbox degrades to available:false) and log it,
+                    // usable → skip BOTH mounts (sandbox degrades to available:false) and log it,
                     // since an otherwise-silent libs-mount drop is invisible to operators.
-                    const libsMounted = !!config.libStorePath && libStoreUsable(config.libStorePath);
+                    // With no provider the store keeps its own `current` as the farm.
+                    const farmPath = farm ?? (config.libStorePath ? join(config.libStorePath, "current") : undefined);
+                    const libsMounted = !!config.libStorePath && !!farmPath && libStoreUsable(farmPath);
                     if (config.libStorePath && !libsMounted) {
                         logger.warn(
-                            "lib store configured but `current` is missing or incomplete at sandbox creation — mounting no library store (sandbox degrades to available:false)",
-                            { libStorePath: config.libStorePath, sandboxId },
+                            "lib store configured but its farm is missing or incomplete at sandbox creation — mounting no library store (sandbox degrades to available:false)",
+                            { libStorePath: config.libStorePath, farmPath, sandboxId },
                         );
                     }
 
@@ -312,6 +362,12 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         `${hostTreePath}:${plan.readonlyTreePath}:ro`,
                         ...(plan.writableStepPath ? [`${hostStepPath}:${plan.writableStepPath}:rw`] : []),
                         ...(libsMounted && config.libStorePath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
+                        // The farm bind nests inside the store bind, thus it comes AFTER it. The
+                        // farm shadows its mount point inside the store, and the farm links into
+                        // `/mnt/libs/store` resolve through the store bind. An engine orders the
+                        // binds by destination depth. That is engine behavior and not API
+                        // contract, thus the array order pins the intent too.
+                        ...(libsMounted && farm && plan.farmPath ? [`${farm}:${plan.farmPath}:ro`] : []),
                         ...(refsMounted && config.refStorePath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
                     ];
 

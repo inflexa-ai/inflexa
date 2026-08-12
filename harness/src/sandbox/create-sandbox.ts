@@ -30,7 +30,7 @@ import { createDockerSandboxOps } from "./docker-client.js";
 import { createK8sSandboxOps } from "./k8s-client.js";
 import { STEP_SUBDIRS } from "./mount-plan.js";
 import { submitExec, type SubmitExecDeps } from "./submit-exec.js";
-import { toPersistedRef, type CreateSandboxMeta, type SandboxRef, type SandboxTransport } from "./types.js";
+import { toPersistedRef, type CreateSandboxMeta, type ResolveAnalysisFarm, type SandboxRef, type SandboxTransport } from "./types.js";
 
 /**
  * Narrow config slice the sandbox factory reads off `Env` — the backend
@@ -70,6 +70,20 @@ export interface CreateSandboxClientConfig {
     resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Docker: host dir bind-mounted read-only at `/mnt/libs`. */
     libStorePath?: string;
+    /**
+     * Farm-provider seam: the analysis id in, the location of its farm out. The
+     * farm is mounted read-only at `/mnt/libs/current`, nested inside the store
+     * mount, so the baked `R_LIBS_SITE`, the Python `.pth`, and the warm caches
+     * keep their meaning. On Docker the location is an absolute host path; on
+     * Kubernetes it is a subPath under the store PVC. The backend resolves the
+     * provider at each `createSandbox` call, and only when a store is configured.
+     *
+     * A provider that names no farm refuses that one sandbox with the
+     * `farm_unavailable` state, and it affects no other surface. Unset keeps the
+     * single mount of the store root, thus an embedder migrates in its own
+     * release.
+     */
+    resolveAnalysisFarm?: ResolveAnalysisFarm;
     /** Docker: host dir bind-mounted read-only at `/mnt/refs`. */
     refStorePath?: string;
     /** Docker: force the container platform (e.g. `linux/amd64`) so the sandbox matches the mounted lib store's arch. */
@@ -115,7 +129,7 @@ export interface CreateSandboxClientConfig {
     backend?: "docker" | "k8s";
     /**
      * Optional logger forwarded to the Docker backend so a lib-store degradation
-     * (a configured store whose `current` vanished/went incomplete mid-session) is
+     * (a configured store whose farm vanished or is incomplete mid-session) is
      * observable rather than a silent mount drop. No-op when unset.
      */
     logger?: Logger;
@@ -191,6 +205,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   sessionPvcRoot: config.sessionPvcRoot,
                   resolveWorkspaceRoot: config.resolveWorkspaceRoot,
                   libStorePvc: config.libStorePvc,
+                  resolveAnalysisFarm: config.resolveAnalysisFarm,
                   refStorePvc: config.refStorePvc,
                   nodeSelector: config.nodeSelector,
                   tolerations: config.tolerations,
@@ -203,6 +218,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   transport,
                   resolveWorkspaceRoot: config.resolveWorkspaceRoot,
                   libStorePath: config.libStorePath,
+                  resolveAnalysisFarm: config.resolveAnalysisFarm,
                   refStorePath: config.refStorePath,
                   platform: config.platform,
                   engineSocketPath: config.engineSocketPath,

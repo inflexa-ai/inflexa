@@ -441,6 +441,99 @@ describe("k8s createSandbox", () => {
         expect(envMap.R_LIBS_SITE).toBeUndefined();
         expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1");
     });
+
+    test("the store volume and the farm subPath mount appear together", async () => {
+        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.3" }, metadata: { name: "sbx-farm" } }]);
+
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
+            sessionPvc: "cortex-sessions",
+            libStorePvc: "cortex-libs",
+            resolveAnalysisFarm: (analysisId) => `farms/${analysisId}`,
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
+        // One store volume carries both mounts: the root, then the farm nested in it.
+        expect(podSpec.volumes!.filter((v) => v.name === "libs")).toHaveLength(1);
+        const libsMounts = podSpec.containers[0].volumeMounts!.filter((m) => m.name === "libs");
+        expect(libsMounts.map((m) => ({ mountPath: m.mountPath, subPath: m.subPath, readOnly: m.readOnly }))).toEqual([
+            { mountPath: "/mnt/libs", subPath: undefined, readOnly: true },
+            { mountPath: "/mnt/libs/current", subPath: "farms/an-1", readOnly: true },
+        ]);
+        const envMap = Object.fromEntries((podSpec.containers[0].env ?? []).map((e) => [e.name, e.value]));
+        expect(envMap.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
+    });
+
+    test("refuses the sandbox with a named state when the provider names no farm", async () => {
+        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.4" }, metadata: { name: "sbx-nofarm" } }]);
+
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
+            sessionPvc: "cortex-sessions",
+            libStorePvc: "cortex-libs",
+            resolveAnalysisFarm: () => undefined,
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+
+        const error = (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrapErr();
+
+        expect(error.type).toBe("farm_unavailable");
+        if (error.type === "farm_unavailable") expect(error.analysisId).toBe("an-1");
+        // The refusal is the whole outcome: no Job is created.
+        expect(stub.createdJobs).toEqual([]);
+    });
+
+    test("with no provider the store PVC keeps its single mount", async () => {
+        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.5" }, metadata: { name: "sbx-single" } }]);
+
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
+            sessionPvc: "cortex-sessions",
+            libStorePvc: "cortex-libs",
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        const libsMounts = stub.createdJobs[0]!.spec!.template.spec!.containers[0].volumeMounts!.filter((m) => m.name === "libs");
+        expect(libsMounts.map((m) => m.mountPath)).toEqual(["/mnt/libs"]);
+    });
 });
 
 describe("k8s createSandbox failure cleanup", () => {

@@ -69,6 +69,20 @@ export type SandboxError =
           readonly sandboxId?: string;
           readonly cause?: unknown;
       }
+    /**
+     * The farm provider named no farm for the analysis, thus the backend refused
+     * the sandbox. It is a refusal of one action, not a boot failure: the
+     * embedder makes the farm, then the next sandbox of the analysis mounts it.
+     * `cause` carries the throw of a provider that failed instead of returning
+     * no farm.
+     */
+    | {
+          readonly type: "farm_unavailable";
+          readonly op: string;
+          readonly sandboxId?: string;
+          readonly analysisId: string;
+          readonly cause?: unknown;
+      }
     | {
           readonly type: "submit_failed";
           readonly op: string;
@@ -122,6 +136,8 @@ export function describeSandboxError(e: SandboxError): string {
             return `sandbox name collision (${e.op}: ${e.sandboxId} owned by ${e.owner ?? "<unlabeled>"})`;
         case "not_found":
             return `sandbox not found (${e.op}${e.sandboxId ? `: ${e.sandboxId}` : ""})`;
+        case "farm_unavailable":
+            return `sandbox farm unavailable (${e.op}: analysisId=${e.analysisId})`;
         case "submit_failed":
             return `sandbox exec submit failed (${e.op}: execId=${e.execId})`;
         case "teardown_failed":

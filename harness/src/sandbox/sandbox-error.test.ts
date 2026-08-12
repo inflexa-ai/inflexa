@@ -131,6 +131,10 @@ describe("sandbox-error", () => {
                 ],
                 [{ type: "not_found", op: "docker.inspect", sandboxId: "s1" }, "sandbox not found (docker.inspect: s1)"],
                 [{ type: "not_found", op: "docker.inspect" }, "sandbox not found (docker.inspect)"],
+                [
+                    { type: "farm_unavailable", op: "docker.createSandbox", sandboxId: "s1", analysisId: "an-1" },
+                    "sandbox farm unavailable (docker.createSandbox: analysisId=an-1)",
+                ],
                 [{ type: "submit_failed", op: "submitExec", execId: "wf:step:1", cause: 1 }, "sandbox exec submit failed (submitExec: execId=wf:step:1)"],
                 [{ type: "teardown_failed", op: "k8s.teardown", sandboxId: "s1", cause: 1 }, "sandbox teardown failed (k8s.teardown: s1)"],
                 [{ type: "liveness_failed", op: "docker.isAlive", cause: 1 }, "sandbox liveness probe failed (docker.isAlive)"],

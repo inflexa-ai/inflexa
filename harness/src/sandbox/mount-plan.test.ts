@@ -17,6 +17,8 @@ describe("buildMountPlan", () => {
         expect(plan.writableStepPath).toBe("/an-1/runs/run-1/step-a");
         expect(plan.libsPath).toBe("/mnt/libs");
         expect(plan.refsPath).toBe("/mnt/refs");
+        // The farm nests inside the store mount, at the path the image bakes.
+        expect(plan.farmPath).toBe("/mnt/libs/current");
     });
 
     test("read-only omits the writable step mount and pins WorkingDir to the RO tree", () => {
@@ -65,9 +67,10 @@ describe("buildMountPlan", () => {
         expect(plan.env.PATH).not.toContain("/mnt/libs");
     });
 
-    test("libs unset omits lib-store env and libsPath", () => {
+    test("libs unset omits lib-store env, libsPath, and farmPath", () => {
         const plan = buildMountPlan(COORDS, { libs: false, refs: false });
         expect(plan.libsPath).toBeUndefined();
+        expect(plan.farmPath).toBeUndefined();
         expect(plan.env.R_LIBS_SITE).toBeUndefined();
         expect(plan.env.NODE_PATH).toBeUndefined();
         expect(plan.env.PATH).toBeUndefined();

@@ -215,6 +215,33 @@ export interface SubmitExecBody {
     timeoutSeconds?: number;
 }
 
+/**
+ * Where the farm of one analysis is, in the address space of the backend that
+ * mounts it. The Docker backend reads an absolute host path. The Kubernetes
+ * backend reads a path under the root of the lib-store PVC, with no leading
+ * slash.
+ *
+ * The harness never derives this value. The layout of the store belongs to the
+ * embedder, thus a naming rule inside the harness would make a private decision
+ * of the embedder into a public interface.
+ */
+export type FarmLocation = string;
+
+/**
+ * The farm-provider seam: the analysis id in, the farm location out.
+ *
+ * A backend resolves the provider at each `createSandbox` call. Thus a farm that
+ * the embedder makes between two sandboxes reaches the second sandbox with no
+ * restart. The result `undefined` says that the analysis has no farm, and the
+ * backend then refuses the sandbox with the `farm_unavailable` state.
+ *
+ * An embedder that supplies no provider keeps the single mount of the store
+ * root. A backend calls the provider only when a store is configured, because
+ * the farm mount nests inside the store mount and the farm links resolve
+ * through it.
+ */
+export type ResolveAnalysisFarm = (analysisId: string) => Promise<FarmLocation | undefined> | FarmLocation | undefined;
+
 /** Step-meta passed to `createSandbox` — what the registry row needs. */
 export interface CreateSandboxMeta {
     runId: string;

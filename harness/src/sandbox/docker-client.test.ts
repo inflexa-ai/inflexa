@@ -16,10 +16,11 @@ import Docker from "dockerode";
 import { createDockerSandboxOps, engineConnectionOptions } from "./docker-client.js";
 import { mintSandboxIdentity } from "./identity.js";
 
-// A real, COMPLETE on-disk lib store: the Docker client re-checks `<libStorePath>/current`
-// AT createSandbox time and requires it to resolve to a directory carrying both
+// A real, COMPLETE on-disk lib store: the Docker client re-checks the farm it is about
+// to mount AT createSandbox time and requires it to resolve to a directory carrying both
 // completeness markers (packages.txt + meta.json), not merely to exist, so tests that
-// expect the /mnt/libs mount must point at a store that is actually usable.
+// expect the /mnt/libs mount must point at a store that is actually usable. With no farm
+// provider the farm of the sandbox is the store's own `current`.
 let libRoot: string;
 async function writeCompleteStore(root: string, version: string): Promise<void> {
     const vdir = join(root, version);
@@ -27,6 +28,19 @@ async function writeCompleteStore(root: string, version: string): Promise<void> 
     await writeFile(join(vdir, "packages.txt"), "# packages\n");
     await writeFile(join(vdir, "meta.json"), JSON.stringify({ version, arch: "linux-amd64", tracks: [] }));
     await symlink(version, join(root, "current"));
+}
+
+/**
+ * A COMPLETE farm of one analysis under the store root. The harness never derives
+ * this location: a test hands the same path back through the farm provider, exactly
+ * as an embedder does.
+ */
+async function writeFarm(root: string, analysisId: string): Promise<string> {
+    const dir = join(root, "farms", analysisId);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "packages.txt"), "# packages\n");
+    await writeFile(join(dir, "meta.json"), JSON.stringify({ analysisId, tracks: [] }));
+    return dir;
 }
 // The ref store has no harness-known interior — the Docker client re-checks only that
 // `refStorePath` is, at createSandbox time, a real (non-symlink) directory, so a bare
@@ -500,6 +514,211 @@ describe("docker createSandbox — mounts and platform", () => {
         (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
 
         expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+    });
+});
+
+describe("docker createSandbox — the per-analysis farm", () => {
+    test("binds the farm read-only at /mnt/libs/current, ordered after the store bind", async () => {
+        const { docker, created } = stubDocker();
+        const farm = await writeFarm(libRoot, "an-1");
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            libStorePath: libRoot,
+            resolveAnalysisFarm: (analysisId) => join(libRoot, "farms", analysisId),
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        const binds = sandboxOf(created)!.binds;
+        expect(binds).toEqual([
+            "/sessions/an-1:/an-1:ro",
+            "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw",
+            `${libRoot}:/mnt/libs:ro`,
+            `${farm}:/mnt/libs/current:ro`,
+        ]);
+        // The nested bind must come after its parent: the farm shadows the mount point
+        // inside the store bind, and the farm's links into /mnt/libs/store resolve
+        // through that same store bind. Engines order binds by destination depth, but
+        // that is engine behavior and not API contract, so the payload order is pinned.
+        expect(binds.indexOf(`${farm}:/mnt/libs/current:ro`)).toBeGreaterThan(binds.indexOf(`${libRoot}:/mnt/libs:ro`));
+        // The container path does not move, so the baked resolver env still names it.
+        expect(envMapOf(sandboxOf(created)!).R_LIBS_SITE).toContain("/mnt/libs/current/r/");
+    });
+
+    test("two analyses mount two different farms at the one container path", async () => {
+        const { docker, created } = stubDocker();
+        const farmOne = await writeFarm(libRoot, "an-1");
+        const farmTwo = await writeFarm(libRoot, "an-2");
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            libStorePath: libRoot,
+            resolveAnalysisFarm: (analysisId) => join(libRoot, "farms", analysisId),
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox({ ...META, analysisId: "an-2" }, mintSandboxIdentity("run-2")))._unsafeUnwrap();
+
+        // Each sandbox resolves its own farm through the same path, thus two library
+        // sets serve two analyses at the same time.
+        expect(created.map((c) => c.binds.find((b) => b.endsWith(":/mnt/libs/current:ro")))).toEqual([
+            `${farmOne}:/mnt/libs/current:ro`,
+            `${farmTwo}:/mnt/libs/current:ro`,
+        ]);
+        // Both keep the store root under the farm, which is what the farm links target.
+        for (const container of created) expect(container.binds).toContain(`${libRoot}:/mnt/libs:ro`);
+    });
+
+    test("refuses the sandbox with a named state when the provider names no farm", async () => {
+        const { docker, created } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            libStorePath: libRoot,
+            resolveAnalysisFarm: () => undefined,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const error = (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrapErr();
+        expect(error.type).toBe("farm_unavailable");
+        if (error.type === "farm_unavailable") expect(error.analysisId).toBe("an-1");
+        // The refusal is the whole outcome: no container stands, and the store root
+        // is not mounted without its farm.
+        expect(created).toEqual([]);
+    });
+
+    test("a provider that throws refuses with the same state and carries the cause", async () => {
+        const { docker, created } = stubDocker();
+        const boom = new Error("composition failed");
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            libStorePath: libRoot,
+            resolveAnalysisFarm: () => {
+                throw boom;
+            },
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        const error = (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrapErr();
+        expect(error.type).toBe("farm_unavailable");
+        expect(error.cause).toBe(boom);
+        expect(created).toEqual([]);
+    });
+
+    test("an incomplete farm drops both binds and warns, and no read follows a stale `current`", async () => {
+        const { docker, created } = stubDocker();
+        // The farm directory stands but carries no completeness markers, while the store
+        // root still holds the `current` link of the earlier layout. The gate follows the
+        // farm the provider names, thus the stale pointer changes nothing.
+        const farm = join(libRoot, "farms", "an-1");
+        await mkdir(farm, { recursive: true });
+        expect(existsSync(join(libRoot, "current"))).toBe(true);
+        const logger = createCapturingLogger();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            libStorePath: libRoot,
+            resolveAnalysisFarm: () => farm,
+            docker,
+            fetch: okFetch,
+            logger,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        const sandbox = sandboxOf(created)!;
+        expect(sandbox.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(envMapOf(sandbox).R_LIBS_SITE).toBeUndefined();
+        const warnings = logger.records.filter((r) => r.level === "warn");
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.fields).toMatchObject({ libStorePath: libRoot, farmPath: farm });
+    });
+
+    test("a farm location that does not resolve drops both binds", async () => {
+        const { docker, created } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            libStorePath: libRoot,
+            resolveAnalysisFarm: (analysisId) => join(libRoot, "farms", analysisId),
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+    });
+
+    test("with no store configured the provider never runs and the sandbox stands", async () => {
+        const { docker, created } = stubDocker();
+        let calls = 0;
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            resolveAnalysisFarm: () => {
+                calls++;
+                return undefined;
+            },
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        // A farm with no store root under it resolves nothing, thus the farm question
+        // is not asked at all and the no-store sandbox keeps its own behavior.
+        expect(calls).toBe(0);
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+    });
+
+    test("with no provider the store keeps its single mount through its own `current`", async () => {
+        const { docker, created } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        const binds = sandboxOf(created)!.binds;
+        expect(binds).toContain(`${libRoot}:/mnt/libs:ro`);
+        expect(binds.some((b) => b.includes("/mnt/libs/current"))).toBe(false);
     });
 });
 
