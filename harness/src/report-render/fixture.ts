@@ -8,6 +8,10 @@
  *
  * Each value is a literal, and the figure source is an inline data URI. Thus the page is a pure function of
  * this module, and the fixture reads no file.
+ *
+ * Only the tests and `scripts/render-fixture.ts` read this module, thus `tsconfig.json` excludes it the same
+ * way that it excludes a test file and the build emits no `dist/report-render/fixture.js`. The lint program
+ * (`tsconfig.eslint.json`) still holds it.
  */
 
 import type { CitationReference, ArtifactTableReference, ArtifactValueReference } from "../contracts/report-reference.js";
