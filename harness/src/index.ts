@@ -34,7 +34,15 @@ export type { ThreadAgentResolver, UnregisteredThreadType } from "./runtime/asse
 // the report sessions of one analysis. An embedder reaches the listing for its
 // navigation surface, thus these names belong on the front door.
 export { createReportSessionSpawn } from "./app/spawn-report-session.js";
-export type { ReportSessionSpawn, ReportSessionSpawnDeps, ReportSessionPaging, SpawnRefusal } from "./app/spawn-report-session.js";
+export type {
+    ReportSessionSpawn,
+    ReportSessionSpawnDeps,
+    ReportSessionPaging,
+    SpawnRefusal,
+    ReportBrief,
+    ReportSessionDelta,
+    NewestReportChild,
+} from "./app/spawn-report-session.js";
 // The harness-owned boot sequence: ordered boot steps around `assembleCoreRuntime`
 // (skill validation → state init → connection budget → assemble → launch) + a
 // `shutdown` handle the embedder wires to its process signals.
