@@ -95,7 +95,7 @@ describe("the report session handle", () => {
     it("anchors a seeded report thread through the exposed handle", async () => {
         const analysisId = "analysis-assemble";
         const threadId = "thread-assemble";
-        (await upsertAnalysis(pool, analysisId, null, null))._unsafeUnwrap();
+        (await upsertAnalysis(pool, analysisId, null))._unsafeUnwrap();
         (await createThreadStore(pool).createThread({ threadId, analysisId, type: "report" }))._unsafeUnwrap();
 
         // The exposed handle is the runtime's turn-start anchor. The assignment proves

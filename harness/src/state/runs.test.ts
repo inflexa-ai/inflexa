@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import {
     insertRun,
+    markRunCanceledIfActive,
     queryActiveRunsByAnalysis,
     queryNonTerminalRunsByAnalysis,
     queryRun,
@@ -221,5 +222,58 @@ describe("runs: active-run query", () => {
         (await insertRun(pool, { runId: "run-other", analysisId: "a-other", workflowName: "executeAnalysis" }))._unsafeUnwrap();
         expect((await queryActiveRunsByAnalysis(pool, "a-empty"))._unsafeUnwrap()).toEqual([]);
         expect((await queryActiveRunsByAnalysis(pool, "a-other"))._unsafeUnwrap().map((r) => r.runId)).toEqual(["run-other"]);
+    });
+});
+
+describe("runs: markRunCanceledIfActive", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("runs_mark_canceled_if_active");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("transitions a running run to canceled, stamping completed_at and the reason", async () => {
+        (await insertRun(pool, { runId: "run-active", analysisId: "a-1", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+
+        const transitioned = (await markRunCanceledIfActive(pool, "run-active", "external_cancel"))._unsafeUnwrap();
+        expect(transitioned).toBe(true);
+
+        const row = (await queryRun(pool, "run-active"))._unsafeUnwrap();
+        expect(row?.status).toBe("canceled");
+        expect(row?.error).toBe("external_cancel");
+        expect(row?.completedAt).not.toBeNull();
+    });
+
+    it("transitions a fund-suspended run to canceled", async () => {
+        (await insertRun(pool, { runId: "run-susp", analysisId: "a-1", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        (await updateRunStatus(pool, "run-susp", "suspended_insufficient_funds"))._unsafeUnwrap();
+
+        expect((await markRunCanceledIfActive(pool, "run-susp", "external_cancel"))._unsafeUnwrap()).toBe(true);
+        expect((await queryRun(pool, "run-susp"))._unsafeUnwrap()?.status).toBe("canceled");
+    });
+
+    it("refuses to clobber a completed run and reports no transition", async () => {
+        (await insertRun(pool, { runId: "run-done", analysisId: "a-1", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        (await updateRunStatus(pool, "run-done", "completed"))._unsafeUnwrap();
+        const before = (await queryRun(pool, "run-done"))._unsafeUnwrap();
+
+        const transitioned = (await markRunCanceledIfActive(pool, "run-done", "external_cancel"))._unsafeUnwrap();
+        expect(transitioned).toBe(false);
+
+        const after = (await queryRun(pool, "run-done"))._unsafeUnwrap();
+        expect(after?.status).toBe("completed");
+        expect(after?.completedAt).toBe(before?.completedAt ?? null);
+        expect(after?.error).toBeNull();
+    });
+
+    it("reports no transition for a run that does not exist", async () => {
+        expect((await markRunCanceledIfActive(pool, "run-nowhere", "external_cancel"))._unsafeUnwrap()).toBe(false);
     });
 });

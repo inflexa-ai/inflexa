@@ -136,6 +136,7 @@ function makeSeams(
             revoke: async () => {
                 rec.revoke++;
             },
+            revokeByJti: async () => {},
         },
         launch: async (input, runId) => {
             rec.launch++;

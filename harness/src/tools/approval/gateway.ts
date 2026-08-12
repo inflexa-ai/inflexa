@@ -55,11 +55,19 @@ export interface AskGateway {
     ask(request: AskRequest, ctx: AskContext): Promise<AskApproval>;
     answer(id: string, reply: AskReply): Promise<AnswerOutcome>;
     pending(): Promise<PendingAsk[]>;
-    sweepExpired(): Promise<number>;
+    /** Expire pending asks older than `maxAgeMs` (default {@link DEFAULT_SWEEP_MAX_AGE_MS}). */
+    sweepExpired(maxAgeMs?: number): Promise<number>;
 }
 
 /** Fixed poll cadence — imperceptible against human decision speed, low chatter. */
 const POLL_INTERVAL_MS = 200;
+
+/**
+ * Pending rows older than this are treated as orphans of a dead process. Far
+ * beyond any plausible live turn, so a boot sweep during a rolling deployment
+ * cannot expire an ask another pod is still polling.
+ */
+export const DEFAULT_SWEEP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 export function createAskGateway(deps: AskGatewayDeps): AskGateway {
     const { pool } = deps;
@@ -129,8 +137,9 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
         return unwrapOrThrow(await selectPending(pool));
     }
 
-    async function sweepExpired(): Promise<number> {
-        return unwrapOrThrow(await sweepExpiredRows(pool, new Date().toISOString()));
+    async function sweepExpired(maxAgeMs: number = DEFAULT_SWEEP_MAX_AGE_MS): Promise<number> {
+        const now = Date.now();
+        return unwrapOrThrow(await sweepExpiredRows(pool, new Date(now).toISOString(), new Date(now - maxAgeMs).toISOString()));
     }
 
     return { ask, answer, pending, sweepExpired };

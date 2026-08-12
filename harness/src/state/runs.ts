@@ -221,6 +221,28 @@ export function updateRunStatus(
     });
 }
 
+/**
+ * Conditionally transition an ACTIVE run to `canceled`, stamping `completed_at`
+ * and recording `reason` in `error` (the same column `collectAndComplete`
+ * stamps `external_cancel` into). Reports whether a row transitioned — false
+ * means the run was already terminal (e.g. it completed concurrently with an
+ * external cancel), and the caller MUST NOT fall back to `updateRunStatus`,
+ * which would clobber that terminal status. The guarded set is the active set
+ * `queryActiveRun` deduplicates on.
+ */
+export function markRunCanceledIfActive(pool: Querier, runId: string, reason: string): ResultAsync<boolean, DbError> {
+    const now = new Date().toISOString();
+    return tryMutation("runs.markRunCanceledIfActive", async () => {
+        const result = await pool.query({
+            text: `UPDATE cortex_runs
+            SET status = 'canceled', completed_at = $2, error = $3
+            WHERE run_id = $1 AND status IN ('running','suspended_insufficient_funds')`,
+            values: [runId, now, reason],
+        });
+        return (result.rowCount ?? 0) > 0;
+    });
+}
+
 export function promoteFailedToPartial(pool: Querier, runId: string): ResultAsync<boolean, DbError> {
     return tryMutation("runs.promoteFailedToPartial", async () => {
         const result = await pool.query({

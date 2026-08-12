@@ -41,7 +41,7 @@ export type { ConversationAgentDeps } from "./agents/conversation-agent.js";
 
 // Seam: run authorization.
 export { createLocalRunAuthorizer } from "./auth/local-run-authorizer.js";
-export type { RunAuthorizer, AuthorizeRunInput, RunAuthorization } from "./execution/run-authorizer.js";
+export type { RunAuthorizer, AuthorizeRunInput, RunAuthorization, RevokeByJtiRef } from "./execution/run-authorizer.js";
 
 // Seam: billing resolution.
 export { createNoopBillingResolver } from "./billing/noop-resolver.js";
@@ -81,6 +81,13 @@ export type { RunLauncher, LaunchOptions } from "./execution/run-launcher.js";
 export { createDbosWorkflowPurger } from "./execution/dbos-workflow-purger.js";
 export type { DbosWorkflowPurgerDeps } from "./execution/dbos-workflow-purger.js";
 export type { WorkflowPurger } from "./execution/workflow-purger.js";
+
+// Run cancellation — the encapsulated external-cancel path: engine cancel
+// (parent + children) plus convergence of the run row, pending step rows,
+// running charge, and run mandate. Hosts call this from their cancel route
+// instead of hand-rolling `DBOS.cancelWorkflow` + partial cleanup.
+export { createRunCanceler, UnknownRunError } from "./execution/run-canceler.js";
+export type { RunCanceler, RunCancelerDeps, CancelRunResult } from "./execution/run-canceler.js";
 
 // Tool primitive.
 export { defineTool, isToolError } from "./tools/define-tool.js";
@@ -502,6 +509,7 @@ export {
     queryActiveRun,
     queryActiveRunsByAnalysis,
     updateRunStatus,
+    markRunCanceledIfActive,
     queryRun,
     queryRunsByAnalysis,
     RunDedupCollisionError,

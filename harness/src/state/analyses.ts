@@ -1,5 +1,5 @@
 /**
- * `cortex_analysis_state` operations — analysis lifecycle and billing context.
+ * `cortex_analysis_state` operations — analysis lifecycle.
  */
 
 import type { ResultAsync } from "neverthrow";
@@ -12,46 +12,24 @@ import type { Querier } from "./db.js";
  *
  * The seed endpoint is called repeatedly; this function handles both the
  * initial INSERT and subsequent UPDATEs by writing ALL mutable fields on
- * every call. Re-upserts replace `context` and `billing_context` wholesale.
+ * every call. Re-upserts replace `context` wholesale.
  *
  * User identity is derived from the ambient credential's JWT `sub` claim
  * at request time — not persisted in this table.
- *
- * INTENTIONAL: split-attribution across a single run.
- * If the seed re-upserts mid-workflow (e.g., the billing context's VK rotates),
- * in-flight steps that have already issued LLM calls keep the old attribution
- * on those calls, while subsequent steps in the same run pick up the new
- * identity on their next `billedAgent` resolution. This is by design —
- * usage rows contain full per-call attribution, so spend is
- * always assignable even when it crosses a rotation boundary.
  */
-export function upsertAnalysis(
-    pool: Querier,
-    resourceId: string,
-    context: string | null,
-    billingContext: Record<string, string> | null,
-    inputFileIds?: string[],
-): ResultAsync<void, DbError> {
+export function upsertAnalysis(pool: Querier, resourceId: string, context: string | null, inputFileIds?: string[]): ResultAsync<void, DbError> {
     const now = new Date().toISOString();
     return tryMutation("analyses.upsertAnalysis", async () => {
         await pool.query({
             text: `INSERT INTO cortex_analysis_state
-            (analysis_id, status, context, billing_context, data_profile_status,
+            (analysis_id, status, context, data_profile_status,
              seed_input_file_ids, created_at, updated_at)
-            VALUES ($1, 'active', $2, $3::jsonb, 'pending', $4::jsonb, $5, $6)
+            VALUES ($1, 'active', $2, 'pending', $3::jsonb, $4, $5)
             ON CONFLICT (analysis_id) DO UPDATE SET
               context = EXCLUDED.context,
-              billing_context = EXCLUDED.billing_context,
               seed_input_file_ids = COALESCE(EXCLUDED.seed_input_file_ids, cortex_analysis_state.seed_input_file_ids),
               updated_at = EXCLUDED.updated_at`,
-            values: [
-                resourceId,
-                context ?? null,
-                billingContext === null ? null : JSON.stringify(billingContext),
-                inputFileIds ? JSON.stringify(inputFileIds) : null,
-                now,
-                now,
-            ],
+            values: [resourceId, context ?? null, inputFileIds ? JSON.stringify(inputFileIds) : null, now, now],
         });
     });
 }
@@ -99,53 +77,5 @@ export function resumeAnalysis(pool: Querier, analysisId: string): ResultAsync<v
             WHERE analysis_id = $2 AND status = 'suspended_insufficient_funds'`,
             values: [new Date().toISOString(), analysisId],
         });
-    });
-}
-
-/**
- * Resolve the persisted billing context for an analysis.
- *
- * Single DB-read chokepoint used by `requireAnalysisBilling` middleware and
- * by any downstream code that needs to re-read billing identity. The driver
- * read is wrapped as a `DbError`; the missing-row / null-billing /
- * unparseable-JSON cases are control-flow throws (a misconfiguration, not a
- * driver failure) that short-circuit the chain and surface verbatim.
- *
- * User identity (`HEADERS.User`) is derived from the ambient credential's
- * JWT `sub` claim by `credential-middleware`, not from the DB.
- */
-export function resolveAnalysisBilling(pool: Querier, analysisId: string): ResultAsync<{ billingContext: Record<string, string> }, DbError> {
-    return tryQuery("analyses.resolveAnalysisBilling", () =>
-        pool.query<{
-            billing_context: Record<string, string> | string | null;
-        }>({
-            text: "SELECT billing_context FROM cortex_analysis_state WHERE analysis_id = $1",
-            values: [analysisId],
-        }),
-    ).map((result) => {
-        const row = result.rows[0];
-        if (!row) {
-            throw new Error(`resolveAnalysisBilling: no cortex_analysis_state row for analysisId=${analysisId}`);
-        }
-        const rawBilling = row.billing_context;
-        if (rawBilling === null || rawBilling === undefined) {
-            throw new Error(`resolveAnalysisBilling: billing_context missing for analysisId=${analysisId}`);
-        }
-        // JSONB is parsed by `pg` into native objects. Legacy TEXT rows (if any
-        // slipped through) arrive as strings — parse them.
-        let billingContext: Record<string, string>;
-        if (typeof rawBilling === "string") {
-            try {
-                billingContext = JSON.parse(rawBilling) as Record<string, string>;
-            } catch (err) {
-                throw new Error(
-                    `resolveAnalysisBilling: billing_context is not valid JSON for analysisId=${analysisId}: ${err instanceof Error ? err.message : err}`,
-                    { cause: err },
-                );
-            }
-        } else {
-            billingContext = rawBilling;
-        }
-        return { billingContext };
     });
 }

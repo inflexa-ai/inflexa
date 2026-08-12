@@ -23,8 +23,8 @@ describe("upsertPlan", () => {
         drop = ctx.drop;
         // cortex_plans.analysis_id has an FK to cortex_analysis_state — seed both
         // analyses the parent-scope cases reference.
-        (await upsertAnalysis(pool, "analysis-1", null, null))._unsafeUnwrap();
-        (await upsertAnalysis(pool, "analysis-2", null, null))._unsafeUnwrap();
+        (await upsertAnalysis(pool, "analysis-1", null))._unsafeUnwrap();
+        (await upsertAnalysis(pool, "analysis-2", null))._unsafeUnwrap();
     });
 
     afterAll(async () => {

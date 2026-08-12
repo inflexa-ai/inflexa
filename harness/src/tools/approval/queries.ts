@@ -148,12 +148,20 @@ export function selectPending(querier: Querier): ResultAsync<PendingAsk[], DbErr
     });
 }
 
-/** Sweep every `pending` row to `expired`, returning the count swept. */
-export function sweepExpired(querier: Querier, expiredAt: string): ResultAsync<number, DbError> {
+/**
+ * Sweep `pending` rows created before `olderThan` to `expired`, returning the
+ * count swept. The age predicate is what keeps a boot sweep from expiring an ask
+ * another live pod is still polling — only rows old enough to be orphans of a
+ * dead process are touched. Both bounds compare as text: every `created_at` is a
+ * fixed-width UTC ISO string, so lexicographic order is chronological (the same
+ * property `selectPending`'s ORDER BY relies on).
+ */
+export function sweepExpired(querier: Querier, expiredAt: string, olderThan: string): ResultAsync<number, DbError> {
     return tryMutation("asks.sweepExpired", async () => {
         const result = await querier.query({
-            text: `UPDATE cortex_asks SET status = 'expired', resolved_at = $1 WHERE status = 'pending'`,
-            values: [expiredAt],
+            text: `UPDATE cortex_asks SET status = 'expired', resolved_at = $1
+              WHERE status = 'pending' AND created_at < $2`,
+            values: [expiredAt, olderThan],
         });
         return result.rowCount ?? 0;
     });

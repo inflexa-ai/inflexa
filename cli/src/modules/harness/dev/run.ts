@@ -420,7 +420,6 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
             runtime.pool,
             analysis.id,
             null,
-            null,
             staged.map((f) => f.fileId),
         )
     ).match(

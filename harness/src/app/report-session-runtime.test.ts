@@ -44,7 +44,7 @@ describe("createReportSessionRuntime", () => {
 
     /** Seed the analysis-state row the session-state foreign key needs. */
     async function seedAnalysis(analysisId: string): Promise<void> {
-        (await upsertAnalysis(pool, analysisId, null, null))._unsafeUnwrap();
+        (await upsertAnalysis(pool, analysisId, null))._unsafeUnwrap();
     }
 
     /** Seed the report thread row the anchor operation resolves to an analysis. */

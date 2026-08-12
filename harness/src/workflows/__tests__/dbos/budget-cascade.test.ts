@@ -207,7 +207,7 @@ describe("402 budget-pause cascade — parent self-cancel", () => {
         const analysisId = "a-budget-parent-cancel";
         const planId = "plan-budget-parent-cancel";
 
-        (await upsertAnalysis(rig.pool, analysisId, null, null))._unsafeUnwrap();
+        (await upsertAnalysis(rig.pool, analysisId, null))._unsafeUnwrap();
         await rig.pool.query(
             `INSERT INTO cortex_plans (plan_id, analysis_id, plan, parent_plan_id, created_at)
          VALUES ($1, $2, $3::jsonb, NULL, $4)`,
@@ -305,7 +305,7 @@ describe("402 budget-pause cascade — parent self-cancel", () => {
         const analysisId = "a-budget-prod-cancel";
         const planId = "plan-budget-prod-cancel";
 
-        (await upsertAnalysis(rig.pool, analysisId, null, null))._unsafeUnwrap();
+        (await upsertAnalysis(rig.pool, analysisId, null))._unsafeUnwrap();
         await rig.pool.query(
             `INSERT INTO cortex_plans (plan_id, analysis_id, plan, parent_plan_id, created_at)
          VALUES ($1, $2, $3::jsonb, NULL, $4)`,

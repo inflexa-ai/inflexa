@@ -45,15 +45,14 @@ import type { HarnessRuntime } from "./runtime.ts";
  * product file must never import the dev directory, so of the pair it is the product caller that
  * must hold the shared half.
  *
- * `context` and `billingContext` stay null — neither caller has goal text at profile time, and a
- * fabricated one would pollute the agent prompt. `inputFileIds` is the staged manifest's file ids,
- * the auth is the local OSS value, and the manifest rides into the trigger params verbatim.
+ * `context` stays null — neither caller has goal text at profile time, and a fabricated one would
+ * pollute the agent prompt. `inputFileIds` is the staged manifest's file ids, the auth is the local
+ * OSS value, and the manifest rides into the trigger params verbatim.
  */
 export function seedProfileLedger(pool: Pool, analysisId: string, staged: readonly StagedInput[]): ResultAsync<DataProfileTriggerParams, DbError> {
     return upsertAnalysis(
         pool,
         analysisId,
-        null,
         null,
         staged.map((f) => f.fileId),
     ).map(() => ({ auth: makeLocalAuth(), analysisId, stagedInputs: staged }));

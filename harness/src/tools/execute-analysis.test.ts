@@ -51,6 +51,7 @@ function recordingAuthorizer(): {
         revoke: async (_authorization, reason) => {
             revokes.push(reason);
         },
+        revokeByJti: async () => {},
     };
     return { authorizer, revokes };
 }
@@ -62,6 +63,7 @@ const throwingAuthorizer: RunAuthorizer = {
         throw new Error("authorize should not be reached in this test");
     },
     revoke: async () => {},
+    revokeByJti: async () => {},
 };
 
 const ANALYSIS_ID = "analysis-test-1";
@@ -360,6 +362,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
                 throw new Error("mint exploded");
             },
             revoke: async () => {},
+            revokeByJti: async () => {},
         };
         const tool = createExecuteAnalysisTool({
             ...utilityDeps,
