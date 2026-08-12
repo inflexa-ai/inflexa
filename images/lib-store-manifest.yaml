@@ -50,6 +50,11 @@ r:
         - RcppArmadillo
         - BiocManager
         - devtools
+        # devtools Imports pak, thus the closure needs it. pak does not arrive by
+        # itself: the provisioner image installs pak for its own resolve, so the
+        # resolver reads it as satisfied and puts no copy in the pool. The sandbox
+        # image carries no pak, thus a name it must resolve is named here.
+        - pak
         - ggrepel
         - pROC
         - vegan
