@@ -6,7 +6,7 @@
 
 The conversation agent MUST offer the tool `start_report_session`. The tool MUST run the spawn operation with the thread id of the call scope as the parent. The tool MUST NOT accept a parent id as input.
 
-The input MUST carry the intent brief: `objective`, `audience`, `angle`, optional `exclusions`, and optional `openQuestions`. The brief holds intent only, and no field names a path, a dataset, or a format. The input MUST also carry the optional override of the zero-delta advice.
+The input MUST carry the intent brief: `objective`, `audience`, `angle`, optional `exclusions`, and optional `openQuestions`. The brief holds intent only, and no field names a path, a dataset, or a format. The input MUST also carry the optional override of the thin-delta advice.
 
 A call whose scope carries no thread id MUST refuse as typed data in the ok channel. A spawn refusal MUST pass through as typed data, and the arm names the reason. The `no_browser` arm MUST carry the detail of the spawn, thus the agent can tell the user that the deployment has no eyes. A store fault MUST return as typed data with a short detail. A success MUST return the thread id and the title of the child. The tool MUST NOT throw for a degraded condition.
 
@@ -66,9 +66,11 @@ The roster of the conversation agent MUST hold `start_report_session`. The roste
 - **WHEN** a reviewer reads the report section of the conversation prompt
 - **THEN** the section names `start_report_session`, and no brief tool is named
 
-### Requirement: The zero-delta advice steers to the existing report chat
+### Requirement: The thin-delta advice steers to the existing report chat
 
-When the parent holds no message past the greatest anchor of its report children, the tool MUST NOT spawn. The tool MUST return an `existing-session` arm that names the report child with the greatest anchor. When two children share the greatest anchor, the newest `created_at` MUST win. The advice MUST read no model judgment.
+The delta MUST count the user turns of the parent past the greatest anchor of its report children. A user turn is a message that opens a turn, and it is not a synthetic record. When the count is one or less, the tool MUST NOT spawn. The tool MUST return an `existing-session` arm that names the report child with the greatest anchor. When two children share the greatest anchor, the newest `created_at` MUST win. The advice MUST read no model judgment.
+
+The count admits one turn, because the ask that made the newest child is itself a user turn past the anchor. The turn appends after the loop of the turn runs, thus the anchor of a child never counts the ask that made it. A count over the raw sequence would name each report child stale one turn after the spawn.
 
 The input MUST carry one optional override field. A true value MUST skip the advice, and the spawn proceeds. A parent with no report child MUST NOT advise. An archived report child MUST NOT advise, because a steer into hidden state is not permitted.
 
@@ -76,7 +78,7 @@ The eyes gate MUST run before the advice. A composition without eyes is a perman
 
 #### Scenario: The eyes gate wins over the advice
 
-- **GIVEN** a composition without eyes, and a report child whose anchor equals the latest seq
+- **GIVEN** a composition without eyes, and a report child at the transcript end
 - **WHEN** the agent calls the tool
 - **THEN** the result carries the `no_browser` arm, and no advice returns
 
@@ -86,21 +88,33 @@ The eyes gate MUST run before the advice. A composition without eyes is a perman
 - **WHEN** the agent calls the tool without the override
 - **THEN** the `existing-session` arm names the child with the newest `created_at`
 
-#### Scenario: A zero delta advises
+#### Scenario: A child at the transcript end advises
 
 - **GIVEN** a report child whose anchor equals the latest seq of the parent
 - **WHEN** the agent calls the tool without the override
 - **THEN** the result carries the `existing-session` arm that names that child, and no thread is written
 
-#### Scenario: A new message clears the advice
+#### Scenario: The turn of the spawning ask does not clear the advice
 
-- **GIVEN** a report child whose anchor is below the latest seq of the parent
+- **GIVEN** a report child, and the one user turn that made it past its anchor
+- **WHEN** the agent calls the tool without the override
+- **THEN** the result carries the `existing-session` arm that names that child
+
+#### Scenario: A second user turn clears the advice
+
+- **GIVEN** a report child, and two user turns of the parent past its anchor
 - **WHEN** the agent calls the tool
 - **THEN** the spawn proceeds, and the result carries the new thread id
 
+#### Scenario: A synthetic record does not clear the advice
+
+- **GIVEN** a report child, and one host record of the parent past its anchor
+- **WHEN** the agent calls the tool
+- **THEN** the result carries the `existing-session` arm, because a record is no user turn
+
 #### Scenario: The override skips the advice
 
-- **GIVEN** a report child whose anchor equals the latest seq of the parent
+- **GIVEN** a report child at the transcript end
 - **WHEN** the agent calls the tool with the override set to true
 - **THEN** the spawn proceeds, and the result carries the new thread id
 

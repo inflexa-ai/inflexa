@@ -11,7 +11,7 @@ The rebuild of #221 is on `main`, and it is dormant: the `report` thread type re
 - Carry the intent brief as the argument of the tool, per the #223 decision record. The conversation agent authors it at the moment of the ask.
 - Seed the child context at the spawn. The seed holds the brief and a copy of the working-memory render, per the #309 delta.
 - Stop the live working-memory render on a report turn. The copy in the child transcript is the record, and a live read breaks the anchor.
-- Add the thin-delta advice. The tool compares the anchor of the newest report child against the transcript end. When no new message exists, the tool advises iteration in that report chat, and it spawns nothing. An explicit input field overrides the advice.
+- Add the thin-delta advice. The tool counts the user turns of the parent past the anchor of the newest report child. At one turn or less, the tool advises iteration in that report chat, and it spawns nothing. An explicit input field overrides the advice.
 - Update the conversation prompt. It describes one report path: start a session, and talk to the Report Builder there.
 - **BREAKING** for the agent surface: a conversation turn cannot build a report in place after this change. The user-visible behavior changes here and nowhere else in the rebuild.
 
@@ -23,7 +23,7 @@ None.
 
 ### Modified Capabilities
 
-- `report-session-spawn`: the capability gains the conversation-agent tool surface. The requirements cover the tool, the brief, the context seed, the one-report-path roster invariant, the typed refusals as data, and the zero-delta advice.
+- `report-session-spawn`: the capability gains the conversation-agent tool surface. The requirements cover the tool, the brief, the context seed, the one-report-path roster invariant, the typed refusals as data, and the thin-delta advice.
 - `report-session-agent`: the report turn reads the copied narrative from its transcript. The turn assembly injects no live working-memory render.
 - `iterative-report`: the roster requirement changes. The conversation agent no longer offers `plan_report` and `submit_report`. The tools and the builder stay in the source until their removal.
 
