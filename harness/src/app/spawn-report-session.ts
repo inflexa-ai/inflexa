@@ -35,6 +35,12 @@
  * fails, the spawn purges the child, because a report thread with no context is
  * a dead end.
  *
+ * The seed takes no redaction pass, and that is deliberate. The two parts are
+ * agent-authored, the same trust tier as the working-memory render of a
+ * conversation turn. The harness redacts the new input of a user one time, at
+ * the assembly of that turn. A second pass here would scrub text that the
+ * assembly already admitted, and it would report a false clean on the rest.
+ *
  * The spawn mints one moment, and that moment carries two pins. The anchor pins
  * the transcript of the parent, and the injected anchor operation pins the data
  * of the analysis. A pin at the first tool call of a later turn reads a
