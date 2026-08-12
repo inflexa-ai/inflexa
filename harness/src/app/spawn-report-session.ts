@@ -23,10 +23,11 @@
  *
  * The spawn also gates on the eyes of the composition. A report session records
  * a version only after a look at the rendered page, and only a browser can look.
- * Thus a composition with no browser and no injected capture seam can author a
- * draft that no gate ever accepts. The spawn refuses that session before it
- * writes a row, because a dead-end thread is worse than a refusal that names the
- * absent capability.
+ * Three routes give a look: the eyes seam, the capture seam, and a chrome config
+ * that names a browser. A composition with none of the three can author a draft
+ * that no gate ever accepts. The spawn refuses that session before it writes a
+ * row, because a dead-end thread is worse than a refusal that names the absent
+ * capability.
  *
  * The spawn seeds the context of the child at the anchor. It writes one message
  * that holds the brief and a copy of the working-memory render. The transcript
@@ -66,6 +67,7 @@ import type { Pool } from "pg";
 import type { DbError } from "../lib/db-result.js";
 import { hasBrowserUrl, type ChromeConfig } from "../lib/chrome.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import type { AcquireEyes } from "../lib/eyes.js";
 import type { Logger } from "../lib/logger.js";
 import type { CapturePage } from "../lib/page-capture.js";
 import type { DomainError } from "../lib/result.js";
@@ -86,7 +88,8 @@ import type { EnsureSessionStateResult } from "./report-session-runtime.js";
  * report session cannot spawn another. `empty_parent_transcript` refuses a
  * report on a parent that holds no messages, because such a report reports
  * nothing. `no_browser` refuses every spawn under a composition that gives no
- * eyes, and it carries the line that explains the absent capability.
+ * route to a look: no eyes seam, no capture seam, and no configured browser
+ * endpoint. It carries the line that explains the absent capability.
  */
 export type SpawnRefusal =
     | {
@@ -174,6 +177,13 @@ export interface ReportSessionDelta {
     readonly userTurnsSinceAnchor: number | null;
 }
 
+/**
+ * The construction inputs of the report-session operations.
+ *
+ * Three of the fields name a route to a look at the rendered page: `eyes`,
+ * `capture`, and a `chrome` config that names a browser. One present route
+ * passes the gate of the spawn.
+ */
 export interface ReportSessionSpawnDeps {
     readonly pool: Pool;
     /**
@@ -188,6 +198,13 @@ export interface ReportSessionSpawnDeps {
      * satisfies the gate on its own.
      */
     readonly capture?: CapturePage;
+    /**
+     * The eyes seam that the same composition gives to the eyes tool. A bound
+     * seam gives a browser for one look, thus it satisfies the gate with no
+     * configured endpoint. The spawn reads only the presence of the seam, and
+     * it acquires no lease.
+     */
+    readonly eyes?: AcquireEyes;
     /**
      * The anchor operation of the report session runtime. The spawn runs it
      * after the seed of the child lands, thus the transcript anchor and the data
@@ -323,9 +340,10 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
     const store = createThreadStore(pool);
     const history = createThreadHistory(pool);
     const workingMemory = createWorkingMemory(pool);
-    // The eyes of the composition are fixed at construction, thus the gate reads
-    // one boolean and never a live probe of the sidecar.
-    const eyesAvailable = deps.capture !== undefined || hasBrowserUrl(deps.chrome);
+    // Any one of the three routes gives a look, thus one present route opens the
+    // gate. The routes are fixed at construction, thus the gate reads one boolean
+    // and never a live probe of the sidecar.
+    const eyesAvailable = deps.eyes !== undefined || deps.capture !== undefined || hasBrowserUrl(deps.chrome);
 
     /**
      * Write the one seed message of the child and give the child back. The
