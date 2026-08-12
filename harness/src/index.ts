@@ -26,6 +26,14 @@ export type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "./report-
 // bytes packed materializes them to disk and binds its own lookup, thus the name of the
 // lookup belongs on the front door.
 export type { ResolvePageAsset } from "./tools/report-session/index.js";
+// Seam: the eyes of a report session — where a browser comes from for one look at the
+// rendered page. A host with a standing sidecar names the endpoint in its chrome config, and
+// the assembly wraps it. A host with no sidecar starts a browser for one look, thus it binds
+// its own realization. The names of the acquire, the scope, and the lease then belong on the
+// front door. `createStaticEyes` is the shipped realization over a standing sidecar, and an
+// embedder that wires the spawn itself binds the same eyes there.
+export { createStaticEyes } from "./lib/eyes.js";
+export type { AcquireEyes, EyesScope, EyesLease } from "./lib/eyes.js";
 // Thread→agent resolution surface `CoreRuntime.agents` carries: an embedder
 // resolves a turn's agent by thread type and matches the typed refusal for a
 // type whose agent is not registered yet.

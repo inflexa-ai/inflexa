@@ -24,6 +24,8 @@ import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import type { AgentDefinition } from "../loop/types.js";
+import { hasBrowserUrl, type ChromeConfig } from "../lib/chrome.js";
+import { createStaticEyes, type AcquireEyes } from "../lib/eyes.js";
 import type { DomainError } from "../lib/result.js";
 import type { ThreadType } from "../memory/thread-store.js";
 import { registerExecuteAnalysis, type ExecuteAnalysisDeps, type ExecuteAnalysisInput, type ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
@@ -150,6 +152,15 @@ export interface CoreRuntimeDeps {
      * materializes them to disk and binds its own lookup here.
      */
     readonly resolveReportPageAsset?: ResolvePageAsset;
+    /**
+     * The eyes of a report session — where a browser comes from for one look at the rendered
+     * page. A host with no standing sidecar starts a browser for one look. Thus it binds its own
+     * realization here, and the harness keeps every page behavior. Absent, the assembly wraps a
+     * chrome config that names a browser into the static realization. Thus a composition that
+     * names a standing sidecar changes nothing. A composition with neither route has no eyes, and
+     * the eyes tool of a report session then reports that condition.
+     */
+    readonly eyes?: AcquireEyes;
 }
 
 /**
@@ -223,6 +234,24 @@ export interface CoreRuntime {
     readonly citationResolver: CitationResolver;
 }
 
+/**
+ * The eyes of the composition, or none.
+ *
+ * A seam that the embedder bound answers first. Otherwise a chrome config that names a browser
+ * becomes the static realization. Thus a composition with a standing sidecar keeps its endpoint,
+ * and it changes nothing. A config that names no browser gives no eyes at all, and the eyes tool
+ * then gives the no-browser outcome.
+ *
+ * `createStaticEyes` refuses a config with no endpoint, thus the gate on the config runs before
+ * the construction. The resolution stays apart from `assembleCoreRuntime`, the same as the thread
+ * resolver above. Thus a test drives the precedence with no DBOS registration.
+ */
+export function resolveCompositionEyes(seam: AcquireEyes | undefined, chrome: ChromeConfig): AcquireEyes | undefined {
+    if (seam !== undefined) return seam;
+    if (hasBrowserUrl(chrome)) return createStaticEyes(chrome);
+    return undefined;
+}
+
 export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const { conversation, workflows: wf, resourcePolicy } = deps;
     const usageRecorder = deps.usageRecorder ?? createNoopUsageRecorder();
@@ -294,6 +323,10 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     };
     const makeReportResolver = deps.makeReportReferenceResolver ?? makeProductionReportResolver;
 
+    // The eyes of the composition resolve one time here. Thus the report agent and each tool under
+    // it read one answer, and no tool reads the precedence again.
+    const eyes = resolveCompositionEyes(deps.eyes, conversation.chrome);
+
     const reportAgent = createReportSessionAgent({
         model: conversation.model,
         pool: conversation.pool,
@@ -305,6 +338,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         threads: reportThreads,
         chrome: conversation.chrome,
         makeResolver: makeReportResolver,
+        ...(eyes ? { eyes } : {}),
         ...(deps.resolveReportPageAsset ? { resolvePageAsset: deps.resolveReportPageAsset } : {}),
         ...(conversation.logger ? { logger: conversation.logger } : {}),
     });

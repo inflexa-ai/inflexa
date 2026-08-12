@@ -28,6 +28,7 @@ import type { EmbeddingProvider } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ChromeConfig } from "../lib/chrome.js";
+import type { AcquireEyes } from "../lib/eyes.js";
 import type { Logger } from "../lib/logger.js";
 import type { ThreadStore } from "../memory/thread-store.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
@@ -75,6 +76,12 @@ export interface ReportSessionAgentDeps {
     /** Headless-Chrome config -- the eyes tool opens the rendered page. */
     readonly chrome: ChromeConfig;
     /**
+     * Eyes seam -- where a browser comes from for one look. The eyes tool takes one lease for each look,
+     * and it releases the lease after the look. Omitted, the tool falls back to the chrome config, and a
+     * config that names no browser leaves the session with no look at all.
+     */
+    readonly eyes?: AcquireEyes;
+    /**
      * Reference-resolution factory -- absent until a realization lands; the preview tool and the record tool
      * degrade as data. The factory binds one analysis, thus a tool makes the resolver over the scope of the call.
      */
@@ -91,7 +98,7 @@ export interface ReportSessionAgentDeps {
 
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
-    const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, makeResolver, resolvePageAsset, logger } = deps;
+    const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, eyes, makeResolver, resolvePageAsset, logger } = deps;
     const authoring = createReportAuthoringTools(gateway);
 
     const tools: Tool[] = [
@@ -126,6 +133,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
             gateway,
             resolveWorkspaceRoot,
             chrome,
+            ...(eyes ? { eyes } : {}),
             ...(logger ? { logger } : {}),
         }),
         // The record tool. It gates the whole document, then records one version.
