@@ -70,9 +70,10 @@ export interface ReportSessionRuntimeDeps {
 
 /**
  * The report session-state runtime. The gateway serves the authoring tools, and
- * `ensureSessionState` anchors the session. The serving path of a report turn runs
- * `ensureSessionState` at the turn start, and the gateway `load` runs it too, thus
- * a tool call cannot arrive before the state exists.
+ * `ensureSessionState` anchors the session. The spawn of a report session runs
+ * `ensureSessionState` at the moment of the spawn, the serving path of a report
+ * turn runs it at the turn start, and the gateway `load` runs it too. Thus a tool
+ * call cannot arrive before the state exists.
  */
 export interface ReportSessionRuntime {
     readonly gateway: ReportSessionStateGateway;

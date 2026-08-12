@@ -69,7 +69,9 @@ The "Report Creation" section of `src/prompts/conversation.ts` rewrites: call `s
 
 ### D8. The brief is the argument of the tool
 
-The #223 record fixes the intent channel: push only what the ask itself creates. The input of the tool carries the brief beside the override: `objective`, `audience`, `angle`, optional `exclusions`, and optional `openQuestions`. Each field is short prose, and the tool description caps the whole brief at approximately 2000 tokens. The conversation agent authors the brief at the moment of the ask, and no field names a path or a dataset.
+The #223 record fixes the intent channel: push only what the ask itself creates. The input of the tool carries the brief beside the override: `objective`, `audience`, `angle`, optional `exclusions`, and optional `openQuestions`. Each field is short prose, and the tool description caps the whole brief at approximately 2000 tokens.
+
+The schema bounds each field as well, because the brief lands in a durable message row. A description alone states the cap to the agent, and it holds no unbounded string out of the store. The conversation agent authors the brief at the moment of the ask, and no field names a path or a dataset.
 
 ### D9. The spawn seeds the child context at the anchor
 
@@ -78,6 +80,14 @@ The spawn operation gains the brief as its second argument. After the thread ins
 A seed write can fail after the thread insert. The spawn then purges the child through `purgeThread` and returns the fault as typed data, because a context-less report thread is a dead end.
 
 The report turn must not inject the live working-memory render, because a live read sees state past the anchor (the #309 delta). The turn assembly reads the thread type that `prepareChatTurn` already loads, and a `report` thread skips that one tail message. The analysis context and the run activity stay, because the #223 record names the working memory alone.
+
+### D10. The spawn pins the snapshot at its own moment
+
+The #223 record mints one T at the spawn: the `parent_seq` pins the transcript, and the snapshot pins the data. The shipped runtime pins the snapshot lazily, on the first session tool call of a report turn (`src/app/report-session-runtime.ts:175-187`). A run can register an artifact between the spawn and that call, thus the session cites an artifact that the anchor never held.
+
+The spawn takes the anchor operation as an optional dep, and it runs the operation after the seed lands. The seed comes first, because a failed seed purges the child and the session-state row holds no key of the thread. The order thus leaves no orphan row.
+
+A failed pin keeps the child, because the operation is idempotent and a later call pins again. A purge on a transient store fault would cost the user the whole session. Thus the failure rides the logger, and the outcome vocabulary of the spawn does not grow. The dep crosses the tool and `ConversationAgentDeps`, and the assembly binds it, thus no embedder changes.
 
 ## Risks / Trade-offs
 
