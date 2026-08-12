@@ -19,9 +19,26 @@ One host directory, three roles, all under the path the harness already knows as
         packages only. The conda prefix and the Node packages belong to the image,
         at a path outside the store mount, thus a farm holds neither.
 
-  /mnt/libs/current -> farms/<analysis>
-        The pointer `libStoreUsable` resolves. Flipping it selects which farm the
-        next sandbox sees.
+  /mnt/libs/deps.json
+        The dependency graph of the store, one node for each store directory and
+        each edge resolved. emit_deps.py writes it at the commit of a run.
+
+The store carries NO active-farm pointer. A sandbox receives its own farm as a
+second read-only bind at /mnt/libs/current, nested inside the store-root bind,
+and the invoker of the container adds that bind. Thus two analyses resolve two
+farms at the same time.
+
+A run has two shapes. A run with --farm builds that farm, and the catalog build
+is the one caller that needs it. A run with no --farm is an ACQUISITION run: it
+resolves the specs, it installs them into the pool, and it appends the resolved
+edges to the graph. It builds no farm, because each analysis composes its own
+farm on the host, from the pool, with no container.
+
+THE INVOKER CONTRACT OF A WARM RUN: a run that warms the caches must receive the
+same bind. The invoker binds the target farm at /mnt/libs/current, read-write,
+nested inside the store-root bind. A numba cache key holds the source path that
+the sandbox imports from, thus a warm through any other path gives a cache that
+the sandbox cannot load. Refer to warm().
 
 That /mnt/libs is mounted at the SAME path here (read-write) and in the sandbox
 (read-only) is the load-bearing detail. It is what makes a farm symlink written
@@ -45,7 +62,10 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
+
+import emit_deps
 
 LIBS = Path(os.environ.get("LIB_ROOT", "/mnt/libs"))
 STORE = LIBS / "store"
@@ -57,16 +77,18 @@ FARMS = LIBS / "farms"
 SANDBOX_MOUNT = Path(os.environ.get("SANDBOX_LIB_MOUNT", "/mnt/libs"))
 
 # One lease file per sandbox that has the store mounted. The host adds a lease when
-# it starts a sandbox and drops it when the sandbox exits; the provisioner refuses to
-# re-point `current` while any lease is active (see flip_current).
+# it starts a sandbox, and it drops the lease when the sandbox exits. A lease has one
+# job: a removal of the farm that the lease names refuses while the lease is active
+# (see remove_farm). A lease never blocks an acquisition run, and it never blocks the
+# extension of a farm, because an added link changes no path that a sandbox resolved.
 LEASES = LIBS / "leases"
 
 # A farm is assembled in a staging directory beside the farms, then swapped into
 # place in one atomic step (see publish_farm). Thus a stop, a refusal, or a crash
 # leaves either the old complete farm or the new complete farm, and never a farm with
 # links and no records. The staging and the superseded farm are dot-directories, so
-# they are unreachable: `current` never selects one, and a later run reads
-# `farms/<name>`. An interrupted swap is recovered by repair_staging.
+# they are unreachable: the host binds `farms/<name>` into a sandbox, and a later run
+# reads the same name. recover_farm recovers an interrupted swap.
 FARM_STAGING = ".staging-"
 FARM_SUPERSEDED = ".superseded-"
 
@@ -110,6 +132,12 @@ NOT_CONTENT = {PIN_MARKER, R_LINKING_MARKER, ".lock"}
 # taken, and an address that moved underneath them would defeat all reuse.
 HASH_EXCLUDE_DIRS = {"__pycache__"}
 HASH_EXCLUDE_SUFFIX = (".pyc", ".nbi", ".nbc")
+
+# Acquisition runs are parallel, thus each run stages its installs under a name of
+# its own. A run that names its staging `store/.staging` alone would delete the tree
+# of a run that is still in flight. _provision sets the token at its start. Outside a
+# run the token is empty, and staging_dir gives the plain names.
+RUN_TOKEN = ""
 
 
 def log(msg: str) -> None:
@@ -159,9 +187,9 @@ def resolve(specs: list[str]) -> dict[str, list[str]]:
     configuration can add another; a resolved requirement carrying a URL — an
     artifact from an unexpected host — fails the resolve.
     """
-    req = Path("/tmp/requirements.in")
+    req = run_temp("requirements.in")
     req.write_text("\n".join(specs) + "\n")
-    out = Path("/tmp/requirements.txt")
+    out = run_temp("requirements.txt")
     log(f"resolving closure of: {', '.join(specs)}")
     proc = subprocess.run(
         ["uv", "pip", "compile", "--python", PYTHON, "--no-header", "--quiet",
@@ -208,6 +236,28 @@ def resolve(specs: list[str]) -> dict[str, list[str]]:
     return dict(sorted(pins.items()))
 
 
+def run_temp(name: str) -> Path:
+    """A temporary path of this run, under /tmp.
+
+    The name carries the run token. Thus two runs that share one container never
+    read the fragment of each other.
+    """
+    return Path("/tmp") / (f"{RUN_TOKEN}-{name}" if RUN_TOKEN else name)
+
+
+def staging_dir(track: str) -> Path:
+    """The private staging directory of this run for `track`.
+
+    The Python track stages under `store/.staging`, and the R track under
+    `store/.staging-r`. Inside a run the name carries the run token as well, thus
+    two parallel runs never write into one staging tree. A staging tree that a
+    crashed run left behind stays until `--repair` clears it, because another run
+    can hold a tree of its own at the same moment.
+    """
+    name = ".staging" if track == "python" else f".staging-{track}"
+    return STORE / (f"{name}-{RUN_TOKEN}" if RUN_TOKEN else name)
+
+
 def find_stored(pin: str) -> Path | None:
     """An existing store directory holding exactly this pin, if there is one."""
     name, version = pin.split("==", 1)
@@ -239,14 +289,14 @@ def ensure_stored(pin: str, hashes: list[str]) -> tuple[Path, bool]:
     # Staged inside the store, not under /tmp: publishing is a rename, and a
     # rename is only atomic within one filesystem. The store is a bind mount, so
     # anywhere else is a different device and the publish would have to be a copy.
-    staging = STORE / ".staging" / canon(name)
+    staging = staging_dir("python") / canon(name)
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
     # A one-line requirements fragment carrying the pin and its hashes, because
     # `--require-hashes` reads hashes from a file, not from the command line.
-    frag = Path("/tmp") / f"req-{canon(name)}.txt"
+    frag = run_temp(f"req-{canon(name)}.txt")
     frag.write_text(pin + "".join(f" --hash={h}" for h in hashes) + "\n")
 
     log(f"installing {pin}")
@@ -276,7 +326,24 @@ def ensure_stored(pin: str, hashes: list[str]) -> tuple[Path, bool]:
     # different subuid than the one that wrote it. World-readable is what makes
     # it legible there, and matches what the baked images already do.
     subprocess.run(["chmod", "-R", "a+rX", str(staging)], check=True)
-    staging.rename(final)
+    return _publish_store_dir(staging, final)
+
+
+def _publish_store_dir(staging: Path, final: Path) -> tuple[Path, bool]:
+    """Publish a staged tree at its content address, and converge on one copy.
+
+    Acquisition runs are parallel, thus two runs can stage the same distribution and
+    reach this rename together. The rename of the second run fails, because the store
+    directory now exists and it is not empty. The address is the content, thus the two
+    trees are identical, and the second run keeps the published copy.
+    """
+    try:
+        staging.rename(final)
+    except OSError:
+        if not final.is_dir():
+            raise
+        shutil.rmtree(staging, ignore_errors=True)
+        return final, False
     return final, True
 
 
@@ -650,8 +717,7 @@ def store_r_package(pkg_dir: Path) -> tuple[Path, bool]:
     # another package's headers stays recorded with it.
     (inner / R_LINKING_MARKER).write_text(json.dumps(read_r_linking(inner)) + "\n")
     subprocess.run(["chmod", "-R", "a+rX", str(wrap)], check=True)
-    wrap.rename(final)
-    return final, True
+    return _publish_store_dir(wrap, final)
 
 
 def build_r_farm(farm: Path, stored: dict[str, list[tuple[str, Path]]]) -> None:
@@ -804,7 +870,7 @@ def install_r(manifest: Path, stage_root: Path) -> None:
 
 def provision_r(farm: Path, manifest: Path) -> dict:
     """Install, content-address, and farm the manifest's R track."""
-    stage_root = STORE / ".staging-r"
+    stage_root = staging_dir("r")
     if stage_root.exists():
         shutil.rmtree(stage_root)
     stage_root.mkdir(parents=True)
@@ -862,6 +928,15 @@ def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, str]:
     # /mnt/libs/farms/<name>/... produces keys the sandbox — which imports via
     # /mnt/libs/current/... — will never match. Measured: warming through the farm
     # path yields 0 loads and 29 recompiles; through `current`, 29 loads and 0.
+    #
+    # The store carries no pointer, thus the invoker of this container supplies the
+    # path: it binds the target farm at /mnt/libs/current for the run. A path that
+    # resolves elsewhere gives a cache that the sandbox cannot load, thus the run
+    # reports it here.
+    bind = LIBS / "current"
+    if not bind.exists() or os.path.realpath(bind) != os.path.realpath(farm):
+        log(f"  WARNING: {bind} does not resolve to {farm}. The invoker must bind "
+            f"the farm there for the run, or the prepared caches stay unusable.")
     env = dict(os.environ)
     env["PYTHONPATH"] = str(LIBS / "current" / "python" / "site-packages")
     env["MPLCONFIGDIR"] = str(farm / "matplotlib_config")
@@ -933,54 +1008,65 @@ def verify_store() -> int:
     return 1 if bad else 0
 
 
+def recover_farm(farm_name: str) -> list[str]:
+    """Recover an interrupted swap of one farm, and clear the debris of that farm.
+
+    publish_farm assembles the new farm in farms/.staging-<name> and, on a platform
+    without RENAME_EXCHANGE, moves the old farm to farms/.superseded-<name> for one
+    instant. A superseded farm means the swap started. When the farm is now missing,
+    the swap died between the two renames, thus the old farm goes back. Otherwise the
+    new farm is already in place, and the superseded copy is only debris.
+
+    This step reads and writes the entries of one farm only. Thus a run repairs its
+    own farm while another run builds a different farm.
+    """
+    cleared: list[str] = []
+    farm = FARMS / farm_name
+    sup = FARMS / (FARM_SUPERSEDED + farm_name)
+    stg = FARMS / (FARM_STAGING + farm_name)
+    if sup.exists():
+        if farm.exists():
+            shutil.rmtree(sup, ignore_errors=True)
+            cleared.append(f"farms/{sup.name}")
+        else:
+            if stg.exists():
+                shutil.rmtree(stg, ignore_errors=True)
+            os.rename(sup, farm)
+            cleared.append(f"farms/{sup.name} (restored {farm_name})")
+    # Any staging farm left now is an un-published build, or the old farm that a
+    # completed RENAME_EXCHANGE left behind. Neither is the reachable farm.
+    if stg.exists():
+        shutil.rmtree(stg, ignore_errors=True)
+        cleared.append(f"farms/{stg.name}")
+    return cleared
+
+
 def repair_staging() -> int:
-    """Clear an abandoned staging tree, and recover an interrupted farm swap.
+    """Clear every abandoned staging tree, and recover each interrupted farm swap.
 
     A store staging directory only ever holds an install in flight: a completed
     publish is a rename OUT of it, so anything left there is debris from a run that
     died before its rename, never a published artifact. Removing it reclaims space and
-    can never lose a package. The Python track stages in store/.staging, the R track
-    in store/.staging-r.
+    can never lose a package. The Python track stages in store/.staging-<token>, and
+    the R track in store/.staging-r-<token>, one token for each run.
 
-    A farm swap can also stop in the middle. publish_farm assembles the new farm in
-    farms/.staging-<name> and, on a platform without RENAME_EXCHANGE, moves the old
-    farm to farms/.superseded-<name> for one instant. This step recovers both: it
-    restores the old farm when a crash left the farm missing, and it removes any
-    leftover staging or superseded farm. Thus the reachable farm is always the old
-    complete farm or the new complete farm, never a half-built tree.
+    A farm swap can also stop in the middle, and recover_farm restores it. Thus the
+    reachable farm is always the old complete farm or the new complete farm, never a
+    half-built tree.
 
-    Safe under the single-writer assumption the per-store lock enforces; two live
-    provisioners are a separate concern.
+    This step reads the whole store, thus it runs under the exclusive lock. A run in
+    flight holds a staging tree of its own, and this step would delete it.
     """
     cleared = []
-    for name in (".staging", ".staging-r"):
-        d = STORE / name
-        if d.exists():
-            shutil.rmtree(d, ignore_errors=True)
-            cleared.append(f"store/{name}")
+    for d in sorted(STORE.glob(".staging*")):
+        shutil.rmtree(d, ignore_errors=True)
+        cleared.append(f"store/{d.name}")
 
     if FARMS.is_dir():
-        # Recover an interrupted swap first. A superseded farm means publish_farm
-        # moved the old farm aside. If the farm is now missing, the swap died between
-        # the two renames, so restore the old farm. Otherwise the new farm is already
-        # in place and the superseded copy is only debris.
-        for sup in sorted(FARMS.glob(FARM_SUPERSEDED + "*")):
-            farm_name = sup.name[len(FARM_SUPERSEDED):]
-            farm = FARMS / farm_name
-            if farm.exists():
-                shutil.rmtree(sup, ignore_errors=True)
-                cleared.append(f"farms/{sup.name}")
-            else:
-                stg = FARMS / (FARM_STAGING + farm_name)
-                if stg.exists():
-                    shutil.rmtree(stg, ignore_errors=True)
-                os.rename(sup, farm)
-                cleared.append(f"farms/{sup.name} (restored {farm_name})")
-        # Any staging farm left now is an un-published build, or the old farm that a
-        # completed RENAME_EXCHANGE left behind. Neither is the reachable farm.
-        for stg in sorted(FARMS.glob(FARM_STAGING + "*")):
-            shutil.rmtree(stg, ignore_errors=True)
-            cleared.append(f"farms/{stg.name}")
+        names = {p.name[len(FARM_SUPERSEDED):] for p in FARMS.glob(FARM_SUPERSEDED + "*")}
+        names |= {p.name[len(FARM_STAGING):] for p in FARMS.glob(FARM_STAGING + "*")}
+        for farm_name in sorted(names):
+            cleared += recover_farm(farm_name)
 
     if cleared:
         log("repair: cleared abandoned " + ", ".join(cleared))
@@ -989,25 +1075,79 @@ def repair_staging() -> int:
     return 0
 
 
-@contextlib.contextmanager
-def store_lock():
-    """Hold an exclusive per-store lock for the length of a mutating run.
+# --- The two locks ------------------------------------------------------------
+# One lock file carries two modes. An acquisition run takes the shared mode, because
+# content addressing makes the pool writes race-safe and two runs that produce the
+# same distribution converge on one store directory. Reclaim, repair, and a farm
+# removal take the exclusive mode, because each of them reads the whole store and
+# deletes from it.
+#
+# A second lock file is the commit mutex. The shared metadata — the dependency graph
+# and the inventory — is read-modify-write, thus one short mutex serializes each
+# commit. A run takes the store lock first and the commit mutex second. No code takes
+# them in the other order, thus no deadlock is possible.
 
-    Content addressing makes the package writes race-safe, but the `current` pointer
-    and farm assembly are not, so a whole provisioning (or reclaim) run holds this.
-    Non-blocking: a second run reports the conflict rather than queueing behind a
-    build of unknown length. Closing the fd releases the flock, including on crash.
+
+@contextlib.contextmanager
+def _flock(path: Path, mode: int, wait: bool, busy: str):
+    """Hold one flock, and report `busy` when another holder has it.
+
+    A step that waits reports the condition, and then it blocks. A step that does
+    not wait stops with the same condition, thus a caller never queues behind work of
+    an unknown length. The close of the fd releases the flock, and a crash closes it
+    too.
     """
     LIBS.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(LIBS / ".provision.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+    fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o644)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, mode | fcntl.LOCK_NB)
         except OSError:
-            raise SystemExit("[provision] another provisioning run holds the store lock; retry when it finishes")
+            if not wait:
+                raise SystemExit(f"[provision] {busy}; retry when it finishes")
+            log(f"{busy}; this step waits for it to finish")
+            fcntl.flock(fd, mode)
         yield
     finally:
         os.close(fd)
+
+
+@contextlib.contextmanager
+def store_lock_shared():
+    """Hold the store lock in the shared mode, for one acquisition run.
+
+    Two acquisition runs hold it at the same time. Only reclaim excludes them, and
+    the run then reports that conflict. It does not wait behind a scan of unknown
+    length.
+    """
+    with _flock(LIBS / ".provision.lock", fcntl.LOCK_SH, False,
+                "reclaim holds the store lock"):
+        yield
+
+
+@contextlib.contextmanager
+def store_lock_exclusive(wait: bool = True):
+    """Hold the store lock in the exclusive mode, for reclaim, repair, or a removal.
+
+    The step waits for zero acquisition runs, and it blocks a new one while it holds
+    the lock. A run that wrote pool directories and did not commit yet holds exactly
+    what reclaim deletes, thus the two must never overlap.
+    """
+    with _flock(LIBS / ".provision.lock", fcntl.LOCK_EX, wait,
+                "an acquisition run holds the store lock"):
+        yield
+
+
+@contextlib.contextmanager
+def commit_lock():
+    """Hold the short mutex that serializes each write to the shared metadata.
+
+    The mutex blocks, because a commit is short and two commits must serialize. A
+    reader of the graph or the inventory thus never sees a half-written record.
+    """
+    with _flock(LIBS / ".commit.lock", fcntl.LOCK_EX, True,
+                "another run commits its metadata"):
+        yield
 
 
 def active_leases() -> list[str]:
@@ -1017,10 +1157,36 @@ def active_leases() -> list[str]:
     return sorted(p.name for p in LEASES.iterdir() if p.is_file())
 
 
-def add_lease(lease_id: str) -> int:
+def lease_farm(lease_id: str) -> str | None:
+    """The farm that one lease names, or None when the lease names none."""
+    try:
+        record = json.loads((LEASES / lease_id).read_text())
+    except (OSError, ValueError):
+        return None
+    return record.get("farm") if isinstance(record, dict) else None
+
+
+def leases_of_farm(farm_name: str) -> list[str]:
+    """Ids of the leases that hold `farm_name`, or that name no farm at all.
+
+    A lease that names no farm can be a sandbox of any farm, thus it holds every
+    farm. The host names the farm of each sandbox it starts, and only an old lease
+    or an incomplete invoker leaves the name out.
+    """
+    return [lease for lease in active_leases()
+            if lease_farm(lease) in (farm_name, None)]
+
+
+def add_lease(lease_id: str, farm_name: str | None = None) -> int:
+    """Record that a sandbox holds the store mounted, and which farm it reads.
+
+    The farm is what makes the removal guard exact: a removal refuses for the farm
+    that a lease names, and it goes ahead for each other farm.
+    """
     LEASES.mkdir(parents=True, exist_ok=True)
-    (LEASES / lease_id).write_text(lease_id + "\n")
-    log(f"lease added: {lease_id}")
+    (LEASES / lease_id).write_text(
+        json.dumps({"lease": lease_id, "farm": farm_name}) + "\n")
+    log(f"lease added: {lease_id} (farm: {farm_name or 'not named'})")
     return 0
 
 
@@ -1032,31 +1198,6 @@ def drop_lease(lease_id: str) -> int:
     else:
         log(f"lease not found: {lease_id}")
     return 0
-
-
-def flip_current(farm_name: str, force: bool = False) -> None:
-    """Point `current` at farm_name, refusing to move it under a live sandbox.
-
-    Re-pointing the symlink breaks a container that has the store mounted — measured,
-    its /mnt/libs/current raises FileNotFoundError from then on — so a re-point is an
-    operation BETWEEN sandboxes. Re-pointing to the SAME target is a no-op: adding to
-    a farm `current` already selects is safe, because existing links are untouched.
-    The host clears the lease once it confirms no sandbox is mounted; --force-repoint
-    is the escape hatch for a stale lease.
-    """
-    current = LIBS / "current"
-    target = f"farms/{farm_name}"
-    if current.is_symlink() and os.readlink(current) == target:
-        return
-    leases = active_leases()
-    if leases and not force:
-        raise SystemExit(
-            f"[provision] refusing to re-point current to {farm_name}: "
-            f"{len(leases)} sandbox lease(s) active ({', '.join(leases[:5])}). "
-            f"A live sandbox resolves /mnt/libs/current; re-pointing breaks it.")
-    if current.is_symlink() or current.exists():
-        current.unlink()
-    current.symlink_to(target)
 
 
 def _referenced_store_dirs() -> set[str]:
@@ -1103,26 +1244,77 @@ def reclaim() -> int:
 
 def remove_farm(farm_name: str) -> int:
     """Remove a farm — the set of symlinks for one analysis. The store dirs it
-    referenced stay until reclaim runs. Refuses the farm `current` selects, since
-    that is the live one a sandbox may be reading."""
+    referenced stay until reclaim runs. The removal refuses while a lease records a
+    live sandbox of that farm, because that sandbox resolves these links now."""
     farm = FARMS / farm_name
     if not farm.is_dir():
         log(f"remove-farm: no such farm {farm_name}")
         return 2
-    current = LIBS / "current"
-    if current.is_symlink() and os.readlink(current) == f"farms/{farm_name}":
-        raise SystemExit(f"[provision] refusing to remove farm {farm_name}: current points at it")
+    holders = leases_of_farm(farm_name)
+    if holders:
+        raise SystemExit(
+            f"[provision] refusing to remove farm {farm_name}: "
+            f"{len(holders)} sandbox lease(s) hold it ({', '.join(holders[:5])}). "
+            f"A live sandbox resolves this farm at /mnt/libs/current.")
     shutil.rmtree(farm, ignore_errors=True)
     log(f"removed farm {farm_name} (run --reclaim to drop store dirs it alone referenced)")
     return 0
 
 
+def _acquire(args) -> int:
+    """Acquire the specs into the pool, and build no farm.
+
+    This is what `inflexa store add` runs. The store carries no active farm, thus an
+    acquisition has no farm to write: it resolves the closure of the specs, it
+    installs each distribution into the content-addressed pool, and it appends the
+    resolved edges to the dependency graph. The farm of an analysis changes only
+    through composition, which the host does with no container.
+
+    The graph append is the whole commit of the run, thus it is the only step under
+    the commit mutex. The pool writes before it are private to this run: a store
+    directory publishes at its content address, and two runs that produce one
+    distribution converge on one directory.
+
+    The specs of the run are the batch that the graph learns. `resolve` settles every
+    requirement of every distribution, thus the batch is closed and each edge of it
+    names a node of it.
+    """
+    global RUN_TOKEN
+    RUN_TOKEN = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+    STORE.mkdir(parents=True, exist_ok=True)
+    requested = sorted(set(args.specs))
+    resolved = resolve(requested)
+    store_dirs: list[Path] = []
+    added: list[str] = []
+    for pin in resolved:
+        path, is_new = ensure_stored(pin, resolved[pin])
+        store_dirs.append(path)
+        if is_new:
+            added.append(pin)
+    log(f"{len(added)} newly installed, {len(resolved) - len(added)} reused from store")
+    shutil.rmtree(staging_dir("python"), ignore_errors=True)
+
+    with commit_lock():
+        emit_deps.append_store_dirs(LIBS, store_dirs)
+
+    log(f"acquired {len(resolved)} distribution(s) into the pool; no farm was built")
+    return 0
+
+
 def _provision(args) -> int:
+    global RUN_TOKEN
+    # The token separates the staging trees of this run from the staging trees of
+    # each parallel run. It carries the pid for a reader of a log, and a random part
+    # because two containers can hold the same pid.
+    RUN_TOKEN = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
     STORE.mkdir(parents=True, exist_ok=True)
     FARMS.mkdir(parents=True, exist_ok=True)
-    # Every run repairs before it builds: anything in a staging dir is debris from an
-    # interrupted prior run (a completed publish renamed out of it).
-    repair_staging()
+    # Recover the farm of this run before it builds: an interrupted swap can have
+    # left the old farm at the superseded name. Another farm belongs to another run,
+    # and only the exclusive `--repair` reads the whole store.
+    recover_farm(args.farm)
 
     farm = FARMS / args.farm
     staging = FARMS / (FARM_STAGING + args.farm)
@@ -1160,7 +1352,7 @@ def _provision(args) -> int:
             if is_new:
                 added.append(pin)
         log(f"{len(added)} newly installed, {len(pins) - len(added)} reused from store")
-        shutil.rmtree(STORE / ".staging", ignore_errors=True)
+        shutil.rmtree(staging_dir("python"), ignore_errors=True)
 
     # Assemble the whole new farm in a staging directory beside the farms, never in
     # `farm` itself. The live farm stays untouched until the atomic swap below, thus a
@@ -1237,39 +1429,43 @@ def _provision(args) -> int:
     def write_lock(dest: Path) -> None:
         (dest / "lock.json").write_text(json.dumps(lock, indent=2) + "\n")
 
-    # The records go into the staging farm, thus the farm the swap publishes already
-    # holds every marker the harness needs. The same producer the images use writes
-    # packages.txt, so it is byte-identical in shape to what list_available_packages
-    # already parses.
-    subprocess.run(["/usr/local/bin/inflexa-libs-refresh", "--rederive"],
-                   env={**os.environ, "INFLEXA_LIB_ROOT": str(staging)}, check=True)
+    # The commit of the run. The inventory and the dependency graph are shared
+    # metadata, and each of the two is read-modify-write, thus one short mutex
+    # serializes this section across the parallel runs. Every step before it wrote
+    # into the pool or into the staging farm, which are private to this run.
+    with commit_lock():
+        # The records go into the staging farm, thus the farm the swap publishes
+        # already holds every marker the harness needs. The same producer the images
+        # use writes packages.txt, so it is byte-identical in shape to what
+        # list_available_packages already parses.
+        subprocess.run(["/usr/local/bin/inflexa-libs-refresh", "--rederive"],
+                       env={**os.environ, "INFLEXA_LIB_ROOT": str(staging)}, check=True)
 
-    # Second of the two completeness markers libStoreUsable requires before it
-    # will bind the store; without it the mount is silently dropped. The track list
-    # comes from the staging farm as it publishes, thus it names each preserved
-    # track beside each rebuilt one.
-    tracks = farm_tracks(staging)
-    (staging / "meta.json").write_text(json.dumps({
-        "version": args.farm,
-        "arch": f"linux-{'arm64' if os.uname().machine == 'aarch64' else 'amd64'}",
-        "tracks": tracks,
-    }, indent=2) + "\n")
+        # Second of the two completeness markers libStoreUsable requires before it
+        # will bind the store; without it the mount is silently dropped. The track
+        # list comes from the staging farm as it publishes, thus it names each
+        # preserved track beside each rebuilt one.
+        tracks = farm_tracks(staging)
+        (staging / "meta.json").write_text(json.dumps({
+            "version": args.farm,
+            "arch": f"linux-{'arm64' if os.uname().machine == 'aarch64' else 'amd64'}",
+            "tracks": tracks,
+        }, indent=2) + "\n")
 
-    write_lock(staging)
-    # The mode goes with the records, because the sandbox reads the farm as a
-    # different uid the moment `current` selects it.
-    subprocess.run(["chmod", "-R", "a+rX", str(staging)], check=True)
+        write_lock(staging)
+        # The mode goes with the records, because the sandbox reads the farm as a
+        # different uid the moment its bind selects the farm.
+        subprocess.run(["chmod", "-R", "a+rX", str(staging)], check=True)
 
-    # The staging farm is complete. Swap it into place in one atomic step, thus the
-    # farm is never a half-built tree that the harness could mount or a later run could
-    # read. From here on `farm` is the new complete farm.
-    publish_farm(staging, farm)
+        # The staging farm is complete. Swap it into place in one atomic step, thus
+        # the farm is never a half-built tree that the harness could mount or a later
+        # run could read. From here on `farm` is the new complete farm.
+        publish_farm(staging, farm)
 
-    # Flip `current` AFTER the swap, so a refusal leaves the new complete farm in place
-    # and `current` unchanged. flip_current refuses under a live sandbox lease, which
-    # is a designed outcome and costs the farm nothing. Flipping before warming makes
-    # the warm-up run against the exact path the sandbox will import from (see warm()).
-    flip_current(args.farm, force=args.force_repoint)
+        # Append the closure of the published farm to the graph at the store root.
+        # The append reads the links of the farm, thus it runs after the swap. A node
+        # that the graph already holds stays as it is.
+        emit_deps.append_for_farm(LIBS, farm)
 
     if warm_targets or args.warm_script:
         lock["warm"] = warm(farm, warm_targets, args.warm_script)
@@ -1283,25 +1479,45 @@ def _provision(args) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Provision packages into the library store.")
-    ap.add_argument("--farm", help="analysis name (farm directory)")
+    ap = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Provision packages into the library store.",
+        epilog=(
+            "The invoker binds the store root read-write at /mnt/libs.\n"
+            "\n"
+            "With no --farm the run acquires its specs into the pool and builds no\n"
+            "farm. The host composes the farm of each analysis from that pool.\n"
+            "\n"
+            "A run that warms the caches (--warm, --warm-script) needs a second bind:\n"
+            "the target farm at /mnt/libs/current, nested inside the store-root bind.\n"
+            "The store carries no active-farm pointer, thus only that bind puts the\n"
+            "farm at the path the sandbox imports from, and a numba cache key holds\n"
+            "that path. A run with no such bind reports a warning and writes a cache\n"
+            "that no sandbox can load."))
+    ap.add_argument("--farm", help="analysis name (farm directory); with --add-lease, "
+                                   "the farm that the sandbox of the lease reads; omit it "
+                                   "to acquire the specs into the pool and build no farm")
     ap.add_argument("--verify", action="store_true",
                     help="re-hash every store directory, report any drift from its address, and exit")
     ap.add_argument("--repair", action="store_true",
-                    help="clear an abandoned staging tree from an interrupted run, and exit")
+                    help="clear each abandoned staging tree from an interrupted run, and exit "
+                         "(exclusive: it waits for every acquisition run to finish)")
     ap.add_argument("--reclaim", action="store_true",
-                    help="remove store directories no farm references, and exit")
+                    help="remove store directories no farm references, and exit "
+                         "(exclusive: it waits for every acquisition run to finish)")
     ap.add_argument("--add-lease", default=None, metavar="ID",
-                    help="record that a sandbox holds the store mounted (blocks re-pointing current)")
+                    help="record that a sandbox holds the store mounted; pass --farm to name "
+                         "the farm that it reads (a lease blocks the removal of that farm)")
     ap.add_argument("--drop-lease", default=None, metavar="ID",
                     help="clear a sandbox's mount lease")
     ap.add_argument("--remove-farm", default=None, metavar="NAME",
                     help="remove a farm's symlinks (store dirs stay until --reclaim), and exit")
-    ap.add_argument("--force-repoint", action="store_true",
-                    help="re-point current even with active leases (host must confirm no sandbox is mounted)")
-    ap.add_argument("--warm", default="", help="comma-separated modules to import during warm-up")
+    ap.add_argument("--warm", default="",
+                    help="comma-separated modules to import during warm-up; the invoker must "
+                         "bind the farm at /mnt/libs/current for the run")
     ap.add_argument("--warm-script", default=None,
-                    help="path (inside the store) to a script that exercises jitted code paths")
+                    help="path (inside the store) to a script that exercises jitted code paths; "
+                         "the invoker must bind the farm at /mnt/libs/current for the run")
     ap.add_argument("--r-manifest", default=None,
                     help="path to a lib-store manifest; provision its R track (CRAN + Bioconductor + git + GitHub) via pak")
     ap.add_argument("specs", nargs="*", help="requirement specs to add")
@@ -1310,24 +1526,39 @@ def main() -> int:
     if args.verify:
         return verify_store()
     if args.repair:
-        return repair_staging()
+        with store_lock_exclusive():
+            return repair_staging()
     if args.reclaim:
-        with store_lock():
+        with store_lock_exclusive():
             return reclaim()
     if args.add_lease:
-        return add_lease(args.add_lease)
+        return add_lease(args.add_lease, args.farm)
     if args.drop_lease:
         return drop_lease(args.drop_lease)
     if args.remove_farm:
-        with store_lock():
+        with store_lock_exclusive():
             return remove_farm(args.remove_farm)
-    if not args.farm:
-        log("usage: --farm <name> (with specs / --r-manifest), or --verify / --repair / "
-            "--reclaim / --add-lease ID / --drop-lease ID / --remove-farm NAME")
-        return 2
     reject_off_index(args.specs)
 
-    with store_lock():
+    # A run with no --farm is an ACQUISITION run: it writes the pool and the graph,
+    # and it builds no farm. That is what the CLI `store add` runs, because each
+    # analysis composes its own farm on the host. The R track still needs a farm,
+    # because pak installs and load-checks through one.
+    if not args.farm:
+        if not args.specs:
+            log("usage: <specs> to acquire into the pool, --farm <name> (with specs / "
+                "--r-manifest) to build a farm, or --verify / --repair / --reclaim / "
+                "--add-lease ID / --drop-lease ID / --remove-farm NAME")
+            return 2
+        if args.r_manifest:
+            log("usage: --r-manifest needs --farm <name>; an R install load-checks through a farm")
+            return 2
+        with store_lock_shared():
+            return _acquire(args)
+
+    # An acquisition run takes the shared mode, thus two runs proceed at the same
+    # time and only reclaim excludes them.
+    with store_lock_shared():
         return _provision(args)
 
 

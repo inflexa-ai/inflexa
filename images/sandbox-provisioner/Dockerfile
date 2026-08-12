@@ -63,7 +63,14 @@ COPY images/gen-r-lock.R /usr/local/bin/gen-r-lock.R
 # identically.
 COPY images/sandbox-base/inflexa-libs-refresh /usr/local/bin/inflexa-libs-refresh
 COPY images/sandbox-provisioner/provision.py /usr/local/bin/provision
-RUN chmod +x /usr/local/bin/inflexa-libs-refresh /usr/local/bin/provision
+# The dependency-graph emitter, beside the provisioner. provision.py imports it, and
+# the directory of the script that runs is on the module path, thus `import emit_deps`
+# resolves here. base-packages.json holds the image-owned names that the emitter
+# drops an edge into, and the emitter reads it beside its own file.
+COPY images/sandbox-provisioner/emit_deps.py /usr/local/bin/emit_deps.py
+COPY images/sandbox-provisioner/base-packages.json /usr/local/bin/base-packages.json
+RUN chmod +x /usr/local/bin/inflexa-libs-refresh /usr/local/bin/provision \
+      /usr/local/bin/emit_deps.py
 
 # Attach the published package to the repo, the same as sandbox-base. GHCR reads this
 # label to link the new package to the repository. A linked package takes the

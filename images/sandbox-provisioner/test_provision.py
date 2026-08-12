@@ -19,8 +19,8 @@ Run with either::
   ContentAddressingTests.test_store_r_package_content_address_and_reuse -> 6.1 (store side)
   VerifyStoreTests.test_verify_detects_tampering                      -> 9.6, 2.5
   RepairTests.test_repair_clears_staging_and_is_idempotent            -> 9.5, 2.4
-  StoreLockTests.test_second_acquire_reports_conflict                 -> 9.8, 7.1
-  FlipCurrentTests.test_refused_under_active_lease                    -> 9.10, 7.2
+  StoreLockTests.test_reclaim_excludes_an_acquisition_run             -> 9.8, 7.1
+  LeaseGuardTests.test_a_lease_records_its_farm                       -> 9.10, 7.2
   FarmAssemblyTests.test_build_farm_invariants                        -> 4.1/4.3/4.4, 4.6-guard
   FarmAssemblyTests.test_build_r_farm_skips_empty_subtree             -> 6.2
   PublishFarmTests.test_publish_to_fresh_name                         -> 4.5 (atomic publish)
@@ -35,13 +35,12 @@ Run with either::
   BiocReleaseTests.test_damaged_entries_are_skipped                   -> 6.4
   SupplyChainTests.test_reject_off_index                              -> 3.1 (request boundary)
   SupplyChainTests.test_resolve_parses_hashes_and_rejects_off_host    -> 3.1 (resolved output)
-  ProvisionRunTests.test_refused_repoint_keeps_farm_and_requested_set -> 9.10/7.2, 3.4, 4.5
   ProvisionRunTests.test_rebuild_drops_stale_links_but_keeps_records  -> 4.1/4.4, 4.5
-  ProvisionRunTests.test_warm_runs_through_current_and_reaches_lock   -> 4.6, 5.2/5.4
+  ProvisionRunTests.test_warm_runs_through_the_supplied_bind_and_reaches_lock -> 4.6, 5.2/5.4
   FailureMessageTests.test_failed_resolve_reports_uv_stderr           -> 3.1 (actionable failure)
   FailureMessageTests.test_failed_install_reports_uv_stderr           -> 3.2 (actionable failure)
   ReclaimTests.test_reclaim_keeps_referenced_drops_orphan            -> 7.3
-  ReclaimTests.test_remove_farm_refuses_current                       -> 7.3
+  ReclaimTests.test_remove_farm_refuses_under_a_lease_of_that_farm    -> 7.3
 
 Track preservation coverage map (test -> task of the change
 ``harness/openspec/changes/preserve-farm-tracks-and-single-runtime-image``):
@@ -55,6 +54,26 @@ Track preservation coverage map (test -> task of the change
 
 Task 6.8 and task 6.9 are NOT covered here: 6.8 needs a real sandbox with a store
 mounted, and 6.9 needs the pak build, which does not fit the memory of a laptop.
+
+Per-analysis farm mount coverage map (test -> task of the change
+``harness/openspec/changes/per-analysis-farm-mount``):
+  ProvisionRunTests.test_publish_writes_no_current_and_leaves_an_old_one_alone -> 4.4
+  ProvisionRunTests.test_warm_runs_through_the_supplied_bind_and_reaches_lock  -> 4.3
+  ProvisionRunTests.test_a_warm_run_without_the_bind_reports_it              -> 4.3
+  LeaseGuardTests.test_a_lease_blocks_no_acquisition_run_and_no_extension    -> 4.2
+  ReclaimTests.test_remove_farm_refuses_under_a_lease_of_that_farm           -> 4.2
+  StoreLockTests.*                                                          -> 5.1/5.3
+  ParallelAcquisitionTests.test_two_runs_for_two_packages_both_complete      -> 5.4
+  ParallelAcquisitionTests.test_two_runs_for_one_package_converge_on_one_store_dir -> 5.5
+  ParallelAcquisitionTests.test_a_publish_that_loses_the_race_keeps_the_published_copy -> 5.5
+  ParallelAcquisitionTests.test_a_crashed_run_leaves_only_reclaim_food       -> 5.6
+  MarkerTests.*                                                             -> 6.1
+  DependencyGraphTests.test_a_python_node_carries_the_track_imports_entry_points_and_edges -> 6.1
+  DependencyGraphTests.test_an_r_node_carries_its_inner_directory_and_its_dcf_edges -> 6.2
+  DependencyGraphTests.test_an_edge_into_an_image_owned_package_drops        -> 6.3
+  DependencyGraphTests.test_the_standalone_emitter_covers_every_farm         -> 6.4
+  DependencyGraphTests.test_a_dangling_edge_fails_the_build_and_names_the_edge -> 6.5
+  DependencyGraphTests.test_an_append_keeps_every_earlier_node_byte_identical -> 6.6
 
 §9 tasks deliberately NOT covered here (require the real container / external
 tools / a running host, i.e. CI- or container-gated, not unit-verifiable):
@@ -81,6 +100,8 @@ import os
 import shutil
 import sys
 import tempfile
+import time
+import traceback
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -94,6 +115,7 @@ _IMPORT_ROOT = tempfile.mkdtemp(prefix="prov-import-")
 os.environ["LIB_ROOT"] = _IMPORT_ROOT
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import emit_deps  # noqa: E402  (import after LIB_ROOT/sys.path are set up)
 import provision  # noqa: E402  (import after LIB_ROOT/sys.path are set up)
 
 
@@ -118,6 +140,9 @@ class StoreTestCase(unittest.TestCase):
         provision.FARMS = self.root / "farms"
         provision.LEASES = self.root / "leases"
         provision.SANDBOX_MOUNT = self.root
+        # A run sets the token, and the token names the staging trees of that run.
+        # Clear it, so a test that calls a step directly reads the plain names.
+        provision.RUN_TOKEN = ""
         provision.STORE.mkdir(parents=True, exist_ok=True)
         provision.FARMS.mkdir(parents=True, exist_ok=True)
 
@@ -130,7 +155,7 @@ class StoreTestCase(unittest.TestCase):
         self.uv_stderr = ""
         # One entry per warm-up child: the PYTHONPATH it was given, and that path
         # resolved AT THAT MOMENT. The resolution has to happen in the fake,
-        # because it is what proves `current` already selected the farm.
+        # because it is what proves the bind of the farm resolved for the child.
         self.warm_paths: list[tuple[str, str]] = []
         # The argv of every external tool the run shelled out to. A preservation
         # test reads it to prove that a preserved track ran no installer.
@@ -211,7 +236,7 @@ class StoreTestCase(unittest.TestCase):
     def _args(farm: str, specs: list[str] | None = None, **over) -> SimpleNamespace:
         """The parsed command line ``_provision`` reads, with the parser defaults."""
         defaults = dict(farm=farm, specs=specs or [], r_manifest=None,
-                        warm="", warm_script=None, force_repoint=False)
+                        warm="", warm_script=None)
         return SimpleNamespace(**{**defaults, **over})
 
     @staticmethod
@@ -367,51 +392,93 @@ class RepairTests(StoreTestCase):
 
 
 class StoreLockTests(StoreTestCase):
-    """§9.8 / §7.1 — a second store_lock reports the conflict; it re-acquires after release."""
+    """§5.1/§5.3 — one lock file, two modes: shared acquisition, exclusive reclaim.
 
-    def test_second_acquire_reports_conflict(self):
-        # Two open file descriptions on the same lock file conflict under flock even
-        # within one process, which models two concurrent provisioning runs.
-        with provision.store_lock():
-            with self.assertRaises(SystemExit) as cm:
-                with provision.store_lock():
+    Two open file descriptions on the same lock file conflict under flock even
+    within one process, which models two concurrent runs.
+    """
+
+    def test_two_acquisition_runs_share_the_lock(self):
+        """The shared mode does not refuse a second acquisition run."""
+        with provision.store_lock_shared():
+            with provision.store_lock_shared():
+                pass
+
+    def test_reclaim_excludes_an_acquisition_run(self):
+        """The exclusive mode waits while an acquisition run holds the lock, and it
+        takes the lock once the run releases it."""
+        with provision.store_lock_shared():
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+                with provision.store_lock_exclusive(wait=False):
                     pass
-            self.assertIn("holds the store lock", str(cm.exception))
+            self.assertIn("acquisition run holds the store lock", str(cm.exception))
 
-        # Released now: the lock re-acquires cleanly.
-        with provision.store_lock():
+        # Released now: the exclusive mode takes the lock cleanly.
+        with provision.store_lock_exclusive(wait=False):
             pass
 
+    def test_an_acquisition_run_refuses_under_reclaim(self):
+        """Reclaim blocks a new acquisition run, and the run reports the conflict
+        rather than queueing behind a scan of unknown length."""
+        with provision.store_lock_exclusive(wait=False):
+            with self.assertRaises(SystemExit) as cm:
+                with provision.store_lock_shared():
+                    pass
+            self.assertIn("reclaim holds the store lock", str(cm.exception))
 
-class FlipCurrentTests(StoreTestCase):
-    """§9.10 / §7.2 — re-pointing `current` is refused while a sandbox lease is active."""
+    def test_the_commit_mutex_is_a_second_lock_file(self):
+        """The commit mutex is its own file, thus a commit never blocks on the store
+        lock and the two orders can never deadlock."""
+        with provision.store_lock_shared(), provision.commit_lock():
+            self.assertTrue((provision.LIBS / ".commit.lock").is_file())
+            self.assertTrue((provision.LIBS / ".provision.lock").is_file())
 
-    def _target(self) -> str:
-        return os.readlink(provision.LIBS / "current")
 
-    def test_refused_under_active_lease(self):
-        provision.flip_current("a")
-        self.assertEqual(self._target(), "farms/a")
+class LeaseGuardTests(StoreTestCase):
+    """§4.2 — a lease blocks the removal of the farm that it names, and nothing else."""
 
+    def test_a_lease_records_its_farm(self):
+        provision.add_lease("s1", "alpha")
+        self.assertEqual(provision.active_leases(), ["s1"])
+        self.assertEqual(provision.lease_farm("s1"), "alpha")
+        self.assertEqual(provision.leases_of_farm("alpha"), ["s1"])
+        # The lease of one farm does not hold another farm.
+        self.assertEqual(provision.leases_of_farm("beta"), [])
+
+    def test_a_lease_that_names_no_farm_holds_every_farm(self):
+        """The farm of the sandbox is unknown, thus the lease holds each farm. A
+        removal is destructive, and an unknown farm cannot make it safe."""
         provision.add_lease("s1")
-        # Re-point to a different farm under a live lease is refused; current unchanged.
-        with self.assertRaises(SystemExit) as cm:
-            provision.flip_current("b")
-        self.assertIn("refusing to re-point", str(cm.exception))
-        self.assertEqual(self._target(), "farms/a")
-
-        # Re-pointing to the SAME target is a no-op even under a lease (no raise).
-        provision.flip_current("a")
-        self.assertEqual(self._target(), "farms/a")
-
-        # --force is the escape hatch for a stale lease.
-        provision.flip_current("b", force=True)
-        self.assertEqual(self._target(), "farms/b")
-
-        # After the lease drops, it moves freely again.
+        self.assertEqual(provision.leases_of_farm("alpha"), ["s1"])
+        self.assertEqual(provision.leases_of_farm("beta"), ["s1"])
         provision.drop_lease("s1")
-        provision.flip_current("a")
-        self.assertEqual(self._target(), "farms/a")
+        self.assertEqual(provision.leases_of_farm("alpha"), [])
+
+    def test_a_lease_blocks_no_acquisition_run_and_no_extension(self):
+        """§4.2: a live lease of the farm that the run extends costs the run nothing.
+        An added link changes no path that the sandbox already resolved."""
+        self.compile_text = "foo==1.0 \\\n    --hash=sha256:aaa\n"
+        self.install_tree = {"foo/__init__.py": "x = 1\n",
+                             "foo-1.0.dist-info/RECORD": "foo/__init__.py,,\n"}
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision._provision(self._args("demo", ["foo"])), 0)
+
+        farm = provision.FARMS / "demo"
+        before = os.readlink(farm / "python" / "site-packages" / "foo")
+        provision.add_lease("s1", "demo")
+
+        # A second run extends the live farm under the lease.
+        self.compile_text = ("bar==2.0 \\\n    --hash=sha256:bbb\n"
+                             "foo==1.0 \\\n    --hash=sha256:aaa\n")
+        self.install_tree = {"bar/__init__.py": "y = 2\n",
+                             "bar-2.0.dist-info/RECORD": "bar/__init__.py,,\n"}
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision._provision(self._args("demo", ["bar"])), 0)
+
+        site = farm / "python" / "site-packages"
+        self.assertTrue((site / "bar").is_symlink())
+        # The path the sandbox resolved before the run resolves the same content.
+        self.assertEqual(os.readlink(site / "foo"), before)
 
 
 class FarmAssemblyTests(StoreTestCase):
@@ -688,43 +755,37 @@ class ProvisionRunTests(StoreTestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             return provision._provision(self._args(farm, specs, **over))
 
-    def test_refused_repoint_keeps_farm_and_requested_set(self):
-        """A refused re-point costs the farm nothing: every record stays, and a
-        later run reads the requested set back and adds to it."""
+    def test_publish_writes_no_current_and_leaves_an_old_one_alone(self):
+        """§4.4: the store carries no active-farm pointer.
+
+        A publish writes no `current` at the store root. A store from an earlier
+        release still carries the link, and the run leaves it exactly as it is, thus
+        a rollback resolves the same farm as before.
+        """
         self.compile_text = self.FOO_1
         self.install_tree = dict(self.FOO_1_TREE)
-
-        # A sandbox holds the store mounted, and `current` selects another farm, so
-        # the re-point this run asks for is refused.
-        provision.flip_current("other")
-        provision.add_lease("s1")
-
         farm = provision.FARMS / "demo"
-        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
-            provision._provision(self._args("demo", ["foo"]))
-        self.assertIn("refusing to re-point", str(cm.exception))
 
-        # `current` is untouched, and the farm it did NOT select is complete: both
-        # markers libStoreUsable needs, plus the lock that carries the request.
-        self.assertEqual(os.readlink(provision.LIBS / "current"), "farms/other")
+        # A fresh store: the publish leaves no pointer at the root.
+        self.assertEqual(self._run("demo", ["foo"]), 0)
+        current = provision.LIBS / "current"
+        self.assertFalse(current.is_symlink())
+        self.assertFalse(current.exists())
+        # The farm is complete without it.
         for record in self.RECORDS:
-            self.assertTrue((farm / record).is_file(), f"{record} did not survive")
-        lock = json.loads((farm / "lock.json").read_text())
-        self.assertEqual(lock["requested"], ["foo"])
-        self.assertEqual(lock["resolved"], ["foo==1.0"])
-        self.assertEqual(json.loads((farm / "meta.json").read_text())["tracks"], ["python"])
-        self.assertTrue((farm / "python" / "site-packages" / "foo").is_symlink())
+            self.assertTrue((farm / record).is_file(), f"{record} is missing")
 
-        # The request survived, so the next run adds to it instead of reporting that
-        # there is nothing to do (exit 2), which is what a lost lock produces.
-        provision.drop_lease("s1")
+        # A store from an earlier release carries the link. The next run neither
+        # reads it nor moves it.
+        (provision.FARMS / "other").mkdir()
+        current.symlink_to("farms/other")
         self.compile_text = "bar==2.0 \\\n    --hash=sha256:bbb\n" + self.FOO_1
         self.install_tree = {"bar/__init__.py": "y = 2\n",
                              "bar-2.0.dist-info/RECORD": "bar/__init__.py,,\n"}
         self.assertEqual(self._run("demo", ["bar"]), 0)
-        self.assertEqual(json.loads((farm / "lock.json").read_text())["requested"],
-                         ["bar", "foo"])
-        self.assertEqual(os.readlink(provision.LIBS / "current"), "farms/demo")
+
+        self.assertEqual(os.readlink(current), "farms/other")
+        self.assertTrue((farm / "python" / "site-packages" / "bar").is_symlink())
 
     def test_rebuild_drops_stale_links_but_keeps_records(self):
         """A rebuilt track holds this run's closure and nothing else: a link from an
@@ -758,26 +819,46 @@ class ProvisionRunTests(StoreTestCase):
         self.assertEqual(lock["requested"], ["foo"])
         self.assertEqual(lock["resolved"], ["foo==2.0"])
 
-    def test_warm_runs_through_current_and_reaches_lock(self):
-        """The warm-up still runs after the flip and through `current`, and the lock
-        still carries its results — neither is lost to the split write."""
+    def test_warm_runs_through_the_supplied_bind_and_reaches_lock(self):
+        """§4.3: the warm-up runs through /mnt/libs/current, which the invoker binds
+        for the run, and the lock still carries its results.
+
+        The unit test stands a symlink in for the bind, because a bind mount needs a
+        privilege that a host test does not hold. Both put the farm at the one path
+        the sandbox imports from.
+        """
         self.compile_text = self.FOO_1
         self.install_tree = dict(self.FOO_1_TREE)
         farm = provision.FARMS / "demo"
-        self.assertEqual(self._run("demo", ["foo"], warm="foo"), 0)
+        self.assertEqual(self._run("demo", ["foo"]), 0)
+
+        # The invoker supplies the bind of the target farm for the warm run.
+        (provision.LIBS / "current").symlink_to(farm)
+        self.assertEqual(self._run("demo", warm="foo"), 0)
 
         self.assertEqual(len(self.warm_paths), 1)
         given, resolved = self.warm_paths[0]
-        # Through `current`, never the farm's own path: the JIT cache key holds the
+        # Through the bind, never the farm's own path: the JIT cache key holds the
         # source path the sandbox will import from.
         self.assertEqual(given, str(provision.LIBS / "current" / "python" / "site-packages"))
-        # And `current` already selected this farm when the child ran, which is what
-        # makes that path resolve to the farm.
+        # And the bind resolved to this farm when the child ran.
         self.assertEqual(resolved, os.path.realpath(farm / "python" / "site-packages"))
 
         lock = json.loads((farm / "lock.json").read_text())
         self.assertTrue(lock["warm"]["foo"].startswith("ok"), lock["warm"])
         self.assertEqual(lock["warm"]["_numba_cache_entries"], "0")
+
+    def test_a_warm_run_without_the_bind_reports_it(self):
+        """§4.3: the bind is the job of the invoker. A run with no bind names the
+        path, because the caches it writes are then keyed on a path that no sandbox
+        imports from."""
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(provision._provision(self._args("demo", ["foo"], warm="foo")), 0)
+        self.assertIn("does not resolve to", buf.getvalue())
+        self.assertIn(str(provision.LIBS / "current"), buf.getvalue())
 
     def test_union_reresolve_over_prior_request(self):
         """§3.4: a re-run resolves the union of the prior request and the new specs.
@@ -1245,6 +1326,82 @@ class SupplyChainTests(StoreTestCase):
         self.assertIn("unexpected host", str(cm.exception))
 
 
+class AcquisitionRunTests(StoreTestCase):
+    """The run that names no farm: it writes the pool and the graph, and nothing else.
+
+    `inflexa store add` runs this shape. The store carries no active farm, thus an
+    acquisition has no farm to write: each analysis composes its own farm on the
+    host, from the pool. A run that DOES name a farm keeps building it, because the
+    catalog build is that caller.
+    """
+
+    FOO_1 = "foo==1.0 \\\n    --hash=sha256:aaa\n"
+    FOO_1_TREE = {"foo/__init__.py": "x = 1\n",
+                  "foo-1.0.dist-info/RECORD": "foo/__init__.py,,\n"}
+
+    def _main(self, argv: list[str]) -> int:
+        """Drive the whole entry point, thus the routing of the arguments is under test."""
+        original = sys.argv
+        sys.argv = ["provision", *argv]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                return provision.main()
+        finally:
+            sys.argv = original
+
+    def test_the_pool_and_the_graph_land_and_no_farm_is_built(self):
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+
+        self.assertEqual(self._main(["foo"]), 0)
+
+        stored = list(provision.STORE.glob("foo-1.0-*"))
+        self.assertEqual(len(stored), 1, stored)
+        nodes = json.loads((provision.LIBS / "deps.json").read_text())["nodes"]
+        self.assertEqual(list(nodes), [stored[0].name])
+        self.assertEqual(nodes[stored[0].name]["track"], "python")
+        self.assertEqual(nodes[stored[0].name]["imports"], ["foo"])
+        # No farm, and no farm record at the store root either.
+        self.assertEqual(sorted(p.name for p in provision.FARMS.iterdir()), [])
+        self.assertFalse((provision.LIBS / "packages.txt").exists())
+        self.assertFalse((provision.LIBS / "lock.json").exists())
+        # The staging tree of the run went with it.
+        self.assertEqual(sorted(p.name for p in provision.STORE.glob(".staging*")), [])
+
+    def test_a_second_acquisition_of_the_same_spec_reuses_the_store_dir(self):
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        self.assertEqual(self._main(["foo"]), 0)
+        graph_before = (provision.LIBS / "deps.json").read_text()
+
+        self.assertEqual(self._main(["foo"]), 0)
+
+        self.assertEqual(len(list(provision.STORE.glob("foo-1.0-*"))), 1)
+        # The node is byte-identical, because a store directory is write-once.
+        self.assertEqual((provision.LIBS / "deps.json").read_text(), graph_before)
+
+    def test_a_named_farm_still_builds_that_farm(self):
+        """The catalog build passes --farm, thus that shape must keep working."""
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+
+        self.assertEqual(self._main(["--farm", "catalog", "foo"]), 0)
+
+        farm = provision.FARMS / "catalog"
+        self.assertTrue((farm / "python" / "site-packages" / "foo").is_symlink())
+        for record in ("lock.json", "meta.json", "packages.txt"):
+            self.assertTrue((farm / record).is_file(), f"{record} is missing")
+
+    def test_a_run_with_no_farm_and_no_spec_reports_the_usage(self):
+        self.assertEqual(self._main([]), 2)
+        self.assertFalse((provision.LIBS / "deps.json").exists())
+
+    def test_an_r_manifest_needs_a_farm(self):
+        """pak installs and load-checks through a farm, thus the R track keeps needing one."""
+        self.assertEqual(self._main(["--r-manifest", "/manifest.yaml"]), 2)
+        self.assertEqual(sorted(p.name for p in provision.FARMS.iterdir()), [])
+
+
 class ReclaimTests(StoreTestCase):
     """§7.3 — reclamation and farm removal as harness operations."""
 
@@ -1262,23 +1419,183 @@ class ReclaimTests(StoreTestCase):
         self.assertTrue(a.exists())   # still referenced by a farm
         self.assertFalse(b.exists())  # unreferenced -> reclaimed
 
-    def test_remove_farm_refuses_current(self):
+    def test_remove_farm_refuses_under_a_lease_of_that_farm(self):
+        """§4.2: the one job of a lease. The removal of the farm that a lease names
+        refuses, and the removal of each other farm goes ahead."""
         (provision.FARMS / "keep").mkdir()
         (provision.FARMS / "gone").mkdir()
-        provision.flip_current("keep")
+        provision.add_lease("s1", "keep")
 
-        # A farm `current` does not select can be removed.
+        # A farm that no lease names can be removed.
         self.assertEqual(provision.remove_farm("gone"), 0)
         self.assertFalse((provision.FARMS / "gone").exists())
 
-        # The farm `current` points at is refused — a live sandbox may be reading it.
+        # The farm the lease names is refused — a live sandbox reads it now.
         with self.assertRaises(SystemExit) as cm:
             provision.remove_farm("keep")
-        self.assertIn("current points at it", str(cm.exception))
+        self.assertIn("sandbox lease(s) hold it", str(cm.exception))
+        self.assertIn("s1", str(cm.exception))
         self.assertTrue((provision.FARMS / "keep").exists())
+
+        # Once the sandbox exits, the host drops the lease and the removal goes ahead.
+        provision.drop_lease("s1")
+        self.assertEqual(provision.remove_farm("keep"), 0)
 
         # An unknown farm is a soft failure (exit code 2), not a raise.
         self.assertEqual(provision.remove_farm("nonexistent"), 2)
+
+
+class ParallelAcquisitionTests(StoreTestCase):
+    """§5.4-§5.6 — acquisition runs are parallel, and reclaim is the one exclusive writer.
+
+    Each concurrent run is a forked child, thus two runs write into one store at the
+    same moment, as two provisioner containers do. A child inherits the fake
+    ``subprocess.run`` of the test, so it installs no real package, and it leaves
+    through ``os._exit``, so it runs no teardown of the test.
+    """
+
+    FOO_1 = "foo==1.0 \\\n    --hash=sha256:aaa\n"
+    FOO_1_TREE = {"foo/__init__.py": "x = 1\n",
+                  "foo-1.0.dist-info/RECORD": "foo/__init__.py,,\n"}
+    BAR_2 = "bar==2.0 \\\n    --hash=sha256:bbb\n"
+    BAR_2_TREE = {"bar/__init__.py": "y = 2\n",
+                  "bar-2.0.dist-info/RECORD": "bar/__init__.py,,\n"}
+
+    def _fork_run(self, farm: str, specs: list[str], compile_text: str,
+                  install_tree: dict[str, str], gate: Path) -> int:
+        """Start one acquisition run in a child process, and give back its pid."""
+        pid = os.fork()
+        if pid:
+            return pid
+        code = 1
+        try:
+            self.compile_text = compile_text
+            self.install_tree = dict(install_tree)
+            # Wait for the parent, thus the two children overlap.
+            for _ in range(3000):
+                if gate.exists():
+                    break
+                time.sleep(0.001)
+            with contextlib.redirect_stdout(io.StringIO()):
+                with provision.store_lock_shared():
+                    code = provision._provision(self._args(farm, specs))
+        except BaseException:                              # noqa: BLE001 (a child reports and exits)
+            (self.root / f"{farm}.err").write_text(traceback.format_exc())
+            code = 9
+        finally:
+            os._exit(code)
+
+    def _run_both(self, first: tuple, second: tuple) -> None:
+        """Run two acquisition runs at the same time, and make sure both report 0."""
+        gate = self.root / "go"
+        pids = {self._fork_run(*first, gate): first[0],
+                self._fork_run(*second, gate): second[0]}
+        gate.write_text("go\n")
+        for pid, farm in pids.items():
+            _, status = os.waitpid(pid, 0)
+            report = self.root / f"{farm}.err"
+            detail = report.read_text() if report.is_file() else ""
+            self.assertEqual(os.waitstatus_to_exitcode(status), 0,
+                             f"the run of farm {farm} did not finish:\n{detail}")
+
+    def test_two_runs_for_two_packages_both_complete(self):
+        """§5.4: two concurrent runs for two packages both complete, and the pool
+        holds the store directory of each."""
+        self._run_both(("alpha", ["foo"], self.FOO_1, self.FOO_1_TREE),
+                       ("beta", ["bar"], self.BAR_2, self.BAR_2_TREE))
+
+        self.assertEqual(len(list(provision.STORE.glob("foo-1.0-*"))), 1)
+        self.assertEqual(len(list(provision.STORE.glob("bar-2.0-*"))), 1)
+        self.assertTrue((provision.FARMS / "alpha" / "python" / "site-packages" / "foo").is_symlink())
+        self.assertTrue((provision.FARMS / "beta" / "python" / "site-packages" / "bar").is_symlink())
+        # The commit of each run reached the shared graph.
+        nodes = json.loads((provision.LIBS / "deps.json").read_text())["nodes"]
+        self.assertEqual(len(nodes), 2)
+
+    def test_two_runs_for_one_package_converge_on_one_store_dir(self):
+        """§5.5: two concurrent runs that produce the same distribution converge on
+        one store directory, and both report success."""
+        self._run_both(("alpha", ["foo"], self.FOO_1, self.FOO_1_TREE),
+                       ("beta", ["foo"], self.FOO_1, self.FOO_1_TREE))
+
+        stored = list(provision.STORE.glob("foo-1.0-*"))
+        self.assertEqual(len(stored), 1, stored)
+        for farm in ("alpha", "beta"):
+            link = provision.FARMS / farm / "python" / "site-packages" / "foo"
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(os.readlink(link), f"{stored[0]}/foo")
+        # No staging tree of either run stayed behind.
+        self.assertEqual(sorted(p.name for p in provision.STORE.glob(".staging*")), [])
+
+    def test_a_publish_that_loses_the_race_keeps_the_published_copy(self):
+        """§5.5: the store directory is content-addressed, thus a run that reaches
+        the publish second keeps the copy that the first run published.
+
+        The fake chmod stands in for the parallel run: it publishes the same content
+        between the check for the directory and the rename of this run.
+        """
+        self.install_tree = dict(self.FOO_1_TREE)
+        winner: dict[str, Path] = {}
+        outer = provision.subprocess.run
+
+        def race(cmd, *args, **kwargs):
+            argv = list(cmd)
+            if argv[0] == "chmod" and not winner:
+                staging = Path(argv[-1])
+                digest = provision.tree_hash(staging)[:16]
+                final = provision.STORE / f"foo-1.0-{digest}"
+                self._write_tree(final, self.FOO_1_TREE)
+                (final / provision.PIN_MARKER).write_text("foo==1.0\n")
+                winner["path"] = final
+            return outer(cmd, *args, **kwargs)
+
+        provision.subprocess.run = race
+        try:
+            path, is_new = provision.ensure_stored("foo==1.0", ["sha256:aaa"])
+        finally:
+            provision.subprocess.run = outer
+
+        self.assertEqual(path, winner["path"])
+        self.assertFalse(is_new)
+        self.assertEqual(len(list(provision.STORE.glob("foo-1.0-*"))), 1)
+        self.assertFalse((provision.STORE / ".staging" / "foo").exists())
+
+    def test_a_crashed_run_leaves_only_reclaim_food(self):
+        """§5.6: a run that dies before its commit leaves store directories that no
+        farm references, and reclaim removes them. The graph does not change."""
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision._provision(self._args("alpha", ["foo"])), 0)
+        graph_before = (provision.LIBS / "deps.json").read_text()
+        inventory_before = (provision.FARMS / "alpha" / "packages.txt").read_text()
+
+        # The second run writes its pool directory and then dies before the commit.
+        self.compile_text = self.BAR_2
+        self.install_tree = dict(self.BAR_2_TREE)
+        original = provision.build_farm
+
+        def die(staging, store_dirs):
+            raise RuntimeError("the run died before its commit")
+
+        provision.build_farm = die
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
+                provision._provision(self._args("beta", ["bar"]))
+        finally:
+            provision.build_farm = original
+
+        orphans = list(provision.STORE.glob("bar-2.0-*"))
+        self.assertEqual(len(orphans), 1)                     # the pool write happened
+        self.assertFalse((provision.FARMS / "beta").exists())  # no farm references it
+        self.assertEqual((provision.LIBS / "deps.json").read_text(), graph_before)
+        self.assertEqual((provision.FARMS / "alpha" / "packages.txt").read_text(),
+                         inventory_before)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision.reclaim(), 0)
+        self.assertFalse(orphans[0].exists())                       # reclaim ate it
+        self.assertEqual(len(list(provision.STORE.glob("foo-1.0-*"))), 1)
 
 
 class PublishFarmTests(StoreTestCase):
@@ -1421,6 +1738,246 @@ class RLoadCheckTests(StoreTestCase):
         provision.subprocess.run = fake
         provision.check_r_loads(provision.FARMS / "rf",
                                 {"cran": [], "bioconductor": [], "github": []})
+
+
+class MarkerTests(unittest.TestCase):
+    """§6.1 — the emitter reads an environment marker with the standard library alone.
+
+    The provisioner image carries no packaging library, thus the emitter holds its
+    own reader. Each marker evaluates against the environment of this interpreter,
+    which in the image is the interpreter of the sandbox.
+    """
+
+    def setUp(self):
+        self.env = dict(emit_deps.marker_environment(),
+                        sys_platform="linux", platform_machine="x86_64",
+                        python_version="3.12", python_full_version="3.12.4",
+                        os_name="posix")
+
+    def true(self, text: str) -> bool:
+        return emit_deps.marker_is_true(text, self.env)
+
+    def test_a_version_compares_by_its_numbers(self):
+        # A text comparison puts "3.10" before "3.9", thus the reader must compare
+        # the numbers.
+        self.assertTrue(self.true('python_version >= "3.9"'))
+        self.assertTrue(self.true('python_version > "3.9"'))
+        self.assertFalse(self.true('python_version < "3.9"'))
+        self.assertTrue(self.true('python_full_version >= "3.12"'))
+
+    def test_and_or_and_parentheses(self):
+        self.assertTrue(self.true('os_name == "posix" and python_version >= "3.8"'))
+        self.assertFalse(self.true('os_name == "nt" and python_version >= "3.8"'))
+        self.assertTrue(self.true('os_name == "nt" or sys_platform == "linux"'))
+        self.assertFalse(self.true(
+            '(sys_platform == "win32" or sys_platform == "darwin") and python_version > "3.0"'))
+
+    def test_in_and_not_in(self):
+        self.assertTrue(self.true('platform_machine in "x86_64 AMD64"'))
+        self.assertTrue(self.true('platform_machine not in "aarch64 arm64"'))
+
+    def test_no_extra_is_active(self):
+        """§6.1: the emitter records the mandatory closure, thus `extra` is empty."""
+        self.assertFalse(self.true('extra == "test"'))
+        self.assertEqual(emit_deps.edge_name('pytest; extra == "test"', self.env), None)
+
+    def test_a_false_marker_drops_the_edge_and_a_true_marker_keeps_it(self):
+        self.assertEqual(emit_deps.edge_name('colorama; sys_platform == "win32"', self.env), None)
+        self.assertEqual(emit_deps.edge_name('numpy>=1.23; python_version >= "3.9"', self.env),
+                         "numpy")
+        self.assertEqual(emit_deps.edge_name("typing-extensions", self.env), "typing-extensions")
+
+    def test_a_marker_that_does_not_read_keeps_the_edge(self):
+        """A dropped edge would leave the closure short with no report. A kept edge
+        that names no node stops the build and names the edge."""
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            name = emit_deps.edge_name('mystery; no_such_variable == "1"', self.env)
+        self.assertEqual(name, "mystery")
+        self.assertIn("WARNING", buf.getvalue())
+
+
+class DependencyGraphTests(StoreTestCase):
+    """§6 — deps.json: the node schema, the dropped edges, the gate, and the append."""
+
+    def _python_store_dir(self, name: str, version: str, requires: list[str],
+                          scripts: list[str] | None = None) -> Path:
+        """A store directory of one Python distribution, as uv leaves it."""
+        store_dir = provision.STORE / f"{provision.canon(name)}-{version}-0000000000000000"
+        (store_dir / name).mkdir(parents=True)
+        (store_dir / name / "__init__.py").write_text("x = 1\n")
+        info = store_dir / f"{name}-{version}.dist-info"
+        info.mkdir()
+        metadata = [f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"]
+        metadata += [f"Requires-Dist: {req}\n" for req in requires]
+        (info / "METADATA").write_text("".join(metadata))
+        if scripts:
+            (info / "entry_points.txt").write_text(
+                "[console_scripts]\n" + "".join(f"{s} = {name}:main\n" for s in scripts))
+        return store_dir
+
+    def _r_store_dir(self, name: str, version: str) -> Path:
+        """A store directory of one R package, which nests the package one level down."""
+        store_dir = provision.STORE / f"{name.lower()}-{version}-0000000000000000"
+        inner = store_dir / name
+        (inner / "R").mkdir(parents=True)
+        (inner / "DESCRIPTION").write_text(f"Package: {name}\nVersion: {version}\n")
+        return store_dir
+
+    def _farm_of(self, farm_name: str, store_dirs: list[Path]) -> Path:
+        farm = provision.FARMS / farm_name
+        provision.build_farm(farm, store_dirs)
+        return farm
+
+    def test_a_python_node_carries_the_track_imports_entry_points_and_edges(self):
+        """§6.1: the node schema, keyed by the store-directory name."""
+        beta = self._python_store_dir("beta", "2.0", [])
+        alpha = self._python_store_dir("alpha", "1.0", ["beta>=1.0"], scripts=["alpha-cli"])
+        farm = self._farm_of("an1", [alpha, beta])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph = emit_deps.append_for_farm(provision.LIBS, farm)
+
+        self.assertEqual(graph["version"], emit_deps.GRAPH_VERSION)
+        node = graph["nodes"][alpha.name]
+        self.assertEqual(node["track"], "python")
+        self.assertEqual(node["imports"], ["alpha"])
+        self.assertEqual(node["entry_points"], ["alpha-cli"])
+        # The edge names the node exactly, and it carries no version range.
+        self.assertEqual(node["edges"], [beta.name])
+        self.assertEqual(graph["nodes"][beta.name]["edges"], [])
+        # The graph is at the store root.
+        self.assertTrue((provision.LIBS / "deps.json").is_file())
+
+    def test_an_edge_into_an_image_owned_package_drops(self):
+        """§6.3: the fixed list beside the emitter names what the image owns."""
+        self.assertIn("setuptools", emit_deps.load_base_packages()["python"])
+        alpha = self._python_store_dir("alpha", "1.0", ["setuptools", "pip>=23"])
+        farm = self._farm_of("an1", [alpha])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph = emit_deps.append_for_farm(provision.LIBS, farm)
+        self.assertEqual(graph["nodes"][alpha.name]["edges"], [])
+
+    def test_a_dangling_edge_fails_the_build_and_names_the_edge(self):
+        """§6.5: an edge that names no node stops the build, and the failure carries
+        the edge."""
+        alpha = self._python_store_dir("alpha", "1.0", ["nowhere"])
+        farm = self._farm_of("an1", [alpha])
+
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            emit_deps.append_for_farm(provision.LIBS, farm)
+        self.assertIn(f"{alpha.name} -> nowhere", str(cm.exception))
+        # The refusal writes no graph.
+        self.assertFalse((provision.LIBS / "deps.json").exists())
+
+    def test_an_r_node_carries_its_inner_directory_and_its_dcf_edges(self):
+        """§6.2: the R edges come from Depends, Imports, and LinkingTo, which one
+        Rscript call reads with read.dcf."""
+        rcpp = self._r_store_dir("Rcpp", "1.0.13")
+        pkg = self._r_store_dir("myRpkg", "1.2.3")
+        farm = provision.FARMS / "an1"
+        provision.build_r_farm(farm, {"cran": [("Rcpp", rcpp), ("myRpkg", pkg)],
+                                      "bioconductor": [], "github": []})
+
+        seen: list[list[str]] = []
+
+        def fake(cmd, *args, **kwargs):
+            argv = list(cmd)
+            seen.append(argv)
+            self.assertEqual(argv[0], "Rscript")
+            self.assertIn("read.dcf", argv[-1])
+            fields = {str(pkg / "myRpkg"): "R (>= 4.0), stats, Rcpp (>= 1.0.0), MASS",
+                      str(rcpp / "Rcpp"): "methods, utils"}
+            lines = "".join(f"{path}\t{value}\n"
+                            for path, value in fields.items()
+                            if path in kwargs["input"].splitlines())
+            return SimpleNamespace(returncode=0, stdout=lines, stderr="")
+
+        provision.subprocess.run = fake
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph = emit_deps.append_for_farm(provision.LIBS, farm)
+
+        self.assertEqual(len(seen), 1)                 # one call for the whole closure
+        node = graph["nodes"][pkg.name]
+        self.assertEqual(node["track"], "r")
+        self.assertEqual(node["r_dir"], "myRpkg")
+        self.assertEqual(node["imports"], ["myRpkg"])
+        self.assertEqual(node["entry_points"], [])
+        # R, stats, and MASS belong to the image; only the store package stays.
+        self.assertEqual(node["edges"], [rcpp.name])
+
+    def test_the_standalone_emitter_covers_every_farm(self):
+        """§6.4: the emitter runs standalone, and it reads every farm of the store."""
+        alpha = self._python_store_dir("alpha", "1.0", [])
+        beta = self._python_store_dir("beta", "2.0", [])
+        self._farm_of("an1", [alpha])
+        self._farm_of("an2", [beta])
+        # A staging farm from an interrupted swap is not a farm.
+        (provision.FARMS / (provision.FARM_STAGING + "an3")).mkdir()
+
+        argv = sys.argv
+        sys.argv = ["emit_deps.py", "--store-root", str(provision.LIBS)]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(emit_deps.main(), 0)
+        finally:
+            sys.argv = argv
+
+        nodes = json.loads((provision.LIBS / "deps.json").read_text())["nodes"]
+        self.assertEqual(sorted(nodes), sorted([alpha.name, beta.name]))
+
+    def test_an_append_keeps_every_earlier_node_byte_identical(self):
+        """§6.6: an acquisition run adds its nodes, and each earlier node stays as
+        it is, byte for byte."""
+        compile_text = "foo==1.0 \\\n    --hash=sha256:aaa\n"
+        self.compile_text = compile_text
+        self.install_tree = {
+            "foo/__init__.py": "x = 1\n",
+            "foo-1.0.dist-info/METADATA": "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n",
+        }
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision._provision(self._args("alpha", ["foo"])), 0)
+
+        graph_path = provision.LIBS / "deps.json"
+        before_text = graph_path.read_text()
+        before = json.loads(before_text)["nodes"]
+        self.assertEqual(len(before), 1)
+
+        # A second acquisition run adds a distribution that depends on the first.
+        self.compile_text = "bar==2.0 \\\n    --hash=sha256:bbb\n" + compile_text
+        self.install_tree = {
+            "bar/__init__.py": "y = 2\n",
+            "bar-2.0.dist-info/METADATA":
+                "Metadata-Version: 2.1\nName: bar\nVersion: 2.0\nRequires-Dist: foo\n",
+        }
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(provision._provision(self._args("beta", ["bar"])), 0)
+
+        after_text = graph_path.read_text()
+        after = json.loads(after_text)["nodes"]
+        self.assertEqual(len(after), 2)
+        for key, node in before.items():
+            self.assertEqual(after[key], node)
+            # The block of the earlier node is the same text, not merely the same
+            # value: an append rewrites the file, thus the bytes are the assertion.
+            self.assertIn(self._node_block(before_text, key), after_text)
+        # The new node names the earlier one exactly.
+        added = [key for key in after if key not in before]
+        self.assertEqual(after[added[0]]["edges"], list(before))
+
+    @staticmethod
+    def _node_block(text: str, key: str) -> str:
+        """The text of one node of deps.json, from its key to its closing brace."""
+        start = text.index(f'"{key}": {{')
+        depth = 0
+        for at in range(start, len(text)):
+            if text[at] == "{":
+                depth += 1
+            elif text[at] == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:at + 1]
+        raise AssertionError(f"the node {key} has no closing brace")
 
 
 if __name__ == "__main__":
