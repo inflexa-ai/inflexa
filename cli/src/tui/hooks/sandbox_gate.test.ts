@@ -4,6 +4,7 @@ import { ok, type Result } from "neverthrow";
 import type { LibStoreDownloadReport, LibStoreDownloadRow, LibStoreDownloadState, LibStoreDownloadStatus } from "../../modules/libs/store_download.ts";
 import type { FarmCompositionFailure } from "../../modules/libs/composition.ts";
 import type { LibStoreFlightReport } from "../../modules/libs/store_flight.ts";
+import type { PoolInventoryGap } from "../../modules/libs/packages.ts";
 import type { Notice } from "../theme.ts";
 import {
     awaitSandboxReady,
@@ -60,6 +61,8 @@ type SeamOverrides = {
     readonly inspect?: LibStoreDownloadState;
     /** The pool inventory path of the store, or `null` for a store no sandbox could mount. */
     readonly inventory?: string | null;
+    /** Why the inventory is absent, which decides the remedy that the refusal names. */
+    readonly inventoryGap?: PoolInventoryGap;
     /** The farm composition that failed and that nothing reported yet. `null` is the ordinary state. */
     readonly farmFailure?: FarmCompositionFailure | null;
     /** The lifecycle reports, consumed in order; the last one repeats once the list runs out. */
@@ -101,6 +104,7 @@ function makeSeams(over: SeamOverrides = {}): { seams: SandboxGateSeams; rec: Re
         readFlights: () => over.flights ?? [],
         installedManifest: async () => over.installedManifest ?? null,
         storeInventory: () => (over.inventory === undefined ? INVENTORY : over.inventory),
+        inventoryGap: () => over.inventoryGap ?? "no_packages",
         takeFarmFailure: () => {
             // The real seam consumes, thus a second read inside one flow answers `null` exactly as it does.
             rec.farmReads += 1;
@@ -152,6 +156,30 @@ describe("the gate reads the detached download and starts none", () => {
         expect(await awaitSandboxReady(seams)).toBe("blocked");
         expect(libStoreGateState().phase).toBe("failed");
         expect(rec.imageChecks).toBe(0);
+    });
+
+    test("a store that predates the graph names `--update`, because the bare download transfers nothing", async () => {
+        // The receipt pins the catalog that this store installed, thus the bare command resolves the same
+        // digest and reports `up_to_date`. A remedy that named it would send the user around a loop.
+        const { seams } = makeSeams({ inspect: "installed", inventory: null, inventoryGap: "no_graph", reports: [settledReport("installed")] });
+        expect(await awaitSandboxReady(seams)).toBe("blocked");
+        const state = libStoreGateState();
+        expect(state.phase).toBe("failed");
+        if (state.phase !== "failed") throw new Error("expected the failed phase");
+        expect(state.message).toContain("inflexa store download --update");
+        expect(state.message).toContain("predates the dependency graph");
+        // The bare command appears as the one that does NOT work, thus the user reads why rather than
+        // trying it again.
+        expect(state.message).toContain("The bare `inflexa store download` transfers nothing");
+    });
+
+    test("a graph that names no package keeps its own remedy", async () => {
+        const { seams } = makeSeams({ inspect: "installed", inventory: null, inventoryGap: "no_packages", reports: [settledReport("installed")] });
+        expect(await awaitSandboxReady(seams)).toBe("blocked");
+        const state = libStoreGateState();
+        if (state.phase !== "failed") throw new Error("expected the failed phase");
+        expect(state.message).toContain("names no package");
+        expect(state.message).toContain("inflexa store ls");
     });
 
     test("a valid receipt with NO row is usable, and the absent row changes nothing", async () => {

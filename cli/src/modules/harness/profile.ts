@@ -19,7 +19,7 @@ import { ensureRuntime, resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { capture, inherit } from "../../lib/container.ts";
 import { isPublishedSandboxImage } from "../libs/images.ts";
-import { storePackagesFile } from "../libs/packages.ts";
+import { poolInventoryGap, storePackagesFile } from "../libs/packages.ts";
 import { getLogger } from "../../lib/log.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import { claimAnalysisOrFail, resolveSingleAnalysis, type ContextFlags } from "../analysis/context.ts";
@@ -102,10 +102,17 @@ export function describeBootError(e: HarnessBootError): string {
             // so it already names the exact command to run — surface it verbatim.
             return e.message;
         case "lib_store_unusable":
-            return [
-                `The package store at ${e.root} carries no readable package inventory, so a sandbox launched now could import nothing.`,
-                "Run `inflexa store download` to obtain the published catalog, or `inflexa store ls` to see what the store holds.",
-            ].join("\n");
+            // A store that predates the dependency graph pins the catalog that it installed, thus the bare
+            // download resolves the same digest and transfers nothing. Only `--update` replaces it.
+            return e.gap === "no_graph"
+                ? [
+                      `The package store at ${e.root} predates the dependency graph, so no farm can be composed from it.`,
+                      "Run `inflexa store download --update` to obtain a catalog that carries the graph.",
+                  ].join("\n")
+                : [
+                      `The package store at ${e.root} carries no readable package inventory, so a sandbox launched now could import nothing.`,
+                      "Run `inflexa store download --update` to obtain the published catalog, or `inflexa store ls` to see what the store holds.",
+                  ].join("\n");
         case "postgres_unavailable":
             return e.cause.message;
         case "ingress_failed":
@@ -137,7 +144,8 @@ export function describeBootError(e: HarnessBootError): string {
  * Exported so `inflexa run` reuses the identical check.
  */
 export function ensureLibStoreUsable(): void {
-    if (storePackagesFile(env.libStoreDir) === null) fail(describeBootError({ type: "lib_store_unusable", root: env.libStoreDir }));
+    if (storePackagesFile(env.libStoreDir) === null)
+        fail(describeBootError({ type: "lib_store_unusable", root: env.libStoreDir, gap: poolInventoryGap(env.libStoreDir) }));
 }
 
 /**

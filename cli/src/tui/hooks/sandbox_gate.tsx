@@ -7,7 +7,7 @@ import { capture } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { isPublishedSandboxImage } from "../../modules/libs/images.ts";
 import { takeFarmCompositionFailure, type FarmCompositionFailure } from "../../modules/libs/composition.ts";
-import { storePackagesFile } from "../../modules/libs/packages.ts";
+import { poolInventoryGap, storePackagesFile, type PoolInventoryGap } from "../../modules/libs/packages.ts";
 import { resolveHarnessConfig } from "../../modules/harness/config.ts";
 import {
     inspectLibStoreDownload,
@@ -134,6 +134,11 @@ export type SandboxGateSeams = {
      */
     readonly storeInventory: (root: string) => string | null;
     /**
+     * Why {@link storeInventory} gave nothing, for the remedy that the refusal names. Real:
+     * {@link poolInventoryGap}.
+     */
+    readonly inventoryGap: (root: string) => PoolInventoryGap;
+    /**
      * The farm composition that failed and that nothing reported yet, or `null`. The read CONSUMES it —
      * refer to {@link takeFarmCompositionFailure}. Real: that function.
      */
@@ -212,6 +217,7 @@ export const realSandboxGateSeams: SandboxGateSeams = {
     readFlights: readLibStoreFlights,
     installedManifest: installedLibStoreManifest,
     storeInventory: storePackagesFile,
+    inventoryGap: poolInventoryGap,
     takeFarmFailure: takeFarmCompositionFailure,
     sandboxImage: () => resolveHarnessConfig().sandboxImage,
     imageReadiness: async (image) => {
@@ -269,13 +275,13 @@ export async function refreshLibStoreGateState(seams: SandboxGateSeams = realSan
         setState(next);
         return next;
     }
-    const next = describeUnusableStore(root, report);
+    const next = describeUnusableStore(root, report, seams);
     setState(next);
     return next;
 }
 
 /** The state of a store a sandbox cannot mount yet: the lifecycle of the run, or the fault of the store itself. */
-function describeUnusableStore(root: string, report: LibStoreDownloadReport): LibStoreGateState {
+function describeUnusableStore(root: string, report: LibStoreDownloadReport, seams: SandboxGateSeams): LibStoreGateState {
     const row = report.row;
     switch (report.state) {
         case null:
@@ -299,12 +305,16 @@ function describeUnusableStore(root: string, report: LibStoreDownloadReport): Li
         case "installed":
             // The row says the bytes landed and the filesystem disagrees: the receipt is gone, or the pool
             // names no package. The filesystem is what a sandbox mounts, thus it wins and the gate keeps the
-            // refusal.
+            // refusal. The two conditions want two remedies, so name the one that works.
             return {
                 phase: "failed",
                 message:
-                    `The package store at ${root} reports an installed download, but it carries no package inventory, ` +
-                    `so a sandbox would carry no library. Run \`inflexa store ls\` to see the farms, and \`inflexa store download\` to obtain the catalog again.`,
+                    seams.inventoryGap(root) === "no_graph"
+                        ? `The package store at ${root} predates the dependency graph, so no farm can be composed from it. ` +
+                          `Run \`inflexa store download --update\` to obtain a catalog that carries the graph. The bare ` +
+                          `\`inflexa store download\` transfers nothing here, because the receipt already pins this catalog.`
+                        : `The package store at ${root} reports an installed download, but its dependency graph names no package, ` +
+                          `so a sandbox would carry no library. Run \`inflexa store ls\` to see the farms, and \`inflexa store download --update\` to obtain the catalog again.`,
             };
         default: {
             const exhaustive: never = report.state;

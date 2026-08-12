@@ -67,6 +67,29 @@ const TRACK_SECTION: Readonly<Record<"python" | "r", string>> = {
  * with no graph, or a graph that names no package, can compose no farm, thus a
  * sandbox of it could import nothing.
  */
+/**
+ * Why {@link storePackagesFile} gives no inventory. It separates two conditions that
+ * want two different remedies.
+ *
+ * `no_graph` is the store of the layout that came before the graph. Its pool and its
+ * farms are complete, and its receipt pins the catalog that it installed. Thus
+ * `inflexa store download` resolves the same digest and transfers nothing, and only
+ * the `--update` consent replaces the catalog. A remedy that names the bare command
+ * sends the user into a loop.
+ *
+ * `no_packages` is a graph that names nothing, which a damaged or empty store gives.
+ */
+export type PoolInventoryGap = "no_graph" | "no_packages";
+
+/**
+ * The reason that the store carries no pool inventory, for a message that names the
+ * correct remedy. It re-stats the graph rather than share the work of
+ * {@link storePackagesFile}, because it runs on the failure path only.
+ */
+export function poolInventoryGap(storePath: string): PoolInventoryGap {
+    return statResult(join(storePath, STORE_GRAPH), "stat the dependency graph").isErr() ? "no_graph" : "no_packages";
+}
+
 export function storePackagesFile(storePath: string): string | null {
     const graph = statResult(join(storePath, STORE_GRAPH), "stat the dependency graph");
     if (graph.isErr()) return null;

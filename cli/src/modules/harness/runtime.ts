@@ -47,7 +47,7 @@ import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import { analysisFarmPath, composeFarm, describeFarmCompositionError } from "../libs/composition.ts";
-import { imagePackagesFile, storePackagesFile } from "../libs/packages.ts";
+import { imagePackagesFile, storePackagesFile, type PoolInventoryGap } from "../libs/packages.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
@@ -198,7 +198,7 @@ export type HarnessBootError =
     // boots anything, exactly as `harness_config_invalid` is. The boot itself no longer raises it: an
     // unreadable inventory refuses the sandbox action and never the boot, so that chat, the workspace read
     // surface, and the planner keep answering while the catalog downloads.
-    | { type: "lib_store_unusable"; root: string }
+    | { type: "lib_store_unusable"; root: string; gap: PoolInventoryGap }
     | { type: "postgres_unavailable"; cause: PostgresError }
     | { type: "ingress_failed"; cause: IngressError }
     | { type: "runtime_already_active"; holderPid: number }
