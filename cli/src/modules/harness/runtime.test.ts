@@ -1072,11 +1072,18 @@ describe("the farm provider the composition root supplies", () => {
         };
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
         expect(result.isOk()).toBe(true);
-        const provider = captured.config?.resolveAnalysisFarm;
-        expect(provider).toBeDefined();
+        const source = captured.config?.farmSource;
+        // The CLI composes a farm for each analysis, thus it names that source and no other.
+        expect(source?.kind).toBe("per-analysis");
         // The farm bind nests inside the store bind, thus the two must name one store root.
         expect(captured.config?.libStorePath).toBe(env.libStoreDir);
-        return provider as (analysisId: string) => Promise<string | undefined>;
+        const resolve = source?.kind === "per-analysis" ? source.resolve : undefined;
+        expect(resolve).toBeDefined();
+        // The tests below read the location, thus unwrap the resolution here.
+        return async (analysisId: string) => {
+            const resolution = await resolve!(analysisId);
+            return resolution.kind === "farm" ? resolution.location : undefined;
+        };
     }
 
     test("two analyses get two farms, and each one carries its own links", async () => {

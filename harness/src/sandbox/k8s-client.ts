@@ -21,12 +21,13 @@ import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
-import { buildMountPlan, buildSessionSubPaths } from "./mount-plan.js";
+import { buildMountPlan, buildSessionSubPaths, farmProviderOf } from "./mount-plan.js";
 import type {
     CreateSandboxMeta,
     FarmLocation,
+    FarmResolution,
+    FarmSource,
     ManagedSandbox,
-    ResolveAnalysisFarm,
     SandboxIdentity,
     SandboxLiveness,
     SandboxRef,
@@ -97,13 +98,17 @@ export interface K8sClientConfig {
     /** PVC claim mounted read-only at `/mnt/libs` when set. */
     libStorePvc?: string;
     /**
-     * Farm-provider seam: the analysis id in, the subPath of its farm under the
-     * lib-store PVC out. The farm is mounted read-only at `/mnt/libs/current`,
-     * nested inside the store mount. The provider runs at each create, and only
-     * when `libStorePvc` is set. A provider that names no farm refuses the
-     * sandbox. Unset keeps the single mount of the store root.
+     * Where a sandbox reads its packages from — refer to {@link FarmSource}. A
+     * farm is mounted read-only at `/mnt/libs/current`, nested inside the store
+     * mount, and its location is a subPath under the lib-store PVC. It resolves
+     * at each create, and only when `libStorePvc` is set. `store-root`, or unset,
+     * keeps the single mount of the store root.
+     *
+     * A managed deployment that mounts the published artifact names
+     * `{ kind: "fixed", location: "farms/catalog" }` here, thus it composes
+     * nothing and it serves one library set.
      */
-    resolveAnalysisFarm?: ResolveAnalysisFarm;
+    farmSource?: FarmSource;
     /** PVC claim mounted read-only at `/mnt/refs` when set. */
     refStorePvc?: string;
     /** Node selector pinning sandbox pods to the dedicated agent pool. Omit for default scheduling. */
@@ -522,26 +527,28 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                     // The farm of this analysis, resolved AT sandbox-creation time. The
                     // provider runs only under a configured store PVC, because the farm mount
                     // nests inside the store mount and the farm links resolve through it.
-                    const farmProvider = config.libStorePvc ? config.resolveAnalysisFarm : undefined;
-                    const farmUnavailable = (cause?: unknown): SandboxError => ({
+                    const farmProvider = config.libStorePvc ? farmProviderOf(config.farmSource) : undefined;
+                    const farmUnavailable = (reason?: string, cause?: unknown): SandboxError => ({
                         type: "farm_unavailable",
                         op: "k8s.createSandbox",
                         sandboxId,
                         analysisId: meta.analysisId,
+                        reason,
                         cause,
                     });
-                    const resolvedFarm: Result<FarmLocation | undefined, SandboxError> = farmProvider
+                    const resolvedFarm: Result<FarmResolution | undefined, SandboxError> = farmProvider
                         ? await trySandbox(
                               async () => farmProvider(meta.analysisId),
-                              (_status, cause) => farmUnavailable(cause),
+                              (_status, cause) => farmUnavailable(undefined, cause),
                           )
                         : ok(undefined);
                     if (resolvedFarm.isErr()) return err(resolvedFarm.error);
-                    // No farm refuses this one action. The embedder makes the farm, then the
-                    // next sandbox of the analysis mounts it.
-                    if (farmProvider && resolvedFarm.value === undefined) return err(farmUnavailable());
+                    // An unavailable farm refuses this one action, and it names why. The
+                    // embedder makes the farm, then the next sandbox of the analysis mounts it.
+                    const resolution = resolvedFarm.value;
+                    if (resolution?.kind === "unavailable") return err(farmUnavailable(resolution.reason));
 
-                    const job = buildJobSpec(meta, config, identity, resolvedFarm.value);
+                    const job = buildJobSpec(meta, config, identity, resolution?.kind === "farm" ? resolution.location : undefined);
 
                     const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, sanitizeLabelValue(meta.childWorkflowId), job);
                     if (adopted.isErr()) return err(adopted.error);

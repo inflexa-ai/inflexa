@@ -40,22 +40,13 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { stepWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
-import { buildMountPlan } from "./mount-plan.js";
+import { buildMountPlan, farmProviderOf } from "./mount-plan.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
 function statusOf(e: SandboxError): number | undefined {
     return "status" in e ? e.status : undefined;
 }
-import type {
-    CreateSandboxMeta,
-    FarmLocation,
-    ManagedSandbox,
-    ResolveAnalysisFarm,
-    SandboxIdentity,
-    SandboxLiveness,
-    SandboxRef,
-    SandboxTransport,
-} from "./types.js";
+import type { CreateSandboxMeta, FarmResolution, FarmSource, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxTransport } from "./types.js";
 
 const SANDBOX_SERVER_PORT = 8765;
 const HEALTH_TIMEOUT_MS = 30_000;
@@ -92,13 +83,13 @@ export interface DockerClientConfig {
     /** Host lib store; bind-mounted read-only at `/mnt/libs` when set. */
     libStorePath?: string;
     /**
-     * Farm-provider seam: the analysis id in, the absolute host path of its farm
-     * out. The farm is bind-mounted read-only at `/mnt/libs/current`, nested
-     * inside the store bind. The provider runs at each create, and only when
-     * `libStorePath` is set. A provider that names no farm refuses the sandbox.
-     * Unset keeps the single mount of the store root.
+     * Where a sandbox reads its packages from — refer to {@link FarmSource}. A
+     * farm is bind-mounted read-only at `/mnt/libs/current`, nested inside the
+     * store bind, and its location is an absolute host path. It resolves at each
+     * create, and only when `libStorePath` is set. `store-root`, or unset, keeps
+     * the single mount of the store root.
      */
-    resolveAnalysisFarm?: ResolveAnalysisFarm;
+    farmSource?: FarmSource;
     /**
      * Host ref store; bind-mounted read-only at `/mnt/refs`. Embedders pass the
      * configured store location unconditionally — existence is (re-)checked at each
@@ -306,31 +297,33 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     // restart. The provider runs only under a configured store. The farm bind
                     // nests inside the store bind, thus a farm with no store root under it
                     // resolves none of its links.
-                    const farmProvider = config.libStorePath ? config.resolveAnalysisFarm : undefined;
-                    const farmUnavailable = (cause?: unknown): SandboxError => ({
+                    const farmProvider = config.libStorePath ? farmProviderOf(config.farmSource) : undefined;
+                    const farmUnavailable = (reason?: string, cause?: unknown): SandboxError => ({
                         type: "farm_unavailable",
                         op: "docker.createSandbox",
                         sandboxId,
                         analysisId: meta.analysisId,
+                        reason,
                         cause,
                     });
-                    const resolvedFarm: Result<FarmLocation | undefined, SandboxError> = farmProvider
+                    const resolvedFarm: Result<FarmResolution | undefined, SandboxError> = farmProvider
                         ? await trySandbox(
                               async () => farmProvider(meta.analysisId),
-                              (_status, cause) => farmUnavailable(cause),
+                              (_status, cause) => farmUnavailable(undefined, cause),
                           )
                         : ok(undefined);
                     if (resolvedFarm.isErr()) return err(resolvedFarm.error);
-                    const farm = resolvedFarm.value;
-                    // No farm refuses this one action. The embedder makes the farm, then the
-                    // next sandbox of the analysis mounts it.
-                    if (farmProvider && farm === undefined) return err(farmUnavailable());
+                    // An unavailable farm refuses this one action, and it names why. The
+                    // embedder makes the farm, then the next sandbox of the analysis mounts it.
+                    const resolution = resolvedFarm.value;
+                    if (resolution?.kind === "unavailable") return err(farmUnavailable(resolution.reason));
+                    const farm = resolution?.kind === "farm" ? resolution.location : undefined;
 
                     // Re-check AT sandbox-creation time: `config.libStorePath` was fixed at CLI
                     // boot and the store may have gone away since (see libStoreUsable). Not
                     // usable → skip BOTH mounts (sandbox degrades to available:false) and log it,
                     // since an otherwise-silent libs-mount drop is invisible to operators.
-                    // With no provider the store keeps its own `current` as the farm.
+                    // Under `store-root` the store carries its own `current` as the farm.
                     const farmPath = farm ?? (config.libStorePath ? join(config.libStorePath, "current") : undefined);
                     const libsMounted = !!config.libStorePath && !!farmPath && libStoreUsable(farmPath);
                     if (config.libStorePath && !libsMounted) {

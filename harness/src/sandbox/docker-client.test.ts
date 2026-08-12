@@ -527,7 +527,7 @@ describe("docker createSandbox — the per-analysis farm", () => {
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             libStorePath: libRoot,
-            resolveAnalysisFarm: (analysisId) => join(libRoot, "farms", analysisId),
+            farmSource: { kind: "per-analysis", resolve: (analysisId) => ({ kind: "farm", location: join(libRoot, "farms", analysisId) }) },
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -561,7 +561,7 @@ describe("docker createSandbox — the per-analysis farm", () => {
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             libStorePath: libRoot,
-            resolveAnalysisFarm: (analysisId) => join(libRoot, "farms", analysisId),
+            farmSource: { kind: "per-analysis", resolve: (analysisId) => ({ kind: "farm", location: join(libRoot, "farms", analysisId) }) },
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -588,7 +588,7 @@ describe("docker createSandbox — the per-analysis farm", () => {
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             libStorePath: libRoot,
-            resolveAnalysisFarm: () => undefined,
+            farmSource: { kind: "per-analysis", resolve: () => ({ kind: "unavailable", reason: "the composition of the farm failed" }) },
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -611,8 +611,11 @@ describe("docker createSandbox — the per-analysis farm", () => {
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             libStorePath: libRoot,
-            resolveAnalysisFarm: () => {
-                throw boom;
+            farmSource: {
+                kind: "per-analysis",
+                resolve: () => {
+                    throw boom;
+                },
             },
             docker,
             fetch: okFetch,
@@ -640,7 +643,7 @@ describe("docker createSandbox — the per-analysis farm", () => {
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             libStorePath: libRoot,
-            resolveAnalysisFarm: () => farm,
+            farmSource: { kind: "per-analysis", resolve: () => ({ kind: "farm", location: farm }) },
             docker,
             fetch: okFetch,
             logger,
@@ -665,7 +668,7 @@ describe("docker createSandbox — the per-analysis farm", () => {
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             libStorePath: libRoot,
-            resolveAnalysisFarm: (analysisId) => join(libRoot, "farms", analysisId),
+            farmSource: { kind: "per-analysis", resolve: (analysisId) => ({ kind: "farm", location: join(libRoot, "farms", analysisId) }) },
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -684,9 +687,12 @@ describe("docker createSandbox — the per-analysis farm", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
-            resolveAnalysisFarm: () => {
-                calls++;
-                return undefined;
+            farmSource: {
+                kind: "per-analysis",
+                resolve: () => {
+                    calls++;
+                    return { kind: "unavailable", reason: "no farm yet" };
+                },
             },
             docker,
             fetch: okFetch,

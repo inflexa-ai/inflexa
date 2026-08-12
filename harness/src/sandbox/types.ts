@@ -228,19 +228,46 @@ export interface SubmitExecBody {
 export type FarmLocation = string;
 
 /**
- * The farm-provider seam: the analysis id in, the farm location out.
+ * What one analysis resolves to, from the farm provider of the embedder.
+ *
+ * `unavailable` carries the reason that the user reads. The embedder composes a
+ * farm, thus only the embedder knows why a composition gave nothing, and a
+ * refusal that names the reason beats one that says "no farm".
+ */
+export type FarmResolution = { readonly kind: "farm"; readonly location: FarmLocation } | { readonly kind: "unavailable"; readonly reason: string };
+
+/**
+ * The farm-provider seam: the analysis id in, the farm of that analysis out.
  *
  * A backend resolves the provider at each `createSandbox` call. Thus a farm that
  * the embedder makes between two sandboxes reaches the second sandbox with no
- * restart. The result `undefined` says that the analysis has no farm, and the
- * backend then refuses the sandbox with the `farm_unavailable` state.
- *
- * An embedder that supplies no provider keeps the single mount of the store
- * root. A backend calls the provider only when a store is configured, because
- * the farm mount nests inside the store mount and the farm links resolve
- * through it.
+ * restart.
  */
-export type ResolveAnalysisFarm = (analysisId: string) => Promise<FarmLocation | undefined> | FarmLocation | undefined;
+export type ResolveAnalysisFarm = (analysisId: string) => Promise<FarmResolution> | FarmResolution;
+
+/**
+ * Where a sandbox reads its packages from. It is the policy of the embedder, and
+ * the harness obeys it without a rule of its own.
+ *
+ * The three kinds are the three deployments that exist:
+ *
+ * - `store-root` — the store root itself carries the farm layout, thus the
+ *   backend makes ONE mount and never a nested one. This is the shape of a store
+ *   that an extracted tarball gives, and of a managed deployment that serves one
+ *   library set.
+ * - `fixed` — one farm serves every analysis. A managed deployment that mounts
+ *   the published artifact names `farms/catalog` here, and it composes nothing.
+ * - `per-analysis` — a farm for each analysis, which the embedder composes. The
+ *   CLI uses this, and it is what lets two analyses hold two versions of one
+ *   package at the same time.
+ *
+ * An absent `farmSource` is `store-root`. Thus an embedder that names nothing
+ * keeps one mount of the store root, and it migrates in its own release.
+ */
+export type FarmSource =
+    | { readonly kind: "store-root" }
+    | { readonly kind: "fixed"; readonly location: FarmLocation }
+    | { readonly kind: "per-analysis"; readonly resolve: ResolveAnalysisFarm };
 
 /** Step-meta passed to `createSandbox` — what the registry row needs. */
 export interface CreateSandboxMeta {

@@ -27,6 +27,7 @@ import {
     type EmbeddingProvider,
     type ExecuteAnalysisInput,
     type ExecuteAnalysisResult,
+    type FarmResolution,
     type MachineBudget,
     type Pool,
     type RegisterNotificationSweepDeps,
@@ -289,27 +290,32 @@ async function resolveSandboxEngineOnce(): Promise<Result<ResolvedSandboxEngine,
  * by construction, and an analysis in which the user only chats gets none. A farm
  * that is already there is returned as it is, so a second sandbox costs one `stat`.
  *
- * A composition failure returns NO farm. The harness then refuses that one sandbox
- * with its `farm_unavailable` state, which is a refusal of one action and never a
- * boot failure. `composeFarm` records the reason, and the sandbox gate
- * (`tui/hooks/sandbox_gate.tsx`) names it at the next action.
+ * A composition failure resolves as `unavailable`, and it carries the reason. The
+ * harness then refuses that one sandbox with its `farm_unavailable` state, which is
+ * a refusal of one action and never a boot failure.
+ *
+ * The reason travels two ways, and the two do not overlap. It rides the refusal for
+ * an action that RUNS, and the message of the harness then names it. `composeFarm`
+ * also records it for the sandbox gate (`tui/hooks/sandbox_gate.tsx`), which refuses
+ * BEFORE an action starts and thus never sees a harness error.
  *
  * The provider can only ever name `farms/<analysisId>`, thus it never names the
  * catalog template: an analysis id is a UUIDv7, and the template is `catalog`.
  */
-async function resolveAnalysisFarm(storeRoot: string, analysisId: string): Promise<string | undefined> {
+async function resolveAnalysisFarm(storeRoot: string, analysisId: string): Promise<FarmResolution> {
     const farmPath = analysisFarmPath(storeRoot, analysisId);
-    if (existsSync(farmPath)) return farmPath;
+    if (existsSync(farmPath)) return { kind: "farm", location: farmPath };
     const composed = await composeFarm({ storeRoot, analysisId });
     return composed.match(
-        (composition) => composition.farmPath,
-        (error) => {
+        (composition): FarmResolution => ({ kind: "farm", location: composition.farmPath }),
+        (error): FarmResolution => {
+            const reason = describeFarmCompositionError(error);
             harnessLogger("farm-provider").warn("could not compose the package farm of this analysis — the sandbox is refused", {
                 analysisId,
                 farmPath,
-                reason: describeFarmCompositionError(error),
+                reason,
             });
-            return undefined;
+            return { kind: "unavailable", reason };
         },
     );
 }
@@ -862,7 +868,7 @@ async function bootHarnessRuntimeOnce(
             // The farm-provider seam. There is no active farm at the store level, thus the harness learns
             // the farm of a sandbox only through this call. It composes on a miss, so the first sandbox
             // action of an analysis makes the farm and a chat-only analysis makes none.
-            resolveAnalysisFarm: (analysisId) => resolveAnalysisFarm(env.libStoreDir, analysisId),
+            farmSource: { kind: "per-analysis", resolve: (analysisId) => resolveAnalysisFarm(env.libStoreDir, analysisId) },
             // Pass the configured store location unconditionally: the sandbox backend
             // re-checks this path's existence at every sandbox creation and mounts it
             // only when it is a real directory then. So a store installed mid-session

@@ -81,6 +81,11 @@ export type SandboxError =
           readonly op: string;
           readonly sandboxId?: string;
           readonly analysisId: string;
+          /**
+           * Why the analysis has no farm, in the words of the embedder. The embedder
+           * composes the farm, thus only it knows the reason, and the user reads this.
+           */
+          readonly reason?: string;
           readonly cause?: unknown;
       }
     | {
@@ -137,7 +142,7 @@ export function describeSandboxError(e: SandboxError): string {
         case "not_found":
             return `sandbox not found (${e.op}${e.sandboxId ? `: ${e.sandboxId}` : ""})`;
         case "farm_unavailable":
-            return `sandbox farm unavailable (${e.op}: analysisId=${e.analysisId})`;
+            return `sandbox farm unavailable (${e.op}: analysisId=${e.analysisId}${e.reason === undefined ? "" : `: ${e.reason}`})`;
         case "submit_failed":
             return `sandbox exec submit failed (${e.op}: execId=${e.execId})`;
         case "teardown_failed":

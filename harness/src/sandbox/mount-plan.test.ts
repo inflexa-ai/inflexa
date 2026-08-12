@@ -6,7 +6,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { buildMountPlan, buildSessionSubPaths, STEP_SUBDIRS } from "./mount-plan.js";
+import { buildMountPlan, buildSessionSubPaths, farmProviderOf, STEP_SUBDIRS } from "./mount-plan.js";
 
 const COORDS = { analysisId: "an-1", runId: "run-1", stepId: "step-a" };
 
@@ -125,5 +125,27 @@ describe("buildMountPlan id validation", () => {
         expect(() => buildMountPlan({ ...COORDS, analysisId: ".." }, { libs: false, refs: false })).toThrow(/Invalid analysisId/);
         expect(() => buildMountPlan({ ...COORDS, stepId: ".." }, { libs: false, refs: false })).toThrow(/Invalid stepId/);
         expect(() => buildMountPlan({ ...COORDS, runId: ".." }, { libs: false, refs: false })).toThrow(/Invalid runId/);
+    });
+});
+
+describe("farmProviderOf — the three farm sources of an embedder", () => {
+    test("store-root gives no provider, thus a backend makes one mount", () => {
+        expect(farmProviderOf({ kind: "store-root" })).toBeUndefined();
+        expect(farmProviderOf(undefined)).toBeUndefined();
+    });
+
+    test("fixed gives one location for every analysis id", async () => {
+        const provider = farmProviderOf({ kind: "fixed", location: "farms/catalog" });
+
+        expect(await provider?.("an-1")).toEqual({ kind: "farm", location: "farms/catalog" });
+        expect(await provider?.("an-2")).toEqual({ kind: "farm", location: "farms/catalog" });
+    });
+
+    test("per-analysis passes the resolver of the embedder through unchanged", async () => {
+        const resolve = (analysisId: string) => ({ kind: "farm" as const, location: `farms/${analysisId}` });
+
+        const provider = farmProviderOf({ kind: "per-analysis", resolve });
+
+        expect(await provider?.("an-1")).toEqual({ kind: "farm", location: "farms/an-1" });
     });
 });

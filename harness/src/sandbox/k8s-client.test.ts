@@ -453,7 +453,7 @@ describe("k8s createSandbox", () => {
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             libStorePvc: "cortex-libs",
-            resolveAnalysisFarm: (analysisId) => `farms/${analysisId}`,
+            farmSource: { kind: "per-analysis", resolve: (analysisId) => ({ kind: "farm", location: `farms/${analysisId}` }) },
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
             registerSandbox: async () => {},
@@ -478,6 +478,46 @@ describe("k8s createSandbox", () => {
         expect(envMap.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
     });
 
+    test("a fixed source serves one farm to every analysis, and it composes nothing", async () => {
+        // The shape a managed deployment uses: it mounts the published artifact and
+        // names its catalog farm, thus each analysis reads one library set.
+        const stub = stubApis([
+            { status: { phase: "Running", podIP: "10.0.0.6" }, metadata: { name: "sbx-fixed-1" } },
+            { status: { phase: "Running", podIP: "10.0.0.7" }, metadata: { name: "sbx-fixed-2" } },
+        ]);
+
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
+            sessionPvc: "cortex-sessions",
+            libStorePvc: "cortex-libs",
+            farmSource: { kind: "fixed", location: "farms/catalog" },
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+
+        for (const analysisId of ["an-1", "an-2"]) {
+            (
+                await ops.createSandbox(
+                    { runId: "run-1", stepId: "step-a", analysisId, childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                    mintSandboxIdentity("run-1"),
+                )
+            )._unsafeUnwrap();
+        }
+
+        for (const job of stub.createdJobs) {
+            const libsMounts = job.spec!.template.spec!.containers[0].volumeMounts!.filter((m) => m.name === "libs");
+            expect(libsMounts.map((m) => ({ mountPath: m.mountPath, subPath: m.subPath }))).toEqual([
+                { mountPath: "/mnt/libs", subPath: undefined },
+                { mountPath: "/mnt/libs/current", subPath: "farms/catalog" },
+            ]);
+        }
+    });
+
     test("refuses the sandbox with a named state when the provider names no farm", async () => {
         const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.4" }, metadata: { name: "sbx-nofarm" } }]);
 
@@ -489,7 +529,7 @@ describe("k8s createSandbox", () => {
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             libStorePvc: "cortex-libs",
-            resolveAnalysisFarm: () => undefined,
+            farmSource: { kind: "per-analysis", resolve: () => ({ kind: "unavailable", reason: "the composition of the farm failed" }) },
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
             registerSandbox: async () => {},
@@ -503,12 +543,45 @@ describe("k8s createSandbox", () => {
         )._unsafeUnwrapErr();
 
         expect(error.type).toBe("farm_unavailable");
-        if (error.type === "farm_unavailable") expect(error.analysisId).toBe("an-1");
+        if (error.type === "farm_unavailable") {
+            expect(error.analysisId).toBe("an-1");
+            // The reason of the embedder reaches the refusal, thus the user reads why
+            // and not merely that a farm is absent.
+            expect(error.reason).toBe("the composition of the farm failed");
+        }
         // The refusal is the whole outcome: no Job is created.
         expect(stub.createdJobs).toEqual([]);
     });
 
-    test("with no provider the store PVC keeps its single mount", async () => {
+    test("an explicit store-root source keeps the single mount, the same as an unset source", async () => {
+        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.8" }, metadata: { name: "sbx-root" } }]);
+
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
+            sessionPvc: "cortex-sessions",
+            libStorePvc: "cortex-libs",
+            farmSource: { kind: "store-root" },
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        const libsMounts = stub.createdJobs[0]!.spec!.template.spec!.containers[0].volumeMounts!.filter((m) => m.name === "libs");
+        expect(libsMounts.map((m) => m.mountPath)).toEqual(["/mnt/libs"]);
+    });
+
+    test("with no source the store PVC keeps its single mount", async () => {
         const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.5" }, metadata: { name: "sbx-single" } }]);
 
         const ops = createK8sSandboxOps({
