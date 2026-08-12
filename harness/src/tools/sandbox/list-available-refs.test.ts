@@ -173,15 +173,19 @@ describe("list_available_refs", () => {
         expect(result.entries).toEqual([{ path: "/mnt/refs/user/observed.csv", kind: "file", bytes: 7 }]);
     });
 
-    it("reports an unprovisioned store as data, not an error", async () => {
-        const result = (await createTool().execute({}, makeToolContext().ctx))._unsafeUnwrap();
-        expect(result).toMatchObject({ state: "unavailable", available: false, entries: [] });
-        expect(result.content).toContain("No reference store is provisioned");
+    // An omitted path reads the container mountpoint, so the two calls are the same
+    // call. Asserting they agree pins the fallback without making the assertion depend
+    // on whether the machine running the test happens to have `/mnt/refs`.
+    it("falls back to the container mount when no store path is configured", async () => {
+        const omitted = (await createTool().execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        const explicit = (await createTool("/mnt/refs").execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        expect(omitted).toEqual(explicit);
     });
 
     it("reports a configured-but-missing store as unavailable", async () => {
         const result = (await createTool(join(tmpdir(), "refs-does-not-exist-xyz")).execute({}, makeToolContext().ctx))._unsafeUnwrap();
         expect(result).toMatchObject({ state: "unavailable", available: false, entries: [] });
+        expect(result.content).toContain("No reference store is provisioned");
     });
 
     it("reports an empty store as data", async () => {
