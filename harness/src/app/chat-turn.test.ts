@@ -5,6 +5,7 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { createThreadHistory } from "../memory/thread-history.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
+import { createWorkingMemory } from "../memory/working-memory.js";
 import { insertRun, updateRunStatus } from "../state/index.js";
 import { prepareChatTurn } from "./chat-turn.js";
 
@@ -213,5 +214,49 @@ describe("prepareChatTurn", () => {
         expect(result.kind).toBe("ok");
         if (result.kind !== "ok") throw new Error("unreachable");
         expect(result.threadType).toBe("report");
+    });
+
+    it("assembles no working-memory render on a report thread", async () => {
+        (await createWorkingMemory(pool).updateSection(ANALYSIS_A, "goal", { text: "Find the driver genes." }))._unsafeUnwrap();
+        (
+            await createThreadStore(pool).createThread({
+                threadId: "t-report-tail",
+                analysisId: ANALYSIS_A,
+                title: "A report",
+                type: "report",
+            })
+        )._unsafeUnwrap();
+
+        const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-report-tail", userInput: "draft the summary" });
+
+        expect(result.kind).toBe("ok");
+        if (result.kind !== "ok") throw new Error("unreachable");
+
+        const joined = result.messages.map((message) => contentText(message.content)).join("\n");
+        expect(joined).not.toContain("# Working Memory");
+        expect(joined).not.toContain("Find the driver genes.");
+        // The other two tail messages stay.
+        expect(joined).toContain("[Run Activity]");
+        expect(joined).toContain("draft the summary");
+    });
+
+    it("assembles the working-memory render on a conversation thread", async () => {
+        (await createWorkingMemory(pool).updateSection(ANALYSIS_A, "goal", { text: "Find the driver genes." }))._unsafeUnwrap();
+        (
+            await createThreadStore(pool).createThread({
+                threadId: "t-conv-tail",
+                analysisId: ANALYSIS_A,
+                title: "A conversation",
+            })
+        )._unsafeUnwrap();
+
+        const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-conv-tail", userInput: "draft the summary" });
+
+        expect(result.kind).toBe("ok");
+        if (result.kind !== "ok") throw new Error("unreachable");
+
+        const joined = result.messages.map((message) => contentText(message.content)).join("\n");
+        expect(joined).toContain("# Working Memory");
+        expect(joined).toContain("Find the driver genes.");
     });
 });
