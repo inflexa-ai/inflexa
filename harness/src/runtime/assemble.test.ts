@@ -1,15 +1,29 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Pool } from "pg";
+import type { Browser } from "puppeteer-core";
 
 import type { ThreadAgentResolver, UnregisteredThreadType } from "@inflexa-ai/harness";
 
+import { createReportSessionAgent } from "../agents/report-session-agent.js";
 import { createReportSessionRuntime } from "../app/report-session-runtime.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
+import type { Scope } from "../auth/types.js";
+import { setBrowserConnector, type ChromeConfig } from "../lib/chrome.js";
+import type { AcquireEyes, EyesScope } from "../lib/eyes.js";
 import { createThreadStore } from "../memory/thread-store.js";
+import type { EmbeddingProvider } from "../providers/types.js";
 import { upsertAnalysis } from "../state/analyses.js";
-import { createThreadAgentResolver, type CoreRuntime, type CoreRuntimeDeps } from "./assemble.js";
+import type { ReportVersionStore } from "../state/report-versions.js";
+import { makeToolContext } from "../tools/__fixtures__/tool-context.js";
+import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad } from "../tools/report-authoring/authoring-tools.js";
+import type { ExaminePageResult } from "../tools/report-session/index.js";
+import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
+import { createThreadAgentResolver, resolveCompositionEyes, type CoreRuntime, type CoreRuntimeDeps } from "./assemble.js";
 import type { AgentDefinition } from "../loop/types.js";
-import type { ThreadType } from "../memory/thread-store.js";
+import type { ThreadStore, ThreadType } from "../memory/thread-store.js";
 
 // A bare `AgentDefinition` stands in for the assembled conversation agent: the
 // resolver only ever hands back the object the registry holds, so its internals
@@ -117,6 +131,199 @@ describe("the report host-read cap dep", () => {
         // The cap is optional, thus the OSS default omits it and the resolver uses its 16 MiB default.
         const without: Pick<CoreRuntimeDeps, "reportHostReadCapBytes"> = {};
         expect(without.reportHostReadCapBytes).toBeUndefined();
+    });
+});
+
+/**
+ * The fixtures of the eyes cases.
+ *
+ * `assembleCoreRuntime` registers the durable workflows with DBOS, thus a case drives the eyes resolution
+ * alone, the same as the thread-resolver cases above. Each case resolves the eyes of one composition, builds
+ * the report agent over that answer the way the assembly does, and looks at one page through the eyes tool
+ * of the roster.
+ */
+const EYES_ANALYSIS_ID = "analysis-eyes";
+
+/**
+ * The endpoint of each case that connects.
+ *
+ * The connection cache holds one browser for each endpoint over the whole run. Thus each case names its own
+ * endpoint, and no case reads the browser that another case left in the cache.
+ */
+const STATIC_ENDPOINT = "http://assemble-static.test:9222";
+const SEAM_ENDPOINT = "http://assemble-seam.test:9222";
+const UNUSED_ENDPOINT = "http://assemble-unused.test:9222";
+
+/** Each root that a case made. The cleanup removes them after the suite. */
+const eyesRoots: string[] = [];
+
+/** The restore of the connect operation that a case replaced. */
+let restoreConnector: (() => void) | undefined;
+
+afterEach(() => {
+    restoreConnector?.();
+    restoreConnector = undefined;
+});
+
+afterAll(async () => {
+    for (const root of eyesRoots) {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+/** Make a temp workspace root that holds the rendered page of one thread, thus a look finds a page. */
+async function makeEyesRoot(threadId: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "assemble-eyes-"));
+    eyesRoots.push(root);
+    const dir = join(root, "report-sessions", threadId);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "index.html"), "<html><body>report</body></html>", "utf8");
+    return root;
+}
+
+/**
+ * A gateway whose thread holds a rendered hash.
+ *
+ * The page and the hash both exist, thus the eyes of the composition are the one condition that a case
+ * varies. A look that finds no browser stops before this gateway.
+ */
+function eyesGateway(): ReportSessionStateGateway {
+    const state: ReportSessionState = { document: { title: "", sections: [] }, snapshot: { artifacts: {} } };
+    return {
+        load: (): Promise<SessionStateLoad> => Promise.resolve({ outcome: "found", state, analysisId: EYES_ANALYSIS_ID, token: null, seenDocumentHash: null }),
+        persist: () => Promise.resolve({ outcome: "persisted" }),
+        stampRendered: () => Promise.resolve({ outcome: "stamped" }),
+        stampSeen: () => Promise.resolve({ outcome: "stamped" }),
+    };
+}
+
+/**
+ * Make a browser that no process backs, and give the screenshot that its one page returns.
+ *
+ * The capture reads the connected flag, it registers the disconnect listener, it opens one context, it
+ * drives one page, and it closes the context. The fake carries those members alone. The two-step assertion
+ * names the type of puppeteer, because a fake of a class with private members is no structural match.
+ */
+function fakeBrowser(screenshot: string): Browser {
+    const page = {
+        on: () => {},
+        goto: () => Promise.resolve(),
+        evaluate: () => Promise.resolve(),
+        screenshot: () => Promise.resolve(screenshot),
+    };
+    const fake = {
+        connected: true,
+        on: () => {},
+        wsEndpoint: () => "ws://fake",
+        createBrowserContext: () =>
+            Promise.resolve({
+                newPage: () => Promise.resolve(page),
+                close: () => Promise.resolve(),
+            }),
+    };
+    return fake as unknown as Browser;
+}
+
+/**
+ * Build the report agent over the eyes of one composition, the same wiring as the assembly.
+ *
+ * A case runs the eyes tool alone, and that tool reads the gateway, the workspace root, the chrome config,
+ * and the eyes. Each of the four is real here. No factory of the roster reads one of the other deps at
+ * construction. Thus an empty stub stands for each of them, and no case reaches the gap between a stub and
+ * its interface.
+ */
+function reportAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, root: string): AgentDefinition {
+    return createReportSessionAgent({
+        model: "test/model",
+        pool: {} as Pool,
+        embedding: {} as EmbeddingProvider,
+        workspaceFs: {} as WorkspaceFilesystem,
+        gateway: eyesGateway(),
+        resolveWorkspaceRoot: () => root,
+        store: {} as ReportVersionStore,
+        threads: {} as Pick<ThreadStore, "getThread">,
+        chrome,
+        ...(eyes ? { eyes } : {}),
+    });
+}
+
+/** Look at the page of one thread through the eyes tool of a built agent. */
+async function look(agent: AgentDefinition, threadId: string): Promise<ExaminePageResult> {
+    const found = agent.tools.filter((each) => each.id === "examine_page");
+    // The roster holds one eyes tool. A wiring that drops it empties this list, thus the assertion fails
+    // here and no line below reads an absent member.
+    expect(found).toHaveLength(1);
+    const [tool] = found;
+    const { ctx } = makeToolContext();
+    const scope: Scope = { kind: "analysis", analysisId: EYES_ANALYSIS_ID, threadId };
+    const outcome = await tool.execute({}, { ...ctx, session: { ...ctx.session, scope } });
+    // The roster types each tool as `Tool<unknown, unknown>`. The id above selects the one factory that
+    // makes the eyes tool, thus the ok value is the outcome of that tool and a case reads its arm by name.
+    return outcome._unsafeUnwrap() as ExaminePageResult;
+}
+
+describe("the eyes of the composition", () => {
+    it("gives no eyes when the composition binds no seam and the config names no browser", async () => {
+        const threadId = "thread-no-eyes";
+        const root = await makeEyesRoot(threadId);
+        const chrome: ChromeConfig = {};
+
+        const result = await look(reportAgentOver(resolveCompositionEyes(undefined, chrome), chrome, root), threadId);
+
+        // The page exists and the row holds a rendered hash, thus the absent browser is the one condition
+        // that stops the look.
+        expect(result.outcome).toBe("no-browser");
+    });
+
+    it("wraps the configured endpoint into the static realization when the composition binds no seam", async () => {
+        const threadId = "thread-static";
+        const root = await makeEyesRoot(threadId);
+        const chrome: ChromeConfig = { browserUrl: STATIC_ENDPOINT };
+        const connected: string[] = [];
+        restoreConnector = setBrowserConnector((browserUrl) => {
+            connected.push(browserUrl);
+            return Promise.resolve(fakeBrowser("STATICPNG"));
+        });
+
+        const result = await look(reportAgentOver(resolveCompositionEyes(undefined, chrome), chrome, root), threadId);
+
+        expect(result.outcome).toBe("examined");
+        // The static realization gives the configured endpoint, thus the look reaches that browser.
+        expect(connected).toEqual([STATIC_ENDPOINT]);
+    });
+
+    it("passes the bound seam, and it wraps no config", async () => {
+        const threadId = "thread-seam";
+        const root = await makeEyesRoot(threadId);
+        // The config names a browser too. Thus the case separates the seam of the embedder from the wrap of
+        // the config, and only the endpoint of the eyes that answered reaches a connection.
+        const chrome: ChromeConfig = { browserUrl: UNUSED_ENDPOINT };
+        const acquired: EyesScope[] = [];
+        const released: string[] = [];
+        const seam: AcquireEyes = (scope) => {
+            acquired.push(scope);
+            return Promise.resolve({
+                browserUrl: SEAM_ENDPOINT,
+                release: () => {
+                    released.push(SEAM_ENDPOINT);
+                    return Promise.resolve();
+                },
+            });
+        };
+        const connected: string[] = [];
+        restoreConnector = setBrowserConnector((browserUrl) => {
+            connected.push(browserUrl);
+            return Promise.resolve(fakeBrowser("SEAMPNG"));
+        });
+
+        const result = await look(reportAgentOver(resolveCompositionEyes(seam, chrome), chrome, root), threadId);
+
+        expect(result.outcome).toBe("examined");
+        // The seam answered the look, thus the configured endpoint reached no connection at all.
+        expect(connected).toEqual([SEAM_ENDPOINT]);
+        // The scope carries the analysis and the root of the call, thus a realization mounts the same tree.
+        expect(acquired).toEqual([{ analysisId: EYES_ANALYSIS_ID, workspaceRoot: root }]);
+        expect(released).toEqual([SEAM_ENDPOINT]);
     });
 });
 
