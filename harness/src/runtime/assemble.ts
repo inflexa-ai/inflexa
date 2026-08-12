@@ -87,14 +87,19 @@ export interface RegisteredWorkflows {
 
 /**
  * Conversation-agent deps minus the workflow callable, the resource policy, the
- * usage recorder, the report-session anchor, and the eyes —
- * `assembleCoreRuntime` supplies those itself so a caller cannot wire a stale
- * callable, a policy that diverges from the one the workflows see, a recorder
- * that only half the agent tree reports to, an anchor over a different session
- * runtime, or a seam that only half the agent tree looks through. The assembly
- * resolves the eyes one time, from `CoreRuntimeDeps.eyes` and the chrome config.
- * A caller that bound them here would give the conversation agent a seam that
- * the report agent never sees.
+ * usage recorder, the report-session anchor, and the eyes.
+ * `assembleCoreRuntime` supplies each of those itself. Thus a caller cannot wire
+ * one of these five values:
+ *
+ * - a stale callable
+ * - a policy that diverges from the one the workflows see
+ * - a recorder that only half the agent tree reports to
+ * - an anchor over a different session runtime
+ * - a seam that only half the agent tree looks through
+ *
+ * The assembly resolves the eyes one time, from `CoreRuntimeDeps.eyes` and the
+ * chrome config. A caller that bound the eyes here would give the conversation
+ * agent a seam that the report agent never sees.
  */
 export type ConversationAssemblyDeps = Omit<
     ConversationAgentDeps,

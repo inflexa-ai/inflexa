@@ -232,6 +232,9 @@ export interface ReportSessionSpawnDeps {
  * The parameter names the route fields alone. Thus a caller passes the deps
  * value that it gives to `createReportSessionSpawn`, and the two answers cannot
  * disagree.
+ *
+ * No type binds a new route to the parameter. Thus this predicate is the one
+ * gate expression of the module, and a new route belongs here and nowhere else.
  */
 export function compositionHasEyes(deps: Pick<ReportSessionSpawnDeps, "chrome" | "capture" | "eyes">): boolean {
     return deps.eyes !== undefined || deps.capture !== undefined || hasBrowserUrl(deps.chrome);

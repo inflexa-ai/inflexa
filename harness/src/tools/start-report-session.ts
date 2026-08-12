@@ -6,8 +6,8 @@
  * conversation. It carries the intent brief of the ask, and the spawn seeds the
  * context of the child with that brief.
  *
- * The order of the checks is fixed. The eyes gate runs first, because a
- * composition with no browser is a permanent condition and the advice is
+ * The order of the checks is fixed. The eyes gate runs first. A composition
+ * that names no route to a look is a permanent condition, and the advice is
  * transient state. The advice runs next. At one user turn or less of the parent
  * past the anchor of the newest report child, the tool starts nothing and it
  * names that child. The spawn runs last.

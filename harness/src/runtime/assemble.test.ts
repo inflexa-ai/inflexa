@@ -387,6 +387,39 @@ function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConf
     });
 }
 
+/**
+ * Seed the parent conversation of one start-tool case. The spawn refuses an empty transcript, thus the parent
+ * carries one turn.
+ */
+async function seedParent(pool: Pool, analysisId: string, parentThreadId: string): Promise<void> {
+    (await upsertAnalysis(pool, analysisId, null))._unsafeUnwrap();
+    (await createThreadStore(pool).createThread({ threadId: parentThreadId, analysisId, title: "Parent" }))._unsafeUnwrap();
+    (
+        await createThreadHistory(pool).appendTurn(parentThreadId, {
+            modelMessages: [
+                { role: "user", content: [{ type: "text", text: "hi" }] },
+                { role: "assistant", content: [{ type: "text", text: "hello" }] },
+            ],
+            displayMessages: [],
+        })
+    )._unsafeUnwrap();
+}
+
+/** Start a report session through the start tool of a built agent. */
+async function startSession(agent: AgentDefinition, analysisId: string, parentThreadId: string): Promise<StartReportSessionResult> {
+    const found = agent.tools.filter((each) => each.id === "start_report_session");
+    // The roster holds one start tool. A wiring that drops it empties this list, thus the assertion fails
+    // here and no line below reads an absent member.
+    expect(found).toHaveLength(1);
+    const [tool] = found;
+    const { ctx } = makeToolContext();
+    const scope: Scope = { kind: "analysis", analysisId, threadId: parentThreadId };
+    const outcome = await tool.execute(START_BRIEF, { ...ctx, session: { ...ctx.session, scope } });
+    // The roster types each tool as `Tool<unknown, unknown>`. The id above selects the one factory that
+    // makes the start tool. Thus the ok value is the outcome of that tool.
+    return outcome._unsafeUnwrap() as StartReportSessionResult;
+}
+
 describe("the eyes of the start tool", () => {
     let pool: Pool;
     let drop: () => Promise<void>;
@@ -403,37 +436,68 @@ describe("the eyes of the start tool", () => {
 
     it("carries the resolved seam into the start tool of the conversation agent", async () => {
         const parentThreadId = "thread-start-parent";
-        (await upsertAnalysis(pool, START_ANALYSIS_ID, null))._unsafeUnwrap();
-        (await createThreadStore(pool).createThread({ threadId: parentThreadId, analysisId: START_ANALYSIS_ID, title: "Parent" }))._unsafeUnwrap();
-        // The spawn refuses an empty transcript, thus the parent carries one turn.
-        (
-            await createThreadHistory(pool).appendTurn(parentThreadId, {
-                modelMessages: [
-                    { role: "user", content: [{ type: "text", text: "hi" }] },
-                    { role: "assistant", content: [{ type: "text", text: "hello" }] },
-                ],
-                displayMessages: [],
-            })
-        )._unsafeUnwrap();
+        await seedParent(pool, START_ANALYSIS_ID, parentThreadId);
         // The config names no browser, thus the bound seam is the one route to a look.
         const chrome: ChromeConfig = {};
         const seam: AcquireEyes = () => Promise.resolve({ browserUrl: START_ENDPOINT, release: () => Promise.resolve() });
 
-        const agent = conversationAgentOver(resolveCompositionEyes(seam, chrome), chrome, pool);
-        const found = agent.tools.filter((each) => each.id === "start_report_session");
-        // The roster holds one start tool. A wiring that drops it empties this list, thus the assertion fails
-        // here and no line below reads an absent member.
-        expect(found).toHaveLength(1);
-        const [tool] = found;
-        const { ctx } = makeToolContext();
-        const scope: Scope = { kind: "analysis", analysisId: START_ANALYSIS_ID, threadId: parentThreadId };
-        const outcome = await tool.execute(START_BRIEF, { ...ctx, session: { ...ctx.session, scope } });
+        const result = await startSession(conversationAgentOver(resolveCompositionEyes(seam, chrome), chrome, pool), START_ANALYSIS_ID, parentThreadId);
 
-        // The roster types each tool as `Tool<unknown, unknown>`. The id above selects the one factory that
-        // makes the start tool. Thus the ok value is the outcome of that tool.
-        const result = outcome._unsafeUnwrap() as StartReportSessionResult;
         // A composition with no route refuses here, thus the started arm says that the seam reached the tool.
         expect(result.outcome).toBe("started");
+    });
+});
+
+/**
+ * The fixtures of the one-answer case.
+ *
+ * The assembly resolves the eyes one time, and two consumers read that answer. The case builds the agent that
+ * looks at a page and the tool that starts a session over one resolved value.
+ */
+const BOTH_ANALYSIS_ID = "analysis-both";
+
+/** The endpoint of the seam of the one-answer case. Each case names its own endpoint, thus no case shares a browser. */
+const BOTH_ENDPOINT = "http://assemble-both.test:9222";
+
+describe("one resolved answer", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("assemble_one_resolved_answer");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("serves the agent that looks at a page and the tool that starts a session", async () => {
+        const parentThreadId = "thread-both-parent";
+        const lookThreadId = "thread-both-look";
+        const root = await makeEyesRoot(lookThreadId);
+        await seedParent(pool, BOTH_ANALYSIS_ID, parentThreadId);
+
+        // The config names no browser, thus the resolved seam is the one route of both consumers.
+        const chrome: ChromeConfig = {};
+        const seam: AcquireEyes = () => Promise.resolve({ browserUrl: BOTH_ENDPOINT, release: () => Promise.resolve() });
+        const connected: string[] = [];
+        restoreConnector = setBrowserConnector((browserUrl) => {
+            connected.push(browserUrl);
+            return Promise.resolve(fakeBrowser("BOTHPNG"));
+        });
+
+        // The one resolution. Each consumer below reads this value, thus a second resolution never runs.
+        const eyes = resolveCompositionEyes(seam, chrome);
+        const looked = await look(reportAgentOver(eyes, chrome, root), lookThreadId);
+        const started = await startSession(conversationAgentOver(eyes, chrome, pool), BOTH_ANALYSIS_ID, parentThreadId);
+
+        expect(looked.outcome).toBe("examined");
+        // The look reached the endpoint of the resolved seam, thus the agent read that answer.
+        expect(connected).toEqual([BOTH_ENDPOINT]);
+        // The config names no browser, thus the started arm says that the tool read the same answer.
+        expect(started.outcome).toBe("started");
     });
 });
 

@@ -194,8 +194,8 @@ describe("the eyes gate", () => {
         const result = (await seeing.execute(INPUT, ctxForThread("p1")))._unsafeUnwrap();
 
         expect(result.outcome).toBe("started");
-        // The thread listing holds the child. Thus the seam opened the gate of the
-        // tool and the gate of the spawn.
+        // The count over the `report` rows finds the child. Thus the seam opened
+        // the gate of the tool and the gate of the spawn.
         expect(await reportThreadCount()).toBe(1);
         // The open gate runs the advice. Thus this record is the positive control
         // of the empty record in the case below.

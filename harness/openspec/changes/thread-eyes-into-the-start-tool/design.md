@@ -40,6 +40,12 @@ The asymmetry costs nothing, because the tool reads the answer of the spawn and 
 
 `resolveCompositionEyes` runs once in the assembly, and its answer reaches the report agent and the conversation agent. A second resolution would let one consumer see a different precedence.
 
+### D4. The predicate stays off the barrel
+
+`createReportSessionSpawn` is on the barrel, and `compositionHasEyes` is not. The harness exports a name that a consumer outside it calls. No embedder calls this gate. The spawn refuses on its own, and the predicate exists so one in-harness caller can skip two database reads.
+
+An export would also make the rule a public name. A later route would then change what an embedder reads, and a public name costs a deprecation. Thus the absent export is correct, and the refusal of the spawn stays the one public answer.
+
 ## Risks / Trade-offs
 
 - [The tool reads a rule of the spawn module, thus the two couple more tightly] → That coupling is the point. The tool exists to run that spawn, and a refusal of that spawn is its own outcome.
