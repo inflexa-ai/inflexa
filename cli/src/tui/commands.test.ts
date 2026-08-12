@@ -35,6 +35,7 @@ import type { Workspace } from "./contexts/workspace.ts";
 import type { Notice } from "./theme.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { WorkspaceDisposal, WorkspaceError } from "../modules/analysis/output.ts";
+import type { FarmCompositionError } from "../modules/libs/composition.ts";
 import type { Sidecar } from "../modules/prov/verify.ts";
 import type { SigningError } from "../modules/prov/signing.ts";
 // The SQLite layer's error union, distinct from the harness's Postgres one already imported above.
@@ -1185,6 +1186,8 @@ describe("analysis delete ladder", () => {
     type LadderOutcomes = {
         /** `null` stands in for a harness that never booted. */
         runtime?: HarnessRuntime | null;
+        /** A refusal of the farm removal, for example a lease that records a live sandbox. */
+        farmError?: FarmCompositionError;
         flushed?: boolean;
         exported?: boolean;
         disposal?: WorkspaceDisposal;
@@ -1206,6 +1209,11 @@ describe("analysis delete ladder", () => {
         const runtime = out.runtime === undefined ? fakeRuntime : out.runtime;
         const seams: AnalysisDeleteSeams = {
             runtime: () => runtime,
+            removeFarm: async () => {
+                steps.push("remove-farm");
+                if (out.farmError) return err<{ removed: boolean }, FarmCompositionError>(out.farmError);
+                return ok<{ removed: boolean }, FarmCompositionError>({ removed: true });
+            },
             hasWorkspaceOnDisk: () => true,
             flushProvenance: async () => {
                 steps.push("flush");
@@ -1266,7 +1274,7 @@ describe("analysis delete ladder", () => {
 
         // The export lands BEFORE the disposal because it writes into the live workspace, and the row
         // goes LAST because it carries the only copy of the id the purge needs.
-        expect(l.steps).toEqual(["flush", "export", "dispose:archive", "purge", "delete-row", `land:${SURVIVOR.id}`]);
+        expect(l.steps).toEqual(["remove-farm", "flush", "export", "dispose:archive", "purge", "delete-row", `land:${SURVIVOR.id}`]);
         expect(l.purged).toEqual([{ pool: fakePool, analysisId: ANALYSIS.id }]);
         expect(l.notices.at(-1)?.kind).toBe("info");
         expect(l.notices.at(-1)?.text).toContain(ARCHIVE_PATH);
@@ -1280,7 +1288,7 @@ describe("analysis delete ladder", () => {
 
         // No export: the tree that would hold the document is the one being removed. The purge runs
         // anyway — the disposal mode governs the workspace tree, never the Postgres footprint.
-        expect(l.steps).toEqual(["dispose:delete", "purge", "delete-row"]);
+        expect(l.steps).toEqual(["remove-farm", "dispose:delete", "purge", "delete-row"]);
         expect(l.purged).toEqual([{ pool: fakePool, analysisId: ANALYSIS.id }]);
         expect(w.quits()).toBe(1);
     });
@@ -1293,7 +1301,7 @@ describe("analysis delete ladder", () => {
 
         // Deleting the row anyway would convert a retryable failure into a permanent orphan: the id
         // that names the footprint would be gone, so no later run could reach it.
-        expect(l.steps).toEqual(["flush", "export", "dispose:archive", "purge"]);
+        expect(l.steps).toEqual(["remove-farm", "flush", "export", "dispose:archive", "purge"]);
         expect(l.notices.at(-1)?.kind).toBe("error");
         expect(l.notices.at(-1)?.text).toContain("nothing was lost");
         // The archive already happened, and this is the last moment its path is known: a retry finds no
@@ -1323,7 +1331,7 @@ describe("analysis delete ladder", () => {
 
         await deleteAnalysisWith(w.ws, ANALYSIS, "archive", l.seams);
 
-        expect(l.steps).toEqual(["flush", "export", "dispose:archive"]);
+        expect(l.steps).toEqual(["remove-farm", "flush", "export", "dispose:archive"]);
         expect(l.purged).toEqual([]);
         expect(l.notices.at(-1)?.text).toContain("NOT deleted");
     });
@@ -1347,7 +1355,7 @@ describe("analysis delete ladder", () => {
         await deleteAnalysisWith(w.ws, ANALYSIS, "archive", l.seams);
 
         // Carrying on is the point: the user asked to delete the analysis, not to export provenance.
-        expect(l.steps).toEqual(["flush", "export", "dispose:archive", "purge", "delete-row"]);
+        expect(l.steps).toEqual(["remove-farm", "flush", "export", "dispose:archive", "purge", "delete-row"]);
         // The export raises its own toast, but the outcome notice arrives milliseconds later and the
         // channel replaces what is showing — so the fact has to ride the notice the user will see.
         expect(l.notices.at(-1)?.kind).toBe("warn");
@@ -1378,7 +1386,7 @@ describe("analysis delete ladder", () => {
             await deleteAnalysisWith(w.ws, ANALYSIS, "archive", seams);
 
             // Neither stage ran: there is nothing to preserve beside a tree that does not exist.
-            expect(l.steps).toEqual(["dispose:archive", "purge", "delete-row"]);
+            expect(l.steps).toEqual(["remove-farm", "dispose:archive", "purge", "delete-row"]);
             expect(existsSync(workspace)).toBe(false);
             // The row still goes, and the disposal's `absent` is what the user is told.
             expect(l.notices.at(-1)?.kind).toBe("info");
@@ -1396,9 +1404,22 @@ describe("analysis delete ladder", () => {
 
         // The document was still written — it is the session's tail that may be missing from it, which
         // is a different claim from "not exported" and must not be collapsed into it.
-        expect(l.steps).toEqual(["flush", "export", "dispose:archive", "purge", "delete-row"]);
+        expect(l.steps).toEqual(["remove-farm", "flush", "export", "dispose:archive", "purge", "delete-row"]);
         expect(l.notices.at(-1)?.kind).toBe("warn");
         expect(l.notices.at(-1)?.text).toContain("may be missing this session's last activity");
+    });
+
+    test("a lease that records a live sandbox of the farm stops the deletion before anything is touched", async () => {
+        const l = ladder({ farmError: { type: "farm_leased", analysisId: ANALYSIS.id, leases: ["sbx-7"] } });
+        const w = scope();
+
+        await deleteAnalysisWith(w.ws, ANALYSIS, "archive", l.seams);
+
+        // The refusal lands FIRST, thus nothing was exported, moved, purged, or deleted.
+        expect(l.steps).toEqual(["remove-farm"]);
+        expect(l.notices.at(-1)?.kind).toBe("error");
+        expect(l.notices.at(-1)?.text).toContain("sbx-7");
+        expect(l.notices.at(-1)?.text).toContain("NOT deleted");
     });
 
     test("the palette refuses before any confirmation when the harness is not booted", async () => {

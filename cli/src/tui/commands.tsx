@@ -2,7 +2,7 @@ import { createSignal, Show, type JSX } from "solid-js";
 import { randomUUIDv7 } from "bun";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { ResultAsync } from "neverthrow";
+import { ResultAsync, type Result } from "neverthrow";
 // Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import type { VerifyResult } from "../types/prov.ts";
@@ -35,6 +35,7 @@ import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
+import { env } from "../lib/env.ts";
 import { mkdirResult, writeFileResult } from "../lib/fs.ts";
 import { str256, type Str256 } from "../lib/types.ts";
 import {
@@ -56,6 +57,7 @@ import { openOutputDir } from "../modules/analysis/open.ts";
 import { archivedOutputSubdir, defaultOutputSubdir, disposeWorkspace, locateExistingOutputDir, resolveOutputDir } from "../modules/analysis/output.ts";
 import { resolveAnchor, resolvedPathOrCached } from "../modules/anchor/anchor.ts";
 import { canonicalPath } from "../modules/anchor/marker.ts";
+import { removeAnalysisFarm, type FarmCompositionError } from "../modules/libs/composition.ts";
 import { loadAuth, describeAuthError } from "../modules/auth/auth.ts";
 import { decodeIdTokenClaims } from "../modules/auth/whoami.ts";
 import { createProject, deleteAnalysis, deleteProject, updateAnalysisProject } from "../db/primary_mutation.ts";
@@ -1009,6 +1011,12 @@ export type AnalysisDeleteSeams = {
     /** The booted runtime handle, or `null`. Its pool is the only route to the purge. Real: {@link harnessRuntime}. */
     readonly runtime: () => HarnessRuntime | null;
     /**
+     * Remove the package farm of the analysis, after the lease check. Real:
+     * {@link removeAnalysisFarm} over `env.libStoreDir`. An analysis that started no
+     * sandbox has no farm, which resolves `removed: false` and is not an error.
+     */
+    readonly removeFarm: (analysisId: string) => Promise<Result<{ readonly removed: boolean }, FarmCompositionError>>;
+    /**
      * Whether the analysis has a workspace tree on disk right now — the same question the disposal
      * answers with `absent`. Real: {@link locateExistingOutputDir}, whose unlocatable-folder error maps
      * to `false` because a tree inside a folder that cannot be found is one the disposal also skips.
@@ -1040,6 +1048,7 @@ export type AnalysisDeleteSeams = {
 
 const realAnalysisDeleteSeams: AnalysisDeleteSeams = {
     runtime: harnessRuntime,
+    removeFarm: (analysisId) => removeAnalysisFarm({ storeRoot: env.libStoreDir, analysisId }),
     hasWorkspaceOnDisk: (a) =>
         locateExistingOutputDir(a).match(
             (dir) => dir !== null,
@@ -1081,10 +1090,14 @@ function describePurgeFailure(e: DbError): string {
 }
 
 /**
- * Delete an analysis: export its provenance, retire its workspace, reclaim its Postgres footprint,
- * and only then delete the row. Every stage sits where a failure of it leaves the deletion
- * *retryable* instead of half-done, and the order is what makes that true:
+ * Delete an analysis: remove its package farm, export its provenance, retire its workspace, reclaim
+ * its Postgres footprint, and only then delete the row. Every stage sits where a failure of it
+ * leaves the deletion *retryable* instead of half-done, and the order is what makes that true:
  *
+ * - The farm goes FIRST because its lease check is the one refusal that costs nothing to hit. A
+ *   lease records a sandbox that resolves the links of that farm right now, thus the analysis is
+ *   busy, and every stage below is irreversible. The farm holds links only, so its removal frees no
+ *   package: the pool stays, and `inflexa store reclaim` is what frees a directory no farm names.
  * - The SQLite row dies LAST because it holds the only copy of the analysis id, and the purge needs
  *   that id. A row deleted first strands the entire Postgres footprint beyond the reach of any
  *   retry, and does it while reporting success — the exact silent orphan this ladder exists to end.
@@ -1119,6 +1132,23 @@ export async function deleteAnalysisWith(
     // The palette refuses earlier for the user's sake; this refusal is what makes it an invariant.
     if (!runtime) {
         seams.notify({ kind: "warn", text: DELETE_NEEDS_HARNESS });
+        return;
+    }
+
+    // The farm goes FIRST, because its lease check is the one refusal that costs
+    // nothing to hit: a lease records a live sandbox that resolves these links right
+    // now, thus the analysis is busy and the deletion must not export, move, or purge
+    // anything before it learns that. Every later stage is irreversible.
+    const farmRemoved = await seams.removeFarm(a.id);
+    if (farmRemoved.isErr()) {
+        const e = farmRemoved.error;
+        seams.notify({
+            kind: "error",
+            text:
+                e.type === "farm_leased"
+                    ? `"${a.name}" has ${e.leases.length} live sandbox (${e.leases.slice(0, 3).join(", ")}) — the analysis was NOT deleted. Wait for the sandbox to finish, then delete it again.`
+                    : `Could not remove this analysis's package farm (${e.type}) — the analysis was NOT deleted, so nothing was lost.`,
+        });
         return;
     }
 

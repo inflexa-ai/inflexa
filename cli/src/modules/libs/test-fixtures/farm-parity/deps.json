@@ -1,0 +1,90 @@
+{
+  "nodes": {
+    "alpha-1.2.0-000000000000aaaa": {
+      "edges": [],
+      "entry_points": [
+        "alpha-cli"
+      ],
+      "imports": [
+        "alpha"
+      ],
+      "track": "python"
+    },
+    "alpha-2.0.0-00000000000a2222": {
+      "edges": [],
+      "entry_points": [],
+      "imports": [
+        "alpha"
+      ],
+      "track": "python"
+    },
+    "beta-0.4.1-000000000000bbbb": {
+      "edges": [
+        "alpha-1.2.0-000000000000aaaa"
+      ],
+      "entry_points": [
+        "beta-run"
+      ],
+      "imports": [
+        "beta",
+        "nsroot"
+      ],
+      "track": "python"
+    },
+    "delta-0.9-000000000000dddd": {
+      "edges": [],
+      "entry_points": [],
+      "imports": [
+        "nsroot"
+      ],
+      "track": "python"
+    },
+    "gamma-3.0.0-000000000000cccc": {
+      "edges": [
+        "delta-0.9-000000000000dddd"
+      ],
+      "entry_points": [],
+      "imports": [
+        "nsroot"
+      ],
+      "track": "python"
+    },
+    "omega-9.9-0000000000009999": {
+      "edges": [],
+      "entry_points": [],
+      "imports": [
+        "omega"
+      ],
+      "track": "python"
+    },
+    "rpkga-1.0-000000000000fff0": {
+      "edges": [
+        "rpkgb-2.1-000000000000fff1"
+      ],
+      "entry_points": [],
+      "imports": [
+        "Rpkga"
+      ],
+      "r_dir": "Rpkga",
+      "track": "r"
+    },
+    "rpkgb-2.1-000000000000fff1": {
+      "edges": [],
+      "entry_points": [],
+      "imports": [
+        "Rpkgb"
+      ],
+      "r_dir": "Rpkgb",
+      "track": "r"
+    },
+    "typing-ext-4.9.0-00000000000eeeee": {
+      "edges": [],
+      "entry_points": [],
+      "imports": [
+        "typing_ext"
+      ],
+      "track": "python"
+    }
+  },
+  "version": 1
+}
