@@ -8,6 +8,9 @@
  * A look through a lease runs the shared capture, thus these tests replace the connect operation with a fake
  * browser. Each test that connects names its own endpoint, because the cache holds one browser for each
  * endpoint.
+ *
+ * A test that hangs a seam call shortens the two budgets of the tool. Thus the deadline of that call expires
+ * inside the test, and the test reads the outcome that an expiry gives.
  */
 
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
@@ -20,7 +23,7 @@ import type { Browser } from "puppeteer-core";
 import type { Scope } from "../../auth/types.js";
 import { setBrowserConnector } from "../../lib/chrome.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
-import type { AcquireEyes, EyesScope } from "../../lib/eyes.js";
+import type { AcquireEyes, EyesLease, EyesScope } from "../../lib/eyes.js";
 import type { Logger } from "../../lib/logger.js";
 import type {
     ReportSessionState,
@@ -135,10 +138,14 @@ interface FakeEyes {
  *
  * `failAcquire` refuses the acquire, and `failRelease` refuses the release. A refused release still records
  * the call, thus a test reads that the tool released the lease and that the fault changed no outcome.
+ *
+ * `hangAcquire` and `hangRelease` give a promise that never settles. A realization that hangs while it starts
+ * or stops a browser reads the same. Thus a test drives the deadline of the tool and never a slow clock.
  */
-function makeFakeEyes(options: { browserUrl: string; failAcquire?: Error; failRelease?: Error }): FakeEyes {
+function makeFakeEyes(options: { browserUrl: string; failAcquire?: Error; failRelease?: Error; hangAcquire?: boolean; hangRelease?: boolean }): FakeEyes {
     const acquired: EyesScope[] = [];
     const released: string[] = [];
+    const neverSettles = <T>(): Promise<T> => new Promise<T>(() => undefined);
     return {
         acquired,
         released,
@@ -147,10 +154,16 @@ function makeFakeEyes(options: { browserUrl: string; failAcquire?: Error; failRe
             if (options.failAcquire !== undefined) {
                 return Promise.reject(options.failAcquire);
             }
+            if (options.hangAcquire === true) {
+                return neverSettles<EyesLease>();
+            }
             return Promise.resolve({
                 browserUrl: options.browserUrl,
                 release: () => {
                     released.push(options.browserUrl);
+                    if (options.hangRelease === true) {
+                        return neverSettles<void>();
+                    }
                     return options.failRelease !== undefined ? Promise.reject(options.failRelease) : Promise.resolve();
                 },
             });
@@ -194,7 +207,16 @@ function makeFakeBrowser(screenshot: string): Browser {
 const LEASE_ENDPOINT = "http://examine-lease.test:9222";
 const CAPTURE_FAULT_ENDPOINT = "http://examine-capture-fault.test:9222";
 const RELEASE_FAULT_ENDPOINT = "http://examine-release-fault.test:9222";
+const RELEASE_HANG_ENDPOINT = "http://examine-release-hang.test:9222";
 const CONFIGURED_ENDPOINT = "http://examine-configured.test:9222";
+
+/**
+ * The budget that a test gives to a seam call that hangs.
+ *
+ * The tool holds a budget of seconds for a real cold start. A test that waits for it would stall the run,
+ * thus the test seam of the deps shortens the budget to this value.
+ */
+const HUNG_DEADLINE_MS = 25;
 
 /**
  * Make a logger that records the message of each warn record.
@@ -422,6 +444,62 @@ describe("the lease of one look", () => {
         // No lease exists, thus the tool releases nothing and the look does not count.
         expect(eyes.released).toEqual([]);
         expect(gateway.seenOf(threadId)).toBeNull();
+    });
+
+    it("gives the typed capture failure when the acquire hangs, and it settles at the deadline", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const eyes = makeFakeEyes({ browserUrl: "http://examine-acquire-hang.test:9222", hangAcquire: true });
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => root,
+            chrome: {},
+            eyes: eyes.acquire,
+            deadlines: { acquireMs: HUNG_DEADLINE_MS },
+        });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("capture-failed");
+        if (result.outcome === "capture-failed") {
+            // The detail names the budget, thus a hung acquire reads apart from a refused acquire.
+            expect(result.detail).toBe(`the eyes gave no browser within ${HUNG_DEADLINE_MS} ms`);
+        }
+        // The acquire gave no lease, thus the tool released nothing and the look does not count.
+        expect(eyes.released).toEqual([]);
+        expect(gateway.seenOf(threadId)).toBeNull();
+    });
+
+    it("keeps the capture when the release hangs", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        restoreConnector = setBrowserConnector(() => Promise.resolve(makeFakeBrowser("HUNGPNG")));
+        const eyes = makeFakeEyes({ browserUrl: RELEASE_HANG_ENDPOINT, hangRelease: true });
+        const { logger, warns } = recordingLogger();
+        const tool = createExaminePageTool({
+            gateway,
+            resolveWorkspaceRoot: () => root,
+            chrome: {},
+            eyes: eyes.acquire,
+            logger,
+            deadlines: { releaseMs: HUNG_DEADLINE_MS },
+        });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        // The capture already passed, thus the release that never settles changes no outcome of the look.
+        expect(result.outcome).toBe("examined");
+        expect(readToolResultImage(result)).toEqual({ base64: "HUNGPNG", mediaType: "image/png" });
+        expect(eyes.released).toEqual([RELEASE_HANG_ENDPOINT]);
+        expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+        // An expired release reads the same as a thrown release, thus the log is its whole record.
+        expect(warns).toContain("the eyes lease did not release");
     });
 });
 

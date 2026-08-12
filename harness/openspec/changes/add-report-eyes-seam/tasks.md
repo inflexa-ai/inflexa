@@ -29,3 +29,10 @@
 - [x] 5.1 Run `bun run format:file` on each changed source file.
 - [x] 5.2 Run `tsc -p tsconfig.json`, and run the targeted test files of the changed modules against `CORTEX_TEST_PG_URL`.
 - [x] 5.3 Run `openspec validate add-report-eyes-seam --strict`.
+
+## 6. The review findings
+
+- [x] 6.1 Add the count obligation to the eyes seam requirement of the `report-verification` delta, with one scenario. Mirror it in the module doc of `src/lib/eyes.ts`, and record the decision in `design.md`.
+- [x] 6.2 Export `resolveCompositionEyes` from `src/index.ts`, beside the eyes seam exports. An embedder that wires the spawn itself reads the same precedence, thus the two gates cannot disagree.
+- [x] 6.3 Give the acquire and the release of one look a deadline each, in `src/tools/report-session/examine-page.ts`. An expired acquire gives the `capture-failed` outcome, and an expired release logs alone. Add the coverage of a hung acquire and of a hung release.
+- [x] 6.4 Document the eviction bound where the endpoint map is declared in `src/lib/chrome.ts`. Record the two rejected evictions in `design.md`, thus no later reader reaches for one again.
