@@ -15,4 +15,4 @@
 
 - [x] 3.1 `bun run typecheck` and `bun run lint` clean.
 - [x] 3.2 `bun test src/config src/sandbox` green.
-- [ ] 3.3 Release as a patch. The function was deep-importable, so the removal is breaking in principle; it ships as a patch because nothing imports it — not this repo, not managed Cortex, and the CLI takes only types from the module.
+- [x] 3.3 Patch bump to 0.19.1. The function was deep-importable, so the removal is breaking in principle; it ships as a patch because nothing imports it — not this repo, not managed Cortex, and the CLI takes only types from the module.

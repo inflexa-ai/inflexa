@@ -21,5 +21,5 @@
 
 - [x] 4.1 `bun run typecheck` and `bun run lint` clean.
 - [x] 4.2 `bun test src/tools/sandbox src/sandbox/mount-plan.test.ts` green.
-- [ ] 4.3 Release as a patch — an additive fallback, no signature an embedder passes. The bump is its own `Release harness` commit, per repo convention, because landing one on main publishes to npm.
+- [x] 4.3 Patch bump to 0.19.1 — an additive fallback, no signature an embedder passes. Kept as its own release commit; merging it publishes to npm.
 - [ ] 4.4 After publish: bump Cortex's pin and confirm `list_available_refs` reports the staging store with no `REF_STORE_PATH` set.
