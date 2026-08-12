@@ -19,17 +19,22 @@
  * one. Neither store is ever written through these paths.
  *
  * Both are optional, and absence is a NORMAL state rather than an error: an
- * omitted path makes its tool report the store as unavailable or unknown, which
- * is a truthful answer an agent can act on. Absence must never be reported as a
- * failure, and never papered over with a guessed path.
+ * omitted path falls back to the store's container mountpoint — correct for a
+ * host whose own process sees the store the way a sandbox does, and harmless for
+ * one that does not, because every consumer stats the root before it reports
+ * anything. A host with nothing mounted there gets the same "unavailable" or
+ * "unknown" answer an omitted path has always produced, so the fallback can no
+ * more invent a store than an explicit path can. Set a path only to name a
+ * location the container mountpoint does not describe; absence must never be
+ * reported as a failure.
  */
 export interface EnvironmentStorePaths {
     /**
      * Host path of the reference store — the same bytes sandboxes mount at
-     * `/mnt/refs`. Omit when no store is provisioned; reference discovery then
-     * reports the store as unavailable. Note that an installed store reads as
-     * absent if this is omitted, which is indistinguishable to an agent from
-     * having no data — so omit it only when there is genuinely nothing staged.
+     * `/mnt/refs`. Omit when the host's own process sees the store at that same
+     * path, as a K8s pod holding the ref-store PVC does; set it when the host
+     * reads the store somewhere else, as a native process bind-mounting a host
+     * directory into Docker does.
      */
     readonly refStorePath?: string;
     /**

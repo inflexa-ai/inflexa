@@ -31,13 +31,14 @@ import { z } from "zod";
 import { defineTool, type ToolError } from "../define-tool.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
+import { LIBS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 
 /**
  * Where the list lives when the host mounts the library store at the same path
  * the sandbox does. Hosts that do not — the store is baked into the image and
  * never bind-mounted — inject their own path instead.
  */
-const DEFAULT_PACKAGES_FILE = "/mnt/libs/current/packages.txt";
+const DEFAULT_PACKAGES_FILE = `${LIBS_CONTAINER_PATH}/current/packages.txt`;
 
 /**
  * Default cap on a listing — high enough that the real store is never truncated.

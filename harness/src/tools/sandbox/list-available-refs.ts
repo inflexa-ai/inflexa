@@ -14,7 +14,11 @@
  * it at — read where it lives, render where the caller will open it. Reading it
  * host-side is what lets a planner ask what reference data exists before any
  * sandbox is created; a step agent asking mid-run sees the same store, because
- * the mount and this path are the same bytes.
+ * the mount and this path are the same bytes. An omitted `refStorePath` falls
+ * back to that same container path — where a host that mounts the store into its
+ * own process (a K8s pod holding the ref-store PVC) already sees it. The fallback
+ * is stat-verified like any other root, so a host with nothing mounted there
+ * still reports the store as unavailable.
  *
  * The scan reports paths; meaning is joined on afterwards from the install
  * receipt and the catalog it names (organism, format, and each file's internal
@@ -34,10 +38,14 @@ import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { capCodePoints, DETAIL_MAX_LENGTH, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
 import { parseReferenceInstallReceipt } from "../../reference-data/receipt.js";
+import { REFS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 import { defineTool } from "../define-tool.js";
 
-/** Container path the ref store is mounted at; every reported path is rendered under it. */
-const REFS_ROOT = "/mnt/refs";
+/**
+ * Container path the ref store is mounted at: every reported path is rendered
+ * under it, and it is the read root when the embedder supplies none.
+ */
+const REFS_ROOT = REFS_CONTAINER_PATH;
 const MAX_ENTRIES = 200;
 const MAX_SCANNED_ENTRIES = 2_000;
 const MAX_PATH_BYTES = 40_000;
@@ -356,9 +364,8 @@ async function collectFiles(
  * summarized), a search walks to the files, because only a file carries the labels a
  * search matches on.
  */
-async function scanStore(root: string | undefined, relative: string, recursive = false): Promise<RawScan> {
+async function scanStore(root: string, relative: string, recursive = false): Promise<RawScan> {
     const empty = (): Omit<RawScan, "state"> => ({ entries: [], scannedEntries: 0, truncated: false });
-    if (!root) return { state: "unavailable", ...empty() };
     try {
         if (!(await lstat(root)).isDirectory()) return { state: "unavailable", ...empty() };
     } catch {
@@ -569,6 +576,7 @@ function renderContent(path: string, scan: RawScan, entries: readonly ReferenceI
 
 /** Create reference discovery over the host-visible reference store. */
 export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
+    const storeRoot = deps.refStorePath ?? REFS_ROOT;
     return defineTool({
         id: "list_available_refs",
         description:
@@ -645,7 +653,7 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
             // recursive pass a search from the store root only ever sees directories,
             // which carry no dataset labels, so "find me a regulon network" finds nothing.
             const needleGiven = (query?.trim() ?? "") !== "";
-            const raw = await scanStore(deps.refStorePath, posixPath.relative(REFS_ROOT, requested.path) || ".", needleGiven);
+            const raw = await scanStore(storeRoot, posixPath.relative(REFS_ROOT, requested.path) || ".", needleGiven);
             const enriched = enrichEntries(raw.entries, raw);
             const categories = collectCategories(enriched);
             const needle = query?.trim().toLowerCase();

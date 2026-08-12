@@ -21,8 +21,13 @@ import { assertSafeId } from "../workspace/paths.js";
 
 export const STEP_SUBDIRS = ["output", "scripts", "figures", "logs", "notebooks"] as const;
 
-const LIBS_CONTAINER_PATH = "/mnt/libs";
-const REFS_CONTAINER_PATH = "/mnt/refs";
+/**
+ * Container mountpoints of the two read-only stores. Exported because they are
+ * also the discovery tools' default read root: a host whose own process sees a
+ * store the way the sandbox does configures nothing further.
+ */
+export const LIBS_CONTAINER_PATH = "/mnt/libs";
+export const REFS_CONTAINER_PATH = "/mnt/refs";
 
 export interface MountPlanCoords {
     analysisId: string;
