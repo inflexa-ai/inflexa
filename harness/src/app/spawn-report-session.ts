@@ -7,8 +7,9 @@
  * finds the parent, and `latestSeq` gives the anchor. `listThreads` counts the
  * report children, and `createThread` writes the insert. `render` and
  * `appendTurn` make the seed, and `purgeThread` removes a child that holds no
- * seed. The one storage read this capability adds, `latestSeq`, lives on the
- * thread history, because that module owns the `messages` table.
+ * seed. The two storage reads that this capability adds, `latestSeq` and
+ * `countUserTurnsAfter`, live on the thread history, because that module owns
+ * the `messages` table.
  *
  * The reads and the insert take no lock and no transaction. A concurrent turn
  * can append between the anchor read and the insert, and a retract can cut the
@@ -34,10 +35,15 @@
  * fails, the spawn purges the child, because a report thread with no context is
  * a dead end.
  *
- * The delta read gives the two values that a caller compares before a new spawn:
- * the report child with the greatest anchor, and the latest seq of the parent.
- * The listing orders by `updated_at` and not by the anchor, thus the read walks
- * each page of the children.
+ * The delta read gives the state that a caller reads before a new spawn. It
+ * gives the report child with the greatest anchor. It also gives the count of
+ * user turns of the parent past that anchor. The listing orders by `updated_at`
+ * and not by the anchor, thus the read walks each page of the children.
+ *
+ * The unit of the delta is a turn, and it is not a raw seq. A turn appends after
+ * its own loop runs, thus the anchor of a child sits below the rows of the ask
+ * that made it. A raw seq comparison would name each child stale one turn after
+ * the spawn.
  */
 
 import { randomUUID } from "node:crypto";
@@ -135,15 +141,22 @@ export interface NewestReportChild {
 }
 
 /**
- * The two values that a caller compares before a new spawn. `newestChild` is
- * `null` when the parent holds no live report child, and an archived child reads
- * the same way, because a steer into hidden state is not permitted. `latestSeq`
- * is `null` when the parent holds no message, and an absent parent reads the
- * same way.
+ * The state that a caller reads before a new spawn. `newestChild` is `null` when
+ * the parent holds no live report child, and an archived child reads the same
+ * way, because a steer into hidden state is not permitted. An absent parent
+ * reads the same way.
  */
 export interface ReportSessionDelta {
     readonly newestChild: NewestReportChild | null;
-    readonly latestSeq: number | null;
+    /**
+     * The count of the parent turns that a person opened past the anchor of
+     * `newestChild` — the new work of the parent past that spawn point. A
+     * synthetic record of the host adds nothing to it.
+     *
+     * It is `null` when `newestChild` is `null`, because a parent with no child
+     * gives no anchor to count from. No count query runs in that case.
+     */
+    readonly userTurnsSinceAnchor: number | null;
 }
 
 export interface ReportSessionSpawnDeps {
@@ -183,14 +196,18 @@ export interface ReportSessionSpawn {
      */
     listReportSessions(analysisId: string, paging?: ReportSessionPaging): ResultAsync<ThreadPage, DbError>;
     /**
-     * The state that a caller reads before a new spawn: the live report child of
-     * the parent with the greatest anchor, and the latest seq of the parent. A
-     * caller compares the two values, and an equal pair says that the parent
-     * holds no message past the anchor of that child.
+     * The state that a caller reads before a new spawn. It gives the live report
+     * child of the parent with the greatest anchor. It also gives the count of
+     * the parent turns that a person opened past that anchor.
      *
-     * The read walks each page of the children listing, because the listing
-     * orders by `updated_at` and not by the anchor. It reads no model judgment,
-     * and it writes nothing.
+     * The count admits one turn of new work by construction. A turn appends
+     * after its own loop runs, thus the anchor of a child sits below the rows of
+     * the ask that made it, and that ask counts as one.
+     *
+     * The read picks the child first, thus one anchor bounds the count. A parent
+     * with no child needs no anchor, and no count query runs. The read walks each
+     * page of the children listing, because the listing orders by `updated_at`
+     * and not by the anchor. It reads no model judgment, and it writes nothing.
      */
     reportSessionDelta(parentThreadId: string): ResultAsync<ReportSessionDelta, DbError>;
 }
@@ -379,13 +396,15 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
         // read comes first. An absent or archived parent gives no advice, and the
         // spawn refuses it later with `parent_not_found`.
         return store.getThread(parentThreadId).andThen((parent): ResultAsync<ReportSessionDelta, DbError> => {
-            if (parent === null) return okAsync({ newestChild: null, latestSeq: null });
-            return history.latestSeq(parentThreadId).andThen((latestSeq) =>
-                collectReportChildren(parent.analysisId, parentThreadId, 0, []).map((children) => ({
-                    newestChild: pickNewestChild(children),
-                    latestSeq,
-                })),
-            );
+            if (parent === null) return okAsync({ newestChild: null, userTurnsSinceAnchor: null });
+            // The child comes first, because the anchor of that child bounds the
+            // count. A parent with no child gives no anchor, thus the read stops
+            // here and the count query never runs.
+            return collectReportChildren(parent.analysisId, parentThreadId, 0, []).andThen((children): ResultAsync<ReportSessionDelta, DbError> => {
+                const newestChild = pickNewestChild(children);
+                if (newestChild === null) return okAsync({ newestChild: null, userTurnsSinceAnchor: null });
+                return history.countUserTurnsAfter(parentThreadId, newestChild.anchor).map((userTurnsSinceAnchor) => ({ newestChild, userTurnsSinceAnchor }));
+            });
         });
     }
 

@@ -1100,6 +1100,56 @@ describe("latestSeq", () => {
     });
 });
 
+// --- countUserTurnsAfter ----------------------------------------------------
+
+describe("countUserTurnsAfter", () => {
+    it("counts one for each turn a person opened past the seq", async () => {
+        // Three two-row turns land at seq 0..5, so the user starts sit at 0, 2, 4.
+        (await append(THREAD, [userText("question one"), assistantText("answer one")]))._unsafeUnwrap();
+        (await append(THREAD, [userText("question two"), assistantText("answer two")]))._unsafeUnwrap();
+        (await append(THREAD, [userText("question three"), assistantText("answer three")]))._unsafeUnwrap();
+
+        expect((await history.countUserTurnsAfter(THREAD, -1))._unsafeUnwrap()).toBe(3);
+        expect((await history.countUserTurnsAfter(THREAD, 1))._unsafeUnwrap()).toBe(2);
+        expect((await history.countUserTurnsAfter(THREAD, 3))._unsafeUnwrap()).toBe(1);
+        expect((await history.countUserTurnsAfter(THREAD, 5))._unsafeUnwrap()).toBe(0);
+    });
+
+    it("gives zero for a thread with no messages", async () => {
+        expect((await history.countUserTurnsAfter(THREAD, 0))._unsafeUnwrap()).toBe(0);
+    });
+
+    it("counts one turn once, whatever the row count of that turn is", async () => {
+        // A serial-tool turn writes five rows and stays one ask. A row count of
+        // the same span would report five, and the nudge would report two starts.
+        (
+            await append(THREAD, [
+                userText("run the search"),
+                assistantToolUse("c1", "workspace_search", { query: "the staged dataset" }),
+                userToolResult("c1", "one hit"),
+                syntheticUserMessage("Your previous reply was cut off at the output-token limit; continue concisely."),
+                assistantText("here is the hit"),
+            ])
+        )._unsafeUnwrap();
+
+        expect((await history.countUserTurnsAfter(THREAD, -1))._unsafeUnwrap()).toBe(1);
+    });
+
+    it("does not count a host-appended record", async () => {
+        (await append(THREAD, [userText("kick off the analysis"), assistantText("launched")]))._unsafeUnwrap();
+        // The record is the only row past seq 1, and it carries the `user` role.
+        // Nobody typed it, thus it is no new work of the thread.
+        (await append(THREAD, [syntheticRecordMessage("Run GSEA cross-species comparison completed: 3/3 steps.")]))._unsafeUnwrap();
+
+        expect((await history.countUserTurnsAfter(THREAD, 1))._unsafeUnwrap()).toBe(0);
+
+        // The genuine turn that follows the record does count, thus the zero above
+        // reports the marker and not an empty span.
+        (await append(THREAD, [userText("what did it find?"), assistantText("here is the summary")]))._unsafeUnwrap();
+        expect((await history.countUserTurnsAfter(THREAD, 1))._unsafeUnwrap()).toBe(1);
+    });
+});
+
 // --- windowing is independent of the rollup ---------------------------------
 
 describe("loadRecent ignores the stored rollup", () => {
