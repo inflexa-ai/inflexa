@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
 import type { CitationBlock, MetricBlock, ReportDocument, TextBlock } from "../contracts/report-blocks.js";
+import { ASSETS_DIR, PAGE_ASSETS } from "./assets.js";
+import { DESIGN_CSS } from "./design.js";
+import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "./fixture.js";
 import { CHART_BOOTSTRAP } from "./page.js";
 import { renderReportPage } from "./render.js";
-import type { RenderValues } from "./types.js";
 
 /** One citation reference. A claim binding and a citation binding both admit it. */
 const citation: CitationBlock["binding"] = { kind: "citation", idKind: "pmid", id: "12345", raw: "Doe 2020" };
@@ -11,84 +13,69 @@ const citation: CitationBlock["binding"] = { kind: "citation", idKind: "pmid", i
 /** One scalar reference for a metric block. The renderer never reads it. */
 const scalarRef: MetricBlock["value"] = { kind: "artifact-value", path: "runs/r1/de.csv", hash: "sha256:aaa", locator: { column: "padj", row: 0 } };
 
-/** A document with every block kind, in a section tree with a nested child. */
-const fullDocument: ReportDocument = {
-    title: "Full Report",
-    sections: [
-        {
-            kind: "section",
-            id: "sec-root",
-            title: "Root",
-            blocks: [
-                { kind: "text", id: "txt", content: { prose: "A paragraph." } },
-                { kind: "claim", id: "clm", content: { prose: "A supported claim." }, bindings: [citation] },
-                { kind: "metric", id: "met", label: "Adjusted p-value", value: scalarRef },
-                { kind: "table", id: "tbl", binding: { kind: "artifact-table", path: "runs/r1/de.csv", hash: "sha256:aaa" } },
-                {
-                    kind: "chart",
-                    id: "cht",
-                    binding: { kind: "artifact-table", path: "runs/r1/de.csv", hash: "sha256:aaa" },
-                    chartType: "bar",
-                    encoding: { x: "day", y: "count" },
-                },
-                { kind: "figure", id: "fig", binding: { kind: "artifact-file", path: "runs/r1/plot.png", hash: "sha256:aaa" }, caption: "Volcano plot." },
-                { kind: "citation", id: "cit", binding: { kind: "citation", idKind: "doi", id: "10.1/x", raw: "Roe 2021" }, note: "see figure 2" },
-                {
-                    kind: "section",
-                    id: "sec-child",
-                    title: "Child",
-                    blocks: [{ kind: "text", id: "txt2", content: { prose: "Nested prose." } }],
-                },
-            ],
-        },
-    ],
-};
+/**
+ * Each `src` value and each `href` value of the page, in document order. The markup runtime quotes every
+ * attribute value with a double quote, thus one pattern reads them all.
+ */
+function attributeReferences(html: string): string[] {
+    return [...html.matchAll(/(?:src|href)="([^"]*)"/g)].map((match) => match[1]);
+}
 
-/** The value map for `fullDocument`. A metric needs a scalar, a table and a chart need a table, a figure needs a figure source. */
-const fullValues: RenderValues = {
-    met: { type: "scalar", value: 0.0123 },
-    tbl: {
-        type: "table",
-        rows: [
-            { gene: "TP53", padj: 0.01 },
-            { gene: "MYC", padj: 0.02 },
-        ],
-    },
-    cht: {
-        type: "table",
-        rows: [
-            { day: "Mon", count: 5 },
-            { day: "Tue", count: 7 },
-        ],
-    },
-    fig: { type: "figure", src: "data:image/png;base64,AAAA" },
-};
+/**
+ * Each `url(...)` value of a style sheet, without its quotes. The `@font-face` rules reach the page through
+ * the inline sheet, thus the font references live here and not in an attribute.
+ */
+function styleReferences(css: string): string[] {
+    const pattern = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^'")]*))\s*\)/g;
+    return [...css.matchAll(pattern)].map((match) => match[1] ?? match[2] ?? match[3]);
+}
 
 describe("renderReportPage assembly", () => {
     it("gives byte-identical output for the same document and values", () => {
-        const first = renderReportPage(fullDocument, fullValues);
-        const second = renderReportPage(fullDocument, fullValues);
+        const first = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES);
+        const second = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES);
         expect(first.isOk()).toBe(true);
         expect(second.isOk()).toBe(true);
         expect(first._unsafeUnwrap()).toBe(second._unsafeUnwrap());
     });
 
     it("renders from in-memory inputs with no directory and no file", () => {
-        const html = renderReportPage(fullDocument, fullValues)._unsafeUnwrap();
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
         expect(typeof html).toBe("string");
         expect(html.startsWith("<!doctype html>")).toBe(true);
-        expect(html).toContain("A paragraph.");
-        expect(html).toContain("Volcano plot.");
+        expect(html).toContain("The cohort holds 48 primary lung adenocarcinoma biopsies.");
+        expect(html).toContain("A teal point rises under hypoxia");
+    });
+});
+
+describe("the page stands alone", () => {
+    it("holds no attribute reference and no style reference with a remote scheme", () => {
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        const references = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)];
+        expect(references.length).toBeGreaterThan(0);
+
+        // The scheme test reads the start of the value. A namespace URI inside a data URI names no host to
+        // fetch, thus the test must not read a scheme out of the middle of a value.
+        const remote = references.filter((value) => /^https?:/i.test(value));
+        expect(remote).toEqual([]);
+
+        // Each reference resolves inside the page directory: a staged asset, an inline data URI, or an
+        // anchor of the page itself.
+        const foreign = references.filter((value) => !(value.startsWith(`${ASSETS_DIR}/`) || value.startsWith("data:") || value.startsWith("#")));
+        expect(foreign).toEqual([]);
     });
 
-    it("holds no local asset reference", () => {
-        const html = renderReportPage(fullDocument, fullValues)._unsafeUnwrap();
-        const assetRefs = [...html.matchAll(/(?:src|href)="([^"]*)"/g)].map((match) => match[1]);
-        expect(assetRefs.length).toBeGreaterThan(0);
-        for (const value of assetRefs) {
-            const standalone = value.startsWith("https://") || value.startsWith("data:") || value.startsWith("#");
-            expect(standalone).toBe(true);
-        }
+    it("names one manifest entry for each staged asset reference", () => {
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        const staged = new Set(PAGE_ASSETS.map((asset) => asset.file));
+        const prefix = `${ASSETS_DIR}/`;
+        const stagedReferences = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)].filter((value) => value.startsWith(prefix));
+        expect(stagedReferences.length).toBeGreaterThan(0);
+
+        // A reference that names no manifest entry is a file that the caller never stages, thus the page
+        // would open with a failed request.
+        const unstaged = stagedReferences.filter((value) => !staged.has(value.slice(prefix.length)));
+        expect(unstaged).toEqual([]);
     });
 });
 
@@ -211,7 +198,7 @@ describe("renderReportPage navigation and references", () => {
 
 describe("renderReportPage readiness signal", () => {
     it("carries the theme-ready dispatch and the sentinel in the page markup", () => {
-        const html = renderReportPage(fullDocument, fullValues)._unsafeUnwrap();
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
         // The bootstrap signals readiness when it completes, thus a capture keys on a real event and returns
         // when the page is ready instead of at a timeout.
         expect(html).toContain("window.__inflexaThemeReady = true");

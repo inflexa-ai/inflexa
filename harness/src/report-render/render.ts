@@ -19,11 +19,11 @@ import { err, ok, type Result } from "neverthrow";
 import type { Block, ReportDocument } from "../contracts/report-blocks.js";
 import { renderChart } from "./views/chart-view.js";
 import { deriveChartOption } from "./chart.js";
-import { assemblePage, renderReferenceSection } from "./views/page-view.js";
+import { assemblePage, renderBand, renderReferenceSection } from "./views/page-view.js";
 import { renderClaim, renderNav, renderSection, renderText } from "./views/prose.js";
 import { ReferenceLedger } from "./references.js";
 import type { RenderProblem, RenderValue, RenderValues } from "./types.js";
-import { renderCitation, renderFigure, renderMetric, renderTable } from "./views/values.js";
+import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable } from "./views/values.js";
 
 /**
  * Render a report document and its value map to one HTML string.
@@ -36,15 +36,15 @@ export function renderReportPage(document: ReportDocument, values: RenderValues)
     const ledger = new ReferenceLedger();
 
     const content: string[] = [];
-    for (const section of document.sections) {
-        content.push(renderBlock(section, values, ledger, 0, problems));
+    for (const [index, section] of document.sections.entries()) {
+        content.push(renderBand(index, renderBlock(section, values, ledger, 0, problems)));
     }
     if (problems.length > 0) {
         return err(problems);
     }
 
     const nav = renderNav(document.sections);
-    const references = renderReferenceSection(ledger);
+    const references = renderReferenceSection(ledger, document.sections.length);
     return ok(assemblePage(document.title, nav, content.join(""), references));
 }
 
@@ -114,14 +114,39 @@ function renderBlock(block: Block, values: RenderValues, ledger: ReferenceLedger
             }
             return renderChart(block, option.value);
         }
-        case "section": {
-            const parts: string[] = [];
-            for (const child of block.blocks) {
-                parts.push(renderBlock(child, values, ledger, depth + 1, problems));
-            }
-            return renderSection(block, depth, parts.join(""));
-        }
+        case "section":
+            return renderSection(block, depth, renderChildren(block.blocks, values, ledger, depth + 1, problems));
     }
+}
+
+/**
+ * Render the children of one section, and group a consecutive run of metric siblings into one grid.
+ *
+ * A run of two or more metric blocks reads as one row of statistics, thus the grid holds the whole run. A
+ * lone metric stays one card, and no grid wraps it. A block of a different kind ends the run.
+ */
+function renderChildren(blocks: Block[], values: RenderValues, ledger: ReferenceLedger, depth: number, problems: RenderProblem[]): string {
+    const parts: string[] = [];
+    let index = 0;
+    while (index < blocks.length) {
+        const run = metricRunLength(blocks, index);
+        const rendered: string[] = [];
+        for (let offset = 0; offset < Math.max(run, 1); offset += 1) {
+            rendered.push(renderBlock(blocks[index + offset], values, ledger, depth, problems));
+        }
+        parts.push(run > 1 ? renderMetricGrid(rendered.join("")) : rendered.join(""));
+        index += Math.max(run, 1);
+    }
+    return parts.join("");
+}
+
+/** The count of the metric blocks that start at `start`. A block of a different kind gives zero. */
+function metricRunLength(blocks: Block[], start: number): number {
+    let length = 0;
+    while (start + length < blocks.length && blocks[start + length].kind === "metric") {
+        length += 1;
+    }
+    return length;
 }
 
 /** A `missing-value` problem that names the block and the shape that it needs. */
