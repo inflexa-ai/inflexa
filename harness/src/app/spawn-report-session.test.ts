@@ -10,7 +10,7 @@ import { createWorkingMemory, type WorkingMemoryStore } from "../memory/working-
 import { upsertAnalysis } from "../state/analyses.js";
 import { upsertArtifact, type RegisterArtifactInput } from "../state/artifacts.js";
 import { createReportSessionRuntime } from "./report-session-runtime.js";
-import { createReportSessionSpawn, REPORT_CHILD_PAGE_SIZE, type ReportBrief, type ReportSessionSpawn } from "./spawn-report-session.js";
+import { compositionHasEyes, createReportSessionSpawn, REPORT_CHILD_PAGE_SIZE, type ReportBrief, type ReportSessionSpawn } from "./spawn-report-session.js";
 
 const ANALYSIS_A = "analysis-a";
 const ANALYSIS_B = "analysis-b";
@@ -189,6 +189,23 @@ describe("spawnReportSession anchor", () => {
 
         const read = (await store.getThread(child.threadId))._unsafeUnwrap();
         expect(read!.parentSeq).toBe(anchorAtSpawn);
+    });
+});
+
+describe("the eyes rule", () => {
+    it("is true for each of the three routes to a look", () => {
+        // A bound eyes seam gives a browser for one look.
+        expect(compositionHasEyes({ chrome: {}, eyes: () => Promise.resolve({ browserUrl: WITH_BROWSER.browserUrl, release: () => Promise.resolve() }) })).toBe(
+            true,
+        );
+        // A capture seam replaces the transport of the look.
+        expect(compositionHasEyes({ chrome: {}, capture: () => Promise.resolve({ screenshotBase64: "", consoleErrors: [], failedRequests: [] }) })).toBe(true);
+        // A config that names a browser is the route of a standing sidecar.
+        expect(compositionHasEyes({ chrome: WITH_BROWSER })).toBe(true);
+    });
+
+    it("is false for a composition with no route", () => {
+        expect(compositionHasEyes({ chrome: {} })).toBe(false);
     });
 });
 

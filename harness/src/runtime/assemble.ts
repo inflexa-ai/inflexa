@@ -87,14 +87,18 @@ export interface RegisteredWorkflows {
 
 /**
  * Conversation-agent deps minus the workflow callable, the resource policy, the
- * usage recorder, and the report-session anchor — `assembleCoreRuntime` supplies
- * those itself so a caller cannot wire a stale callable, a policy that diverges
- * from the one the workflows see, a recorder that only half the agent tree
- * reports to, or an anchor over a different session runtime.
+ * usage recorder, the report-session anchor, and the eyes —
+ * `assembleCoreRuntime` supplies those itself so a caller cannot wire a stale
+ * callable, a policy that diverges from the one the workflows see, a recorder
+ * that only half the agent tree reports to, an anchor over a different session
+ * runtime, or a seam that only half the agent tree looks through. The assembly
+ * resolves the eyes one time, from `CoreRuntimeDeps.eyes` and the chrome config.
+ * A caller that bound them here would give the conversation agent a seam that
+ * the report agent never sees.
  */
 export type ConversationAssemblyDeps = Omit<
     ConversationAgentDeps,
-    "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder" | "citationResolver" | "anchorReportSession"
+    "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder" | "citationResolver" | "anchorReportSession" | "eyes"
 >;
 
 /**
@@ -282,6 +286,10 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     // operation and pins the snapshot of a new session at the spawn.
     const reportSession = createReportSessionRuntime({ pool: conversation.pool, ...(conversation.logger ? { logger: conversation.logger } : {}) });
 
+    // The eyes of the composition resolve one time here. Thus the agent that looks at a page and
+    // the tool that starts a session read one answer. No tool reads the precedence again.
+    const eyes = resolveCompositionEyes(deps.eyes, conversation.chrome);
+
     const conversationAgent = createConversationAgent({
         ...conversation,
         executeAnalysisWorkflow: executeAnalysis,
@@ -289,6 +297,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         resourcePolicy,
         usageRecorder,
         citationResolver,
+        ...(eyes ? { eyes } : {}),
     });
 
     // The report agent is a singleton over the conversation deps, the same way the
@@ -322,10 +331,6 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         });
     };
     const makeReportResolver = deps.makeReportReferenceResolver ?? makeProductionReportResolver;
-
-    // The eyes of the composition resolve one time here. Thus the report agent and each tool under
-    // it read one answer, and no tool reads the precedence again.
-    const eyes = resolveCompositionEyes(deps.eyes, conversation.chrome);
 
     const reportAgent = createReportSessionAgent({
         model: conversation.model,

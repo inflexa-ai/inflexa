@@ -7,19 +7,25 @@ import type { Browser } from "puppeteer-core";
 
 import type { ThreadAgentResolver, UnregisteredThreadType } from "@inflexa-ai/harness";
 
+import { createConversationAgent } from "../agents/conversation-agent.js";
 import { createReportSessionAgent } from "../agents/report-session-agent.js";
 import { createReportSessionRuntime } from "../app/report-session-runtime.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import type { Scope } from "../auth/types.js";
+import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
+import type { RunAuthorizer } from "../execution/run-authorizer.js";
+import type { RunLauncher } from "../execution/run-launcher.js";
 import { setBrowserConnector, type ChromeConfig } from "../lib/chrome.js";
 import type { AcquireEyes, EyesScope } from "../lib/eyes.js";
+import { createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore } from "../memory/thread-store.js";
-import type { EmbeddingProvider } from "../providers/types.js";
+import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { upsertAnalysis } from "../state/analyses.js";
 import type { ReportVersionStore } from "../state/report-versions.js";
 import { makeToolContext } from "../tools/__fixtures__/tool-context.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad } from "../tools/report-authoring/authoring-tools.js";
 import type { ExaminePageResult } from "../tools/report-session/index.js";
+import type { StartReportSessionResult } from "../tools/start-report-session.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { createThreadAgentResolver, resolveCompositionEyes, type CoreRuntime, type CoreRuntimeDeps } from "./assemble.js";
 import type { AgentDefinition } from "../loop/types.js";
@@ -324,6 +330,110 @@ describe("the eyes of the composition", () => {
         // The scope carries the analysis and the root of the call, thus a realization mounts the same tree.
         expect(acquired).toEqual([{ analysisId: EYES_ANALYSIS_ID, workspaceRoot: root }]);
         expect(released).toEqual([SEAM_ENDPOINT]);
+    });
+});
+
+/**
+ * The fixtures of the start-tool case.
+ *
+ * The assembly resolves the eyes one time, and the conversation agent takes that answer. The case builds the
+ * agent over one resolution, the same wiring as the assembly. It starts a session through the tool of the
+ * roster.
+ */
+const START_ANALYSIS_ID = "analysis-start";
+
+/** The endpoint of the seam of the start-tool case. The start tool opens no lease, thus nothing connects. */
+const START_ENDPOINT = "http://assemble-start.test:9222";
+
+/** The smallest brief that the tool accepts. The two optional fields add nothing to the eyes case. */
+const START_BRIEF = {
+    objective: "Explain the sample quality outcome",
+    audience: "The lab lead",
+    angle: "The samples that the study keeps",
+};
+
+/**
+ * Build the conversation agent over the eyes of one composition, the same wiring as the assembly.
+ *
+ * The case runs the start tool alone, and that tool reads the pool, the anchor, the chrome config, and the
+ * eyes. Each of the four is real here. No factory of the roster reads one of the other deps at construction,
+ * thus an empty stub stands for each of them.
+ */
+function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, pool: Pool): AgentDefinition {
+    return createConversationAgent({
+        provider: {} as ChatProvider,
+        utilityProvider: {} as ChatProvider,
+        pool,
+        embedding: {} as EmbeddingProvider,
+        workspaceFs: {} as WorkspaceFilesystem,
+        model: "test/model",
+        utilityModel: "test/utility-model",
+        executeAnalysisWorkflow: (async () => {
+            throw new Error("not used at composition time");
+        }) as never,
+        anchorReportSession: createReportSessionRuntime({ pool }).ensureSessionState,
+        resolveWorkspaceRoot: (id: string) => join("/sessions", id),
+        runAuthorizer: {} as RunAuthorizer,
+        runLauncher: {} as RunLauncher,
+        createPreviewPublisher: (async () => {
+            throw new Error("not used at composition time");
+        }) as never,
+        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        templatesDir: "/templates",
+        skillsDir: "/skills",
+        chrome,
+        citationResolver: unusedCitationResolver,
+        ...(eyes ? { eyes } : {}),
+    });
+}
+
+describe("the eyes of the start tool", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("assemble_start_report_session");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("carries the resolved seam into the start tool of the conversation agent", async () => {
+        const parentThreadId = "thread-start-parent";
+        (await upsertAnalysis(pool, START_ANALYSIS_ID, null))._unsafeUnwrap();
+        (await createThreadStore(pool).createThread({ threadId: parentThreadId, analysisId: START_ANALYSIS_ID, title: "Parent" }))._unsafeUnwrap();
+        // The spawn refuses an empty transcript, thus the parent carries one turn.
+        (
+            await createThreadHistory(pool).appendTurn(parentThreadId, {
+                modelMessages: [
+                    { role: "user", content: [{ type: "text", text: "hi" }] },
+                    { role: "assistant", content: [{ type: "text", text: "hello" }] },
+                ],
+                displayMessages: [],
+            })
+        )._unsafeUnwrap();
+        // The config names no browser, thus the bound seam is the one route to a look.
+        const chrome: ChromeConfig = {};
+        const seam: AcquireEyes = () => Promise.resolve({ browserUrl: START_ENDPOINT, release: () => Promise.resolve() });
+
+        const agent = conversationAgentOver(resolveCompositionEyes(seam, chrome), chrome, pool);
+        const found = agent.tools.filter((each) => each.id === "start_report_session");
+        // The roster holds one start tool. A wiring that drops it empties this list, thus the assertion fails
+        // here and no line below reads an absent member.
+        expect(found).toHaveLength(1);
+        const [tool] = found;
+        const { ctx } = makeToolContext();
+        const scope: Scope = { kind: "analysis", analysisId: START_ANALYSIS_ID, threadId: parentThreadId };
+        const outcome = await tool.execute(START_BRIEF, { ...ctx, session: { ...ctx.session, scope } });
+
+        // The roster types each tool as `Tool<unknown, unknown>`. The id above selects the one factory that
+        // makes the start tool. Thus the ok value is the outcome of that tool.
+        const result = outcome._unsafeUnwrap() as StartReportSessionResult;
+        // A composition with no route refuses here, thus the started arm says that the seam reached the tool.
+        expect(result.outcome).toBe("started");
     });
 });
 
