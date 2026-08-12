@@ -17,7 +17,7 @@ import type { ReferenceLedger } from "../references.js";
  */
 export function Marker({ n }: { n: number }) {
     return (
-        <sup class="report-marker font-mono text-[10px] text-primary-500">
+        <sup class="report-marker">
             <a href={`#ref-${n}`}>{n}</a>
         </sup>
     );
@@ -25,17 +25,17 @@ export function Marker({ n }: { n: number }) {
 
 /** The kind label of one reference entry. */
 function RefKind({ children }: PropsWithChildren) {
-    return <span class="report-ref-kind font-mono text-[11px] uppercase tracking-wider text-slate-400">{children}</span>;
+    return <span class="report-ref-kind">{children}</span>;
 }
 
 /** A path in a monospace code span. */
 function PathCode({ children }: PropsWithChildren) {
-    return <code class="font-mono text-primary-700">{children}</code>;
+    return <code class="report-ref-path">{children}</code>;
 }
 
 /** A plain detail such as a locator or an external id. */
 function Detail({ children }: PropsWithChildren) {
-    return <span class="text-slate-500">{children}</span>;
+    return <span class="report-ref-detail">{children}</span>;
 }
 
 /**
@@ -109,9 +109,9 @@ export function renderReferenceList(ledger: ReferenceLedger): string {
         return "";
     }
     return String(
-        <ol class="report-references list-decimal pl-6">
+        <ol class="report-references">
             {entries.map((reference, index) => (
-                <li id={`ref-${index + 1}`} class="report-ref-item mb-2 text-sm text-slate-600">
+                <li id={`ref-${index + 1}`} class="report-ref-item">
                     <ReferenceEntry reference={reference} />
                 </li>
             ))}

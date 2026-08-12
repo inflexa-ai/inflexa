@@ -30,14 +30,14 @@ describe("renderTable", () => {
                 { gene: "EGFR", padj: 0.03 },
             ],
         });
-        expect(html.split("<th ").length - 1).toBe(2);
+        expect(html.split("<th>").length - 1).toBe(2);
         expect(html.split(`<tr class="report-row`).length - 1).toBe(3);
         expect(html).toContain("TP53");
     });
 
     it("renders the header alone for a zero-row table with named columns", () => {
         const html = renderTable(block, { type: "table", rows: [], columns: ["gene", "padj"] });
-        expect(html.split("<th ").length - 1).toBe(2);
+        expect(html.split("<th>").length - 1).toBe(2);
         expect(html).not.toContain(`<tr class="report-row`);
     });
 
@@ -47,7 +47,7 @@ describe("renderTable", () => {
             rows: [{ gene: "TP53", padj: 0.01 }, { gene: "MYC" }],
             columns: ["gene", "padj"],
         });
-        expect(html).toContain(`<td class="px-4 py-2.5 text-slate-700"></td>`);
+        expect(html).toContain(`<td></td>`);
         expect(html).not.toContain("undefined");
     });
 });

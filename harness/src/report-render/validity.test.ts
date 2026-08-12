@@ -20,8 +20,9 @@ import { describe, expect, it } from "bun:test";
 import { validate as validateCssRaw } from "csstree-validator";
 import { HtmlValidate } from "html-validate";
 
-import type { CitationBlock, MetricBlock, ReportDocument } from "../contracts/report-blocks.js";
-import { PAGE_CSS } from "./page.js";
+import type { ReportDocument } from "../contracts/report-blocks.js";
+import { DESIGN_CSS } from "./design.js";
+import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "./fixture.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
 
@@ -31,77 +32,10 @@ type CssFinding = { name: string; message: string; property?: string };
 /** The one signature that the gate uses. The cast gives the untyped import a precise type. */
 const validateCss = validateCssRaw as (css: string, filename?: string) => CssFinding[];
 
-/** One citation reference. A claim binding and a citation binding both admit it. */
-const citation: CitationBlock["binding"] = { kind: "citation", idKind: "pmid", id: "12345", raw: "Doe 2020" };
-
-/** One scalar reference for a metric block. The renderer never reads it. */
-const scalarRef: MetricBlock["value"] = { kind: "artifact-value", path: "runs/r1/de.csv", hash: "sha256:aaa", locator: { column: "padj", row: 0 } };
-
-/** A document with every block kind, in a section tree with a nested child. The chart, the table, and the figure carry a title and a caption, thus the gate covers those markup slots too. */
-const fullDocument: ReportDocument = {
-    title: "Full Report",
-    sections: [
-        {
-            kind: "section",
-            id: "sec-root",
-            title: "Root",
-            blocks: [
-                { kind: "text", id: "txt", content: { prose: "A paragraph." } },
-                { kind: "claim", id: "clm", content: { prose: "A supported claim." }, bindings: [citation] },
-                { kind: "metric", id: "met", label: "Adjusted p-value", value: scalarRef },
-                {
-                    kind: "table",
-                    id: "tbl",
-                    title: "Genes",
-                    binding: { kind: "artifact-table", path: "runs/r1/de.csv", hash: "sha256:aaa" },
-                    caption: "Top genes.",
-                },
-                {
-                    kind: "chart",
-                    id: "cht",
-                    title: "Counts by day",
-                    binding: { kind: "artifact-table", path: "runs/r1/de.csv", hash: "sha256:aaa" },
-                    chartType: "bar",
-                    encoding: { x: "day", y: "count" },
-                    caption: "Daily counts.",
-                },
-                { kind: "figure", id: "fig", binding: { kind: "artifact-file", path: "runs/r1/plot.png", hash: "sha256:aaa" }, caption: "Volcano plot." },
-                { kind: "citation", id: "cit", binding: { kind: "citation", idKind: "doi", id: "10.1/x", raw: "Roe 2021" }, note: "see figure 2" },
-                {
-                    kind: "section",
-                    id: "sec-child",
-                    title: "Child",
-                    blocks: [{ kind: "text", id: "txt2", content: { prose: "Nested prose." } }],
-                },
-            ],
-        },
-    ],
-};
-
-/** The value map for `fullDocument`. A metric needs a scalar, a table and a chart need a table, a figure needs a figure source. */
-const fullValues: RenderValues = {
-    met: { type: "scalar", value: 0.0123 },
-    tbl: {
-        type: "table",
-        rows: [
-            { gene: "TP53", padj: 0.01 },
-            { gene: "MYC", padj: 0.02 },
-        ],
-    },
-    cht: {
-        type: "table",
-        rows: [
-            { day: "Mon", count: 5 },
-            { day: "Tue", count: 7 },
-        ],
-    },
-    fig: { type: "figure", src: "data:image/png;base64,AAAA" },
-};
-
 /**
- * The HTML validator with the recommended preset. Three rules turn off, because the page rejects each one
- * on a deliberate design property. The rest of the preset stays on, thus the gate still catches a real
- * defect such as an unknown attribute.
+ * The HTML validator with the recommended preset. Two rules turn off, because the page rejects each one on
+ * a deliberate design property. The rest of the preset stays on, thus the gate still catches a real defect
+ * such as an unknown attribute or a style attribute that a view emits.
  */
 const htmlValidate = new HtmlValidate({
     extends: ["html-validate:recommended"],
@@ -112,14 +46,12 @@ const htmlValidate = new HtmlValidate({
         // The markup runtime prints each void element in the self-closed form, for example `<meta/>` and
         // `<img/>`. The trailing slash is inert in HTML5, thus the compact form is a runtime property.
         "void-style": "off",
-        // The metric card sets a deliberate inline color on its value. Thus the inline style stays.
-        "no-inline-style": "off",
     },
 });
 
 describe("the rendered page validates as HTML and CSS", () => {
     it("passes the offline HTML validation with the recommended preset", async () => {
-        const html = renderReportPage(fullDocument, fullValues)._unsafeUnwrap();
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
         const report = await htmlValidate.validateString(html);
         // A finding names the rule and the element, thus a failure reads as its own cause.
         const findings = report.results.flatMap((result) =>
@@ -129,10 +61,10 @@ describe("the rendered page validates as HTML and CSS", () => {
         expect(report.valid).toBe(true);
     });
 
-    it("passes the CSS property-syntax validation over PAGE_CSS", () => {
+    it("passes the CSS property-syntax validation over DESIGN_CSS", () => {
         // `csstree-validator` skips a custom property by design, thus the `--color-*` tokens never report.
         // Each known property and value must match the css-tree grammar.
-        const errors = validateCss(PAGE_CSS, "page.css");
+        const errors = validateCss(DESIGN_CSS, "design.css");
         const findings = errors.map((error) => `${error.property ?? error.name}: ${error.message}`);
         expect(findings).toEqual([]);
     });

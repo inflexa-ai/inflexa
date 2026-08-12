@@ -12,8 +12,8 @@ import type { ClaimBlock, SectionBlock, TextBlock } from "../../contracts/report
 import type { ReferenceLedger } from "../references.js";
 import { Marker } from "./references-view.js";
 
-/** The paragraph class of a text block and a claim block. */
-const PARAGRAPH_CLASS = "report-paragraph mb-4 leading-relaxed text-slate-600";
+/** The paragraph class of a text block and a claim block. The measure caps the line inside the wide band. */
+const PARAGRAPH_CLASS = "report-prose";
 
 /**
  * Split prose into paragraphs on a blank line. A run of blank lines makes one split. An empty part drops
@@ -68,16 +68,9 @@ export function renderClaim(block: ClaimBlock, ledger: ReferenceLedger): string 
     );
 }
 
-/** The heading class of a section, by heading level. */
+/** The heading class of a section, by heading level. A heading uses the sans family, never the mono family. */
 function headingClass(level: number): string {
-    switch (level) {
-        case 2:
-            return "text-3xl font-semibold tracking-tight text-slate-900 mb-4";
-        case 3:
-            return "text-2xl font-semibold tracking-tight text-slate-900 mb-3";
-        default:
-            return "text-xl font-semibold tracking-tight text-slate-900 mb-2";
-    }
+    return `report-heading report-heading-${level}`;
 }
 
 /**
@@ -89,7 +82,7 @@ export function renderSection(section: SectionBlock, depth: number, childrenHtml
     const level = Math.min(depth + 2, 4);
     const Heading = `h${level}` as "h2" | "h3" | "h4";
     return String(
-        <section id={section.id} class="report-section mb-10">
+        <section id={section.id} class="report-section">
             <Heading class={headingClass(level)}>{section.title}</Heading>
             {raw(childrenHtml)}
         </section>,
@@ -99,26 +92,19 @@ export function renderSection(section: SectionBlock, depth: number, childrenHtml
 /**
  * Render the fixed left navigation. Each anchor targets one top-level section by its block id, with a
  * numeric badge for its position. The brand row stays, and the mobile toggle and the icon slot drop out.
+ * The `report-sidebar` id is the hook of the layout shift on a large viewport.
  */
 export function renderNav(topSections: SectionBlock[]): string {
     return String(
-        <aside
-            id="report-sidebar"
-            class="fixed top-0 left-0 z-40 h-screen w-60 flex flex-col border-r border-slate-200 bg-white/95 backdrop-blur"
-            aria-label="Report navigation"
-        >
-            <div class="flex items-center gap-2 px-5 py-5 border-b border-slate-200">
-                <span class="font-mono text-sm font-semibold tracking-wider text-primary-500">inflexa</span>
+        <aside id="report-sidebar" class="report-nav" aria-label="Report navigation">
+            <div class="report-nav-brand">
+                <span class="report-nav-brand-name">inflexa</span>
             </div>
-            <nav class="flex-1 overflow-y-auto py-3" aria-label="Report sections">
+            <nav class="report-nav-list" aria-label="Report sections">
                 {topSections.map((section, index) => (
-                    <a
-                        href={`#${section.id}`}
-                        data-sidebar-link=""
-                        class="sidebar-link flex items-center gap-3 px-5 py-2 text-sm text-slate-500 hover:text-slate-900 hover:bg-slate-50 transition-colors"
-                    >
-                        <span class="font-mono text-[10px] font-semibold tracking-wider text-slate-300 shrink-0 w-4 text-right">{index + 1}</span>
-                        <span class="truncate">{section.title}</span>
+                    <a href={`#${section.id}`} class="report-nav-link">
+                        <span class="report-nav-index">{index + 1}</span>
+                        <span class="report-nav-label">{section.title}</span>
                     </a>
                 ))}
             </nav>
