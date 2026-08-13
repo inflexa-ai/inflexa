@@ -107,9 +107,11 @@ The entry MUST derive from the thread listing alone. It MUST NOT read a tool res
 
 The listing MUST read again after the turn that spawns a child settles. The open thread does not change at a spawn. Thus a read that tracks the open thread alone shows nothing until the user leaves the conversation.
 
-The anchor is a store sequence number, and the loaded transcript holds no such number. The load reads each stored message with its sequence number, and the conversion to the display messages drops it. Thus the load path MUST keep the sequence number of each loaded message beside the message that it opened. The entry MUST sit after the last loaded message whose sequence number is not greater than the anchor.
+The anchor is a store sequence number, and the loaded transcript holds no such number. The load reads each stored message with its sequence number, and the conversion to the display messages drops it. Thus the load path MUST pair each sequence number with the identity of the message that its row ends on. The pair MUST hold an identity and not a position, because a live append drops a message off the front at the cap. The entry MUST sit after the message that the greatest such pair names.
 
-An anchor past the end of the loaded transcript MUST be a normal state, and the entry MUST render at the end. The transcript mounts the newest turns alone, thus an anchor below the mounted window is a normal state too. The entry MUST then render at the top of the loaded transcript. A listing failure MUST show no entry, and it MUST NOT break the transcript. An archived child MUST show no entry, because the listing reads the live children alone.
+When no loaded message sits above the anchor, the entry MUST render at the end of the mounted transcript. Two states reach that rule. An anchor past the end of the loaded transcript is one. The other is a session that the newest turn spawned: the spawn reads the parent before that turn appends its rows, thus the anchor sits below the request that made it.
+
+The transcript mounts the newest turns alone, thus an anchor below the mounted window is a normal state. The entry MUST then render at the top. A pair whose message the mounted window no longer holds MUST read the same way. A listing failure MUST show no entry, and it MUST NOT break the transcript. An archived child MUST show no entry, because the listing reads the live children alone.
 
 #### Scenario: An entry sits at the spawn point
 
@@ -130,6 +132,11 @@ An anchor past the end of the loaded transcript MUST be a normal state, and the 
 
 - **WHEN** the anchor of a report child names a position past the loaded transcript
 - **THEN** the entry renders at the end, and nothing throws
+
+#### Scenario: A session that the newest turn spawned sits below the request
+
+- **WHEN** the newest turn of the open conversation spawns a report child, and no loaded message sits above the anchor of that child
+- **THEN** the entry renders at the end of the mounted transcript, below the request that asked for the report
 
 #### Scenario: An anchor below the mounted window renders at the top
 

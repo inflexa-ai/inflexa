@@ -29,8 +29,8 @@
 ## 4. The chat entry point
 
 - [x] 4.1 Hold the report children of the open conversation as a reactive read. It refreshes when the open thread changes, and when a turn settles, because a turn is what spawns a report session.
-- [x] 4.2 Keep the sequence number of each loaded message beside the first message that its row opened. The conversion to the display messages drops the sequence number, thus the load path holds the pair itself.
-- [x] 4.3 Render an openable entry for each child after the last loaded message whose sequence number is not greater than the anchor. An anchor past the loaded transcript renders at the end, and an anchor below the mounted window renders at the top.
+- [x] 4.2 Pair each stored sequence number with the identity of the message that its row ends on. A position would move under a live append, because the cap drops a message off the front.
+- [x] 4.3 Render an openable entry for each child after the message that the greatest such pair names. An anchor with no loaded message above it renders at the end, and an anchor below the mounted window renders at the top.
 - [x] 4.4 Open the child in place from that entry.
 - [x] 4.5 Take each glyph from `GLYPHS` and each color from `theme`. Consult the design gallery first, then add the entry to the gallery, because the entry is a new block.
 
