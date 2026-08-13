@@ -84,13 +84,20 @@ if [ -n "$BAKED_IMAGE" ]; then
   exit $?
 fi
 
-if [ ! -d "$LIB_PATH/current" ]; then
-  echo "Error: library store not found at $LIB_PATH/current" >&2
+# The store carries no active-farm pointer. A farm is a property of the sandbox,
+# thus the invoker names the farm and binds it at the container path. The catalog
+# farm is what a published store brings, and it is what a consumer of the artifact
+# validates.
+FARM_NAME="${FARM_NAME:-catalog}"
+FARM_PATH="$LIB_PATH/farms/$FARM_NAME"
+
+if [ ! -d "$FARM_PATH" ]; then
+  echo "Error: no farm at $FARM_PATH" >&2
   echo "Pass --image <ref> to validate a baked image, or --store PATH for a mounted store." >&2
   exit 1
 fi
 
-echo "Validating store at $LIB_PATH/current in $MOUNT_IMAGE ..."
+echo "Validating farm $FARM_NAME of the store at $LIB_PATH in $MOUNT_IMAGE ..."
 
 # Managed path: mirror the runtime mount contract (harness lib-store spec):
 # read-only mount, R_LIBS_SITE / NODE_PATH / conda-bin PATH injected, PYTHONPATH
@@ -114,8 +121,12 @@ echo "Validating store at $LIB_PATH/current in $MOUNT_IMAGE ..."
 #
 # --entrypoint "" for the same reason as the baked path above: MOUNT_IMAGE is
 # sandbox-base, which defines its own ENTRYPOINT.
+# The farm bind nests inside the store bind, thus it comes AFTER it. The farm
+# shadows its mount point inside the store, and each farm link into
+# /mnt/libs/store resolves through the store bind.
 docker run --rm --entrypoint "" \
   -v "$LIB_PATH:/mnt/libs:ro" \
+  -v "$FARM_PATH:/mnt/libs/current:ro" \
   -v "$SUITE_DIR:/opt/lib-store-validate:ro" \
   -v "$VALIDATOR_DIR:/opt/lib-validator:ro" \
   --tmpfs /mnt/refs \

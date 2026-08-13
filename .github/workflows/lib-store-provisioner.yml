@@ -401,6 +401,22 @@ jobs:
               cp -r /mnt/libs/current/numba-cache /tmp/numba-cache
               python3 /opt/lib-store-cache-check.py'
 
+      - name: Remove the mount point that the checks left in the store
+        # A bind at /mnt/libs/current makes the runtime create that directory inside
+        # the volume, and it stays after the container exits. The store carries no
+        # active-farm pointer, thus such an entry in the published artifact states a
+        # contract that the store denies, and a stale consumer reads it as one.
+        #
+        # rmdir and not `rm -rf`: it removes an empty directory only. A `current`
+        # that holds content is a farm that something published at the wrong path,
+        # thus the test below stops the run instead of deleting it.
+        run: |
+          docker run --rm \
+            -v "${STORE_VOLUME}:/mnt/libs:rw" \
+            --entrypoint sh \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+            -c 'rmdir /mnt/libs/current 2>/dev/null || true; test ! -e /mnt/libs/current'
+
       - name: Export the store as a symlink-preserving tarball
         # Stream the store OUT of the volume as a tar (symlinks kept as symlinks,
         # including the absolute /mnt/libs targets) and compress on the host.

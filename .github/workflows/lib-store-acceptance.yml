@@ -173,11 +173,16 @@ jobs:
             echo "extracting $(basename "$f")"
             zstd -dc "$f" | tar -xf - -C store
           done
-          test -e store/current || { echo "::error::$REF extracted no 'current' pointer — the store is unusable."; exit 1; }
+          # The store carries no active-farm pointer. What makes it usable is the
+          # catalog farm with its two completeness markers, and the graph that names
+          # every store directory a composition can link.
+          for entry in farms/catalog/packages.txt farms/catalog/meta.json deps.json; do
+            test -e "store/$entry" || { echo "::error::$REF extracted no $entry — the store is unusable."; exit 1; }
+          done
           # An ABSOLUTE path: a relative bind source is read as a named volume.
           echo "store_dir=$PWD/store" >> "$GITHUB_OUTPUT"
           echo "store_ref=$REF" >> "$GITHUB_OUTPUT"
-          echo "Store for linux-${ARCH}: $REF -> $(readlink store/current)"
+          echo "Store for linux-${ARCH}: $REF, $(ls -1 store/store | wc -l | tr -d ' ') store directories"
 
       # Mount the extracted store read-only into the published runtime image and run
       # the suite. acceptance.sh renders the per-arch results table into the step
