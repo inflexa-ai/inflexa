@@ -21,7 +21,7 @@ import { notify } from "./hooks/notice.ts";
 import { createThreadStore, loadPlan, queryActiveRunsByAnalysis, queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
 import type { AnalysisPurgeOutcome, CortexRunRow, DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
 
-import { agentModels, bootState, harnessRuntime } from "./hooks/boot.ts";
+import { agentModels, bootState, harnessRuntime, type BootState } from "./hooks/boot.ts";
 import { refreshOpenThread, resolveThreadId } from "./hooks/thread.ts";
 import { latestPlanCard, sessionOpenables, type SessionOpenable } from "./hooks/conversation.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
@@ -164,8 +164,24 @@ const ARCHIVED_PAGE_LIMIT = 25;
 export type SessionSeams = {
     /** The booted runtime handle, or `null` when boot is not ready. Real: {@link harnessRuntime}. */
     readonly runtime: () => HarnessRuntime | null;
-    /** An analysis's live threads, most-recently-active first. Real: `createThreadStore(pool).listThreads`. */
+    /**
+     * An analysis's live conversations, most-recently-active first. The listing narrows on the
+     * `conversation` type, thus a report child stays out of it. A report is reached from the
+     * conversation that spawned it, and never as a session of its own in this list.
+     * Real: `createThreadStore(pool).listThreads` with `type`.
+     */
     readonly listThreads: (pool: Pool, analysisId: string) => ResultAsync<ThreadPage, DbError>;
+    /**
+     * The report children of ONE conversation, most-recently-active first. The listing narrows on the
+     * parent thread and on the `report` type. Thus a report of a different parent, and a child of a
+     * different type, both stay out. Real: `createThreadStore(pool).listThreads` with `parentThreadId`
+     * and `type`.
+     *
+     * The read gives the LIVE children alone. The store hides a tombstoned row until `includeArchived`
+     * widens the listing, and this read never widens it. An archive stamps the whole subtree, thus one
+     * archive removes a child from each surface at the same time.
+     */
+    readonly listReportChildren: (pool: Pool, analysisId: string, parentThreadId: string) => ResultAsync<ThreadPage, DbError>;
     /** One thread's row, or `null` when absent/soft-deleted. Real: `createThreadStore(pool).getThread`. */
     readonly getThread: (pool: Pool, threadId: string) => ResultAsync<Thread | null, DbError>;
     /** Retitle a thread; `null` when the row is gone. Real: `createThreadStore(pool).updateTitle`. */
@@ -210,7 +226,8 @@ export type SessionSeams = {
 
 const realSessionSeams: SessionSeams = {
     runtime: harnessRuntime,
-    listThreads: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId }),
+    listThreads: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId, type: "conversation" }),
+    listReportChildren: (pool, analysisId, parentThreadId) => createThreadStore(pool).listThreads({ analysisId, type: "report", parentThreadId }),
     getThread: (pool, threadId) => createThreadStore(pool).getThread(threadId),
     updateTitle: (pool, threadId, title) => createThreadStore(pool).updateTitle(threadId, title),
     listThreadsWithArchived: (pool, analysisId, page) =>
@@ -792,12 +809,12 @@ const NEW_SESSION = Symbol("new-session");
 type SwitchSessionChoice = Thread | typeof NEW_SESSION;
 
 /**
- * The Switch-session picker's rows: the analysis's live threads (most-recently-active first), followed
+ * The Switch-session picker's rows: the analysis's live conversations (most-recently-active first), followed
  * by a pinned "Start a new session" row. The creation row comes LAST so the default selection stays the
  * most-recent thread — this picker is for switching, and the create action is the escape hatch out of
  * the list, not its headline. Being pinned, the row survives any filter query and an empty thread set,
  * so the picker is never empty and the create action is always one keystroke away; last-placement also
- * keeps it put, since a query matching no thread re-appends dropped pinned rows at the end.
+ * keeps it put, since a query matching no conversation re-appends dropped pinned rows at the end.
  */
 export function switchSessionItems(threads: Thread[]): SelectItem<SwitchSessionChoice>[] {
     return [
@@ -824,7 +841,7 @@ export function selectSwitchSession(ctx: Workspace, choice: SwitchSessionChoice,
 }
 
 /**
- * Open the session picker over the analysis's live threads (most-recently-active first). Fetched
+ * Open the session picker over the analysis's live conversations (most-recently-active first). Fetched
  * BEFORE the dialog opens — the thread store is an async Postgres read, so the dialog cannot pull it
  * from its own body — mirroring `openRunsPicker`. A read failure degrades to an empty picker rather
  * than a crash.
@@ -871,12 +888,250 @@ export async function openSwitchSession(ctx: Workspace, seams: SessionSeams = re
             items={switchSessionItems(threads)}
             // The pinned "Start a new session" row keeps this list non-empty in every real case, so this
             // text is the contract for an items-empty render rather than a line a user reaches: a fresh
-            // chat with no other threads still sees that row, not this.
+            // chat with no other conversation still sees that row, not this.
             emptyText="No other conversations — send a message to start one, or switch analysis first"
             onCancel={() => ctx.closeDialog()}
             onSelect={(choice: SwitchSessionChoice) => selectSwitchSession(ctx, choice, analysis, seams)}
         />
     ));
+}
+
+const REPORT_LIST_FAILED = "Could not list the report sessions of this conversation.";
+const OPEN_SESSION_UNREADABLE = "Could not read this session — nothing was opened.";
+const NO_REPORT_CHILD = "No report session in this conversation — ask the agent to start one.";
+
+/**
+ * The refusal a report-session flow raises before the boot reaches `ready`.
+ *
+ * `failed` is terminal, thus "still booting" would promise a wait that never ends and contradict the
+ * status bar the user reads. Every other non-ready phase IS a wait. The three report flows take their
+ * words from here, because one boot state must not reach the user as three different facts.
+ */
+function reportBootNotice(phase: BootState["phase"]): Notice {
+    return phase === "failed"
+        ? { kind: "warn", text: "The harness did not start — report sessions are unavailable." }
+        : { kind: "info", text: `Harness is still booting${GLYPHS.ellipsis}` };
+}
+
+/**
+ * What one read of a conversation's report children found — the rows, or the read itself failing.
+ *
+ * The split is the one {@link ThreadRead} makes, for the same reason. An empty set is a normal state the
+ * flows answer with "there is none", and a `DbError` folded into that arm would tell a user whose
+ * Postgres blinked a fact about their data that is not true.
+ */
+type ReportChildren = { readonly kind: "read"; readonly threads: Thread[] } | { readonly kind: "unreadable" };
+
+/**
+ * The report children of ONE conversation, most-recently-active first. The single read behind both
+ * surfaces that offer them — the forward chord and the palette command — thus the two can never answer
+ * one question with two different sets.
+ *
+ * One page, exactly as the switch picker reads one. The rows sort by the last activity, thus the first
+ * page holds the children a user reaches for.
+ */
+async function readReportChildren(pool: Pool, analysisId: string, parentThreadId: string, seams: SessionSeams): Promise<ReportChildren> {
+    return (await seams.listReportChildren(pool, analysisId, parentThreadId)).match(
+        (page): ReportChildren => ({ kind: "read", threads: page.threads }),
+        (): ReportChildren => ({ kind: "unreadable" }),
+    );
+}
+
+/**
+ * Whether the analysis captured before an await is still the open one. It raises the refusal itself when
+ * it is not, thus a caller reads one branch and never repeats the words.
+ *
+ * A thread read is a Postgres round trip and NOTHING is modal across it, thus the analysis-switch keys
+ * stay live. A swap that lands anyway would bind a thread of the previous analysis beside the working
+ * directory of the analysis open now: one scope naming two analyses. Each report flow crosses that
+ * window, and each one asks here.
+ */
+function analysisStillOpen(ctx: Workspace, analysis: Analysis, seams: SessionSeams): boolean {
+    if (ctx.analysis?.id === analysis.id) return true;
+    seams.notify({ kind: "info", text: "Analysis changed — no report session was opened." });
+    return false;
+}
+
+/**
+ * The report picker's rows. A report child IS a session, thus a row carries what a row of
+ * {@link switchSessionItems} carries: the thread's title, and its last-activity stamp as an absolute
+ * local time (the durable-record rule — a listed conversation is a referenced record).
+ *
+ * There is no pinned creation row, and that difference from the switch picker is deliberate: the agent
+ * spawns a report session, thus this picker has no create action it could honestly offer.
+ */
+export function reportSessionItems(threads: Thread[]): SelectItem<Thread>[] {
+    return threads.map((t) => ({ value: t, title: threadLabel(t), description: t.updatedAt.toLocaleString() }));
+}
+
+/**
+ * Open the picker over one conversation's report children. The single picker behind both surfaces, thus
+ * the forward chord and the palette command render one component over one population.
+ *
+ * The pick swaps the chat in place under the analysis captured before the read. A report child belongs to
+ * the conversation that spawned it, and that conversation belongs to this analysis, thus the swap moves
+ * the thread alone.
+ */
+function openReportPicker(ctx: Workspace, analysis: Analysis, threads: Thread[]): void {
+    ctx.openDialog(() => (
+        <SelectDialog
+            title="Switch report session"
+            placeholder={`Search report sessions${GLYPHS.ellipsis}`}
+            items={reportSessionItems(threads)}
+            // The forward chord opens this picker only above one child, thus the palette command is the
+            // one surface that reaches an empty set. The text names what puts a row here.
+            emptyText="No report session in this conversation — ask the agent to start one"
+            onCancel={() => ctx.closeDialog()}
+            onSelect={(thread: Thread) => {
+                ctx.closeDialog();
+                ctx.openSession(thread.threadId, ctx.workingDir, analysis);
+            }}
+        />
+    ));
+}
+
+/**
+ * Open the parent conversation of the open report child, in place.
+ *
+ * The parent belongs to the same analysis as its child — the thread store refuses a create that says
+ * otherwise — thus the swap moves the thread and never the analysis.
+ *
+ * The pre-`ready` refusal speaks rather than no-ops, as {@link openSwitchSession}'s does. This flow has
+ * no palette command whose `enabled` could hide it, and its leader chord dispatches by id, thus it is
+ * reachable while the runtime still boots.
+ */
+export async function openParentSession(ctx: Workspace, seams: SessionSeams = realSessionSeams): Promise<void> {
+    const runtime = seams.runtime();
+    const analysis = ctx.analysis;
+    const threadId = ctx.sessionId;
+    // An absent analysis or an unbound thread names no session the user could have meant, thus the
+    // narrowing is silent.
+    if (!analysis || threadId === null) return;
+    const phase = bootState().phase;
+    if (phase !== "ready" || !runtime) {
+        seams.notify(reportBootNotice(phase));
+        return;
+    }
+    const pool = runtime.pool;
+    const read = await readOpenThread(pool, threadId, seams);
+    if (read.kind === "unreadable") {
+        seams.notify({ kind: "error", text: OPEN_SESSION_UNREADABLE });
+        return;
+    }
+    // A thread with no row is a conversation whose first turn has not landed, because the spawn writes a
+    // report child's row before that child exists anywhere. Thus absence and a conversation row are one
+    // answer here, and a report row carrying no parent link is that same answer again.
+    const parentId = read.kind === "row" && read.thread.threadType === "report" ? read.thread.parentThreadId : null;
+    if (parentId === null) {
+        seams.notify({ kind: "info", text: "This session has no parent — a report session opens the conversation that spawned it." });
+        return;
+    }
+    await seams.getThread(pool, parentId).match(
+        (parent) => {
+            // A parent that resolves to no row is a NORMAL state, never a fault: the read hides an
+            // archived row, and the chat scope can name a thread another instance has moved since. To
+            // name the absence and leave the user where they are is the whole remedy.
+            if (parent === null) {
+                seams.notify({ kind: "warn", text: "The parent conversation is no longer listed — nothing was opened." });
+                return;
+            }
+            if (!analysisStillOpen(ctx, analysis, seams)) return;
+            ctx.openSession(parent.threadId, ctx.workingDir, analysis);
+        },
+        () => seams.notify({ kind: "error", text: "Could not read the parent conversation — nothing was opened." }),
+    );
+}
+
+/**
+ * Open a report child of the open conversation, in place.
+ *
+ * One child opens with no picker, because a picker over one row asks the user to confirm what the
+ * keystroke already said. Above one child the shared picker opens. The count comes from the one read,
+ * thus no second query decides which of the two shapes the user gets.
+ *
+ * Each dead direction speaks. A silent key reads as a broken key, and the two reasons a user meets here —
+ * an open report session, and a conversation with no child — are different facts about their data.
+ */
+export async function openReportSession(ctx: Workspace, seams: SessionSeams = realSessionSeams): Promise<void> {
+    const runtime = seams.runtime();
+    const analysis = ctx.analysis;
+    const threadId = ctx.sessionId;
+    if (!analysis || threadId === null) return;
+    const phase = bootState().phase;
+    if (phase !== "ready" || !runtime) {
+        seams.notify(reportBootNotice(phase));
+        return;
+    }
+    const pool = runtime.pool;
+    const read = await readOpenThread(pool, threadId, seams);
+    if (read.kind === "unreadable") {
+        seams.notify({ kind: "error", text: OPEN_SESSION_UNREADABLE });
+        return;
+    }
+    if (read.kind === "row" && read.thread.threadType === "report") {
+        seams.notify({ kind: "info", text: "This is a report session — the thread tree stays flat, thus a report session spawns none of its own." });
+        return;
+    }
+    // A thread with no row has no child either. Thus the flow skips the second read, and it answers
+    // exactly as an empty set answers.
+    if (read.kind === "none") {
+        seams.notify({ kind: "info", text: NO_REPORT_CHILD });
+        return;
+    }
+    const children = await readReportChildren(pool, analysis.id, threadId, seams);
+    if (children.kind === "unreadable") {
+        seams.notify({ kind: "warn", text: REPORT_LIST_FAILED });
+        return;
+    }
+    if (!analysisStillOpen(ctx, analysis, seams)) return;
+    // Destructured rather than indexed: this hands the one-child arm its row and the count in one step,
+    // where an index read is typed `Thread | undefined` and wants a guard at each site.
+    const [first, ...rest] = children.threads;
+    if (!first) {
+        seams.notify({ kind: "info", text: NO_REPORT_CHILD });
+        return;
+    }
+    if (rest.length === 0) {
+        ctx.openSession(first.threadId, ctx.workingDir, analysis);
+        return;
+    }
+    openReportPicker(ctx, analysis, children.threads);
+}
+
+/**
+ * Open the report picker over the open conversation's report children, from the palette.
+ *
+ * It ALWAYS opens the picker, and {@link openReportSession} does not. The chord is a movement, thus one
+ * child is the answer it acts on. This command is a browse, thus the list IS the answer — at one row, and
+ * at none, where the picker's own empty state names what puts a row there.
+ *
+ * The read runs before the dialog opens, as {@link openSwitchSession}'s does: the thread store is an async
+ * Postgres read that a dialog body cannot pull from itself. A failed read degrades to a notice.
+ */
+export async function openSwitchReportSession(ctx: Workspace, seams: SessionSeams = realSessionSeams): Promise<void> {
+    const runtime = seams.runtime();
+    const analysis = ctx.analysis;
+    const threadId = ctx.sessionId;
+    if (!analysis) return;
+    const phase = bootState().phase;
+    if (phase !== "ready" || !runtime) {
+        seams.notify(reportBootNotice(phase));
+        return;
+    }
+    // The command is offered on an open analysis and a ready boot, and neither of those binds a thread. A
+    // report child hangs off the conversation that spawned it, thus an unbound scope names no population
+    // to list.
+    if (threadId === null) {
+        seams.notify({ kind: "info", text: "No conversation is open — a report session belongs to one." });
+        return;
+    }
+    const children = await readReportChildren(runtime.pool, analysis.id, threadId, seams);
+    if (children.kind === "unreadable") {
+        seams.notify({ kind: "warn", text: REPORT_LIST_FAILED });
+        return;
+    }
+    if (!analysisStillOpen(ctx, analysis, seams)) return;
+    openReportPicker(ctx, analysis, children.threads);
 }
 
 function AnalysesListDialog(): JSX.Element {
@@ -2426,6 +2681,17 @@ export const commands: Command[] = [
         category: "Session",
         enabled: (ctx) => ctx.analysis !== null && bootState().phase === "ready",
         run: (ctx) => openSwitchSession(ctx),
+    },
+    {
+        id: "session.report-switch",
+        title: "Switch report session",
+        description: "Switch to a report session this conversation spawned",
+        category: "Session",
+        // Gated with its siblings, and for their reason: thread metadata lives only in Postgres. The
+        // bound thread is deliberately NOT part of the gate — the flow names an unbound scope itself,
+        // where hiding the command would leave a user who searched for it with no answer at all.
+        enabled: (ctx) => ctx.analysis !== null && bootState().phase === "ready",
+        run: (ctx) => openSwitchReportSession(ctx),
     },
     {
         id: "session.new",

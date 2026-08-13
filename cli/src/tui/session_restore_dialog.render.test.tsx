@@ -57,6 +57,7 @@ function seams(page: ThreadPage, notices: Notice[], restored: string[]): Session
     return {
         runtime: () => fakeRuntime,
         listThreads: () => okAsync(threadPage([])),
+        listReportChildren: () => okAsync(threadPage([])),
         getThread: () => okAsync(null),
         updateTitle: () => okAsync(null),
         listThreadsWithArchived: () => okAsync(page),

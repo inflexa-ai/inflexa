@@ -257,6 +257,18 @@ export const KEYBIND_DEFAULTS = {
     // (scroll-pane-focused) layer only — never active while the composer holds focus.
     "artifact.open-latest": "o",
     "plan.explore-steps": "ctrl+g",
+    // Walk between a conversation and the report it spawned: left moves to the parent, right moves to
+    // the child. The pair matches the arrow directions of a tree view, so neither id needs a mnemonic.
+    //
+    // The value is a BARE chord, never `"<leader> left"`. `resolved()` parses a default with
+    // `parseChord`, which splits on `+` alone — a value that holds a leader token and a space becomes
+    // one key name that no keystroke can ever match, and the binding then silently does nothing. The
+    // leader prefix is composed at the binding site instead.
+    //
+    // A ctrl-arrow is not the default, because macOS binds a ctrl-arrow to its own window control.
+    // Thus that chord never reaches the terminal on a stock machine.
+    "session.open-parent": "left",
+    "session.open-report": "right",
 } satisfies Record<string, string>;
 
 /** A remappable keybinding id — a key of {@link KEYBIND_DEFAULTS}. */
