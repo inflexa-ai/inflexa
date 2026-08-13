@@ -116,9 +116,32 @@ describe("watchReportChildren", () => {
             expect(reportChildren().map((t) => t.threadId)).toEqual(["child-1"]);
 
             w.bindTo("thread-other");
+            // Empty BEFORE the query lands. The transcript resets synchronously at a swap, thus rows held
+            // across the round trip would paint over the transcript of the thread the user just opened.
+            expect(reportChildren()).toEqual([]);
             await settle();
 
             expect(reportChildren().map((t) => t.threadId)).toEqual(["child-2"]);
+        } finally {
+            dispose();
+        }
+    });
+
+    test("a settled turn keeps the rows on screen while it re-reads them", async () => {
+        // The clear is for a swap alone. To blank the entries on each turn would flash them out and back
+        // under a reader who never left the conversation.
+        const rows = [reportThread({ threadId: "child-1", parentThreadId: "thread-parent" })];
+        const seams: ReportChildrenSeams = { runtime: () => fakeRuntime, listThreads: () => okAsync(threadPageOf(rows)) };
+        const w = scope(ANALYSIS, "thread-parent");
+        const dispose = mount(w.ws, seams);
+        try {
+            __setBootStateForTest(ready());
+            await settle();
+            expect(reportChildren().map((t) => t.threadId)).toEqual(["child-1"]);
+
+            setChatStatus("busy");
+            setChatStatus("idle");
+            expect(reportChildren().map((t) => t.threadId)).toEqual(["child-1"]);
         } finally {
             dispose();
         }

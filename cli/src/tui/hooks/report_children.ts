@@ -1,4 +1,4 @@
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createSignal, untrack } from "solid-js";
 import type { ResultAsync } from "neverthrow";
 import { createThreadStore, type DbError, type Pool, type Thread, type ThreadPage } from "@inflexa-ai/harness";
 
@@ -56,6 +56,13 @@ const realReportChildrenSeams: ReportChildrenSeams = {
 // `thread.ts`.
 let refreshGeneration = 0;
 
+// The parent that the listing on screen describes. A refresh for a DIFFERENT parent empties the
+// listing before it queries, because a query is a round trip and the transcript resets synchronously
+// at a session swap. To hold the rows across that window paints the entries of the conversation the
+// user just left over the transcript of the one they opened. A refresh for the SAME parent, which is
+// what a settled turn asks for, keeps the rows and blinks nothing.
+let listedParentThreadId: string | null = null;
+
 /**
  * Read the open thread's report children into {@link reportChildren}. A `null` analysis, a `null`
  * thread, or an unbooted runtime resets the listing to empty and issues no query.
@@ -72,6 +79,10 @@ export async function refreshReportChildren(
     // Claim the token BEFORE the guards, thus even the empty path invalidates an older read that is
     // still in flight. A swap to an unbound scope must not take the listing of the previous one.
     const mine = ++refreshGeneration;
+    if (parentThreadId !== listedParentThreadId) {
+        listedParentThreadId = parentThreadId;
+        setChildren(NO_CHILDREN);
+    }
     const runtime = seams.runtime();
     if (!runtime || analysisId === null || parentThreadId === null) {
         setChildren(NO_CHILDREN);
@@ -114,9 +125,11 @@ export function watchReportChildren(workspace: Workspace, seams: ReportChildrenS
     let prev: ChatStatus = chatStatus();
     createEffect(() => {
         const status = chatStatus();
-        const analysisId = workspace.analysis?.id ?? null;
-        const parentThreadId = workspace.sessionId;
-        if (prev === "busy" && status !== "busy") void refreshReportChildren(analysisId, parentThreadId, seams);
+        // The scope reads sit inside `untrack`, thus this effect tracks the status alone. Tracked, they
+        // would make a session swap run BOTH effects and issue two listings for one bind.
+        if (prev === "busy" && status !== "busy") {
+            untrack(() => void refreshReportChildren(workspace.analysis?.id ?? null, workspace.sessionId, seams));
+        }
         prev = status;
     });
 }
@@ -124,5 +137,6 @@ export function watchReportChildren(workspace: Workspace, seams: ReportChildrenS
 /** Test hook: drop the listing and any read that is in flight. Test-only. */
 export function __resetReportChildrenForTest(): void {
     refreshGeneration += 1;
+    listedParentThreadId = null;
     setChildren(NO_CHILDREN);
 }
