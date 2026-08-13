@@ -5,7 +5,7 @@ import { errAsync, okAsync } from "neverthrow";
 import type { DbError, MessagePage, Pool, Thread } from "@inflexa-ai/harness";
 
 import { reportThread, threadPageOf } from "../../test_support/threads.ts";
-import { Chat } from "./chat.tsx";
+import { Chat, slotFor } from "./chat.tsx";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
 import { type CortexMsg, loadMessages, type LoadSeams, resetHotState } from "../hooks/conversation.ts";
 import { __resetReportChildrenForTest, refreshReportChildren, type ReportChildrenSeams } from "../hooks/report_children.ts";
@@ -17,8 +17,9 @@ import type { Analysis } from "../../types/analysis.ts";
 // two turns that the reader expects it between. Thus this drives the real `Chat` over the real stores,
 // and reads the order off one frame.
 //
-// The placement helper is module-private in `chat.tsx` and stays that way: the render reaches every arm
-// of it, thus an export would widen the surface of a component for nothing.
+// One arm of the placement rule needs a LIVE append after the load, which a render over a seeded
+// transcript cannot produce. Thus `slotFor` is exported and that arm is pinned as a unit below, while
+// each arm the render does reach stays a frame assertion.
 
 const SID = "thread-parent";
 const AID = "a1";
@@ -219,5 +220,52 @@ describe("the report entries of a mounted transcript", () => {
         expect(rowOf(frame, TURN_1)).toBeLessThan(rowOf(frame, "Volcano report"));
         expect(rowOf(frame, "Volcano report")).toBeLessThan(rowOf(frame, TURN_2));
         expect(rowOf(frame, TURN_3)).toBeLessThan(rowOf(frame, "Enrichment report"));
+    });
+});
+
+describe("slotFor — the arms a seeded render cannot reach", () => {
+    // The marks describe the LOADED transcript. A live turn appends past them and mints none, thus a
+    // mounted count larger than the marks is the state these cases are about.
+    const MARKS = [
+        { seq: 10, afterMessageId: "m10" },
+        { seq: 11, afterMessageId: "m11" },
+        { seq: 12, afterMessageId: "m12" },
+    ];
+    const LOADED = new Map([
+        ["m10", 0],
+        ["m11", 1],
+        ["m12", 2],
+    ]);
+    const positionOf = (id: string): number | undefined => LOADED.get(id);
+
+    test("a session the newest turn spawned lands BELOW that turn, and not at its spawn point", () => {
+        // The spawn reads the parent before the turn that asked for it appends, thus the spawn point sits
+        // under the request. To place the entry there paints it above the words that asked for the report.
+        // The live turn added two messages past the loaded three.
+        expect(slotFor(12, MARKS, positionOf, 5)).toBe(5);
+    });
+
+    test("a spawn point past the loaded transcript lands at the TRUE tail, not at the loaded end", () => {
+        expect(slotFor(99, MARKS, positionOf, 5)).toBe(5);
+    });
+
+    test("a spawn point with a loaded turn above it stays at that turn, whatever a live turn added", () => {
+        // A session spawned earlier keeps its place: the mark above it is what pins the entry, thus a
+        // later turn appends below the entry rather than moving it.
+        expect(slotFor(11, MARKS, positionOf, 5)).toBe(2);
+    });
+
+    test("a mark whose message left the window reads as a position below it", () => {
+        // The trailing cap drops a message off the front as a live turn appends. The id then resolves to
+        // nothing, which is the same answer as a spawn point older than the window.
+        expect(slotFor(10, MARKS, () => undefined, 5)).toBe(0);
+    });
+
+    test("a spawn point below every mark takes the TOP", () => {
+        expect(slotFor(3, MARKS, positionOf, 5)).toBe(0);
+    });
+
+    test("a row with no spawn point takes the tail, because it names no place", () => {
+        expect(slotFor(null, MARKS, positionOf, 5)).toBe(5);
     });
 });

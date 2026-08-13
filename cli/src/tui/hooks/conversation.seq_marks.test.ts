@@ -7,9 +7,12 @@ import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 
 // A spawned report session records its spawn point as a stored `messages.seq`, but a mounted message
 // carries no such number. The marks are the join between the two, and the report entry of the chat is
-// their one reader. Thus what these cases pin is the pairing itself: which stored row owns which
-// mounted position, once a row that displays nothing and the trailing message cap have both had their
+// their one reader. Thus what these cases pin is the pairing itself: which stored row ends on which
+// mounted message, once a row that displays nothing and the trailing message cap have both had their
 // say.
+//
+// A mark names a message by ID and never by index. The mounted array moves under the marks, because a
+// live append drops a message off the front once the transcript is at the cap.
 
 const SID = "s1";
 const AID = "a1";
@@ -81,9 +84,9 @@ describe("the seq marks of a loaded transcript", () => {
 
         expect(messages.length).toBe(4);
         expect(messageSeqMarks()).toEqual([
-            { seq: 10, end: 1 },
-            { seq: 11, end: 3 },
-            { seq: 12, end: 4 },
+            { seq: 10, afterMessageId: "id-10-0" },
+            { seq: 11, afterMessageId: "id-11-1" },
+            { seq: 12, afterMessageId: "id-12-0" },
         ]);
     });
 
@@ -102,34 +105,40 @@ describe("the seq marks of a loaded transcript", () => {
 
         expect(messages.length).toBe(2);
         expect(messageSeqMarks()).toEqual([
-            { seq: 10, end: 1 },
-            { seq: 12, end: 2 },
+            { seq: 10, afterMessageId: "id-10-0" },
+            { seq: 12, afterMessageId: "id-12-0" },
         ]);
     });
 
-    test("the trailing message cap shifts each mark, thus a mark names a mounted position", async () => {
-        // 201 turns replay into 201 messages and the cap mounts 200 of them, thus the window drops one
-        // from the front and every mark moves back by that one.
+    test("a row the cap dropped keeps a mark that no mounted message answers", async () => {
+        // 201 turns replay into 201 messages and the cap mounts 200 of them, thus the window drops the
+        // first. Its mark stays, and the id it names is the one the reader cannot resolve. That miss is
+        // what tells the reader the row sits below the window.
         await loadMessages(SID, AID, loadSeams(turns(201, 1)));
 
         const marks = messageSeqMarks();
+        const mounted = new Set(messages.map((m) => m.id));
         expect(messages.length).toBe(200);
         expect(marks).toHaveLength(201);
-        // The dropped row keeps its mark, and the mark now names the top of the mounted window.
-        expect(marks[0]).toEqual({ seq: 0, end: 0 });
-        expect(marks[1]).toEqual({ seq: 1, end: 1 });
-        // The last mark names the end of the mounted transcript, never a position past it.
-        expect(marks.at(-1)).toEqual({ seq: 200, end: 200 });
+        expect(marks[0]).toEqual({ seq: 0, afterMessageId: "id-0-0" });
+        expect(mounted.has("id-0-0")).toBe(false);
+        // Every other mark names a message the window holds.
+        expect(mounted.has(marks[1]!.afterMessageId)).toBe(true);
+        expect(marks.at(-1)).toEqual({ seq: 200, afterMessageId: "id-200-0" });
+        expect(mounted.has("id-200-0")).toBe(true);
     });
 
-    test("a deeper trim carries a mark below zero, which is what names a row under the mounted window", async () => {
+    test("a deeper trim leaves more marks unanswered, and never a position the reader must clamp", async () => {
         // Two messages for each row and 201 turns replay into 402 messages, thus the cap drops 202 of
-        // them. A negative `end` is the honest answer: that row ends before the window starts.
+        // them. The marks of the dropped rows resolve to nothing, which is the honest answer.
         await loadMessages(SID, AID, loadSeams(turns(201, 2)));
 
         const marks = messageSeqMarks();
+        const mounted = new Set(messages.map((m) => m.id));
         expect(messages.length).toBe(200);
-        expect(marks[0]).toEqual({ seq: 0, end: -200 });
-        expect(marks.at(-1)).toEqual({ seq: 200, end: 200 });
+        expect(marks[0]).toEqual({ seq: 0, afterMessageId: "id-0-1" });
+        expect(mounted.has("id-0-1")).toBe(false);
+        expect(marks.at(-1)).toEqual({ seq: 200, afterMessageId: "id-200-1" });
+        expect(mounted.has("id-200-1")).toBe(true);
     });
 });

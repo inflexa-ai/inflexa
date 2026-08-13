@@ -41,21 +41,35 @@ const NO_ENTRIES: readonly Thread[] = Object.freeze([]);
  *
  * Each edge lands on a position, and none of them is a fault:
  *
- * - A spawn point past the loaded transcript takes the END, because the harness can cut a parent tail
- *   behind a spawn point and the entry must still be reachable.
+ * - NO mark sits above the spawn point, thus the true END. Two states reach it, and both belong at the
+ *   tail. The harness can cut a parent tail behind a spawn point. The spawn also reads the parent
+ *   before the turn that asked for it appends, thus a session that the newest turn spawned anchors
+ *   BELOW the request that made it. To place it at the anchor would paint the entry above the words
+ *   that asked for the report.
  * - A spawn point below the mounted window takes the TOP, because the transcript mounts the newest
- *   turns alone and an old spawn point has no mounted message at or below it.
+ *   turns alone and an old spawn point has no mounted message at or below it. The mark whose message
+ *   left the window reads the same way, for the same reason.
  * - A row with no spawn point takes the END. The store pairs a parent with its spawn point, thus a
  *   listing that narrows on a parent gives no such row, but the column permits one.
+ *
+ * Exported for the coverage. The END arm above needs a live append after the load, which no render of a
+ * seeded transcript can produce, thus the render alone cannot reach every arm.
  */
-function slotFor(parentSeq: number | null, marks: readonly MessageSeqMark[], mounted: number): number {
+export function slotFor(parentSeq: number | null, marks: readonly MessageSeqMark[], positionOf: (id: string) => number | undefined, mounted: number): number {
     if (parentSeq === null) return mounted;
-    let at = 0;
+    let anchored: MessageSeqMark | undefined;
+    let above = false;
     for (const mark of marks) {
-        if (mark.seq > parentSeq) break;
-        at = mark.end;
+        if (mark.seq > parentSeq) {
+            above = true;
+            break;
+        }
+        anchored = mark;
     }
-    return Math.min(Math.max(at, 0), mounted);
+    if (!above) return mounted;
+    if (anchored === undefined) return 0;
+    const at = positionOf(anchored.afterMessageId);
+    return at === undefined ? 0 : Math.min(at + 1, mounted);
 }
 
 export function Chat(props: ChatProps) {
@@ -72,9 +86,13 @@ export function Chat(props: ChatProps) {
     const entrySlots = createMemo((): Map<number, Thread[]> => {
         const marks = messageSeqMarks();
         const mounted = messages.length;
+        // The mounted index of each message, built once for the whole pass. A mark names a message by
+        // id, thus each entry would otherwise scan the transcript to place itself.
+        const positions = new Map<string, number>();
+        for (const [at, message] of messages.entries()) positions.set(message.id, at);
         const slots = new Map<number, Thread[]>();
         for (const child of reportChildren()) {
-            const at = slotFor(child.parentSeq, marks, mounted);
+            const at = slotFor(child.parentSeq, marks, (id) => positions.get(id), mounted);
             const held = slots.get(at);
             if (held) held.push(child);
             else slots.set(at, [child]);

@@ -102,21 +102,24 @@ const MESSAGE_CAP = 200;
 
 const [messages, setMessages] = createStore<UIMessage[]>([]);
 /**
- * Where one loaded row's messages END in the mounted transcript, beside the store `seq` that row
- * carried.
+ * Which mounted message one loaded row ENDS on, beside the store `seq` that the row carried.
  *
  * A spawned thread records its spawn point as a `messages.seq` of the harness store, but a
  * {@link UIMessage} carries no such number: the display projection gives back the messages alone.
  * These marks are the join between the two, thus a `seq` names a position between two mounted entries.
  */
 export type MessageSeqMark = {
-    /** The `messages.seq` of the stored row that produced the messages up to {@link MessageSeqMark.end}. */
+    /** The `messages.seq` of the stored row that produced the message {@link MessageSeqMark.afterMessageId} names. */
     readonly seq: number;
     /**
-     * The mounted index one past this row's last message. The trailing message cap is already
-     * subtracted, thus a value of zero or less names a row below the mounted window.
+     * The id of the LAST message that this row produced.
+     *
+     * An identity and not an index, because the mounted array moves under the marks. The trailing cap
+     * drops messages off the FRONT as a live turn appends, thus an index recorded at the load names a
+     * different message one turn later. An id that no mounted message carries is a row that left the
+     * window, which a reader treats as a position below it.
      */
-    readonly end: number;
+    readonly afterMessageId: string;
 };
 const [messageSeqMarks, setMessageSeqMarks] = createSignal<readonly MessageSeqMark[]>([]);
 const [streamText, setStreamText] = createSignal("");
@@ -1221,34 +1224,32 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
     const replayed = seams.toCortex(rows);
     const mounted = replayed.map((m) => cortexToUiMessage(m, sessionId, analysisId)).slice(-MESSAGE_CAP);
     setMessages(mounted);
-    // The trim is what the trailing cap dropped off the front. Each mark subtracts it, thus a mark
-    // names a position in the MOUNTED array and not in the full replay.
-    setMessageSeqMarks(seqMarksFor(rows, replayed.length - mounted.length, seams));
+    setMessageSeqMarks(seqMarksFor(rows, seams));
     loadedSessionId = sessionId;
 }
 
 /**
- * Pair each loaded row with the mounted position at which its messages end.
+ * Pair each loaded row with the message that its own messages end on.
  *
- * The replay is a concatenation in row order, thus the count that ONE row contributes is the length of
- * the same call over that row alone. The bulk call stays the source of the transcript, because a row
- * that carries a usage figure and no display projection folds that figure onto the append before it,
- * which a per-row call cannot see. The second pass is the price of the row boundaries that the bulk
+ * The replay is a concatenation in row order, thus the messages that ONE row contributes are what the
+ * same call over that row alone gives back. The bulk call stays the source of the transcript, because a
+ * row that carries a usage figure and no display projection folds that figure onto the append before
+ * it, which a per-row call cannot see. The second pass is the price of the row boundaries that the bulk
  * call drops, and it is bounded by the two loaded pages.
  *
- * A row that contributes nothing takes no mark, because it names no position. A `seq` that lands on
- * such a row resolves to the mark before it, which is the end of the append that the row belongs to.
+ * The mark records the id and never an index. A trailing cap drops messages off the front of the
+ * mounted array, thus an index recorded here names a different message after enough live turns. The id
+ * is the one handle that survives both the cap of the load and the cap of a live append.
  *
- * @param trim how many leading messages the mounted window dropped.
+ * A row that contributes nothing takes no mark, because it names no message. A `seq` that lands on such
+ * a row resolves to the mark before it, which is the end of the append that the row belongs to.
  */
-function seqMarksFor(rows: Parameters<LoadSeams["toCortex"]>[0], trim: number, seams: LoadSeams): MessageSeqMark[] {
+function seqMarksFor(rows: Parameters<LoadSeams["toCortex"]>[0], seams: LoadSeams): MessageSeqMark[] {
     const marks: MessageSeqMark[] = [];
-    let total = 0;
     for (const row of rows) {
-        const produced = seams.toCortex([row]).length;
-        if (produced === 0) continue;
-        total += produced;
-        marks.push({ seq: row.seq, end: total - trim });
+        const last = seams.toCortex([row]).at(-1);
+        if (last === undefined) continue;
+        marks.push({ seq: row.seq, afterMessageId: last.id });
     }
     return marks;
 }
