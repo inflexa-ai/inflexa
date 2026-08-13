@@ -33,7 +33,6 @@ import { runToTerminal } from "../loop/run-to-terminal.js";
 import { durableStep } from "../loop/run-step.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
-import type { ResolveBilling } from "../billing/resolver.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { defineTool } from "../tools/define-tool.js";
@@ -70,9 +69,6 @@ import { DATA_PROFILE_RUN_LITERAL } from "../contracts/data-profile.js";
 const DATA_PROFILE_STEP_LITERAL = "profile" as const;
 const DATA_PROFILE_AGENT_ID = "data-profiler" as const;
 
-/** Resolved-header key carrying the billing-context id (see `ResolveBilling`). */
-const BILLING_CONTEXT_HEADER = "X-Inflexa-Billing-Context";
-
 /** Sandbox-server exec budget for the profile run. */
 const DEFAULT_DEADLINE_MS = 300_000;
 
@@ -102,9 +98,13 @@ export interface DataProfileDeps extends EnvironmentStorePaths {
     readonly skillsDir: string;
     /** LLM usage-accounting seam for the profiler agent loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
-    /** Resolves the billing context stamped as the sandbox pod's OpenCost
-     *  labels. Absent in upstream-less (dev/OSS) wiring — pods spawn unlabeled. */
-    readonly resolveBilling?: ResolveBilling;
+    /**
+     * Host-supplied labels for the profiler's sandbox pod, resolved under the
+     * profiling session. The map is opaque to the harness: it stamps each entry
+     * and interprets none of it. Absent in a wiring that attributes nothing —
+     * the pod then carries the harness's own labels only.
+     */
+    readonly resolvePodLabels?: (session: RunSession) => Promise<Record<string, string>>;
 }
 
 /**
@@ -340,14 +340,16 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         // run panel's activity readout was built to remove.
         await activity.sandboxInit();
 
-        let billingContextId: string | undefined;
-        if (deps.resolveBilling) {
+        let podLabels: Record<string, string> | undefined;
+        if (deps.resolvePodLabels) {
             try {
-                billingContextId = (await deps.resolveBilling(childSession))[BILLING_CONTEXT_HEADER];
+                podLabels = await deps.resolvePodLabels(childSession);
             } catch (err) {
-                logger.error("[billing] data-profile billing resolution failed", logger.errorFields(err));
+                logger.warn("pod-label resolution failed", logger.errorFields(err));
             }
-            if (!billingContextId) logger.error("[billing] sandbox spawned without billing labels");
+            // A wired resolver that yields nothing is the one loud case: the host
+            // asked for attribution and the pod spawns without it.
+            if (!podLabels || Object.keys(podLabels).length === 0) logger.warn("sandbox spawned with no pod labels");
         }
 
         const sandbox = await deps.sandboxClient.createSandbox(
@@ -357,7 +359,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 analysisId,
                 childWorkflowId: workflowId,
                 resources: estimateDataProfileResources(stagedInputs),
-                billing: billingContextId ? { billingContextId, userId: childSession.identity.user } : undefined,
+                podLabels,
             },
             mintSandboxIdentity(DATA_PROFILE_RUN_LITERAL),
         );

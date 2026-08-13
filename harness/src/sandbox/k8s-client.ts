@@ -42,10 +42,6 @@ const MANAGED_BY_VALUE = "cortex";
 const OWNER_WORKFLOW_LABEL = "cortex/owner-workflow-id";
 const RUN_ID_LABEL = "cortex/run-id";
 const STEP_ID_LABEL = "cortex/step-id";
-// OpenCost sanitizes `/` and `-` to `_`, so these arrive at the metering
-// reconciler as cortex_billing_context / cortex_user_id / cortex_analysis_id.
-const BILLING_CONTEXT_LABEL = "cortex/billing-context";
-const USER_ID_LABEL = "cortex/user-id";
 const ANALYSIS_ID_LABEL = "cortex/analysis-id";
 
 /**
@@ -281,17 +277,15 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
     if (config.tolerations) podSpec.tolerations = config.tolerations;
     if (config.runtimeClassName) podSpec.runtimeClassName = config.runtimeClassName;
 
-    // Pod-template placement is load-bearing: the OpenCost reconciler allocates
-    // by pod labels and filters on a non-empty cortex_billing_context — a
-    // Job-only label is invisible to compute metering.
-    const billingLabels: Record<string, string> = meta.billing
-        ? {
-              [BILLING_CONTEXT_LABEL]: sanitizeLabelValue(meta.billing.billingContextId),
-              [USER_ID_LABEL]: sanitizeLabelValue(meta.billing.userId),
-              [ANALYSIS_ID_LABEL]: sanitizeLabelValue(meta.analysisId),
-              [RUN_ID_LABEL]: sanitizeLabelValue(meta.runId),
-          }
-        : {};
+    // Pod-template placement is load-bearing: a cost reconciler allocates by pod
+    // labels, thus a Job-only label is invisible to it. The host labels stay
+    // opaque — every value passes through `sanitizeLabelValue`, because one
+    // malformed value makes the API server reject the whole Job at admission.
+    const attributionLabels: Record<string, string> = {
+        [ANALYSIS_ID_LABEL]: sanitizeLabelValue(meta.analysisId),
+        [RUN_ID_LABEL]: sanitizeLabelValue(meta.runId),
+        ...Object.fromEntries(Object.entries(meta.podLabels ?? {}).map(([key, value]) => [key, sanitizeLabelValue(value)])),
+    };
 
     return {
         apiVersion: "batch/v1",
@@ -304,9 +298,8 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
                 role: "sandbox",
                 "cortex/sandbox-id": sandboxId,
                 [OWNER_WORKFLOW_LABEL]: sanitizeLabelValue(meta.childWorkflowId),
-                [RUN_ID_LABEL]: sanitizeLabelValue(meta.runId),
                 [STEP_ID_LABEL]: sanitizeLabelValue(meta.stepId),
-                ...billingLabels,
+                ...attributionLabels,
             },
         },
         spec: {
@@ -317,7 +310,7 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
                     labels: {
                         role: "sandbox",
                         "cortex/sandbox-id": sandboxId,
-                        ...billingLabels,
+                        ...attributionLabels,
                     },
                 },
                 spec: podSpec,
