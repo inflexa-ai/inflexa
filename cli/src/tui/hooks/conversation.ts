@@ -101,6 +101,24 @@ export type UIMessage = {
 const MESSAGE_CAP = 200;
 
 const [messages, setMessages] = createStore<UIMessage[]>([]);
+/**
+ * Where one loaded row's messages END in the mounted transcript, beside the store `seq` that row
+ * carried.
+ *
+ * A spawned thread records its spawn point as a `messages.seq` of the harness store, but a
+ * {@link UIMessage} carries no such number: the display projection gives back the messages alone.
+ * These marks are the join between the two, thus a `seq` names a position between two mounted entries.
+ */
+export type MessageSeqMark = {
+    /** The `messages.seq` of the stored row that produced the messages up to {@link MessageSeqMark.end}. */
+    readonly seq: number;
+    /**
+     * The mounted index one past this row's last message. The trailing message cap is already
+     * subtracted, thus a value of zero or less names a row below the mounted window.
+     */
+    readonly end: number;
+};
+const [messageSeqMarks, setMessageSeqMarks] = createSignal<readonly MessageSeqMark[]>([]);
 const [streamText, setStreamText] = createSignal("");
 const [streamPartId, setStreamPartId] = createSignal<string | null>(null);
 const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
@@ -112,6 +130,12 @@ const [lastTurnFailure, setLastTurnFailure] = createSignal<unknown>(null);
 
 /** The conversation's messages — read in a tracking scope to react to appends/edits. */
 export { messages };
+/**
+ * The store positions of the LOADED transcript, one mark for each row that contributed a message —
+ * read reactively. A live turn appends past the last mark and mints none, because a mark describes
+ * where a stored row landed and the durable `seq` of an in-flight turn is not known here.
+ */
+export { messageSeqMarks };
 /** The live streaming text for the in-flight part — read reactively. */
 export { streamText };
 /** The id of the part currently streaming, or `null` — read reactively. */
@@ -1194,13 +1218,39 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
     //
     // No error branch: the read cannot fail. It maps stored projections and touches neither the
     // database nor the filesystem, so the only failure this function still reports is a page read's.
-    setMessages(
-        seams
-            .toCortex(rows)
-            .map((m) => cortexToUiMessage(m, sessionId, analysisId))
-            .slice(-MESSAGE_CAP),
-    );
+    const replayed = seams.toCortex(rows);
+    const mounted = replayed.map((m) => cortexToUiMessage(m, sessionId, analysisId)).slice(-MESSAGE_CAP);
+    setMessages(mounted);
+    // The trim is what the trailing cap dropped off the front. Each mark subtracts it, thus a mark
+    // names a position in the MOUNTED array and not in the full replay.
+    setMessageSeqMarks(seqMarksFor(rows, replayed.length - mounted.length, seams));
     loadedSessionId = sessionId;
+}
+
+/**
+ * Pair each loaded row with the mounted position at which its messages end.
+ *
+ * The replay is a concatenation in row order, thus the count that ONE row contributes is the length of
+ * the same call over that row alone. The bulk call stays the source of the transcript, because a row
+ * that carries a usage figure and no display projection folds that figure onto the append before it,
+ * which a per-row call cannot see. The second pass is the price of the row boundaries that the bulk
+ * call drops, and it is bounded by the two loaded pages.
+ *
+ * A row that contributes nothing takes no mark, because it names no position. A `seq` that lands on
+ * such a row resolves to the mark before it, which is the end of the append that the row belongs to.
+ *
+ * @param trim how many leading messages the mounted window dropped.
+ */
+function seqMarksFor(rows: Parameters<LoadSeams["toCortex"]>[0], trim: number, seams: LoadSeams): MessageSeqMark[] {
+    const marks: MessageSeqMark[] = [];
+    let total = 0;
+    for (const row of rows) {
+        const produced = seams.toCortex([row]).length;
+        if (produced === 0) continue;
+        total += produced;
+        marks.push({ seq: row.seq, end: total - trim });
+    }
+    return marks;
 }
 
 // The in-flight chat request. Module-private: only `send`/`abort`/`resetHotState` touch it, so the
@@ -1272,6 +1322,9 @@ export function resetHotState(): void {
     setLastTurnFailure(null);
     setChatStatus("idle");
     setMessages([]);
+    // The marks describe the cleared transcript, thus they go with it. A stale mark would place a
+    // spawned thread's entry against a message that is no longer mounted.
+    setMessageSeqMarks([]);
 }
 
 /**
