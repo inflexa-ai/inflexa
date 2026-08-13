@@ -7,6 +7,7 @@ import {
     keybindLabel,
     KEYBIND_DEFAULTS,
     reachableKeys,
+    leaderKeybind,
     leaderSeq,
     parseChord,
     resolveKeybind,
@@ -59,6 +60,15 @@ describe("keybind resolution — defaults", () => {
     test("leaderSeq prefixes the suffix with the resolved leader chord", () => {
         expect(leaderSeq("n")).toEqual([parseChord("ctrl+x"), parseChord("n")]);
     });
+
+    test("leaderKeybind gives a TWO-stroke sequence for each report-navigation id", () => {
+        // The shape is the whole point. Both ids store a bare arrow, because a default carrying the
+        // leader token cannot survive parseChord. A binding that dropped the leader stroke would put a
+        // bare arrow in the base layer, where the engine dispatches ahead of the focused composer and
+        // swallows the key — the cursor keys would stop moving the caret while typing.
+        expect(leaderKeybind("session.open-parent")).toEqual([parseChord("ctrl+x"), parseChord("left")]);
+        expect(leaderKeybind("session.open-report")).toEqual([parseChord("ctrl+x"), parseChord("right")]);
+    });
 });
 
 describe("keybind resolution — config override", () => {
@@ -66,6 +76,16 @@ describe("keybind resolution — config override", () => {
         writeKeybinds({ "app.command-palette": "ctrl+p" });
         expect(resolveKeybind("app.command-palette")).toEqual(parseChord("ctrl+p"));
         expect(keybindLabel("app.command-palette")).toBe("ctrl+p");
+    });
+
+    test("a remapped report-navigation id moves its SECOND stroke and keeps the leader", () => {
+        writeKeybinds({ "session.open-report": "ctrl+o" });
+        expect(leaderKeybind("session.open-report")).toEqual([parseChord("ctrl+x"), parseChord("ctrl+o")]);
+    });
+
+    test("a remapped leader moves the FIRST stroke of a report-navigation chord", () => {
+        writeKeybinds({ "app.leader": "ctrl+g" });
+        expect(leaderKeybind("session.open-parent")).toEqual([parseChord("ctrl+g"), parseChord("left")]);
     });
 
     test("the plan-step command id is remappable", () => {
