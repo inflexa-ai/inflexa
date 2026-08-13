@@ -101,14 +101,13 @@ export interface K8sClientConfig {
      * Where a sandbox reads its packages from — refer to {@link FarmSource}. A
      * farm is mounted read-only at `/mnt/libs/current`, nested inside the store
      * mount, and its location is a subPath under the lib-store PVC. It resolves
-     * at each create, and only when `libStorePvc` is set. `store-root`, or unset,
-     * keeps the single mount of the store root.
+     * at each create, and only when `libStorePvc` is set.
      *
      * A managed deployment that mounts the published artifact names
      * `{ kind: "fixed", location: "farms/catalog" }` here, thus it composes
      * nothing and it serves one library set.
      */
-    farmSource?: FarmSource;
+    farmSource: FarmSource;
     /** PVC claim mounted read-only at `/mnt/refs` when set. */
     refStorePvc?: string;
     /** Node selector pinning sandbox pods to the dedicated agent pool. Omit for default scheduling. */

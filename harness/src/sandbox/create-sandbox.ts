@@ -81,10 +81,8 @@ export interface CreateSandboxClientConfig {
      *
      * A farm that resolves as `unavailable` refuses that one sandbox with the
      * `farm_unavailable` state and its reason, and it affects no other surface.
-     * `store-root`, or unset, keeps the single mount of the store root, thus an
-     * embedder migrates in its own release.
      */
-    farmSource?: FarmSource;
+    farmSource: FarmSource;
     /** Docker: host dir bind-mounted read-only at `/mnt/refs`. */
     refStorePath?: string;
     /** Docker: force the container platform (e.g. `linux/amd64`) so the sandbox matches the mounted lib store's arch. */

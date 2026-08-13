@@ -249,25 +249,19 @@ export type ResolveAnalysisFarm = (analysisId: string) => Promise<FarmResolution
  * Where a sandbox reads its packages from. It is the policy of the embedder, and
  * the harness obeys it without a rule of its own.
  *
- * The three kinds are the three deployments that exist:
+ * The two kinds are the two deployments that exist:
  *
- * - `store-root` — the store root itself carries the farm layout, thus the
- *   backend makes ONE mount and never a nested one. This is the shape of a store
- *   that an extracted tarball gives, and of a managed deployment that serves one
- *   library set.
  * - `fixed` — one farm serves every analysis. A managed deployment that mounts
  *   the published artifact names `farms/catalog` here, and it composes nothing.
  * - `per-analysis` — a farm for each analysis, which the embedder composes. The
  *   CLI uses this, and it is what lets two analyses hold two versions of one
  *   package at the same time.
  *
- * An absent `farmSource` is `store-root`. Thus an embedder that names nothing
- * keeps one mount of the store root, and it migrates in its own release.
+ * A store carries its packages under a farm, thus a mount of the store root
+ * alone gives a sandbox no package. As a result each backend config makes this
+ * value necessary, and an embedder that names none fails to compile.
  */
-export type FarmSource =
-    | { readonly kind: "store-root" }
-    | { readonly kind: "fixed"; readonly location: FarmLocation }
-    | { readonly kind: "per-analysis"; readonly resolve: ResolveAnalysisFarm };
+export type FarmSource = { readonly kind: "fixed"; readonly location: FarmLocation } | { readonly kind: "per-analysis"; readonly resolve: ResolveAnalysisFarm };
 
 /** Step-meta passed to `createSandbox` — what the registry row needs. */
 export interface CreateSandboxMeta {

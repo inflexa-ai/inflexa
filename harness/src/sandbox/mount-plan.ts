@@ -165,23 +165,18 @@ export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores)
 }
 
 /**
- * The provider that a farm source names, or `undefined` when the store root is
- * itself the farm.
+ * The provider that a farm source names.
  *
- * The three kinds of {@link FarmSource} collapse to one question for a backend:
- * is there a farm to mount inside the store mount, and where. `store-root` gives
- * no provider, thus the backend makes one mount and the nested mount never
- * appears. The other two give a provider, and the backend treats them alike.
+ * The two kinds of {@link FarmSource} collapse to one question for a backend:
+ * where is the farm that it mounts inside the store mount. Thus each kind gives
+ * a provider, and the backend treats the two alike.
  *
  * `fixed` becomes a provider that ignores its analysis id. That keeps ONE code
  * path in each backend, thus a managed deployment that serves one farm and a CLI
  * that composes one for each analysis exercise the same mount code.
  */
-export function farmProviderOf(source: FarmSource | undefined): ResolveAnalysisFarm | undefined {
-    if (source === undefined) return undefined;
+export function farmProviderOf(source: FarmSource): ResolveAnalysisFarm {
     switch (source.kind) {
-        case "store-root":
-            return undefined;
         case "fixed":
             return () => ({ kind: "farm", location: source.location });
         case "per-analysis":

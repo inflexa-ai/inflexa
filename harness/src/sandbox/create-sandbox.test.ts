@@ -136,6 +136,9 @@ describe("createSandboxClient — engine connection threading", () => {
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
                 resolveWorkspaceRoot: (id) => join("/sessions", id),
+                // The config makes the source necessary. This client mounts no store,
+                // thus the source never resolves.
+                farmSource: { kind: "fixed", location: join(dir, "farm") },
                 engineSocketPath: socketPath,
             });
 

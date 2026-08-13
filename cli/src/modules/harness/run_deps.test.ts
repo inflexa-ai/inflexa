@@ -50,6 +50,9 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
             image: "img",
             resourceLimits: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 },
             resolveWorkspaceRoot,
+            // The config makes the source necessary. This client mounts no store, thus
+            // the source never resolves and no farm is composed.
+            farmSource: { kind: "per-analysis", resolve: (analysisId) => ({ kind: "farm", location: join("/tmp/libs/farms", analysisId) }) },
         }),
         workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot }),
         resolveWorkspaceRoot,

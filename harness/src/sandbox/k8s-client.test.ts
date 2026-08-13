@@ -10,10 +10,16 @@ import type { BatchV1Api, CoreV1Api, V1Job, V1Pod } from "@kubernetes/client-nod
 
 import { createK8sSandboxOps, sanitizeLabelValue } from "./k8s-client.js";
 import { mintSandboxIdentity } from "./identity.js";
+import type { FarmSource } from "./types.js";
 
 /** The conventional managed layout: workspace roots sit directly under the PVC mountpoint. */
 const SESSION_PVC_ROOT = "/sessions";
 const resolveWorkspaceRoot = (analysisId: string) => `${SESSION_PVC_ROOT}/${analysisId}`;
+/**
+ * The farm of each analysis, as a subPath under the store PVC. The backend config
+ * makes the source necessary, thus a test that mounts no store names one too.
+ */
+const FARM_SOURCE: FarmSource = { kind: "per-analysis", resolve: (analysisId) => ({ kind: "farm", location: `farms/${analysisId}` }) };
 
 function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: number; existingOwner?: string } = {}) {
     const createdJobs: V1Job[] = [];
@@ -97,6 +103,7 @@ describe("k8s createSandbox", () => {
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             libStorePvc: "cortex-libs",
+            farmSource: FARM_SOURCE,
             refStorePvc: "cortex-refs",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -172,6 +179,7 @@ describe("k8s createSandbox", () => {
             // An embedder whose roots are NOT `{pvcRoot}/{analysisId}`. The pod must mount the
             // directory the harness pre-creates under this root, not a same-named sibling of it.
             resolveWorkspaceRoot: (id) => `${SESSION_PVC_ROOT}/tenants/acme/${id}`,
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -203,6 +211,7 @@ describe("k8s createSandbox", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot: () => "/elsewhere/an-1",
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -233,6 +242,7 @@ describe("k8s createSandbox", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -275,6 +285,7 @@ describe("k8s createSandbox", () => {
             resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             libStorePvc: "cortex-libs",
+            farmSource: FARM_SOURCE,
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
             registerSandbox: async () => {},
@@ -320,6 +331,7 @@ describe("k8s createSandbox", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             nodeSelector: { "platform.io/role": "agent-node" },
             tolerations: [
@@ -374,6 +386,7 @@ describe("k8s createSandbox", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -413,6 +426,7 @@ describe("k8s createSandbox", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -552,61 +566,6 @@ describe("k8s createSandbox", () => {
         // The refusal is the whole outcome: no Job is created.
         expect(stub.createdJobs).toEqual([]);
     });
-
-    test("an explicit store-root source keeps the single mount, the same as an unset source", async () => {
-        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.8" }, metadata: { name: "sbx-root" } }]);
-
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
-            namespace: "sandbox",
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            libStorePvc: "cortex-libs",
-            farmSource: { kind: "store-root" },
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-            registerSandbox: async () => {},
-        });
-
-        (
-            await ops.createSandbox(
-                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
-                mintSandboxIdentity("run-1"),
-            )
-        )._unsafeUnwrap();
-
-        const libsMounts = stub.createdJobs[0]!.spec!.template.spec!.containers[0].volumeMounts!.filter((m) => m.name === "libs");
-        expect(libsMounts.map((m) => m.mountPath)).toEqual(["/mnt/libs"]);
-    });
-
-    test("with no source the store PVC keeps its single mount", async () => {
-        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.5" }, metadata: { name: "sbx-single" } }]);
-
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            cortexBaseUrl: "https://x",
-            namespace: "sandbox",
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            libStorePvc: "cortex-libs",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-            registerSandbox: async () => {},
-        });
-
-        (
-            await ops.createSandbox(
-                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
-                mintSandboxIdentity("run-1"),
-            )
-        )._unsafeUnwrap();
-
-        const libsMounts = stub.createdJobs[0]!.spec!.template.spec!.containers[0].volumeMounts!.filter((m) => m.name === "libs");
-        expect(libsMounts.map((m) => m.mountPath)).toEqual(["/mnt/libs"]);
-    });
 });
 
 describe("k8s createSandbox failure cleanup", () => {
@@ -619,6 +578,7 @@ describe("k8s createSandbox failure cleanup", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -648,6 +608,7 @@ describe("k8s createSandbox failure cleanup", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -687,6 +648,7 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -731,6 +693,7 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -768,6 +731,7 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -801,6 +765,7 @@ describe("k8s job ownership labels", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -835,6 +800,7 @@ describe("k8s job ownership labels", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -881,6 +847,7 @@ describe("k8s teardown", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
             registerSandbox: async () => {},
@@ -904,6 +871,7 @@ describe("k8s teardown", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
             registerSandbox: async () => {},
@@ -949,6 +917,7 @@ describe("k8s isAlive", () => {
                 namespace: "sandbox",
                 sessionPvcRoot: SESSION_PVC_ROOT,
                 resolveWorkspaceRoot,
+                farmSource: FARM_SOURCE,
                 batchApi: stub.batchApi,
                 coreApi: stub.coreApi,
                 registerSandbox: async () => {},
@@ -983,6 +952,7 @@ describe("k8s isAlive", () => {
             namespace: "sandbox",
             sessionPvcRoot: SESSION_PVC_ROOT,
             resolveWorkspaceRoot,
+            farmSource: FARM_SOURCE,
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
             registerSandbox: async () => {},

@@ -86,10 +86,9 @@ export interface DockerClientConfig {
      * Where a sandbox reads its packages from — refer to {@link FarmSource}. A
      * farm is bind-mounted read-only at `/mnt/libs/current`, nested inside the
      * store bind, and its location is an absolute host path. It resolves at each
-     * create, and only when `libStorePath` is set. `store-root`, or unset, keeps
-     * the single mount of the store root.
+     * create, and only when `libStorePath` is set.
      */
-    farmSource?: FarmSource;
+    farmSource: FarmSource;
     /**
      * Host ref store; bind-mounted read-only at `/mnt/refs`. Embedders pass the
      * configured store location unconditionally — existence is (re-)checked at each
@@ -135,7 +134,7 @@ export interface DockerClientConfig {
  *
  * The gate follows the farm the provider names, and it never follows a `current`
  * symlink at the store root: the active farm is a property of the sandbox, not of
- * the store. With no provider the caller names `<libStorePath>/current` itself.
+ * the store.
  *
  * `statSync` FOLLOWS a symlink, so a dangling farm location throws here and is rejected.
  */
@@ -323,13 +322,11 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     // boot and the store may have gone away since (see libStoreUsable). Not
                     // usable → skip BOTH mounts (sandbox degrades to available:false) and log it,
                     // since an otherwise-silent libs-mount drop is invisible to operators.
-                    // Under `store-root` the store carries its own `current` as the farm.
-                    const farmPath = farm ?? (config.libStorePath ? join(config.libStorePath, "current") : undefined);
-                    const libsMounted = !!config.libStorePath && !!farmPath && libStoreUsable(farmPath);
+                    const libsMounted = !!config.libStorePath && farm !== undefined && libStoreUsable(farm);
                     if (config.libStorePath && !libsMounted) {
                         logger.warn(
                             "lib store configured but its farm is missing or incomplete at sandbox creation — mounting no library store (sandbox degrades to available:false)",
-                            { libStorePath: config.libStorePath, farmPath, sandboxId },
+                            { libStorePath: config.libStorePath, farmPath: farm, sandboxId },
                         );
                     }
 
