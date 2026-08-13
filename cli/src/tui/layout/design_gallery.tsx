@@ -27,6 +27,7 @@ import { RunCardBlock } from "../components/run_card_block.tsx";
 import { ErrorBlock } from "../components/error_block.tsx";
 import { PresentationBlock } from "../components/presentation_block.tsx";
 import { OpenableCardBlock } from "../components/openable_card_block.tsx";
+import { ReportSessionBlock } from "../components/report_session_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { AskPrompt } from "../components/ask_prompt.tsx";
 import { MessageBlock } from "./message_block.tsx";
@@ -81,6 +82,7 @@ import {
     mockUsageSnapshotInputOnly,
     mockUsageSnapshotNoFigures,
     mockUsageSnapshotEmpty,
+    mockReportSession,
 } from "./design_gallery_fixtures.ts";
 
 // Nothing streams in the gallery — MessageBlock's streaming accessors are constant stubs.
@@ -1085,6 +1087,20 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <text fg={theme().fgMuted}>sub-agent activity — one subordinate line on a RUNNING tool call, gone the moment it finishes:</text>
                     <ToolBlock name="plan_analysis" status="running" activity="literature-reviewer: fetch_abstract" inlineStatus={true} />
                     <ToolBlock name="plan_analysis" status="ok" durationMs={94_000} activity="literature-reviewer: fetch_abstract" inlineStatus={true} />
+                </State>
+                <State n="25" label="report session entry — a report session spawned from this conversation">
+                    {/* The entry sits in the transcript at the point of the spawn, and a click opens that
+                        session IN PLACE. onOpen is inert here — the gallery renders the pure block.
+
+                        The marker is the plain right arrow against the openable card's north-east one
+                        (State 20): that card hands its rows to an application outside the terminal, and
+                        this entry stays inside the app. One arrow for each direction is what keeps the two
+                        readable side by side in one transcript.
+
+                        The resting state is the only state. An entry has no lifecycle of its own: the
+                        listing holds the live sessions alone, thus an archived session leaves the
+                        transcript rather than gaining a state here. */}
+                    <ReportSessionBlock title={mockReportSession.title} activityLabel={mockReportSession.activityLabel} onOpen={noop} />
                 </State>
             </ScrollPane>
         </DialogPanel>

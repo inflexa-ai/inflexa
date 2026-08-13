@@ -1,16 +1,19 @@
 import { For, Show, createEffect, createMemo, on } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
+import type { Thread } from "@inflexa-ai/harness";
 
 import { theme } from "../theme.ts";
 import { MessageBlock } from "../layout/message_block.tsx";
 import { Welcome } from "./welcome.tsx";
 import { ThinkingIndicator } from "./thinking_indicator.tsx";
+import { ReportSessionBlock } from "./report_session_block.tsx";
 import { ScrollPane } from "./scroll_pane.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { getAnchor } from "../../db/primary_query.ts";
 import { chatStatus } from "../hooks/status.ts";
 import { bootState } from "../hooks/boot.ts";
-import { messages, streamText, streamPartId, errorMsg, loadMessages, resetHotState } from "../hooks/conversation.ts";
+import { messages, messageSeqMarks, streamText, streamPartId, errorMsg, loadMessages, resetHotState, type MessageSeqMark } from "../hooks/conversation.ts";
+import { reportChildren, watchReportChildren } from "../hooks/report_children.ts";
 
 /**
  * The live conversation: the sticky message stream plus the error banner. State (the message store,
@@ -28,8 +31,78 @@ export type ChatProps = {
     onScrollPaneRef: (r: ScrollBoxRenderable) => void;
 };
 
+// One frozen empty listing, thus a position that holds no entry hands `<For>` the same reference on
+// each read and reconciles nothing.
+const NO_ENTRIES: readonly Thread[] = Object.freeze([]);
+
+/**
+ * The mounted position of one report session's entry: after the last mounted message whose mark
+ * carries a `seq` that is not greater than the spawn point.
+ *
+ * Each edge lands on a position, and none of them is a fault:
+ *
+ * - A spawn point past the loaded transcript takes the END, because the harness can cut a parent tail
+ *   behind a spawn point and the entry must still be reachable.
+ * - A spawn point below the mounted window takes the TOP, because the transcript mounts the newest
+ *   turns alone and an old spawn point has no mounted message at or below it.
+ * - A row with no spawn point takes the END. The store pairs a parent with its spawn point, thus a
+ *   listing that narrows on a parent gives no such row, but the column permits one.
+ */
+function slotFor(parentSeq: number | null, marks: readonly MessageSeqMark[], mounted: number): number {
+    if (parentSeq === null) return mounted;
+    let at = 0;
+    for (const mark of marks) {
+        if (mark.seq > parentSeq) break;
+        at = mark.end;
+    }
+    return Math.min(Math.max(at, 0), mounted);
+}
+
 export function Chat(props: ChatProps) {
     const ws = useWorkspace();
+
+    // The report sessions of the open thread. The store (`hooks/report_children.ts`) owns the read and
+    // the refresh edge, and this component only places what it holds — the same split as the transcript
+    // load below. A failed listing gives no children, thus the transcript stays whole.
+    watchReportChildren(ws);
+
+    // Which mounted position each report session's entry sits at, computed ONCE for each change of the
+    // listing, the marks, or the message count. A `Map` because two sessions spawned in one turn share
+    // a position, and the entries then render in the order that the store gave them.
+    const entrySlots = createMemo((): Map<number, Thread[]> => {
+        const marks = messageSeqMarks();
+        const mounted = messages.length;
+        const slots = new Map<number, Thread[]>();
+        for (const child of reportChildren()) {
+            const at = slotFor(child.parentSeq, marks, mounted);
+            const held = slots.get(at);
+            if (held) held.push(child);
+            else slots.set(at, [child]);
+        }
+        return slots;
+    });
+    const entriesAt = (at: number): readonly Thread[] => entrySlots().get(at) ?? NO_ENTRIES;
+
+    // The open is IN PLACE, through the one session-open operation of the workspace store: it binds the
+    // report thread, and the effect below then resets the hot state and loads that thread. Nothing
+    // relaunches and no screen pushes. An unscoped chat has no analysis to open a session against, thus
+    // the click does nothing.
+    const openReportChild = (threadId: string): void => {
+        const analysis = ws.analysis;
+        if (!analysis) return;
+        ws.openSession(threadId, ws.workingDir, analysis);
+    };
+
+    // One render function for the two mount points below, thus an entry reads the same wherever it sits.
+    // The title is pg-owned and seeded from the first message of the session, thus a row can legitimately
+    // carry none. Say so rather than render a blank line, exactly as the sidebar SESSION rail does.
+    const reportEntry = (child: Thread) => (
+        <ReportSessionBlock
+            title={child.title ?? "untitled"}
+            activityLabel={Date.relativeAge(child.updatedAt.getTime())}
+            onOpen={() => openReportChild(child.threadId)}
+        />
+    );
 
     // Turn number per store position, computed ONCE per messages change rather than per row.
     //
@@ -105,18 +178,27 @@ export function Chat(props: ChatProps) {
                 cannot supply it once event entries are interleaved — see `turnNumbers`. */}
                 <For each={messages}>
                     {(msg, index) => (
-                        <MessageBlock
-                            index={turnNumbers()[index()] ?? 0}
-                            role={msg.role}
-                            durationMs={msg.durationMs}
-                            turnUsage={msg.turnUsage}
-                            interrupted={msg.interrupted}
-                            parts={msg.parts}
-                            streamPartId={streamPartId}
-                            streamText={streamText}
-                        />
+                        <>
+                            {/* Each entry whose position is this message renders BEFORE it, thus the
+                            entry sits after the last message that its spawn point named. */}
+                            <For each={entriesAt(index())}>{reportEntry}</For>
+                            <MessageBlock
+                                index={turnNumbers()[index()] ?? 0}
+                                role={msg.role}
+                                durationMs={msg.durationMs}
+                                turnUsage={msg.turnUsage}
+                                interrupted={msg.interrupted}
+                                parts={msg.parts}
+                                streamPartId={streamPartId}
+                                streamText={streamText}
+                            />
+                        </>
                     )}
                 </For>
+                {/* The tail position, which the loop above cannot reach: a spawn point at or past the end
+                of the loaded transcript. A live turn appends below these entries, which is correct — the
+                session was spawned before that turn. */}
+                <For each={entriesAt(messages.length)}>{reportEntry}</For>
 
                 {/* Live "thinking" indicator: sits under the last (assistant) turn for the whole busy
                 window — before the first token and while text streams below it — so the wait reads as
