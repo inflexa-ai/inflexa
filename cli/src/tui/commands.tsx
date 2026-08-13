@@ -187,9 +187,16 @@ export type SessionSeams = {
     /** Retitle a thread; `null` when the row is gone. Real: `createThreadStore(pool).updateTitle`. */
     readonly updateTitle: (pool: Pool, threadId: string, title: string) => ResultAsync<Thread | null, DbError>;
     /**
-     * One page of an analysis's threads WIDENED to include the archived ones — the store widens the set
-     * rather than switching to an archived-only one, so a caller wanting the tombstoned rows alone
-     * narrows on `deletedAt` itself. Real: `createThreadStore(pool).listThreads` with `includeArchived`.
+     * One page of an analysis's CONVERSATIONS widened to include the archived ones — the store widens
+     * the set rather than switching to an archived-only one, so a caller wanting the tombstoned rows
+     * alone narrows on `deletedAt` itself. Real: `createThreadStore(pool).listThreads` with `type` and
+     * `includeArchived`.
+     *
+     * The type narrow keeps a report session out of the restore picker. An archive stamps the whole
+     * subtree, thus archiving one conversation tombstones each report session under it. The restore
+     * lifts ONE row, thus a report session restored on its own would sit live under a parent that is
+     * still hidden, and no live listing reaches such a row. A row that leads nowhere does not belong in
+     * a picker.
      *
      * The page index is a parameter because the caller must be able to walk the whole set: the widened
      * listing orders by activity, and archiving leaves `updated_at` where the last turn put it, so the
@@ -238,7 +245,7 @@ export const realSessionSeams: SessionSeams = {
     getThread: (pool, threadId) => createThreadStore(pool).getThread(threadId),
     updateTitle: (pool, threadId, title) => createThreadStore(pool).updateTitle(threadId, title),
     listThreadsWithArchived: (pool, analysisId, page) =>
-        createThreadStore(pool).listThreads({ analysisId, includeArchived: true, page, perPage: ARCHIVED_PAGE_SIZE }),
+        createThreadStore(pool).listThreads({ analysisId, type: "conversation", includeArchived: true, page, perPage: ARCHIVED_PAGE_SIZE }),
     archiveThread: (pool, threadId) => createThreadStore(pool).archiveThread(threadId),
     unarchiveThread: (pool, threadId) => createThreadStore(pool).unarchiveThread(threadId),
     purgeThread: (pool, threadId) => createThreadStore(pool).purgeThread(threadId),
@@ -963,11 +970,11 @@ async function readReportChildren(pool: Pool, analysisId: string, parentThreadId
  */
 function scopeStillOpen(ctx: Workspace, analysis: Analysis, threadId: string | null, seams: SessionSeams): boolean {
     if (ctx.analysis?.id !== analysis.id) {
-        seams.notify({ kind: "info", text: "Analysis changed — no report session was opened." });
+        seams.notify({ kind: "info", text: "Analysis changed — nothing was opened." });
         return false;
     }
     if (ctx.sessionId !== threadId) {
-        seams.notify({ kind: "info", text: "Session changed — no report session was opened." });
+        seams.notify({ kind: "info", text: "Session changed — nothing was opened." });
         return false;
     }
     return true;
