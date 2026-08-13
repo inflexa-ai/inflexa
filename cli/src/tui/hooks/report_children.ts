@@ -5,6 +5,7 @@ import { createThreadStore, type DbError, type Pool, type Thread, type ThreadPag
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import { bootState, harnessRuntime } from "./boot.ts";
+import { chatStatus, type ChatStatus } from "./status.ts";
 
 // The report sessions spawned from the open conversation thread, held here and not inside
 // `components/chat.tsx`, thus the holder of the state stays separate from its renderer. This is the
@@ -85,12 +86,13 @@ export async function refreshReportChildren(
 }
 
 /**
- * Wire the listing to the open thread. Call it one time from the component that renders the entries,
- * inside its reactive root.
+ * Wire the listing to the open thread and to the settlement of a turn. Call it one time from the
+ * component that renders the entries, inside its reactive root.
  *
- * The effect tracks the boot phase, the open analysis, and the bound thread. It tracks nothing that a
- * turn moves, thus the listing refreshes on an OPEN THREAD change alone. A report session that a turn
- * spawns appears at the next such change, which is the same edge that mounts its transcript.
+ * Two edges write the listing, and a turn is the second one for a concrete reason: a turn is what
+ * spawns a report session, and the open scope does not move when it does. Without that edge a user
+ * would ask for a report, watch the turn finish, and find no entry until they left the conversation
+ * and came back.
  */
 export function watchReportChildren(workspace: Workspace, seams: ReportChildrenSeams = realReportChildrenSeams): void {
     createEffect(() => {
@@ -100,6 +102,22 @@ export function watchReportChildren(workspace: Workspace, seams: ReportChildrenS
         // Before `ready` there is no pool to list from, thus collapse to empty rather than hold the
         // children of a previous boot.
         void refreshReportChildren(ready ? analysisId : null, ready ? parentThreadId : null, seams);
+    });
+
+    // The turn-completion down-edge, the shape `thread.ts` uses for the row of the open thread. `prev`
+    // is closure-local and it is seeded to the current status, thus the first synchronous run fires no
+    // false edge.
+    //
+    // Leaving `busy` at all is the edge, and not reaching `idle`. The spawn writes its row before the
+    // rest of the turn runs, thus a turn that spawns a session and then fails has still written the row
+    // that this read collects. Such a turn settles on `error`.
+    let prev: ChatStatus = chatStatus();
+    createEffect(() => {
+        const status = chatStatus();
+        const analysisId = workspace.analysis?.id ?? null;
+        const parentThreadId = workspace.sessionId;
+        if (prev === "busy" && status !== "busy") void refreshReportChildren(analysisId, parentThreadId, seams);
+        prev = status;
     });
 }
 
