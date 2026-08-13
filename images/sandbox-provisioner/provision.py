@@ -38,7 +38,13 @@ THE INVOKER CONTRACT OF A WARM RUN: a run that warms the caches must receive the
 same bind. The invoker binds the target farm at /mnt/libs/current, read-write,
 nested inside the store-root bind. A numba cache key holds the source path that
 the sandbox imports from, thus a warm through any other path gives a cache that
-the sandbox cannot load. Refer to warm().
+the sandbox cannot load. A run that cannot resolve the farm at that path fails,
+and it names the bind that it wants. Refer to warm().
+
+A run that warms the caches builds no farm. A publish replaces the farm directory,
+and the bind of the container then holds the directory that the publish
+superseded. Thus the preparation of the caches is a run of its own: it names the
+farm and the workload, and it passes no spec.
 
 That /mnt/libs is mounted at the SAME path here (read-write) and in the sandbox
 (read-only) is the load-bearing detail. It is what makes a farm symlink written
@@ -779,47 +785,6 @@ def build_r_farm(farm: Path, stored: dict[str, list[tuple[str, Path]]]) -> None:
             link.symlink_to(str(store_dir / name))
 
 
-def check_r_loads(farm: Path, stored: dict[str, list[tuple[str, Path]]]) -> None:
-    """Load each farmed R package through the farm, and run its compiled code.
-
-    A package can install and farm cleanly and still fail to load, because the farm
-    resolves it through symlinks and a compiled package finds its shared object by
-    the path R gives it. The check sets the same three R_LIBS_SITE paths the sandbox
-    uses, then runs library() on each farmed package. For a package that carries
-    compiled code, it also reads the registered native routines, which runs the
-    package's own compiled code. A package that does not load names itself and stops
-    the run, because a farm that cannot load is not usable.
-    """
-    lib_dirs = [farm / "r" / sub for sub in R_SUBTREES if (farm / "r" / sub).is_dir()]
-    packages = [(name, store_dir)
-                for sub in R_SUBTREES for name, store_dir in stored.get(sub, [])]
-    if not packages:
-        return
-    libs_expr = ", ".join(f"'{d}'" for d in lib_dirs)
-    for name, store_dir in packages:
-        # A compiled package keeps its shared object under libs/. Load it, then read
-        # its registered routines, so the check runs the compiled code and not only
-        # the symlink resolution.
-        if (store_dir / name / "libs").is_dir():
-            probe = (f"d <- getLoadedDLLs()[['{name}']]; "
-                     f"if (!is.null(d)) invisible(getDLLRegisteredRoutines(d)); ")
-        else:
-            probe = ""
-        rexpr = (f".libPaths(c({libs_expr}, .libPaths())); "
-                 f"suppressMessages(library('{name}', character.only = TRUE)); {probe}")
-        proc = subprocess.run(["Rscript", "-e", rexpr], capture_output=True, text=True)
-        if proc.returncode != 0:
-            # The last line of an R failure is usually the bare "Execution halted".
-            # The cause sits in the lines above it, thus the report carries the tail
-            # of the stream and not one line.
-            tail = (proc.stderr or "").strip().splitlines()[-8:]
-            detail = "\n  ".join(tail) if tail else "(R wrote nothing to stderr)"
-            raise SystemExit(
-                f"[provision] R package {name} does not load through the farm "
-                f"(exit {proc.returncode}):\n  {detail}")
-    log(f"R load check: {len(packages)} package(s) load through the farm")
-
-
 def r_version_of(manifest: Path) -> str | None:
     import yaml
     return (yaml.safe_load(manifest.read_text()) or {}).get("r_version")
@@ -922,9 +887,16 @@ def provision_r(farm: Path, manifest: Path) -> dict:
             stored[sub].append((name, store_dir))
 
     build_r_farm(farm, stored)
-    # A farmed package can install cleanly and still fail to load. Load each one
-    # through the farm before the run reports success.
-    check_r_loads(farm, stored)
+    # The record of what this run farmed. The load check runs in a sandbox-base
+    # container, thus it belongs to the invoker and not to this run. It reads this
+    # record, thus it loads the set that the run produced and it walks no farm.
+    # `compiled` marks a package that carries a shared object. The check reads the
+    # registered native routines of such a package, thus it runs the compiled code.
+    farmed = [{"name": name,
+               "subtree": sub,
+               "store_dir": store_dir.name,
+               "compiled": (store_dir / name / "libs").is_dir()}
+              for sub in R_SUBTREES for name, store_dir in stored[sub]]
     # Keep the pak bulk lock as provenance: it records the full resolved set,
     # including the LinkingTo packages the compiled objects were built against.
     bulk_lock = stage_root / "r" / "r-bulk.lock"
@@ -938,10 +910,35 @@ def provision_r(farm: Path, manifest: Path) -> dict:
 
     counts = {sub: len(v) for sub, v in stored.items()}
     log(f"R farm: {counts}, Bioconductor release(s): {releases or 'none'}")
-    return {"packages": counts, "r_version": r_version_of(manifest), "bioc_releases": releases}
+    return {"packages": counts, "farmed": farmed,
+            "r_version": r_version_of(manifest), "bioc_releases": releases}
 
 
-def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, str]:
+# numba names each cache data file after the function and the absolute directory of
+# its source, and NUMBA_DEBUG_CACHE reports each file that it loads or saves. The
+# effectiveness check parses the same two lines, thus the two sides must agree on
+# this pattern. Refer to scripts/lib-store-cache-check.py.
+CACHE_EVENT = re.compile(r"\[cache\] data (loaded from|saved to) ['\"](.+?)['\"]")
+
+
+def cache_entry_key(path: str, root: Path) -> str:
+    """The portable name of one numba cache data file.
+
+    The name of the file holds the module, the qualified name, the first line, and
+    the ABI tag. Its directory holds a hash of the absolute directory of the source,
+    which is the farm path that the sandbox imports from. Thus the whole key
+    describes the prepared entry and nothing of the machine that prepared it.
+
+    The root is the one part that differs between the two runs, because the sandbox
+    copies the cache out of the read-only store before it runs. Thus the key drops
+    the root. A path outside the root keeps its full name, and no such path can
+    match a recorded entry.
+    """
+    rel = os.path.relpath(path, root)
+    return path if rel.startswith("..") else rel
+
+
+def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, object]:
     """Pre-build numba JIT and matplotlib font caches into the store.
 
     numba's caches are written to NUMBA_CACHE_DIR rather than in-tree, because an
@@ -957,6 +954,20 @@ def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, str]:
     so an import-only warm-up leaves the cache empty — measured 0 cache files after
     importing numba, scanpy and matplotlib. Pass --warm-script to exercise the code
     paths an analysis will actually hit.
+
+    A module of the workload that does not import, and a script that exits
+    non-zero, stop the run. The declaration states which packages an analysis
+    reaches first, thus a module that cannot run is a broken catalog.
+
+    The run makes the record of the prepared entries in a second pass over the same
+    workload. numba keys an index entry on the type signature of the call. A
+    signature that holds a type which a `type()` call builds never matches its index
+    again, thus such an entry writes on each run and it loads on none. The second
+    pass reports which entry a later run reuses, and only those entries enter the
+    record.
+
+    A measurement does this work, and a list of names cannot. The next package
+    update writes another kernel of that shape, and a list does not change with it.
     """
     # Warm through /mnt/libs/current, NOT through the farm's own path. numba's
     # cache index key includes the source file's path, so warming via
@@ -965,13 +976,28 @@ def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, str]:
     # path yields 0 loads and 29 recompiles; through `current`, 29 loads and 0.
     #
     # The store carries no pointer, thus the invoker of this container supplies the
-    # path: it binds the target farm at /mnt/libs/current for the run. A path that
-    # resolves elsewhere gives a cache that the sandbox cannot load, thus the run
-    # reports it here.
+    # path: it binds the target farm at /mnt/libs/current for the run. The check
+    # comes before the first cache write, thus a run that fails here leaves no
+    # cache behind.
+    #
+    # A bind mount is not a symlink, thus no comparison of two paths can tell that
+    # the bind resolves this farm. Write a probe into the farm, and read it through
+    # the bind. The name of the probe is new, thus no cache of the engine holds a
+    # miss for it, and the lookup reaches the directory of the farm.
     bind = LIBS / "current"
-    if not bind.exists() or os.path.realpath(bind) != os.path.realpath(farm):
-        log(f"  WARNING: {bind} does not resolve to {farm}. The invoker must bind "
-            f"the farm there for the run, or the prepared caches stay unusable.")
+    probe = farm / f".inflexa-bind-probe-{uuid.uuid4().hex}"
+    try:
+        probe.write_text("probe\n")
+        resolved = (bind / probe.name).is_file()
+    finally:
+        probe.unlink(missing_ok=True)
+    if not resolved:
+        raise SystemExit(
+            f"[provision] the preparation run cannot resolve the farm at {bind}. "
+            f"The invoker must bind {farm} there, read-write, nested inside the "
+            f"store-root bind. A numba cache key holds the source path that the "
+            f"sandbox imports from, thus a cache that this run writes through any "
+            f"other path never loads.")
     env = dict(os.environ)
     env["PYTHONPATH"] = str(LIBS / "current" / "python" / "site-packages")
     env["MPLCONFIGDIR"] = str(farm / "matplotlib_config")
@@ -983,26 +1009,108 @@ def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, str]:
     Path(env["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
     Path(env["NUMBA_CACHE_DIR"]).mkdir(parents=True, exist_ok=True)
 
-    jobs = [(m, ["-c", f"import {m}"]) for m in modules]
+    jobs = [(m, ["-c", f"import {m}"], f"the declared module {m} does not import")
+            for m in modules]
     if script:
-        jobs.append((f"script:{Path(script).name}", [script]))
+        jobs.append((f"script:{Path(script).name}", [script],
+                     f"the workload script {script} exited non-zero"))
 
-    results = {}
-    for label, argv in jobs:
+    def child(argv: list[str], environment: dict[str, str], failure: str):
+        proc = subprocess.run([PYTHON, *argv], env=environment,
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            # The tail, not one line: the last line of a traceback is the exception,
+            # and the frames above it name the module that raised.
+            tail = (proc.stderr or "").strip().splitlines()[-8:]
+            detail = "\n  ".join(tail) if tail else "(the child wrote nothing to stderr)"
+            raise SystemExit(
+                f"[provision] {failure} (exit {proc.returncode}). The preparation "
+                f"run stops here, and it prepares no module after it:\n  {detail}")
+        return proc
+
+    results: dict[str, object] = {}
+    for label, argv, failure in jobs:
         started = time.monotonic()
-        proc = subprocess.run([PYTHON, *argv], env=env, capture_output=True, text=True)
-        elapsed = time.monotonic() - started
-        if proc.returncode == 0:
-            results[label] = f"ok in {elapsed:.1f}s"
-        else:
-            tail = proc.stderr.strip().splitlines()
-            results[label] = f"FAILED: {tail[-1] if tail else '?'}"
+        child(argv, env, failure)
+        results[label] = f"ok in {time.monotonic() - started:.1f}s"
         log(f"  warm {label}: {results[label]}")
 
-    cached = len(list(Path(env["NUMBA_CACHE_DIR"]).rglob("*.nbi")))
-    log(f"  numba cache: {cached} index file(s)")
-    results["_numba_cache_entries"] = str(cached)
+    # The pass that records. It runs the same workload with the cache debug on, thus
+    # an entry that loads here is an entry that a later run of this workload reuses.
+    # An entry that writes again names a kernel that no run reuses, and the record
+    # leaves it out. The check judges the record, thus that kernel fails nothing.
+    cache_root = Path(env["NUMBA_CACHE_DIR"])
+    debug = {**env, "NUMBA_DEBUG_CACHE": "1"}
+    prepared: set[str] = set()
+    rewritten: set[str] = set()
+    for label, argv, failure in jobs:
+        proc = child(argv, debug, failure)
+        for event, path in CACHE_EVENT.findall(proc.stdout + proc.stderr):
+            key = cache_entry_key(path, cache_root)
+            (prepared if event == "loaded from" else rewritten).add(key)
+
+    index_files = len(list(cache_root.rglob("*.nbi")))
+    log(f"  numba cache: {index_files} index file(s), "
+        f"{len(prepared)} prepared entry(s) recorded")
+    for key in sorted(rewritten - prepared):
+        # A person judges the workload, and this is what shows a kernel that the
+        # preparation cannot carry forward. Refer to D8 of the change design.
+        log(f"    no run reuses {key}")
+    results["cache_entries"] = sorted(prepared)
+    results["_numba_index_files"] = str(index_files)
     return results
+
+
+def script_sha256(script: str | None) -> str | None:
+    """The content hash of the workload script, or None when the run names none.
+
+    A path can point at another file later. Thus the record holds the hash of the
+    bytes that ran, and the effectiveness check confirms those bytes before it
+    replays them.
+    """
+    if not script:
+        return None
+    with contextlib.suppress(OSError):
+        return hashlib.sha256(Path(script).read_bytes()).hexdigest()
+    return None
+
+
+def prepare_caches(farm: Path, args) -> int:
+    """Warm the caches of a farm that an earlier run published, and build nothing.
+
+    A publish replaces the farm directory with another one (refer to publish_farm).
+    The invoker binds the farm at /mnt/libs/current before the container starts,
+    thus a run that publishes leaves that bind on the directory that it superseded.
+    As a result the preparation of the caches is a run of its own.
+
+    The lock of the farm carries the record. It holds the workload, which is the
+    module list and the hash of the script, and it holds the entries that the
+    workload prepared. The effectiveness check reads exactly that record.
+    """
+    lock_path = farm / "lock.json"
+    if not lock_path.is_file():
+        raise SystemExit(
+            f"[provision] no farm to prepare at {farm}. A preparation run warms the "
+            f"farm that an earlier run published, thus build the farm first.")
+
+    lock = json.loads(lock_path.read_text())
+    modules = [m for m in args.warm.split(",") if m]
+    results = warm(farm, modules, args.warm_script)
+    lock["warm_script"] = args.warm_script
+    lock["warm_workload"] = {
+        "modules": modules,
+        "script_sha256": script_sha256(args.warm_script),
+        # The entries that a later run of this workload reuses. The check loads each
+        # one, and a write outside this set names a kernel that no run reuses.
+        "cache_entries": results.pop("cache_entries"),
+    }
+    lock["warm"] = results
+    lock_path.write_text(json.dumps(lock, indent=2) + "\n")
+    # The caches that the warm wrote get the mode the sandbox reads them with.
+    subprocess.run(["chmod", "-R", "a+rX", str(farm)], check=True)
+    log(f"farm '{farm.name}' prepared: "
+        f"{len(lock['warm_workload']['cache_entries'])} cache entry(s) recorded")
+    return 0
 
 
 def reject_off_index(specs: list[str]) -> None:
@@ -1352,6 +1460,16 @@ def _provision(args) -> int:
     recover_farm(args.farm)
 
     farm = FARMS / args.farm
+    if args.warm or args.warm_script:
+        if args.specs or args.r_manifest:
+            raise SystemExit(
+                f"[provision] a run that builds a farm cannot also warm it. The "
+                f"publish replaces the directory that the bind at {LIBS / 'current'} "
+                f"holds, thus the warm would write a cache into the farm that the "
+                f"publish superseded. Build the farm in one run. Then prepare the "
+                f"caches in a run of its own, with no spec and with the farm bound.")
+        return prepare_caches(farm, args)
+
     staging = FARMS / (FARM_STAGING + args.farm)
     lock_path = farm / "lock.json"
 
@@ -1428,15 +1546,6 @@ def _provision(args) -> int:
     if args.r_manifest:
         r_result = provision_r(staging, Path(args.r_manifest))
 
-    # The warm workload is what the caches hold, so record it before the lock is
-    # written. Read the script bytes once and keep their hash, because a path can
-    # later point at a different file, and a replay must run the same bytes.
-    warm_targets = [m for m in args.warm.split(",") if m]
-    warm_script_hash = None
-    if args.warm_script:
-        with contextlib.suppress(OSError):
-            warm_script_hash = hashlib.sha256(Path(args.warm_script).read_bytes()).hexdigest()
-
     lock = {
         "requested": requested,
         "resolved": pins,
@@ -1447,17 +1556,14 @@ def _provision(args) -> int:
         # farm. A later run reads this to tell a rebuilt track from a preserved one.
         "tracks": {"built": sorted(builds), "preserved": preserved},
         "collisions": collisions,
-        # The path of the warm script, kept so the effectiveness check can run it.
-        "warm_script": args.warm_script,
-        # The workload the warm step ran, recorded so the effectiveness check can
-        # replay exactly it. numba keys its cache per type signature, thus only the
-        # call shapes the workload ran are cached, and any other shape recompiles.
-        # The module list and a content hash of the script let a replay confirm the
-        # same bytes ran, not merely a file at the same path.
-        "warm_workload": {
-            "modules": warm_targets,
-            "script_sha256": warm_script_hash,
-        },
+        # The empty record of a farm that nothing prepared. A preparation run fills
+        # the three keys, and it is a run of its own (refer to prepare_caches).
+        #
+        # A build resets them. It carries the cache of the old farm forward, and that
+        # cache describes the package set of the old farm. Thus the record that
+        # published with the old farm cannot describe this one.
+        "warm_script": None,
+        "warm_workload": {"modules": [], "script_sha256": None, "cache_entries": []},
         "warm": {},
     }
 
@@ -1502,13 +1608,6 @@ def _provision(args) -> int:
         # that the graph already holds stays as it is.
         emit_deps.append_for_farm(LIBS, farm)
 
-    if warm_targets or args.warm_script:
-        lock["warm"] = warm(farm, warm_targets, args.warm_script)
-        # The lock is the record of what the caches hold, so the warm results go into
-        # it, and the caches the warm wrote get the mode the sandbox needs.
-        write_lock(farm)
-        subprocess.run(["chmod", "-R", "a+rX", str(farm)], check=True)
-
     log(f"farm '{args.farm}' ready: {len(pins)} distributions")
     return 0
 
@@ -1527,8 +1626,13 @@ def main() -> int:
             "the target farm at /mnt/libs/current, nested inside the store-root bind.\n"
             "The store carries no active-farm pointer, thus only that bind puts the\n"
             "farm at the path the sandbox imports from, and a numba cache key holds\n"
-            "that path. A run with no such bind reports a warning and writes a cache\n"
-            "that no sandbox can load."))
+            "that path. A run that cannot resolve the farm there fails, and it names\n"
+            "the bind that it wants.\n"
+            "\n"
+            "Such a run passes no spec, because it prepares the caches of a farm that\n"
+            "an earlier run published. A publish replaces the farm directory, and the\n"
+            "bind of the container then holds the directory that the publish\n"
+            "superseded. Thus one run builds the farm, and the next one prepares it."))
     ap.add_argument("--farm", help="analysis name (farm directory); with --add-lease, "
                                    "the farm that the sandbox of the lease reads; omit it "
                                    "to acquire the specs into the pool and build no farm")
@@ -1548,11 +1652,13 @@ def main() -> int:
     ap.add_argument("--remove-farm", default=None, metavar="NAME",
                     help="remove a farm's symlinks (store dirs stay until --reclaim), and exit")
     ap.add_argument("--warm", default="",
-                    help="comma-separated modules to import during warm-up; the invoker must "
-                         "bind the farm at /mnt/libs/current for the run")
+                    help="comma-separated modules to import during warm-up; the run prepares "
+                         "an existing farm, thus it passes no spec, and the invoker must bind "
+                         "that farm at /mnt/libs/current")
     ap.add_argument("--warm-script", default=None,
                     help="path (inside the store) to a script that exercises jitted code paths; "
-                         "the invoker must bind the farm at /mnt/libs/current for the run")
+                         "the run prepares an existing farm, thus it passes no spec, and the "
+                         "invoker must bind that farm at /mnt/libs/current")
     ap.add_argument("--r-manifest", default=None,
                     help="path to a lib-store manifest; provision its R track (CRAN + Bioconductor + git + GitHub) via pak")
     ap.add_argument("specs", nargs="*", help="requirement specs to add")
@@ -1578,7 +1684,7 @@ def main() -> int:
     # A run with no --farm is an ACQUISITION run: it writes the pool and the graph,
     # and it builds no farm. That is what the CLI `store add` runs, because each
     # analysis composes its own farm on the host. The R track still needs a farm,
-    # because pak installs and load-checks through one.
+    # because provision_r links each installed package into one.
     if not args.farm:
         if not args.specs:
             log("usage: <specs> to acquire into the pool, --farm <name> (with specs / "
@@ -1586,7 +1692,7 @@ def main() -> int:
                 "--add-lease ID / --drop-lease ID / --remove-farm NAME")
             return 2
         if args.r_manifest:
-            log("usage: --r-manifest needs --farm <name>; an R install load-checks through a farm")
+            log("usage: --r-manifest needs --farm <name>; an R install farms each package it stores")
             return 2
         with store_lock_shared():
             return _acquire(args)

@@ -5,8 +5,13 @@ These cover the OFFLINE-verifiable slice of the change's §9 verification tasks
 (``harness/openspec/changes/content-addressed-lib-store/tasks.md``). Each test
 drives the real Python logic of ``provision.py``; every external tool the code
 shells out to (``uv``, ``chmod``, ``Rscript``/``R``/``pak``) is monkeypatched at
-``provision.subprocess.run``, so the whole suite runs with only the standard
+``provision.subprocess.run``, so those tests run with only the standard
 library — no ``uv``, no ``docker``, no third-party packages, no yaml.
+
+``ImageOwnedPackageTests`` is the one exception. It reads the installed set of the
+sandbox image, thus it starts one container. Nothing else can answer what that
+image owns. It skips when the host cannot reach the image, and it names what is
+absent.
 
 Run with either::
 
@@ -59,7 +64,6 @@ Per-analysis farm mount coverage map (test -> task of the change
 ``harness/openspec/changes/per-analysis-farm-mount``):
   ProvisionRunTests.test_publish_writes_no_current_and_leaves_an_old_one_alone -> 4.4
   ProvisionRunTests.test_warm_runs_through_the_supplied_bind_and_reaches_lock  -> 4.3
-  ProvisionRunTests.test_a_warm_run_without_the_bind_reports_it              -> 4.3
   LeaseGuardTests.test_a_lease_blocks_no_acquisition_run_and_no_extension    -> 4.2
   ReclaimTests.test_remove_farm_refuses_under_a_lease_of_that_farm           -> 4.2
   StoreLockTests.*                                                          -> 5.1/5.3
@@ -74,6 +78,27 @@ Per-analysis farm mount coverage map (test -> task of the change
   DependencyGraphTests.test_the_standalone_emitter_covers_every_farm         -> 6.4
   DependencyGraphTests.test_a_dangling_edge_fails_the_build_and_names_the_edge -> 6.5
   DependencyGraphTests.test_an_append_keeps_every_earlier_node_byte_identical -> 6.6
+
+Warm cache and farm source coverage map (test -> task of the change
+``harness/openspec/changes/restore-warm-cache-and-name-farm-source``):
+  ProvisionRunTests.test_a_declared_module_that_does_not_import_fails_the_run   -> 1.6
+  ProvisionRunTests.test_a_workload_script_that_exits_non_zero_fails_the_run    -> 1.5
+  ProvisionRunTests.test_a_warm_run_without_the_bind_fails_and_writes_no_cache  -> 2.4
+  ProvisionRunTests.test_a_run_that_builds_the_farm_refuses_to_warm_it          -> 2.2
+  ProvisionRunTests.test_the_prepared_entries_reach_the_record                  -> 3.3/3.5
+  ImageOwnedPackageTests.test_a_list_that_matches_the_image_passes              -> 6.1
+  ImageOwnedPackageTests.test_a_stale_name_fails_and_names_the_package          -> 6.2
+  ImageOwnedPackageTests.test_the_recorded_list_matches_the_sandbox_image       -> 6.1/6.2
+
+Task 3.4 is NOT covered here. The effectiveness check runs in a `sandbox-base`
+container, against a cache that a real numba run wrote. The check is
+``scripts/lib-store-cache-check.py``, and the ``cache`` section of
+``scripts/lib-store-sandbox-checks.sh`` drives it. The build runs the same file.
+
+Tasks 5.3 to 5.6 are NOT covered here. The R load check left this module: it runs
+in a `sandbox-base` container, which the provisioner cannot start. The check is
+``scripts/lib-store-r-load-check.py``, and the ``rload`` section of
+``scripts/lib-store-sandbox-checks.sh`` drives it against both images.
 
 §9 tasks deliberately NOT covered here (require the real container / external
 tools / a running host, i.e. CI- or container-gated, not unit-verifiable):
@@ -98,6 +123,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -158,6 +184,14 @@ class StoreTestCase(unittest.TestCase):
         # resolved AT THAT MOMENT. The resolution has to happen in the fake,
         # because it is what proves the bind of the farm resolved for the child.
         self.warm_paths: list[tuple[str, str]] = []
+        # Module name (or script path) -> the stderr of a warm-up child that fails.
+        # A named target reports exit 1, and each other target reports success.
+        self.warm_failures: dict[str, str] = {}
+        # Module name (or script path) -> the cache events of that child, as
+        # (event, path) pairs. numba writes such a line for each cache file that it
+        # loads or saves, and it writes them only when NUMBA_DEBUG_CACHE is set. The
+        # recording pass of the warm step reads them.
+        self.cache_events: dict[str, list[tuple[str, str]]] = {}
         # The argv of every external tool the run shelled out to. A preservation
         # test reads it to prove that a preserved track ran no installer.
         self.calls: list[list[str]] = []
@@ -206,7 +240,18 @@ class StoreTestCase(unittest.TestCase):
         if prog == provision.PYTHON:
             ppath = (kwargs.get("env") or {}).get("PYTHONPATH", "")
             self.warm_paths.append((ppath, os.path.realpath(ppath)))
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
+            # A module job is `-c import <name>`, and a script job is the path
+            # alone. Both end in the target, thus one line names either shape.
+            target = argv[-1].split()[-1] if argv[1:2] == ["-c"] else argv[-1]
+            if target in self.warm_failures:
+                return SimpleNamespace(returncode=1, stdout="",
+                                       stderr=self.warm_failures[target])
+            # numba writes a cache line only when the debug flag is on, which is what
+            # the recording pass of the warm step sets.
+            events = self.cache_events.get(target, []) \
+                if (kwargs.get("env") or {}).get("NUMBA_DEBUG_CACHE") else []
+            out = "".join(f"[cache] data {event} '{path}'\n" for event, path in events)
+            return SimpleNamespace(returncode=0, stdout=out, stderr="")
         raise AssertionError(f"test triggered an unexpected subprocess: {argv!r}")
 
     @staticmethod
@@ -887,29 +932,92 @@ class ProvisionRunTests(StoreTestCase):
         (provision.LIBS / "current").symlink_to(farm)
         self.assertEqual(self._run("demo", warm="foo"), 0)
 
-        self.assertEqual(len(self.warm_paths), 1)
-        given, resolved = self.warm_paths[0]
-        # Through the bind, never the farm's own path: the JIT cache key holds the
-        # source path the sandbox will import from.
-        self.assertEqual(given, str(provision.LIBS / "current" / "python" / "site-packages"))
-        # And the bind resolved to this farm when the child ran.
-        self.assertEqual(resolved, os.path.realpath(farm / "python" / "site-packages"))
+        # One child prepares the module, and one records what a later run reuses.
+        self.assertEqual(len(self.warm_paths), 2)
+        for given, resolved in self.warm_paths:
+            # Through the bind, never the farm's own path: the JIT cache key holds the
+            # source path the sandbox will import from.
+            self.assertEqual(given, str(provision.LIBS / "current" / "python" / "site-packages"))
+            # And the bind resolved to this farm when the child ran.
+            self.assertEqual(resolved, os.path.realpath(farm / "python" / "site-packages"))
 
         lock = json.loads((farm / "lock.json").read_text())
         self.assertTrue(lock["warm"]["foo"].startswith("ok"), lock["warm"])
-        self.assertEqual(lock["warm"]["_numba_cache_entries"], "0")
+        self.assertEqual(lock["warm"]["_numba_index_files"], "0")
 
-    def test_a_warm_run_without_the_bind_reports_it(self):
-        """§4.3: the bind is the job of the invoker. A run with no bind names the
-        path, because the caches it writes are then keyed on a path that no sandbox
-        imports from."""
+    def test_a_warm_run_without_the_bind_fails_and_writes_no_cache(self):
+        """§2.4: the bind is the job of the invoker. A run that cannot resolve the
+        farm at that path fails and names the mount that it wants.
+
+        A cache that the run writes through another path never loads, thus such a
+        run costs build minutes and produces nothing. The check comes before the
+        first cache write, thus the failed run leaves no cache directory behind.
+        """
         self.compile_text = self.FOO_1
         self.install_tree = dict(self.FOO_1_TREE)
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            self.assertEqual(provision._provision(self._args("demo", ["foo"], warm="foo")), 0)
-        self.assertIn("does not resolve to", buf.getvalue())
-        self.assertIn(str(provision.LIBS / "current"), buf.getvalue())
+        farm = provision.FARMS / "demo"
+        self.assertEqual(self._run("demo", ["foo"]), 0)
+
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            provision._provision(self._args("demo", warm="foo"))
+
+        message = str(cm.exception)
+        self.assertIn("cannot resolve the farm", message)
+        self.assertIn(str(provision.LIBS / "current"), message)   # the mount it wants
+        self.assertIn(str(farm), message)                          # and what to bind there
+        # No cache was written, and no warm child ran at all.
+        self.assertFalse((farm / "numba-cache").exists())
+        self.assertFalse((farm / "matplotlib_config").exists())
+        self.assertEqual(self.warm_paths, [])
+        self.assertEqual(json.loads((farm / "lock.json").read_text())["warm"], {})
+
+    def test_a_declared_module_that_does_not_import_fails_the_run(self):
+        """§1.6: a module of the declared workload that does not import fails the
+        run, and the failure names that module.
+
+        The declaration states which packages an analysis reaches first. Thus a
+        module that cannot run is a broken catalog, and not a cache that is one
+        entry short. The run stops at that module and prepares no module after it.
+        """
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        farm = provision.FARMS / "demo"
+        self.assertEqual(self._run("demo", ["foo"]), 0)
+        (provision.LIBS / "current").symlink_to(farm)
+
+        self.warm_failures = {"nosuch": "ModuleNotFoundError: No module named 'nosuch'"}
+        self.calls.clear()
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            provision._provision(self._args("demo", warm="foo,nosuch,later"))
+
+        message = str(cm.exception)
+        self.assertIn("nosuch", message)                    # the module that failed
+        self.assertIn("does not import", message)
+        self.assertIn("ModuleNotFoundError", message)       # the cause of the child
+        # The module after the failure never ran.
+        warmed = [argv[-1] for argv in self.calls if argv[0] == provision.PYTHON]
+        self.assertEqual(warmed, ["import foo", "import nosuch"])
+
+    def test_a_workload_script_that_exits_non_zero_fails_the_run(self):
+        """§1.5: a workload script that exits non-zero fails the run, and the
+        failure names the script."""
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        farm = provision.FARMS / "demo"
+        self.assertEqual(self._run("demo", ["foo"]), 0)
+        (provision.LIBS / "current").symlink_to(farm)
+
+        script = provision.STORE / "warmup.py"
+        script.write_text("raise SystemExit(1)\n")
+        self.warm_failures = {str(script): "RuntimeError: the workload did not finish"}
+
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            provision._provision(self._args("demo", warm_script=str(script)))
+
+        message = str(cm.exception)
+        self.assertIn(str(script), message)
+        self.assertIn("exited non-zero", message)
+        self.assertIn("RuntimeError", message)
 
     def test_union_reresolve_over_prior_request(self):
         """§3.4: a re-run resolves the union of the prior request and the new specs.
@@ -955,13 +1063,17 @@ class ProvisionRunTests(StoreTestCase):
         self.compile_text = self.FOO_1
         self.install_tree = dict(self.FOO_1_TREE)
         farm = provision.FARMS / "demo"
+        # One run builds the farm, and the next one prepares its caches. The invoker
+        # binds the target farm for the second run.
+        self.assertEqual(self._run("demo", ["foo"]), 0)
+        (provision.LIBS / "current").symlink_to(farm)
 
         script = provision.STORE / "warmup.py"
         script_bytes = b"import foo\nfoo\n"
         script.write_bytes(script_bytes)
 
         self.assertEqual(
-            self._run("demo", ["foo"], warm="foo,bar", warm_script=str(script)), 0)
+            self._run("demo", warm="foo,bar", warm_script=str(script)), 0)
 
         lock = json.loads((farm / "lock.json").read_text())
         workload = lock["warm_workload"]
@@ -969,6 +1081,65 @@ class ProvisionRunTests(StoreTestCase):
         self.assertEqual(workload["script_sha256"], hashlib.sha256(script_bytes).hexdigest())
         # The path stays too, so the effectiveness check can run the script.
         self.assertEqual(lock["warm_script"], str(script))
+        # The build that came first published the farm with an empty record: it
+        # carried no cache, thus it described none.
+        self.assertEqual(lock["requested"], ["foo"])
+
+    def test_the_prepared_entries_reach_the_record(self):
+        """§3.3/§3.5: the run records the cache entries that a later run reuses, and
+        it leaves out the entry that writes on each run.
+
+        numba reports each cache file that it loads and each one that it saves. A
+        load is the proof that the entry matches its index again. A save in the same
+        pass names a kernel whose signature holds a type that no index re-matches,
+        and the record leaves that kernel out. Thus the effectiveness check cannot
+        fail on a kernel that no workload can prepare.
+        """
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        farm = provision.FARMS / "demo"
+        self.assertEqual(self._run("demo", ["foo"]), 0)
+        (provision.LIBS / "current").symlink_to(farm)
+
+        script = provision.STORE / "warmup.py"
+        script.write_bytes(b"import foo\n")
+        cache = farm / "numba-cache"
+        self.cache_events = {
+            "foo": [("loaded from", f"{cache}/foo_a1/foo.at_import-3.py311.1.nbc")],
+            str(script): [
+                ("loaded from", f"{cache}/foo_a1/foo.kernel-12.py311.1.nbc"),
+                ("saved to", f"{cache}/foo_a1/foo.unpicklable_sig-40.py311.7.nbc"),
+            ],
+        }
+
+        self.assertEqual(
+            self._run("demo", warm="foo", warm_script=str(script)), 0)
+
+        entries = json.loads((farm / "lock.json").read_text())["warm_workload"]["cache_entries"]
+        # Relative to the cache root, and sorted. The sandbox copies the cache to a
+        # writable path, thus the root is the one part that cannot travel.
+        self.assertEqual(entries, ["foo_a1/foo.at_import-3.py311.1.nbc",
+                                   "foo_a1/foo.kernel-12.py311.1.nbc"])
+
+    def test_a_run_that_builds_the_farm_refuses_to_warm_it(self):
+        """§2.2: a preparation run passes no spec.
+
+        The invoker binds the farm before the container starts, and a publish
+        replaces the farm directory. Thus a run that builds and warms would write the
+        cache into the farm that its own publish superseded. The refusal comes before
+        the resolve, thus it costs no build minute.
+        """
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        self.calls.clear()
+
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            provision._provision(self._args("demo", ["foo"], warm="foo"))
+
+        message = str(cm.exception)
+        self.assertIn("cannot also warm it", message)
+        self.assertIn(str(provision.LIBS / "current"), message)
+        self.assertEqual(self.calls, [])            # nothing resolved, nothing installed
 
 
 class TrackPreservationTests(StoreTestCase):
@@ -1136,7 +1307,7 @@ class TrackPreservationTests(StoreTestCase):
         self.calls.clear()
         self.assertEqual(self._run("demo"), 0)
 
-        # No R installer, no R resolver, and no load check ran for the preserved track.
+        # No R installer and no R resolver ran for the preserved track.
         for argv in self.calls:
             self.assertNotIn(argv[0], ("Rscript", "R"), f"the run reached for R: {argv}")
         # foo==1.0 is already in the store, thus the Python track reinstalls nothing.
@@ -1448,7 +1619,8 @@ class AcquisitionRunTests(StoreTestCase):
         self.assertFalse((provision.LIBS / "deps.json").exists())
 
     def test_an_r_manifest_needs_a_farm(self):
-        """pak installs and load-checks through a farm, thus the R track keeps needing one."""
+        """provision_r links each package that it stores into a farm, thus the R
+        track keeps needing one."""
         self.assertEqual(self._main(["--r-manifest", "/manifest.yaml"]), 2)
         self.assertEqual(sorted(p.name for p in provision.FARMS.iterdir()), [])
 
@@ -1721,74 +1893,6 @@ class FarmSwapRecoveryTests(StoreTestCase):
         self.assertEqual((farm / "meta.json").read_text(), "new\n")
         self.assertFalse((provision.FARMS / (provision.FARM_SUPERSEDED + "demo")).exists())
         self.assertFalse((provision.FARMS / (provision.FARM_STAGING + "demo")).exists())
-
-
-class RLoadCheckTests(StoreTestCase):
-    """§6.6 — the R load check loads each farmed package through the farm.
-
-    ``provision.subprocess.run`` is replaced with a local fake per test, so no real R
-    runs; the check's structure and its failure path are what the tests assert. The
-    base ``tearDown`` restores the original ``subprocess.run``.
-    """
-
-    def _stored(self, *packages: tuple[str, bool]) -> dict[str, list[tuple[str, Path]]]:
-        """Build a farm with the given R packages; a compiled one gets a libs/ dir."""
-        (provision.FARMS / "rf" / "r" / "cran").mkdir(parents=True)
-        pkgs = []
-        for name, compiled in packages:
-            store_dir = provision.STORE / f"{name.lower()}-1.0-000000000000000a"
-            (store_dir / name).mkdir(parents=True)
-            if compiled:
-                (store_dir / name / "libs").mkdir()
-            pkgs.append((name, store_dir))
-        return {"cran": pkgs, "bioconductor": [], "github": []}
-
-    def test_load_check_runs_library_per_package_and_compiled_probe(self):
-        """One R invocation per farmed package names that package with library(); only
-        a package with compiled code reads its registered routines."""
-        stored = self._stored(("pkgA", False), ("pkgB", True))
-
-        calls: list[list[str]] = []
-
-        def fake(cmd, *a, **k):
-            calls.append(list(cmd))
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-        provision.subprocess.run = fake
-        with contextlib.redirect_stdout(io.StringIO()):
-            provision.check_r_loads(provision.FARMS / "rf", stored)   # no raise
-
-        self.assertEqual(len(calls), 2)
-        self.assertTrue(all(c[0] == "Rscript" for c in calls))
-        self.assertIn("library('pkgA'", calls[0][-1])
-        self.assertIn("library('pkgB'", calls[1][-1])
-        # The pure-R package does not touch compiled code; the compiled one does.
-        self.assertNotIn("getDLLRegisteredRoutines", calls[0][-1])
-        self.assertIn("getDLLRegisteredRoutines", calls[1][-1])
-
-    def test_load_check_names_the_package_that_fails(self):
-        """A package that does not load names itself and stops the run."""
-        stored = self._stored(("pkgA", False))
-
-        def fake(cmd, *a, **k):
-            return SimpleNamespace(
-                returncode=1, stdout="",
-                stderr="Error: package or namespace load failed for 'pkgA'")
-
-        provision.subprocess.run = fake
-        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
-            provision.check_r_loads(provision.FARMS / "rf", stored)
-        self.assertIn("pkgA", str(cm.exception))
-        self.assertIn("does not load", str(cm.exception))
-
-    def test_load_check_skips_when_no_r_package(self):
-        """A farm with no R package runs no R at all."""
-        def fake(cmd, *a, **k):
-            raise AssertionError("check_r_loads must not run R with no R package")
-
-        provision.subprocess.run = fake
-        provision.check_r_loads(provision.FARMS / "rf",
-                                {"cran": [], "bioconductor": [], "github": []})
 
 
 class MarkerTests(unittest.TestCase):
@@ -2086,6 +2190,162 @@ class DependencyGraphTests(StoreTestCase):
                 if depth == 0:
                     return text[start:at + 1]
         raise AssertionError(f"the node {key} has no closing brace")
+
+
+# --- The image-owned package list ---------------------------------------------
+# base-packages.json is a hand-kept claim about the sandbox image. The comparison
+# below holds it to that image.
+
+# The image to read, and the engine that runs it. scripts/lib-store-sandbox-checks.sh
+# reads the same two environment names, thus one export selects the image for the
+# unit suite and for the sandbox checks together.
+SANDBOX_IMAGE = os.environ.get("SANDBOX_IMAGE", "ghcr.io/inflexa-ai/sandbox-base:latest")
+
+# The inventory reader, which runs inside the sandbox image and writes one JSON
+# object. Each rule below matches the rule that emit_deps.py resolves an edge with,
+# because the list exists to drop such an edge.
+#
+# A Requires-Dist entry names a distribution, thus importlib.metadata gives the
+# Python set. It reads a .dist-info and an .egg-info alike, and setuptools arrives
+# in this image as an .egg-info. A command-line binary is no distribution, thus a
+# tool that the image installs as a bare binary is absent from this set, and an
+# edge to its name would resolve to nothing.
+#
+# A Depends entry and an Imports entry name an R package. emit_deps.r_package_of
+# reads an R package as a directory that carries DESCRIPTION, and the walk below
+# obeys that same rule. installed.packages() gives a shorter answer, because it
+# omits `translations`, which is a real package of the R library.
+IMAGE_INVENTORY = r'''
+import json
+import subprocess
+from importlib.metadata import distributions
+from pathlib import Path
+
+python = sorted({d.metadata["Name"] for d in distributions() if d.metadata["Name"]})
+
+libs = subprocess.run(["Rscript", "-e", 'cat(.libPaths(), sep="\n")'],
+                      capture_output=True, text=True, check=True)
+r = set()
+for lib in libs.stdout.split():
+    path = Path(lib)
+    if path.is_dir():
+        r |= {d.name for d in path.iterdir() if (d / "DESCRIPTION").is_file()}
+
+# Rscript ran, thus the image carries the R engine. A DESCRIPTION names the engine
+# as R in its Depends field, and that edge drops the same as an edge into a
+# package. An image with no R fails the call above, and this line never runs.
+r.add("R")
+
+print(json.dumps({"python": python, "r": sorted(r)}))
+'''
+
+
+def container_engine() -> str | None:
+    """The container engine to drive, or None when the host has none.
+
+    CTR names the engine. Otherwise podman comes first and docker second, which is
+    the order of scripts/lib-store-sandbox-checks.sh.
+    """
+    named = os.environ.get("CTR")
+    for engine in ([named] if named else ["podman", "docker"]):
+        if engine and shutil.which(engine):
+            return engine
+    return None
+
+
+def image_owned_sets(inventory: dict[str, list[str]]) -> dict[str, set[str]]:
+    """The names of an image inventory, in the shape that load_base_packages gives."""
+    return {"python": {emit_deps.canon(name) for name in inventory["python"]},
+            "r": set(inventory["r"])}
+
+
+def image_owned_report(listed: dict[str, set[str]], installed: dict[str, set[str]],
+                       image: str) -> str:
+    """The empty string when the image owns each listed name, else the report.
+
+    The two failures are not symmetric, thus this reads one direction only. A name
+    that the list omits stops the build at the gate of the emitter, which is loud
+    and safe. A name that the image does not own drops a real edge. The closure
+    then runs short, and the import fails inside the sandbox with no explanation.
+
+    A name that the image owns and the list omits is no fault here. The list names
+    what an edge can drop, and it is not an inventory of the image.
+    """
+    absent = sorted((track, name)
+                    for track, names in listed.items()
+                    for name in names
+                    if name not in installed[track])
+    if not absent:
+        return ""
+    lines = "\n".join(f"  {track}: {name}" for track, name in absent)
+    return (f"the image-owned package list names {len(absent)} package(s) that "
+            f"{image} does not own:\n{lines}\n"
+            + emit_deps.REVEALED_NAME_RULE)
+
+
+class ImageOwnedPackageTests(unittest.TestCase):
+    """§6 — base-packages.json against the installed set of the sandbox image."""
+
+    def test_a_stale_name_fails_and_names_the_package(self):
+        """§6.2: a listed name that the image does not own fails, and it is named."""
+        listed = {"python": {"pip", "nowhere"}, "r": {"base", "Nothing"}}
+        installed = {"python": {"pip"}, "r": {"base"}}
+
+        report = image_owned_report(listed, installed, "an-image")
+
+        self.assertIn("python: nowhere", report)
+        self.assertIn("r: Nothing", report)
+        # The report carries the rule that decides where a revealed name goes.
+        self.assertIn("images/lib-store-manifest.yaml", report)
+        self.assertIn(emit_deps.BASE_PACKAGES_FILE.name, report)
+
+    def test_a_list_that_matches_the_image_passes(self):
+        """§6.1: each listed name exists in the image, thus the report is empty.
+
+        The image owns more than the list names, and that is the normal condition.
+        """
+        listed = {"python": {"pip", "ruff"}, "r": {"base", "MASS"}}
+        installed = {"python": {"pip", "ruff", "wheel"}, "r": {"base", "MASS", "utils"}}
+
+        self.assertEqual(image_owned_report(listed, installed, "an-image"), "")
+
+    def test_the_recorded_list_matches_the_sandbox_image(self):
+        """§6.1/6.2: the recorded list against the image that owns the packages.
+
+        The test skips on one condition: the host cannot reach the sandbox image.
+        Each step after that is a failure and never a skip, because the comparison
+        ran. A container that starts and then answers wrong is a defect.
+        """
+        engine = container_engine()
+        if engine is None:
+            raise unittest.SkipTest(
+                "no container engine on this host; install podman or docker, or set CTR")
+        found = subprocess.run([engine, "image", "inspect", SANDBOX_IMAGE],
+                               capture_output=True, text=True)
+        if found.returncode != 0:
+            raise unittest.SkipTest(
+                f"{engine} cannot reach the image {SANDBOX_IMAGE}: "
+                f"{found.stderr.strip()[-200:] or '(the engine wrote nothing)'}")
+
+        # The run mounts no store. A mounted farm joins .libPaths() and sys.path,
+        # thus a farmed package would read as a package of the image.
+        read = subprocess.run(
+            [engine, "run", "--rm", "-i", "--network", "none",
+             "--entrypoint", "python3", SANDBOX_IMAGE, "-"],
+            input=IMAGE_INVENTORY, capture_output=True, text=True, timeout=300)
+        self.assertEqual(read.returncode, 0,
+                         f"the image inventory failed:\n{read.stderr.strip()[-600:]}")
+        inventory = json.loads(read.stdout)
+
+        # A non-empty floor for each track. An empty answer is a broken read, and a
+        # broken read must never report agreement.
+        self.assertTrue(inventory["python"], f"{SANDBOX_IMAGE} reported no distribution")
+        self.assertTrue(inventory["r"], f"{SANDBOX_IMAGE} reported no R package")
+
+        report = image_owned_report(emit_deps.load_base_packages(),
+                                    image_owned_sets(inventory), SANDBOX_IMAGE)
+        if report:
+            self.fail(report)
 
 
 if __name__ == "__main__":
