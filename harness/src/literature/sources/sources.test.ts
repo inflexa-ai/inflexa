@@ -95,4 +95,20 @@ describe("shared literature authority sources", () => {
         expect(seen.map((url) => url.pathname.split("/").at(-1))).toEqual(["esearch.fcgi", "efetch.fcgi"]);
         expect(seen.every((url) => url.searchParams.get("api_key") === "ncbi-key")).toBe(true);
     });
+
+    it("omits the NCBI api_key parameter when the key is empty", async () => {
+        const seen: URL[] = [];
+        const source = createPubmedSource({
+            apiKey: "",
+            fetch: async (url) => {
+                seen.push(new URL(String(url)));
+                return Response.json({ esearchresult: { idlist: ["12345678"], count: "1" } });
+            },
+        });
+
+        const ids = await source.searchIds("shared source[Title]", 5);
+
+        expect(ids).toEqual({ status: "ok", value: ["12345678"] });
+        expect(seen[0]?.searchParams.has("api_key")).toBe(false);
+    });
 });
