@@ -18,6 +18,10 @@ name: Emit content-addressed lib store (Provisioner)
 #
 # Scope of this workflow:
 #   * Build the Provisioner image and run it to emit a store as a CI artifact.
+#   * Prepare the caches of the published farm, in a second run of the Provisioner.
+#   * Gate the artifact on the two checks that run in the sandbox image: the R load
+#     check, and the cache effectiveness check. A farm publishes before both of
+#     them, thus the artifact is the publish that the gate belongs to.
 #   * Publish the store to GHCR as an OCI artifact, through an ORAS push, one
 #     artifact for each architecture. This publish is IN SCOPE, decided 2026-08-05.
 #   * OUT OF SCOPE still: the S3 publish, and store-vs-image verification (same
@@ -113,15 +117,27 @@ jobs:
             best_effort: true
     runs-on: ${{ fromJSON(matrix.runner) }}
     continue-on-error: ${{ matrix.best_effort }}
+    # PROVISIONAL. A person must revise this value from the first real run. It is not
+    # a measurement: no run of this job with the preparation step and the two checks
+    # exists yet. It is a backstop that is tighter than the 6-hour default of GitHub.
+    # It holds the arm64 leg, which compiles the whole R set from source.
+    timeout-minutes: 240
     env:
       PLATFORM: ${{ matrix.platform }}
       ARCH: ${{ matrix.arch }}
       VERSION: ${{ needs.prepare.outputs.version }}
       BASE_IMAGE: ${{ needs.prepare.outputs.base_image }}
       PROVISIONER_IMAGE: sandbox-provisioner-local
+      SANDBOX_IMAGE: sandbox-base-local
       STORE_VOLUME: lib-store-${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
       STORE_IMAGE: ghcr.io/${{ github.repository_owner }}/lib-store
       R_NCPUS: ${{ inputs.r_ncpus }}
+      FARM: catalog
+      # The container path of the workload script, in the preparation run and in the
+      # cache check. The record of the preparation run holds this path, and the check
+      # reads the bytes there before it replays them. Thus the two runs must see one
+      # file at one path.
+      WARM_SCRIPT_MOUNT: /opt/lib-store-warm.py
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -188,6 +204,59 @@ jobs:
             -t "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
             .
 
+      - name: Build the sandbox runtime image
+        # The two checks below run INSIDE this image, because a sandbox runs it. The
+        # provisioner image installs pak and yaml into its own R library, thus a load
+        # check there resolves two names that no farm carries. Refer to D7 of the
+        # design of this change.
+        #
+        # The image comes from the working tree, and not from GHCR. The store of this
+        # run and this image then come from one commit, thus a check proves the pair
+        # that ships together. A published image carries the system libraries of an
+        # older commit. Thus a package of this manifest can fail against that image,
+        # for a reason that the store does not hold.
+        #
+        # TARGETARCH is explicit, the same as in lib-store.yml: the builder left the
+        # predefined value empty at the final FROM interpolation.
+        run: |
+          docker buildx build --load \
+            -f images/sandbox-base/Dockerfile \
+            --platform "$PLATFORM" \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            --build-arg "TARGETARCH=${ARCH}" \
+            -t "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" \
+            .
+
+      - name: Read the workload of the preparation run from the manifest
+        id: warm
+        # The manifest decides which packages exist, thus it declares the workload
+        # that exercises them. The build reads that declaration and names no module of
+        # its own. Refer to D1 of the design of this change.
+        #
+        # The read comes before the store build, because a manifest with no workload
+        # must stop this job in seconds, and not after a long compile.
+        run: |
+          set -euo pipefail
+          mapfile -t WARM < <(python3 - "$MANIFEST" <<'PY'
+          import sys, yaml
+          warm = (yaml.safe_load(open(sys.argv[1])) or {}).get("warm", {}) or {}
+          print(",".join(warm.get("modules", []) or []))
+          print(warm.get("script") or "")
+          PY
+          )
+          if [ -z "${WARM[0]:-}" ] || [ -z "${WARM[1]:-}" ]; then
+            echo "::error::the warm key of $MANIFEST names no module or no script"; exit 1
+          fi
+          if [ ! -f "${GITHUB_WORKSPACE}/${WARM[1]}" ]; then
+            echo "::error::the warm script ${WARM[1]} of $MANIFEST is not in the repository"; exit 1
+          fi
+          {
+            echo "modules=${WARM[0]}"
+            echo "script=${WARM[1]}"
+          } >> "$GITHUB_OUTPUT"
+          echo "warm modules: ${WARM[0]}"
+          echo "warm script:  ${WARM[1]}"
+
       - name: Emit the content-addressed store
         # NETWORK ON (the Provisioner resolves + compiles). The store is a named
         # volume mounted READ-WRITE at /mnt/libs — the SAME path the sandbox later
@@ -227,9 +296,110 @@ jobs:
             -e GITHUB_PAT \
             -e R_NCPUS \
             "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
-            --farm catalog \
+            --farm "$FARM" \
             --r-manifest /manifest.yaml \
             "${PY_SPECS[@]}"
+
+      - name: Resolve the farm directory of the store volume
+        id: farm
+        # The steps below read the store root AND the farm, and the farm is a
+        # directory inside the store. The store is a named docker volume, and `-v`
+        # mounts a whole volume: it has no subpath form. Thus each run binds the farm
+        # by its path on the host of the daemon, which `docker volume inspect` gives.
+        #
+        # `--mount type=volume,volume-subpath=...` is the other route, and this file
+        # does not take it. That option holds a floor on the version of the engine,
+        # and nothing pins the version of Docker on the self-hosted builder.
+        # `Mountpoint` has no such floor. The daemon is local to the runner, which the
+        # `--load` build and the volume above already depend on.
+        run: |
+          set -euo pipefail
+          MOUNTPOINT=$(docker volume inspect -f '{{ .Mountpoint }}' "$STORE_VOLUME")
+          echo "dir=${MOUNTPOINT}/farms/${FARM}" >> "$GITHUB_OUTPUT"
+          echo "the farm of this run: ${MOUNTPOINT}/farms/${FARM}"
+
+      - name: Check that each farmed R package loads in the sandbox image
+        # This check gates the catalog artifact. The provisioner cannot start a
+        # container, thus the farm publishes before the check runs. A farm and its
+        # store directories reach no user until an artifact ships them. Thus the
+        # artifact is the publish that the gate belongs to. Refer to D7 of the design
+        # of this change.
+        #
+        # The posture is the posture of a sandbox: no network, uid 1000, no
+        # capability, and the store read-only. The farm arrives as a second bind at
+        # /mnt/libs/current, nested inside the store bind, because a farm link is an
+        # absolute path into /mnt/libs/store.
+        env:
+          FARM_DIR: ${{ steps.farm.outputs.dir }}
+        run: |
+          docker run --rm --network none \
+            --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+            -v "${STORE_VOLUME}:/mnt/libs:ro" \
+            -v "${FARM_DIR}:/mnt/libs/current:ro" \
+            -v "${GITHUB_WORKSPACE}/scripts/lib-store-r-load-check.py:/opt/lib-store-r-load-check.py:ro" \
+            --entrypoint python3 \
+            "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" /opt/lib-store-r-load-check.py
+
+      - name: Prepare the caches of the published farm
+        # A run that builds a farm cannot also warm it. `publish_farm` replaces the
+        # farm directory with another inode, thus the bind of this container holds the
+        # directory that the publish superseded. provision.py refuses such a run. As a
+        # result the preparation is a second run: it names the farm and the workload,
+        # and it passes no spec.
+        #
+        # The farm binds read-write, because the workload writes the two caches and a
+        # bytecode cache through that path. A numba cache key holds the directory of
+        # the source, thus a cache that a run writes through any other path never
+        # loads.
+        env:
+          FARM_DIR: ${{ steps.farm.outputs.dir }}
+          WARM_MODULES: ${{ steps.warm.outputs.modules }}
+          WARM_SCRIPT: ${{ steps.warm.outputs.script }}
+        run: |
+          docker run --rm \
+            -v "${STORE_VOLUME}:/mnt/libs:rw" \
+            -v "${FARM_DIR}:/mnt/libs/current:rw" \
+            -v "${GITHUB_WORKSPACE}/${WARM_SCRIPT}:${WARM_SCRIPT_MOUNT}:ro" \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" \
+            --farm "$FARM" \
+            --warm "$WARM_MODULES" \
+            --warm-script "$WARM_SCRIPT_MOUNT"
+
+      - name: Check that the prepared caches are effective at run time
+        # A cache file on disk is not evidence. numba selects its cache directory by a
+        # write probe. It keys each entry on the type signature of the call, and on
+        # the directory of the source. Thus a cache can be present and miss on each
+        # call. The check replays the recorded workload with the cache debug on, and a
+        # write to a recorded entry fails this step.
+        #
+        # The store is read-only, thus the two caches move to a writable path first. A
+        # sandbox does the same at its entrypoint. `seed_caches` seeds them and then
+        # execs sandbox-server, thus it cannot carry another command, and this step
+        # seeds them the same way.
+        env:
+          FARM_DIR: ${{ steps.farm.outputs.dir }}
+          WARM_SCRIPT: ${{ steps.warm.outputs.script }}
+        run: |
+          set -euo pipefail
+          # The preparation run exports this value on aarch64, where the autodetection
+          # of the host CPU crashes the code generator of LLVM. Another value here
+          # makes each cached entry miss.
+          numba=()
+          if [ "$ARCH" = arm64 ]; then numba=(-e NUMBA_CPU_NAME=generic); fi
+          docker run --rm --network none \
+            --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+            -v "${STORE_VOLUME}:/mnt/libs:ro" \
+            -v "${FARM_DIR}:/mnt/libs/current:ro" \
+            -v "${GITHUB_WORKSPACE}/scripts/lib-store-cache-check.py:/opt/lib-store-cache-check.py:ro" \
+            -v "${GITHUB_WORKSPACE}/${WARM_SCRIPT}:${WARM_SCRIPT_MOUNT}:ro" \
+            "${numba[@]}" \
+            -e MPLCONFIGDIR=/tmp/mpl -e NUMBA_CACHE_DIR=/tmp/numba-cache -w /tmp \
+            --entrypoint /bin/bash \
+            "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" -c '
+              set -eu
+              cp -r /mnt/libs/current/matplotlib_config /tmp/mpl
+              cp -r /mnt/libs/current/numba-cache /tmp/numba-cache
+              python3 /opt/lib-store-cache-check.py'
 
       - name: Export the store as a symlink-preserving tarball
         # Stream the store OUT of the volume as a tar (symlinks kept as symlinks,
@@ -445,6 +615,7 @@ jobs:
         if: always()
         run: |
           docker rmi "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" 2>/dev/null || true
+          docker rmi "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" 2>/dev/null || true
           docker volume rm "$STORE_VOLUME" 2>/dev/null || true
           rm -rf dist
           docker image prune -f 2>/dev/null || true
