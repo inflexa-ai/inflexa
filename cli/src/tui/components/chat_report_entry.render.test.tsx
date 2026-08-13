@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
+import { createMockMouse } from "@opentui/core/testing";
 import { errAsync, okAsync } from "neverthrow";
 import type { DbError, MessagePage, Pool, Thread } from "@inflexa-ai/harness";
 
@@ -33,6 +34,9 @@ const dbErr: DbError = { type: "query_failed", op: "test", cause: new Error("boo
 // transcript mounted.
 const ANALYSIS = { id: AID, name: "Alpha", anchorId: "anchor-absent", projectId: null } as unknown as Analysis;
 
+// What the entry's open bound, recorded so a click is assertable. Cleared between cases.
+const opened: string[] = [];
+
 const ws = {
     analysis: ANALYSIS,
     sessionId: SID,
@@ -40,7 +44,9 @@ const ws = {
     project: null,
     openDialog: () => {},
     closeDialog: () => {},
-    openSession: () => {},
+    openSession: (threadId: string | null) => {
+        if (threadId !== null) opened.push(threadId);
+    },
     quit: async () => {},
 } as unknown as Workspace;
 
@@ -90,6 +96,12 @@ function rowOf(frame: string, needle: string): number {
     return at;
 }
 
+/** The cell that `needle` starts at, as the mouse addresses it. */
+function cellOf(frame: string, needle: string): { x: number; y: number } {
+    const y = rowOf(frame, needle);
+    return { x: frame.split("\n")[y]!.indexOf(needle), y };
+}
+
 /**
  * Mount the real `Chat`, seed the two stores it reads, and hand back one frame.
  *
@@ -100,7 +112,10 @@ function rowOf(frame: string, needle: string): number {
  * The renderer is destroyed in a `finally`. An undisposed renderer outlives its case and corrupts every
  * later render suite in the same process.
  */
-async function frameWith(children: Thread[] | "unreadable"): Promise<string> {
+async function withChat<T>(
+    children: Thread[] | "unreadable",
+    body: (setup: Awaited<ReturnType<typeof testRender>>, frame: string) => Promise<T> | T,
+): Promise<T> {
     const setup = await testRender(
         () => (
             <WorkspaceContext.Provider value={ws}>
@@ -120,16 +135,22 @@ async function frameWith(children: Thread[] | "unreadable"): Promise<string> {
             await Promise.sleep(20);
             await setup.renderOnce();
         }
-        return setup.captureCharFrame();
+        return await body(setup, setup.captureCharFrame());
     } finally {
         setup.renderer.destroy();
     }
+}
+
+/** One frame of the mounted transcript, for a case that reads the painted order alone. */
+async function frameWith(children: Thread[] | "unreadable"): Promise<string> {
+    return withChat(children, (_setup, frame) => frame);
 }
 
 describe("the report entries of a mounted transcript", () => {
     afterEach(() => {
         resetHotState();
         __resetReportChildrenForTest();
+        opened.length = 0;
     });
 
     // The turn headers carry the turn number and paint synchronously, thus they are the stable anchors
@@ -146,6 +167,16 @@ describe("the report entries of a mounted transcript", () => {
         expect(rowOf(frame, "Volcano report")).toBeLessThan(rowOf(frame, TURN_3));
         // The entry names what it opens, because a title reads as a conversation title on its own.
         expect(frame).toContain("report session");
+    });
+
+    test("a click on the entry opens that report session in place", async () => {
+        // The entry is the only route into a report session that names the point of the spawn, thus a
+        // click that binds nothing leaves the reader with a row that reads as a dead label.
+        await withChat([reportThread({ threadId: "child-1", title: "Volcano report", parentThreadId: SID, parentSeq: 11 })], async (setup, frame) => {
+            const at = cellOf(frame, "Volcano report");
+            await createMockMouse(setup.renderer).pressDown(at.x, at.y);
+            expect(opened).toEqual(["child-1"]);
+        });
     });
 
     test("a spawn point past the loaded transcript puts the entry at the END", async () => {

@@ -10,10 +10,13 @@ import {
     openReportSession,
     openSwitchReportSession,
     openSwitchSession,
+    realSessionSeams,
     reportSessionItems,
+    selectReportSession,
     switchSessionItems,
     type SessionSeams,
 } from "./commands.tsx";
+import { realThreadSeams } from "./hooks/thread.ts";
 import type { Workspace } from "./contexts/workspace.ts";
 import type { Notice } from "./theme.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
@@ -462,6 +465,18 @@ describe("report session flows", () => {
             expect(t.notices[0]?.kind).toBe("info");
             expect(t.notices[0]?.text).toContain("No conversation is open");
         });
+
+        test("a pick closes the dialog and swaps the chat onto that report session", () => {
+            // The handler carries the whole behavior of a pick, and nothing reaches it through a mounted
+            // dialog. The analysis is the one captured when the picker opened, thus the swap moves the
+            // thread alone and never the scope.
+            const w = sessionScope(ANALYSIS, PARENT.threadId);
+
+            selectReportSession(w.ws, CHILD, ANALYSIS);
+
+            expect(w.opened).toEqual([{ threadId: CHILD.threadId, analysisId: ANALYSIS.id }]);
+            expect(w.dialogs()).toBe(0);
+        });
     });
 
     describe("an analysis that changes across the await", () => {
@@ -524,5 +539,64 @@ describe("report session flows", () => {
             expect(t.notices).toHaveLength(1);
             expect(t.notices[0]?.text).toContain("Analysis changed");
         });
+    });
+});
+
+// The narrowing lives in the seam REALIZATIONS and nowhere above them, thus an injected fake shows
+// what the fake was told rather than what the real one passes. These cases drive the real realizations
+// over a fake pool and read the predicate that reached the store.
+describe("the narrowing each realization applies", () => {
+    /**
+     * A pool that records every statement and answers the two the listing runs: a count, then a page.
+     * The store builds one scope fragment and binds every value as a parameter, thus the recorded
+     * params ARE the filter.
+     */
+    function recordingPool(): { pool: Pool; calls: { text: string; values: unknown[] }[] } {
+        const calls: { text: string; values: unknown[] }[] = [];
+        const query = (text: string, values: unknown[] = []): Promise<{ rows: unknown[] }> => {
+            calls.push({ text, values });
+            return Promise.resolve({ rows: text.includes("COUNT(") ? [{ count: "0" }] : [] });
+        };
+        // The store reads `query` alone off the pool, and a real `Pool` carries a surface no test can
+        // build. The cast is sound because every statement below arrives at this one function.
+        return { pool: { query } as unknown as Pool, calls };
+    }
+
+    test("the switch listing asks the store for conversations", async () => {
+        const { pool, calls } = recordingPool();
+        (await realSessionSeams.listThreads(pool, FIXTURE_ANALYSIS_ID))._unsafeUnwrap();
+        expect(calls).not.toHaveLength(0);
+        for (const call of calls) {
+            expect(call.text).toContain("thread_type = $2");
+            expect(call.values.slice(0, 2)).toEqual([FIXTURE_ANALYSIS_ID, "conversation"]);
+        }
+    });
+
+    test("the report listing asks the store for one parent's report children", async () => {
+        const { pool, calls } = recordingPool();
+        (await realSessionSeams.listReportChildren(pool, FIXTURE_ANALYSIS_ID, "thread-parent"))._unsafeUnwrap();
+        expect(calls).not.toHaveLength(0);
+        for (const call of calls) {
+            expect(call.text).toContain("thread_type = $2");
+            expect(call.text).toContain("parent_thread_id = $3");
+            expect(call.values.slice(0, 3)).toEqual([FIXTURE_ANALYSIS_ID, "report", "thread-parent"]);
+        }
+    });
+
+    test("neither listing widens to the archived rows", async () => {
+        const { pool, calls } = recordingPool();
+        (await realSessionSeams.listThreads(pool, FIXTURE_ANALYSIS_ID))._unsafeUnwrap();
+        (await realSessionSeams.listReportChildren(pool, FIXTURE_ANALYSIS_ID, "thread-parent"))._unsafeUnwrap();
+        for (const call of calls) expect(call.text).toContain("deleted_at IS NULL");
+    });
+
+    test("the launch listing asks the store for conversations", async () => {
+        const { pool, calls } = recordingPool();
+        (await realThreadSeams.listThreads(pool, FIXTURE_ANALYSIS_ID))._unsafeUnwrap();
+        expect(calls).not.toHaveLength(0);
+        for (const call of calls) {
+            expect(call.text).toContain("thread_type = $2");
+            expect(call.values.slice(0, 2)).toEqual([FIXTURE_ANALYSIS_ID, "conversation"]);
+        }
     });
 });

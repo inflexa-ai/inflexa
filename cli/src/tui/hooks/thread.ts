@@ -65,7 +65,14 @@ export type ThreadSeams = {
     readonly notify: (notice: Notice) => void;
 };
 
-const realThreadSeams: ThreadSeams = {
+/**
+ * The production realizations of {@link ThreadSeams}.
+ *
+ * Exported so a test can observe the narrowing, which lives HERE and nowhere else: `resolveThreadId`
+ * applies no filter of its own, and a seam injected in this one's place shows what the FAKE was told
+ * rather than what the real one passes to the store.
+ */
+export const realThreadSeams: ThreadSeams = {
     runtime: harnessRuntime,
     listThreads: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId, type: "conversation" }),
     getThread: (pool, threadId) => createThreadStore(pool).getThread(threadId),
