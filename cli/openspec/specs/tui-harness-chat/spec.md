@@ -14,8 +14,11 @@ gate visible in the input affordance and status bar) and a boot animation SHALL 
 elapsed, design-gallery entered); session-scoped surfaces (the sidebar session line, the
 session-switch command) SHALL show a placeholder / stay disabled, since thread metadata has no
 pre-`ready` source. When boot reaches `ready`, the TUI SHALL resolve the conversation thread for the
-open analysis: the most-recent live thread from `ThreadStore.listThreads({analysisId})`, else a
-freshly minted thread id (`randomUUIDv7()`) whose row is created by the first turn. A failed boot
+open analysis: the most-recent live thread from
+`ThreadStore.listThreads({analysisId, type: "conversation"})`, else a
+freshly minted thread id (`randomUUIDv7()`) whose row is created by the first turn. The narrowing to
+the `conversation` type keeps a report child out of the launch: the listing orders by last activity,
+so a fresh report child would otherwise be the thread the next launch opens. A failed boot
 SHALL render the boot-error taxonomy's actionable message as a terminal state — never a hang or a
 dead screen. Ctrl+C at any boot stage SHALL quit through the graceful shutdown path (terminal
 restored, locks released, whatever booted drained). No passive flow (bare `inflexa` resolving to no
@@ -30,6 +33,11 @@ analysis, the welcome screen, `--status` views) boots anything.
 
 - **WHEN** boot reaches `ready` for an analysis with prior live threads
 - **THEN** the most-recently-active thread is resolved into the workspace scope and its transcript loads
+
+#### Scenario: The launch never opens a report child
+
+- **WHEN** boot reaches `ready` and the most-recently-active thread of the analysis is a report child
+- **THEN** the launch resolves the most-recent conversation instead, and the report child opens through the report surfaces alone
 
 #### Scenario: No threads yet means an empty chat, no row
 
