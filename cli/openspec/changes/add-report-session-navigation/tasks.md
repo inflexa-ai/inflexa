@@ -28,7 +28,7 @@
 
 ## 4. The chat entry point
 
-- [x] 4.1 Hold the report children of the open conversation as a reactive read. It refreshes when the open thread changes, and not for each turn.
+- [x] 4.1 Hold the report children of the open conversation as a reactive read. It refreshes when the open thread changes, and when a turn settles, because a turn is what spawns a report session.
 - [x] 4.2 Keep the sequence number of each loaded message beside the first message that its row opened. The conversion to the display messages drops the sequence number, thus the load path holds the pair itself.
 - [x] 4.3 Render an openable entry for each child after the last loaded message whose sequence number is not greater than the anchor. An anchor past the loaded transcript renders at the end, and an anchor below the mounted window renders at the top.
 - [x] 4.4 Open the child in place from that entry.
@@ -39,6 +39,7 @@
 - [x] 5.1 Cover each flow of the keybind pair, and cover each notice arm.
 - [x] 5.2 Cover the report picker, the narrowed switch picker, and the changed-analysis refusal.
 - [x] 5.3 Cover the chat entry: the anchor position, the anchor past the end, the anchor below the mounted window, the failed listing, and the archived child.
+- [x] 5.6 Cover the two edges of the listing: a bind to a different thread, and a turn that settles.
 - [x] 5.4 Cover the narrowed launch read: an analysis whose newest thread is a report child opens the newest conversation.
 - [x] 5.5 Seed a report thread in Postgres directly, because no local composition writes one yet.
 

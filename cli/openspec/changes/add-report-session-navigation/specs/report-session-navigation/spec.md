@@ -105,6 +105,8 @@ The chat MUST show an openable entry for each report child of the open conversat
 
 The entry MUST derive from the thread listing alone. It MUST NOT read a tool result, and no new harness data part is necessary. Thus a child that a different host spawned appears the same way.
 
+The listing MUST read again after the turn that spawns a child settles. The open thread does not change at a spawn. Thus a read that tracks the open thread alone shows nothing until the user leaves the conversation.
+
 The anchor is a store sequence number, and the loaded transcript holds no such number. The load reads each stored message with its sequence number, and the conversion to the display messages drops it. Thus the load path MUST keep the sequence number of each loaded message beside the message that it opened. The entry MUST sit after the last loaded message whose sequence number is not greater than the anchor.
 
 An anchor past the end of the loaded transcript MUST be a normal state, and the entry MUST render at the end. The transcript mounts the newest turns alone, thus an anchor below the mounted window is a normal state too. The entry MUST then render at the top of the loaded transcript. A listing failure MUST show no entry, and it MUST NOT break the transcript. An archived child MUST show no entry, because the listing reads the live children alone.
@@ -113,6 +115,11 @@ An anchor past the end of the loaded transcript MUST be a normal state, and the 
 
 - **WHEN** the open conversation holds a report child whose anchor names a loaded position
 - **THEN** the transcript shows an openable entry for that child at that position
+
+#### Scenario: A session that a turn spawns gets its entry
+
+- **WHEN** a turn of the open conversation spawns a report child and that turn settles
+- **THEN** the transcript shows an entry for that child, and the open thread does not change
 
 #### Scenario: The entry opens the child
 

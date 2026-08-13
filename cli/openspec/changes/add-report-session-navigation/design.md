@@ -72,7 +72,7 @@ The narrowing costs one filter on a read that the CLI already runs. The delta on
 
 - [The surfaces list nothing until a browser realization lands] → Accepted, and stated in the proposal. The coverage seeds a report thread in Postgres directly.
 - [A leader chord costs two keystrokes] → Accepted for reach. The pair is remappable, thus a user picks a shorter chord.
-- [The chat entry point costs one listing read] → The read narrows by the parent thread id. It runs when the open thread changes, and not for each turn.
+- [The chat entry point costs one listing read] → The read narrows by the parent thread id. It runs when the open thread changes, and one time when a turn settles. A turn is what spawns a report session, thus that second edge is what puts the entry on the screen.
 
 ## Migration Plan
 
