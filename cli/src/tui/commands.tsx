@@ -934,8 +934,10 @@ type ReportChildren = { readonly kind: "read"; readonly threads: Thread[] } | { 
  * surfaces that offer them — the forward chord and the palette command — thus the two can never answer
  * one question with two different sets.
  *
- * One page, exactly as the switch picker reads one. The rows sort by the last activity, thus the first
- * page holds the children a user reaches for.
+ * One page of the store default, exactly as the switch picker reads one. A conversation past that count
+ * loses the tail with no mark on the list. The one-version policy of a report session keeps the count
+ * far below it. The rows also sort by the last activity, thus the page holds the children a user
+ * reaches for.
  */
 async function readReportChildren(pool: Pool, analysisId: string, parentThreadId: string, seams: SessionSeams): Promise<ReportChildren> {
     return (await seams.listReportChildren(pool, analysisId, parentThreadId)).match(
@@ -945,18 +947,30 @@ async function readReportChildren(pool: Pool, analysisId: string, parentThreadId
 }
 
 /**
- * Whether the analysis captured before an await is still the open one. It raises the refusal itself when
+ * Whether the scope captured before an await is still the open one. It raises the refusal itself when
  * it is not, thus a caller reads one branch and never repeats the words.
  *
- * A thread read is a Postgres round trip and NOTHING is modal across it, thus the analysis-switch keys
- * stay live. A swap that lands anyway would bind a thread of the previous analysis beside the working
- * directory of the analysis open now: one scope naming two analyses. Each report flow crosses that
- * window, and each one asks here.
+ * A thread read is a Postgres round trip and NOTHING is modal across it, thus the analysis-switch AND
+ * the session-switch keys stay live. Each report flow crosses that window, and a swap that lands anyway
+ * acts on the conversation the user just left. The two facts break differently:
+ *
+ * - A changed analysis binds a thread of the previous analysis beside the working directory of the
+ *   analysis open now, which is one scope naming two analyses.
+ * - A changed session opens the parent of a conversation the user moved off, or a report child that
+ *   hangs off it. Both rows are real, thus nothing downstream refuses them.
+ *
+ * The sibling session flows of this file split the two the same way, for the same reason.
  */
-function analysisStillOpen(ctx: Workspace, analysis: Analysis, seams: SessionSeams): boolean {
-    if (ctx.analysis?.id === analysis.id) return true;
-    seams.notify({ kind: "info", text: "Analysis changed — no report session was opened." });
-    return false;
+function scopeStillOpen(ctx: Workspace, analysis: Analysis, threadId: string | null, seams: SessionSeams): boolean {
+    if (ctx.analysis?.id !== analysis.id) {
+        seams.notify({ kind: "info", text: "Analysis changed — no report session was opened." });
+        return false;
+    }
+    if (ctx.sessionId !== threadId) {
+        seams.notify({ kind: "info", text: "Session changed — no report session was opened." });
+        return false;
+    }
+    return true;
 }
 
 /**
@@ -1052,7 +1066,7 @@ export async function openParentSession(ctx: Workspace, seams: SessionSeams = re
                 seams.notify({ kind: "warn", text: "The parent conversation is no longer listed — nothing was opened." });
                 return;
             }
-            if (!analysisStillOpen(ctx, analysis, seams)) return;
+            if (!scopeStillOpen(ctx, analysis, threadId, seams)) return;
             ctx.openSession(parent.threadId, ctx.workingDir, analysis);
         },
         () => seams.notify({ kind: "error", text: "Could not read the parent conversation — nothing was opened." }),
@@ -1100,7 +1114,7 @@ export async function openReportSession(ctx: Workspace, seams: SessionSeams = re
         seams.notify({ kind: "warn", text: REPORT_LIST_FAILED });
         return;
     }
-    if (!analysisStillOpen(ctx, analysis, seams)) return;
+    if (!scopeStillOpen(ctx, analysis, threadId, seams)) return;
     // Destructured rather than indexed: this hands the one-child arm its row and the count in one step,
     // where an index read is typed `Thread | undefined` and wants a guard at each site.
     const [first, ...rest] = children.threads;
@@ -1147,7 +1161,7 @@ export async function openSwitchReportSession(ctx: Workspace, seams: SessionSeam
         seams.notify({ kind: "warn", text: REPORT_LIST_FAILED });
         return;
     }
-    if (!analysisStillOpen(ctx, analysis, seams)) return;
+    if (!scopeStillOpen(ctx, analysis, threadId, seams)) return;
     openReportPicker(ctx, analysis, children.threads);
 }
 

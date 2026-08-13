@@ -479,6 +479,66 @@ describe("report session flows", () => {
         });
     });
 
+    describe("a session that changes across the await", () => {
+        // The session-switch keys stay live across the same window. A swap that landed anyway would open
+        // the parent of a conversation the user moved off, or a report child that hangs off it. Both rows
+        // are real, thus nothing downstream refuses them and the user simply lands somewhere else.
+        test("the back chord refuses the swap", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.threadId);
+            const t = makeSeams({
+                getThread: (_pool, threadId) => {
+                    if (threadId === CHILD.threadId) return okAsync(CHILD);
+                    w.swapTo({ sessionId: "thread-elsewhere" });
+                    return okAsync(PARENT);
+                },
+            });
+
+            await openParentSession(w.ws, t.seams);
+
+            expect(w.opened).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Session changed");
+        });
+
+        test("the forward chord refuses the swap and opens no dialog", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, PARENT.threadId);
+            const only = reportThread({ parentThreadId: PARENT.threadId });
+            const t = makeSeams({
+                getThread: rowsByThreadId([PARENT]),
+                listReportChildren: () => {
+                    w.swapTo({ sessionId: "thread-elsewhere" });
+                    return okAsync(threadPageOf([only]));
+                },
+            });
+
+            await openReportSession(w.ws, t.seams);
+
+            expect(w.opened).toEqual([]);
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Session changed");
+        });
+
+        test("the palette command refuses the picker it built for the session that was left", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, PARENT.threadId);
+            const t = makeSeams({
+                listReportChildren: () => {
+                    w.swapTo({ sessionId: "thread-elsewhere" });
+                    return okAsync(threadPageOf([reportThread({ parentThreadId: PARENT.threadId })]));
+                },
+            });
+
+            await openSwitchReportSession(w.ws, t.seams);
+
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Session changed");
+        });
+    });
+
     describe("an analysis that changes across the await", () => {
         // Nothing is modal across a thread read, thus the analysis-switch keys stay live. A swap that
         // landed anyway would bind a thread of the previous analysis beside the working directory of the
