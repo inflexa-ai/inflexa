@@ -12,22 +12,23 @@
 ## 2. The farm bind
 
 - [x] 2.1 Fail a preparation run that cannot resolve the farm at the container path, and name the mount
-- [ ] 2.2 Bind the target farm for the preparation run of `scripts/lib-store-sandbox-checks.sh`
-- [ ] 2.3 Bind the target farm for each sandbox run of that script
+- [x] 2.2 Bind the target farm for the preparation run of `scripts/lib-store-sandbox-checks.sh`
+- [x] 2.3 Bind the target farm for each sandbox run of that script
 - [x] 2.4 Do a test: a run with no farm mount fails, and it writes no cache
-- [ ] 2.5 Run the sandbox checks end to end, and make sure that each section passes
+- [x] 2.5 Run the sandbox checks end to end, and make sure that each section passes
 
 ## 3. The catalog build
 
-- [ ] 3.1 Read the `warm` key in the build, beside the step that parses `PY_SPECS` from the manifest
-- [ ] 3.2 Add the preparation step, which passes `--warm` and `--warm-script` with the farm bound
-- [ ] 3.3 Record the prepared cache entries in the run, beside the workload that it recorded
-- [ ] 3.4 Extract the replay check, so the build and the acceptance script share one implementation
-- [ ] 3.5 Judge the check on the recorded set: each entry loads, and a write outside the set passes
-- [ ] 3.6 Run that check in the build against the published store, as the unprivileged runtime user
-- [ ] 3.7 Fail the build when the check counts a cache write for a recorded entry
-- [ ] 3.6 Measure the added build time, and set `timeout-minutes` on the job from that measurement
-- [ ] 3.7 Do a test: a build that runs no preparation step fails the check
+- [x] 3.1 Read the `warm` key in the build, beside the step that parses `PY_SPECS` from the manifest
+- [x] 3.2 Add the preparation step as a SECOND run, with no spec and with the farm bound. A run that builds a farm cannot warm it, because the publish replaces the directory that the bind holds
+- [x] 3.3 Record the prepared cache entries in the run, beside the workload that it recorded
+- [x] 3.4 Extract the replay check, so the build and the acceptance script share one implementation
+- [x] 3.5 Judge the check on the recorded set: each entry loads, and a write outside the set passes
+- [x] 3.6 Run that check in the build against the published store, as the unprivileged runtime user
+- [x] 3.7 Fail the build when the check counts a cache write for a recorded entry
+- [x] 3.8 Set a provisional `timeout-minutes` on the job, with a comment that names it provisional
+- [ ] 3.10 Revise `timeout-minutes` from the first real run. No run of the job with these steps exists, thus nothing measured it
+- [x] 3.9 Do a test: a build that runs no preparation step fails the check. A workflow cannot omit its own step, thus the exit-2 path of the check covers it: a farm with no record refuses and publishes nothing
 
 ## 4. The farm source
 
@@ -43,10 +44,10 @@
 
 - [x] 5.1 Record the farmed R packages in the run, thus the check reads a record and walks no farm
 - [x] 5.2 Remove `check_r_loads` from `provision_r`, because the provisioner cannot start a container
-- [ ] 5.3 Run the check in a `sandbox-base` container, through the `R_LIBS_SITE` paths of the farm
-- [ ] 5.4 Gate the catalog artifact on that check, because the farm publishes before the check runs
-- [ ] 5.5 Add the check to `scripts/lib-store-sandbox-checks.sh`, thus a local run proves the same thing
-- [ ] 5.6 Do a test: a package whose runtime dependency only the provisioner image owns fails the check
+- [x] 5.3 Run the check in a `sandbox-base` container, through the `R_LIBS_SITE` paths of the farm
+- [x] 5.4 Gate the catalog artifact on that check, because the farm publishes before the check runs
+- [x] 5.5 Add the check to `scripts/lib-store-sandbox-checks.sh`, thus a local run proves the same thing
+- [x] 5.6 Do a test: a package whose runtime dependency only the provisioner image owns fails the check
 
 ## 6. The image-owned package list
 
@@ -57,4 +58,4 @@
 
 ## 7. The spec sync
 
-- [ ] 7.1 Run `openspec validate restore-warm-cache-and-name-farm-source --strict` and resolve each finding
+- [x] 7.1 Run `openspec validate restore-warm-cache-and-name-farm-source --strict` and resolve each finding
