@@ -591,6 +591,30 @@ python:
         arm64:
             - "liana"
 
+# The workload of the run that prepares the caches. The manifest decides which
+# packages exist, thus the workload that exercises them belongs beside them. The
+# catalog build reads this key, and it passes --warm and --warm-script to the
+# provisioner. The provisioner reads no manifest for the workload.
+#
+# `modules` is the import gate: a module that does not import fails the run.
+# `script` makes the calls, and its value is a repository path. numba compiles at
+# the first CALL, and it keys each cache entry on the type signature of that call.
+# Thus an import prepares no entry, and one call of one signature prepares one
+# entry.
+warm:
+    # The packages that a first single-cell analysis reaches, and that cost the
+    # most before a cache exists. numba is the compiler that scanpy and pertpy
+    # compile through. matplotlib owns the font cache, the second prepared cache.
+    modules:
+        - numba
+        - matplotlib
+        - scanpy
+        - seaborn
+        - pertpy
+        - scvi
+        - cell2location
+    script: images/lib-store-warm.py
+
 # Node packages the runtime image installs at /opt/node (a flat list, not
 # arch-split). echarts backs the chart/report rendering path. A package farm cannot
 # carry this track, thus the image owns it.
