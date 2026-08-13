@@ -200,6 +200,53 @@ Do not do these tasks if the user does not ask for them:
 - Do not clean, rename, or move code that is not part of the request.
 - Do not make code better.
 
+## Backward compatibility
+
+Do not make anything backward compatible. The user says when compatibility is
+necessary. Until the user says it, each change replaces what came before.
+
+Do not do these tasks if the user does not ask for them:
+
+- Do not write a migration step, an upgrade path, or a fix-up of old data.
+- Do not keep an old code path beside the new one.
+- Do not add a deprecation shim, an alias, or a fallback to an older shape.
+- Do not keep a field, a flag, or a union member for a reader that came before.
+- Do not write a message that tells a user how to upgrade.
+- Do not name compatibility as a cost, a risk, or an alternative in a document.
+
+### Work that did not ship constrains nothing
+
+Unmerged work has no users. Thus it can never make a requirement for
+compatibility. This covers each of these:
+
+- a commit on the current branch
+- a change in `openspec/changes/` that is not archived
+- a decision from earlier in this same conversation
+- a file that an earlier session wrote.
+
+Read the state of the branch before you name a constraint. An open pull request
+ships nothing. Your own earlier work is the weakest reason of all, because you
+wrote it and it went nowhere.
+
+### Do not invent the person who needs it
+
+A reason that starts "a user could have" is not a reason. Before you keep
+anything for compatibility, do these steps:
+
+1. Name the person or the system that holds the old shape.
+2. Prove that it exists. Read the release, the tag, or the file on disk.
+3. Make sure that the user asked you to support it.
+
+If one step fails, delete the old shape. The user asks for it again if the
+deletion is wrong, and that costs one message. A path that stays for a person
+who does not exist costs each reader after you.
+
+### A stated cost must be a true cost
+
+When you give the user a list of options, prove each cost that you name. An
+invented cost makes the user decide against the facts, and it is worse than no
+list at all.
+
 ## Questions
 
 Give an answer to a question. Do not start work because of a question.
