@@ -73,7 +73,8 @@ export interface PubmedSource {
 
 export function ncbiUrl(apiKey: string | undefined, base: string, params: Record<string, string | number | undefined>): string {
     const url = new URL(base);
-    if (apiKey !== undefined) url.searchParams.set("api_key", apiKey);
+    // The URL must not include an empty key. NCBI rejects `api_key=` with HTTP 400.
+    if (apiKey) url.searchParams.set("api_key", apiKey);
     for (const [key, value] of Object.entries(params)) if (value !== undefined) url.searchParams.set(key, String(value));
     return url.toString();
 }
