@@ -51,7 +51,13 @@ export const openThread = threadState;
 export type ThreadSeams = {
     /** The booted runtime handle, or `null` when boot is not ready. Real: {@link harnessRuntime}. */
     readonly runtime: () => HarnessRuntime | null;
-    /** An analysis's live threads, most-recently-active first. Real: `createThreadStore(pool).listThreads`. */
+    /**
+     * An analysis's live conversations, most-recently-active first. The listing narrows on the
+     * `conversation` type, and the narrow is necessary: the store orders by last activity, thus a
+     * report child spawned a moment ago sorts ahead of every conversation. Without the narrow the next
+     * launch would open that report child, and the report agent would answer the first message the
+     * user types. Real: `createThreadStore(pool).listThreads` with `type`.
+     */
     readonly listThreads: (pool: Pool, analysisId: string) => ResultAsync<ThreadPage, DbError>;
     /** One thread's row, or `null` when absent/soft-deleted. Real: `createThreadStore(pool).getThread`. */
     readonly getThread: (pool: Pool, threadId: string) => ResultAsync<Thread | null, DbError>;
@@ -61,14 +67,14 @@ export type ThreadSeams = {
 
 const realThreadSeams: ThreadSeams = {
     runtime: harnessRuntime,
-    listThreads: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId }),
+    listThreads: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId, type: "conversation" }),
     getThread: (pool, threadId) => createThreadStore(pool).getThread(threadId),
     notify,
 };
 
 /**
- * Pick the conversation thread to open for an analysis: its most-recently-active live thread, else a
- * freshly minted id. A mint is an IDENTITY, not a row — nothing is written here, and the row is
+ * Pick the conversation thread to open for an analysis: its most-recently-active live conversation,
+ * else a freshly minted id. A mint is an IDENTITY, not a row — nothing is written here, and the row is
  * created by the first turn, so opening a chat and typing nothing persists nothing anywhere.
  *
  * Returns `null` when the runtime is not booted: the thread store lives in Postgres, which has no
@@ -77,7 +83,7 @@ const realThreadSeams: ThreadSeams = {
  * threads sat unread.
  *
  * A failed listing degrades to a fresh mint with a toast rather than an error: the user still gets a
- * working chat, and the unread threads are recoverable through the session picker once the read
+ * working chat, and the unread conversations are recoverable through the session picker once the read
  * succeeds again.
  */
 export async function resolveThreadId(analysisId: string, seams: ThreadSeams = realThreadSeams): Promise<string | null> {

@@ -8,6 +8,7 @@ import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { Notice } from "../theme.ts";
 import type { Analysis } from "../../types/analysis.ts";
+import { conversationThread, reportThread } from "../../test_support/threads.ts";
 import { __resetBootForTest, __setBootStateForTest, type BootState } from "./boot.ts";
 import { setChatStatus } from "./status.ts";
 import { __resetOpenThreadForTest, openThread, refreshOpenThread, resolveThreadId, watchOpenThread, type ThreadSeams } from "./thread.ts";
@@ -137,6 +138,36 @@ describe("resolveThreadId", () => {
         expect(t.notices).toHaveLength(1);
         expect(t.notices[0]?.kind).toBe("warn");
         expect(t.notices[0]?.text).toContain("new one");
+    });
+
+    // A report child rides the same activity clock as a conversation, so a child spawned a moment ago
+    // sits at the head of an unnarrowed listing. The narrow itself lives in the real seam, which pushes
+    // `type: "conversation"` into the query — the seam takes a pool and an analysis id and nothing else,
+    // so an injected one cannot report the filter it applied. The fakes below therefore model the store:
+    // the fixture is the analysis's WHOLE thread set and the seam answers with the narrowed slice of it,
+    // the same faithful stand-in shape the page slicing in `conversation.test.ts` uses.
+    const analysisThreads = (all: Thread[]): ThreadPage => threadPage(all.filter((t) => t.threadType === "conversation"));
+
+    test("an analysis whose newest thread is a report child launches on the newest CONVERSATION", async () => {
+        const child = reportThread({ analysisId: ANALYSIS.id, threadId: "thread-report-newest", updatedAt: new Date("2026-07-09T09:00:00.000Z") });
+        const newest = conversationThread({ analysisId: ANALYSIS.id, threadId: "thread-newest", updatedAt: new Date("2026-07-08T09:00:00.000Z") });
+        const older = conversationThread({ analysisId: ANALYSIS.id, threadId: "thread-older", updatedAt: new Date("2026-07-01T09:00:00.000Z") });
+        const t = makeSeams({ listThreads: () => okAsync(analysisThreads([child, newest, older])) });
+
+        // A launch that landed on the child would hand the first message the user types to the report
+        // agent, in a chat that names itself the conversation.
+        expect(await resolveThreadId(ANALYSIS.id, t.seams)).toBe("thread-newest");
+        expect(t.notices).toEqual([]);
+    });
+
+    test("an analysis holding report children only starts a fresh conversation, never resumes one of them", async () => {
+        const child = reportThread({ analysisId: ANALYSIS.id, threadId: "thread-report-only" });
+        const t = makeSeams({ listThreads: () => okAsync(analysisThreads([child])) });
+
+        const resolved = await resolveThreadId(ANALYSIS.id, t.seams);
+
+        expect(resolved).toMatch(UUID_V7);
+        expect(resolved).not.toBe(child.threadId);
     });
 });
 
