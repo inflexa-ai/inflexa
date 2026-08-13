@@ -1,0 +1,60 @@
+# Tasks — Restore the Warm Cache and Name the Farm Source
+
+## 1. The declared workload
+
+- [x] 1.1 Add a `warm` key to `images/lib-store-manifest.yaml`, with a `modules` list and a `script` path
+- [x] 1.2 Name the module set of the earlier image: `numba`, `matplotlib`, `scanpy`, `seaborn`, `pertpy`, `scvi`, `cell2location`
+- [x] 1.3 Write the workload script: for each module, call the entry points that a first analysis reaches
+- [x] 1.4 Comment each call with the reason that it sits on the path of an analysis
+- [x] 1.5 Fail a preparation run when a declared module does not import, or the script exits non-zero
+- [x] 1.6 Do a test: a run whose declared module does not import fails and names that module
+
+## 2. The farm bind
+
+- [x] 2.1 Fail a preparation run that cannot resolve the farm at the container path, and name the mount
+- [ ] 2.2 Bind the target farm for the preparation run of `scripts/lib-store-sandbox-checks.sh`
+- [ ] 2.3 Bind the target farm for each sandbox run of that script
+- [x] 2.4 Do a test: a run with no farm mount fails, and it writes no cache
+- [ ] 2.5 Run the sandbox checks end to end, and make sure that each section passes
+
+## 3. The catalog build
+
+- [ ] 3.1 Read the `warm` key in the build, beside the step that parses `PY_SPECS` from the manifest
+- [ ] 3.2 Add the preparation step, which passes `--warm` and `--warm-script` with the farm bound
+- [ ] 3.3 Record the prepared cache entries in the run, beside the workload that it recorded
+- [ ] 3.4 Extract the replay check, so the build and the acceptance script share one implementation
+- [ ] 3.5 Judge the check on the recorded set: each entry loads, and a write outside the set passes
+- [ ] 3.6 Run that check in the build against the published store, as the unprivileged runtime user
+- [ ] 3.7 Fail the build when the check counts a cache write for a recorded entry
+- [ ] 3.6 Measure the added build time, and set `timeout-minutes` on the job from that measurement
+- [ ] 3.7 Do a test: a build that runs no preparation step fails the check
+
+## 4. The farm source
+
+- [x] 4.1 Remove the `store-root` kind from the `FarmSource` union in `harness/src/sandbox/types.ts`
+- [x] 4.2 Make `farmSource` necessary on `CreateSandboxConfig` and on each backend config
+- [x] 4.3 Remove the `<store root>/current` fallback at `harness/src/sandbox/docker-client.ts:327`
+- [x] 4.4 Remove the `store-root` branch of `farmProviderOf` in `mount-plan.ts`, and update `k8s-client.ts`
+- [x] 4.5 Adjust the delta of `per-analysis-farm-mount` where it names the removed kind. No edit was necessary: the delta names the store-root MOUNT and never the kind
+- [x] 4.6 Update each test that constructs the kind or omits `farmSource`
+- [x] 4.7 Run `tsc -p tsconfig.json` in `harness` and in `cli`, thus the break shows at each consumer
+
+## 5. The R load check
+
+- [x] 5.1 Record the farmed R packages in the run, thus the check reads a record and walks no farm
+- [x] 5.2 Remove `check_r_loads` from `provision_r`, because the provisioner cannot start a container
+- [ ] 5.3 Run the check in a `sandbox-base` container, through the `R_LIBS_SITE` paths of the farm
+- [ ] 5.4 Gate the catalog artifact on that check, because the farm publishes before the check runs
+- [ ] 5.5 Add the check to `scripts/lib-store-sandbox-checks.sh`, thus a local run proves the same thing
+- [ ] 5.6 Do a test: a package whose runtime dependency only the provisioner image owns fails the check
+
+## 6. The image-owned package list
+
+- [x] 6.1 Add the test that compares `base-packages.json` against the installed set of the sandbox image
+- [x] 6.2 Fail that test when the list names a package that the image does not own
+- [x] 6.3 Add a revealed name to the manifest when the sandbox needs the package, and to the list when the image carries it
+- [x] 6.4 Remove `uv` from the list. The image carries the command and not the distribution, thus the name belongs to neither file
+
+## 7. The spec sync
+
+- [ ] 7.1 Run `openspec validate restore-warm-cache-and-name-farm-source --strict` and resolve each finding
