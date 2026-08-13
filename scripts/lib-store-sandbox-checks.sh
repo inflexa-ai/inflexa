@@ -460,10 +460,16 @@ r_load_check() {
 if wants rload; then
     head2 "the R load check in the sandbox image"
 
+    # config Imports yaml, and yaml names itself here for the reason that the
+    # catalog manifest names pak: the provisioner image installs yaml for its own
+    # resolve, thus the resolver reads it as satisfied and puts no copy in the
+    # pool. A manifest that names config alone leaves the edge with no node, and
+    # the graph gate then stops the run before this section can prove anything.
     read -r -d '' R_MANIFEST <<'YAML'
 r:
   cran:
     - config
+    - yaml
 YAML
     stage /mnt/libs/r-manifest.yaml <<<"$R_MANIFEST"
 
