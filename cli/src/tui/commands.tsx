@@ -224,7 +224,14 @@ export type SessionSeams = {
     readonly notify: (notice: Notice) => void;
 };
 
-const realSessionSeams: SessionSeams = {
+/**
+ * The production realizations of {@link SessionSeams}.
+ *
+ * Exported so a test can observe the narrowing, which lives HERE and nowhere else: `listThreads` and
+ * `listReportChildren` differ only by the arguments they hand the store, and a seam injected in their
+ * place shows what the FAKE was told rather than what the real one passes.
+ */
+export const realSessionSeams: SessionSeams = {
     runtime: harnessRuntime,
     listThreads: (pool, analysisId) => createThreadStore(pool).listThreads({ analysisId, type: "conversation" }),
     listReportChildren: (pool, analysisId, parentThreadId) => createThreadStore(pool).listThreads({ analysisId, type: "report", parentThreadId }),
@@ -982,12 +989,22 @@ function openReportPicker(ctx: Workspace, analysis: Analysis, threads: Thread[])
             // one surface that reaches an empty set. The text names what puts a row here.
             emptyText="No report session in this conversation — ask the agent to start one"
             onCancel={() => ctx.closeDialog()}
-            onSelect={(thread: Thread) => {
-                ctx.closeDialog();
-                ctx.openSession(thread.threadId, ctx.workingDir, analysis);
-            }}
+            onSelect={(thread: Thread) => selectReportSession(ctx, thread, analysis)}
         />
     ));
+}
+
+/**
+ * Dispatch a report-session pick: close the dialog, then swap the chat onto that thread under the
+ * analysis captured when the picker opened. The swap moves the thread alone, because a report child
+ * belongs to the conversation that spawned it and that conversation belongs to this analysis.
+ *
+ * Exported for the reason {@link selectSwitchSession} is: the handler carries the whole behavior of a
+ * pick, and nothing can reach it through a mounted dialog.
+ */
+export function selectReportSession(ctx: Workspace, thread: Thread, analysis: Analysis): void {
+    ctx.closeDialog();
+    ctx.openSession(thread.threadId, ctx.workingDir, analysis);
 }
 
 /**
