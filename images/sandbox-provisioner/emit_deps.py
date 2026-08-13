@@ -59,6 +59,15 @@ GRAPH_VERSION = 1
 # The packages that the image owns, recorded beside the emitter.
 BASE_PACKAGES_FILE = Path(__file__).with_name("base-packages.json")
 
+# The rule that a revealed name obeys. A build stops on such a name, and the reader
+# then makes one decision. The gate below carries this text, and so does the test
+# that holds the list to the image, thus the rule has one wording.
+REVEALED_NAME_RULE = (
+    "A revealed name goes to one of two files:\n"
+    "  the sandbox imports the package -> images/lib-store-manifest.yaml\n"
+    f"  the sandbox image carries the package -> {BASE_PACKAGES_FILE.name}"
+)
+
 # A store directory of a Python distribution carries this suffix at its root. A
 # store directory of an R package carries DESCRIPTION one level down instead.
 DIST_INFO_SUFFIX = ".dist-info"
@@ -418,7 +427,8 @@ def gate(nodes: dict[str, dict]) -> None:
     lines = "\n".join(f"  {key} -> {edge}" for key, edge in bad)
     raise SystemExit(
         f"[deps] {len(bad)} edge(s) name a node that the graph does not hold. "
-        f"The closure is short, or the marker of the requirement read wrong:\n{lines}")
+        f"The closure is short, or the marker of the requirement read wrong:\n{lines}\n"
+        + REVEALED_NAME_RULE)
 
 
 def _merge(store_root: Path, batches: list[list[Path]]) -> dict:

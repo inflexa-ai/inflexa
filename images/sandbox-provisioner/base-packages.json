@@ -1,11 +1,11 @@
 {
   "note": "The packages that the sandbox image owns. The emitter drops an edge into one of these names, because no store directory holds it. A name here is dropped only when the resolved set holds no node of that name, thus a package that the store does install keeps its edge. Python names match after PEP 503 normalization. R names match verbatim, because R package names are case-sensitive.",
+  "rule": "A build that stops on a revealed name gives one decision, and the two files answer it. The sandbox imports the package: add the name to images/lib-store-manifest.yaml. The sandbox image carries the package: add the name here. A name here that the image does not own drops a real edge, thus the closure runs short and the import fails inside the sandbox. ImageOwnedPackageTests in test_provision.py holds this file to the image.",
   "python": [
     "pip",
     "setuptools",
     "wheel",
-    "ruff",
-    "uv"
+    "ruff"
   ],
   "r": [
     "R",
