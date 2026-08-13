@@ -13,14 +13,20 @@
 #   - two farms that pin different versions do not stay isolated
 #   - a prepared cache is present but not effective, so the runtime recompiles
 #   - packages.txt names a package the farm does not actually serve
+#   - an R package loads in the provisioner image and not in the sandbox image
 #
 # The provisioner builds each farm with the network on. Every check that reads a
 # farm runs in the sandbox image with the sandbox posture: no network, uid 1000,
 # all capabilities dropped, and the store read-only.
 #
+# The store carries no active-farm pointer. Thus every run that reads a farm takes
+# that farm as a second bind at /mnt/libs/current, nested inside the store-root bind,
+# the same as the harness gives a farm to a sandbox. The preparation of the caches
+# takes the same bind, because a numba cache key holds the path of the source.
+#
 # Usage: scripts/lib-store-sandbox-checks.sh [--keep] [SECTION ...]
 #   --keep     do not remove the throwaway store root at the end
-#   SECTION    one or more of: imports validate cache isolation  (default: all)
+#   SECTION    one or more of: imports validate cache isolation rload  (default: all)
 # Env:
 #   PROVISIONER_IMAGE   the provisioner to drive (default inflexa-provisioner:local)
 #   SANDBOX_IMAGE       the sandbox to read with (default ghcr.io/inflexa-ai/sandbox-base:latest)
@@ -39,12 +45,12 @@ SECTIONS=()
 for arg in "$@"; do
     case "$arg" in
         --keep) KEEP=1 ;;
-        imports|validate|cache|isolation) SECTIONS+=("$arg") ;;
-        all) SECTIONS=(imports validate cache isolation) ;;
+        imports|validate|cache|isolation|rload) SECTIONS+=("$arg") ;;
+        all) SECTIONS=(imports validate cache isolation rload) ;;
         *) echo "error: unknown argument '$arg'" >&2; exit 1 ;;
     esac
 done
-[[ ${#SECTIONS[@]} -eq 0 ]] && SECTIONS=(imports validate cache isolation)
+[[ ${#SECTIONS[@]} -eq 0 ]] && SECTIONS=(imports validate cache isolation rload)
 
 # Podman is the engine on the target platform, and docker is only a fallback.
 CTR="${CTR:-}"
@@ -76,6 +82,22 @@ head2() { printf '\n=== %s ===\n' "$1"; }
 # The store mounts at /mnt/libs in each run, because a farm links to absolute targets
 # under that path. A different mount point breaks every link.
 run_net() { "$CTR" run --rm -v "$STORE_ROOT:/mnt/libs:rw" "$PROVISIONER_IMAGE" "$@" 2>&1; }
+
+# A preparation run, which warms the caches of a farm that an earlier run published.
+# It takes the farm as a second bind at /mnt/libs/current, the path the sandbox
+# imports from, because a numba cache key holds the path of the source. The store
+# carries no pointer, thus this bind is what puts the farm there.
+#
+# The farm is the first argument. Such a run passes no spec: a publish replaces the
+# farm directory, and the bind of this container would then hold the directory that
+# the publish superseded.
+run_prepare() {
+    local name="$1"; shift
+    "$CTR" run --rm -v "$STORE_ROOT:/mnt/libs:rw" \
+        -v "$STORE_ROOT/farms/$name:/mnt/libs/current:rw" \
+        "$PROVISIONER_IMAGE" "$@" 2>&1
+}
+
 # A shell in the store, for the steps that must write as the provisioner wrote. A
 # write from the host is not equal: on macOS a container that starts directly after a
 # host write can read the old bytes, and a read from a container refreshes them.
@@ -97,18 +119,29 @@ cp -r /mnt/libs/current/numba-cache /tmp/numba-cache 2>/dev/null || mkdir -p /tm
 export NUMBA_CACHE_DIR=/tmp/numba-cache
 export PATH="$PATH:/mnt/libs/current/python/bin"'
 
+# The farm that the sandbox runs resolve at /mnt/libs/current. Each section sets it
+# before its first sandbox run, because each section reads a farm of its own.
+SANDBOX_FARM=""
+
 # The sandbox posture, unchanged: no network, uid 1000, every capability dropped, and
 # the store read-only. `script` is the program to run; the rest passes to the engine,
 # for example an extra read-only mount.
+#
+# The farm arrives as a second bind at /mnt/libs/current, nested inside the bind of
+# the store root, the same as the harness gives a farm to a sandbox. The store carries
+# no pointer, thus without that bind the baked .pth resolves nothing and the whole
+# section reads an empty environment.
 sandbox_run() {
     local script="$1"; shift
     local numba=()
+    [[ -n "$SANDBOX_FARM" ]] || { echo "internal error: the section named no farm"; return 1; }
     # The value must match what the provisioner exported while it warmed, or every
     # cached numba entry misses.
     [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]] && numba=(-e NUMBA_CPU_NAME=generic)
     "$CTR" run --rm --network none \
         --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
-        -v "$STORE_ROOT:/mnt/libs:ro" "$@" \
+        -v "$STORE_ROOT:/mnt/libs:ro" \
+        -v "$STORE_ROOT/farms/$SANDBOX_FARM:/mnt/libs/current:ro" "$@" \
         "${numba[@]}" -e MPLCONFIGDIR=/tmp/mpl -w /tmp \
         --entrypoint /bin/bash "$SANDBOX_IMAGE" -c "$SANDBOX_PROLOGUE
 $script" 2>&1
@@ -154,6 +187,7 @@ fi
 
 if wants imports; then
     head2 "imports through the farm"
+    SANDBOX_FARM=rt
     read -r -d '' FARM_IMPORTS <<'PY'
 import importlib.metadata as im
 
@@ -201,6 +235,7 @@ fi
 # module resolves under the content store, not a baked or system copy.
 if wants validate; then
     head2 "validate.py against the farm"
+    SANDBOX_FARM=rt
     out=$(sandbox_run "python3 /opt/lib-store-validate/validate.py --farm" \
           -v "$VALIDATE_DIR:/opt/lib-store-validate:ro"); rc=$?
     if [[ $rc -eq 0 ]] && grep -q "farm-backed" <<<"$out" && grep -q "GREEN" <<<"$out"; then
@@ -212,9 +247,13 @@ fi
 
 # ---------------------------------------------------------------------------
 # A prepared cache must be effective, not merely present. The provisioner warms a
-# small numba workload into the farm cache. The sandbox replays exactly that
-# recording with the cache debug on, and a save at run time means the runtime
-# recompiled a prepared code path.
+# small numba workload into the farm cache, and it records the entries that a later
+# run reuses. The sandbox replays that recording with the cache debug on, and a write
+# to a recorded entry means the runtime recompiled a prepared code path.
+#
+# scripts/lib-store-cache-check.py is that check, and the build runs the same file.
+# The four runs below cover both halves of its judgment: each recorded entry loads,
+# and a write outside the record passes.
 if wants cache; then
     head2 "a warmed numba cache is effective"
 
@@ -263,74 +302,89 @@ if __name__ == "__main__":
     main()
 PY
 
-    read -r -d '' REPLAY_CHECK <<'PY'
-import hashlib
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-farm = Path("/mnt/libs/current")
-lock = json.loads((farm / "lock.json").read_text())
-script = lock.get("warm_script")
-if not script:
-    print("FAIL: the farm recorded no warm_script")
-    sys.exit(1)
-
-recorded = (lock.get("warm_workload") or {}).get("script_sha256")
-actual = hashlib.sha256(Path(script).read_bytes()).hexdigest()
-if recorded != actual:
-    print(f"FAIL: the warm script bytes differ from the record "
-          f"(recorded {recorded}, actual {actual})")
-    sys.exit(1)
-
-# NUMBA_DEBUG_CACHE makes the locator report every load and every save. A save here
-# means the entry recompiled at run time, so the warm-up did not carry over.
-proc = subprocess.run([sys.executable, script], capture_output=True, text=True,
-                      env={**os.environ, "NUMBA_DEBUG_CACHE": "1"})
-if proc.returncode != 0:
-    print("FAIL: the replay run errored:\n" + proc.stderr.strip()[-400:])
-    sys.exit(1)
-
-out = proc.stdout + proc.stderr
-loads = out.count("data loaded")
-saves = out.count("data saved")
-if loads <= 0:
-    print(f"FAIL: no cache loads at all ({saves} saves)")
-    sys.exit(1)
-if saves != 0:
-    print(f"FAIL: {saves} entries recompiled despite the warm-up ({loads} loaded)")
-    sys.exit(1)
-print(f"PASS: {loads} cached compilations loaded, 0 recompiled")
-PY
-
     stage /mnt/libs/warm_kernels.py <<<"$WARM_KERNELS"
     stage /mnt/libs/warm_numba.py <<<"$WARM_NUMBA"
-    stage /mnt/libs/replay_check.py <<<"$REPLAY_CHECK"
 
-    out=$(run_net --farm nb --warm numba,numpy --warm-script /mnt/libs/warm_numba.py numpy numba); rc=$?
+    # The check runs in the sandbox image, thus it arrives as a mount of the one
+    # implementation. The build runs the same file against the store that it
+    # published, and two implementations of it would not stay equal.
+    cache_check() {
+        sandbox_run "python3 /opt/lib-store-cache-check.py" \
+            -v "$REPO_ROOT/scripts/lib-store-cache-check.py:/opt/lib-store-cache-check.py:ro"
+    }
+
+    SANDBOX_FARM=nb
+    out=$(run_net --farm nb numpy numba); rc=$?
     if [[ $rc -ne 0 ]]; then
-        bad "could not provision and warm the numba farm" "$(tail -5 <<<"$out")"
+        bad "could not provision the numba farm" "$(tail -5 <<<"$out")"
     else
-        ok "the numba farm is provisioned and warmed"
+        ok "the numba farm is provisioned"
 
-        out=$(sandbox_run "python3 /mnt/libs/replay_check.py"); rc=$?
-        if [[ $rc -eq 0 ]] && grep -q "^PASS" <<<"$out"; then
-            ok "the replay loads the cache and writes nothing  ($(grep '^PASS' <<<"$out"))"
+        # The preparation is a run of its own, with the farm bound at the path the
+        # sandbox imports from. A run that published the farm would hold that bind on
+        # the directory that its own publish superseded.
+        out=$(run_prepare nb --farm nb --warm numba,numpy \
+              --warm-script /mnt/libs/warm_numba.py); rc=$?
+        if [[ $rc -ne 0 ]]; then
+            bad "could not prepare the caches of the numba farm" "$(tail -5 <<<"$out")"
         else
-            bad "the replay observed a run-time recompile or an error" "$(tail -4 <<<"$out")"
-        fi
+            ok "the caches are prepared through the bound farm  ($(grep -o '[0-9]* cache entry(s) recorded' <<<"$out" | tail -1))"
 
-        # The confirm must reject a script whose bytes drifted from the record. A
-        # changed byte at the recorded path is a different workload, and a replay of
-        # it would test an unprepared call and fail for the wrong reason.
-        in_store 'printf "\n# drift\n" >> /mnt/libs/warm_numba.py' >/dev/null 2>&1
-        out=$(sandbox_run "python3 /mnt/libs/replay_check.py"); rc=$?
-        if [[ $rc -ne 0 ]] && grep -q "bytes differ" <<<"$out"; then
-            ok "a drifted warm script fails the byte confirm before the replay"
-        else
-            bad "a drifted warm script did not fail the confirm (exit $rc)" "$(tail -3 <<<"$out")"
+            out=$(cache_check); rc=$?
+            if [[ $rc -eq 0 ]] && grep -q "PASS:" <<<"$out"; then
+                ok "each recorded entry loads, and nothing recompiles  ($(grep 'PASS:' <<<"$out" | tail -1))"
+            else
+                bad "the replay observed a run-time recompile or an error" "$(tail -4 <<<"$out")"
+            fi
+
+            # A kernel that the preparation cannot carry forward writes at run time,
+            # and the record holds no entry for it. One entry that leaves the disk and
+            # the record has that same shape, thus the check reports it and passes.
+            entry=$(in_store 'python3 - <<PY
+import json
+from pathlib import Path
+farm = Path("/mnt/libs/farms/nb")
+lock = json.loads((farm / "lock.json").read_text())
+entry = lock["warm_workload"]["cache_entries"].pop(0)
+(farm / "numba-cache" / entry).unlink()
+(farm / "lock.json").write_text(json.dumps(lock, indent=2))
+print(entry)
+PY' | tail -1 | tr -d '\r')
+            out=$(cache_check); rc=$?
+            if [[ $rc -eq 0 ]] && grep -q "no run reuses" <<<"$out"; then
+                ok "a write outside the recorded set is reported, and it passes"
+            else
+                bad "a write outside the recorded set did not pass (exit $rc)" "$(tail -4 <<<"$out")"
+            fi
+
+            # The same missing entry, back in the record. A prepared code path that
+            # compiles again at run time is the defect this whole section exists for,
+            # thus the check must fail on it.
+            in_store "python3 - <<PY
+import json
+from pathlib import Path
+farm = Path('/mnt/libs/farms/nb')
+lock = json.loads((farm / 'lock.json').read_text())
+lock['warm_workload']['cache_entries'].append('$entry')
+(farm / 'lock.json').write_text(json.dumps(lock, indent=2))
+PY" >/dev/null
+            out=$(cache_check); rc=$?
+            if [[ $rc -eq 1 ]] && grep -q "compiled again" <<<"$out"; then
+                ok "a recorded entry that recompiles fails the check"
+            else
+                bad "a recompiled entry of the record did not fail (exit $rc)" "$(tail -4 <<<"$out")"
+            fi
+
+            # The check must reject a script whose bytes drifted from the record. A
+            # changed byte at the recorded path is a different workload, and a replay
+            # of it would exercise an unprepared call and fail for the wrong reason.
+            in_store 'printf "\n# drift\n" >> /mnt/libs/warm_numba.py' >/dev/null 2>&1
+            out=$(cache_check); rc=$?
+            if [[ $rc -ne 0 ]] && grep -q "bytes differ" <<<"$out"; then
+                ok "a drifted warm script fails the byte confirm before the replay"
+            else
+                bad "a drifted warm script did not fail the confirm (exit $rc)" "$(tail -3 <<<"$out")"
+            fi
         fi
     fi
 fi
@@ -348,6 +402,9 @@ if wants isolation; then
     if [[ $rc -ne 0 ]]; then
         bad "could not provision the old farm" "$(tail -5 <<<"$out")"
     else
+        # Each of the two runs below binds its own farm at /mnt/libs/current, which is
+        # what makes the two versions resolve at the same path in two containers.
+        SANDBOX_FARM=iso-old
         got=$(sandbox_run 'python3 -c "import importlib.metadata as im; print(im.version(\"six\"))"' | tail -1 | tr -d '\r')
         if [[ "$got" == "$OLD" ]]; then ok "the old farm resolves six==$OLD"
         else bad "the old farm resolved '$got', not $OLD"; fi
@@ -356,6 +413,7 @@ if wants isolation; then
         if [[ $rc -ne 0 ]]; then
             bad "could not provision the new farm" "$(tail -5 <<<"$out")"
         else
+            SANDBOX_FARM=iso-new
             got=$(sandbox_run 'python3 -c "import importlib.metadata as im; print(im.version(\"six\"))"' | tail -1 | tr -d '\r')
             if [[ "$got" == "$NEW" ]]; then ok "the new farm resolves six==$NEW"
             else bad "the new farm resolved '$got', not $NEW"; fi
@@ -375,6 +433,81 @@ if wants isolation; then
             else
                 bad "the old farm's link changed" "$tgt"
             fi
+        fi
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# The R load check belongs to the SANDBOX image. The provisioner image installs pak
+# and yaml into its own site library, thus a check that runs there resolves two names
+# that no farm carries. This section proves the difference with two small packages:
+# config imports yaml, and only the provisioner owns yaml when the farm loses it.
+
+# The check reads the farm at /mnt/libs/current, the path a sandbox resolves, thus the
+# run takes the store root and the farm as two mounts. `image` is the first argument,
+# so the same check runs in either image and the two answers are comparable. The
+# posture is the posture of a sandbox: no network, uid 1000, and no capability.
+r_load_check() {
+    local image="$1" farm="$2"
+    "$CTR" run --rm --network none \
+        --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+        -v "$STORE_ROOT:/mnt/libs:ro" \
+        -v "$STORE_ROOT/farms/$farm:/mnt/libs/current:ro" \
+        -v "$REPO_ROOT/scripts/lib-store-r-load-check.py:/opt/lib-store-r-load-check.py:ro" \
+        --entrypoint python3 "$image" /opt/lib-store-r-load-check.py 2>&1
+}
+
+if wants rload; then
+    head2 "the R load check in the sandbox image"
+
+    read -r -d '' R_MANIFEST <<'YAML'
+r:
+  cran:
+    - config
+YAML
+    stage /mnt/libs/r-manifest.yaml <<<"$R_MANIFEST"
+
+    out=$(run_net --farm rload --r-manifest /mnt/libs/r-manifest.yaml); rc=$?
+    if [[ $rc -ne 0 ]]; then
+        bad "could not provision the R farm" "$(tail -5 <<<"$out")"
+    else
+        ok "the R farm is provisioned (config, yaml)"
+
+        out=$(r_load_check "$SANDBOX_IMAGE" rload); rc=$?
+        if [[ $rc -eq 0 ]] && grep -q "PASS:" <<<"$out"; then
+            ok "each farmed R package loads in the sandbox image  ($(grep 'PASS:' <<<"$out" | tail -1))"
+        else
+            bad "a farm that carries its whole closure did not pass (exit $rc)" "$(tail -4 <<<"$out")"
+        fi
+
+        # The shape of the defect: the dependency leaves the farm, and it leaves the
+        # record with the link. What remains is a package whose runtime dependency
+        # only the provisioner image owns.
+        in_store 'python3 - <<PY
+import json
+from pathlib import Path
+farm = Path("/mnt/libs/farms/rload")
+lock = json.loads((farm / "lock.json").read_text())
+lock["r"]["farmed"] = [e for e in lock["r"]["farmed"] if e["name"] != "yaml"]
+(farm / "lock.json").write_text(json.dumps(lock, indent=2))
+(farm / "r" / "cran" / "yaml").unlink()
+PY' >/dev/null
+
+        out=$(r_load_check "$SANDBOX_IMAGE" rload); rc=$?
+        if [[ $rc -eq 1 ]] && grep -q "^FAIL config " <<<"$out"; then
+            ok "a dependency that only the provisioner owns fails the check"
+        else
+            bad "the sandbox image passed a farm that lost a dependency (exit $rc)" "$(tail -4 <<<"$out")"
+        fi
+
+        # The same farm inside the provisioner image: yaml resolves from the site
+        # library of that image, thus the check passes there and proves nothing about
+        # the sandbox. That is the reason the check moved.
+        out=$(r_load_check "$PROVISIONER_IMAGE" rload); rc=$?
+        if [[ $rc -eq 0 ]]; then
+            ok "the same farm passes inside the provisioner image, which owns yaml"
+        else
+            bad "the provisioner image did not resolve yaml from its own library (exit $rc)" "$(tail -4 <<<"$out")"
         fi
     fi
 fi
