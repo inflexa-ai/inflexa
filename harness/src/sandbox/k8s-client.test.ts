@@ -713,7 +713,7 @@ describe("sanitizeLabelValue", () => {
     });
 });
 
-describe("k8s billing labels", () => {
+describe("k8s host-supplied pod labels", () => {
     const READY_POD = [
         {
             status: { phase: "Running" as const, podIP: "10.0.0.1" },
@@ -735,7 +735,9 @@ describe("k8s billing labels", () => {
         });
     }
 
-    test("billing meta stamps the four labels on pod template and Job metadata", async () => {
+    test("host labels reach the pod template and the Job metadata, beside the harness's own", async () => {
+        // The pod template is the placement that a cost reconciler allocates on;
+        // a Job-only label never reaches it.
         const stub = stubApis(READY_POD);
         (
             await opsWith(stub).createSandbox(
@@ -745,7 +747,7 @@ describe("k8s billing labels", () => {
                     analysisId: "an-1",
                     childWorkflowId: "run-1-0",
                     resources: { cpu: 2, memoryGb: 4 },
-                    billing: { billingContextId: "bc-123", userId: "user-9" },
+                    podLabels: { "cortex/billing-context": "bc-123", "cortex/user-id": "user-9" },
                 },
                 mintSandboxIdentity("run-1"),
             )
@@ -760,7 +762,7 @@ describe("k8s billing labels", () => {
         }
     });
 
-    test("billing label values are sanitized", async () => {
+    test("host label values are sanitized, because one invalid value loses the whole Job", async () => {
         const stub = stubApis(READY_POD);
         (
             await opsWith(stub).createSandbox(
@@ -770,7 +772,7 @@ describe("k8s billing labels", () => {
                     analysisId: "an-1",
                     childWorkflowId: "data-profile:x",
                     resources: { cpu: 1, memoryGb: 1 },
-                    billing: { billingContextId: "bc:123", userId: "user@example.com" },
+                    podLabels: { "cortex/billing-context": "bc:123", "cortex/user-id": "user@example.com" },
                 },
                 mintSandboxIdentity("data-profile"),
             )
@@ -782,7 +784,26 @@ describe("k8s billing labels", () => {
         expect(podLabels["cortex/run-id"]).toBe("data-profile");
     });
 
-    test("absent billing meta stamps no billing labels and still spawns", async () => {
+    test("an arbitrary host key is stamped verbatim — the harness reads no key", async () => {
+        const stub = stubApis(READY_POD);
+        (
+            await opsWith(stub).createSandbox(
+                {
+                    runId: "run-1",
+                    stepId: "step-a",
+                    analysisId: "an-1",
+                    childWorkflowId: "run-1-0",
+                    resources: { cpu: 2, memoryGb: 4 },
+                    podLabels: { "example.com/tenant": "acme" },
+                },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        expect(stub.createdJobs[0]!.spec!.template.metadata!.labels!["example.com/tenant"]).toBe("acme");
+    });
+
+    test("absent pod labels stamp nothing extra and still spawn", async () => {
         const stub = stubApis(READY_POD);
         const ref = (
             await opsWith(stub).createSandbox(
@@ -801,8 +822,10 @@ describe("k8s billing labels", () => {
         for (const labels of [stub.createdJobs[0]!.metadata!.labels!, stub.createdJobs[0]!.spec!.template.metadata!.labels!]) {
             expect(labels["cortex/billing-context"]).toBeUndefined();
             expect(labels["cortex/user-id"]).toBeUndefined();
+            // The two identifiers the harness holds itself stay on both.
+            expect(labels["cortex/analysis-id"]).toBe("an-1");
+            expect(labels["cortex/run-id"]).toBe("run-1");
         }
-        expect(stub.createdJobs[0]!.spec!.template.metadata!.labels!["cortex/analysis-id"]).toBeUndefined();
     });
 });
 

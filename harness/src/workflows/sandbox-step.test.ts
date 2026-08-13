@@ -9,6 +9,9 @@
  *   - The `data-step-usage` run-event part: what the step's loop spent reaches
  *     the run stream once the loop completes, under the step's stable part id,
  *     and is absent entirely when the loop reported nothing.
+ *   - The host's sandbox pod labels: what the `resolvePodLabels` seam returns is
+ *     what the spawn carries, and a seam that is absent or that throws still
+ *     spawns the step.
  *
  * The usage tests drive `runSandboxStepBody` against a fake DBOS surface and a
  * fake deps bundle, the same shape `execute-analysis.test.ts` uses for the
@@ -30,7 +33,7 @@ import { silentLogger } from "../__tests__/setup/logger.js";
 import { classifyReadPath } from "../provenance/collector.js";
 import type { AgentChat, ChatResponse, ChatUsage, EmbeddingProvider } from "../providers/types.js";
 import type { SandboxClient } from "../sandbox/client.js";
-import type { SandboxRef } from "../sandbox/types.js";
+import type { CreateSandboxMeta, SandboxRef } from "../sandbox/types.js";
 import type { ArtifactRegistry } from "../execution/artifact-registry.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { createLineageCollector, runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput } from "./sandbox-step.js";
@@ -163,9 +166,12 @@ const SANDBOX_REF: SandboxRef = {
     callbackSecret: "base64:unused",
 };
 
-function makeSandboxClient(): SandboxClient {
+function makeSandboxClient(spawns: CreateSandboxMeta[] = []): SandboxClient {
     return {
-        createSandbox: async () => SANDBOX_REF,
+        createSandbox: async (meta: CreateSandboxMeta) => {
+            spawns.push(meta);
+            return SANDBOX_REF;
+        },
         submitExec: async () => undefined,
         awaitExec: async () => {
             throw new Error("awaitExec: the usage tests run a tool-less agent");
@@ -360,5 +366,66 @@ describe("sandbox-step data-step-usage part", () => {
 
         const folded = usageParts(foldStream(dbosState.emittedParts));
         expect(folded.map((p) => p.stepId).sort()).toEqual(["T1S1", "T1S2"]);
+    });
+});
+
+// ── host-supplied sandbox pod labels ─────────────────────────────────
+
+describe("sandbox-step pod labels", () => {
+    /** Deps whose spawns are recorded, under the given `resolvePodLabels` seam. */
+    function podLabelDeps(resolvePodLabels?: SandboxStepDeps["resolvePodLabels"]): { deps: SandboxStepDeps; spawns: CreateSandboxMeta[] } {
+        const spawns: CreateSandboxMeta[] = [];
+        const deps: SandboxStepDeps = {
+            ...usageStepDeps(undefined),
+            sandboxClient: makeSandboxClient(spawns),
+            ...(resolvePodLabels ? { resolvePodLabels } : {}),
+        };
+        return { deps, spawns };
+    }
+
+    it("carries what the host resolved into the spawn, verbatim", async () => {
+        const labels = { "cortex/billing-context": "bc-1", "example.com/tenant": "acme" };
+        const { deps, spawns } = podLabelDeps(async () => labels);
+
+        const result = await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(result.status).toBe("complete");
+        expect(spawns.length).toBe(1);
+        expect(spawns[0]!.podLabels).toEqual(labels);
+    });
+
+    it("resolves under the step's own session, so the labels name the step that spawns", async () => {
+        const seen: RunSession[] = [];
+        const { deps } = podLabelDeps(async (session) => {
+            seen.push(session);
+            return {};
+        });
+
+        await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(seen.length).toBe(1);
+        expect(seen[0]!.provenance.agentId).toBe(USAGE_AGENT_ID);
+        expect(seen[0]!.runFrame).toEqual({ runId: USAGE_RUN_ID, stepId: USAGE_STEP_ID });
+    });
+
+    it("spawns with no labels and completes when no seam is wired", async () => {
+        const { deps, spawns } = podLabelDeps();
+
+        const result = await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(result.status).toBe("complete");
+        expect(spawns[0]!.podLabels).toBeUndefined();
+    });
+
+    it("spawns with no labels and completes when the seam throws", async () => {
+        // Attribution is never a gate on compute: the step runs unlabeled.
+        const { deps, spawns } = podLabelDeps(async () => {
+            throw new Error("upstream unreachable");
+        });
+
+        const result = await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(result.status).toBe("complete");
+        expect(spawns[0]!.podLabels).toBeUndefined();
     });
 });

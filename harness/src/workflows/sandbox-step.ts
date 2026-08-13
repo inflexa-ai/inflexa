@@ -35,7 +35,6 @@ import type { Pool } from "pg";
 import { insertStepExecution, updateStepExecution } from "../state/index.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
-import type { ResolveBilling } from "../billing/resolver.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -132,9 +131,6 @@ export interface SandboxStepInput {
  * declare it explicitly.
  */
 export const DEFAULT_STEP_TIMEOUT_SECONDS = 3600;
-
-/** Resolved-header key carrying the billing-context id (see `ResolveBilling`). */
-const BILLING_CONTEXT_HEADER = "X-Inflexa-Billing-Context";
 
 export type SandboxStepStatus = "complete" | "failed" | "canceled" | "blocked";
 
@@ -274,9 +270,13 @@ export interface SandboxStepDeps {
     /** Write-side embedder for the post-step vector index. */
     readonly embedding: EmbeddingProvider;
     readonly sandboxClient: SandboxClient;
-    /** Resolves the billing context stamped as the sandbox pod's OpenCost
-     *  labels. Absent in upstream-less (dev/OSS) wiring — pods spawn unlabeled. */
-    readonly resolveBilling?: ResolveBilling;
+    /**
+     * Host-supplied labels for this step's sandbox pod, resolved under the
+     * step's session. The map is opaque to the harness: it stamps each entry
+     * and interprets none of it. Absent in a wiring that attributes nothing —
+     * the pod then carries the harness's own labels only.
+     */
+    readonly resolvePodLabels?: (session: RunSession) => Promise<Record<string, string>>;
     /**
      * External artifact registration + sync seam. The harness's post-step pipeline
      * registers each step's outputs through it (filesystem index in the
@@ -435,7 +435,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     // (2b) sandbox.create — spawn (or adopt) the machine under the minted
     // identity. The handle (secret included) is cached so recovery picks the
-    // same machine back up without re-provisioning. Billing resolution lives
+    // same machine back up without re-provisioning. Pod-label resolution lives
     // INSIDE this step (not as its own step) so the child's step sequence is
     // unchanged — in-flight workflows resumed across a deploy replay cleanly.
     const sandboxMeta: CreateSandboxMeta = {
@@ -449,17 +449,18 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     };
     const sandbox = await DBOS.runStep(
         async () => {
-            let billing: CreateSandboxMeta["billing"];
-            if (deps.resolveBilling) {
+            let podLabels: Record<string, string> | undefined;
+            if (deps.resolvePodLabels) {
                 try {
-                    const bcId = (await deps.resolveBilling(session))[BILLING_CONTEXT_HEADER];
-                    if (bcId) billing = { billingContextId: bcId, userId: input.runSession.identity.user };
+                    podLabels = await deps.resolvePodLabels(session);
                 } catch (err) {
-                    logger.error("[billing] step billing resolution failed", { analysisId: input.analysisId, ...logger.errorFields(err) });
+                    logger.warn("pod-label resolution failed", { analysisId: input.analysisId, ...logger.errorFields(err) });
                 }
-                if (!billing) logger.error("[billing] sandbox spawned without billing labels", { analysisId: input.analysisId });
+                // A wired resolver that yields nothing is the one loud case: the
+                // host asked for attribution and the pod spawns without it.
+                if (!podLabels || Object.keys(podLabels).length === 0) logger.warn("sandbox spawned with no pod labels", { analysisId: input.analysisId });
             }
-            return deps.sandboxClient.createSandbox({ ...sandboxMeta, billing }, identity);
+            return deps.sandboxClient.createSandbox({ ...sandboxMeta, podLabels }, identity);
         },
         { name: "sandbox.create" },
     );
