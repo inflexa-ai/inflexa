@@ -52,6 +52,7 @@ function seams(notices: Notice[]): SessionSeams {
     return {
         runtime: () => fakeRuntime,
         listThreads: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
+        listReportChildren: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),
         getThread: () => okAsync(threadRow()),
         updateTitle: () => okAsync(null),
         listThreadsWithArchived: () => okAsync({ threads: [], total: 0, page: 0, perPage: 20, hasMore: false }),

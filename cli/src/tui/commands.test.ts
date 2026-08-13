@@ -284,6 +284,7 @@ describe("session flows", () => {
         const base: SessionSeams = {
             runtime: () => fakeRuntime,
             listThreads: () => okAsync(threadPage([])),
+            listReportChildren: () => okAsync(threadPage([])),
             getThread: () => okAsync(null),
             updateTitle: () => okAsync(null),
             listThreadsWithArchived: () => okAsync(threadPage([])),

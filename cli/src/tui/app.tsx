@@ -29,12 +29,23 @@ import {
     watchActivityPanel,
 } from "./hooks/activity_panel.ts";
 import { watchRunCompletions } from "./hooks/run_completion.ts";
-import { commands } from "./commands.tsx";
+import { commands, openParentSession, openReportSession } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
 import { UsageDialog, readSessionUsage } from "./components/dialog/usage_dialog.tsx";
 import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
-import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, interruptHintLabel, leaderSeq, KEYS, type LayerConfig } from "./keymap.ts";
+import {
+    useKeymapRoot,
+    useBindings,
+    MODE_BASE,
+    resolveKeybind,
+    keybindLabel,
+    interruptHintLabel,
+    leaderChord,
+    leaderSeq,
+    KEYS,
+    type LayerConfig,
+} from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
 import { BootIndicator } from "./components/boot_indicator.tsx";
@@ -790,6 +801,22 @@ export function App(props: AppProps) {
             { chord: leaderSeq("d"), run: openProfile, desc: "Data profile", group: "Analysis" },
             { chord: leaderSeq("r"), run: openRuns, desc: "Runs", group: "Analysis" },
             { chord: leaderSeq("s"), run: () => runCommandById("session.switch"), desc: "Switch session", group: "Session" },
+            // The pair walks between a conversation and the report session it spawned — one chord back to
+            // the parent, the other forward to a child. Each chord is the leader stroke plus the RESOLVED
+            // chord of its id, never `leaderSeq`, which takes a literal suffix and would bypass the
+            // user's remap of that id.
+            {
+                chord: [leaderChord(), resolveKeybind("session.open-parent")],
+                run: () => void openParentSession(workspace),
+                desc: "Open the parent conversation",
+                group: "Session",
+            },
+            {
+                chord: [leaderChord(), resolveKeybind("session.open-report")],
+                run: () => void openReportSession(workspace),
+                desc: "Open a report session",
+                group: "Session",
+            },
             { chord: leaderSeq("t"), run: () => runCommandById("view.theme"), desc: "Change theme", group: "View" },
             { chord: leaderSeq("e"), run: openTurnError, desc: "Turn error details", group: "App" },
             { chord: leaderSeq("q"), run: () => void quit(), desc: "Quit", group: "App" },
