@@ -20,12 +20,13 @@ fresh machine. The acceptance run is not a gate, and it moves no pointer.
 
 ### Requirement: The store ships as per-track, self-describing tarballs
 
-The build SHALL package the library store as one tarball per **track** —
+The build MUST package the library store as one tarball per **track** —
 `cran`, `bioconductor`, `github`, `python`, `conda`, `node` — rather than one
-combined archive. Each track tarball SHALL carry its own `packages.txt` fragment
-listing that track's contents. Both architectures SHALL attempt every track; the
-set of track tarballs produced for an arch SHALL be exactly those that met the
-non-empty floor for that arch (best-effort), rather than a fixed per-arch set.
+combined archive. Each track tarball MUST carry its own `packages.txt` fragment
+that lists that track's contents. Both architectures MUST attempt every track.
+For an arch, the set of track tarballs is best-effort. That set MUST be exactly
+the tracks that met the non-empty floor for that arch, and not a fixed per-arch
+set.
 
 This form remains the published artifact for the managed mount only, until the
 managed delivery change replaces it (decoupled, 2026-08-05). It is one of two
@@ -35,12 +36,12 @@ published artifact for the CLI channel.
 #### Scenario: A track tarball carries its own fragment
 
 - **WHEN** the build produces the `python` track tarball
-- **THEN** it carries a `packages.txt` fragment listing exactly that track's loaded packages
+- **THEN** it carries a `packages.txt` fragment that lists exactly that track's loaded packages
 
 #### Scenario: The produced track set is what passed the floor
 
 - **WHEN** the build runs for an architecture
-- **THEN** it produces a tarball for each track that met the non-empty floor on that arch, and none for a track that produced no loadable package
+- **THEN** it produces a tarball for each track that met the non-empty floor on that arch, and none for a track with no loadable package
 
 #### Scenario: Emitting the content-addressed form does not change the tarballs
 
@@ -49,13 +50,14 @@ published artifact for the CLI channel.
 
 ### Requirement: packages.txt derives from the verified-loadable set
 
-Each track's `packages.txt` fragment SHALL be generated from the set of packages
-that actually **installed and loaded** during the build (the load check), NOT
-from the manifest wishlist. A package that fails to load SHALL be absent from the
-fragment without, on its own, failing the build. The client (or the baked image)
-SHALL surface the single `/mnt/libs/current/packages.txt` consumed by the harness
+The build MUST generate each track's `packages.txt` fragment from the set of
+packages that actually **installed and loaded** during the build (the load
+check). The build MUST NOT generate the fragment from the manifest wishlist. A
+package that fails to load MUST be absent from the fragment. That absence, on its
+own, MUST NOT fail the build. The client (or the baked image) MUST surface the
+single `/mnt/libs/current/packages.txt` consumed by the harness
 `list_available_packages` tool as the concatenation of the present tracks'
-fragments. The advertised set SHALL therefore never list a package that failed to
+fragments. Thus the advertised set MUST never list a package that failed to
 load.
 
 #### Scenario: A package that fails to load is not advertised
@@ -71,21 +73,21 @@ load.
 
 ### Requirement: Builds publish immutable versions selected by a manifest
 
-Each build SHALL publish its track tarballs to a write-once, versioned path
-(`<version>/linux-<arch>/<track>.tar.zst`) that SHALL never be rewritten. For
-each arch the build SHALL write a **manifest** pinning each track's tarball —
-by a store-relative `path` (so a client joins it onto its own resolved base and
-a mirror redirects payload downloads, not only the manifest) plus an absolute
-`url` for compatibility — and its content digest. Clients SHALL resolve their
-arch's manifest and MAY skip re-pulling any track whose digest they already
-hold.
+Each build MUST publish its track tarballs to a write-once, versioned path
+(`<version>/linux-<arch>/<track>.tar.zst`) that MUST never be rewritten. For
+each arch the build MUST write a **manifest**. The manifest MUST pin each track's
+tarball and its content digest. The pin MUST carry a store-relative `path`, and
+an absolute `url` for compatibility. A client joins the store-relative `path` onto
+its own resolved base. Thus a mirror redirects the payload downloads, not only
+the manifest. A client MUST resolve the manifest of its arch. The client can skip
+the download of any track whose digest it already holds.
 
-Each successful build SHALL advance the mutable `latest/linux-<arch>` pointer
-(manifest and coverage baseline) to the version it just published, gated by the
-build's own load check + non-empty floor + coverage regression guard — the same
-gate that decides whether the build publishes at all. Promotion to `latest` is
-NOT deferred to a separate acceptance run. This mirrors the image `:latest` tag,
-which the build already advances atomically at publish.
+Each successful build MUST advance the mutable `latest/linux-<arch>` pointer
+(manifest and coverage baseline) to the version that it just published. The gate
+is the build's own load check + non-empty floor + coverage regression guard. That
+gate is the same gate that decides whether the build publishes at all. Promotion
+to `latest` is NOT deferred to a separate acceptance run. This mirrors the image
+`:latest` tag, which the build already advances atomically at publish.
 
 #### Scenario: A published version is never mutated
 
@@ -106,36 +108,36 @@ which the build already advances atomically at publish.
 
 ### Requirement: The build publishes one sandbox runtime image
 
-The build SHALL publish exactly one runtime image, `sandbox-base`. That image
-SHALL carry the language interpreters (R, Python, and Node.js), the system
-libraries, `sandbox-server`, and the provenance hooks. It SHALL also carry each
+The build MUST publish exactly one runtime image, `sandbox-base`. That image
+MUST carry the language interpreters (R, Python, and Node.js), the system
+libraries, `sandbox-server`, and the provenance hooks. It MUST also carry each
 track that a package farm cannot carry: the conda prefix with the bioconda
-command-line tools, and the Node packages. It SHALL contain **no** R library and
-**no** Python library. Its `/mnt/libs/current` SHALL be empty, so the mounted
-package store is the one source of a library. The build SHALL NOT publish a
+command-line tools, and the Node packages. It MUST contain **no** R library and
+**no** Python library. Its `/mnt/libs/current` MUST be empty, so the mounted
+package store is the one source of a library. The build MUST NOT publish a
 variant image that bakes a library set: `sandbox-python` and `sandbox-python-r`
 are retired.
 
-The image, and never the store, SHALL supply each interpreter. R comes from the
+The image, and never the store, MUST supply each interpreter. R comes from the
 digest-pinned base image the manifest names as `base_image`, and Python and
-Node.js come from apt in that same image. A package store SHALL NOT carry an
-interpreter, thus a store SHALL NOT change the R version, the Python version, or
+Node.js come from apt in that same image. A package store MUST NOT carry an
+interpreter, thus a store MUST NOT change the R version, the Python version, or
 the Node version.
 
-The image SHALL place the conda prefix and the Node packages **outside** the store
+The image MUST place the conda prefix and the Node packages **outside** the store
 mount path. A package store mounts read-only over `/mnt/libs`, thus it shadows
-each path the image bakes below `/mnt/libs`. The conda prefix SHALL be at
-`/opt/conda` and the Node packages SHALL be at `/opt/node`.
+each path the image bakes below `/mnt/libs`. The conda prefix MUST be at
+`/opt/conda` and the Node packages MUST be at `/opt/node`.
 
-The build SHALL **make** the conda prefix at that final path. Conda writes the
-absolute prefix path into each shebang and each RPATH. Thus the build SHALL NOT
-build the prefix elsewhere and then copy, link, or move it. The prefix SHALL carry
+The build MUST **make** the conda prefix at that final path. Conda writes the
+absolute prefix path into each shebang and each RPATH. Thus the build MUST NOT
+build the prefix elsewhere and then copy, link, or move it. The prefix MUST carry
 the bioconda tool set, the channel list, and the strict channel priority the
-retired conda-builder stage used. It SHALL keep that stage's non-empty-tool floor.
+retired conda-builder stage used. It MUST keep that stage's non-empty-tool floor.
 
-The image SHALL be published for both `linux/amd64` and `linux/arm64` to GitHub
+The image MUST be published for both `linux/amd64` and `linux/arm64` to GitHub
 Packages (GHCR) on the `inflexa-ai/inflexa` repository
-(`ghcr.io/inflexa-ai/sandbox-base`), as a multi-arch manifest. It SHALL have a
+(`ghcr.io/inflexa-ai/sandbox-base`), as a multi-arch manifest. It MUST have a
 committed Dockerfile that a user can edit or `FROM`.
 
 #### Scenario: One runtime image is published
@@ -162,7 +164,7 @@ committed Dockerfile that a user can edit or `FROM`.
 #### Scenario: The conda prefix is built at its final path
 
 - **WHEN** the build assembles the conda prefix
-- **THEN** it creates the prefix at `/opt/conda` directly, and it never copies, links, or moves a prefix built at another path
+- **THEN** it makes the prefix at `/opt/conda` directly, and it never copies, links, or moves a prefix built at another path
 
 #### Scenario: Both architectures are published
 
@@ -171,27 +173,27 @@ committed Dockerfile that a user can edit or `FROM`.
 
 ### Requirement: Sandbox images are self-sufficient at runtime
 
-The published runtime image SHALL bake the package-resolver env and the mount
+The published runtime image MUST bake the package-resolver env and the mount
 points the store expects. The env is `R_LIBS_SITE` over the
 github/bioconductor/cran subtrees, the Python `.pth`, and `INFLEXA_LIB_ROOT`.
 Thus the image with a mounted store and **no** harness resolves imports and
 answers `list_available_packages`. The baked env and the harness-injected env name
-the same paths, thus the baked env SHALL be safe under the managed mount
+the same paths, thus the baked env MUST be safe under the managed mount
 (redundant with, never in conflict with, the harness-injected env).
 
-The env for the two image-owned tracks SHALL name their baked paths, not a path
-under the store mount. `PATH` SHALL carry `/opt/conda/bin` and `NODE_PATH` SHALL
-be `/opt/node/node_modules`. The harness-injected env SHALL name the same two
+The env for the two image-owned tracks MUST name their baked paths, not a path
+under the store mount. `PATH` MUST carry `/opt/conda/bin` and `NODE_PATH` MUST
+be `/opt/node/node_modules`. The harness-injected env MUST name the same two
 paths, so a mounted store never removes the tools of the image.
 
-The image SHALL carry the shared `packages.txt` producer, so a store assembled by
-any route reports its inventory in one shape. The image SHALL NOT bake a
+The image MUST carry the shared `packages.txt` producer, so a store assembled by
+any route reports its inventory in one shape. The image MUST NOT bake a
 `/mnt/libs/current/packages.txt`, because `/mnt/libs/current` is empty.
 
-The image SHALL bake an inventory fragment that lists the two image-owned tracks:
-the bioconda command-line tools and the Node packages. The build SHALL derive the
+The image MUST bake an inventory fragment that lists the two image-owned tracks:
+the bioconda command-line tools and the Node packages. The build MUST derive the
 fragment from the sets the load check resolved, thus the record matches what the
-image installed and it cannot drift. The fragment SHALL live at a path outside the
+image installed and it cannot drift. The fragment MUST live at a path outside the
 store mount, so a mounted store never shadows it. Thus the image advertises its own
 two tracks, and `list_available_packages` merges the fragment with the farm
 inventory.
@@ -219,11 +221,11 @@ inventory.
 
 ### Requirement: The load check is best-effort with a non-empty-track floor
 
-The store build SHALL run a **load check**. The check
+The store build MUST run a **load check**. The check
 `import`/`library()`/`require()`/`--version`s each installed package, and it derives
 that track's `packages.txt` fragment from the set that loaded. A single package's
-load failure SHALL NOT fail the track — the package is simply absent from the
-fragment. A track that loaded **zero** packages SHALL fail the build (the non-empty
+load failure MUST NOT fail the track — the package is simply absent from the
+fragment. A track that loaded **zero** packages MUST fail the build (the non-empty
 floor), so a degenerate or empty track is never published.
 
 #### Scenario: A single load failure drops one package, not the track
@@ -240,20 +242,20 @@ floor), so a degenerate or empty track is never published.
 
 ### Requirement: The build emits a per-arch coverage report and guards against regressions
 
-After the load check, the store build SHALL emit a **coverage report**. The report
+After the load check, the store build MUST emit a **coverage report**. The report
 is a table, per architecture and track, of the wanted, loaded, and missing package
-counts and names. The report SHALL diff the loaded set against the last published
+counts and names. The report MUST diff the loaded set against the last published
 store. A regression is a package that the last `linux/amd64` store published, that
-the manifest still requests, and that no longer loads. A regression SHALL be
-reported and SHALL fail the build. A package that never built for `linux/arm64`
-SHALL be reported informationally and SHALL NOT fail the build.
+the manifest still requests, and that no longer loads. A regression MUST be
+reported and MUST fail the build. A package that never built for `linux/arm64`
+MUST be reported informationally and MUST NOT fail the build.
 
-A previously-published package that the manifest **no longer requests** SHALL be
-reported as *dropped*, not as a regression. A drop SHALL NOT fail the build, on any
+A previously-published package that the manifest **no longer requests** MUST be
+reported as *dropped*, not as a regression. A drop MUST NOT fail the build, on any
 architecture. A removal of a package from the manifest removes it, and any
 transitive dependency that came in with it, from the next published set. Thus a
 build that treats that as breakage would make a baseline reset necessary before
-every intentional removal could ship. The build SHALL print each drop by name, so
+every intentional removal could ship. The build MUST print each drop by name, so
 an unintended removal is reviewable rather than silent.
 
 #### Scenario: A silent amd64 drop is a regression
@@ -276,11 +278,11 @@ an unintended removal is reviewable rather than silent.
 
 ### Requirement: Each architecture publishes the tracks that pass the floor
 
-The store SHALL remain per-architecture, but each arch SHALL publish the tracks
-that met the non-empty floor for that arch on a **best-effort** basis rather than
-a fixed pre-declared set. Both `linux/amd64` and `linux/arm64` SHALL attempt every
-track; `linux/arm64` MAY therefore publish R tracks when they build. The R tracks
-(`cran`, `bioconductor`, `github`) SHALL travel together or not at all, because
+The store MUST remain per-architecture. Each arch MUST publish the tracks that
+met the non-empty floor for that arch. That set is **best-effort**, and it is not
+a fixed pre-declared set. Both `linux/amd64` and `linux/arm64` MUST attempt every
+track. Thus `linux/arm64` can publish R tracks when they build. The R tracks
+(`cran`, `bioconductor`, `github`) MUST travel together or not at all, because
 they share one R library path and form a dependency chain.
 
 #### Scenario: arm64 publishes R when it builds
@@ -297,13 +299,13 @@ they share one R library path and form a dependency chain.
 
 ### Requirement: Acceptance is a non-gating post-publish validation
 
-After a build publishes, an **acceptance** run SHALL validate the published store
+After a build publishes, an **acceptance** run MUST validate the published store
 on a **fresh machine** — no network, runtime environment only, correct
-architecture — obtaining the store the way it is actually consumed. Two routes
-serve: **the published store artifact, mounted read-only into the published
+architecture. The run MUST obtain the store the way a consumer obtains it. Two
+routes serve: **the published store artifact, mounted read-only into the published
 runtime image** (the user path), and **the extracted tarballs, mounted read-only**
-(the managed path). Acceptance SHALL NOT use a validator-private download. It
-SHALL run, inside the obtained store:
+(the managed path). Acceptance MUST NOT use a validator-private download. It
+MUST run, inside the obtained store:
 
 1. **the import-all invariant** — `import`/`library()`/`require()` for **every**
    advertised package, and a check that the advertised `packages.txt` equals the
@@ -311,19 +313,21 @@ SHALL run, inside the obtained store:
 2. **the per-library smoke-test suite** (`lib-validator/run_all.py`) — the
    behavioral pass: each covered library's self-contained smoke test runs a real
    operation and reports pass, not-installed, or fail. An installed-but-broken
-   library counts as a failure; an absent library (its not-installed guard fires)
+   library counts as a failure. An absent library (its not-installed guard fires)
    is a skip.
 
-Acceptance SHALL NOT run R packages' own examples and SHALL NOT maintain a
-curated anchor-operation registry; the per-library smoke-test suite is the sole
-behavioral pass and covers both R and Python. Acceptance SHALL NOT move `latest`
-or any other consumer-facing pointer and SHALL NOT publish, tag, or mutate any
-image, store artifact, or tarball — the build already published everything before
-acceptance runs. Acceptance SHALL surface, per architecture, a **results table**
-in its run summary reporting the import-all tally per track and the per-library
+Acceptance MUST NOT run R packages' own examples. Acceptance MUST NOT maintain a
+curated anchor-operation registry. The per-library smoke-test suite is the sole
+behavioral pass, and it covers both R and Python. Acceptance MUST NOT move
+`latest` or any other consumer-facing pointer. Acceptance MUST NOT publish, tag,
+or mutate any image, store artifact, or tarball. The build already published
+everything before acceptance runs.
+
+Acceptance MUST surface a **results table** in its run summary, for each
+architecture. The table gives the import-all tally per track, the per-library
 validator outcome (counts of pass / fail / error / skipped, and the
-failing/errored libraries), plus an overall green/red status, so a maintainer can
-review exactly what was verified.
+failing/errored libraries), and an overall green/red status. Thus a maintainer
+can review exactly what the run validated.
 
 #### Scenario: Acceptance obtains the store the way it is consumed
 
@@ -355,9 +359,9 @@ review exactly what was verified.
 
 ### Requirement: The build can publish a content-addressed store alongside the track tarballs
 
-The build SHALL be able to emit the package set as per-distribution, content-addressed directories in addition to the per-track tarballs it already produces. The two forms SHALL describe the same package set for a given manifest and architecture, and either SHALL be usable as `/mnt/libs` without a change to the runtime contract.
+The build MUST be able to emit the package set as per-distribution, content-addressed directories in addition to the per-track tarballs it already produces. The two forms MUST describe the same package set for a given manifest and architecture. Either form MUST be usable as `/mnt/libs` without a change to the runtime contract.
 
-The content-addressed form SHALL carry the same `packages.txt`, produced by the same generator, so a consumer cannot tell from the inventory which form it received.
+The content-addressed form MUST carry the same `packages.txt`, produced by the same generator, so a consumer cannot tell from the inventory which form it received.
 
 #### Scenario: Both forms describe the same package set
 
@@ -373,16 +377,16 @@ The content-addressed form SHALL carry the same `packages.txt`, produced by the 
 
 ### Requirement: The content-addressed store publishes to GHCR as an OCI artifact
 
-The build SHALL publish the content-addressed store to GHCR as an OCI artifact,
-through an ORAS push. It SHALL push one artifact for each architecture, with one
-layer for each track. A track layer SHALL hold the store directories of that
-track's packages, as a tar that keeps symlinks. One more layer SHALL hold the
+The build MUST publish the content-addressed store to GHCR as an OCI artifact,
+through an ORAS push. It MUST push one artifact for each architecture, with one
+layer for each track. A track layer MUST hold the store directories of that
+track's packages, as a tar that keeps symlinks. One more layer MUST hold the
 farms, the `current` pointer, and the empty mount points. Extraction of all the
-layers SHALL reassemble the store root exactly. The OCI manifest SHALL carry the
-sha256 digest of each layer. A version tag SHALL be immutable in content: the
-build SHALL refuse to publish a version again with different content, rather
-than move the tag. A `latest` pointer SHALL be a tag move only. The artifact
-SHALL be pullable anonymously, over https, with no credentials.
+layers MUST reassemble the store root exactly. The OCI manifest MUST carry the
+sha256 digest of each layer. A version tag MUST be immutable in content: the
+build MUST refuse to publish a version again with different content, rather
+than move the tag. A `latest` pointer MUST be a tag move only. The artifact
+MUST be pullable anonymously, over https, with no credentials.
 
 #### Scenario: One artifact for each architecture
 
@@ -403,18 +407,64 @@ SHALL be pullable anonymously, over https, with no credentials.
 
 ### Requirement: Cache preparation is verified to take effect at run time
 
-The build SHALL verify that prepared caches are used by the runtime rather than merely present on disk. It SHALL run a workload that exercises compiled-on-first-call code under the unprivileged runtime user against the read-only store, and SHALL count cache loads against cache writes. A run that writes a new cache entry for a prepared code path SHALL fail the check.
+The build MUST make sure that the runtime uses a prepared cache, and that the
+cache is not merely present on disk. It MUST run a workload that exercises code
+which compiles at the first call. It MUST run that workload as the unprivileged
+runtime user, against the read-only store. It MUST load every cache entry that
+the preparation run recorded. A run that writes a new cache entry for a prepared
+code path MUST fail the check.
 
-Presence of cache files SHALL NOT be accepted as evidence that the cache is effective.
+A write outside the recorded set MUST NOT fail the check. Such a write names a
+kernel that the preparation could not cache, and no workload can prevent it.
+
+The presence of cache files MUST NOT count as evidence that the cache is
+effective.
+
+The build MUST prepare the caches before it runs that check. A build that
+prepares nothing publishes a store with no cache, thus the check has nothing to
+prove. The preparation step MUST mount the target farm at the container path that
+the sandbox imports from.
+
+The manifest MUST declare the workload. The build MUST read that declaration and
+pass it to the provisioner, and it MUST NOT carry a list of its own. Thus the
+workload and the packages that it exercises change in one file.
+
+The build MUST run the R load check in the sandbox runtime image, against the
+farm that it published. A failure MUST stop the build before it publishes the
+catalog artifact, because that artifact is the publish which reaches a user.
 
 #### Scenario: An ineffective prepared cache fails the build
 
-- **GIVEN** a store whose caches are written where the runtime cannot read them
+- **GIVEN** a store whose caches sit where the runtime cannot read them
 - **WHEN** the verification workload runs
 - **THEN** the check observes cache writes at run time and fails
 
 #### Scenario: An effective prepared cache passes
 
-- **GIVEN** a store whose caches are prepared where the runtime reads them
+- **GIVEN** a store whose caches sit where the runtime reads them
 - **WHEN** the verification workload runs
-- **THEN** the check observes only cache loads and passes
+- **THEN** the check observes a load for each recorded entry, and it passes
+
+#### Scenario: A write outside the recorded set passes
+
+- **GIVEN** a workload that reaches a kernel which the preparation could not cache
+- **WHEN** the verification workload runs
+- **THEN** the check reports that write, and it passes because the entry is in no record
+
+#### Scenario: A build that prepares no cache fails
+
+- **GIVEN** a build that publishes a store and runs no preparation step
+- **WHEN** the verification workload runs
+- **THEN** the check observes cache writes at run time and fails
+
+#### Scenario: The workload comes from the manifest
+
+- **GIVEN** a manifest that names the modules and the workload script
+- **WHEN** the build prepares the caches
+- **THEN** it reads that declaration, passes it to the provisioner, and names no module of its own
+
+#### Scenario: An R package that the runtime image cannot load stops the build
+
+- **GIVEN** a published farm holding an R package that does not load in the sandbox runtime image
+- **WHEN** the build runs the load check in that image
+- **THEN** the build fails and publishes no catalog artifact

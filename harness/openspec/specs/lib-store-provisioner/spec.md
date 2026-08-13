@@ -12,9 +12,9 @@ no network reaches a sandbox, and the store mounts read-only.
 
 ### Requirement: Provisioning runs in a container separate from the sandbox
 
-Package provisioning SHALL run in a dedicated container that is distinct from any sandbox. The provisioner MAY have network access and SHALL carry a build toolchain. It SHALL mount the library store and SHALL NOT mount any analysis workspace, session tree, or reference store, so that it holds no user data while it has a network. It SHALL exit when provisioning completes.
+Package provisioning MUST run in a dedicated container that is distinct from any sandbox. The provisioner can have network access, and it MUST carry a build toolchain. It MUST mount the library store. It MUST NOT mount any analysis workspace, session tree, or reference store. Thus it holds no user data while it has a network. It MUST exit when provisioning completes.
 
-The sandbox SHALL remain unchanged: no network, uid 1000, all capabilities dropped, and the store mounted read-only.
+The sandbox MUST remain unchanged: no network, uid 1000, all capabilities dropped, and the store mounted read-only.
 
 #### Scenario: The provisioner reaches the network but sees no user data
 
@@ -29,7 +29,7 @@ The sandbox SHALL remain unchanged: no network, uid 1000, all capabilities dropp
 
 ### Requirement: The provisioner is built from the sandbox runtime's base image
 
-The provisioner image SHALL be built from the same digest-pinned base image as `sandbox-base`. Compiled artifacts produced by the provisioner are loaded by the sandbox, so a divergent base would yield a mismatched libc, C++ runtime, or Python ABI.
+The provisioner image MUST be built from the same digest-pinned base image as `sandbox-base`. The sandbox loads the compiled artifacts that the provisioner produces. Thus a divergent base would give a mismatched libc, C++ runtime, or Python ABI.
 
 #### Scenario: Base images match
 
@@ -44,11 +44,11 @@ The provisioner image SHALL be built from the same digest-pinned base image as `
 
 ### Requirement: Each distribution is stored once, addressed by its content
 
-The provisioner SHALL install each resolved distribution into its own directory under `<root>/store/`, named from the distribution name, its version, and a hash of the installed content. A directory SHALL be written once and never modified in place. When a resolved distribution already has a store directory, the provisioner SHALL reuse it rather than install it again.
+The provisioner MUST install each resolved distribution into its own directory under `<root>/store/`. The name of that directory comes from the distribution name, its version, and a hash of the installed content. A directory MUST be written once and never modified in place. When a resolved distribution already has a store directory, the provisioner MUST reuse that directory rather than install the distribution again.
 
-The content hash SHALL cover file contents, relative paths, the executable bit, and symbolic-link targets. It SHALL exclude derived artifacts — compiled Python bytecode and prepared JIT caches — so that cache preparation does not invalidate the address.
+The content hash MUST cover file contents, relative paths, the executable bit, and symbolic-link targets. It MUST exclude derived artifacts — compiled Python bytecode and prepared JIT caches — so that cache preparation does not invalidate the address.
 
-Publication SHALL be atomic. The provisioner SHALL stage an install inside the store and SHALL move it into place with a rename, so that an interrupted run leaves no partially written store directory.
+Publication MUST be atomic. The provisioner MUST stage an install inside the store. It MUST move the install into place with a rename. Thus an interrupted run leaves no partially written store directory.
 
 #### Scenario: A shared dependency is stored once
 
@@ -69,7 +69,7 @@ Publication SHALL be atomic. The provisioner SHALL stage an install inside the s
 
 ### Requirement: Source artifacts are pinned by hash and resolved from a pinned index
 
-The provisioner SHALL resolve a dependency closure to exact versions and SHALL record a cryptographic hash for each source artifact it downloads. It SHALL refuse an artifact whose hash does not match the recorded value. It SHALL resolve from an explicitly configured package index and SHALL refuse an artifact served from an unexpected host.
+The provisioner MUST resolve a dependency closure to exact versions and MUST record a cryptographic hash for each source artifact it downloads. It MUST refuse an artifact whose hash does not match the recorded value. It MUST resolve from an explicitly configured package index and MUST refuse an artifact served from an unexpected host.
 
 #### Scenario: A tampered artifact is refused
 
@@ -84,19 +84,19 @@ The provisioner SHALL resolve a dependency closure to exact versions and SHALL r
 
 ### Requirement: An analysis reaches its closure through a symlink farm
 
-The provisioner SHALL assemble, for each analysis, a directory of symbolic links pointing into the store, and SHALL expose it at the path the sandbox already expects. Link targets SHALL be paths that resolve inside the sandbox container, not host paths.
+The provisioner MUST assemble, for each analysis, a directory of symbolic links that point into the store. It MUST expose that directory at the path the sandbox already expects. Link targets MUST be paths that resolve inside the sandbox container, not host paths.
 
-Links SHALL be created per top-level entry rather than per file, so that a distribution's package directory and its vendored shared-library directory resolve within the same store directory and `$ORIGIN`-relative lookups continue to work.
+The provisioner MUST make a link for each top-level entry, and not for each file. Thus a distribution's package directory and its vendored shared-library directory resolve within the same store directory. As a result, the `$ORIGIN`-relative lookups continue to work.
 
-When two distributions provide the same top-level name, the provisioner SHALL create a real directory at that name and link both sides beneath it.
+When two distributions carry the same top-level name, the provisioner MUST make a real directory at that name. It MUST link both sides beneath that directory.
 
-A farm SHALL expose only the closure of its own analysis.
+A farm MUST expose only the closure of its own analysis.
 
-A farm SHALL publish atomically, with its records. The provisioner SHALL
+A farm MUST publish atomically, with its records. The provisioner MUST
 assemble a new farm and its records in a staging path that no consumer
-resolves. It SHALL swap the staging farm into place in one step. After any
-stop or crash, the farm path SHALL hold either the previous complete farm or
-the new complete farm, each with its records. A repair pass SHALL clear the
+resolves. It MUST swap the staging farm into place in one step. After any
+stop or crash, the farm path MUST hold either the previous complete farm or
+the new complete farm, each with its records. A repair pass MUST clear the
 staging debris at the start of the next run.
 
 #### Scenario: A stopped run does not destroy the records of a farm
@@ -118,9 +118,9 @@ staging debris at the start of the next run.
 
 #### Scenario: A shared top-level name is merged
 
-- **GIVEN** two distributions that both provide the top-level name `mpl_toolkits`
+- **GIVEN** two distributions that both carry the top-level name `mpl_toolkits`
 - **WHEN** the farm is assembled
-- **THEN** `mpl_toolkits` is a real directory containing links from both distributions
+- **THEN** `mpl_toolkits` is a real directory that holds links from both distributions
 
 #### Scenario: Farms are isolated from each other
 
@@ -130,26 +130,92 @@ staging debris at the start of the next run.
 
 ### Requirement: Prepared caches are written to a relocatable directory and seeded before use
 
-The provisioner SHALL prepare the numba JIT cache and the matplotlib font cache into directories it publishes with the farm, rather than into the installed package trees. The sandbox SHALL copy those directories to writable paths and point `NUMBA_CACHE_DIR` and `MPLCONFIGDIR` at the copies before any workload runs. A cache for another library SHALL be added only by amending this requirement, so the prepared set stays enumerable and testable.
+The provisioner MUST prepare the numba JIT cache and the matplotlib font cache
+into directories that it publishes with the farm. It MUST NOT write them into the
+installed package trees. The sandbox MUST copy those directories to writable
+paths. It MUST point `NUMBA_CACHE_DIR` and `MPLCONFIGDIR` at the copies before a
+workload runs. A cache for another library MUST arrive only by an amendment of
+this requirement, thus the prepared set stays enumerable.
 
-Cache preparation SHALL run against the same container path the sandbox will import from, because cache validity is keyed on the source path. Preparation SHALL execute a workload rather than only importing modules, because compilation is triggered by a call rather than by an import. The provisioner SHALL record the workload it executed, and the effectiveness check SHALL replay exactly that recording — anything else tests an unprepared call signature and fails for the wrong reason.
+Cache preparation MUST run against the same container path that the sandbox
+imports from, because a cache key holds the source path. Preparation MUST execute
+a workload, and it MUST NOT import modules only, because a call starts a
+compilation and an import does not. The provisioner MUST record the workload that
+it executed. The effectiveness check MUST replay exactly that recording, because
+another workload exercises an unprepared call signature.
+
+The run MUST also record the cache entries that it prepared. A kernel whose
+signature holds a type that cannot pickle never matches its index again. Thus it
+writes on each run, and it loads on none. The check judges the recorded entries
+only, thus such a kernel cannot fail it.
+
+The invoker of the provisioner MUST mount the target farm at that container path
+for the run. The store carries no pointer, thus no other mechanism puts the farm
+there. A preparation run that cannot resolve the farm at that path MUST fail, and
+it MUST name the mount that it wants. A cache that the run writes through another
+path never loads, thus such a run produces nothing.
+
+A module of the declared workload that does not import, and a workload script
+that exits non-zero, MUST fail the run. The declaration states which packages an
+analysis reaches first. Thus a module that cannot run is a broken catalog, and
+not a cache that is one entry short.
 
 #### Scenario: A prepared cache is used rather than rebuilt
 
-- **GIVEN** a farm whose cache was prepared by executing a workload
+- **GIVEN** a farm whose cache the provisioner prepared by a workload
 - **WHEN** the sandbox runs that same workload
-- **THEN** the run loads cached compilations and writes no new cache entry
+- **THEN** the run loads every recorded entry, and it writes none of them
+
+#### Scenario: A kernel that cannot cache does not fail the check
+
+- **GIVEN** a workload that reaches a kernel whose signature holds a type that cannot pickle
+- **WHEN** the run prepares the caches
+- **THEN** that kernel enters no record, thus its write at replay time fails nothing
 
 #### Scenario: Preparation uses the path the sandbox will use
 
 - **WHEN** the provisioner prepares caches for a farm
-- **THEN** it does so through the same path at which the sandbox will resolve the farm
+- **THEN** it does so through the same path at which the sandbox resolves the farm
+
+#### Scenario: A run with no farm mount fails
+
+- **GIVEN** an invoker that mounts the store root and mounts no farm at the container path
+- **WHEN** a preparation run starts
+- **THEN** the run fails, it names the mount that it wants, and it writes no cache
+
+#### Scenario: The declared workload reaches the run
+
+- **GIVEN** a manifest that names the modules and the workload script
+- **WHEN** the provisioner prepares the caches of the farm
+- **THEN** it runs exactly that workload, and it records it for the effectiveness check
+
+#### Scenario: A module of the workload that does not import fails the run
+
+- **GIVEN** a declared workload whose module the farm cannot import
+- **WHEN** the preparation run reaches that module
+- **THEN** the run fails and names the module, rather than preparing the modules that remain
 
 ### Requirement: R packages are stored and farmed like Python distributions
 
-The provisioner SHALL store each R package in its own content-addressed directory and SHALL assemble the R farms at the three paths the resolver env already names. Where the installer produces a combined library tree rather than one package at a time, the provisioner SHALL split that tree into one directory per package, taking the name and version from each package's `DESCRIPTION`.
+The provisioner MUST store each R package in its own content-addressed directory.
+It MUST assemble the R farms at the three paths that the resolver env names.
+Where the installer writes many packages into one library tree, the provisioner
+MUST split that tree into one directory for each package. It MUST take the name
+and the version from the `DESCRIPTION` of each package.
 
-Each stored R package SHALL record the R version and, where applicable, the Bioconductor release it was built against, because Bioconductor couples its release to an R version. A package compiled against another package's headers SHALL be recorded together with that package, so the pair stays consistent.
+Each stored R package MUST record the R version. It MUST record the Bioconductor
+release where one applies, because Bioconductor couples its release to an R
+version. A package that compiles against the headers of another package MUST stay
+recorded with that package, thus the pair stays consistent.
+
+The load check MUST run inside the sandbox runtime image. It MUST resolve each
+package through the `R_LIBS_SITE` paths of the farm, and it MUST add no other
+library. The provisioner cannot start a container, thus the check belongs to the
+invoker of the provisioner, and it runs after the farm publishes.
+
+The provisioner MUST record the R packages that it farmed, and the check MUST
+read that record. A package whose runtime dependency the sandbox image owns MUST
+carry that name in the image-owned package list.
 
 #### Scenario: An R package loads through the farm
 
@@ -168,29 +234,64 @@ Each stored R package SHALL record the R version and, where applicable, the Bioc
 - **WHEN** an R package is stored
 - **THEN** its record carries the R version, and the Bioconductor release when it came from Bioconductor
 
+#### Scenario: A dependency of the provisioner image does not satisfy the check
+
+- **GIVEN** an R package whose runtime dependency exists in the provisioner image and in no farm
+- **WHEN** the load check runs in the sandbox runtime image
+- **THEN** the check fails and names that package, because that image does not carry the dependency
+
+#### Scenario: The check reads the record of the run
+
+- **GIVEN** a provisioning run that farmed a set of R packages and recorded it
+- **WHEN** the load check runs
+- **THEN** it loads exactly the recorded set, and it walks no farm to find one
+
+### Requirement: The image-owned package list matches the sandbox image
+
+A test MUST compare `base-packages.json` against the installed set of the sandbox
+image. It MUST fail when the list names a package that the image does not own.
+
+The emitter drops an edge into a package that the sandbox image owns, and
+`base-packages.json` is that list. The two failures are not symmetric. A name
+that the list omits stops the build at the edge gate, which is loud and safe. A
+name in the list that the image does not own drops a real edge. The closure then
+runs short, and the import fails inside the sandbox with no explanation.
+
+#### Scenario: A stale name in the list fails the test
+
+- **GIVEN** an image-owned package list that names a package the sandbox image does not carry
+- **WHEN** the test compares the list against that image
+- **THEN** the test fails and names the package
+
+#### Scenario: A list that matches the image passes
+
+- **GIVEN** an image-owned package list whose every name the sandbox image carries
+- **WHEN** the test compares the list against that image
+- **THEN** the test passes
+
 ### Requirement: Provisioning does not disturb a sandbox that is already running
 
-Provisioning SHALL take effect for sandboxes created after it, and SHALL NOT attempt to change what a running sandbox sees. The provisioner SHALL NOT replace the active-farm pointer while a sandbox has the store mounted, because replacing that path breaks the running container's view of it rather than switching it.
+Provisioning MUST take effect for sandboxes created after it, and MUST NOT attempt to change what a running sandbox sees. The provisioner MUST NOT replace the active-farm pointer while a sandbox has the store mounted. If the provisioner replaces that path, it breaks the running container's view of that path. It does not switch that view.
 
 #### Scenario: The active pointer is not swung under a live sandbox
 
 - **GIVEN** a sandbox with the store mounted
 - **WHEN** provisioning would re-point the active farm
-- **THEN** it refuses, and reports that a sandbox is using the store
+- **THEN** it refuses, and reports that a sandbox uses the store
 
 #### Scenario: The next sandbox sees the new package
 
-- **GIVEN** a package provisioned while no sandbox was running
+- **GIVEN** a package provisioned while no sandbox ran
 - **WHEN** the next sandbox is created
 - **THEN** the package is importable and listed in the inventory
 
 ### Requirement: Each provisioning run records the closure it produced
 
-The provisioner SHALL write a lock file for each farm recording the requested specifications, the resolved distributions with their versions and source hashes, and the store directories that satisfy them. Re-running provisioning for an existing farm SHALL resolve the union of the previously requested specifications and the newly requested ones.
+The provisioner MUST write a lock file for each farm. The lock file MUST record the requested specifications. It MUST also record the resolved distributions with their versions and source hashes, and the store directories that satisfy them. When provisioning runs again for an existing farm, it MUST resolve the union of the previously requested specifications and the newly requested ones.
 
-The provisioner SHALL regenerate the farm's package inventory using the shared inventory producer, so that a store-backed inventory and a baked inventory are indistinguishable in shape.
+The provisioner MUST regenerate the farm's package inventory with the shared inventory producer. Thus a store-backed inventory and a baked inventory are indistinguishable in shape.
 
-The records the provisioner publishes with a farm SHALL describe the farm as published, not the work of the run alone. Thus the track record and the package inventory SHALL cover every preserved track, and every rebuilt track. An inventory that omits a preserved track would deny a package the sandbox can import.
+The records the provisioner publishes with a farm MUST describe the farm as published, not the work of the run alone. Thus the track record and the package inventory MUST cover every preserved track, and every rebuilt track. An inventory that omits a preserved track would deny a package the sandbox can import.
 
 #### Scenario: Adding a package preserves the earlier request
 
@@ -211,11 +312,11 @@ The records the provisioner publishes with a farm SHALL describe the farm as pub
 
 ### Requirement: A provisioning run preserves the tracks it does not rebuild
 
-A provisioning run SHALL preserve every track the target farm already carries and the run does not rebuild. Thus the published farm SHALL hold the union of two sets: the tracks the run built, and the tracks the previous farm carried. A run SHALL NOT install a preserved track again, and SHALL NOT reach a network for one.
+A provisioning run MUST preserve every track the target farm already carries and the run does not rebuild. Thus the published farm MUST hold the union of two sets: the tracks the run built, and the tracks the previous farm carried. A run MUST NOT install a preserved track again, and MUST NOT reach a network for one.
 
-A run that builds a track SHALL replace that track in the published farm. A run that builds no track of a given kind SHALL keep the previous track of that kind unchanged. A removal of a track SHALL be an explicit operation, which is the removal of the farm. A removal SHALL NOT be a side effect of an added package.
+A run that builds a track MUST replace that track in the published farm. A run that builds no track of a given kind MUST keep the previous track of that kind unchanged. A removal of a track MUST be an explicit operation, which is the removal of the farm. A removal MUST NOT be a side effect of an added package.
 
-Preservation SHALL take effect through the same staging path the atomic publish already uses. Thus a stop or a crash leaves the farm path with one complete farm, old or new.
+Preservation MUST take effect through the same staging path the atomic publish already uses. Thus a stop or a crash leaves the farm path with one complete farm, old or new.
 
 #### Scenario: Adding a Python package keeps the R track
 
