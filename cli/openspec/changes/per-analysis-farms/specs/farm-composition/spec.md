@@ -137,3 +137,34 @@ A golden-fixture test SHALL pin the TypeScript composer against the provisioner'
 - **GIVEN** a farm whose analysis id is not in the DB
 - **WHEN** reclamation runs
 - **THEN** the reaper removes the farm, and reclamation then frees what no farm references
+
+### Requirement: Composition takes no store lock and stays safe against a reclamation
+
+Composition MUST NOT take the store lock of the provisioner. It runs on the host
+at the first sandbox action of an analysis. A lock there would put a
+container-scoped wait on that path.
+
+Safety against a reclamation rests on one invariant. A default farm links exactly
+the store directories that the catalog template links. The template is itself a
+farm, and a reclamation walks each farm. Thus a reclamation sees each of those
+directories as referenced, and it removes none of them.
+
+A default farm that took the closure of its roots would break the invariant. Such
+a walk can reach a store directory that no farm links yet. A reclamation between
+the walk and the link would then remove it.
+
+An extension names a root outside the template, thus it MUST run inside an
+acquisition flight. A reclamation waits for zero live flights, and that wait is
+what separates the two.
+
+#### Scenario: A composition during a reclamation loses no link
+
+- **GIVEN** a reclamation that runs
+- **WHEN** a first sandbox action composes a default farm at the same time
+- **THEN** each link of the new farm resolves, because the template already referenced every target
+
+#### Scenario: An extension outside the template runs inside a flight
+
+- **GIVEN** an extension whose roots the catalog template does not hold
+- **WHEN** it runs
+- **THEN** it runs inside an acquisition flight, and a reclamation waits for that flight to finish
