@@ -342,6 +342,20 @@ export function leaderSeq(suffix: string): Sequence {
     return [leaderChord(), parseChord(suffix)];
 }
 
+/**
+ * Build a leader-prefixed sequence whose second stroke is REMAPPABLE: the resolved chord of `id`. The
+ * sibling of {@link leaderSeq}, which takes a literal suffix and so cannot honour a config override.
+ *
+ * The leader prefix has to be composed HERE rather than stored in {@link KEYBIND_DEFAULTS}. A default
+ * is parsed by {@link parseChord}, which splits on `+` alone, so a value carrying the leader token and
+ * a space collapses into one key name no keystroke can ever match — a binding that silently does
+ * nothing. An id whose reachable key is a leader chord therefore stores its FINAL stroke alone, and
+ * its binding site calls this to put the leader back in front.
+ */
+export function leaderKeybind(id: KeybindId): Sequence {
+    return [leaderChord(), resolveKeybind(id)];
+}
+
 // How long a half-typed sequence stays pending before it is abandoned (config, load-once).
 function leaderTimeoutMs(): number {
     if (leaderTimeoutCache == null) leaderTimeoutCache = readConfig().leaderTimeout ?? 2000;

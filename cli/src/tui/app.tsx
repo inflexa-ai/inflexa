@@ -41,7 +41,7 @@ import {
     resolveKeybind,
     keybindLabel,
     interruptHintLabel,
-    leaderChord,
+    leaderKeybind,
     leaderSeq,
     KEYS,
     type LayerConfig,
@@ -802,17 +802,16 @@ export function App(props: AppProps) {
             { chord: leaderSeq("r"), run: openRuns, desc: "Runs", group: "Analysis" },
             { chord: leaderSeq("s"), run: () => runCommandById("session.switch"), desc: "Switch session", group: "Session" },
             // The pair walks between a conversation and the report session it spawned — one chord back to
-            // the parent, the other forward to a child. Each chord is the leader stroke plus the RESOLVED
-            // chord of its id, never `leaderSeq`, which takes a literal suffix and would bypass the
-            // user's remap of that id.
+            // the parent, the other forward to a child. `leaderKeybind` and not `leaderSeq`, which takes a
+            // literal suffix and would bypass the user's remap of the id.
             {
-                chord: [leaderChord(), resolveKeybind("session.open-parent")],
+                chord: leaderKeybind("session.open-parent"),
                 run: () => void openParentSession(workspace),
                 desc: "Open the parent conversation",
                 group: "Session",
             },
             {
-                chord: [leaderChord(), resolveKeybind("session.open-report")],
+                chord: leaderKeybind("session.open-report"),
                 run: () => void openReportSession(workspace),
                 desc: "Open a report session",
                 group: "Session",
