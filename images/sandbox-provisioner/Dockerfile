@@ -37,12 +37,15 @@ RUN declared="$(grep -E '^base_image:' /tmp/lib-store-manifest.yaml \
 
 # The same toolchain the image builds use, from the same script, so a package
 # that compiles during a CI image build also compiles during a user install.
-# python3-yaml is the system-python YAML the manifest parse reads; the jags/libuv/
-# libprotobuf/libglpk runtime .so set mirrors sandbox-base so R packages that
-# dlopen them at library() time load in the provisioner too (pak installs most
-# system libraries itself from each package's SystemRequirements).
+# python3-yaml is the system-python YAML the manifest parse reads.
+# python3-packaging is the reference reader of a PEP 508 marker, which
+# emit_deps.py uses. Both are named here, thus neither can arrive as a transitive
+# package that a later change removes.
+# The jags/libuv/libprotobuf/libglpk runtime .so set mirrors sandbox-base so R
+# packages that dlopen them at library() time load in the provisioner too (pak
+# installs most system libraries itself from each package's SystemRequirements).
 COPY images/install-build-toolchain.sh /tmp/install-build-toolchain.sh
-RUN bash /tmp/install-build-toolchain.sh python3-yaml jags libuv1t64 libprotobuf32t64 libglpk40
+RUN bash /tmp/install-build-toolchain.sh python3-yaml python3-packaging jags libuv1t64 libprotobuf32t64 libglpk40
 
 # Pinned to sandbox-base's uv so resolution and wheel selection are identical to
 # what the baked images got.

@@ -45,6 +45,8 @@ import re
 import subprocess
 import sys
 from importlib.metadata import Distribution
+from packaging.markers import InvalidMarker, Marker
+from packaging.version import InvalidVersion
 from pathlib import Path
 
 # The graph, at the store root. The name is part of the store contract, because a
@@ -102,27 +104,11 @@ def canon(name: str) -> str:
 
 
 # --- Environment markers ------------------------------------------------------
-# A marker is a small boolean expression over a fixed set of variables. The
-# emitter reads it with its own parser, because the provisioner image carries no
-# packaging library, and the emitter must run with the standard library alone.
-
-
-class MarkerError(Exception):
-    """The emitter cannot read an environment marker."""
-
-
-_TOKENS = re.compile(
-    r"""\s*(?:
-          (?P<string>'[^']*'|"[^"]*")
-        | (?P<op>===|==|!=|<=|>=|~=|<|>)
-        | (?P<punct>[()])
-        | (?P<word>[A-Za-z_][A-Za-z0-9_.]*)
-        )""",
-    re.VERBOSE,
-)
-
-_NUMBER = re.compile(r"^(\d+)")
-
+# A marker is a boolean expression over a fixed set of variables, and the rules of
+# PEP 508 and PEP 440 that compare a version are subtle. `packaging` is the
+# reference implementation of both, thus the emitter reads a marker with it and
+# never with a parser of its own. The Dockerfile installs `python3-packaging`, so
+# the import cannot depend on a transitive arrival.
 
 def marker_environment() -> dict[str, str]:
     """The PEP 508 environment of this image, with no extra active.
@@ -148,162 +134,18 @@ def marker_environment() -> dict[str, str]:
     }
 
 
-def _tokenize(text: str) -> list[tuple[str, str]]:
-    tokens: list[tuple[str, str]] = []
-    pos = 0
-    while pos < len(text):
-        match = _TOKENS.match(text, pos)
-        if match is None:
-            if not text[pos:].strip():
-                break
-            raise MarkerError(f"cannot read the marker at {text[pos:]!r}")
-        pos = match.end()
-        kind = match.lastgroup or ""
-        tokens.append((kind, match.group(kind)))
-    return tokens
-
-
-def _version_key(text: str) -> list[int]:
-    """The numeric parts of a version, for an ordered comparison.
-
-    A marker compares a version such as `3.10` against a variable such as
-    `python_version`. A text comparison puts `3.10` before `3.9`, thus the
-    comparison must read the numbers. A part that starts with no digit stops the
-    read, and the caller then falls back to a text comparison.
-    """
-    key: list[int] = []
-    for part in text.split("."):
-        match = _NUMBER.match(part)
-        if match is None:
-            raise MarkerError(f"{text!r} is not a version")
-        key.append(int(match.group(1)))
-    return key
-
-
-def _pad(left: list[int], right: list[int]) -> tuple[list[int], list[int]]:
-    width = max(len(left), len(right))
-    return left + [0] * (width - len(left)), right + [0] * (width - len(right))
-
-
-def _order(left, right, op: str) -> bool:
-    if op == "<":
-        return left < right
-    if op == "<=":
-        return left <= right
-    if op == ">":
-        return left > right
-    if op == ">=":
-        return left >= right
-    raise MarkerError(f"unknown marker operator {op!r}")
-
-
-def _apply(left: str, op: str, right: str) -> bool:
-    if op == "in":
-        return left in right
-    if op == "not in":
-        return left not in right
-    if op in ("==", "==="):
-        return left == right
-    if op == "!=":
-        return left != right
-    if op == "~=":
-        # A compatible release: at least the named version, and the same version up
-        # to the last part of the named one.
-        prefix = len(_version_key(right)) - 1
-        have, want = _pad(_version_key(left), _version_key(right))
-        return have >= want and have[:prefix] == want[:prefix]
-    try:
-        have, want = _pad(_version_key(left), _version_key(right))
-    except MarkerError:
-        return _order(left, right, op)
-    return _order(have, want, op)
-
-
-class _Marker:
-    """A recursive-descent reader of one marker expression."""
-
-    def __init__(self, tokens: list[tuple[str, str]], env: dict[str, str]) -> None:
-        self.tokens = tokens
-        self.env = env
-        self.at = 0
-
-    def value(self) -> bool:
-        result = self._or()
-        if self.at != len(self.tokens):
-            raise MarkerError(f"the marker has text after its end: {self.tokens[self.at:]!r}")
-        return result
-
-    def _peek(self) -> tuple[str, str] | None:
-        return self.tokens[self.at] if self.at < len(self.tokens) else None
-
-    def _take(self) -> tuple[str, str]:
-        token = self._peek()
-        if token is None:
-            raise MarkerError("the marker stops too early")
-        self.at += 1
-        return token
-
-    def _or(self) -> bool:
-        result = self._and()
-        while self._peek() == ("word", "or"):
-            self._take()
-            result = self._and() or result
-        return result
-
-    def _and(self) -> bool:
-        result = self._atom()
-        while self._peek() == ("word", "and"):
-            self._take()
-            result = self._atom() and result
-        return result
-
-    def _atom(self) -> bool:
-        if self._peek() == ("punct", "("):
-            self._take()
-            result = self._or()
-            if self._take() != ("punct", ")"):
-                raise MarkerError("the marker has no closing parenthesis")
-            return result
-        return self._compare()
-
-    def _operand(self) -> str:
-        kind, text = self._take()
-        if kind == "string":
-            return text[1:-1]
-        if kind == "word":
-            if text not in self.env:
-                raise MarkerError(f"unknown marker variable {text!r}")
-            return self.env[text]
-        raise MarkerError(f"{text!r} is not a marker operand")
-
-    def _compare(self) -> bool:
-        left = self._operand()
-        kind, text = self._take()
-        if kind == "op":
-            op = text
-        elif (kind, text) == ("word", "in"):
-            op = "in"
-        elif (kind, text) == ("word", "not"):
-            if self._take() != ("word", "in"):
-                raise MarkerError("the marker has `not` without `in`")
-            op = "not in"
-        else:
-            raise MarkerError(f"{text!r} is not a marker operator")
-        right = self._operand()
-        return _apply(left, op, right)
-
-
-def marker_is_true(text: str, env: dict[str, str]) -> bool:
-    """Read one environment marker against `env`."""
-    return _Marker(_tokenize(text), env).value()
-
-
 def edge_name(requirement: str, env: dict[str, str]) -> str | None:
     """The distribution name of `requirement`, or None when its marker is false.
 
-    A marker that the emitter cannot read keeps the edge, and it reports the
-    marker. A kept edge that names no node stops the build with the name of the
-    edge, but a dropped edge would leave the closure short with no report.
+    A marker that does not read keeps the edge, and the emitter reports it. A kept
+    edge that names no node stops the build with the name of the edge, but a
+    dropped edge would leave the closure short with no report.
+
+    Two failures are possible, and both keep the edge. `InvalidMarker` is a marker
+    that does not parse. `InvalidVersion` is a comparison against a value that is
+    no version of PEP 440: `platform_release` carries a kernel release such as
+    `7.0.9-205.fc44.aarch64`, thus a marker that compares it raises rather than
+    gives an answer.
     """
     body, _, marker = requirement.partition(";")
     match = REQUIREMENT_NAME.match(body)
@@ -312,10 +154,11 @@ def edge_name(requirement: str, env: dict[str, str]) -> str | None:
     name = match.group(1)
     if marker.strip():
         try:
-            if not marker_is_true(marker, env):
+            if not Marker(marker).evaluate(env):
                 return None
-        except MarkerError as exc:
-            log(f"WARNING: {exc}; the emitter keeps the edge to {name}")
+        except (InvalidMarker, InvalidVersion) as exc:
+            log(f"WARNING: cannot read the marker {marker.strip()!r} ({exc}); "
+                f"the emitter keeps the edge to {name}")
     return name
 
 

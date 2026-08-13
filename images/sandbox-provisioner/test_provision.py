@@ -103,6 +103,7 @@ import tempfile
 import time
 import traceback
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1791,11 +1792,11 @@ class RLoadCheckTests(StoreTestCase):
 
 
 class MarkerTests(unittest.TestCase):
-    """§6.1 — the emitter reads an environment marker with the standard library alone.
+    """§6.1 — the marker of a requirement decides the edge.
 
-    The provisioner image carries no packaging library, thus the emitter holds its
-    own reader. Each marker evaluates against the environment of this interpreter,
-    which in the image is the interpreter of the sandbox.
+    `packaging` reads a marker, thus these tests pin the USE of it and never
+    packaging itself: the environment that the emitter builds, the empty `extra`,
+    and the two failures that KEEP an edge rather than drop it.
     """
 
     def setUp(self):
@@ -1804,45 +1805,57 @@ class MarkerTests(unittest.TestCase):
                         python_version="3.12", python_full_version="3.12.4",
                         os_name="posix")
 
-    def true(self, text: str) -> bool:
-        return emit_deps.marker_is_true(text, self.env)
+    def edge(self, requirement: str):
+        return emit_deps.edge_name(requirement, self.env)
 
-    def test_a_version_compares_by_its_numbers(self):
-        # A text comparison puts "3.10" before "3.9", thus the reader must compare
-        # the numbers.
-        self.assertTrue(self.true('python_version >= "3.9"'))
-        self.assertTrue(self.true('python_version > "3.9"'))
-        self.assertFalse(self.true('python_version < "3.9"'))
-        self.assertTrue(self.true('python_full_version >= "3.12"'))
-
-    def test_and_or_and_parentheses(self):
-        self.assertTrue(self.true('os_name == "posix" and python_version >= "3.8"'))
-        self.assertFalse(self.true('os_name == "nt" and python_version >= "3.8"'))
-        self.assertTrue(self.true('os_name == "nt" or sys_platform == "linux"'))
-        self.assertFalse(self.true(
-            '(sys_platform == "win32" or sys_platform == "darwin") and python_version > "3.0"'))
-
-    def test_in_and_not_in(self):
-        self.assertTrue(self.true('platform_machine in "x86_64 AMD64"'))
-        self.assertTrue(self.true('platform_machine not in "aarch64 arm64"'))
+    def test_the_environment_names_each_variable_of_pep_508(self):
+        """A variable that the environment does not carry makes packaging raise, thus
+        the edge would survive for the wrong reason and the gate would report it."""
+        env = emit_deps.marker_environment()
+        for key in ("os_name", "sys_platform", "platform_machine", "platform_release",
+                    "platform_system", "platform_version", "python_version",
+                    "python_full_version", "implementation_name", "implementation_version",
+                    "platform_python_implementation", "extra"):
+            self.assertIn(key, env)
 
     def test_no_extra_is_active(self):
         """§6.1: the emitter records the mandatory closure, thus `extra` is empty."""
-        self.assertFalse(self.true('extra == "test"'))
-        self.assertEqual(emit_deps.edge_name('pytest; extra == "test"', self.env), None)
+        self.assertEqual(emit_deps.marker_environment()["extra"], "")
+        self.assertIsNone(self.edge('pytest; extra == "test"'))
 
     def test_a_false_marker_drops_the_edge_and_a_true_marker_keeps_it(self):
-        self.assertEqual(emit_deps.edge_name('colorama; sys_platform == "win32"', self.env), None)
-        self.assertEqual(emit_deps.edge_name('numpy>=1.23; python_version >= "3.9"', self.env),
-                         "numpy")
-        self.assertEqual(emit_deps.edge_name("typing-extensions", self.env), "typing-extensions")
+        self.assertIsNone(self.edge('colorama; sys_platform == "win32"'))
+        self.assertEqual(self.edge('numpy>=1.23; python_version >= "3.9"'), "numpy")
+        self.assertEqual(self.edge("typing-extensions"), "typing-extensions")
 
-    def test_a_marker_that_does_not_read_keeps_the_edge(self):
+    def test_a_version_compares_by_its_numbers_and_not_by_its_text(self):
+        # A text comparison puts "3.10" before "3.9".
+        self.assertEqual(self.edge('numpy; python_version > "3.9"'), "numpy")
+        self.assertIsNone(self.edge('numpy; python_version < "3.9"'))
+
+    def test_a_marker_that_does_not_parse_keeps_the_edge(self):
         """A dropped edge would leave the closure short with no report. A kept edge
         that names no node stops the build and names the edge."""
         with contextlib.redirect_stdout(io.StringIO()) as buf:
-            name = emit_deps.edge_name('mystery; no_such_variable == "1"', self.env)
+            name = self.edge('mystery; no_such_variable == "1"')
         self.assertEqual(name, "mystery")
+        self.assertIn("WARNING", buf.getvalue())
+
+    def test_a_version_that_does_not_read_keeps_the_edge(self):
+        """`platform_release` carries a kernel release such as `7.0.9-205.fc44.aarch64`,
+        which is no version of PEP 440. packaging 24.0, which the image carries,
+        raises InvalidVersion for a comparison against it, and packaging 26.0 gives
+        False instead. Thus the raise is forced here: the test pins the handler of the
+        emitter, and it does not pin the behavior of one version of packaging."""
+
+        class Raising:
+            def __init__(self, _text): pass
+            def evaluate(self, _env): raise emit_deps.InvalidVersion("Invalid version: '7.0.9-205.fc44.aarch64'")
+
+        with unittest.mock.patch.object(emit_deps, "Marker", Raising):
+            with contextlib.redirect_stdout(io.StringIO()) as buf:
+                name = emit_deps.edge_name('oldpkg; platform_release > "5.0"', self.env)
+        self.assertEqual(name, "oldpkg")
         self.assertIn("WARNING", buf.getvalue())
 
 
