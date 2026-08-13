@@ -726,3 +726,11 @@ export const mockRunStepUsage: RunStepUsage = {
     ]),
     unattributed: { calls: 15, inputTokens: 284_900, outputTokens: 15_500 },
 };
+
+/**
+ * MOCK: the report-session entry that a conversation renders for a report session it spawned.
+ *
+ * The age is a WRITTEN label and not a live clock, thus the gallery paints one identical frame each
+ * time that a reader opens it.
+ */
+export const mockReportSession = { title: "Differential expression report", activityLabel: "12m04s" } as const;
