@@ -93,6 +93,12 @@ Thus an embedder that packs the asset bytes into its binary materializes them to
 
 `report-render/assets.ts` stays pure data. The manifest names the specifier alone, and the caller owns the lookup. A lookup that throws keeps the `fs` failure kind, thus the outcome vocabulary of the tool does not grow.
 
+### D10. The front door carries the manifest, and not a deep path alone
+
+An embedder that binds its own lookup reads the manifest to know which files to stage. It already reads the type of that lookup from the front door. Thus the value that the type describes belongs beside it.
+
+A deep subpath resolves today, and it stays importable. But the front door is the curated surface that an embedder faces, and half a contract on it is worse than none. A hand-kept copy of the entries in an embedder is the outcome that this export prevents.
+
 ## Risks / Trade-offs
 
 - [A caller does not stage the assets, and the page opens without charts] → The manifest export makes the stage step explicit. A gate asserts the stage step, and `examine_page` reports each failed request.

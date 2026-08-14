@@ -35,3 +35,7 @@
 - [x] 4.5 Add the fixture render script to `package.json`. It writes the fixture page with its assets, and it prints the path.
 - [x] 4.6 Render the fixture, open the page, and do a visual check against `design-system.md`.
 - [x] 4.7 Run `tsc -p tsconfig.json`, `bun test`, and `bun run format:file` on the changed files.
+
+## 5. The front door
+
+- [x] 5.1 Re-export the asset manifest and its entry type from `src/index.ts`, beside the type of the asset lookup that the front door already carries. An embedder reads the manifest to stage the files itself.
