@@ -68,6 +68,7 @@ import {
 // embedded pack. That binding is the release-gated dynamic `import("./content.ts")` in the boot body
 // below, thus a dev run keeps the pack out of its module graph.
 import type { ContentError } from "./content_extract.ts";
+import { createEphemeralEyes } from "./eyes.ts";
 import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
 import { createRunInflexaTool } from "./inflexa_tool.ts";
 import { createLaunchDirTool } from "./launch_dir_tool.ts";
@@ -1180,6 +1181,10 @@ async function bootHarnessRuntimeOnce(
                 resourcePolicy: cfg.resourcePolicy,
                 usageRecorder,
                 ...(assetsDir ? { resolveReportPageAsset: makeReportPageAssetLookup(assetsDir) } : {}),
+                // The eyes of a report session. A spawn refuses outright without them, thus this binding is
+                // what makes the report path exist here at all. The realization runs on the same pinned
+                // runtime that the sandbox uses, thus one boot names one container engine.
+                eyes: createEphemeralEyes({ runtime: pinnedRuntime }),
             },
             pool: composition.pool,
             skillsDir: cfg.skillsDir,
