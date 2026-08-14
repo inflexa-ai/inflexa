@@ -40,7 +40,29 @@ The session runtime MUST bind the per-session state to the thread, behind the si
 - **THEN** the tool returns typed data that names the missing thread id, and it does not throw
 
 ### Requirement: The snapshot pins at session start
-The runtime MUST give an idempotent operation that makes sure that the session state of a thread exists. The first run of the operation MUST pin the snapshot with `pinReportSnapshot`, and it MUST write the row. The serving path of a report turn MUST run the operation at the start of the turn. Every later call MUST read the stored snapshot, and it MUST NOT pin again. A pin failure MUST return as typed data, and a later call can pin again, because no row was written.
+The runtime MUST give an idempotent operation that makes sure that the session state of a thread exists. The first run of the operation MUST pin the snapshot with `pinReportSnapshot`, and it MUST write the row. Every later call MUST read the stored snapshot, and it MUST NOT pin again. A pin failure MUST return as typed data, and a later call can pin again, because no row was written.
+
+The spawn MUST run the operation directly after the seed of the child lands. The spawn mints one moment, and the two pins of that moment are the anchor of the transcript and the snapshot of the data. A pin at the first tool call of a later turn reads a different moment. A run can register an artifact between the two, and the session then cites an artifact that the anchor never held.
+
+A failed pin at the spawn MUST NOT fail the spawn, and it MUST NOT remove the child. The operation is idempotent, thus a later call pins again. The failure MUST reach the injected logger.
+
+The serving path of a report turn MUST run the operation at the start of the turn. Thus a session that the spawn could not pin still anchors before its first tool call.
+
+#### Scenario: The spawn pins the snapshot
+
+- **WHEN** the spawn makes a report child
+- **THEN** the session state of the child holds the snapshot before the first turn runs
+
+#### Scenario: An artifact of a later run is not a member
+
+- **GIVEN** a spawned report child
+- **WHEN** a run registers a new artifact, and the first turn of the child then runs
+- **THEN** the stored snapshot holds no entry for that artifact
+
+#### Scenario: A failed pin at the spawn keeps the child
+
+- **WHEN** the pin fails at the spawn
+- **THEN** the spawn gives the child, and the next call pins again
 
 #### Scenario: The first served turn pins before any tool call
 - **WHEN** the first turn of a report thread starts
@@ -124,3 +146,37 @@ The prompt MUST teach the verification loop: preview, look, repair, and record o
 #### Scenario: The prompt teaches the loop order
 - **WHEN** a reviewer reads the prompt module
 - **THEN** the loop order and the visual-spiral anti-pattern are present
+
+### Requirement: The report turn reads the copied narrative, never the live memory
+
+The turn assembly of a `report` thread MUST NOT inject the live working-memory render. The seed message in the child transcript carries the copy at the anchor, and that copy is the narrative record of the session. A live render sees state past the anchor, and that breaks the knowledge cap.
+
+The assembly MUST read the thread type from the row that the turn preparation already loads. A `conversation` thread keeps the live render.
+
+#### Scenario: A report turn carries no live render
+
+- **WHEN** a turn runs on a `report` thread
+- **THEN** the assembled tail holds no working-memory render, and the seed message stays the one narrative source
+
+#### Scenario: A conversation turn keeps the live render
+
+- **WHEN** a turn runs on a `conversation` thread
+- **THEN** the assembled tail holds the working-memory render, as before
+
+### Requirement: The window of a report turn keeps the seed
+
+The history window of a report turn MUST keep the first turn of the thread. The seed is that first turn, and it is the one record of the brief and of the working memory. No tail message replaces it.
+
+The window evicts the oldest turn first. Thus a long session would drop the seed, and the agent would keep its tools and lose its objective. The retained seed can carry the window past its token budget. The cost is bounded, because the brief carries a length bound and the render is one row.
+
+A `conversation` thread MUST keep the eviction that it has. The live tail of that thread carries the memory on each turn, thus its first turn holds no record that a later turn needs.
+
+#### Scenario: A long report session keeps its seed
+
+- **WHEN** a report thread holds more turns than the token budget admits
+- **THEN** the window holds the seed, and it holds the most recent turns
+
+#### Scenario: A conversation window evicts its oldest turn
+
+- **WHEN** a conversation thread holds more turns than the token budget admits
+- **THEN** the window drops the oldest turns, as before
