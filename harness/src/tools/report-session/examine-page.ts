@@ -52,7 +52,7 @@ import { createNoopLogger } from "../../lib/console-logger.js";
 import { createStaticEyes, type AcquireEyes, type EyesLease, type EyesScope } from "../../lib/eyes.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import { capturePage, type CapturePage, type FailedRequest, type PageCapture } from "../../lib/page-capture.js";
-import type { ResolveWorkspaceRoot } from "../../workspace/paths.js";
+import { reportSessionDir, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, withToolResultImage, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 
@@ -350,7 +350,7 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 return ok({ outcome: "capture-failed", detail: "the workspace root did not resolve" });
             }
 
-            const relativePagePath = join("report-sessions", threadId, "index.html");
+            const relativePagePath = join(reportSessionDir(threadId), "index.html");
             const pagePath = join(root, relativePagePath);
             try {
                 await access(pagePath);

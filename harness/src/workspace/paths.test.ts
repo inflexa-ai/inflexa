@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { resolve as resolvePath, sep } from "node:path";
 
-import { assertSafeId, resolveForWrite, resolveWorkspacePath, stepWritePrefix, toSandboxPath } from "./paths.js";
+import { assertSafeId, previewDir, reportSessionDir, resolveForWrite, resolveWorkspacePath, stepWritePrefix, toSandboxPath } from "./paths.js";
 
 const SESSIONS = "/var/sessions";
 const ANALYSIS = "analysis-001";
@@ -223,6 +223,29 @@ describe("assertSafeId", () => {
     it("rejects a slash or NUL", () => {
         expect(() => assertSafeId("a/b", "stepId")).toThrow(/Invalid stepId/);
         expect(() => assertSafeId("a\0b", "stepId")).toThrow(/Invalid stepId/);
+    });
+});
+
+describe("reportSessionDir", () => {
+    it("separates the directory of one thread from the directory of another", () => {
+        expect(reportSessionDir("thread-a")).toBe("report-sessions/thread-a");
+        expect(reportSessionDir("thread-b")).toBe("report-sessions/thread-b");
+        expect(reportSessionDir("thread-a")).not.toBe(reportSessionDir("thread-b"));
+    });
+
+    it("gives the workspace-root-relative form of the preview helpers", () => {
+        // A host joins the form onto the root that it resolves. A leading slash makes
+        // `join` give an absolute path, thus the form carries no leading slash.
+        expect(reportSessionDir("thread-a").startsWith("/")).toBe(false);
+        expect(previewDir("preview-a").startsWith("/")).toBe(false);
+        expect(reportSessionDir("thread-a").split("/")).toEqual(["report-sessions", "thread-a"]);
+        expect(previewDir("preview-a").split("/")).toEqual(["previews", "preview-a"]);
+    });
+
+    it("rejects a thread id that is not safe", () => {
+        expect(() => reportSessionDir("..")).toThrow(/Invalid threadId/);
+        expect(() => reportSessionDir("a/b")).toThrow(/Invalid threadId/);
+        expect(() => reportSessionDir("a\0b")).toThrow(/Invalid threadId/);
     });
 });
 
