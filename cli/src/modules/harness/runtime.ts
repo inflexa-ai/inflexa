@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { ok, err, type Result } from "neverthrow";
 import {
     bootHarness,
@@ -11,6 +12,7 @@ import {
     createSandboxClient,
     createWorkspaceFilesystem,
     makeLocalAuth,
+    PAGE_ASSETS,
     queryActiveSandboxes,
     registerNotificationSweep,
     registerSandboxReaper,
@@ -31,6 +33,7 @@ import {
     type Pool,
     type RegisterNotificationSweepDeps,
     type RegisterReaperDeps,
+    type ResolvePageAsset,
     type RunAuthorizer,
     type RunLauncher,
     type ThreadAgentResolver,
@@ -61,9 +64,10 @@ import {
     type AgentName,
     type ModelConnectionIdentity,
 } from "./config.ts";
-// Type-only: erased at compile, so it does NOT pull content.ts (and its embedded pack) into the module
-// graph. The value import is the release-gated dynamic `import("./content.ts")` in the boot body below.
-import type { ContentError } from "./content.ts";
+// The error type comes from the module that holds the extract, and never from the module that binds the
+// embedded pack. That binding is the release-gated dynamic `import("./content.ts")` in the boot body
+// below, thus a dev run keeps the pack out of its module graph.
+import type { ContentError } from "./content_extract.ts";
 import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
 import { createRunInflexaTool } from "./inflexa_tool.ts";
 import { createLaunchDirTool } from "./launch_dir_tool.ts";
@@ -236,7 +240,7 @@ export function describeBootError(e: HarnessBootError): string {
             return `Templates directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.templatesDir\` in config.json (a checkout's \`templates/\` tree).`;
         case "content_materialize_failed":
             return [
-                `Could not unpack the bundled skills/templates into ${env.contentDir} (${e.cause.type}).`,
+                `Could not unpack the bundled skills, templates, and report page assets into ${env.contentDir} (${e.cause.type}).`,
                 "Ensure the data directory is writable, or point `harness.skillsDir`/`harness.templatesDir` at your own trees in config.json.",
             ].join("\n");
         case "proxy_key_missing":
@@ -571,6 +575,29 @@ export function buildAuthInjectingFetch(source: CredentialSource, underlying: In
 }
 
 /**
+ * The page-asset lookup of the report preview, bound over the materialized assets directory.
+ *
+ * A compiled binary carries no `node_modules` tree, thus the module resolution that the preview tool does
+ * by default finds no source. The materialization stages each manifest file under one directory by its own
+ * name, thus the lookup maps a specifier onto its staged file. The manifest of the harness is the single
+ * source of the pair, thus no file name lives here.
+ */
+export function makeReportPageAssetLookup(assetsDir: string): ResolvePageAsset {
+    const stagedBySpecifier = new Map<string, string>();
+    for (const asset of PAGE_ASSETS) {
+        stagedBySpecifier.set(asset.specifier, asset.file);
+    }
+    return (specifier: string): string => {
+        const file = stagedBySpecifier.get(specifier);
+        // A throw, and not a Result: the preview tool wraps each call to this seam in its own guard, and it
+        // turns the throw into a typed outcome of the tool. Thus the throw is the protocol of the seam. A
+        // specifier that the manifest does not carry is a fault of the build, not a condition of the run.
+        if (file === undefined) throw new Error(`unknown report page asset specifier: ${specifier}`);
+        return join(assetsDir, file);
+    };
+}
+
+/**
  * One boot attempt, run under the {@link bootHarnessRuntime} in-flight guard.
  * This root resolves the host-specific inputs — prerequisites → Postgres
  * readiness → callback ingress → providers/models → instance lock → pool — then
@@ -595,15 +622,21 @@ async function bootHarnessRuntimeOnce(
     // against the silently-substituted default connection.
     if (connection.configError) return err({ type: "model_connection_invalid", issues: connection.configError.issues });
 
-    // A release binary ships skills/templates embedded, not on disk: materialize them (idempotent) to
+    // A release binary ships skills/templates/assets embedded, not on disk: materialize them (idempotent) to
     // the hash-keyed content dir that cfg.skillsDir/templatesDir already resolve to in a release build,
     // BEFORE the prerequisite gates below, so those gates find a populated tree. Gated to release — a dev
     // run resolves both to the repo checkout and must not touch the embedded archive. The dynamic import
     // keeps content.ts (and its embedded pack, absent from a dev checkout) out of a dev module graph.
+    //
+    // The extract is the one proof that the assets are on disk, thus the returned path is what the boot
+    // binds the page-asset lookup over. It stays null in a dev run, where the harness installation on disk
+    // answers each specifier and the preview tool needs no bound lookup.
+    let assetsDir: string | null = null;
     if (!env.isDevelopment) {
         const { ensureBundledContent } = await import("./content.ts");
         const materialized = ensureBundledContent();
         if (materialized.isErr()) return err({ type: "content_materialize_failed", cause: materialized.error });
+        assetsDir = materialized.value.assetsDir;
     }
 
     // Prerequisites that no amount of booting can heal — checked before any
@@ -1139,7 +1172,15 @@ async function bootHarnessRuntimeOnce(
             // `assembleCoreRuntime` owns the stamping: both bag types OMIT the field precisely so an
             // embedder cannot half-wire a ledger the workflows report to and the conversation agent
             // does not. One supply point here is the whole guarantee.
-            core: { conversation, workflows, resourcePolicy: cfg.resourcePolicy, usageRecorder },
+            // The page-asset lookup rides on `core` for the same reason: one supply point for the whole
+            // runtime. It is present in a release build only, where the extract above staged the bytes.
+            core: {
+                conversation,
+                workflows,
+                resourcePolicy: cfg.resourcePolicy,
+                usageRecorder,
+                ...(assetsDir ? { resolveReportPageAsset: makeReportPageAssetLookup(assetsDir) } : {}),
+            },
             pool: composition.pool,
             skillsDir: cfg.skillsDir,
             dbos: {
