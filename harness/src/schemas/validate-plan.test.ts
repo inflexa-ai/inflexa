@@ -124,3 +124,62 @@ describe("validatePlan per-step resource ceiling", () => {
         expect(result.valid).toBe(true);
     });
 });
+
+describe("validatePlan package entries", () => {
+    it("accepts each requirement form, in both ecosystems", () => {
+        const result = validatePlan(
+            plan([
+                step({
+                    id: "T1S1",
+                    packages: ["scanpy", "polars==1.2", "scanpy[leiden]", "numpy>=1.24,<2.0", "torch~=2.3", "data.table", "Seurat"],
+                }),
+            ]),
+        );
+        expect(result.valid).toBe(true);
+        expect(result.errors).toEqual([]);
+    });
+
+    it("accepts a step that names no package", () => {
+        expect(validatePlan(plan([step({ id: "T1S1", packages: [] })])).valid).toBe(true);
+        // A stored plan taken before the field parses without it.
+        expect(validatePlan(plan([step({ id: "T1S1" })])).valid).toBe(true);
+    });
+
+    it("refuses an entry that names a location, and names the step and the entry", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["scanpy"] }), step({ id: "T1S2", packages: ["/mnt/libs/scanpy"] })]));
+
+        expect(result.valid).toBe(false);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toContain('"T1S2"');
+        expect(result.errors[0]).toContain("/mnt/libs/scanpy");
+    });
+
+    it("refuses a location in each shape that a planner reaches for", () => {
+        const located = [
+            "/mnt/libs/scanpy",
+            "./scanpy",
+            "libs/scanpy",
+            "C:\\libs\\scanpy",
+            "https://example.org/scanpy-1.0.whl",
+            "git+https://example.org/scanpy.git",
+            "scanpy @ https://example.org/scanpy-1.0.whl",
+            "file:///mnt/libs/scanpy",
+        ];
+        for (const entry of located) {
+            expect(validatePlan(plan([step({ id: "T1S1", packages: [entry] })])).valid, entry).toBe(false);
+        }
+    });
+
+    it("refuses an entry that is neither a name nor a version", () => {
+        for (const entry of ["", " ", "scanpy 1.9", "scanpy==", "-scanpy"]) {
+            expect(validatePlan(plan([step({ id: "T1S1", packages: [entry] })])).valid, entry).toBe(false);
+        }
+    });
+
+    it("reports every malformed entry of a step, not the first one alone", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["/mnt/libs/scanpy", "scanpy", "https://example.org/x.whl"] })]));
+
+        expect(result.valid).toBe(false);
+        expect(result.errors).toHaveLength(2);
+    });
+});

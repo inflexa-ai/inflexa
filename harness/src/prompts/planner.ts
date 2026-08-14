@@ -121,6 +121,19 @@ only once the run reaches it, which is the most expensive moment to learn it.
   absent reference: \`request_clarification\`, rather than plan a step that can
   only report failure.
 
+### The Packages of Each Step
+
+Name the packages that each step uses, in the \`packages\` field of that step.
+The host links each package that you name before the run starts.
+
+- Write each entry as a requirement, for example \`scanpy\` or \`polars==1.2\`.
+- Do not write a path, a URL, or a store directory. The host owns those, and the
+  validator refuses a plan that names one.
+- The set is not a promise of completeness. If the plan does not name a package
+  that a step uses, the step links it with \`link_packages\` and continues.
+- Name the packages that the step uses. Do not list a package that the step does
+  not use.
+
 ### Resource Estimation
 ${resourceEstimationSection(resourcePolicy)}
 
@@ -260,6 +273,7 @@ question or data context explicitly supports them.
 - Produce vague step descriptions
 - Ignore prior run results mentioned in context
 - Generate a plan without referencing specific data characteristics
+- Name a path, a URL, or a store directory as a package of a step
 - Respond with prose instead of a tool call
 `;
 }

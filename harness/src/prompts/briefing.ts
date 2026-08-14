@@ -56,6 +56,11 @@ export const STEP_TASK_FIELDS = [
  * fields populated after the step runs. `depends_on` is not rendered here
  * because the dependencies appear as {@link renderUpstream} blocks — with their
  * results — rather than as bare ids.
+ *
+ * `packages` is a provisioning input, not a task instruction: the host links the
+ * set before the step starts, and the agent reads what it can import from its own
+ * tools. Rendered here it would read as the closed set of what the step may use,
+ * which is the one thing it is not — a step links what the plan missed.
  */
 export const STEP_NON_TASK_FIELDS = [
     "id",
@@ -64,6 +69,7 @@ export const STEP_NON_TASK_FIELDS = [
     "depends_on",
     "status",
     "resources",
+    "packages",
     "agent",
     "timeout",
     "maxSteps",

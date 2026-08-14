@@ -43,6 +43,19 @@ export const AnalysisStepSchema = z.object({
         })
         .optional()
         .describe("Resources the step needs. Ground the estimate in the actual data size — see the resource-estimation rules."),
+    // Optional on the persistence schema so a plan that a reader stored before
+    // this field still parses. `PlanStepSchema` re-requires it for planner
+    // output. The entries are a requirement each, never a location: the embedder
+    // owns where a package sits, and `validate_plan` refuses an entry that names
+    // a place.
+    packages: z
+        .array(z.string())
+        .optional()
+        .describe(
+            "The packages that this step uses. Write each entry as a requirement, for example `scanpy` or `polars==1.2`. " +
+                "Do not write a path, a URL, or a store directory. The set is not a promise of completeness — " +
+                "a step reaches a package that the plan does not name through `link_packages`.",
+        ),
 
     // Execution fields
     agent: z.string().optional().describe("Assigned sandbox agent name from registry"),

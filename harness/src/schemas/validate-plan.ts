@@ -10,6 +10,7 @@
  * 2. Output prefix uniqueness
  * 3. All agent assignments exist in the agent catalog
  * 4. All steps have resources defined
+ * 5. Every package entry is a requirement, not a location
  */
 
 import { KNOWN_AGENT_IDS } from "../agents/sandbox-catalog.js";
@@ -29,6 +30,21 @@ const KNOWN_AGENTS: ReadonlySet<string> = new Set(KNOWN_AGENT_IDS);
  * the row's `(run_id, step_id)` primary key (see the harness-workspace-tools spec).
  */
 const RESERVED_STEP_IDS: ReadonlySet<string> = new Set([...STEP_SUBDIRS, SYNTHESIS_STEP_ID]);
+
+/**
+ * The grammar of one package entry: a name, optional extras, and optional
+ * version clauses — `scanpy`, `scanpy[leiden]`, `polars==1.2`, `numpy>=1.24,<2.0`.
+ *
+ * A name accepts a dot, thus one grammar covers a Python distribution and an R
+ * package such as `data.table`. Each separator of a location — the slash, the
+ * backslash, the colon of a scheme, and the plus of a VCS specifier — sits
+ * outside the name class. Thus a path and a URL fail the grammar by their own
+ * shape, and no separate list of bad prefixes goes stale.
+ */
+const PACKAGE_NAME = String.raw`[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?`;
+const PACKAGE_EXTRAS = String.raw`\[\s*${PACKAGE_NAME}(?:\s*,\s*${PACKAGE_NAME})*\s*\]`;
+const VERSION_CLAUSE = String.raw`(?:===|==|!=|<=|>=|~=|<|>)\s*[A-Za-z0-9*][A-Za-z0-9.*+!_-]*`;
+const PACKAGE_REQUIREMENT = new RegExp(String.raw`^${PACKAGE_NAME}(?:\s*${PACKAGE_EXTRAS})?(?:\s*${VERSION_CLAUSE}(?:\s*,\s*${VERSION_CLAUSE})*)?$`);
 
 export interface ValidationResult {
     valid: boolean;
@@ -152,6 +168,22 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
             errors.push(
                 `Step "${step.id}" has an unsafe id — step ids may contain only letters, digits, '.', '_', '-' ` +
                     `and cannot be '.' or '..' (the id becomes a workspace directory and container mount segment)`,
+            );
+        }
+    }
+
+    // 7. Package entries. A step names what it uses in requirement form. A path,
+    //    a URL, or a store directory is a refusal: the embedder owns the layout of
+    //    the store, and a plan that carries one makes a private decision of the
+    //    host into a public interface. The plan also outlives the host that made
+    //    it, thus a location in it is wrong for the next host as well.
+    for (const step of plan.steps) {
+        for (const entry of step.packages ?? []) {
+            if (PACKAGE_REQUIREMENT.test(entry)) continue;
+            errors.push(
+                `Step "${step.id}" names the package "${entry}" which is not a requirement — ` +
+                    `write a name with an optional version, for example "scanpy" or "polars==1.2", ` +
+                    `and never a path, a URL, or a store directory`,
             );
         }
     }

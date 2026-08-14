@@ -21,7 +21,7 @@ export const PlanStepSchema = AnalysisStepSchema.omit({
     error: true,
     maxSteps: true,
 })
-    .required({ agent: true, resources: true })
+    .required({ agent: true, resources: true, packages: true })
     .extend({
         agent: z.enum(plannableAgentIds).describe("Sandbox agent ID, routed by the step's primary data object. Must be one of the available agents."),
     });

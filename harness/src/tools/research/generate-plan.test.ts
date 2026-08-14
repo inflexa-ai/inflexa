@@ -85,8 +85,22 @@ function validCandidate(stepOverrides: Record<string, unknown> = {}) {
                 depends_on: [],
                 agent: PLANNABLE_AGENT_IDS[0],
                 resources: { cpu: 2, memoryGb: 8 },
+                packages: ["pydeseq2"],
                 ...stepOverrides,
             },
+        ],
+    };
+}
+
+/** Two steps that use different libraries — the package set belongs to the step, not to the plan. */
+function twoStepCandidate() {
+    const base = validCandidate();
+    const first = base.steps[0]!;
+    return {
+        ...base,
+        steps: [
+            { ...first, packages: ["pydeseq2", "pandas==2.2.1"] },
+            { ...first, id: "T1S2", name: "Pathway enrichment", depends_on: ["T1S1"], packages: ["gseapy"] },
         ],
     };
 }
@@ -420,6 +434,60 @@ describe("generatePlan loop-driving tool", () => {
 
             const notes = seed.slice(seed.indexOf("## Analyst Notes"));
             expect(notes).not.toContain("Homo sapiens");
+        });
+    });
+
+    // ── Step packages ────────────────────────────────────────────────
+    //
+    // The embedder links the set of a step before the run starts, thus the set must
+    // survive into the stored plan. It reads that plan back through the persistence
+    // schema, which drops each field that the schema does not declare.
+
+    describe("step packages", () => {
+        it("carries the packages of each step into the persisted plan", async () => {
+            const analysisId = "an-packages";
+            await seedAnalysis(pool, analysisId, { dpStatus: null });
+            const provider = scriptedProvider([
+                makeMessage([toolUseBlock("t1", "submit_plan", { plan: twoStepCandidate() })], "tool_use"),
+                makeMessage([textBlock("Submitted.")], "end_turn"),
+            ]);
+
+            const result = (await toolFor(provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+            expect(result.event).toBe("plan_complete");
+
+            const persisted = await pool.query({
+                text: "SELECT plan FROM cortex_plans WHERE analysis_id = $1",
+                values: [analysisId],
+            });
+            const stored = persisted.rows[0]!.plan as { steps: { id: string; packages: string[] }[] };
+            expect(stored.steps.map((s) => [s.id, s.packages])).toEqual([
+                ["T1S1", ["pydeseq2", "pandas==2.2.1"]],
+                ["T1S2", ["gseapy"]],
+            ]);
+        });
+
+        it("refuses an entry that names a location, and tells the planner which entry", async () => {
+            const analysisId = "an-packages-located";
+            await seedAnalysis(pool, analysisId, { dpStatus: null });
+            const provider = scriptedProvider([
+                makeMessage([toolUseBlock("t1", "submit_plan", { plan: validCandidate({ packages: ["/mnt/libs/scanpy"] }) })], "tool_use"),
+                makeMessage([toolUseBlock("t2", "report_blocker", { reason: "the package entry cannot be fixed" })], "tool_use"),
+                makeMessage([textBlock("Reported.")], "end_turn"),
+            ]);
+
+            const result = (await toolFor(provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+
+            // The rejection is non-terminal, so the planner reads the issue and carries on.
+            // The entry itself is in the issue: an issue that names only the step leaves the
+            // planner to guess which of its entries was wrong.
+            expect(transcript(provider)).toContain("/mnt/libs/scanpy");
+            expect(result.event).toBe("error");
+
+            const persisted = await pool.query({
+                text: "SELECT plan_id FROM cortex_plans WHERE analysis_id = $1",
+                values: [analysisId],
+            });
+            expect(persisted.rows).toHaveLength(0);
         });
     });
 
