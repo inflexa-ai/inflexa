@@ -372,14 +372,19 @@ jobs:
         # call. The check replays the recorded workload with the cache debug on, and a
         # write to a recorded entry fails this step.
         #
-        # The run starts the image through its own entrypoint, and it copies no cache.
-        # `seed_caches` in that entrypoint is the only code that moves a prepared cache
-        # out of the read-only store, and it is the code that a sandbox runs. It also
-        # names NUMBA_CACHE_DIR, MPLCONFIGDIR, and the CPU that a numba key holds on
+        # The run sources `seed_caches`, and it copies no cache of its own. That
+        # function is the only code that moves a prepared cache out of the read-only
+        # store, and it is the code that a sandbox runs. It also names
+        # NUMBA_CACHE_DIR, MPLCONFIGDIR, and the CPU that a numba key holds on
         # aarch64. A step that seeds the caches with its own commands states each of
-        # those values a second time, and it leaves the code of the sandbox in no check
-        # at all. SANDBOX_ENTRYPOINT_COMMAND puts the check in the place of
-        # sandbox-server, thus the seed runs first.
+        # those values a second time, and it leaves the code of the sandbox in no
+        # check at all.
+        #
+        # The seed lives in a file of its own, thus this step takes it without the
+        # workload of the entrypoint. The entrypoint execs sandbox-server and nothing
+        # else, thus a run that needs another program overrides it and sources the
+        # seed here. An image that predates the file fails at the source, and it names
+        # the missing path.
         #
         # The farm of the check is composed, because that is the farm an analysis
         # reads: the package links point into the store, and the two cache directories
@@ -421,9 +426,13 @@ jobs:
             -v "${COMPOSED_DIR}:/mnt/libs/current:ro" \
             -v "${GITHUB_WORKSPACE}/scripts/lib-store-cache-check.py:/opt/lib-store-cache-check.py:ro" \
             -v "${GITHUB_WORKSPACE}/${WARM_SCRIPT}:${WARM_SCRIPT_MOUNT}:ro" \
-            -e SANDBOX_ENTRYPOINT_COMMAND='python3 /opt/lib-store-cache-check.py' \
             -w /tmp \
-            "${SANDBOX_IMAGE}:${VERSION}-${ARCH}"
+            --entrypoint /bin/sh \
+            "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" -c '
+              set -eu
+              . /usr/local/bin/inflexa-seed-caches
+              seed_caches
+              python3 /opt/lib-store-cache-check.py'
 
           # The composed farm belongs to this check alone, thus it leaves the store
           # before the export. A published store that carried it would ship the farm of

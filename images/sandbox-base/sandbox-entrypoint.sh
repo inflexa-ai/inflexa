@@ -13,52 +13,14 @@
 # still works; loopback survives for local tooling.
 set -e
 
-# Seed the store's prepared caches into writable paths before the workload starts.
-# numba and matplotlib each pick a cache directory by writing a probe to it, so the
-# store's read-only copy is skipped for reads as well as writes; copying it
-# somewhere writable is what makes the provisioner's warm-up take effect at run time
-# (measured: read-only cache -> 0 loads; seeded writable -> ~29 loads). Conditional
-# on a store farm carrying the caches, so the baked-image path -- which has none
-# under /mnt/libs/current -- is left exactly as it was. `return 0` is load-bearing:
-# without it a failed `[ -d ]` in the no-store case would be the function's exit and
-# `set -e` would abort the entrypoint, breaking every sandbox that mounts no store.
-seed_caches() {
-    _cur=/mnt/libs/current
-    if [ -d "$_cur/numba-cache" ]; then
-        mkdir -p /tmp/numba-cache && cp -a "$_cur/numba-cache/." /tmp/numba-cache/ 2>/dev/null || true
-        export NUMBA_CACHE_DIR=/tmp/numba-cache
-        # numba keys each cache entry by the target CPU. The provisioner built these
-        # with a generic arm64 CPU (autodetect crashes LLVM codegen on newer cores),
-        # so the sandbox must name the same CPU here or every entry misses.
-        case "$(uname -m)" in
-            aarch64 | arm64) export NUMBA_CPU_NAME=generic ;;
-        esac
-    fi
-    if [ -d "$_cur/matplotlib_config" ]; then
-        mkdir -p /tmp/matplotlib_config && cp -a "$_cur/matplotlib_config/." /tmp/matplotlib_config/ 2>/dev/null || true
-        export MPLCONFIGDIR=/tmp/matplotlib_config
-    fi
-    return 0
-}
-
-# The workload of the container. sandbox-server is the default, thus a sandbox
-# always runs the server. A run that sets SANDBOX_ENTRYPOINT_COMMAND runs that
-# command in place of the server, and the seed above runs first in both cases.
+# `seed_caches` moves the prepared caches of the store to writable paths. It lives
+# in a file of its own, because the effectiveness check must run that same code and
+# this script execs the server. A caller that sources the file takes the seed and
+# no workload. Refer to /usr/local/bin/inflexa-seed-caches.
 #
-# The cache effectiveness check is the reason for the switch. `seed_caches` is the
-# only code that makes a prepared cache reach a workload, thus a check that copies
-# the caches with its own commands proves nothing about it. The check needs this
-# entrypoint and its own program at the same time.
-#
-# Only the creator of the container sets this value, because a process inside the
-# container cannot change the environment of the entrypoint after the start. Each
-# confinement step below stays in front of the exec: the firewall installs first,
-# and setpriv drops the privileges of whichever workload runs.
-if [ -n "${SANDBOX_ENTRYPOINT_COMMAND:-}" ]; then
-    set -- /bin/sh -c "$SANDBOX_ENTRYPOINT_COMMAND"
-else
-    set -- sandbox-server "$@"
-fi
+# This entrypoint runs sandbox-server and nothing else. A container that must run
+# another program overrides the entrypoint and sources the seed itself.
+. /usr/local/bin/inflexa-seed-caches
 
 if [ "${SANDBOX_EGRESS_FIREWALL:-0}" = "1" ]; then
     iptables -A OUTPUT -o lo -j ACCEPT
@@ -87,10 +49,10 @@ if [ "${SANDBOX_EGRESS_FIREWALL:-0}" = "1" ]; then
     # the workload cannot regain CAP_NET_ADMIN and flush the rules above.
     exec setpriv --reuid=1000 --regid=1000 --init-groups \
         --inh-caps=-all --bounding-set=-all \
-        "$@"
+        sandbox-server "$@"
 fi
 
 # Default path: the workload runs as the current (already unprivileged) user, so
 # the seed is written with the ownership it needs and no chown is required.
 seed_caches
-exec "$@"
+exec sandbox-server "$@"

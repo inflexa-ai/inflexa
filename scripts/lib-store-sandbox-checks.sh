@@ -69,16 +69,6 @@ for img in "$PROVISIONER_IMAGE" "$SANDBOX_IMAGE"; do
         echo "error: no image $img" >&2; exit 1; }
 done
 
-# Each run below starts the sandbox image through its own entrypoint, thus the image
-# must carry the entrypoint of this working tree. An older image ignores the switch
-# and execs sandbox-server, and the run then never returns. A read of the entrypoint
-# ends at once, and it names the reason.
-"$CTR" run --rm --entrypoint grep "$SANDBOX_IMAGE" \
-    -q SANDBOX_ENTRYPOINT_COMMAND /usr/local/bin/sandbox-entrypoint.sh || {
-    echo "error: the entrypoint of $SANDBOX_IMAGE does not read SANDBOX_ENTRYPOINT_COMMAND." >&2
-    echo "       Build the sandbox image of this working tree, and name it with SANDBOX_IMAGE." >&2
-    exit 1; }
-
 # A throwaway root, never the store of the user. The checks tamper with the content of
 # the store, so they must not touch a store that a real sandbox reads.
 STORE_ROOT="${LIB_STORE:-$(mktemp -d)}"
@@ -171,12 +161,14 @@ SANDBOX_FARM=""
 # no pointer, thus without that bind the baked .pth resolves nothing and the whole
 # section reads an empty environment.
 #
-# The run starts the image through its own entrypoint, which is what a sandbox starts.
-# That entrypoint seeds the prepared caches into a writable path, and it names
-# NUMBA_CACHE_DIR, MPLCONFIGDIR, and the numba CPU of an aarch64 host. Thus this file
-# states none of those values, and a check reads what a sandbox reads.
-# SANDBOX_ENTRYPOINT_COMMAND puts the program of the check in the place of
-# sandbox-server.
+# The run sources `seed_caches`, which is the code that a sandbox runs to move the
+# prepared caches into a writable path. That function names NUMBA_CACHE_DIR,
+# MPLCONFIGDIR, and the numba CPU of an aarch64 host. Thus this file states none of
+# those values, and a check reads what a sandbox reads.
+#
+# The seed lives in a file of its own, thus a run takes it without the workload of
+# the entrypoint. An image that predates that file fails at the source, and it names
+# the missing path.
 sandbox_run() {
     local script="$1"; shift
     [[ -n "$SANDBOX_FARM" ]] || { echo "internal error: the section named no farm"; return 1; }
@@ -184,8 +176,12 @@ sandbox_run() {
         --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
         -v "$STORE_ROOT:/mnt/libs:ro" \
         -v "$STORE_ROOT/farms/$SANDBOX_FARM:/mnt/libs/current:ro" "$@" \
-        -e SANDBOX_ENTRYPOINT_COMMAND="$SANDBOX_PROLOGUE
-$script" -w /tmp "$SANDBOX_IMAGE" 2>&1
+        -w /tmp --entrypoint /bin/sh "$SANDBOX_IMAGE" -c "
+set -eu
+. /usr/local/bin/inflexa-seed-caches
+seed_caches
+$SANDBOX_PROLOGUE
+$script" 2>&1
 }
 
 store_dirs() { ls -1 "$STORE_ROOT/store" 2>/dev/null | grep -v '^\.' ; }
@@ -356,14 +352,15 @@ PY
             -v "$REPO_ROOT/scripts/lib-store-cache-check.py:/opt/lib-store-cache-check.py:ro" "$@"
     }
 
-    # A stand-in for the entrypoint of the image. It names a writable cache directory
+    # A stand-in for the seed file of the image. It names a writable cache directory
     # and it copies no prepared entry into it, which is the shape of a seed that fails
     # and reports nothing. The check must observe the writes and fail.
     read -r -d '' BLIND_ENTRYPOINT <<'SH'
-#!/bin/sh
-mkdir -p /tmp/numba-cache
-export NUMBA_CACHE_DIR=/tmp/numba-cache
-exec /bin/sh -c "$SANDBOX_ENTRYPOINT_COMMAND"
+seed_caches() {
+    mkdir -p /tmp/numba-cache
+    export NUMBA_CACHE_DIR=/tmp/numba-cache
+    return 0
+}
 SH
 
     # The farm is the catalog, which is the name that the store gives its template
@@ -404,16 +401,17 @@ SH
                 bad "the replay observed a run-time recompile or an error" "$(tail -4 <<<"$out")"
             fi
 
-            # The seed of the entrypoint is the only code that makes a prepared cache
-            # effective, thus a check that stays green without it proves nothing.
-            stage /mnt/libs/blind-entrypoint.sh <<<"$BLIND_ENTRYPOINT"
-            in_store 'chmod 755 /mnt/libs/blind-entrypoint.sh' >/dev/null
+            # `seed_caches` is the only code that makes a prepared cache effective,
+            # thus a check that stays green without it proves nothing. The bind puts a
+            # seed that copies nothing in the place of the real one.
+            stage /mnt/libs/blind-seed <<<"$BLIND_ENTRYPOINT"
+            in_store 'chmod 755 /mnt/libs/blind-seed' >/dev/null
             out=$(cache_check \
-                  -v "$STORE_ROOT/blind-entrypoint.sh:/usr/local/bin/sandbox-entrypoint.sh:ro"); rc=$?
+                  -v "$STORE_ROOT/blind-seed:/usr/local/bin/inflexa-seed-caches:ro"); rc=$?
             if [[ $rc -eq 1 ]] && grep -q "compiled again" <<<"$out"; then
-                ok "an entrypoint that seeds no cache fails the check"
+                ok "a seed that copies no cache fails the check"
             else
-                bad "an entrypoint that seeds no cache did not fail (exit $rc)" "$(tail -4 <<<"$out")"
+                bad "a seed that copies no cache did not fail (exit $rc)" "$(tail -4 <<<"$out")"
             fi
 
             # A kernel that the preparation cannot carry forward writes at run time,

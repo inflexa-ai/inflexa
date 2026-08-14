@@ -497,6 +497,12 @@ COPY --from=server-builder /sandbox-server /usr/local/bin/sandbox-server
 COPY images/sandbox-base/sandbox-entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh
 RUN chmod +x /usr/local/bin/sandbox-entrypoint.sh
 
+# The seed of the prepared caches. The entrypoint sources it, and so does the cache
+# effectiveness check, which runs its own program in place of the server. One file
+# thus serves both, and the check exercises the code that a sandbox runs. It is
+# sourced and never executed, thus it takes no execute bit.
+COPY images/sandbox-base/inflexa-seed-caches /usr/local/bin/inflexa-seed-caches
+
 # Provenance tracking hooks
 COPY --from=provtrack-builder /provtrack.so /opt/provenance/provtrack.so
 COPY images/sandbox-base/provenance/sitecustomize.py /opt/provenance/sitecustomize.py
