@@ -133,12 +133,26 @@ A claim MUST render its prose with evidence markers, and the references MUST lis
 - **WHEN** the caller renders two claim blocks that carry the same reference
 - **THEN** both claims show the same marker number, and the list holds one entry for it
 
-### Requirement: The page holds no local asset reference
-The skeleton MUST inline the style rules, and it MUST reference each script and font through the pinned CDN constants with their integrity hashes. The output MUST hold no relative asset path.
+### Requirement: The page stands alone
+The skeleton MUST inline the style rules. The page MUST reference each script and each font as a relative `assets/<name>` path, and it MUST reference no CDN host. The renderer MUST export one asset manifest, and each entry MUST name the staged file and its package source. The caller MUST stage each manifest entry beside the page, in the same pipeline that stages the figures.
 
-#### Scenario: The output stands alone beside the CDN
+The front door of the package MUST re-export that manifest and its entry type. An embedder that stages the assets itself reads the manifest, and it binds the asset lookup that the preview tool accepts. The front door already carries the type of that lookup, thus the value it describes belongs beside it. A hand-kept copy of the entries in an embedder would ship a build that is short one file, with nothing to say so.
+
+#### Scenario: The page references no remote host
 - **WHEN** the caller renders any valid document
-- **THEN** the page holds no `src` or `href` that points at a local file
+- **THEN** the page holds no `src` and no `href` with an `http` or an `https` scheme
+
+#### Scenario: The manifest and the page agree
+- **WHEN** the caller renders any valid document
+- **THEN** each `assets/` reference in the skeleton names one manifest entry
+
+#### Scenario: The front door carries the manifest
+- **WHEN** a consumer imports the package by its name
+- **THEN** the asset manifest and its entry type resolve from that import
+
+#### Scenario: A staged page opens with no network
+- **WHEN** the caller stages the manifest and a browser opens the page offline
+- **THEN** each script and each font loads from the sibling directory, and no request fails
 
 ### Requirement: The page validates as HTML and CSS
 The rendered page of a valid document MUST pass an offline HTML validation with the recommended preset. A disabled rule MUST carry its reason in the test. The inline style rules MUST hold known properties with valid value syntax. The gate guards the attribute hole of the markup types, because an intrinsic element accepts an unknown attribute silently.
