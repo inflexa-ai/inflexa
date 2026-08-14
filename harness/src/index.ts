@@ -579,6 +579,10 @@ export { queryActiveSandboxes } from "./state/active-sandboxes.js";
 // Workspace-tree path convention — the root-relative step directory each
 // sandbox step confines its artifact writes to (join onto the resolved root).
 export { runStepDir } from "./workspace/paths.js";
+// An embedder removes the page files of a purged report session. Thus it needs
+// the root-relative directory of that session, and it restates no layout of the
+// harness.
+export { reportSessionDir } from "./workspace/paths.js";
 
 // Operational logging seam. The harness names no logging library; an embedder
 // binds a realization at its composition root and the harness logs through it.

@@ -31,7 +31,7 @@ import { createRequire } from "node:module";
 import { extname, join } from "node:path";
 import { z } from "zod";
 
-import { resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
+import { reportSessionDir, resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import type { AuthContext } from "../../auth/types.js";
 import type { Block, ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
@@ -224,7 +224,7 @@ async function renderToWorkspace(args: {
         return err({ kind: "fs", error: { type: "read_failed", op: "preview.resolveWorkspaceRoot", path: args.analysisId, cause } });
     }
 
-    const sessionDir = join(root, "report-sessions", args.threadId);
+    const sessionDir = join(root, reportSessionDir(args.threadId));
     const assetsDir = join(sessionDir, "assets");
     const pagePath = join(sessionDir, "index.html");
 

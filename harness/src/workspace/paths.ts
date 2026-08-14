@@ -214,6 +214,25 @@ export function latestPreviewVersion(dirNames: string[]): number {
 }
 
 /**
+ * Parent of every report session, workspace-root-relative. Callers that
+ * enumerate the sessions join this. Callers that address one join
+ * {@link reportSessionDir}. Both spell the segment through this constant, thus
+ * the tree has one owner.
+ */
+export const REPORT_SESSIONS_ROOT = "report-sessions";
+
+/**
+ * Directory of one report session, workspace-root-relative. The page of the
+ * session and its staged assets live under this one directory. Thus a host that
+ * reclaims the files of a purged session names each directory through this
+ * helper. The host restates no layout of the harness.
+ */
+export function reportSessionDir(threadId: string): string {
+    assertSafeId(threadId, "threadId");
+    return `${REPORT_SESSIONS_ROOT}/${threadId}`;
+}
+
+/**
  * For an analysis-rooted input (`/{analysisId}/...`), strip the leading
  * `/{analysisId}/` segment so it can be resolved relative to the analysis
  * root. Returns `null` if the first segment does not match `analysisId` —
