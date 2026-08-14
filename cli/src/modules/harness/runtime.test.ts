@@ -7,6 +7,7 @@ import { ok, okAsync, err } from "neverthrow";
 import {
     createCitationResolver,
     createSandboxClient,
+    PAGE_ASSETS,
     type CoreRuntimeDeps,
     type CreateSandboxClientConfig,
     type EmbeddingProvider,
@@ -18,7 +19,14 @@ import { env } from "../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../lib/credential.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { bootHarnessRuntime, buildAuthInjectingFetch, describeBootError, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
+import {
+    bootHarnessRuntime,
+    buildAuthInjectingFetch,
+    describeBootError,
+    makeReportPageAssetLookup,
+    __resetHarnessRuntimeForTest,
+    type BootSeams,
+} from "./runtime.ts";
 import { agentProviderInner } from "./agent_switch.ts";
 import type { ResolvedHarnessConfig, ResolvedModelConnection } from "./config.ts";
 import type { ExecIngress } from "./ingress.ts";
@@ -1042,6 +1050,36 @@ describe("buildAuthInjectingFetch", () => {
             forceRefresh: () => Promise.resolve(err<Credential, CredentialError>({ type: "env_var_unset", var: "MISSING" })),
         };
         await expect(buildAuthInjectingFetch(source, underlying)("https://x/messages", {})).rejects.toThrow(/MISSING/);
+    });
+});
+
+// The page-asset lookup that a release boot binds over the materialized assets directory. A compiled
+// binary carries no node_modules tree, thus this map is the whole answer to a specifier of the manifest.
+// The manifest of the harness is the single source of each pair, thus these cases restate no file name.
+describe("makeReportPageAssetLookup", () => {
+    // A path alone: the lookup joins a path, and it reads no file. Thus the directory can be absent.
+    const assetsDir = join(tmpdir(), "harness-runtime-test-assets");
+
+    test("gives the path of the staged file of a manifest specifier, under the bound assets directory", () => {
+        // The manifest is a non-empty constant of the harness, thus the first entry is present.
+        const asset = PAGE_ASSETS[0]!;
+
+        expect(makeReportPageAssetLookup(assetsDir)(asset.specifier)).toBe(join(assetsDir, asset.file));
+    });
+
+    test("resolves every entry of the manifest", () => {
+        const lookup = makeReportPageAssetLookup(assetsDir);
+
+        // The extract stages each entry of the manifest, and the preview tool can ask for any one of them.
+        // Thus a gap in this map is a page that loads a font or a chart runtime from nowhere.
+        expect(PAGE_ASSETS.map((asset) => lookup(asset.specifier))).toEqual(PAGE_ASSETS.map((asset) => join(assetsDir, asset.file)));
+    });
+
+    test("throws for a specifier that the manifest does not carry, and names it", () => {
+        // The throw is the protocol of the seam, because the preview tool wraps each call in its own guard
+        // and turns the throw into a typed outcome. The message names the specifier, thus the build defect
+        // is legible.
+        expect(() => makeReportPageAssetLookup(assetsDir)("not-a-package/not-a-file.woff2")).toThrow("not-a-package/not-a-file.woff2");
     });
 });
 
