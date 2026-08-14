@@ -843,6 +843,25 @@ describe("session flows", () => {
         expect(t.notices[0]?.text).toContain("report files are removed");
     });
 
+    test("a delete from inside a report session takes its own page and no other", async () => {
+        // The likeliest path to this command: the user reads a report and deletes it. The erase reaches
+        // that thread alone, thus the parent conversation and each sibling report keep their pages.
+        const root = pageRoot(["thread-1", "report-a", "report-b"]);
+        const t = makeSeams({
+            purgeThread: () => okAsync<readonly string[], DbError>(["report-a"]),
+            workspaceRootFor: () => root,
+            removeReportSessionDir: realSessionSeams.removeReportSessionDir,
+        });
+        const w = sessionScope(ANALYSIS, "report-a");
+
+        await confirmSessionPurge(w.ws, fakePool, ANALYSIS, "report-a", "remove", t.seams);
+
+        expect(existsSync(join(root, reportSessionDir("report-a")))).toBe(false);
+        expect(existsSync(join(root, reportSessionDir("thread-1")))).toBe(true);
+        expect(existsSync(join(root, reportSessionDir("report-b")))).toBe(true);
+        expect(t.notices[0]?.text).toContain("report files are removed");
+    });
+
     test("the decline erases the rows and leaves every page directory on disk", async () => {
         const erased = ["thread-1", "report-a"];
         const root = pageRoot(erased);
