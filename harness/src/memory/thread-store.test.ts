@@ -320,6 +320,9 @@ describe("purgeThread (hard delete)", () => {
     it("succeeds on an absent thread", async () => {
         const purged = await store.purgeThread("missing");
         expect(purged.isOk()).toBe(true);
+        // Absence is a success with no member, thus a host that reclaims the
+        // storage of each erased thread has nothing to remove.
+        expect(purged._unsafeUnwrap()).toEqual([]);
     });
 
     it("makes no claim on a turn that commits after it", async () => {
@@ -902,6 +905,28 @@ describe("purgeThread across a subtree", () => {
         expect((await store.getThread("root"))._unsafeUnwrap()!.title).toBe("Root");
         expect(await threadRowCount("unrelated")).toBe(1);
         expect(await messageCount("unrelated")).toBe(2);
+    });
+
+    it("gives back the parent and both of its children", async () => {
+        (await store.createThread({ threadId: "parent", analysisId: ANALYSIS_A, title: "Parent" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "left", analysisId: ANALYSIS_A, title: "Left", parentThreadId: "parent", parentSeq: 2 }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "right", analysisId: ANALYSIS_A, title: "Right", parentThreadId: "parent", parentSeq: 4 }))._unsafeUnwrap();
+
+        const erased = (await store.purgeThread("parent"))._unsafeUnwrap();
+
+        // The store promises no order, thus the assertion sorts before it compares.
+        expect([...erased].sort()).toEqual(["left", "parent", "right"]);
+    });
+
+    it("gives back one id for every generation it erased", async () => {
+        await seedGenerations();
+        await appendTurnsToEveryThread();
+
+        const erased = (await store.purgeThread("root"))._unsafeUnwrap();
+
+        // The value must reach the depth the rows go to. The unrelated thread
+        // keeps its row, thus its id must stay out of the array.
+        expect([...erased].sort()).toEqual([...GENERATIONS].sort());
     });
 
     it("leaves every generation whole when the subtree delete fails partway", async () => {
