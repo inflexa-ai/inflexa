@@ -398,7 +398,15 @@ export type { CreateSandboxClientConfig, SandboxBackendConfig } from "./sandbox/
 export type { SandboxClient } from "./sandbox/client.js";
 // The farm seam of `CreateSandboxClientConfig`: the embedder names the farm of
 // each analysis, and the sandbox mounts it at `/mnt/libs/current`.
-export type { FarmLocation, FarmResolution, FarmSource, ResolveAnalysisFarm } from "./sandbox/types.js";
+export type {
+    ExtendAnalysisFarm,
+    FarmLocation,
+    FarmResolution,
+    FarmSource,
+    PackageRequest,
+    PackageRequestOutcome,
+    ResolveAnalysisFarm,
+} from "./sandbox/types.js";
 export { MachineBudgetSchema, ResourceLimitsSchema, ResourcePolicySchema, ResourceSpecSchema, parseResourcePolicy } from "./config/resource-limits.js";
 export type { MachineBudget, ResourceLimits, ResourcePolicy, ResourceSpec } from "./config/resource-limits.js";
 export { createWorkspaceFilesystem } from "./workspace/filesystem.js";

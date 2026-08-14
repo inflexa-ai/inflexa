@@ -263,6 +263,87 @@ export type ResolveAnalysisFarm = (analysisId: string) => Promise<FarmResolution
  */
 export type FarmSource = { readonly kind: "fixed"; readonly location: FarmLocation } | { readonly kind: "per-analysis"; readonly resolve: ResolveAnalysisFarm };
 
+/**
+ * One package that a step asks for.
+ *
+ * A `distribution` names the package itself. It takes the form `name`, or
+ * `name==version` for one exact version. An `import` names the module of an
+ * import failure, because `sklearn` is not `scikit-learn`.
+ *
+ * The harness parses neither form. It hands the text of the step to the
+ * realization of the embedder, which owns the graph that maps a module onto a
+ * distribution, and the order of the versions of one name.
+ */
+export type PackageRequest = { readonly kind: "distribution"; readonly requirement: string } | { readonly kind: "import"; readonly module: string };
+
+/**
+ * What the seam did with one request. The four states are the four answers that a
+ * pool can give.
+ *
+ * `absent` carries `acquisitionPossible`. This store cannot acquire an R package,
+ * thus a refusal with no such mark sends an agent around the same loop forever.
+ *
+ * `collision` names the two store directories, because a farm holds one version
+ * of one top-level name. The caller reports both directories and stops.
+ *
+ * A store directory is opaque to the harness. The harness never derives one and
+ * never reads one, exactly as it never derives the location of a farm.
+ */
+export type PackageRequestOutcome =
+    | {
+          readonly kind: "linked";
+          /** The request, in the words of the step. */
+          readonly requested: string;
+          /** The canonical name of the distribution that the farm now links. */
+          readonly name: string;
+          readonly version: string;
+      }
+    | {
+          readonly kind: "present";
+          readonly requested: string;
+          readonly name: string;
+          readonly version: string;
+      }
+    | {
+          readonly kind: "absent";
+          readonly requested: string;
+          /**
+           * Why the pool gave nothing. Only the embedder holds the pool, thus only
+           * the embedder knows the reason, and a reason beats "no package".
+           */
+          readonly reason: string;
+          /** False when this store cannot acquire a package of that ecosystem at all. */
+          readonly acquisitionPossible: boolean;
+      }
+    | {
+          readonly kind: "collision";
+          readonly requested: string;
+          /** The top-level name that the farm and the request both claim. */
+          readonly name: string;
+          /** The store directory that the farm links today. */
+          readonly linkedDirectory: string;
+          /** The store directory that the request asks for. */
+          readonly requestedDirectory: string;
+      };
+
+/**
+ * The farm-extension seam: an analysis id and a set of requests in, one outcome
+ * for each request out. The result holds the outcomes in the order of the
+ * requests.
+ *
+ * The seam links from the pool, and it acquires nothing. Thus it starts no
+ * container and it opens no network connection. An acquisition is a host action,
+ * before a run.
+ *
+ * A bind reflects a new link at once. Thus the live sandbox of that analysis
+ * resolves the new links at the next import, with no restart.
+ *
+ * The harness declares no realization. An embedder that binds one gives its
+ * sandbox agents the `link_packages` tool, and an embedder that binds none has no
+ * such capability.
+ */
+export type ExtendAnalysisFarm = (analysisId: string, requests: readonly PackageRequest[]) => Promise<readonly PackageRequestOutcome[]>;
+
 /** Step-meta passed to `createSandbox` — what the registry row needs. */
 export interface CreateSandboxMeta {
     runId: string;

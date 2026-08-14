@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { SOULExecutionCore, SOULIdentity, SOULConversationalPrompt } from "../../prompts/SOUL.js";
-import { sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt } from "../../prompts/sandbox-standards.js";
+import { sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt, sandboxPackageLinkPrompt } from "../../prompts/sandbox-standards.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import type { SubmitExecBody } from "../../sandbox/types.js";
+import type { ExtendAnalysisFarm, SubmitExecBody } from "../../sandbox/types.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
 
 import { makeFakeSandboxAgentDeps, makeFakeSandboxClient } from "./__fixtures__/deps.js";
@@ -28,6 +28,9 @@ const body = "# Test Agent\n\nDo testy things.";
 
 const ORIENT_CORE_MARKER = "# Sandbox Orient-Core";
 const ANALYSIS_STEP_MARKER = "# Sandbox Analysis-Step Conventions";
+
+/** A bound farm-extension seam. These tests read the roster, never an outcome. */
+const EXTEND_FARM: ExtendAnalysisFarm = async () => [];
 
 describe("createSandboxAgent", () => {
     it("returns an AgentDefinition with id, model, composed prompt, tools, maxIterations", () => {
@@ -226,6 +229,42 @@ describe("createSandboxAgent", () => {
         expect(() => createSandboxAgent(makeFakeSandboxAgentDeps(), citationMeta, body)).toThrow(/requires a CitationResolver/);
         const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), citationResolver }, citationMeta, body);
         expect(def.tools.map((tool) => tool.id)).toContain("resolve_citation");
+    });
+
+    it("resolves link_packages only when the farm-extension seam is bound", () => {
+        const unbound = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+        expect(unbound.tools.map((tool) => tool.id)).not.toContain("link_packages");
+
+        const bound = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm: EXTEND_FARM }, meta, body);
+        expect(bound.tools.map((tool) => tool.id)).toContain("link_packages");
+    });
+
+    it("wires link_packages as always-on substrate — no meta declares it, and none can", () => {
+        // The seam of the embedder decides whether the capability exists, exactly as
+        // the blocker cell decides for `report_blocker`. An agent type opts neither in
+        // nor out, so the name is absent from the closed allowlist altogether.
+        const bare = { ...meta, tools: [] as const };
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm: EXTEND_FARM }, bare, body);
+        expect(def.tools.map((tool) => tool.id)).toContain("link_packages");
+
+        expect(() =>
+            createSandboxAgent(
+                { ...makeFakeSandboxAgentDeps(), extendAnalysisFarm: EXTEND_FARM },
+                // @ts-expect-error — `link_packages` is not a SandboxToolName, which is the point.
+                { ...meta, tools: [...BASE_SANDBOX_TOOLS, "link_packages"] },
+                body,
+            ),
+        ).toThrow(/unknown SandboxToolName "link_packages"/);
+    });
+
+    it("appends the package-link prompt layer only under a bound seam", () => {
+        // The layer offers a tool. Where the tool is absent the offer is a lie, so the
+        // two move together.
+        const unbound = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+        expect(unbound.systemPrompt).not.toContain(sandboxPackageLinkPrompt.trim());
+
+        const bound = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm: EXTEND_FARM }, meta, body);
+        expect(bound.systemPrompt).toContain(sandboxPackageLinkPrompt.trim());
     });
 
     it("declaring the same tool twice does not duplicate it in the resolved list", () => {

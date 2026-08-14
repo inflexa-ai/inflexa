@@ -21,16 +21,19 @@ import type { Pool } from "pg";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import type { SandboxRef } from "../../sandbox/types.js";
+import type { ExtendAnalysisFarm, SandboxRef } from "../../sandbox/types.js";
 import type { Tool } from "../../tools/define-tool.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import type { ProvenanceCollector as LineageCollector } from "../../provenance/collector.js";
 
-import { sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt } from "../../prompts/sandbox-standards.js";
+import { sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt, sandboxPackageLinkPrompt } from "../../prompts/sandbox-standards.js";
 import { composeSystemPrompt } from "../system-prompt.js";
 
 // Sandbox-environment introspection.
 import { createListAvailablePackagesTool, createListAvailableRefsTool } from "../../tools/sandbox/index.js";
+
+// Farm extension (dependency-bearing) — the seam of the embedder yields the tool.
+import { createLinkPackagesTool } from "../../tools/sandbox/link-packages.js";
 
 // Context7 docs (pure leaves).
 import { queryDocsTool, resolveLibraryIdTool } from "../../tools/research/context7-docs.js";
@@ -136,6 +139,16 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
      * agents that have no terminal status to declare (such as the data profiler).
      */
     readonly blockerHolder?: BlockerHolder;
+    /**
+     * The farm-extension seam (refer to the lib-store spec). When present, the
+     * agent gets a `link_packages` tool that links a package the pool already
+     * holds into the farm of this analysis, and the sandbox layer of its prompt
+     * states that the environment can grow. Omit it, and no agent holds the tool.
+     *
+     * This is capability degradation, and it is not a path for an older embedder.
+     * No code branches on which realization is bound.
+     */
+    readonly extendAnalysisFarm?: ExtendAnalysisFarm;
 }
 
 /** Per-agent override for the prompt composition and tool surface. */
@@ -289,7 +302,15 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
  */
 export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body: string, opts: SandboxAgentPromptOptions = {}): AgentDefinition {
     const appendStandards = opts.appendAnalysisStepStandards ?? true;
-    const sandboxLayer = appendStandards ? [sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt] : [sandboxOrientCorePrompt];
+    // The link layer follows its tool, not the agent type: a prompt that offers
+    // `link_packages` where no seam is bound sends the agent at a tool it does not
+    // hold. It stays a constant of the composition root, so the cached prefix is
+    // still byte-identical across every step of every run.
+    const sandboxLayer = [
+        sandboxOrientCorePrompt,
+        ...(appendStandards ? [sandboxAnalysisStepStandardsPrompt] : []),
+        ...(deps.extendAnalysisFarm ? [sandboxPackageLinkPrompt] : []),
+    ];
     const agentBody = [body, ...sandboxLayer].map((s) => s.trim()).join("\n\n");
 
     const systemPrompt = composeSystemPrompt(agentBody);
@@ -306,6 +327,10 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
         ...skillTools,
         ...resolveSandboxTools(deps, meta.tools),
         ...(deps.blockerHolder ? [createReportBlockerTool(deps.blockerHolder)] : []),
+        // Always-on, not in the `meta.tools` allowlist: the seam of the embedder
+        // decides whether the capability exists at all, and no agent type opts in
+        // or out. An embedder that binds nothing yields no tool.
+        ...(deps.extendAnalysisFarm ? [createLinkPackagesTool({ extendAnalysisFarm: deps.extendAnalysisFarm, analysisId: deps.step.analysisId })] : []),
     ];
 
     return {

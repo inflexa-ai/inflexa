@@ -1,5 +1,5 @@
 /**
- * Sandbox prompts — split into two layers, both STATIC.
+ * Sandbox prompts — split into three layers, all STATIC.
  *
  * - `sandboxOrientCorePrompt` — universal guidance for any agent that talks to
  *   a sandbox (plannable steps and the data profiler). Covers the workspace
@@ -11,6 +11,11 @@
  *   steps that produce reproducible script + output + figure artifacts in their
  *   working directory. Opt out via `appendAnalysisStepStandards: false` for
  *   agents that don't fit this mold (for example data-profiler).
+ *
+ * - `sandboxPackageLinkPrompt` — appended only when the embedder binds the
+ *   farm-extension seam. It is the one layer that follows a capability instead
+ *   of an agent type. A prompt that offers a tool which the agent does not hold
+ *   is worse than silence, thus the layer and the tool move together.
  *
  * Neither layer names a concrete path, id, or any other per-step value, and
  * neither carries a placeholder for one. That is load-bearing rather than
@@ -98,9 +103,8 @@ firewall, not merely discouraged: every download, API call, package install, and
 \`ExperimentHub\`/\`AnnotationHub\`/\`models.download_*\` style fetch fails outright.
 There is no proxy, no mirror, and no retry that succeeds. Packages and reference
 data were staged onto read-only mounts by the host **before** this container
-started, and that is the whole of what this sandbox has. You cannot install a
-package yourself — adding one is a host action, done outside the sandbox and
-applied to a later run — so report a package you need but cannot find, rather
+started. You cannot install a package yourself — acquiring one is a host action,
+done outside the sandbox — so report a package you need but cannot find, rather
 than trying to install it. Work that genuinely requires the
 internet — fetching a dataset, querying an external API, literature lookup — is
 done **outside** the sandbox through the host's tools, not from your scripts.
@@ -412,4 +416,25 @@ scientific assessment of what the results mean.
 - **Inline logic without functions.** Wrap non-trivial operations in
   functions with docstrings and typed parameters.
 - **Magic numbers.** Define thresholds and cutoffs as named constants.
+`;
+
+export const sandboxPackageLinkPrompt = `# Sandbox Package Requests
+
+You still install nothing — there is no network here and the store mount is
+read-only. But the library store the host staged is wider than what this sandbox
+links right now, and \`link_packages\` links from that store into your environment
+with no restart: the next import resolves what it linked.
+
+- **When to reach for it** — after an import fails for a package you expected, or
+  when \`list_available_packages\` reports one you need as absent.
+  \`list_available_packages\` stays the cheap first check; this is the follow-up.
+- **What to pass** — \`imports\` takes the module name verbatim from the error
+  (\`sklearn\`). \`distributions\` takes package names, optionally pinned (\`polars\`,
+  \`polars==1.2\`); an unpinned name takes the newest version the store holds.
+- **A refusal is a real answer** — a package the store does not hold cannot arrive
+  from inside this sandbox. Report it and proceed with what you do have. Do not
+  retry it, and do not substitute something else unannounced.
+- **A version collision is terminal** — this environment holds exactly one version
+  of a given name. On a collision, report both store directories and stop; no
+  retry can succeed.
 `;
