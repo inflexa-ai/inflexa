@@ -3,6 +3,7 @@ import { err, errAsync, ok, okAsync } from "neverthrow";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { reportSessionDir } from "@inflexa-ai/harness";
 import type { AnalysisPurgeOutcome, DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
 
 import { GLYPHS } from "../lib/design_system.ts";
@@ -24,6 +25,7 @@ import {
     openRestoreSession,
     openSwitchSession,
     purgeSessionFlow,
+    realSessionSeams,
     selectSwitchSession,
     switchSessionItems,
     type AnalysisDeleteSeams,
@@ -290,7 +292,11 @@ describe("session flows", () => {
             listThreadsWithArchived: () => okAsync(threadPage([])),
             archiveThread: () => okAsync<void, DbError>(undefined),
             unarchiveThread: () => okAsync<void, DbError>(undefined),
-            purgeThread: () => okAsync<void, DbError>(undefined),
+            purgeThread: () => okAsync<readonly string[], DbError>([]),
+            // No root and no removal by default: a case that is not about the files says so by leaving
+            // these alone, and a flow that reached the disk without being asked to shows up as a call.
+            workspaceRootFor: () => null,
+            removeReportSessionDir: async () => true,
             chatBusy: () => false,
             resolveThreadId: async () => "thread-resolved",
             workingDirFor: () => "/work",
@@ -597,7 +603,7 @@ describe("session flows", () => {
             resolveThreadId: async () => "thread-survivor",
             purgeThread: (_pool, threadId) => {
                 purged.push(threadId);
-                return okAsync<void, DbError>(undefined);
+                return okAsync<readonly string[], DbError>([threadId]);
             },
             archiveThread: () => {
                 archives += 1;
@@ -606,7 +612,7 @@ describe("session flows", () => {
         });
         const w = sessionScope(ANALYSIS, "thread-1");
 
-        await confirmSessionPurge(w.ws, fakePool, ANALYSIS, "thread-1", t.seams);
+        await confirmSessionPurge(w.ws, fakePool, ANALYSIS, "thread-1", "keep", t.seams);
 
         expect(purged).toEqual(["thread-1"]);
         expect(archives).toBe(0); // a tombstone here would keep the transcript the user asked to erase
@@ -633,7 +639,7 @@ describe("session flows", () => {
             },
             purgeThread: () => {
                 purges += 1;
-                return okAsync<void, DbError>(undefined);
+                return okAsync<readonly string[], DbError>([]);
             },
         });
 
@@ -688,7 +694,7 @@ describe("session flows", () => {
             },
             purgeThread: () => {
                 purges += 1;
-                return okAsync<void, DbError>(undefined);
+                return okAsync<readonly string[], DbError>([]);
             },
         });
         const w = sessionScope(ANALYSIS, "thread-1");
@@ -747,11 +753,170 @@ describe("session flows", () => {
         const t = makeSeams({ purgeThread: () => errAsync(dbErr) });
         const w = sessionScope(ANALYSIS, "thread-1");
 
-        await confirmSessionPurge(w.ws, fakePool, ANALYSIS, "thread-1", t.seams);
+        await confirmSessionPurge(w.ws, fakePool, ANALYSIS, "thread-1", "keep", t.seams);
 
         expect(t.notices).toHaveLength(1);
         expect(t.notices[0]?.kind).toBe("error");
         expect(w.opened).toEqual([]); // the thread is still there, so nothing is re-landed
+    });
+
+    // The page directory of a report session takes the name of its thread id, and the erase is the only
+    // source for the set of ids it took — after it, no listing names them. These cases pin the file half
+    // of the delete: what the user is asked, when the removal may run, and what a page that survives it
+    // does to the outcome.
+    const tmpRoots: string[] = [];
+    afterEach(() => {
+        for (const dir of tmpRoots.splice(0)) rmSync(dir, { recursive: true, force: true });
+    });
+
+    /** A workspace root holding one page directory per id, removed when the case ends. */
+    function pageRoot(ids: readonly string[]): string {
+        const dir = mkdtempSync(join(tmpdir(), "inflexa-session-pages-"));
+        tmpRoots.push(dir);
+        for (const id of ids) mkdirSync(join(dir, reportSessionDir(id)), { recursive: true });
+        return dir;
+    }
+
+    test("the file question is asked on every delete: nothing on disk is read before it", async () => {
+        // The erase names the threads it took, and it names them only after it runs. A question that
+        // waited for a directory to exist could therefore only be asked past the point of no return.
+        let roots = 0;
+        let removals = 0;
+        const t = makeSeams({
+            getThread: () => okAsync(threadRow()),
+            workspaceRootFor: () => {
+                roots += 1;
+                return null;
+            },
+            removeReportSessionDir: async () => {
+                removals += 1;
+                return true;
+            },
+        });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await purgeSessionFlow(w.ws, t.seams);
+
+        expect(w.dialogs()).toBe(1);
+        expect(roots).toBe(0);
+        expect(removals).toBe(0);
+    });
+
+    test("a subtree that owns no page removes nothing and reports no failure", async () => {
+        // Driven through the REAL removal seam, because the property under test is the forced removal:
+        // an absent directory is a success, which is what lets the question precede the erase.
+        const root = pageRoot([]);
+        writeFileSync(join(root, "runs.txt"), "x");
+        const t = makeSeams({
+            purgeThread: () => okAsync<readonly string[], DbError>(["thread-1"]),
+            workspaceRootFor: () => root,
+            removeReportSessionDir: realSessionSeams.removeReportSessionDir,
+        });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await confirmSessionPurge(w.ws, fakePool, ANALYSIS, "thread-1", "remove", t.seams);
+
+        // The rest of the workspace is not this flow's to touch: only a page directory is.
+        expect(existsSync(join(root, "runs.txt"))).toBe(true);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("info");
+        expect(t.notices[0]?.text).toContain("transcript is gone");
+    });
+
+    test("the accept removes the page directory of every thread the erase took", async () => {
+        // The reports are the point: a delete that reclaimed the conversation's own directory only would
+        // leave each report page behind with nothing left that can name it.
+        const erased = ["thread-1", "report-a", "report-b"];
+        const root = pageRoot(erased);
+        const t = makeSeams({
+            purgeThread: () => okAsync<readonly string[], DbError>(erased),
+            workspaceRootFor: () => root,
+            removeReportSessionDir: realSessionSeams.removeReportSessionDir,
+        });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await confirmSessionPurge(w.ws, fakePool, ANALYSIS, "thread-1", "remove", t.seams);
+
+        for (const id of erased) expect(existsSync(join(root, reportSessionDir(id)))).toBe(false);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("info");
+        expect(t.notices[0]?.text).toContain("report files are removed");
+    });
+
+    test("the decline erases the rows and leaves every page directory on disk", async () => {
+        const erased = ["thread-1", "report-a"];
+        const root = pageRoot(erased);
+        let purges = 0;
+        let removals = 0;
+        const t = makeSeams({
+            purgeThread: () => {
+                purges += 1;
+                return okAsync<readonly string[], DbError>(erased);
+            },
+            workspaceRootFor: () => root,
+            removeReportSessionDir: async () => {
+                removals += 1;
+                return true;
+            },
+        });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await confirmSessionPurge(w.ws, fakePool, ANALYSIS, "thread-1", "keep", t.seams);
+
+        expect(purges).toBe(1); // the rows go either way — the choice governs the files alone
+        expect(removals).toBe(0);
+        for (const id of erased) expect(existsSync(join(root, reportSessionDir(id)))).toBe(true);
+        expect(t.notices[0]?.text).toContain("report files are kept");
+    });
+
+    test("a failed erase leaves every file, even where the user asked to remove them", async () => {
+        // The rows survive a failed erase, thus each page is still reachable from them. Removing the
+        // files anyway would strip a conversation the user can still open.
+        let removals = 0;
+        const t = makeSeams({
+            purgeThread: () => errAsync(dbErr),
+            workspaceRootFor: () => "/root",
+            removeReportSessionDir: async () => {
+                removals += 1;
+                return true;
+            },
+        });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await confirmSessionPurge(w.ws, fakePool, ANALYSIS, "thread-1", "remove", t.seams);
+
+        expect(removals).toBe(0);
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("error");
+        expect(w.opened).toEqual([]);
+    });
+
+    test("a page directory that resists removal keeps the delete a success and is named in the notice", async () => {
+        // The rows are gone and nothing restores them, so a file left behind cannot make this a failed
+        // delete. Naming the directory is the whole remedy the user has: after the erase, no surface
+        // can name it for them.
+        const root = "/root";
+        const stubborn = join(root, reportSessionDir("report-b"));
+        const t = makeSeams({
+            purgeThread: () => okAsync<readonly string[], DbError>(["thread-1", "report-b"]),
+            workspaceRootFor: () => root,
+            removeReportSessionDir: async (dir) => dir !== stubborn,
+        });
+        const w = sessionScope(ANALYSIS, "thread-1");
+
+        await confirmSessionPurge(w.ws, fakePool, ANALYSIS, "thread-1", "remove", t.seams);
+
+        expect(t.notices).toHaveLength(1);
+        expect(t.notices[0]?.kind).toBe("warn");
+        expect(t.notices[0]?.text).toContain("transcript is gone");
+        expect(t.notices[0]?.text).toContain(stubborn);
+        // The one that went is not named: the list is what is left to deal with, not a report of the work.
+        expect(t.notices[0]?.text).not.toContain(join(root, reportSessionDir("thread-1")));
+        // Unbound and re-landed exactly as a clean delete is — a stayed directory changes nothing here.
+        expect(w.opened).toEqual([
+            { threadId: null, analysisId: ANALYSIS.id },
+            { threadId: "thread-resolved", analysisId: ANALYSIS.id },
+        ]);
     });
 
     // The moment a removal stamped the tombstone. Distinct from the fixture's activity clock, which the
