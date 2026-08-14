@@ -17,27 +17,35 @@ the cache never matches that entry again. No workload prevents such a write, and
 list of names stays true across a package update. The record answers both: an entry
 that no run reuses never enters it, thus a write outside the record fails nothing.
 
-The invoker gives three mounts and one seeded cache:
+The invoker gives three mounts, and the entrypoint of the image does the rest:
 
   - the store root, read-only at /mnt/libs, because a farm link is an absolute path
     into /mnt/libs/store
-  - the target farm, read-only at /mnt/libs/current, because the sandbox resolves
-    its farm at that path, and a cache key holds that path
+  - the farm of the analysis, read-only at /mnt/libs/current, because the sandbox
+    resolves its farm at that path, and a cache key holds that path
   - this file, at a path of its own
-  - NUMBA_CACHE_DIR, at a writable copy of the cache of the farm. The store is
-    read-only, and numba skips a cache directory that it cannot write to, for a read
-    as much as for a write. A sandbox makes that copy at its entrypoint
-    (`seed_caches`), and the invoker of this check makes it the same way.
+
+The store is read-only, and numba skips a cache directory that it cannot write to,
+for a read as much as for a write. Thus the caches move to a writable path before a
+workload starts, and `seed_caches` in the entrypoint of the image is the only code
+that does it. This program copies no cache, because a check that seeds the caches
+with its own commands proves nothing about that code. The entrypoint reads
+SANDBOX_ENTRYPOINT_COMMAND, which puts this program in the place of sandbox-server,
+thus the seed runs first and it names NUMBA_CACHE_DIR.
+
+A composed farm carries its cache directories as links into the catalog farm, which
+is the one home of every prepared cache. It also carries a lock of its own, and that
+lock holds no record. Thus the record sits beside the prepared entries, and the link
+of the numba cache is what finds it.
 
 Usage, with `sandbox-base` as the image and this file bound into it:
 
     <engine> run --rm --network none --user 1000:1000 \\
         -v <store root>:/mnt/libs:ro \\
-        -v <store root>/farms/<farm>:/mnt/libs/current:ro \\
+        -v <composed farm>:/mnt/libs/current:ro \\
         -v <this file>:/opt/lib-store-cache-check.py:ro \\
-        -e NUMBA_CACHE_DIR=/tmp/numba-cache -e MPLCONFIGDIR=/tmp/mpl \\
-        --entrypoint /bin/bash <sandbox image> -c '<seed the caches>
-            python3 /opt/lib-store-cache-check.py'
+        -e SANDBOX_ENTRYPOINT_COMMAND='python3 /opt/lib-store-cache-check.py' \\
+        <sandbox image>
 
 The exit code is the gate:
 
@@ -112,6 +120,20 @@ def replay(label: str, argv: list[str], root: Path) -> tuple[set[str], set[str]]
     return loaded, saved
 
 
+def farm_of_record(farm: Path) -> Path:
+    """The farm that holds the prepared cache entries, and the record of them.
+
+    An analysis farm links its cache directories into the catalog farm, which is the
+    one home of every prepared cache. The preparation run names that same farm, thus
+    the lock of that farm holds the record. As a result the parent of the resolved
+    link is the farm of the record.
+
+    A farm whose cache directory is a real directory resolves to itself, which is
+    again the farm that the preparation run named.
+    """
+    return (farm / "numba-cache").resolve().parent
+
+
 def report(names: list[str]) -> str:
     head = ", ".join(names[:NAMES_IN_REPORT])
     rest = len(names) - NAMES_IN_REPORT
@@ -119,11 +141,12 @@ def report(names: list[str]) -> str:
 
 
 def main() -> int:
-    lock_path = FARM / "lock.json"
+    lock_path = farm_of_record(FARM) / "lock.json"
     if not lock_path.is_file():
         log(f"no farm record at {lock_path}. The invoker must bind the target farm "
             f"at {FARM}, read-only, nested inside the read-only bind of the store "
-            f"root at /mnt/libs.")
+            f"root at /mnt/libs. The record of the preparation run sits beside the "
+            f"prepared entries, which the numba-cache link of that farm names.")
         return 2
 
     lock = json.loads(lock_path.read_text())

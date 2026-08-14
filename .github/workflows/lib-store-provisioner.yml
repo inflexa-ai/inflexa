@@ -372,34 +372,67 @@ jobs:
         # call. The check replays the recorded workload with the cache debug on, and a
         # write to a recorded entry fails this step.
         #
-        # The store is read-only, thus the two caches move to a writable path first. A
-        # sandbox does the same at its entrypoint. `seed_caches` seeds them and then
-        # execs sandbox-server, thus it cannot carry another command, and this step
-        # seeds them the same way.
+        # The run starts the image through its own entrypoint, and it copies no cache.
+        # `seed_caches` in that entrypoint is the only code that moves a prepared cache
+        # out of the read-only store, and it is the code that a sandbox runs. It also
+        # names NUMBA_CACHE_DIR, MPLCONFIGDIR, and the CPU that a numba key holds on
+        # aarch64. A step that seeds the caches with its own commands states each of
+        # those values a second time, and it leaves the code of the sandbox in no check
+        # at all. SANDBOX_ENTRYPOINT_COMMAND puts the check in the place of
+        # sandbox-server, thus the seed runs first.
+        #
+        # The farm of the check is composed, because that is the farm an analysis
+        # reads: the package links point into the store, and the two cache directories
+        # are links into the catalog farm. The catalog farm holds them as real
+        # directories, thus a check against the catalog alone leaves the arrangement of
+        # every analysis untested. The composed farm carries no lock of its own, and
+        # the check finds the record of the preparation run beside the prepared
+        # entries. Refer to D6 of the design of this change.
         env:
           FARM_DIR: ${{ steps.farm.outputs.dir }}
           WARM_SCRIPT: ${{ steps.warm.outputs.script }}
+          COMPOSED_FARM: analysis-check
         run: |
           set -euo pipefail
-          # The preparation run exports this value on aarch64, where the autodetection
-          # of the host CPU crashes the code generator of LLVM. Another value here
-          # makes each cached entry miss.
-          numba=()
-          if [ "$ARCH" = arm64 ]; then numba=(-e NUMBA_CPU_NAME=generic); fi
+          COMPOSED_DIR="$(dirname "$FARM_DIR")/${COMPOSED_FARM}"
+
+          docker run --rm \
+            -v "${STORE_VOLUME}:/mnt/libs:rw" \
+            -e "SRC=/mnt/libs/farms/${FARM}" \
+            -e "DST=/mnt/libs/farms/${COMPOSED_FARM}" \
+            --entrypoint sh \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" -c '
+              set -eu
+              rm -rf "$DST"
+              mkdir -p "$DST"
+              for entry in "$SRC"/*; do
+                name=${entry##*/}
+                case "$name" in
+                  numba-cache|matplotlib_config|lock.json) continue ;;
+                esac
+                cp -a "$entry" "$DST/$name"
+              done
+              ln -s "$SRC/numba-cache" "$DST/numba-cache"
+              ln -s "$SRC/matplotlib_config" "$DST/matplotlib_config"'
+
           docker run --rm --network none \
             --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
             -v "${STORE_VOLUME}:/mnt/libs:ro" \
-            -v "${FARM_DIR}:/mnt/libs/current:ro" \
+            -v "${COMPOSED_DIR}:/mnt/libs/current:ro" \
             -v "${GITHUB_WORKSPACE}/scripts/lib-store-cache-check.py:/opt/lib-store-cache-check.py:ro" \
             -v "${GITHUB_WORKSPACE}/${WARM_SCRIPT}:${WARM_SCRIPT_MOUNT}:ro" \
-            "${numba[@]}" \
-            -e MPLCONFIGDIR=/tmp/mpl -e NUMBA_CACHE_DIR=/tmp/numba-cache -w /tmp \
-            --entrypoint /bin/bash \
-            "${SANDBOX_IMAGE}:${VERSION}-${ARCH}" -c '
-              set -eu
-              cp -r /mnt/libs/current/matplotlib_config /tmp/mpl
-              cp -r /mnt/libs/current/numba-cache /tmp/numba-cache
-              python3 /opt/lib-store-cache-check.py'
+            -e SANDBOX_ENTRYPOINT_COMMAND='python3 /opt/lib-store-cache-check.py' \
+            -w /tmp \
+            "${SANDBOX_IMAGE}:${VERSION}-${ARCH}"
+
+          # The composed farm belongs to this check alone, thus it leaves the store
+          # before the export. A published store that carried it would ship the farm of
+          # a check as if an analysis owned it.
+          docker run --rm \
+            -v "${STORE_VOLUME}:/mnt/libs:rw" \
+            -e "DST=/mnt/libs/farms/${COMPOSED_FARM}" \
+            --entrypoint sh \
+            "${PROVISIONER_IMAGE}:${VERSION}-${ARCH}" -c 'rm -rf "$DST"'
 
       - name: Remove the mount point that the checks left in the store
         # A bind at /mnt/libs/current makes the runtime create that directory inside

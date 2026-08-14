@@ -41,6 +41,25 @@ seed_caches() {
     return 0
 }
 
+# The workload of the container. sandbox-server is the default, thus a sandbox
+# always runs the server. A run that sets SANDBOX_ENTRYPOINT_COMMAND runs that
+# command in place of the server, and the seed above runs first in both cases.
+#
+# The cache effectiveness check is the reason for the switch. `seed_caches` is the
+# only code that makes a prepared cache reach a workload, thus a check that copies
+# the caches with its own commands proves nothing about it. The check needs this
+# entrypoint and its own program at the same time.
+#
+# Only the creator of the container sets this value, because a process inside the
+# container cannot change the environment of the entrypoint after the start. Each
+# confinement step below stays in front of the exec: the firewall installs first,
+# and setpriv drops the privileges of whichever workload runs.
+if [ -n "${SANDBOX_ENTRYPOINT_COMMAND:-}" ]; then
+    set -- /bin/sh -c "$SANDBOX_ENTRYPOINT_COMMAND"
+else
+    set -- sandbox-server "$@"
+fi
+
 if [ "${SANDBOX_EGRESS_FIREWALL:-0}" = "1" ]; then
     iptables -A OUTPUT -o lo -j ACCEPT
     iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
@@ -68,10 +87,10 @@ if [ "${SANDBOX_EGRESS_FIREWALL:-0}" = "1" ]; then
     # the workload cannot regain CAP_NET_ADMIN and flush the rules above.
     exec setpriv --reuid=1000 --regid=1000 --init-groups \
         --inh-caps=-all --bounding-set=-all \
-        sandbox-server "$@"
+        "$@"
 fi
 
 # Default path: the workload runs as the current (already unprivileged) user, so
 # the seed is written with the ownership it needs and no chown is required.
 seed_caches
-exec sandbox-server "$@"
+exec "$@"

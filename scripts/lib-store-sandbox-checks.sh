@@ -12,12 +12,15 @@
 #   - distribution metadata does not resolve through the farm
 #   - two farms that pin different versions do not stay isolated
 #   - a prepared cache is present but not effective, so the runtime recompiles
+#   - the entrypoint of the image seeds no cache, so the runtime recompiles
 #   - packages.txt names a package the farm does not actually serve
 #   - an R package loads in the provisioner image and not in the sandbox image
 #
 # The provisioner builds each farm with the network on. Every check that reads a
 # farm runs in the sandbox image with the sandbox posture: no network, uid 1000,
-# all capabilities dropped, and the store read-only.
+# all capabilities dropped, and the store read-only. Each such run starts the image
+# through its own entrypoint, because that entrypoint is the code that a sandbox
+# runs before its workload.
 #
 # The store carries no active-farm pointer. Thus every run that reads a farm takes
 # that farm as a second bind at /mnt/libs/current, nested inside the store-root bind,
@@ -66,6 +69,16 @@ for img in "$PROVISIONER_IMAGE" "$SANDBOX_IMAGE"; do
         echo "error: no image $img" >&2; exit 1; }
 done
 
+# Each run below starts the sandbox image through its own entrypoint, thus the image
+# must carry the entrypoint of this working tree. An older image ignores the switch
+# and execs sandbox-server, and the run then never returns. A read of the entrypoint
+# ends at once, and it names the reason.
+"$CTR" run --rm --entrypoint grep "$SANDBOX_IMAGE" \
+    -q SANDBOX_ENTRYPOINT_COMMAND /usr/local/bin/sandbox-entrypoint.sh || {
+    echo "error: the entrypoint of $SANDBOX_IMAGE does not read SANDBOX_ENTRYPOINT_COMMAND." >&2
+    echo "       Build the sandbox image of this working tree, and name it with SANDBOX_IMAGE." >&2
+    exit 1; }
+
 # A throwaway root, never the store of the user. The checks tamper with the content of
 # the store, so they must not touch a store that a real sandbox reads.
 STORE_ROOT="${LIB_STORE:-$(mktemp -d)}"
@@ -98,6 +111,34 @@ run_prepare() {
         "$PROVISIONER_IMAGE" "$@" 2>&1
 }
 
+# A composed farm, which is the farm that an analysis reads. Its package links point
+# into the store, and its two cache directories are links into the catalog farm. The
+# catalog farm is the one home of every prepared cache, and it holds those two as
+# real directories. Thus a check against the catalog alone leaves the arrangement of
+# every analysis untested.
+#
+# The composed farm carries no lock of its own here, because the lock that the host
+# composer writes holds no record of a preparation run. Thus the check must find that
+# record beside the prepared entries.
+compose_farm() {
+    "$CTR" run --rm -v "$STORE_ROOT:/mnt/libs:rw" \
+        -e "SRC=/mnt/libs/farms/$1" \
+        -e "DST=/mnt/libs/farms/$2" \
+        --entrypoint sh "$PROVISIONER_IMAGE" -c '
+            set -eu
+            rm -rf "$DST"
+            mkdir -p "$DST"
+            for entry in "$SRC"/*; do
+              name=${entry##*/}
+              case "$name" in
+                numba-cache|matplotlib_config|lock.json) continue ;;
+              esac
+              cp -a "$entry" "$DST/$name"
+            done
+            ln -s "$SRC/numba-cache" "$DST/numba-cache"
+            ln -s "$SRC/matplotlib_config" "$DST/matplotlib_config"' 2>&1
+}
+
 # A shell in the store, for the steps that must write as the provisioner wrote. A
 # write from the host is not equal: on macOS a container that starts directly after a
 # host write can read the old bytes, and a read from a container refreshes them.
@@ -112,12 +153,10 @@ stage() {
     in_store "printf %s '$b64' | base64 -d > '$path'" >/dev/null
 }
 
-# Both prepared caches must move out of the read-only store before use, because each
-# library picks its cache directory by a write probe and rebuilds when it cannot write.
-SANDBOX_PROLOGUE='cp -r /mnt/libs/current/matplotlib_config /tmp/mpl 2>/dev/null || mkdir -p /tmp/mpl
-cp -r /mnt/libs/current/numba-cache /tmp/numba-cache 2>/dev/null || mkdir -p /tmp/numba-cache
-export NUMBA_CACHE_DIR=/tmp/numba-cache
-export PATH="$PATH:/mnt/libs/current/python/bin"'
+# The prologue of a sandbox run. It puts the console scripts of the farm on PATH,
+# which no entrypoint does. Both prepared caches move to a writable path at the
+# entrypoint of the image, thus this file names neither cache directory.
+SANDBOX_PROLOGUE='export PATH="$PATH:/mnt/libs/current/python/bin"'
 
 # The farm that the sandbox runs resolve at /mnt/libs/current. Each section sets it
 # before its first sandbox run, because each section reads a farm of its own.
@@ -131,20 +170,22 @@ SANDBOX_FARM=""
 # the store root, the same as the harness gives a farm to a sandbox. The store carries
 # no pointer, thus without that bind the baked .pth resolves nothing and the whole
 # section reads an empty environment.
+#
+# The run starts the image through its own entrypoint, which is what a sandbox starts.
+# That entrypoint seeds the prepared caches into a writable path, and it names
+# NUMBA_CACHE_DIR, MPLCONFIGDIR, and the numba CPU of an aarch64 host. Thus this file
+# states none of those values, and a check reads what a sandbox reads.
+# SANDBOX_ENTRYPOINT_COMMAND puts the program of the check in the place of
+# sandbox-server.
 sandbox_run() {
     local script="$1"; shift
-    local numba=()
     [[ -n "$SANDBOX_FARM" ]] || { echo "internal error: the section named no farm"; return 1; }
-    # The value must match what the provisioner exported while it warmed, or every
-    # cached numba entry misses.
-    [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]] && numba=(-e NUMBA_CPU_NAME=generic)
     "$CTR" run --rm --network none \
         --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
         -v "$STORE_ROOT:/mnt/libs:ro" \
         -v "$STORE_ROOT/farms/$SANDBOX_FARM:/mnt/libs/current:ro" "$@" \
-        "${numba[@]}" -e MPLCONFIGDIR=/tmp/mpl -w /tmp \
-        --entrypoint /bin/bash "$SANDBOX_IMAGE" -c "$SANDBOX_PROLOGUE
-$script" 2>&1
+        -e SANDBOX_ENTRYPOINT_COMMAND="$SANDBOX_PROLOGUE
+$script" -w /tmp "$SANDBOX_IMAGE" 2>&1
 }
 
 store_dirs() { ls -1 "$STORE_ROOT/store" 2>/dev/null | grep -v '^\.' ; }
@@ -252,8 +293,9 @@ fi
 # to a recorded entry means the runtime recompiled a prepared code path.
 #
 # scripts/lib-store-cache-check.py is that check, and the build runs the same file.
-# The four runs below cover both halves of its judgment: each recorded entry loads,
-# and a write outside the record passes.
+# The runs below cover both halves of its judgment: each recorded entry loads, and a
+# write outside the record passes. One more run replaces the entrypoint of the image
+# with a stand-in that seeds no cache, because the seed is what this section proves.
 if wants cache; then
     head2 "a warmed numba cache is effective"
 
@@ -307,34 +349,71 @@ PY
 
     # The check runs in the sandbox image, thus it arrives as a mount of the one
     # implementation. The build runs the same file against the store that it
-    # published, and two implementations of it would not stay equal.
+    # published, and two implementations of it would not stay equal. An argument of a
+    # run passes to the engine, for example a mount over the entrypoint of the image.
     cache_check() {
         sandbox_run "python3 /opt/lib-store-cache-check.py" \
-            -v "$REPO_ROOT/scripts/lib-store-cache-check.py:/opt/lib-store-cache-check.py:ro"
+            -v "$REPO_ROOT/scripts/lib-store-cache-check.py:/opt/lib-store-cache-check.py:ro" "$@"
     }
 
-    SANDBOX_FARM=nb
-    out=$(run_net --farm nb numpy numba); rc=$?
+    # A stand-in for the entrypoint of the image. It names a writable cache directory
+    # and it copies no prepared entry into it, which is the shape of a seed that fails
+    # and reports nothing. The check must observe the writes and fail.
+    read -r -d '' BLIND_ENTRYPOINT <<'SH'
+#!/bin/sh
+mkdir -p /tmp/numba-cache
+export NUMBA_CACHE_DIR=/tmp/numba-cache
+exec /bin/sh -c "$SANDBOX_ENTRYPOINT_COMMAND"
+SH
+
+    # The farm is the catalog, which is the name that the store gives its template
+    # farm. A preparation run writes each entry into the cache home, and that home is
+    # the catalog farm. Thus a farm of another name would hold a record of a
+    # preparation whose entries sit in a farm that this store never built.
+    out=$(run_net --farm catalog numpy numba); rc=$?
     if [[ $rc -ne 0 ]]; then
-        bad "could not provision the numba farm" "$(tail -5 <<<"$out")"
+        bad "could not provision the catalog farm" "$(tail -5 <<<"$out")"
     else
-        ok "the numba farm is provisioned"
+        ok "the catalog farm is provisioned (numpy, numba)"
 
         # The preparation is a run of its own, with the farm bound at the path the
         # sandbox imports from. A run that published the farm would hold that bind on
         # the directory that its own publish superseded.
-        out=$(run_prepare nb --farm nb --warm numba,numpy \
+        out=$(run_prepare catalog --farm catalog --warm numba,numpy \
               --warm-script /mnt/libs/warm_numba.py); rc=$?
         if [[ $rc -ne 0 ]]; then
-            bad "could not prepare the caches of the numba farm" "$(tail -5 <<<"$out")"
+            bad "could not prepare the caches of the catalog farm" "$(tail -5 <<<"$out")"
         else
             ok "the caches are prepared through the bound farm  ($(grep -o '[0-9]* cache entry(s) recorded' <<<"$out" | tail -1))"
 
+            # Every check below reads the composed farm, because that farm is what an
+            # analysis mounts. Each manipulation stays on the catalog farm, which the
+            # two cache links of the composed farm point at.
+            out=$(compose_farm catalog analysis-check); rc=$?
+            SANDBOX_FARM=analysis-check
+            if [[ $rc -ne 0 ]]; then
+                bad "could not compose an analysis farm from the catalog" "$(tail -5 <<<"$out")"
+            else
+                ok "the analysis farm links the two prepared caches of the catalog"
+            fi
+
             out=$(cache_check); rc=$?
             if [[ $rc -eq 0 ]] && grep -q "PASS:" <<<"$out"; then
-                ok "each recorded entry loads, and nothing recompiles  ($(grep 'PASS:' <<<"$out" | tail -1))"
+                ok "each recorded entry loads through the links, and nothing recompiles  ($(grep 'PASS:' <<<"$out" | tail -1))"
             else
                 bad "the replay observed a run-time recompile or an error" "$(tail -4 <<<"$out")"
+            fi
+
+            # The seed of the entrypoint is the only code that makes a prepared cache
+            # effective, thus a check that stays green without it proves nothing.
+            stage /mnt/libs/blind-entrypoint.sh <<<"$BLIND_ENTRYPOINT"
+            in_store 'chmod 755 /mnt/libs/blind-entrypoint.sh' >/dev/null
+            out=$(cache_check \
+                  -v "$STORE_ROOT/blind-entrypoint.sh:/usr/local/bin/sandbox-entrypoint.sh:ro"); rc=$?
+            if [[ $rc -eq 1 ]] && grep -q "compiled again" <<<"$out"; then
+                ok "an entrypoint that seeds no cache fails the check"
+            else
+                bad "an entrypoint that seeds no cache did not fail (exit $rc)" "$(tail -4 <<<"$out")"
             fi
 
             # A kernel that the preparation cannot carry forward writes at run time,
@@ -343,7 +422,7 @@ PY
             entry=$(in_store 'python3 - <<PY
 import json
 from pathlib import Path
-farm = Path("/mnt/libs/farms/nb")
+farm = Path("/mnt/libs/farms/catalog")
 lock = json.loads((farm / "lock.json").read_text())
 entry = lock["warm_workload"]["cache_entries"].pop(0)
 (farm / "numba-cache" / entry).unlink()
@@ -363,7 +442,7 @@ PY' | tail -1 | tr -d '\r')
             in_store "python3 - <<PY
 import json
 from pathlib import Path
-farm = Path('/mnt/libs/farms/nb')
+farm = Path('/mnt/libs/farms/catalog')
 lock = json.loads((farm / 'lock.json').read_text())
 lock['warm_workload']['cache_entries'].append('$entry')
 (farm / 'lock.json').write_text(json.dumps(lock, indent=2))
