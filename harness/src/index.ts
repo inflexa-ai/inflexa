@@ -24,8 +24,12 @@ export type {
 export type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "./report-model/reference-resolver.js";
 // Seam: the page-asset lookup of the report preview. An embedder that ships the asset
 // bytes packed materializes them to disk and binds its own lookup, thus the name of the
-// lookup belongs on the front door.
+// lookup belongs on the front door. The manifest rides beside it: an embedder that stages
+// the bytes itself reads which files to stage, and a hand-kept copy of the entries would
+// ship a build that is short one file with nothing to say so.
 export type { ResolvePageAsset } from "./tools/report-session/index.js";
+export { PAGE_ASSETS } from "./report-render/assets.js";
+export type { PageAsset } from "./report-render/assets.js";
 // Seam: the eyes of a report session — where a browser comes from for one look at the
 // rendered page. A host with a standing sidecar names the endpoint in its chrome config, and
 // the assembly wraps it. A host with no sidecar starts a browser for one look, thus it binds

@@ -28,6 +28,7 @@ Issue #221 rebuilt report generation, and the new path renders a typed block doc
 - `harness/src/report-render/` holds the design source: `page.ts`, the views, and the chart theme.
 - `harness/src/report-render/validity.test.ts` extends. The HTML gate and the CSS gate cover the new components.
 - Vendored assets enter the package: ECharts 5.5.1, Space Grotesk, and IBM Plex Mono. The OFL license of each font permits the copy.
+- The front door re-exports the asset manifest and its entry type. An embedder that stages the assets itself reads the manifest, and the front door already carries the type of the lookup that it binds.
 - The old path does not change. `templates/report-html`, `previews/`, and the Nunjucks renderer stay as they are.
 - The block contract in `src/contracts/report-blocks.ts` does not change.
 - The readiness sentinel of `lib/page-capture.ts` stays, thus `examine_page` works without a change.
