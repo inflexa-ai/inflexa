@@ -59,7 +59,7 @@ function seams(notices: Notice[]): SessionSeams {
         archiveThread: () => okAsync<void, DbError>(undefined),
         unarchiveThread: () => okAsync<void, DbError>(undefined),
         purgeThread: () => okAsync<readonly string[], DbError>([]),
-        workspaceRootFor: () => null,
+        workspaceRootFor: () => ({ kind: "unlocatable" }),
         removeReportSessionDir: async () => true,
         chatBusy: () => false,
         resolveThreadId: async () => "thread-2",

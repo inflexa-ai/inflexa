@@ -67,7 +67,7 @@ function seams(page: ThreadPage, notices: Notice[], restored: string[]): Session
             return okAsync<void, DbError>(undefined);
         },
         purgeThread: () => okAsync<readonly string[], DbError>([]),
-        workspaceRootFor: () => null,
+        workspaceRootFor: () => ({ kind: "unlocatable" }),
         removeReportSessionDir: async () => true,
         chatBusy: () => false,
         resolveThreadId: async () => null,
