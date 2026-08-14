@@ -78,6 +78,8 @@
 - [ ] 9.3 Refuse a package that the pool does not hold, and give an R package a reason of its own
 - [ ] 9.4 Add an optional `--analysis` flag to `inflexa store add`, and thread it into the flight
 - [ ] 9.5 Join the flight key with `::`, and remove each control character from the source file
+- [ ] 9.8 Move the graph reader to schema version 2, because the emitter now records a version ordering
+- [ ] 9.9 Give the provisioner runner a second bind of a farm at `/mnt/libs/current`, read-write, so an acquisition can warm
 - [ ] 9.6 Do a test: `link` starts no container, it opens no network connection, and it asks for no consent
 - [ ] 9.7 Do a test: an add with an analysis extends that farm, and an add with none extends no farm
 
