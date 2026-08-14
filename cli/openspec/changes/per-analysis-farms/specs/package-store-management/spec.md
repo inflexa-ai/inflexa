@@ -4,35 +4,35 @@
 
 ### Requirement: The store can be inspected and reclaimed
 
-The CLI SHALL report what a store holds — its packages, the farms defined against it, and the disk each occupies. It SHALL give a way to remove a farm, and a way to remove store content that no farm references. Reclamation SHALL never run implicitly as a side effect of another command.
+The CLI MUST report what a store holds — its packages, the farms defined against it, and the disk each occupies. It MUST give a way to remove a farm, and a way to remove store content that no farm references. Reclamation MUST never run implicitly as a side effect of another command.
 
-The inspection SHALL name the analysis of each analysis farm, and it SHALL mark the catalog template farm as the template. It SHALL say which tracks each farm carries. A farm with fewer tracks than another is the reason an import fails in one analysis and not in another.
+The inspection MUST name the analysis of each analysis farm, and it MUST mark the catalog template farm as the template. It MUST say which tracks each farm carries. A farm with fewer tracks than another is the reason an import fails in one analysis and not in another.
 
-The inspection SHALL report the state of the download beside the farms. It SHALL
-name the state, and it SHALL name the bytes transferred and the total bytes while
-a transfer runs. When the state is `failed`, it SHALL report the message and it
-SHALL name `inflexa store download` as the retry. When the state is `canceled`, it SHALL
-say that the user stopped the transfer, and it SHALL name the same retry. When no
-row exists, it SHALL say that no download ran, because a store can arrive by a
+The inspection MUST report the state of the download beside the farms. It MUST
+name the state, and it MUST name the bytes transferred and the total bytes while
+a transfer runs. When the state is `failed`, it MUST report the message and it
+MUST name `inflexa store download` as the retry. When the state is `canceled`, it MUST
+say that the user stopped the transfer, and it MUST name the same retry. When no
+row exists, it MUST say that no download ran, because a store can arrive by a
 route that wrote no row.
 
-The inspection SHALL report a live acquisition flight beside the download: the spec of the flight, its state, and the analyses subscribed to it.
+The inspection MUST report a live acquisition flight beside the download: the spec of the flight, its state, and the analyses subscribed to it.
 
-The inspection SHALL report an available update when the recorded resolve differs
+The inspection MUST report an available update when the recorded resolve differs
 from the receipt. The row records the digest of the last resolve, and the receipt
-pins the digest that is installed. The inspection SHALL name `inflexa store
-download --update`, and it SHALL open no prompt. The user owns that decision.
+pins the digest that is installed. The inspection MUST name `inflexa store
+download --update`, and it MUST open no prompt. The user owns that decision.
 
 A resolve happens only when `inflexa store download` or `inflexa setup` runs.
 `inflexa store ls` stays local, and it opens no network call. Thus the two
 surfaces report no update between a moved tag and the next resolve. The sidebar
 obeys the same rule, because it reads the same two records.
 
-The inspection command SHALL stay prompt-free and SHALL gain no option, because a
+The inspection command MUST stay prompt-free and MUST gain no option, because a
 passive diagnostic stays passive. A new option on an `auto` command is unsafe
 until the user says otherwise.
 
-Reclamation SHALL be exclusive against live acquisition flights: it waits for zero flights and blocks new ones while it scans and deletes. Before it frees pool content, it SHALL run the orphan-farm reaper, which removes a farm whose analysis id is not in the DB.
+Reclamation MUST be exclusive against live acquisition flights: it waits for zero flights and blocks new ones while it scans and deletes. Before it frees pool content, it MUST run the orphan-farm reaper, which removes a farm whose analysis id is not in the DB.
 
 #### Scenario: Inspection reports contents and size
 
@@ -94,14 +94,14 @@ Reclamation SHALL be exclusive against live acquisition flights: it waits for ze
 
 ### Requirement: Only an install starts the provisioner container
 
-The CLI SHALL start the provisioner container only for an operation that installs
-packages or mutates the store under the store lock. Four operations SHALL be
+The CLI MUST start the provisioner container only for an operation that installs
+packages or mutates the store under the store lock. Four operations MUST be
 host filesystem actions the CLI does directly, with no container: the read of the
 store, the list of what the store holds, the preview of a reclamation, and the
 composition of a farm.
 
 The provisioner image is large, so a container start is a real cost. A read or a
-link operation SHALL NOT pay it.
+link operation MUST NOT pay it.
 
 #### Scenario: Listing starts no container
 
@@ -125,8 +125,8 @@ link operation SHALL NOT pay it.
 
 ### Requirement: `inflexa store add` refuses while a download is live
 
-`inflexa store add` SHALL refuse while a store download is live. The command SHALL name the live download, and it SHALL
-name the command that reports the progress. It SHALL write nothing to the store
+`inflexa store add` MUST refuse while a store download is live. The command MUST name the live download, and it MUST
+name the command that reports the progress. It MUST write nothing to the store
 root.
 
 The published artifact is not one blob. It is a set of layers. The CLI extracts
@@ -134,9 +134,9 @@ them into a staged root. It then merges that staged root into the store root one
 child at a time. A provisioning run that writes into the same pool during the
 merge can meet a half-merged store root.
 
-The refusal SHALL key on a live lock holder. A run is live when the row reports
+The refusal MUST key on a live lock holder. A run is live when the row reports
 `pending` or `running`, and a process holds the download lock. A row of `running`
-with no live holder reads as `failed`, thus a dead downloader SHALL NOT refuse the
+with no live holder reads as `failed`, thus a dead downloader MUST NOT refuse the
 command.
 
 A `pending` row carries no holder until the child takes the lock. That window
@@ -167,17 +167,19 @@ refusal on the row alone would block the command with no transfer in flight.
 
 ### Requirement: `inflexa store add` is acquisition with single-flight dedup
 
-`inflexa store add` SHALL acquire into the pool and append to the dependency graph. It SHALL do no farm work. The farm of an analysis changes only through composition.
+`inflexa store add` MUST acquire into the pool and append to the dependency graph. It MUST take an optional analysis, through an `--analysis` flag. With no flag it does pool work only. With the flag it also links the acquired closure into the farm of that analysis.
 
-Concurrent adds SHALL dedup per flight key, which is the normalized spec: the ecosystem, the canonical name, and the specifier. One live flight SHALL exist per key. A request for a key with a live flight subscribes to that flight and reports its progress as its own.
+Concurrent adds MUST dedup per flight key, which is the normalized spec: the ecosystem, the canonical name, and the specifier. The key MUST join the three with `::`. Neither ecosystem permits a colon in a package name: a normalized Python name is lower-case letters, digits, and the hyphen, and an R name is letters, digits, and the dot. Thus the first two occurrences of `::` are always the separators, whatever the specifier holds after them. The key MUST NOT hold a control character, because a source file that carries one reads as binary to the ordinary text tools.
 
-A subscription belongs to an analysis. A cancel SHALL remove one subscription. The flight SHALL stop when no subscription remains. A finished flight is not a cache: a failed flight clears, and a later request for the key starts fresh.
+One live flight MUST exist per key. A request for a key with a live flight subscribes to that flight and reports its progress as its own.
 
-Flights for different keys SHALL run concurrently, under a configured concurrency cap. The default cap is 2, because an R source compile can exhaust memory.
+A subscription belongs to an analysis. A cancel MUST remove one subscription. The flight MUST stop when no subscription remains. A finished flight is not a cache: a failed flight clears, and a later request for the key starts fresh.
 
-Each flight SHALL live in one DB row with named states, in the shape of the detached download lifecycle. The sidebar and `inflexa store ls` SHALL report a live flight from that row.
+Flights for different keys MUST run concurrently, under a configured concurrency cap. The default cap is 2, because an R source compile can exhaust memory.
 
-On success, the flight SHALL extend the farm of each subscribing analysis with the acquired closure, through composition.
+Each flight MUST live in one DB row with named states, in the shape of the detached download lifecycle. The sidebar and `inflexa store ls` MUST report a live flight from that row.
+
+On success, each caller MUST extend its own farm with the acquired closure, through composition. The owner of the flight MUST NOT extend the farm of another caller. An owner that dies between the acquisition and the extension would otherwise leave a subscriber short. The row that named the subscribers is gone by then. Each caller already knows its own analysis, thus no subscriber list is necessary.
 
 #### Scenario: Two identical requests share one flight
 
@@ -202,11 +204,23 @@ On success, the flight SHALL extend the farm of each subscribing analysis with t
 - **WHEN** that subscription cancels
 - **THEN** the flight stops, and the pool keeps what content addressing already made safe
 
-#### Scenario: Success extends each subscriber's farm
+#### Scenario: Each caller extends its own farm
 
 - **GIVEN** a flight with two subscribed analyses
 - **WHEN** the flight succeeds
-- **THEN** composition extends the farm of each subscriber with the acquired closure
+- **THEN** each caller extends the farm of its own analysis, and neither waits on the other to do it
+
+#### Scenario: A dead owner leaves no subscriber short
+
+- **GIVEN** a subscriber whose flight owner dies after a successful acquisition
+- **WHEN** the subscriber observes that the flight ended
+- **THEN** it extends its own farm from the pool, and the package resolves in its next sandbox
+
+#### Scenario: An add with no analysis touches no farm
+
+- **GIVEN** `inflexa store add` run in a terminal with no analysis
+- **WHEN** the acquisition succeeds
+- **THEN** the pool and the graph hold the package, and no farm changes
 
 #### Scenario: The cap bounds concurrency
 
@@ -214,9 +228,45 @@ On success, the flight SHALL extend the farm of each subscribing analysis with t
 - **WHEN** a third spec is requested
 - **THEN** its flight queues, and it starts when a slot frees
 
+### Requirement: `inflexa store link` links a package from the pool
+
+The store command family MUST hold `inflexa store link <packages...>`. It MUST take an analysis, through a required `--analysis` flag. A call that names none MUST refuse, because a link with no farm has no meaning. It MUST link the named packages and their closure into the farm of that analysis, from the pool. It MUST NOT acquire, thus it starts no container and it opens no network connection.
+
+`link` MUST be a subcommand of its own, and it MUST NOT be a flag on `store add`. An option must never change the effect class of a command. A flag that turned an acquisition into a link would classify two effects under one policy.
+
+`link` MUST carry the `auto` agent policy. It writes symlinks only, into a farm that the analysis already owns, from packages that the user already consented to. Thus the consent that `add` takes covers it, and a second prompt would interrupt a run for nothing.
+
+A package MUST take an optional version, in the form of a requirement, for example `polars==1.2`. A request with no version MUST take the head of the version ordering that the graph records. A request with a version MUST take the match, or it MUST refuse and name the versions that the pool holds.
+
+`link` MUST refuse a package that the pool does not hold. The refusal MUST name the package, and it MUST say that an acquisition is the work of `store add`. For an R package the refusal MUST also say that this store acquires none, thus no retry succeeds.
+
+#### Scenario: A pooled package links into the farm
+
+- **GIVEN** an analysis whose farm lacks a package that the pool holds
+- **WHEN** `inflexa store link` names it
+- **THEN** the farm links it and its closure, no container starts, and no prompt appears
+
+#### Scenario: A request with no version takes the newest
+
+- **GIVEN** a pool that holds two versions of one distribution
+- **WHEN** `inflexa store link` names it with no version
+- **THEN** the farm links the newest of the two
+
+#### Scenario: A package the pool does not hold refuses
+
+- **GIVEN** a package that the pool does not hold
+- **WHEN** `inflexa store link` names it
+- **THEN** it refuses, names the package, and says that `store add` acquires one
+
+#### Scenario: An R package names its own refusal
+
+- **GIVEN** an R package that the catalog does not carry
+- **WHEN** `inflexa store link` names it
+- **THEN** it refuses and says that this store acquires no R package, thus no retry succeeds
+
 ### Requirement: A stale active-farm pointer is removed on first use
 
-The first store command after the upgrade SHALL remove a `current` symlink at the store root, when one exists. The removal SHALL be idempotent and silent when nothing is there. No farm SHALL be rebuilt, because no farm link involves the pointer.
+The first store command after the upgrade MUST remove a `current` symlink at the store root, when one exists. The removal MUST be idempotent and silent when nothing is there. No farm MUST be rebuilt, because no farm link involves the pointer.
 
 #### Scenario: The stale pointer is removed once
 

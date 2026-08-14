@@ -4,11 +4,11 @@
 
 ### Requirement: A farm is composed per analysis from the pool
 
-The CLI SHALL compose the farm of an analysis on the host, with no container. Composition SHALL read the resolved dependency graph `deps.json` at the store root. It SHALL take the closure of the requested roots and link that closure from the pool into `farms/<analysisId>`.
+The CLI MUST compose the farm of an analysis on the host, with no container. Composition MUST read the resolved dependency graph `deps.json` at the store root. It MUST take the closure of the requested roots and link that closure from the pool into `farms/<analysisId>`.
 
-Composition SHALL make the three link shapes the provisioner makes: the top-level entry links with namespace-directory promotion, the R inner-directory links, and the relative bin hoist. It SHALL write the farm markers — `packages.txt`, `meta.json`, and `lock.json` — in the shared inventory shape, so the harness usability gate accepts the farm.
+Composition MUST make the three link shapes the provisioner makes: the top-level entry links with namespace-directory promotion, the R inner-directory links, and the relative bin hoist. It MUST write the farm markers — `packages.txt`, `meta.json`, and `lock.json` — in the shared inventory shape, so the harness usability gate accepts the farm.
 
-Composition SHALL NOT resolve a version constraint. The graph carries resolved edges, thus the walk is a lookup. A root that the graph does not hold SHALL be a named error, not a network call.
+Composition MUST NOT resolve a version constraint. The graph carries resolved edges, thus the walk is a lookup. A root that the graph does not hold MUST be a named error, not a network call.
 
 #### Scenario: A composed farm passes the usability gate
 
@@ -32,53 +32,72 @@ Composition SHALL NOT resolve a version constraint. The graph carries resolved e
 - **WHEN** composition runs
 - **THEN** no container starts, and no network call opens
 
-### Requirement: Composition is lazy and a default farm copies the template
+### Requirement: A farm is made with its analysis, and it starts empty
 
-The first sandbox action of an analysis SHALL trigger composition, through the farm provider. An analysis that starts no sandbox SHALL get no farm.
+The CLI MUST make `farms/<analysisId>` when it makes the analysis. The farm MUST start empty, and it MUST carry its markers only. A farm is a tree of links and a few small records, thus an empty one costs almost nothing on disk.
 
-A new farm SHALL hold EVERY store directory that the catalog template links, of both tracks. It SHALL NOT hold the closure of the requested set of the template, because the two sets are not the same and the difference is a silent loss.
+The farm MUST exist before the planner runs. The planner names the packages that a plan wants, and it cannot name them into a farm that does not exist. Thus a composition at the first sandbox action would arrive too late.
 
-A requirement under an extra carries a marker, and the emitter evaluates a marker with no extra active. Thus such a requirement gives no edge, and its distribution becomes a node that no edge names. A walk from the requested roots never reaches it, although the template links it. Measured on the published catalog, a walk lost 16 distributions and `import scanpy` then failed inside the sandbox.
+A composition MUST NOT invent a package set. It links what a caller names, and it links nothing else. No declaration of packages MUST live in the store, in an agent, or in this specification.
 
-Thus the first sandbox of a new analysis resolves the same set the single active farm served before this change. An explicit root set SHALL still take its closure, because a caller that names a package asks for what that package needs.
+A root that the graph does not hold MUST be a named error. A named root MUST take its closure, because a caller that names a package asks for what that package needs.
 
-#### Scenario: The first sandbox composes the farm
+#### Scenario: The farm is made with the analysis
 
-- **GIVEN** an analysis with no farm
-- **WHEN** its first sandbox action runs
-- **THEN** composition makes `farms/<analysisId>` before the sandbox is created, and the sandbox mounts it
+- **WHEN** an analysis is made
+- **THEN** `farms/<analysisId>` exists, it holds its markers, and it links no package
 
-#### Scenario: A chat-only analysis makes no farm
+#### Scenario: A chat-only analysis keeps an empty farm
 
 - **GIVEN** an analysis in which the user only chats
-- **WHEN** no sandbox action runs
-- **THEN** no farm exists for the analysis
+- **WHEN** no plan and no sandbox action runs
+- **THEN** the farm stays empty, and it costs the markers alone
 
-#### Scenario: A default farm matches the template
+#### Scenario: A farm holds what it was told to hold
 
-- **GIVEN** a fresh analysis and a catalog template farm
-- **WHEN** the first composition runs with no explicit roots
-- **THEN** the farm holds each store directory of the template, and its lock records that set
+- **GIVEN** a catalog that holds many packages and an analysis whose plan named two of them
+- **WHEN** composition links them
+- **THEN** the farm holds those two and their closure, and it holds nothing else
 
-#### Scenario: A distribution that no edge reaches is still held
+#### Scenario: An unknown root is a named error
 
-- **GIVEN** a template that links a distribution which the graph names and no edge points at
-- **WHEN** the first composition runs with no explicit roots
-- **THEN** the farm links that distribution, thus an import of it succeeds in the sandbox
+- **GIVEN** a root that the graph does not hold
+- **WHEN** composition runs
+- **THEN** it fails with the name of the root, and it makes no partial farm
 
-#### Scenario: An explicit root takes its closure
+### Requirement: The packages of a farm come from the plan and from the steps
 
-- **GIVEN** a template that holds more than one package
-- **WHEN** composition runs with one named root
-- **THEN** the farm holds that root and its closure, and it holds nothing else of the template
+The planner MUST give the set of packages that its plan wants. For each package of that set, the CLI MUST do one of two things. When the pool holds it, the CLI MUST link it into the farm. When the pool does not hold it, the CLI MUST ask the user to install it, before the run starts.
+
+A step MUST reach a package that the planner did not name, through the tool of the harness seam. Thus one package that a plan missed does not fail a whole run.
+
+The graph gives no edge for a requirement under an extra, because the emitter evaluates a marker with no extra active. Thus a closure walk can miss such a distribution, and the import of it fails inside the sandbox. That failure MUST be recoverable through the same tool, and it MUST NOT be silent.
+
+#### Scenario: A planned package that the pool holds is linked
+
+- **GIVEN** a plan that names a package which the pool holds
+- **WHEN** the CLI reads the plan
+- **THEN** it links that package and its closure into the farm, and it asks the user for nothing
+
+#### Scenario: A planned package that the pool lacks asks the user
+
+- **GIVEN** a plan that names a package which the pool does not hold
+- **WHEN** the CLI reads the plan
+- **THEN** it asks the user to install it, and the run waits on that answer
+
+#### Scenario: A step reaches what the plan missed
+
+- **GIVEN** a live sandbox whose farm lacks a package that the pool holds
+- **WHEN** the step requests it
+- **THEN** the farm links it, and the next import inside that same sandbox resolves it
 
 ### Requirement: A farm extends additively and safely under a live sandbox
 
-An extension SHALL add links for new closure members and SHALL NOT touch an existing link. Thus a live sandbox of the farm keeps every resolution it made, and the next import inside the same sandbox resolves the new links.
+An extension MUST add links for new closure members and MUST NOT touch an existing link. Thus a live sandbox of the farm keeps every resolution it made, and the next import inside the same sandbox resolves the new links.
 
-A per-farm mutex SHALL serialize two compositions of one farm, because namespace-directory promotion re-writes a link as a directory. Compositions of two different farms SHALL run concurrently.
+A per-farm mutex MUST serialize two compositions of one farm, because namespace-directory promotion re-writes a link as a directory. Compositions of two different farms MUST run concurrently.
 
-A version collision SHALL refuse with names. When a new link and an existing link share a top-level name but not a store directory, the extension fails. The failure SHALL name the two store directories, and the farm SHALL stay as it was.
+A version collision MUST refuse with names. When a new link and an existing link share a top-level name but not a store directory, the extension fails. The failure MUST name the two store directories, and the farm MUST stay as it was.
 
 #### Scenario: An extension reaches a live sandbox
 
@@ -99,16 +118,24 @@ A version collision SHALL refuse with names. When a new link and an existing lin
 
 ### Requirement: The warm caches link from the catalog template
 
-Composition SHALL link the prepared cache directories of the catalog template farm — the numba cache and the matplotlib configuration — into each analysis farm. It SHALL NOT copy them. A cache entry that does not match a farm's package version misses and recompiles, which is safe.
+Composition MUST link the prepared cache directories of the catalog template farm — the numba cache and the matplotlib configuration — into each analysis farm. It MUST NOT copy them. A cache entry that does not match the package version of a farm misses and recompiles, which is safe.
+
+The template farm is thus the one home of a prepared cache. An acquisition MUST warm into that same home, thus one warm serves each farm that links the package. A cache for each farm would compile one package again for each analysis that adds it.
 
 #### Scenario: The caches are shared by link
 
 - **WHEN** composition makes a farm
-- **THEN** the farm's cache directories are links into the catalog template farm, and no cache file is copied
+- **THEN** the cache directories of the farm are links into the catalog template farm, and no cache file is copied
+
+#### Scenario: One warm serves each farm
+
+- **GIVEN** two analyses that link a package which an acquisition warmed
+- **WHEN** each runs the workload of that package
+- **THEN** both load the prepared entries, and neither compiles them again
 
 ### Requirement: The composed layout stays in parity with the provisioner layout
 
-A golden-fixture test SHALL pin the TypeScript composer against the provisioner's farm builder: one fixture pool, composed by both, compared tree for tree. A divergence SHALL fail CI with a path diff.
+A golden-fixture test MUST pin the TypeScript composer against the provisioner's farm builder: one fixture pool, composed by both, compared tree for tree. A divergence MUST fail CI with a path diff.
 
 #### Scenario: A layout divergence fails CI
 
@@ -118,7 +145,7 @@ A golden-fixture test SHALL pin the TypeScript composer against the provisioner'
 
 ### Requirement: A farm dies with its analysis
 
-`analysis delete` SHALL remove `farms/<analysisId>` after the lease check: a removal refuses while a lease records a live sandbox of the farm. Reclaim SHALL gain a reaper pass that removes a farm whose analysis id no longer exists in the DB. The reaper SHALL run only inside the reclaim command, because reclamation is never implicit.
+`analysis delete` MUST remove `farms/<analysisId>` after the lease check: a removal refuses while a lease records a live sandbox of the farm. Reclaim MUST gain a reaper pass that removes a farm whose analysis id no longer exists in the DB. The reaper MUST run only inside the reclaim command, because reclamation is never implicit.
 
 #### Scenario: Deleting the analysis removes the farm
 
@@ -138,33 +165,39 @@ A golden-fixture test SHALL pin the TypeScript composer against the provisioner'
 - **WHEN** reclamation runs
 - **THEN** the reaper removes the farm, and reclamation then frees what no farm references
 
-### Requirement: Composition takes no store lock and stays safe against a reclamation
+### Requirement: Composition waits on a reclamation and takes no provisioner lock
 
 Composition MUST NOT take the store lock of the provisioner. It runs on the host
 at the first sandbox action of an analysis. A lock there would put a
 container-scoped wait on that path.
 
-Safety against a reclamation rests on one invariant. A default farm links exactly
-the store directories that the catalog template links. The template is itself a
-farm, and a reclamation walks each farm. Thus a reclamation sees each of those
-directories as referenced, and it removes none of them.
+Composition MUST yield while a live process holds the host reclamation lock. A
+farm holds the closure of its roots, thus a walk can reach a store directory that
+no farm links yet. A reclamation between the walk and the link would remove that
+directory, and the farm would then hold a link that resolves to nothing.
 
-A default farm that took the closure of its roots would break the invariant. Such
-a walk can reach a store directory that no farm links yet. A reclamation between
-the walk and the link would then remove it.
+A reclamation MUST wait for each live composition before it deletes, exactly as
+it waits for each live acquisition flight. Thus the two never interleave, and
+neither one starves the other.
 
-An extension names a root outside the template, thus it MUST run inside an
-acquisition flight. A reclamation waits for zero live flights, and that wait is
-what separates the two.
+A composition MUST record its liveness where a reclamation reads it. A record
+that a dead process left MUST NOT block a reclamation. The liveness of the holder
+is the signal, and the record alone is not.
 
-#### Scenario: A composition during a reclamation loses no link
+#### Scenario: A composition yields to a live reclamation
 
-- **GIVEN** a reclamation that runs
-- **WHEN** a first sandbox action composes a default farm at the same time
-- **THEN** each link of the new farm resolves, because the template already referenced every target
+- **GIVEN** a reclamation that holds the lock
+- **WHEN** a first sandbox action starts a composition
+- **THEN** the composition waits, and it links nothing until the reclamation finishes
 
-#### Scenario: An extension outside the template runs inside a flight
+#### Scenario: A reclamation waits for a live composition
 
-- **GIVEN** an extension whose roots the catalog template does not hold
-- **WHEN** it runs
-- **THEN** it runs inside an acquisition flight, and a reclamation waits for that flight to finish
+- **GIVEN** a composition that walks the graph
+- **WHEN** a reclamation starts
+- **THEN** it waits for that composition to finish before it deletes a store directory
+
+#### Scenario: A dead composition blocks nothing
+
+- **GIVEN** a liveness record whose process is gone
+- **WHEN** a reclamation starts
+- **THEN** it sweeps that record and proceeds

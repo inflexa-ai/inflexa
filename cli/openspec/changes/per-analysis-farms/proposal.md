@@ -17,10 +17,19 @@ same time as the others.
   closure from the pool. It hoists the entry points, and it links the warm
   caches from the catalog farm. A per-farm mutex serializes two compositions of
   one farm.
-- Composition is lazy. The first sandbox of an analysis makes the farm. A
-  chat-only analysis makes none. An import failure extends the farm on demand:
-  the agent requests the package, composition links it, the same sandbox
-  retries.
+- The farm is made with its analysis, and it starts empty. A farm is a tree of
+  links and a few records, thus an empty one costs almost nothing. The farm must
+  exist before the planner runs, because the planner names packages into it.
+- The contents arrive from the plan and from the steps. The planner gives the
+  packages of each step: the CLI links what the pool holds, and it asks the user
+  to install what the pool lacks. A step then links what the plan missed, through
+  the tool of the harness seam, and the same sandbox retries with no restart.
+- Composition invents no package set. No base set lives in the store, and no
+  agent declares a package list.
+- `inflexa store link` joins the command family: it links from the pool, it
+  acquires nothing, and it carries the `auto` agent policy. The CLI binds the
+  harness farm-extension seam with the same composer, thus a sandbox agent asks
+  without a subprocess.
 - The CLI wires the harness farm provider: analysis id in, `farms/<analysisId>`
   under the store root out. When composition failed, the provider gives no farm,
   and the sandbox gate names that state.

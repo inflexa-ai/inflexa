@@ -4,42 +4,42 @@
 
 ### Requirement: The download runs as a detached process with a receipt
 
-`inflexa setup` SHALL start the download, and the app SHALL start none. The
+`inflexa setup` MUST start the download, and the app MUST start none. The
 process runs detached, and `lib-store-download-process` owns its lifecycle.
 
-The download SHALL start when the receipt is absent and the user gave the consent
-at setup. No configuration value SHALL suppress the download, because the runtime
+The download MUST start when the receipt is absent and the user gave the consent
+at setup. No configuration value MUST suppress the download, because the runtime
 image bakes no R library and no Python library.
 
-A receipt that pins a different manifest SHALL give the outcome
-`update_available`, and the run SHALL transfer nothing. `inflexa store ls` and the
-sidebar SHALL report that an update is available. The user SHALL then run
+A receipt that pins a different manifest MUST give the outcome
+`update_available`, and the run MUST transfer nothing. `inflexa store ls` and the
+sidebar MUST report that an update is available. The user MUST then run
 `inflexa store download --update`, which is the consent to apply the moved tag. No
-surface SHALL open a prompt for that consent.
+surface MUST open a prompt for that consent.
 
-It SHALL obey the receipt pattern of the reference store: stage, rename, then
-write the receipt. The client SHALL extract every layer into the staged root, and
-it SHALL keep the symlinks. An interrupted download SHALL read back as incomplete,
-and the next run SHALL repair it.
+It MUST obey the receipt pattern of the reference store: stage, rename, then
+write the receipt. The client MUST extract every layer into the staged root, and
+it MUST keep the symlinks. An interrupted download MUST read back as incomplete,
+and the next run MUST repair it.
 
 The store root is shared with `inflexa store add`, which provisions into the same
-`store/` pool. Thus the CLI SHALL MERGE the staged tree into the store root, and
-it SHALL NOT remove locally provisioned content.
+`store/` pool. Thus the CLI MUST MERGE the staged tree into the store root, and
+it MUST NOT remove locally provisioned content.
 
 The merge obeys these rules:
 
-- It SHALL move in only a child that the store root does not have. It SHALL leave
+- It MUST move in only a child that the store root does not have. It MUST leave
   an existing `store/` child and `farms/` child as it is. A store directory name
   carries the hash of its content, thus a skip is correct.
-- On a farm name collision, it SHALL keep the local farm.
-- It SHALL NOT write a `current` symlink. The catalog farm arrives as the
+- On a farm name collision, it MUST keep the local farm.
+- It MUST NOT write a `current` symlink. The catalog farm arrives as the
   template: composition reads its lock for the default closure and links its
   warm caches.
-- `deps.json` SHALL merge as a store record. On `--update`, the graph of the new
+- `deps.json` MUST merge as a store record. On `--update`, the graph of the new
   catalog replaces the old graph under the store-level metadata mutex.
 
-The merged root SHALL hold the published tree, so the harness check accepts it.
-The download SHALL report what the merge did: the store directories added, the
+The merged root MUST hold the published tree, so the harness check accepts it.
+The download MUST report what the merge did: the store directories added, the
 farms added, and the farms kept.
 
 #### Scenario: Setup starts the transfer
