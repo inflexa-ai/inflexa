@@ -42,7 +42,7 @@ import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js"
 import type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "../../report-model/reference-resolver.js";
 import { resolveDocumentReferences, type ResolutionFailure } from "../../report-model/validate.js";
 import { bridgeValues, type BlockResolution, type BridgeMismatch, type ResolvedFile } from "../../report-render/value-bridge.js";
-import { PAGE_ASSETS } from "../../report-render/assets.js";
+import { ASSETS_DIR, PAGE_ASSETS } from "../../report-render/assets.js";
 import { renderReportPage } from "../../report-render/render.js";
 import type { RenderProblem } from "../../report-render/types.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
@@ -225,7 +225,9 @@ async function renderToWorkspace(args: {
     }
 
     const sessionDir = join(root, reportSessionDir(args.threadId));
-    const assetsDir = join(sessionDir, "assets");
+    // The page addresses each staged file through `assetSource`, which spells the same segment. Thus the
+    // directory that receives the copies comes from that one constant, and never from a literal here.
+    const assetsDir = join(sessionDir, ASSETS_DIR);
     const pagePath = join(sessionDir, "index.html");
 
     // Each bound figure, contained and deduplicated by its staged name, mapped to its host source.
