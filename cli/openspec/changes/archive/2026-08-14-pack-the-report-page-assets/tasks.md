@@ -30,7 +30,7 @@
 - [x] 4.1 Cover the pack: each manifest entry lands in the archive under its staged name, and an unresolvable specifier refuses the build.
 - [x] 4.2 Cover the materialization: a fresh unpack writes the three directories, and a directory that holds two of them re-extracts.
 - [x] 4.3 Cover the lookup: a manifest specifier gives the materialized path, and an unknown specifier throws.
-- [ ] 4.4 Build a binary, and render one report page with it. No automated case reaches a compiled binary, thus this manual step is the one proof that the whole path works.
+- [x] 4.4 Build a binary, and render one report page with it. No automated case reaches a compiled binary, thus this manual step is the one proof that the whole path works.
 
 ## 5. The gates
 

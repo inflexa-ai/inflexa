@@ -23,7 +23,9 @@ The harness side is in place. `assembleCoreRuntime` accepts `resolveReportPageAs
 ## Impact
 
 - `scripts/build.ts` — the asset entries of the archive, and the refusal.
-- `src/modules/harness/content.ts` — the third materialized directory.
+- `src/modules/harness/page_assets.ts` — the collection of the entries. It sits apart from the build script, because that script runs its whole body at import and a test cannot load it.
+- `src/modules/harness/content.ts` — the bind of the embedded archive and of the two frozen environment values.
+- `src/modules/harness/content_extract.ts` — the extract of the third tree, over injected inputs. It sits apart from its caller for the same reason as the collection.
 - `src/modules/harness/runtime.ts` — the binding at the composition root.
 
 ## A note on the dependency direction
