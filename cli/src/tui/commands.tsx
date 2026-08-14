@@ -2160,10 +2160,13 @@ export async function purgeSessionFlow(ctx: Workspace, seams: SessionSeams = rea
  * What became of the files of the threads that the erase took. A stayed page is not a failed delete,
  * thus the union has no error member. The rows are gone, and no file work can bring one back.
  *
- * `stayed` names each directory that is still on disk. The list can be empty, because a tree that the
- * host cannot locate leaves the flow with no name to give.
+ * `stayed` names each directory that is still on disk. Its list can be empty, because a refused id
+ * leaves the flow with a page that it cannot name. `unlocatable` is the separate fact that the host
+ * never found the tree, and it carries no name for a different reason. The two keep their own member,
+ * because one notice cannot give one cause for both.
  */
-type ReportPageFate = { readonly kind: "kept" } | { readonly kind: "removed" } | { readonly kind: "stayed"; readonly dirs: readonly string[] };
+type ReportPageFate =
+    { readonly kind: "kept" } | { readonly kind: "removed" } | { readonly kind: "unlocatable" } | { readonly kind: "stayed"; readonly dirs: readonly string[] };
 
 /**
  * The absolute directory of one report session, under the workspace root of its analysis.
@@ -2195,7 +2198,7 @@ async function reclaimReportPages(analysis: Analysis, erased: readonly string[],
 
     const lookup = seams.workspaceRootFor(analysis);
     if (lookup.kind === "absent") return { kind: "removed" };
-    if (lookup.kind === "unlocatable") return { kind: "stayed", dirs: [] };
+    if (lookup.kind === "unlocatable") return { kind: "unlocatable" };
     const root = lookup.root;
 
     const stayed: string[] = [];
@@ -2221,8 +2224,10 @@ async function reclaimReportPages(analysis: Analysis, erased: readonly string[],
  * whether a directory was there, and the common delete is a conversation that owns no page at all. Thus
  * a line that said "its pages are removed" would name work that never ran.
  *
- * An empty `stayed` list is the one line that names a cause. It is reached only where the host cannot
- * locate the workspace, and the user can act on that fact alone.
+ * `unlocatable` is the one line that names a cause. The host cannot locate the workspace, and the user
+ * can act on that fact alone. An empty `stayed` list is the guard arm: an id that the path helper
+ * refused leaves a page with no name to print, and the workspace resolved, thus that line must not
+ * blame the workspace.
  */
 function describeReportPageFate(fate: ReportPageFate): string {
     switch (fate.kind) {
@@ -2230,10 +2235,10 @@ function describeReportPageFate(fate: ReportPageFate): string {
             return "no report page was removed";
         case "removed":
             return "no report page remains";
+        case "unlocatable":
+            return "its report pages stayed, because its workspace did not resolve";
         case "stayed":
-            return fate.dirs.length === 0
-                ? "its report pages stayed, because its workspace did not resolve"
-                : `these report pages stayed: ${fate.dirs.join(", ")}`;
+            return fate.dirs.length === 0 ? "its report pages stayed, and nothing can name them" : `these report pages stayed: ${fate.dirs.join(", ")}`;
     }
 }
 
@@ -2246,12 +2251,13 @@ function describeReportPageFate(fate: ReportPageFate): string {
  * The erase runs first, because it gives the id of each thread that it took and nothing else can. A
  * failed erase leaves each file where it is, because a page whose rows survive is still reachable.
  *
- * The file work runs BEFORE the unbind and the landing. The landing is another Postgres round trip, and
- * a removal that raced it would run while the user is already on a different conversation.
+ * The unbind runs next, and it runs before the file work. It is a local write with no round trip, and
+ * every step after it awaits: the removal walks the disk, and the landing asks Postgres. The scope names
+ * an erased id across each of those windows, and the composer is open, thus a turn submitted into one of
+ * them would mint the row back.
  *
- * The landing repeats the removal flow's unbind-then-open, and the unbind matters more here: the row
- * the scope names is not merely tombstoned but gone, so a turn submitted across the landing's round
- * trip would recreate a thread under an id the user just erased.
+ * The file work runs BEFORE the landing. The landing binds a different conversation, and a removal that
+ * raced it would run while the user reads that other conversation.
  */
 export async function confirmSessionPurge(
     ctx: Workspace,
@@ -2269,15 +2275,19 @@ export async function confirmSessionPurge(
         return;
     }
 
-    const fate = await reclaimReportPages(analysis, purged.value, files, seams);
-    // One notice carries the erase and the fate of the files. A page that stayed warns and never reads
-    // as a failed delete, because the rows are gone and nothing can restore one.
-    seams.notify({ kind: fate.kind === "stayed" ? "warn" : "info", text: `Session deleted — its transcript is gone, and ${describeReportPageFate(fate)}.` });
-    // Unbind BEFORE the landing's Postgres round trip. Across that window the scope would
-    // otherwise still name a thread id whose row no longer exists, and a turn submitted into it
+    // Unbind BEFORE the file work and the landing's Postgres round trip. Across those windows the scope
+    // would otherwise still name a thread id whose row no longer exists, and a turn submitted into it
     // passes every gate: the id is non-null, and the thread store's create would mint the row
     // back — resurrecting, as an empty conversation, the very thing the user just erased.
     ctx.openSession(null, ctx.workingDir, analysis);
+
+    const fate = await reclaimReportPages(analysis, purged.value, files, seams);
+    // One notice carries the erase and the fate of the files. A page that stayed warns and never reads
+    // as a failed delete, because the rows are gone and nothing can restore one.
+    seams.notify({
+        kind: fate.kind === "kept" || fate.kind === "removed" ? "info" : "warn",
+        text: `Session deleted — its transcript is gone, and ${describeReportPageFate(fate)}.`,
+    });
     // Re-enter through the analysis-open path: it performs exactly the landing this needs —
     // bind the surviving most-recent thread, else a fresh mint.
     await openAnalysis(ctx, analysis, seams);
