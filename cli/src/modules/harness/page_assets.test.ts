@@ -84,6 +84,19 @@ describe("collectPageAssetEntries", () => {
         expect(error).toMatchObject({ type: "unreadable_source", specifier: target.specifier, path: absent });
     });
 
+    test("the default resolution reads a real file for every manifest specifier", () => {
+        // The one case that drives `resolveThroughHarness`, which is the two-hop resolution that the whole
+        // pack exists for. Each package that holds the bytes is a dependency of the harness and never of
+        // the cli, thus hop one must name the installed entry of the harness before hop two runs. A
+        // manifest entry that no resolution answers, or that names no file, fails here.
+        const entries = collectPageAssetEntries()._unsafeUnwrap();
+
+        expect(entries.map((entry) => entry.path)).toEqual(PAGE_ASSETS.map((asset) => `assets/${asset.file}`));
+        // A byte count alone, because the bytes are a font and a chart runtime that this repository does
+        // not own. An empty file resolves and reads, and it ships a page that loads nothing.
+        for (const entry of entries) expect(entry.bytes.length).toBeGreaterThan(0);
+    });
+
     test("an empty manifest gives the empty-manifest error", () => {
         // An empty manifest stages no file, and the boot guard of the binary then extracts the archive on
         // every start. The build must stop instead.
