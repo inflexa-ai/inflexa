@@ -10,7 +10,7 @@ The flow MUST ask on every delete, and it MUST test no directory first. The dele
 
 The two answers MUST be "remove" and "keep". Nothing archives a page, thus the two-way choice of the analysis delete does not carry here.
 
-The removal MUST run before the flow unbinds the scope and lands the user. That landing is a round trip, thus the removal must not race it.
+The flow MUST unbind the scope before the removal, and the removal MUST run before the landing. Each step after the erase awaits, thus a bound scope that names an erased thread lets a turn mint the row back. The landing binds a different conversation, thus the removal must not race it.
 
 One notice MUST report both the erase and the fate of the files, in place of the success line that the flow raises today. Two notices for one action are two claims about one event.
 
@@ -20,7 +20,9 @@ The set of directories MUST come from the ids that the purge gives back. A listi
 
 The flow MUST name each directory through the helper that the harness exports. It MUST spell no directory name of its own, because the layout of a workspace belongs to the harness.
 
-The removal MUST be best-effort. The rows are gone when it runs, thus a directory that survives MUST NOT read as a failed delete. An absent directory MUST NOT read as a failure either. A workspace root that does not resolve MUST remove nothing and MUST report the same way. The outcome notice MUST name what stayed.
+The removal MUST be best-effort. The rows are gone when it runs, thus a directory that survives MUST NOT read as a failed delete. An absent directory MUST NOT read as a failure either. The outcome notice MUST name what stayed.
+
+A workspace root that does not resolve MUST remove nothing, and the notice MUST tell its two causes apart. A tree that was never written holds no page, thus the notice MUST report that no page remains. A tree that the host cannot locate can hold one, thus the notice MUST warn and MUST give that cause. One line for both would send the user to the anchor for a page that never existed.
 
 The flow MUST keep the gate that it has on a running chat turn. A render of a page runs inside a turn, thus that one gate covers a delete that would race a write into the same directory.
 
@@ -64,3 +66,15 @@ The flow MUST keep the gate that it has on a running chat turn. A render of a pa
 - **GIVEN** a confirmed delete whose rows are erased
 - **WHEN** one page directory cannot be removed
 - **THEN** the delete reports its success, and the notice names the directory that stayed
+
+#### Scenario: An analysis with no workspace tree reports that no page remains
+
+- **GIVEN** an analysis that ran nothing, thus it has no workspace tree on disk
+- **WHEN** the user confirms the delete and accepts the removal
+- **THEN** the notice reports that no report page remains, and it raises no warning
+
+#### Scenario: A workspace that the host cannot locate warns
+
+- **GIVEN** an analysis whose workspace tree the host cannot locate
+- **WHEN** the user confirms the delete and accepts the removal
+- **THEN** the notice warns that the pages stayed, and it gives that cause
