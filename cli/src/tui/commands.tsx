@@ -156,6 +156,16 @@ const ARCHIVED_PAGE_SIZE = 200;
 const ARCHIVED_PAGE_LIMIT = 25;
 
 /**
+ * Where the page files of an analysis live, or why the host cannot name them.
+ *
+ * The two absent arms are different facts about the data of the user, and the delete notice tells them
+ * apart. An analysis whose workspace tree was never written holds no page directory at all, thus a
+ * removal reaches nothing and nothing stays behind. A tree that the host cannot locate can hold a page
+ * that the removal never reached, and that page is what the notice must warn about.
+ */
+export type WorkspaceRootLookup = { readonly kind: "root"; readonly root: string } | { readonly kind: "absent" } | { readonly kind: "unlocatable" };
+
+/**
  * Injectable edges for the session flows (switch / rename / delete) and the in-place analysis open,
  * so each is unit-testable offline — no Postgres, no booted runtime, no toast overlay. Mirrors
  * `ThreadSeams` in `hooks/thread.ts`: production callers omit the argument and get the real booted
@@ -220,11 +230,10 @@ export type SessionSeams = {
      */
     readonly purgeThread: (pool: Pool, threadId: string) => ResultAsync<readonly string[], DbError>;
     /**
-     * The workspace root of an analysis on disk, or `null` when the analysis names none.
-     * Real: {@link locateExistingOutputDir}, where an absent tree and an unlocatable folder both give
-     * `null`. A root that the host cannot name holds no directory that the host can remove.
+     * The workspace root of an analysis on disk, or why the host cannot name it.
+     * Real: {@link locateExistingOutputDir}, whose two outcomes map onto the two absent arms.
      */
-    readonly workspaceRootFor: (a: Analysis) => string | null;
+    readonly workspaceRootFor: (a: Analysis) => WorkspaceRootLookup;
     /**
      * Remove one report session directory by force, and resolve `true` when the directory is gone.
      * Real: {@link rmResult}, which removes a tree and makes an absent path a success.
@@ -269,8 +278,8 @@ export const realSessionSeams: SessionSeams = {
     purgeThread: (pool, threadId) => createThreadStore(pool).purgeThread(threadId),
     workspaceRootFor: (a) =>
         locateExistingOutputDir(a).match(
-            (dir) => dir,
-            () => null,
+            (dir): WorkspaceRootLookup => (dir === null ? { kind: "absent" } : { kind: "root", root: dir }),
+            (): WorkspaceRootLookup => ({ kind: "unlocatable" }),
         ),
     removeReportSessionDir: async (dir) => rmResult(dir, "removeReportSessionDir").isOk(),
     chatBusy: () => chatStatus() === "busy",
@@ -1355,8 +1364,11 @@ function DeleteAnalysisFilesDialog(props: { analysis: Analysis; onDecided: (disp
 
 /**
  * Second step of deleting a session: what happens to its files. A report session writes its page into a
- * directory that takes the name of its thread id. The erase takes the row of each report under the
- * conversation, thus after it no surface can name those directories again.
+ * directory that takes the name of its thread id. The erase reaches the open thread and each descendant
+ * of it, thus after it no surface can name those directories again.
+ *
+ * The copy names no conversation. The open thread can be a report session itself, and that delete takes
+ * one thread and one page.
  *
  * The question comes on each delete, and it tests no directory first. The erase gives back the threads
  * that it took, and it gives them only after it runs. Thus a question that spoke of the directories
@@ -1374,12 +1386,12 @@ function DeleteSessionFilesDialog(props: { sessionName: string; onDecided: (file
                 {
                     value: "keep" as const,
                     title: "Keep the files",
-                    description: "Leave the page of each report of this conversation on disk — the conversation and its messages are erased either way",
+                    description: "Leave the page of each report that this delete erases on disk — the messages are erased either way",
                 },
                 {
                     value: "remove" as const,
                     title: "Delete the files permanently",
-                    description: "Remove the directory of each report of this conversation, with the page in it and each staged asset. This cannot be undone",
+                    description: "Remove the page directory of each report that this delete erases, with each staged asset in it. This cannot be undone",
                 },
             ]}
             emptyText="No options"
@@ -2148,8 +2160,8 @@ export async function purgeSessionFlow(ctx: Workspace, seams: SessionSeams = rea
  * What became of the files of the threads that the erase took. A stayed page is not a failed delete,
  * thus the union has no error member. The rows are gone, and no file work can bring one back.
  *
- * `stayed` names each directory that is still on disk. The list can be empty, because a root that does
- * not resolve leaves the flow with no name to give.
+ * `stayed` names each directory that is still on disk. The list can be empty, because a tree that the
+ * host cannot locate leaves the flow with no name to give.
  */
 type ReportPageFate = { readonly kind: "kept" } | { readonly kind: "removed" } | { readonly kind: "stayed"; readonly dirs: readonly string[] };
 
@@ -2174,15 +2186,17 @@ function reportPageDir(root: string, threadId: string): Result<string, { type: "
  * what lets the question come before the erase: the flow learns which threads went only after the
  * point of no return, and a page that was never there is not a page that stayed.
  *
- * A root that does not resolve removes nothing and names nothing, and it reports as a page that stayed.
- * Both facts read the same to the user, because the conversation is gone in each case and the files
- * are not.
+ * The two absent roots part here, and they part because the user reads the outcome. A workspace tree
+ * that was never written carries no page directory, thus nothing was left behind and the notice must
+ * say so. A tree that the host cannot locate can carry one, and that page is a real page that stayed.
  */
 async function reclaimReportPages(analysis: Analysis, erased: readonly string[], files: "keep" | "remove", seams: SessionSeams): Promise<ReportPageFate> {
     if (files === "keep") return { kind: "kept" };
 
-    const root = seams.workspaceRootFor(analysis);
-    if (root === null) return { kind: "stayed", dirs: [] };
+    const lookup = seams.workspaceRootFor(analysis);
+    if (lookup.kind === "absent") return { kind: "removed" };
+    if (lookup.kind === "unlocatable") return { kind: "stayed", dirs: [] };
+    const root = lookup.root;
 
     const stayed: string[] = [];
     let unnamed = false;
@@ -2200,15 +2214,26 @@ async function reclaimReportPages(analysis: Analysis, erased: readonly string[],
     return { kind: "stayed", dirs: stayed };
 }
 
-/** The tail of the delete notice, which gives the fate of the files in the words of {@link ReportPageFate}. */
+/**
+ * The tail of the delete notice, which gives the fate of the files in the words of {@link ReportPageFate}.
+ *
+ * Each line states the outcome on disk, and none of them counts a page. A forced removal cannot report
+ * whether a directory was there, and the common delete is a conversation that owns no page at all. Thus
+ * a line that said "its pages are removed" would name work that never ran.
+ *
+ * An empty `stayed` list is the one line that names a cause. It is reached only where the host cannot
+ * locate the workspace, and the user can act on that fact alone.
+ */
 function describeReportPageFate(fate: ReportPageFate): string {
     switch (fate.kind) {
         case "kept":
-            return "its report files are kept";
+            return "no report page was removed";
         case "removed":
-            return "its report files are removed";
+            return "no report page remains";
         case "stayed":
-            return fate.dirs.length === 0 ? "its report files stayed" : `these report files stayed: ${fate.dirs.join(", ")}`;
+            return fate.dirs.length === 0
+                ? "its report pages stayed, because its workspace did not resolve"
+                : `these report pages stayed: ${fate.dirs.join(", ")}`;
     }
 }
 
