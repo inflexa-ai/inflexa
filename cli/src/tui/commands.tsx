@@ -2,7 +2,7 @@ import { createSignal, Show, type JSX } from "solid-js";
 import { randomUUIDv7 } from "bun";
 import { existsSync } from "node:fs";
 import { join, sep } from "node:path";
-import { ResultAsync } from "neverthrow";
+import { Result, ResultAsync } from "neverthrow";
 // Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import type { VerifyResult } from "../types/prov.ts";
@@ -18,7 +18,7 @@ import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
 import { setTheme, theme, type Notice } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
-import { createThreadStore, loadPlan, queryActiveRunsByAnalysis, queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
+import { createThreadStore, loadPlan, queryActiveRunsByAnalysis, queryRunsByAnalysis, queryStepsByRun, reportSessionDir } from "@inflexa-ai/harness";
 import type { AnalysisPurgeOutcome, CortexRunRow, DbError, Pool, Thread, ThreadPage } from "@inflexa-ai/harness";
 
 import { agentModels, bootState, harnessRuntime, type BootState } from "./hooks/boot.ts";
@@ -35,7 +35,7 @@ import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
-import { mkdirResult, statResult, writeFileResult } from "../lib/fs.ts";
+import { mkdirResult, rmResult, statResult, writeFileResult } from "../lib/fs.ts";
 import { str256, type Str256 } from "../lib/types.ts";
 import {
     createAnalysis,
@@ -213,8 +213,26 @@ export type SessionSeams = {
     /**
      * Erase a thread: its metadata row AND every one of its messages, with nothing left to restore.
      * The one thread verb the archive cannot undo. Real: `createThreadStore(pool).purgeThread`.
+     *
+     * The value holds the id of each thread that the erase took, the named one and each descendant of
+     * it. The directory of a report session takes the name of its thread id. Thus this set is the only
+     * source that the host has for the directories that no surface can name again.
      */
-    readonly purgeThread: (pool: Pool, threadId: string) => ResultAsync<void, DbError>;
+    readonly purgeThread: (pool: Pool, threadId: string) => ResultAsync<readonly string[], DbError>;
+    /**
+     * The workspace root of an analysis on disk, or `null` when the analysis names none.
+     * Real: {@link locateExistingOutputDir}, where an absent tree and an unlocatable folder both give
+     * `null`. A root that the host cannot name holds no directory that the host can remove.
+     */
+    readonly workspaceRootFor: (a: Analysis) => string | null;
+    /**
+     * Remove one report session directory by force, and resolve `true` when the directory is gone.
+     * Real: {@link rmResult}, which removes a tree and makes an absent path a success.
+     *
+     * A forced removal wants no existence test. Thus the flow can ask the user about the files before
+     * the erase names the threads that it took, which is the only order the purge permits.
+     */
+    readonly removeReportSessionDir: (dir: string) => Promise<boolean>;
     /**
      * Whether a chat turn is streaming into the open conversation right now. The harness's thread store
      * cannot observe a host's in-flight turns, so refusing an unrecoverable thread write while one is
@@ -249,6 +267,12 @@ export const realSessionSeams: SessionSeams = {
     archiveThread: (pool, threadId) => createThreadStore(pool).archiveThread(threadId),
     unarchiveThread: (pool, threadId) => createThreadStore(pool).unarchiveThread(threadId),
     purgeThread: (pool, threadId) => createThreadStore(pool).purgeThread(threadId),
+    workspaceRootFor: (a) =>
+        locateExistingOutputDir(a).match(
+            (dir) => dir,
+            () => null,
+        ),
+    removeReportSessionDir: async (dir) => rmResult(dir, "removeReportSessionDir").isOk(),
     chatBusy: () => chatStatus() === "busy",
     resolveThreadId,
     workingDirFor,
@@ -1330,6 +1354,45 @@ function DeleteAnalysisFilesDialog(props: { analysis: Analysis; onDecided: (disp
 }
 
 /**
+ * Second step of deleting a session: what happens to its files. A report session writes its page into a
+ * directory that takes the name of its thread id. The erase takes the row of each report under the
+ * conversation, thus after it no surface can name those directories again.
+ *
+ * The question comes on each delete, and it tests no directory first. The erase gives back the threads
+ * that it took, and it gives them only after it runs. Thus a question that spoke of the directories
+ * that are really there would have to come after the point of no return.
+ *
+ * Keeping is the default, as it is for an analysis. A page is the work of the user, and a removal of it
+ * cannot be undone.
+ */
+function DeleteSessionFilesDialog(props: { sessionName: string; onDecided: (files: "keep" | "remove") => void }): JSX.Element {
+    const ws = useWorkspace();
+    return (
+        <SelectDialog
+            title={`Delete "${props.sessionName}" — keep its report files?`}
+            items={[
+                {
+                    value: "keep" as const,
+                    title: "Keep the files",
+                    description: "Leave the page of each report of this conversation on disk — the conversation and its messages are erased either way",
+                },
+                {
+                    value: "remove" as const,
+                    title: "Delete the files permanently",
+                    description: "Remove the directory of each report of this conversation, with the page in it and each staged asset. This cannot be undone",
+                },
+            ]}
+            emptyText="No options"
+            onCancel={() => ws.closeDialog()}
+            onSelect={(files) => {
+                ws.closeDialog();
+                props.onDecided(files);
+            }}
+        />
+    );
+}
+
+/**
  * Why deletion is refused without a booted harness, raised both at the palette gate (before the user
  * spends a confirmation on it) and again inside the ladder, which cannot obtain a pool either way.
  * One string so the two refusals can never drift into telling the user different things.
@@ -2068,15 +2131,98 @@ export async function purgeSessionFlow(ctx: Workspace, seams: SessionSeams = rea
             entityName={name}
             // No `verb`: the default IS "Delete", and this is the action that word was reserved for.
             description={() => <text fg={theme().fgMuted}>Every message in it is erased. This cannot be undone — Restore session cannot bring it back.</text>}
-            onConfirm={() => void confirmSessionPurge(ctx, pool, analysis, threadId, seams)}
+            // The files question stacks over the name confirmation, exactly as the analysis delete
+            // stacks its own. The two steps ask different things: the first names what goes from the
+            // stores, and the second decides what happens to the files that the stores can no longer
+            // name.
+            onConfirm={() => {
+                ctx.openDialog(() => (
+                    <DeleteSessionFilesDialog sessionName={name} onDecided={(files) => void confirmSessionPurge(ctx, pool, analysis, threadId, files, seams)} />
+                ));
+            }}
         />
     ));
 }
 
 /**
- * Hard-delete the confirmed thread, then land the user on whatever the analysis has left. Lives beside
- * the confirmation rather than inside its `onConfirm` so the post-confirm ladder is testable headlessly
- * (the {@link confirmSessionDelete} shape); the dialog owns only the name match and its close.
+ * What became of the files of the threads that the erase took. A stayed page is not a failed delete,
+ * thus the union has no error member. The rows are gone, and no file work can bring one back.
+ *
+ * `stayed` names each directory that is still on disk. The list can be empty, because a root that does
+ * not resolve leaves the flow with no name to give.
+ */
+type ReportPageFate = { readonly kind: "kept" } | { readonly kind: "removed" } | { readonly kind: "stayed"; readonly dirs: readonly string[] };
+
+/**
+ * The absolute directory of one report session, under the workspace root of its analysis.
+ *
+ * `reportSessionDir` throws for an id that is not one safe path segment. Each id here comes from the
+ * erase, which mints its own. Thus the error arm is a guard against a future miswire, and not a path
+ * that a user meets.
+ */
+function reportPageDir(root: string, threadId: string): Result<string, { type: "unsafe_id" }> {
+    return Result.fromThrowable(
+        () => join(root, reportSessionDir(threadId)),
+        (): { type: "unsafe_id" } => ({ type: "unsafe_id" }),
+    )();
+}
+
+/**
+ * Remove the page directory of each thread that the erase took, and report what is still on disk.
+ *
+ * The removal is forced, thus a thread that owns no page costs one call and reports success. That is
+ * what lets the question come before the erase: the flow learns which threads went only after the
+ * point of no return, and a page that was never there is not a page that stayed.
+ *
+ * A root that does not resolve removes nothing and names nothing, and it reports as a page that stayed.
+ * Both facts read the same to the user, because the conversation is gone in each case and the files
+ * are not.
+ */
+async function reclaimReportPages(analysis: Analysis, erased: readonly string[], files: "keep" | "remove", seams: SessionSeams): Promise<ReportPageFate> {
+    if (files === "keep") return { kind: "kept" };
+
+    const root = seams.workspaceRootFor(analysis);
+    if (root === null) return { kind: "stayed", dirs: [] };
+
+    const stayed: string[] = [];
+    let unnamed = false;
+    for (const threadId of erased) {
+        const dir = reportPageDir(root, threadId).unwrapOr(null);
+        if (dir === null) {
+            // The guard refused the id, thus the flow has no path to remove and no name to print. The
+            // page stays, and the notice says so without naming it.
+            unnamed = true;
+            continue;
+        }
+        if (!(await seams.removeReportSessionDir(dir))) stayed.push(dir);
+    }
+    if (stayed.length === 0 && !unnamed) return { kind: "removed" };
+    return { kind: "stayed", dirs: stayed };
+}
+
+/** The tail of the delete notice, which gives the fate of the files in the words of {@link ReportPageFate}. */
+function describeReportPageFate(fate: ReportPageFate): string {
+    switch (fate.kind) {
+        case "kept":
+            return "its report files are kept";
+        case "removed":
+            return "its report files are removed";
+        case "stayed":
+            return fate.dirs.length === 0 ? "its report files stayed" : `these report files stayed: ${fate.dirs.join(", ")}`;
+    }
+}
+
+/**
+ * Hard-delete the confirmed thread, reclaim the files that the user chose to remove, then land the user
+ * on whatever the analysis has left. Lives beside the confirmation rather than inside its `onConfirm` so
+ * the post-confirm ladder is testable headlessly (the {@link confirmSessionDelete} shape); the dialog
+ * owns only the name match and its close.
+ *
+ * The erase runs first, because it gives the id of each thread that it took and nothing else can. A
+ * failed erase leaves each file where it is, because a page whose rows survive is still reachable.
+ *
+ * The file work runs BEFORE the unbind and the landing. The landing is another Postgres round trip, and
+ * a removal that raced it would run while the user is already on a different conversation.
  *
  * The landing repeats the removal flow's unbind-then-open, and the unbind matters more here: the row
  * the scope names is not merely tombstoned but gone, so a turn submitted across the landing's round
@@ -2087,24 +2233,29 @@ export async function confirmSessionPurge(
     pool: Pool,
     analysis: Analysis,
     threadId: string,
+    files: "keep" | "remove",
     seams: SessionSeams = realSessionSeams,
 ): Promise<void> {
-    await seams.purgeThread(pool, threadId).match(
-        async () => {
-            seams.notify({ kind: "info", text: "Session deleted — its transcript is gone." });
-            // Unbind BEFORE the landing's Postgres round trip. Across that window the scope would
-            // otherwise still name a thread id whose row no longer exists, and a turn submitted into it
-            // passes every gate: the id is non-null, and the thread store's create would mint the row
-            // back — resurrecting, as an empty conversation, the very thing the user just erased.
-            ctx.openSession(null, ctx.workingDir, analysis);
-            // Re-enter through the analysis-open path: it performs exactly the landing this needs —
-            // bind the surviving most-recent thread, else a fresh mint.
-            await openAnalysis(ctx, analysis, seams);
-        },
+    const purged = await seams.purgeThread(pool, threadId);
+    if (purged.isErr()) {
         // The thread is still there and still lists, so nothing is re-landed — leaving the user exactly
         // where they were is the truthful outcome of a deletion that did not happen.
-        async (e) => seams.notify({ kind: "error", text: `Failed: ${e.type}` }),
-    );
+        seams.notify({ kind: "error", text: `Failed: ${purged.error.type}` });
+        return;
+    }
+
+    const fate = await reclaimReportPages(analysis, purged.value, files, seams);
+    // One notice carries the erase and the fate of the files. A page that stayed warns and never reads
+    // as a failed delete, because the rows are gone and nothing can restore one.
+    seams.notify({ kind: fate.kind === "stayed" ? "warn" : "info", text: `Session deleted — its transcript is gone, and ${describeReportPageFate(fate)}.` });
+    // Unbind BEFORE the landing's Postgres round trip. Across that window the scope would
+    // otherwise still name a thread id whose row no longer exists, and a turn submitted into it
+    // passes every gate: the id is non-null, and the thread store's create would mint the row
+    // back — resurrecting, as an empty conversation, the very thing the user just erased.
+    ctx.openSession(null, ctx.workingDir, analysis);
+    // Re-enter through the analysis-open path: it performs exactly the landing this needs —
+    // bind the surviving most-recent thread, else a fresh mint.
+    await openAnalysis(ctx, analysis, seams);
 }
 
 /**
