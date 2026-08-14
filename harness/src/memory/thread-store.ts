@@ -29,6 +29,10 @@
  * reclamation vocabulary — `purgeAnalysis` reclaims an analysis's whole
  * persisted footprint, `purgeThread` one subtree's.
  *
+ * The directory of a report session takes the name of its thread id. Thus
+ * `purgeThread` gives back the ids that it erased, because a host that reclaims
+ * those directories has no other source for the set.
+ *
  * A purge creates no orphan of its own, but it is NOT serialized against a
  * concurrent `appendTurn`: `messages` carries no foreign key to
  * `cortex_analysis_threads`, and the append deliberately tolerates a missing
@@ -244,8 +248,14 @@ export interface ThreadStore {
      * of every one of them, removed together in one transaction. Unrecoverable —
      * nothing survives, and no tombstone marks that any of it existed. A
      * `thread_id` with no row succeeds as a no-op.
+     *
+     * The value holds the id of each thread that the purge erased, the named one
+     * and every descendant, in no promised order. A purge that erases nothing
+     * gives back an empty array. The directory of a report session takes the
+     * name of its thread id, thus a host that reclaims those directories has no
+     * other source for the set that went.
      */
-    purgeThread(threadId: string): ResultAsync<void, DbError>;
+    purgeThread(threadId: string): ResultAsync<readonly string[], DbError>;
     /**
      * Threads for one analysis, newest-updated first, paginated. Live threads
      * only unless `includeArchived` widens the set, and every type under every
@@ -516,7 +526,7 @@ export function createThreadStore(pool: Pool): ThreadStore {
         ).map(() => undefined);
     }
 
-    function purgeThread(threadId: string): ResultAsync<void, DbError> {
+    function purgeThread(threadId: string): ResultAsync<readonly string[], DbError> {
         // One transaction for every statement: `messages` is attributable to an
         // analysis only by joining through `cortex_analysis_threads`, so a metadata
         // row removed without its messages strands them beyond the reach of any
@@ -539,6 +549,11 @@ export function createThreadStore(pool: Pool): ThreadStore {
         // shares reads the very rows the last one removes. Thus a thread delete before
         // the others leaves the subtree unresolvable before a later statement names its
         // transcripts and its drafts.
+        //
+        // The last statement names the exact set of erased threads through the
+        // same walk, thus `RETURNING` is the whole source of the ids. A separate
+        // read cannot supply them: before the delete it costs a round trip on a
+        // set that can still change, and after it the rows are gone.
         return withTransaction(pool, "thread-store.purgeThread", (client) =>
             tryMutation("thread-store.purgeThread.messages", () =>
                 client.query(
@@ -558,14 +573,15 @@ export function createThreadStore(pool: Pool): ThreadStore {
                 )
                 .andThen(() =>
                     tryMutation("thread-store.purgeThread.thread", () =>
-                        client.query(
+                        client.query<{ thread_id: string }>(
                             `${SUBTREE_CTE}
-         DELETE FROM cortex_analysis_threads WHERE thread_id IN (SELECT thread_id FROM subtree)`,
+         DELETE FROM cortex_analysis_threads WHERE thread_id IN (SELECT thread_id FROM subtree)
+         RETURNING thread_id`,
                             [threadId],
                         ),
                     ),
                 )
-                .map(() => undefined),
+                .map(({ rows }) => rows.map((row) => row.thread_id)),
         );
     }
 
