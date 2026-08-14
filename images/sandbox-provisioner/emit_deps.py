@@ -3,9 +3,16 @@
 
 The graph is one file at the store root. A node is one store directory, and the
 name of that directory is the key of the node. A node carries its track, its
-import names, its entry points, and, for an R package, the name of the inner
-directory. An edge names another node exactly. The graph holds no version range,
-because pip and pak resolve each constraint at build time.
+canonical name, its version, its import names, its entry points, and, for an R
+package, the name of the inner directory. An edge names another node exactly. The
+graph holds no version range, because pip and pak resolve each constraint at build
+time.
+
+The graph also carries an order. `by_name` holds, for each track and each
+canonical name, the store directories of that name with the newest first. A
+consumer that names no version takes the head, and a consumer that names one reads
+the version of each node. A release comes before a pre-release, thus a pre-release
+heads a name only when the pool holds no release of that name.
 
 The unit of work is a resolved set, which is the closure of one farm. The emitter
 resolves each edge inside that set. Thus two farms that hold two versions of one
@@ -46,15 +53,16 @@ import subprocess
 import sys
 from importlib.metadata import Distribution
 from packaging.markers import InvalidMarker, Marker
-from packaging.version import InvalidVersion
+from packaging.version import InvalidVersion, Version
 from pathlib import Path
 
 # The graph, at the store root. The name is part of the store contract, because a
 # consumer reads the closure from it.
 GRAPH_NAME = "deps.json"
 
-# The schema version of the graph. A reader checks it before it trusts a field.
-GRAPH_VERSION = 1
+# The schema version of the graph. A reader that does not know this version refuses
+# the graph, because a field of another shape gives a wrong answer in silence.
+GRAPH_VERSION = 2
 
 # The packages that the image owns, recorded beside the emitter.
 BASE_PACKAGES_FILE = Path(__file__).with_name("base-packages.json")
@@ -169,6 +177,70 @@ def edge_name(requirement: str, env: dict[str, str]) -> str | None:
             log(f"WARNING: cannot read the marker {marker.strip()!r} ({exc}); "
                 f"the emitter keeps the edge to {name}")
     return name
+
+
+# --- The version order --------------------------------------------------------
+# The pool can hold more than one version of one name, and a consumer that names no
+# version wants the newest. A sort of the text gives the wrong answer, because
+# `1.10.3` sorts before `1.9.0` and is the later version. The emitter runs where the
+# version rules of both ecosystems are, thus it sorts one time and the graph carries
+# the answer. A second sort on a host puts one rule in two places.
+
+def dir_version(key: str, name: str) -> str:
+    """The version that a store-directory name records.
+
+    A store directory is named `<canonical name>-<version>-<hash16>`. The name and
+    the hash carry no ambiguity, but the version can hold a hyphen, because an R
+    version accepts one as a separator. Thus this function removes the known name
+    and the last field only, and it never splits on each hyphen.
+    """
+    rest = key[len(name) + 1:] if key.startswith(f"{name}-") else key
+    version, _, _digest = rest.rpartition("-")
+    return version or rest
+
+
+def version_key(track: str, version: str) -> tuple:
+    """The sort key of one version, for a descending sort inside one name.
+
+    The first part of the key is the rank. A release ranks above a pre-release,
+    thus a pre-release heads a name only when the pool holds no release of that
+    name. A version that this function cannot read ranks below both.
+
+    The second part is the ordered value of the ecosystem. `packaging.version`
+    gives it for Python, thus an epoch, a post-release, and a local version each
+    order as PEP 440 states. For R the value is the numbers of the dotted-decimal
+    form, which accepts a period and a hyphen as separators.
+
+    The third part is the raw text, and it makes the order of two equal values
+    stable.
+    """
+    if track == "python":
+        try:
+            parsed = Version(version)
+        except InvalidVersion:
+            return (0, Version("0"), version)
+        return (1 if parsed.is_prerelease else 2, parsed, version)
+    parts = re.split(r"[.-]", version)
+    if version and all(part.isdigit() for part in parts):
+        return (2, tuple(int(part) for part in parts), version)
+    return (0, (), version)
+
+
+def order_by_name(nodes: dict[str, dict]) -> dict[str, dict[str, list[str]]]:
+    """The store directories of each canonical name, newest first, inside a track.
+
+    The track separates the two maps. One canonical name can reach a distribution
+    of each ecosystem, and the two versions of such a pair order under two rules.
+    """
+    ordering: dict[str, dict[str, list[str]]] = {"python": {}, "r": {}}
+    for key, node in nodes.items():
+        ordering[node["track"]].setdefault(node["name"], []).append(key)
+    for track, by_name in ordering.items():
+        for keys in by_name.values():
+            keys.sort(reverse=True,
+                      key=lambda store_dir, track=track: version_key(
+                          track, nodes[store_dir]["version"]))
+    return ordering
 
 
 # --- The nodes ----------------------------------------------------------------
@@ -329,21 +401,26 @@ def collect(store_dirs: list[Path], env: dict[str, str] | None = None) -> dict[s
         if info is not None:
             dist = Distribution.at(info)
             fallback, _version = _name_and_version(info)
-            name = _metadata_name(dist) or fallback
+            name = canon(_metadata_name(dist) or fallback)
             nodes[key] = {
                 "track": "python",
+                "name": name,
+                "version": dir_version(key, name),
                 "imports": import_names(store_dir, dist),
                 "entry_points": entry_point_names(dist),
             }
-            index["python"][canon(name)] = key
+            index["python"][name] = key
             wanted[key] = ("python",
                            [n for n in (edge_name(req, env) for req in _requirements(dist))
                             if n])
             continue
         inner = r_package_of(store_dir)
         if inner is not None:
+            name = canon(inner.name)
             nodes[key] = {
                 "track": "r",
+                "name": name,
+                "version": dir_version(key, name),
                 "imports": [inner.name],
                 "entry_points": [],
                 "r_dir": inner.name,
@@ -387,7 +464,13 @@ def farm_closure(farm: Path, store_root: Path) -> list[Path]:
 
 
 def read_graph(store_root: Path) -> dict:
-    """The published graph, or an empty graph when the store carries none."""
+    """The published graph, or an empty graph when the store carries none.
+
+    A graph of another schema version stops the run. Its nodes carry the fields of
+    that version, thus the emitter cannot order them and cannot merge them. A
+    silent overwrite is worse, because it drops each store directory that the older
+    graph names.
+    """
     path = store_root / GRAPH_NAME
     try:
         graph = json.loads(path.read_text())
@@ -395,7 +478,10 @@ def read_graph(store_root: Path) -> dict:
         return {"version": GRAPH_VERSION, "nodes": {}}
     if not isinstance(graph, dict) or not isinstance(graph.get("nodes"), dict):
         return {"version": GRAPH_VERSION, "nodes": {}}
-    graph["version"] = GRAPH_VERSION
+    if graph.get("version") != GRAPH_VERSION:
+        raise SystemExit(
+            f"[deps] {path} carries the schema version {graph.get('version')!r}, "
+            f"and this emitter reads the schema version {GRAPH_VERSION}.")
     return graph
 
 
@@ -438,6 +524,9 @@ def _merge(store_root: Path, batches: list[list[Path]]) -> dict:
     directory is content-addressed and write-once, thus its metadata cannot
     change, and a second read gives the same node.
 
+    The emitter derives the order again over the whole graph, because a node of
+    this batch can head a name that the graph already holds.
+
     Each batch resolves its edges INSIDE itself, thus a batch that is not closed
     leaves an edge under its bare name and the gate stops the run. That is the
     check the caller wants: a farm closure and an install closure are each closed
@@ -451,6 +540,7 @@ def _merge(store_root: Path, batches: list[list[Path]]) -> dict:
         for key, node in collect(batch, env).items():
             nodes.setdefault(key, node)
     gate(nodes)
+    graph["by_name"] = order_by_name(nodes)
     write_graph(store_root, graph)
     log(f"{len(nodes)} node(s) in {GRAPH_NAME} ({len(nodes) - before} added)")
     return graph

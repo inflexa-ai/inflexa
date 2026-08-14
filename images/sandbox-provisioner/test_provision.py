@@ -90,6 +90,14 @@ Warm cache and farm source coverage map (test -> task of the change
   ImageOwnedPackageTests.test_a_stale_name_fails_and_names_the_package          -> 6.2
   ImageOwnedPackageTests.test_the_recorded_list_matches_the_sandbox_image       -> 6.1/6.2
 
+Version order coverage map (test -> task of the change
+``harness/openspec/changes/agent-requested-packages``):
+  DependencyGraphTests.test_three_versions_of_one_name_order_newest_first    -> 1.1/1.6
+  DependencyGraphTests.test_the_python_order_reads_pep_440                   -> 1.2
+  DependencyGraphTests.test_the_r_order_reads_the_dotted_decimal_rule        -> 1.3
+  DependencyGraphTests.test_a_release_heads_the_name_and_a_pre_release_follows_it -> 1.4
+  DependencyGraphTests.test_a_graph_of_another_schema_version_stops_the_run  -> 1.5
+
 Task 3.4 is NOT covered here. The effectiveness check runs in a `sandbox-base`
 container, against a cache that a real numba run wrote. The check is
 ``scripts/lib-store-cache-check.py``, and the ``cache`` section of
@@ -965,9 +973,10 @@ class ProvisionRunTests(StoreTestCase):
         self.assertIn("cannot resolve the farm", message)
         self.assertIn(str(provision.LIBS / "current"), message)   # the mount it wants
         self.assertIn(str(farm), message)                          # and what to bind there
-        # No cache was written, and no warm child ran at all.
-        self.assertFalse((farm / "numba-cache").exists())
-        self.assertFalse((farm / "matplotlib_config").exists())
+        # No cache was written, and no warm child ran at all. The prepared cache
+        # lands in the shared home, thus the home is where an early write would show.
+        self.assertFalse((provision.cache_home() / "numba-cache").exists())
+        self.assertFalse((provision.cache_home() / "matplotlib_config").exists())
         self.assertEqual(self.warm_paths, [])
         self.assertEqual(json.loads((farm / "lock.json").read_text())["warm"], {})
 
@@ -1103,7 +1112,9 @@ class ProvisionRunTests(StoreTestCase):
 
         script = provision.STORE / "warmup.py"
         script.write_bytes(b"import foo\n")
-        cache = farm / "numba-cache"
+        # The entries land in the shared home, thus the key of the record is relative
+        # to the home and never to the farm that the run prepared.
+        cache = provision.cache_home() / "numba-cache"
         self.cache_events = {
             "foo": [("loaded from", f"{cache}/foo_a1/foo.at_import-3.py311.1.nbc")],
             str(script): [
@@ -1140,6 +1151,202 @@ class ProvisionRunTests(StoreTestCase):
         self.assertIn("cannot also warm it", message)
         self.assertIn(str(provision.LIBS / "current"), message)
         self.assertEqual(self.calls, [])            # nothing resolved, nothing installed
+
+
+class AcquisitionWarmTests(StoreTestCase):
+    """The warm of an acquisition run, and the one home of a prepared cache.
+
+    An acquisition run that names a workload prepares what it acquired. It links the
+    closure into the farm that the bind resolves, then it warms through that bind.
+    Each prepared entry lands in the shared home, which is the catalog farm, thus a
+    second farm that links the same store directory loads the entry.
+
+    A unit test stands a symlink in for the bind, because a bind mount needs a
+    privilege that a host test does not hold. Both put a farm at the one path that a
+    sandbox imports from.
+    """
+
+    FOO_1 = "foo==1.0 \\\n    --hash=sha256:aaa\n"
+    FOO_1_TREE = {"foo/__init__.py": "x = 1\n",
+                  "foo-1.0.dist-info/RECORD": "foo/__init__.py,,\n"}
+    BAR_2 = "bar==2.0 \\\n    --hash=sha256:bbb\n"
+    BAR_2_TREE = {"bar/__init__.py": "y = 2\n",
+                  "bar-2.0.dist-info/RECORD": "bar/__init__.py,,\n"}
+
+    def setUp(self):
+        super().setUp()
+        # The environment of each warm-up child. The fake of the base class records
+        # the PYTHONPATH only, and the two cache destinations are what these tests
+        # judge. The wrapper also writes each cache file that the child reports,
+        # because numba writes an entry file into NUMBA_CACHE_DIR and the record of
+        # a later run reads it back.
+        self.warm_env: list[dict[str, str]] = []
+        inner = provision.subprocess.run
+
+        def spy(cmd, *rest, **kwargs):
+            argv = list(cmd)
+            if argv[:1] == [provision.PYTHON]:
+                self.warm_env.append(dict(kwargs.get("env") or {}))
+                target = argv[-1].split()[-1] if argv[1:2] == ["-c"] else argv[-1]
+                for _event, path in self.cache_events.get(target, []):
+                    Path(path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(path).write_text("entry\n")
+            return inner(cmd, *rest, **kwargs)
+
+        provision.subprocess.run = spy
+
+    def _main(self, argv: list[str]) -> int:
+        """Drive the whole entry point, thus the routing of the arguments is under test."""
+        original = sys.argv
+        sys.argv = ["provision", *argv]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                return provision.main()
+        finally:
+            sys.argv = original
+
+    def _run(self, farm: str, specs: list[str] | None = None, **over) -> int:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return provision._provision(self._args(farm, specs, **over))
+
+    @staticmethod
+    def _bind(farm: Path) -> None:
+        """Put `farm` at the path that a sandbox imports from, as the invoker does."""
+        current = provision.LIBS / "current"
+        if current.is_symlink():
+            current.unlink()
+        current.symlink_to(farm)
+
+    def _entries(self, cache: Path) -> list[str]:
+        return sorted(str(p.relative_to(cache)) for p in cache.rglob("*") if p.is_file())
+
+    def test_an_acquisition_warms_into_the_shared_home_and_not_the_bound_farm(self):
+        """§2.4: the cache of an acquisition run lands in the shared home.
+
+        The import path sets the key of an entry, and the cache path sets where the
+        entry lands. The run binds a farm that holds the new package, thus the key is
+        the key that each sandbox produces. It points the cache at the home, thus one
+        preparation serves each farm that links the package.
+        """
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        scratch = provision.FARMS / "an1"
+        scratch.mkdir()
+        self._bind(scratch)
+
+        self.assertEqual(self._main(["foo", "--warm", "foo"]), 0)
+
+        # The run linked what it acquired into the bound farm, thus the workload
+        # imports the new package through the path that a sandbox resolves.
+        self.assertTrue((scratch / "python" / "site-packages" / "foo").is_symlink())
+        self.assertEqual(len(self.warm_paths), 2)   # one pass prepares, one records
+        for given, resolved in self.warm_paths:
+            self.assertEqual(given, str(provision.LIBS / "current" / "python" / "site-packages"))
+            self.assertEqual(resolved, os.path.realpath(scratch / "python" / "site-packages"))
+
+        home = provision.cache_home()
+        self.assertEqual(home, provision.FARMS / "catalog")
+        for env in self.warm_env:
+            self.assertEqual(env["NUMBA_CACHE_DIR"], str(home / "numba-cache"))
+            self.assertEqual(env["MPLCONFIGDIR"], str(home / "matplotlib_config"))
+        self.assertTrue((home / "numba-cache").is_dir())
+        self.assertTrue((home / "matplotlib_config").is_dir())
+        # The farm that the run bound carries no cache of its own. A cache in that
+        # farm would die with the farm, and each other farm would compile again.
+        self.assertFalse((scratch / "numba-cache").exists())
+        self.assertFalse((scratch / "matplotlib_config").exists())
+        # The acquisition published no farm: the bind still holds the same directory.
+        self.assertFalse((provision.FARMS / ".staging-an1").exists())
+        self.assertEqual(os.path.realpath(provision.LIBS / "current"),
+                         os.path.realpath(scratch))
+
+    def test_a_package_acquired_after_the_catalog_build_loads_in_a_second_farm(self):
+        """§2.5: a distribution that reaches the pool after the catalog build carries
+        prepared entries, and a second farm loads them.
+
+        The catalog build prepares the packages of the catalog. An acquisition adds
+        one distribution and prepares it into the same home. A farm that links that
+        store directory then resolves it at the same container path, thus the key of
+        each entry matches and the farm loads what the acquisition prepared.
+        """
+        home_cache = provision.cache_home() / "numba-cache"
+
+        # The catalog build, and the preparation run that follows it.
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        self.assertEqual(self._run("catalog", ["foo"]), 0)
+        self._bind(provision.cache_home())
+        self.cache_events = {"foo": [("loaded from", f"{home_cache}/foo_a1/foo.k-1.py311.1.nbc")]}
+        self.assertEqual(self._run("catalog", warm="foo"), 0)
+        self.assertEqual(self._entries(home_cache), ["foo_a1/foo.k-1.py311.1.nbc"])
+
+        # The acquisition of a distribution that the catalog build never saw.
+        self.compile_text = self.BAR_2
+        self.install_tree = dict(self.BAR_2_TREE)
+        self.cache_events = {"bar": [("loaded from", f"{home_cache}/bar_b2/bar.k-1.py311.1.nbc")]}
+        scratch = provision.FARMS / "an1"
+        scratch.mkdir()
+        self._bind(scratch)
+        self.assertEqual(self._main(["bar", "--warm", "bar"]), 0)
+
+        prepared = self._entries(home_cache)
+        self.assertEqual(prepared, ["bar_b2/bar.k-1.py311.1.nbc", "foo_a1/foo.k-1.py311.1.nbc"])
+        self.assertFalse((scratch / "numba-cache").exists())
+
+        # A second farm links the same store directory of bar.
+        second = provision.FARMS / "an2"
+        self.assertEqual(self._run("an2", ["bar"]), 0)
+        self.assertEqual(os.readlink(second / "python" / "site-packages" / "bar"),
+                         os.readlink(scratch / "python" / "site-packages" / "bar"))
+
+        self._bind(second)
+        self.warm_env.clear()
+        self.assertEqual(self._run("an2", warm="bar"), 0)
+
+        # The second farm read the entries of the acquisition: one cache root, one
+        # import path, thus one key for one distribution.
+        for env in self.warm_env:
+            self.assertEqual(env["NUMBA_CACHE_DIR"], str(home_cache))
+        for given, _resolved in self.warm_paths[-2:]:
+            self.assertEqual(given, str(provision.LIBS / "current" / "python" / "site-packages"))
+        recorded = json.loads((second / "lock.json").read_text())["warm_workload"]["cache_entries"]
+        self.assertEqual(recorded, ["bar_b2/bar.k-1.py311.1.nbc"])
+        # It prepared nothing again, and it carries no cache of its own.
+        self.assertEqual(self._entries(home_cache), prepared)
+        self.assertFalse((second / "numba-cache").exists())
+
+    def test_an_acquisition_warm_without_a_bound_farm_fails_and_names_the_mount(self):
+        """The bind is the job of the invoker, for an acquisition run as well.
+
+        A cache that the run writes through another path never loads. Thus a run that
+        resolves no farm at that path fails, and it names the mount that it wants.
+        """
+        self.compile_text = self.FOO_1
+        self.install_tree = dict(self.FOO_1_TREE)
+        bind = provision.LIBS / "current"
+
+        # No bind at all: the run cannot even write its probe.
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            self._main(["foo", "--warm", "foo"])
+        self.assertIn(str(bind), str(cm.exception))
+        self.assertIn("read-write", str(cm.exception))
+
+        # The runtime makes the mount point when the invoker names no source. Such a
+        # directory is no farm, thus the run stops there too.
+        bind.mkdir()
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            self._main(["foo", "--warm", "foo"])
+        self.assertIn("resolves no farm", str(cm.exception))
+        self.assertIn(str(provision.FARMS), str(cm.exception))
+
+        # The acquisition itself completed, thus a run again reuses the store
+        # directory and the graph holds the node.
+        self.assertEqual(len(list(provision.STORE.glob("foo-1.0-*"))), 1)
+        self.assertTrue((provision.LIBS / "deps.json").is_file())
+        # The failed warm wrote no cache and left no probe behind.
+        self.assertFalse((provision.cache_home() / "numba-cache").exists())
+        self.assertEqual(sorted(p.name for p in bind.iterdir()), [])
+        self.assertEqual(self.warm_env, [])
 
 
 class TrackPreservationTests(StoreTestCase):
@@ -2190,6 +2397,91 @@ class DependencyGraphTests(StoreTestCase):
                 if depth == 0:
                     return text[start:at + 1]
         raise AssertionError(f"the node {key} has no closing brace")
+
+    # --- The version order ----------------------------------------------------
+    # The graph records the store directories of one canonical name, newest first.
+    # A consumer takes the head, thus no host sorts a version again.
+
+    def test_three_versions_of_one_name_order_newest_first(self):
+        """1.6: the order is numeric, thus 1.10.3 comes before 1.9.0."""
+        old = self._python_store_dir("alpha", "1.9.0", [])
+        mid = self._python_store_dir("alpha", "1.10.3", [])
+        new = self._python_store_dir("alpha", "2.0", [])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph = emit_deps.append_store_dirs(provision.LIBS, [old, mid, new])
+
+        self.assertEqual(graph["by_name"]["python"]["alpha"],
+                         [new.name, mid.name, old.name])
+        # The node of each store directory carries the name and the version that the
+        # order reads. Thus a consumer that names a version resolves it in the graph.
+        self.assertEqual(graph["nodes"][mid.name]["name"], "alpha")
+        self.assertEqual(graph["nodes"][mid.name]["version"], "1.10.3")
+
+    def test_the_python_order_reads_pep_440(self):
+        """1.2: an epoch, a post-release, and a local version each order as PEP 440
+        states."""
+        base = self._python_store_dir("alpha", "1.0", [])
+        local = self._python_store_dir("alpha", "1.0+cu12", [])
+        post = self._python_store_dir("alpha", "1.0.post1", [])
+        epoch = self._python_store_dir("alpha", "1!0.1", [])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph = emit_deps.append_store_dirs(provision.LIBS,
+                                                [base, local, post, epoch])
+
+        self.assertEqual(graph["by_name"]["python"]["alpha"],
+                         [epoch.name, post.name, local.name, base.name])
+
+    def test_a_release_heads_the_name_and_a_pre_release_follows_it(self):
+        """1.4: version 2.0 heads the name, and version 2.1rc1 follows it. The node
+        of the pre-release records its version, thus an explicit version reaches it.
+        A name that holds no release keeps its pre-release."""
+        release = self._python_store_dir("alpha", "2.0", [])
+        pre = self._python_store_dir("alpha", "2.1rc1", [])
+        lone = self._python_store_dir("beta", "3.0b1", [])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph = emit_deps.append_store_dirs(provision.LIBS, [release, pre, lone])
+
+        self.assertEqual(graph["by_name"]["python"]["alpha"], [release.name, pre.name])
+        self.assertEqual(graph["nodes"][pre.name]["version"], "2.1rc1")
+        self.assertEqual(graph["by_name"]["python"]["beta"], [lone.name])
+
+    def test_the_r_order_reads_the_dotted_decimal_rule(self):
+        """1.3: an R version accepts a hyphen as a separator, and each part orders as
+        a number."""
+        old = self._r_store_dir("myRpkg", "0.99.0-3")
+        mid = self._r_store_dir("myRpkg", "0.99.0-10")
+        new = self._r_store_dir("myRpkg", "1.2.3")
+
+        def fake(cmd, *args, **kwargs):
+            """The stand-in for read.dcf. Each package here names no dependency."""
+            lines = "".join(f"{path}\t\n" for path in kwargs["input"].splitlines())
+            return SimpleNamespace(returncode=0, stdout=lines, stderr="")
+
+        provision.subprocess.run = fake
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph = emit_deps.append_store_dirs(provision.LIBS, [old, mid, new])
+
+        self.assertEqual(graph["by_name"]["r"]["myrpkg"],
+                         [new.name, mid.name, old.name])
+        self.assertEqual(graph["nodes"][mid.name]["version"], "0.99.0-10")
+
+    def test_a_graph_of_another_schema_version_stops_the_run(self):
+        """1.5: the emitter reads one schema version. A graph of another version
+        stops the run, and the run writes nothing over it."""
+        graph_path = provision.LIBS / "deps.json"
+        older = json.dumps({"version": emit_deps.GRAPH_VERSION - 1, "nodes": {}}) + "\n"
+        graph_path.write_text(older)
+        alpha = self._python_store_dir("alpha", "1.0", [])
+
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            emit_deps.append_store_dirs(provision.LIBS, [alpha])
+
+        self.assertIn(str(emit_deps.GRAPH_VERSION - 1), str(cm.exception))
+        self.assertIn(str(emit_deps.GRAPH_VERSION), str(cm.exception))
+        self.assertEqual(graph_path.read_text(), older)
 
 
 # --- The image-owned package list ---------------------------------------------

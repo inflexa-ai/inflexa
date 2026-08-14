@@ -41,10 +41,20 @@ the sandbox imports from, thus a warm through any other path gives a cache that
 the sandbox cannot load. A run that cannot resolve the farm at that path fails,
 and it names the bind that it wants. Refer to warm().
 
-A run that warms the caches builds no farm. A publish replaces the farm directory,
-and the bind of the container then holds the directory that the publish
-superseded. Thus the preparation of the caches is a run of its own: it names the
-farm and the workload, and it passes no spec.
+A warm has two shapes. A run with --farm prepares the caches of the farm that an
+earlier run published, and it passes no spec. A publish replaces the farm
+directory, and the bind of the container then holds the directory that the publish
+superseded. Thus that shape builds no farm.
+
+An ACQUISITION run with a workload prepares what it acquired. It links the closure
+into the farm that the bind resolves, then it warms through the bind. It publishes
+nothing, thus the bind keeps the directory that the run extended.
+
+Each prepared cache lands in the shared cache home, and never in the farm that the
+run bound. The home is the catalog farm, and every analysis farm links its cache
+directories there. The import path sets the key of a numba entry, and the cache
+path sets where the entry lands. Thus one preparation serves each farm that links
+the package. Refer to cache_home().
 
 That /mnt/libs is mounted at the SAME path here (read-write) and in the sandbox
 (read-only) is the load-bearing detail. It is what makes a farm symlink written
@@ -405,6 +415,12 @@ def link_tree(dst: Path, src: str, collisions: list[str]) -> None:
             link.symlink_to(target)
         elif link.is_symlink():
             previous = os.readlink(link)
+            if previous == target:
+                # One link that names one target is not a collision. An acquisition
+                # run extends a farm that can already hold a store directory of the
+                # closure, and the link that it holds is the link that this step
+                # writes. A build never reaches this, because it makes the track again.
+                continue
             previous_name, target_name = store_dir_name(previous), store_dir_name(target)
             if previous_name is not None and previous_name == target_name:
                 raise SystemExit(
@@ -492,6 +508,34 @@ def build_farm(farm: Path, store_dirs: list[Path]) -> list[str]:
             link.symlink_to(f"../site-packages/bin/{entry}")
 
     log(f"farm: {len(list(site.iterdir()))} top-level entries, {len(collisions)} collision(s)")
+    for c in collisions:
+        log(f"  collision {c}")
+    return collisions
+
+
+def extend_farm(farm: Path, store_dirs: list[Path]) -> list[str]:
+    """Add the links of `store_dirs` to the Python track of a farm that a bind holds.
+
+    An acquisition run that warms needs the acquired package at the path that the
+    sandbox imports from. Only the bind of the invoker puts a farm at that path, and
+    this same run installs the package. Thus the run links the closure into the bound
+    farm, and the farm then holds the new package.
+
+    The step adds links, and it publishes nothing. A publish replaces the farm
+    directory, and the bind of the container holds the directory that the publish
+    superseded. An added link changes no directory, thus the bind stays on the farm
+    that this step extended.
+
+    It writes the links of the closure only. It hoists no console script, because the
+    run imports the packages and it starts no command of a package.
+    """
+    site = farm / "python" / "site-packages"
+    site.mkdir(parents=True, exist_ok=True)
+    collisions: list[str] = []
+    for store_dir in store_dirs:
+        link_tree(site, str(store_dir), collisions)
+    log(f"extended the bound farm '{farm.name}': {len(store_dirs)} store dir(s), "
+        f"{len(collisions)} collision(s)")
     for c in collisions:
         log(f"  collision {c}")
     return collisions
@@ -914,6 +958,32 @@ def provision_r(farm: Path, manifest: Path) -> dict:
             "r_version": r_version_of(manifest), "bioc_releases": releases}
 
 
+# The two prepared caches, by the directory name that each one carries in a farm.
+# The sandbox copies both to a writable path before a workload runs, because numba
+# selects a cache directory by a write probe and it skips a read-only one.
+NUMBA_CACHE = "numba-cache"
+MPL_CACHE = "matplotlib_config"
+WARM_CACHES = (NUMBA_CACHE, MPL_CACHE)
+
+# The template farm that the store download brings. Each analysis farm links its two
+# cache directories into this one farm, thus the store holds one prepared cache and
+# not one for each analysis. The host composer writes those links.
+CATALOG_FARM = "catalog"
+
+
+def cache_home() -> Path:
+    """The one directory that holds each prepared cache of the store.
+
+    A cache key holds the container path of the source, and every farm resolves one
+    distribution at one container path. Thus one preparation serves each farm that
+    links the package, and the prepared cache needs one home only.
+
+    This is a function and not a constant, because FARMS is a module global that a
+    test points at a temporary store.
+    """
+    return FARMS / CATALOG_FARM
+
+
 # numba names each cache data file after the function and the absolute directory of
 # its source, and NUMBA_DEBUG_CACHE reports each file that it loads or saves. The
 # effectiveness check parses the same two lines, thus the two sides must agree on
@@ -938,6 +1008,43 @@ def cache_entry_key(path: str, root: Path) -> str:
     return path if rel.startswith("..") else rel
 
 
+def bound_farm() -> Path:
+    """The farm that the bind at /mnt/libs/current resolves.
+
+    An acquisition run that warms must extend the bound farm, and it receives no
+    name for that farm. The store carries no pointer, thus the run reads the bind
+    itself.
+
+    A bind mount is not a symlink, thus no comparison of two paths names the farm
+    behind the bind. The run writes one probe through the bind, then it reads each
+    farm. The farm that holds the probe is the farm of the bind. The name of the
+    probe is new, thus no cache of the engine holds a miss for it.
+    """
+    bind = LIBS / "current"
+    want = (f"The invoker must bind the farm of this run at {bind}, read-write, "
+            f"nested inside the store-root bind. A numba cache key holds the source "
+            f"path that the sandbox imports from, thus a cache that this run writes "
+            f"through another path never loads.")
+    probe = bind / f".inflexa-bind-probe-{uuid.uuid4().hex}"
+    try:
+        probe.write_text("probe\n")
+    except OSError as exc:
+        raise SystemExit(
+            f"[provision] the run cannot write a probe at {bind} ({exc}). {want}") from exc
+    try:
+        for candidate in sorted(FARMS.iterdir()) if FARMS.is_dir() else []:
+            # A dot-directory is a staging or a superseded farm of an interrupted
+            # swap, and no invoker binds one.
+            if candidate.name.startswith(".") or not candidate.is_dir():
+                continue
+            if (candidate / probe.name).is_file():
+                return candidate
+    finally:
+        probe.unlink(missing_ok=True)
+    raise SystemExit(
+        f"[provision] the bind at {bind} resolves no farm under {FARMS}. {want}")
+
+
 def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, object]:
     """Pre-build numba JIT and matplotlib font caches into the store.
 
@@ -947,8 +1054,8 @@ def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, object
     locator is skipped entirely — for reads as well as writes — and everything
     recompiles. Measured: a read-only cache directory produces 30 saves and 0
     loads; the same directory made writable produces 30 loads and 0 saves. So the
-    cache is built here into the farm, and the sandbox copies it to a writable
-    path before use.
+    cache is built here into the shared home, and the sandbox copies it to a
+    writable path before use.
 
     Importing a module is NOT enough to populate it. numba compiles at first CALL,
     so an import-only warm-up leaves the cache empty — measured 0 cache files after
@@ -1000,8 +1107,13 @@ def warm(farm: Path, modules: list[str], script: str | None) -> dict[str, object
             f"other path never loads.")
     env = dict(os.environ)
     env["PYTHONPATH"] = str(LIBS / "current" / "python" / "site-packages")
-    env["MPLCONFIGDIR"] = str(farm / "matplotlib_config")
-    env["NUMBA_CACHE_DIR"] = str(farm / "numba-cache")
+    # The cache lands in the shared home, and never in the farm that the run bound.
+    # The import path above sets the key of an entry, and this path sets where the
+    # entry lands. The two values are independent, thus a run that acquires a package
+    # writes the entry of that package where each farm already links.
+    home = cache_home()
+    env["MPLCONFIGDIR"] = str(home / MPL_CACHE)
+    env["NUMBA_CACHE_DIR"] = str(home / NUMBA_CACHE)
     if os.uname().machine == "aarch64":
         # Autodetecting the host CPU crashes LLVM codegen on newer arm64 cores.
         # The sandbox must set the identical value or every cache entry misses.
@@ -1106,8 +1218,10 @@ def prepare_caches(farm: Path, args) -> int:
     }
     lock["warm"] = results
     lock_path.write_text(json.dumps(lock, indent=2) + "\n")
-    # The caches that the warm wrote get the mode the sandbox reads them with.
-    subprocess.run(["chmod", "-R", "a+rX", str(farm)], check=True)
+    # The caches land in the shared home, and the record of the run lands in the
+    # farm. Each of the two gets the mode that the sandbox reads it with.
+    for target in sorted({cache_home(), farm}):
+        subprocess.run(["chmod", "-R", "a+rX", str(target)], check=True)
     log(f"farm '{farm.name}' prepared: "
         f"{len(lock['warm_workload']['cache_entries'])} cache entry(s) recorded")
     return 0
@@ -1405,13 +1519,19 @@ def remove_farm(farm_name: str) -> int:
 
 
 def _acquire(args) -> int:
-    """Acquire the specs into the pool, and build no farm.
+    """Acquire the specs into the pool, and publish no farm.
 
     This is what `inflexa store add` runs. The store carries no active farm, thus an
-    acquisition has no farm to write: it resolves the closure of the specs, it
+    acquisition has no farm to publish: it resolves the closure of the specs, it
     installs each distribution into the content-addressed pool, and it appends the
     resolved edges to the dependency graph. The farm of an analysis changes only
     through composition, which the host does with no container.
+
+    A run that names a workload also prepares what it acquired. A distribution that
+    reaches the pool after the catalog build carries no prepared entry, thus its
+    compiled kernels build again at each first call, on each machine. The run links
+    the closure into the bound farm, and it warms into the shared cache home. Refer
+    to extend_farm and to cache_home.
 
     The graph append is the whole commit of the run, thus it is the only step under
     the commit mutex. The pool writes before it are private to this run: a store
@@ -1441,7 +1561,21 @@ def _acquire(args) -> int:
     with commit_lock():
         emit_deps.append_store_dirs(LIBS, store_dirs)
 
-    log(f"acquired {len(resolved)} distribution(s) into the pool; no farm was built")
+    # The preparation comes after the commit, because the pool and the graph are the
+    # acquisition itself. The run keeps each acquired distribution when a workload
+    # fails, thus a later run reuses the store directories of this one.
+    modules = [m for m in args.warm.split(",") if m]
+    if modules or args.warm_script:
+        farm = bound_farm()
+        extend_farm(farm, store_dirs)
+        results = warm(farm, modules, args.warm_script)
+        # The prepared cache gets the mode that the sandbox reads it with. The links
+        # of the farm need none, because the mode of a symlink governs nothing.
+        subprocess.run(["chmod", "-R", "a+rX", str(cache_home())], check=True)
+        prepared = results["cache_entries"]
+        log(f"prepared {len(prepared)} cache entry(s) into {cache_home()}")
+
+    log(f"acquired {len(resolved)} distribution(s) into the pool; no farm was published")
     return 0
 
 
@@ -1467,7 +1601,9 @@ def _provision(args) -> int:
                 f"publish replaces the directory that the bind at {LIBS / 'current'} "
                 f"holds, thus the warm would write a cache into the farm that the "
                 f"publish superseded. Build the farm in one run. Then prepare the "
-                f"caches in a run of its own, with no spec and with the farm bound.")
+                f"caches in a run of its own, with no spec and with the farm bound. "
+                f"An acquisition run publishes no farm, thus that run warms the "
+                f"distributions that it acquires.")
         return prepare_caches(farm, args)
 
     staging = FARMS / (FARM_STAGING + args.farm)
@@ -1521,7 +1657,7 @@ def _provision(args) -> int:
     # real files, thus it moves rather than copies. Cache preservation is an
     # optimization, thus a move that fails is logged, never fatal, and the cache
     # rebuilds on the next warm.
-    for cache in ("numba-cache", "matplotlib_config"):
+    for cache in WARM_CACHES:
         src = farm / cache
         if src.is_dir():
             try:
@@ -1619,7 +1755,7 @@ def main() -> int:
         epilog=(
             "The invoker binds the store root read-write at /mnt/libs.\n"
             "\n"
-            "With no --farm the run acquires its specs into the pool and builds no\n"
+            "With no --farm the run acquires its specs into the pool and publishes no\n"
             "farm. The host composes the farm of each analysis from that pool.\n"
             "\n"
             "A run that warms the caches (--warm, --warm-script) needs a second bind:\n"
@@ -1629,13 +1765,19 @@ def main() -> int:
             "that path. A run that cannot resolve the farm there fails, and it names\n"
             "the bind that it wants.\n"
             "\n"
-            "Such a run passes no spec, because it prepares the caches of a farm that\n"
-            "an earlier run published. A publish replaces the farm directory, and the\n"
-            "bind of the container then holds the directory that the publish\n"
-            "superseded. Thus one run builds the farm, and the next one prepares it."))
+            "A run with --farm passes no spec, because it prepares the caches of a\n"
+            "farm that an earlier run published. A publish replaces the farm\n"
+            "directory, and the bind of the container then holds the directory that\n"
+            "the publish superseded. Thus one run builds the farm, and the next one\n"
+            "prepares it.\n"
+            "\n"
+            "An acquisition run with a workload prepares what it acquired. It links\n"
+            "the closure into the bound farm, and it publishes nothing. Each prepared\n"
+            "cache lands in the catalog farm, which is the one home that every farm\n"
+            "links."))
     ap.add_argument("--farm", help="analysis name (farm directory); with --add-lease, "
                                    "the farm that the sandbox of the lease reads; omit it "
-                                   "to acquire the specs into the pool and build no farm")
+                                   "to acquire the specs into the pool and publish no farm")
     ap.add_argument("--verify", action="store_true",
                     help="re-hash every store directory, report any drift from its address, and exit")
     ap.add_argument("--repair", action="store_true",
@@ -1652,13 +1794,14 @@ def main() -> int:
     ap.add_argument("--remove-farm", default=None, metavar="NAME",
                     help="remove a farm's symlinks (store dirs stay until --reclaim), and exit")
     ap.add_argument("--warm", default="",
-                    help="comma-separated modules to import during warm-up; the run prepares "
-                         "an existing farm, thus it passes no spec, and the invoker must bind "
-                         "that farm at /mnt/libs/current")
+                    help="comma-separated modules to import during warm-up; with --farm the run "
+                         "prepares that published farm and passes no spec, and with specs and no "
+                         "--farm it prepares what it acquired; the invoker must bind the farm of "
+                         "the run at /mnt/libs/current")
     ap.add_argument("--warm-script", default=None,
                     help="path (inside the store) to a script that exercises jitted code paths; "
-                         "the run prepares an existing farm, thus it passes no spec, and the "
-                         "invoker must bind that farm at /mnt/libs/current")
+                         "it takes the two shapes of --warm, and the invoker must bind the farm "
+                         "of the run at /mnt/libs/current")
     ap.add_argument("--r-manifest", default=None,
                     help="path to a lib-store manifest; provision its R track (CRAN + Bioconductor + git + GitHub) via pak")
     ap.add_argument("specs", nargs="*", help="requirement specs to add")
