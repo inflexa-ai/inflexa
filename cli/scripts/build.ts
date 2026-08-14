@@ -15,6 +15,7 @@ import { audienceInvalidReason } from "../src/modules/auth/auth.ts";
 import { LLAMA_PINS, LLAMA_RUNTIME_TAG, llamaArtifactUrl, type LlamaPin, type LlamaTargetKey } from "../src/modules/embedding/llama_runtime.ts";
 import { MODEL_ARTIFACT, MODEL_SHA256, MODEL_URL } from "../src/modules/embedding/model_pin.ts";
 import { contentHashOf, packContent, type PackEntry } from "../src/modules/harness/content-pack.ts";
+import { collectPageAssetEntries, type PageAssetError } from "../src/modules/harness/page_assets.ts";
 
 // This process autoloads the repo bunfig.toml, whose preload installs
 // opentui's runtime plugin support and sets a global resolvePath that
@@ -69,6 +70,20 @@ function walkContentTree(dir: string, root: string, treeName: string, out: PackE
             const rel = relative(root, abs).split(sep).join("/");
             out.push({ path: `${treeName}/${rel}`, bytes: readFileSync(abs) });
         }
+    }
+}
+
+// Report why the collection of the page assets stopped. A page with no chart runtime and no font is a
+// broken product, and the defect stays silent until a user opens a report. Thus each message names the
+// specifier that the operator must inspect.
+function pageAssetErrorMessage(error: PageAssetError): string {
+    switch (error.type) {
+        case "empty_manifest":
+            return "error: the page-asset manifest of the harness is empty — refusing to build a binary whose report page has no assets";
+        case "unresolved_specifier":
+            return `error: could not resolve the report page asset ${error.specifier} through the harness installation — ${String(error.cause)}`;
+        case "unreadable_source":
+            return `error: could not read the report page asset ${error.specifier} at ${error.path} — ${String(error.cause)}`;
     }
 }
 
@@ -148,11 +163,24 @@ if (gitCommit) define["process.env.INFLEXA_GIT_COMMIT"] = JSON.stringify(gitComm
 // content, so a skills/templates edit re-extracts on the next install; identical content reuses the dir.
 // Same explicit-define treatment as INFLEXA_GIT_COMMIT (not the bakedEnv scanner, whose missing-var guard
 // spans every channel). See content-pack.ts for the archive format.
-const contentEntries = collectContentEntries();
-if (contentEntries.length === 0) {
+//
+// The page assets of the report ride in the same archive. The two trees keep their own guard, because an
+// empty walk and an empty asset manifest have different causes.
+const treeEntries = collectContentEntries();
+if (treeEntries.length === 0) {
     console.error("error: no skills/templates files found to bundle — expected ../skills and ../templates relative to cli/");
     process.exit(1);
 }
+// The collection gives a Result, and this script is the boundary that stops the build. A page asset that
+// no resolution answers, or that has no readable file, is a defect of the build.
+const pageAssetEntries = collectPageAssetEntries().match(
+    (entries) => entries,
+    (error) => {
+        console.error(pageAssetErrorMessage(error));
+        process.exit(1);
+    },
+);
+const contentEntries = [...treeEntries, ...pageAssetEntries];
 const contentHash = contentHashOf(contentEntries);
 await Bun.write("content.pack", packContent(contentEntries));
 define["process.env.INFLEXA_CONTENT_HASH"] = JSON.stringify(contentHash);
