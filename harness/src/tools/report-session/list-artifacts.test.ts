@@ -4,7 +4,7 @@
  * Each test drives the tool through `execute` with a temp directory as the workspace root and an
  * in-memory gateway. The tests cover the order of the listing, the cap of the listing, the columns of a
  * CSV and of a TSV, the extension that carries no header, the cut header line, the quoted header, the
- * absent file, the file type that holds no cell, and the session refusal.
+ * absent file, the file type that holds no cell, the pinned citations, and the session refusal.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -341,6 +341,41 @@ describe("the columns", () => {
         if (result.outcome === "listed") {
             expect(result.artifacts[0].hash).toBe("sha256:aaa");
             expect(result.artifacts[0].columns).toBeUndefined();
+        }
+    });
+});
+
+describe("the pinned citations", () => {
+    it("gives the stored citation keys in the order that the pin wrote", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", {
+            artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } },
+            citations: ["pmid:12345", "pmid:42", "pmid:999"],
+        });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            // The agent binds a citation block to one of these ids, thus the listing is the route to an
+            // id and a refusal never has to teach one.
+            expect(result.citations).toEqual(["pmid:12345", "pmid:42", "pmid:999"]);
+        }
+    });
+
+    it("gives an empty list for a snapshot that pinned no citation", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/de.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            expect(result.citations).toEqual([]);
         }
     });
 });
