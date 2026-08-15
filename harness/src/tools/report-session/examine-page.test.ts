@@ -174,13 +174,16 @@ function makeFakeEyes(options: { browserUrl: string; failAcquire?: Error; failRe
 /**
  * Make a browser that no process backs, and give the screenshot that its one page returns.
  *
- * The capture reads the connected flag, it registers the disconnect listener, it opens one context, it
- * drives one page, and it closes the context. The fake carries those members alone, thus no call of the
- * capture reaches the gap between the fake and the class of puppeteer.
+ * The capture reads the connected flag, it registers the disconnect listener, it opens one context, it sizes
+ * one page, it emulates the media features of that page, it drives the page, and it closes the context. The
+ * fake carries those members alone, thus no call of the capture reaches the gap between the fake and the
+ * class of puppeteer.
  */
 function makeFakeBrowser(screenshot: string): Browser {
     const page = {
         on: () => {},
+        setViewport: () => Promise.resolve(),
+        emulateMediaFeatures: () => Promise.resolve(),
         goto: () => Promise.resolve(),
         evaluate: () => Promise.resolve(),
         screenshot: () => Promise.resolve(screenshot),

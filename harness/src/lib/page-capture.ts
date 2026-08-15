@@ -53,6 +53,15 @@ export interface CaptureOptions {
 const SELECTOR_TIMEOUT_MS = 5_000;
 
 /**
+ * The window of one capture, in CSS pixels.
+ *
+ * The width clears each breakpoint of the design source. Thus a multi-column band lays out at the width that a
+ * reader gets, and no band collapses to one column because the window was narrow.
+ */
+const VIEWPORT_WIDTH = 1440;
+const VIEWPORT_HEIGHT = 900;
+
+/**
  * The body of the readiness wait, in the browser context. The sentinel arm resolves a page that dispatched
  * the event before this wait registered, thus a plain listener never blocks forever. The timer arm bounds a
  * page that never signals.
@@ -84,6 +93,9 @@ function waitForThemeReady(sentinel: string, event: string, timeout: number): Pr
 /**
  * Capture one page: the screenshot, the console errors, and the failed requests.
  *
+ * The picture holds the whole document, and not the window alone. Thus a caller can judge a section that a
+ * reader reaches by a scroll.
+ *
  * The readiness wait is best-effort. A page that never signals still captures at the readiness budget, thus
  * a broken page gives a picture that shows what broke.
  */
@@ -99,6 +111,10 @@ export function capturePage(chrome: ChromeConfig, url: string, options: CaptureO
         page.on("requestfailed", (req) => {
             failedRequests.push({ url: req.url(), reason: req.failure()?.errorText ?? "unknown" });
         });
+
+        // The size is set before the navigation, because a layout resolves at load time. The connection gives
+        // a small default window, and that window collapses each multi-column band of the design.
+        await page.setViewport({ width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT });
 
         // The preference is active before the navigation, because the page reveals its sections as it loads.
         // A preference that arrives after the load reaches a page that already runs its transitions.
@@ -121,7 +137,9 @@ export function capturePage(chrome: ChromeConfig, url: string, options: CaptureO
             await new Promise((resolve) => setTimeout(resolve, settle));
         }
 
-        const screenshot = await page.screenshot({ encoding: "base64", fullPage: false });
+        // The picture must show the whole document at the layout that a reader gets. Thus a defect below the
+        // fold is visible, and a question about content that never appeared has an answer.
+        const screenshot = await page.screenshot({ encoding: "base64", fullPage: true });
         return {
             screenshotBase64: typeof screenshot === "string" ? screenshot : Buffer.from(screenshot).toString("base64"),
             consoleErrors,
