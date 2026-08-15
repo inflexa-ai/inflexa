@@ -28,9 +28,15 @@
  * A composition with no sandbox client and no run authorizer cannot derive at all. The tool reports that
  * condition one time, up front, the same discipline as the eyes. A per-attempt failure would instead read as
  * a transient fault, and it would invite a repeat of a call that can never pass.
+ *
+ * The transport of the client is the second such bound. A derivation runs inside one live turn and not
+ * inside a workflow body. The poll transport awaits with plain steps and a plain sleep, thus it settles
+ * there. The callback transport awaits through `DBOS.recv`, which a workflow body alone can call, thus this
+ * tool refuses up front under it rather than start a container that nothing can await.
  */
 
 import { err, ok, type Result } from "neverthrow";
+import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -137,6 +143,9 @@ const noopEmit: ExecEmit = () => {};
 
 /** The line that the agent reads when the composition binds no sandbox rails. */
 const NO_SANDBOX_DETAIL = "the composition gives no sandbox, thus this session cannot derive a table";
+
+/** The line that the agent reads when the sandbox client awaits under a transport that a turn cannot drive. */
+const CALLBACK_TRANSPORT_DETAIL = "the sandbox of this composition reports through callbacks, which a report turn cannot await, thus it derives no table";
 
 /** One declared input, as the container reads it: the mounted path of the file, and its pinned hash. */
 export interface DerivationInputMount {
@@ -299,6 +308,12 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
                 logger.warn("the composition gives no sandbox, thus no derivation can run");
                 return ok({ outcome: "unavailable", detail: NO_SANDBOX_DETAIL });
             }
+            // The await of the callback transport is a workflow-body call, and a report turn is not one. An
+            // absent field states nothing, thus it reads as the poll default and it refuses nothing.
+            if (sandboxClient.transport === "callback") {
+                logger.warn("the sandbox client awaits through callbacks, thus no derivation can run in a turn");
+                return ok({ outcome: "unavailable", detail: CALLBACK_TRANSPORT_DETAIL });
+            }
 
             const opened = await openReportThread(deps.gateway, ctx.session.scope);
             if (opened.isErr()) {
@@ -383,28 +398,34 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
                 return ok({ outcome: "unavailable", detail: "the derivation was not authorized" });
             }
 
-            const result = await derive({
-                client: sandboxClient,
-                derivations: deps.derivations,
-                root,
-                threadId,
-                analysisId,
-                script: input.script,
-                sources,
-                writableTail,
-                outputPath,
-                outputName: input.output,
-                logger,
-            });
-
-            // The authorization revokes on every terminal path. A revoke fault changes no outcome of the
-            // call, thus it reaches the log alone.
+            // The work sits inside the `try`, and the revoke sits in the `finally`. Thus the authorization
+            // revokes on every terminal path, the thrown one included: a path builder refuses a hostile
+            // stored path with a throw, and that throw must not leave an authorization standing.
+            let result: DeriveTableResult | undefined;
             try {
-                await runAuthorizer.revoke(authorization, result.outcome === "derived" ? "derive-table-completed" : "derive-table-failed");
-            } catch (cause) {
-                logger.warn("the derivation authorization did not revoke", { threadId, analysisId, ...defaultErrorFields(cause) });
+                result = await derive({
+                    client: sandboxClient,
+                    derivations: deps.derivations,
+                    root,
+                    threadId,
+                    analysisId,
+                    script: input.script,
+                    sources,
+                    writableTail,
+                    outputPath,
+                    outputName: input.output,
+                    logger,
+                });
+                return ok(result);
+            } finally {
+                // A revoke fault changes no outcome of the call, thus it reaches the log alone. An absent
+                // result means that the work threw, and a throw is a failed derivation.
+                try {
+                    await runAuthorizer.revoke(authorization, result?.outcome === "derived" ? "derive-table-completed" : "derive-table-failed");
+                } catch (cause) {
+                    logger.warn("the derivation authorization did not revoke", { threadId, analysisId, ...defaultErrorFields(cause) });
+                }
             }
-            return ok(result);
         },
     });
 }
@@ -418,6 +439,11 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
  *
  * The classification is the guard of the read. A script can leave a symbolic link at the output name, and a
  * link that resolves outside the tree would otherwise carry a host file into the evidence of the session.
+ *
+ * The output path clears before the exec. The host owns the `derived/` directory, and a failed attempt can
+ * leave a file at the name that this attempt declares. Without the clearance a script that writes nothing
+ * would adopt those bytes as its own table, and the record would chain a script to a file that it never
+ * wrote. A clearance fault refuses the derivation, because the same doubt stands.
  */
 async function derive(args: {
     readonly client: SandboxClient;
@@ -437,6 +463,18 @@ async function derive(args: {
     // The container sees the tree at its own mount point, thus each path that the script reads maps through
     // the one host-to-container mapper and never through a formula here.
     const workingDir = toSandboxPath(args.root, args.analysisId, join(args.root, args.writableTail));
+
+    // `unlink` removes a symbolic link as the link, and never the file that it names. An absent path is the
+    // normal condition, thus it is not a fault.
+    try {
+        await unlink(absolute);
+    } catch (cause) {
+        if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
+            args.logger.error("the output path did not clear before the derivation", { threadId: args.threadId, ...defaultErrorFields(cause) });
+            return { outcome: "exec-failed", detail: `${args.outputName} already holds a file that did not clear, thus this derivation takes a new name` };
+        }
+    }
+
     const executed = await runDerivationExec({
         client: args.client,
         analysisId: args.analysisId,

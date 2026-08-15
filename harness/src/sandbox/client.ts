@@ -21,9 +21,29 @@
  * `DBOS.recv` and `DBOS.writeStream` are body-only.
  */
 
-import type { CreateSandboxMeta, ExecEmit, ExecResult, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SubmitExecBody } from "./types.js";
+import type {
+    CreateSandboxMeta,
+    ExecEmit,
+    ExecResult,
+    ManagedSandbox,
+    SandboxIdentity,
+    SandboxLiveness,
+    SandboxRef,
+    SandboxTransport,
+    SubmitExecBody,
+} from "./types.js";
 
 export interface SandboxClient {
+    /**
+     * The result transport this client awaits under, fixed at construction. A caller that runs outside a
+     * workflow body reads it: `callback` awaits through `DBOS.recv`, which is body-only, thus such a caller
+     * must refuse before it starts a container it can never await.
+     *
+     * Optional, because a hand-written realization states nothing here. Absent means unknown, and a caller
+     * treats it as the poll default rather than refusing every composition that omits it.
+     */
+    readonly transport?: SandboxTransport;
+
     /**
      * DBOS step (`sandbox.create`) — the spawn half of the two-step create
      * (see the harness-sandbox-exec spec). Launches the sandbox-base container/Job under the

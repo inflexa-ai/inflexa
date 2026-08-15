@@ -153,6 +153,15 @@ describe("the declared write tail", () => {
         expect(() => sandboxWriteTail({ ...COORDS, writableTail: TAIL, readOnly: true })).toThrow(/read-only sandbox cannot/);
     });
 
+    test("validates the two ids even where the tail replaces the step directory", () => {
+        // The ids reach the sandbox name, the ownership labels, and the registry row on every path, thus a
+        // declared tail is no reason to skip their validation.
+        expect(() => buildMountPlan({ ...COORDS, runId: "..", writableTail: TAIL }, { libs: false, refs: false })).toThrow(/Invalid runId/);
+        expect(() => buildMountPlan({ ...COORDS, stepId: "a/b", writableTail: TAIL }, { libs: false, refs: false })).toThrow(/Invalid stepId/);
+        expect(() => sandboxWriteTail({ ...COORDS, stepId: "..", readOnly: true })).toThrow(/Invalid stepId/);
+        expect(() => buildSessionSubPaths({ ...COORDS, runId: "..", writableTail: TAIL }, "an-1")).toThrow(/Invalid runId/);
+    });
+
     test("refuses an empty, absolute, or traversing tail", () => {
         for (const tail of ["", "/abs/derived", "../escape", "report-sessions/../../etc", "report-sessions//derived", "derived/"]) {
             expect(() => buildMountPlan({ ...COORDS, writableTail: tail }, { libs: false, refs: false })).toThrow(/Invalid writableTail/);
