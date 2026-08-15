@@ -237,6 +237,12 @@ export interface CreateSandboxMeta {
     /** Enforced read-only: provision with no read-write step mount, only the
      *  read-only analysis tree for generic read-only agents. */
     readOnly?: boolean;
+    /** Workspace-relative path that becomes the one read-write mount, in place of
+     *  the step directory and with no step subdirectories under it. Each segment
+     *  passes the safe-id discipline of the step builder. Absent keeps the step
+     *  mount, thus a run provisions exactly as before. A tail beside `readOnly` is
+     *  a contradiction, and the mount builders refuse it. */
+    writableTail?: string;
     /** Host-supplied labels stamped onto the sandbox pod, verbatim. Opaque here:
      *  the harness reads no key and no value, it only sanitizes each value into a
      *  valid label. Absent ⇒ the pod carries the harness's own labels only. */

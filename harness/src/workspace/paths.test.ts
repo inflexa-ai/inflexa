@@ -1,7 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import { resolve as resolvePath, sep } from "node:path";
 
-import { assertSafeId, previewDir, reportSessionDir, resolveForWrite, resolveWorkspacePath, stepWritePrefix, toSandboxPath } from "./paths.js";
+import {
+    assertSafeId,
+    assertSafeTail,
+    previewDir,
+    reportSessionDir,
+    resolveForWrite,
+    resolveWorkspacePath,
+    stepWritePrefix,
+    tailWritePrefix,
+    toSandboxPath,
+} from "./paths.js";
 
 const SESSIONS = "/var/sessions";
 const ANALYSIS = "analysis-001";
@@ -246,6 +256,42 @@ describe("reportSessionDir", () => {
         expect(() => reportSessionDir("..")).toThrow(/Invalid threadId/);
         expect(() => reportSessionDir("a/b")).toThrow(/Invalid threadId/);
         expect(() => reportSessionDir("a\0b")).toThrow(/Invalid threadId/);
+    });
+});
+
+describe("assertSafeTail", () => {
+    it("gives the segments of a workspace-relative tail", () => {
+        expect(assertSafeTail("report-sessions/thread-a/derived")).toEqual(["report-sessions", "thread-a", "derived"]);
+        expect(assertSafeTail("derived")).toEqual(["derived"]);
+    });
+
+    it("rejects an empty, an absolute, and a traversing tail", () => {
+        expect(() => assertSafeTail("")).toThrow(/Invalid writableTail/);
+        expect(() => assertSafeTail("/abs/derived")).toThrow(/Invalid writableTail/);
+        expect(() => assertSafeTail("../escape")).toThrow(/Invalid writableTail/);
+        expect(() => assertSafeTail("a/../../etc")).toThrow(/Invalid writableTail/);
+        // An empty segment reaches the same refusal, thus a doubled or a trailing separator is out.
+        expect(() => assertSafeTail("a//b")).toThrow(/Invalid writableTail/);
+        expect(() => assertSafeTail("a/")).toThrow(/Invalid writableTail/);
+    });
+
+    it("rejects a segment that carries a NUL or a space, and it names the label", () => {
+        expect(() => assertSafeTail("a\0b/c")).toThrow(/Invalid writableTail/);
+        expect(() => assertSafeTail("a b/c", "tail")).toThrow(/Invalid tail/);
+    });
+});
+
+describe("tailWritePrefix", () => {
+    it("joins the validated segments under the workspace root", () => {
+        expect(tailWritePrefix({ workspaceRoot: ROOT, tail: "report-sessions/thread-a/derived" })).toBe(
+            resolvePath(ROOT, "report-sessions", "thread-a", "derived"),
+        );
+        // The step tail gives the same path as the step builder, thus one preparation serves both.
+        expect(tailWritePrefix({ workspaceRoot: ROOT, tail: "runs/run-abc/step-1" })).toBe(STEP_DIR);
+    });
+
+    it("refuses a crafted tail instead of resolving outside the root", () => {
+        expect(() => tailWritePrefix({ workspaceRoot: ROOT, tail: "../../etc" })).toThrow(/Invalid writableTail/);
     });
 });
 

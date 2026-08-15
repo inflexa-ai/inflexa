@@ -194,6 +194,49 @@ describe("k8s createSandbox", () => {
         expect(mounts.find((m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a")!.subPath).toBe("tenants/acme/an-1/runs/run-1/step-a");
     });
 
+    test("mounts a declared write tail in place of the step directory", async () => {
+        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.7" }, metadata: { name: "sbx-tail" } }]);
+
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot: (id) => `${SESSION_PVC_ROOT}/${id}`,
+            sessionPvc: "cortex-sessions",
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                {
+                    runId: "derive-table",
+                    stepId: "derive",
+                    analysisId: "an-1",
+                    childWorkflowId: "derive-table:x",
+                    resources: { cpu: 1, memoryGb: 1 },
+                    writableTail: "report-sessions/thread-1/derived",
+                },
+                mintSandboxIdentity("derive-table"),
+            )
+        )._unsafeUnwrap();
+
+        const container = stub.createdJobs[0]!.spec!.template.spec!.containers[0]!;
+        const mounts = container.volumeMounts!.filter((m) => m.name === "session");
+
+        expect(container.workingDir).toBe("/an-1/report-sessions/thread-1/derived");
+        // The tree stays read-only, and the one read-write mount covers the declared tail alone.
+        expect(mounts.find((m) => m.mountPath === "/an-1")!.readOnly).toBe(true);
+        const rw = mounts.find((m) => m.mountPath === "/an-1/report-sessions/thread-1/derived")!;
+        expect(rw.subPath).toBe("an-1/report-sessions/thread-1/derived");
+        expect(rw.readOnly).toBe(false);
+        // No step directory of the coordinates reaches a mount.
+        expect(mounts.some((m) => m.mountPath.includes("runs/derive-table"))).toBe(false);
+        expect(mounts).toHaveLength(2);
+    });
+
     test("a workspace root outside sessionPvcRoot is a loud failure, not a silently wrong mount", async () => {
         const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-escape" } }]);
 

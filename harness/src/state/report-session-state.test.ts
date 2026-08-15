@@ -13,7 +13,7 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import type { DraftDocument } from "../report-model/draft.js";
 import type { ReportSnapshot } from "../report-model/reference-resolver.js";
 import { upsertAnalysis } from "./analyses.js";
-import { createReportSessionStateStore, type ReportSessionStateStore } from "./report-session-state.js";
+import { createReportSessionStateStore, type DerivationRecord, type ReportSessionStateStore } from "./report-session-state.js";
 
 const validDraft: DraftDocument = {
     title: "A report",
@@ -199,10 +199,19 @@ describe("createReportSessionStateStore", () => {
         const threadId = "thread-purge-cascade";
 
         (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        (
+            await store.appendDerivation(threadId, {
+                outputPath: `report-sessions/${threadId}/derived/a.csv`,
+                outputHash: "sha256:aaaaaa",
+                sources: [{ path: "runs/r1/output/de.csv", hash: "abc123" }],
+                scriptHash: "sha256:bbbbbb",
+                script: "import pandas\n",
+            })
+        )._unsafeUnwrap();
         expect((await store.readState(threadId))._unsafeUnwrap()).not.toBeNull();
 
         // The analysis_id foreign key cascades. A purge removes the analysis-state row,
-        // thus the session-state row goes with it.
+        // thus the session-state row and the derivations that it holds go with it.
         await pool.query({ text: "DELETE FROM cortex_analysis_state WHERE analysis_id = $1", values: [analysisId] });
 
         expect((await store.readState(threadId))._unsafeUnwrap()).toBeNull();
@@ -248,5 +257,93 @@ describe("createReportSessionStateStore", () => {
     it("gives an absence for a stamp against a thread with no row", async () => {
         expect((await store.stampRendered("thread-stamp-absent", "h"))._unsafeUnwrap()).toBe("absent");
         expect((await store.stampSeen("thread-stamp-absent"))._unsafeUnwrap()).toBe("absent");
+    });
+
+    /** One derivation record. Each test names its own output path, thus the name rule reads one case. */
+    function derivation(output: string, sourcePath = "runs/r1/output/de.csv"): DerivationRecord {
+        return {
+            outputPath: `report-sessions/thread-x/derived/${output}`,
+            outputHash: `sha256:${output}`,
+            sources: [{ path: sourcePath, hash: "abc123" }],
+            scriptHash: "sha256:script",
+            script: "import pandas\n",
+        };
+    }
+
+    it("appends each derivation, and the read gives them in the order that they landed", async () => {
+        const analysisId = "analysis-derivations";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-derivations";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        // A fresh row holds no list at all, thus the read gives an empty list.
+        expect((await store.readState(threadId))._unsafeUnwrap()!.derivations).toEqual([]);
+
+        const first = derivation("a.csv");
+        const second = derivation("b.csv", "runs/r1/output/counts.csv");
+        expect((await store.appendDerivation(threadId, first))._unsafeUnwrap()).toBe("appended");
+        expect((await store.appendDerivation(threadId, second))._unsafeUnwrap()).toBe("appended");
+
+        // A second store instance reads the same durable list, with each record whole.
+        const read = (await createReportSessionStateStore({ pool }).readState(threadId))._unsafeUnwrap();
+        expect(read!.derivations).toEqual([first, second]);
+        // The record carries what a second run needs: the script, the sources, and the output hash.
+        expect(read!.derivations[0]!.script).toBe("import pandas\n");
+        expect(read!.derivations[0]!.sources).toEqual([{ path: "runs/r1/output/de.csv", hash: "abc123" }]);
+    });
+
+    it("refuses a second record that holds an output path of the list", async () => {
+        const analysisId = "analysis-derivation-name";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-derivation-name";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        const landed = derivation("yield.csv");
+        expect((await store.appendDerivation(threadId, landed))._unsafeUnwrap()).toBe("appended");
+
+        // The output path is unique across the list, thus a second record of that path refuses.
+        const repeated: DerivationRecord = { ...landed, outputHash: "sha256:different", script: "import numpy\n" };
+        expect((await store.appendDerivation(threadId, repeated))._unsafeUnwrap()).toBe("duplicate");
+
+        // The stored list keeps the first record, thus the refusal changed nothing.
+        const read = (await store.readState(threadId))._unsafeUnwrap();
+        expect(read!.derivations).toEqual([landed]);
+    });
+
+    it("gives an absence for an append against a thread with no row", async () => {
+        expect((await store.appendDerivation("thread-derivation-absent", derivation("a.csv")))._unsafeUnwrap()).toBe("absent");
+    });
+
+    it("reads a row whose list predates the column as an empty list", async () => {
+        const analysisId = "analysis-derivation-legacy";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-derivation-legacy";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        // A row written before the column existed carries SQL NULL. The read gives an empty list, and it
+        // gives no error, because a session that derived nothing holds none.
+        await pool.query({ text: "UPDATE cortex_report_session_state SET derivations = NULL WHERE thread_id = $1", values: [threadId] });
+        const read = (await store.readState(threadId))._unsafeUnwrap();
+        expect(read!.derivations).toEqual([]);
+        expect(read!.snapshot).toEqual(snapshot);
+    });
+
+    it("reads a corrupted derivation list as a typed error", async () => {
+        const analysisId = "analysis-derivation-corrupt";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-derivation-corrupt";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        await pool.query({
+            text: `UPDATE cortex_report_session_state SET derivations = '[{"outputPath":1}]'::jsonb WHERE thread_id = $1`,
+            values: [threadId],
+        });
+
+        const failure = (await store.readState(threadId))._unsafeUnwrapErr();
+        expect(failure.type).toBe("corrupt_session_state");
+        if (failure.type === "corrupt_session_state") {
+            expect(failure.part).toBe("derivations");
+            expect(failure.issues.length).toBeGreaterThan(0);
+        }
     });
 });

@@ -353,6 +353,12 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         store: reportVersionStore,
         threads: reportThreads,
         chrome: conversation.chrome,
+        // The derivation tool draws the rails of the value tier: the same sandbox client
+        // and the same run authorizer. Thus a session derivation and an extraction run on
+        // one substrate, and neither one mints a run of the analysis.
+        derivations: reportSession.derivations,
+        sandboxClient: wf.dataProfile.sandboxClient,
+        runAuthorizer: conversation.runAuthorizer,
         makeResolver: makeReportResolver,
         ...(eyes ? { eyes } : {}),
         ...(deps.resolveReportPageAsset ? { resolvePageAsset: deps.resolveReportPageAsset } : {}),

@@ -21,6 +21,7 @@ import { createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { upsertAnalysis } from "../state/analyses.js";
+import type { ReportSessionStateStore } from "../state/report-session-state.js";
 import type { ReportVersionStore } from "../state/report-versions.js";
 import { makeToolContext } from "../tools/__fixtures__/tool-context.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad } from "../tools/report-authoring/authoring-tools.js";
@@ -252,6 +253,7 @@ function reportAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, ro
         store: {} as ReportVersionStore,
         threads: {} as Pick<ThreadStore, "getThread">,
         chrome,
+        derivations: {} as Pick<ReportSessionStateStore, "appendDerivation">,
         ...(eyes ? { eyes } : {}),
     });
 }

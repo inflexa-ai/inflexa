@@ -113,6 +113,36 @@ describe("precreateStepTree — step-tree access mode", () => {
         // The read-only path returns before creating or chmodding any step tree.
         await expect(stat(stepDir())).rejects.toThrow();
     });
+
+    /** A declared write tail, in the shape the session derivation gives. */
+    const TAIL = "report-sessions/thread-1/derived";
+    const tailDir = () => join(root, "report-sessions", "thread-1", "derived");
+
+    test("a declared tail makes that one directory, and no step tree", async () => {
+        await precreateStepTree(deps(undefined), { ...meta, writableTail: TAIL });
+
+        expect((await stat(tailDir())).isDirectory()).toBe(true);
+        // A declared tail is one directory, thus no artifact subdirectory lands under it.
+        for (const sub of STEP_SUBDIRS) {
+            await expect(stat(join(tailDir(), sub))).rejects.toThrow();
+        }
+        // The step tree of the coordinates is never made, because the tail took its place.
+        await expect(stat(stepDir())).rejects.toThrow();
+    });
+
+    test("world-writable: a declared tail ends world-writable", async () => {
+        await precreateStepTree(deps("world-writable"), { ...meta, writableTail: TAIL });
+
+        expect(await modeOf(tailDir())).toBe(0o777);
+        // The loosening is scoped to the tail — its ancestors keep default modes.
+        expect(await modeOf(join(root, "report-sessions"))).not.toBe(0o777);
+    });
+
+    test("a crafted tail escapes nothing, because the builder refuses it first", async () => {
+        await expect(precreateStepTree(deps(undefined), { ...meta, writableTail: "../escape" })).rejects.toThrow(/Invalid writableTail/);
+        await expect(precreateStepTree(deps(undefined), { ...meta, writableTail: TAIL, readOnly: true })).rejects.toThrow(/read-only sandbox cannot/);
+        await expect(stat(join(root, "..", "escape"))).rejects.toThrow();
+    });
 });
 
 describe("createSandboxClient — engine connection threading", () => {

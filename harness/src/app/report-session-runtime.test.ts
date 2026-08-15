@@ -15,11 +15,15 @@ import { join } from "node:path";
 import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
+import type { Scope } from "../auth/types.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import type { DraftDocument } from "../report-model/draft.js";
 import { upsertAnalysis } from "../state/analyses.js";
 import { upsertArtifact, type RegisterArtifactInput } from "../state/artifacts.js";
+import type { DerivationRecord } from "../state/report-session-state.js";
 import { insertRun } from "../state/runs.js";
+import { makeToolContext } from "../tools/__fixtures__/tool-context.js";
+import { createReportAuthoringTools } from "../tools/report-authoring/authoring-tools.js";
 import { createReportSessionRuntime } from "./report-session-runtime.js";
 
 const DOC_ONE: DraftDocument = {
@@ -222,6 +226,99 @@ describe("createReportSessionRuntime", () => {
         } finally {
             await rm(root, { recursive: true, force: true });
         }
+    });
+
+    /**
+     * One derivation record over a source of the pinned set. The hashes are well-formed `algorithm:hex`
+     * values, because the grammar of a reference refuses any other shape.
+     */
+    function derivation(threadId: string, output: string, sourcePath: string, sourceHash: string): DerivationRecord {
+        return {
+            outputPath: `report-sessions/${threadId}/derived/${output}`,
+            outputHash: "sha256:dddddd",
+            sources: [{ path: sourcePath, hash: sourceHash }],
+            scriptHash: "sha256:eeeeee",
+            script: "import pandas\n",
+        };
+    }
+
+    it("serves each derivation as a member, and the stored pin stays as it was written", async () => {
+        const analysisId = "analysis-derived-membership";
+        const threadId = "thread-derived-membership";
+        await seedAnalysis(analysisId);
+        await seedThread(threadId, analysisId);
+        const pinnedPath = "runs/r1/output/de.csv";
+        await upsertArtifact(pool, artifact(analysisId, pinnedPath, "sha256:aaa"));
+
+        const runtime = createReportSessionRuntime({ pool });
+        const pinned = await runtime.gateway.load(threadId);
+        expect(pinned.outcome).toBe("found");
+        if (pinned.outcome !== "found") throw new Error("expected found");
+        expect(Object.keys(pinned.state.snapshot.artifacts)).toEqual([pinnedPath]);
+        // The stored pin, as the row holds it before any derivation lands.
+        const { rows: before } = await pool.query<{ snapshot: unknown }>({
+            text: "SELECT snapshot FROM cortex_report_session_state WHERE thread_id = $1",
+            values: [threadId],
+        });
+
+        const record = derivation(threadId, "yield.csv", pinnedPath, "sha256:aaa");
+        expect((await runtime.derivations.appendDerivation(threadId, record))._unsafeUnwrap()).toBe("appended");
+
+        // A fresh runtime reads the row, thus the merge runs on the durable state and not on a value that
+        // the append held.
+        const served = await createReportSessionRuntime({ pool }).gateway.load(threadId);
+        expect(served.outcome).toBe("found");
+        if (served.outcome !== "found") throw new Error("expected found");
+        expect(Object.keys(served.state.snapshot.artifacts).sort()).toEqual([record.outputPath, pinnedPath].sort());
+        // The served entry carries the output hash of the record.
+        expect(served.state.snapshot.artifacts[record.outputPath]).toEqual({ hash: record.outputHash });
+        // The pinned entry is untouched by the merge.
+        expect(served.state.snapshot.artifacts[pinnedPath]!.hash).toBe("sha256:aaa");
+
+        // The stored snapshot column holds the pin alone, thus the anchor stays honest.
+        const { rows: after } = await pool.query<{ snapshot: unknown }>({
+            text: "SELECT snapshot FROM cortex_report_session_state WHERE thread_id = $1",
+            values: [threadId],
+        });
+        expect(after[0]!.snapshot).toEqual(before[0]!.snapshot);
+        expect(Object.keys(after[0]!.snapshot as Record<string, unknown>)).not.toContain(record.outputPath);
+    });
+
+    it("binds a derived path through the authoring tools, and the stamp fills its hash", async () => {
+        const analysisId = "analysis-derived-binding";
+        const threadId = "thread-derived-binding";
+        await seedAnalysis(analysisId);
+        await seedThread(threadId, analysisId);
+        await upsertArtifact(pool, artifact(analysisId, "runs/r1/output/de.csv", "sha256:aaa"));
+
+        const runtime = createReportSessionRuntime({ pool });
+        await runtime.gateway.load(threadId);
+        const record = derivation(threadId, "yield.csv", "runs/r1/output/de.csv", "sha256:aaa");
+        expect((await runtime.derivations.appendDerivation(threadId, record))._unsafeUnwrap()).toBe("appended");
+
+        const tools = createReportAuthoringTools(runtime.gateway);
+        const { ctx } = makeToolContext();
+        const scope: Scope = { kind: "analysis", analysisId, threadId };
+        const call = { ...ctx, session: { ...ctx.session, scope } };
+
+        expect((await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Findings", blocks: [] } }, call))._unsafeUnwrap().applied).toBe(
+            true,
+        );
+        // The reference names the derived path alone. The stamp fills the hash from the served membership,
+        // thus a derived table binds the same way as a pinned artifact.
+        const added = (
+            await tools.add_block.execute(
+                { block: { kind: "table", id: "t1", binding: { kind: "artifact-table", path: record.outputPath } }, parentId: "s1", place: "end" },
+                call,
+            )
+        )._unsafeUnwrap();
+        expect(added.applied).toBe(true);
+
+        const loaded = await runtime.gateway.load(threadId);
+        if (loaded.outcome !== "found") throw new Error("expected found");
+        const section = loaded.state.document.sections[0]!;
+        const table = section.blocks[0]!;
+        expect(table).toMatchObject({ kind: "table", id: "t1", binding: { path: record.outputPath, hash: record.outputHash } });
     });
 
     it("lands the pin with no citation when the deps bind no workspace root", async () => {

@@ -20,7 +20,7 @@ import type { Pool } from "pg";
 
 import type { Logger } from "../lib/logger.js";
 import { clampResources, type ResourceLimits } from "../config/resource-limits.js";
-import { stepWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { tryMutation } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { clearSandboxRef, setSandboxRef } from "../state/index.js";
@@ -28,7 +28,7 @@ import { awaitExec, type AwaitExecOptions } from "./await-exec.js";
 import type { SandboxClient } from "./client.js";
 import { createDockerSandboxOps } from "./docker-client.js";
 import { createK8sSandboxOps } from "./k8s-client.js";
-import { STEP_SUBDIRS } from "./mount-plan.js";
+import { sandboxWriteTail } from "./mount-plan.js";
 import { submitExec, type SubmitExecDeps } from "./submit-exec.js";
 import { toPersistedRef, type CreateSandboxMeta, type SandboxRef, type SandboxTransport } from "./types.js";
 
@@ -140,35 +140,40 @@ export function composeAwaitOptions(
 }
 
 /**
- * Backend-agnostic pre-creation of the writable step tree under the analysis's
+ * Backend-agnostic pre-creation of the writable tree under the analysis's
  * resolved workspace root. On Docker that root is the host dir the container
  * binds; on K8s it lives under the session PVC the sandbox pod mounts via
  * subPath. `mkdir(recursive)` is idempotent, so an existing tree (replay, retry)
- * is not an error. A read-only sandbox has no writable step mount, so there is
+ * is not an error. A read-only sandbox has no writable mount, so there is
  * nothing to pre-create.
  *
- * `stepTreeAccess: "world-writable"` chmods the step dir and each subdir so the
+ * The writable tree is the step directory with its five artifact subdirs, or the
+ * declared write tail as one directory. `sandboxWriteTail` decides which, so the
+ * directory the host makes and the directory the sandbox mounts are the same one,
+ * and the run path keeps the tree it always had.
+ *
+ * `stepTreeAccess: "world-writable"` chmods the directory and each subdir so the
  * uid-1000 sandbox workload can write them through engines that honor host bind
  * ownership. The chmod is explicit, not `mkdir`'s `mode` option: the process
  * umask masks `mkdir`'s mode, and on replay the dirs already exist so `mkdir`
- * would not touch them either way. Scoped to the step write tree — the
+ * would not touch them either way. Scoped to the write tree — the
  * read-only mount sources are never re-moded. Exported for tests.
  */
 export async function precreateStepTree(
     deps: { resolveWorkspaceRoot: ResolveWorkspaceRoot; stepTreeAccess?: "world-writable" },
     meta: CreateSandboxMeta,
 ): Promise<void> {
-    if (meta.readOnly) return;
-    const stepDir = stepWritePrefix({
-        workspaceRoot: deps.resolveWorkspaceRoot(meta.analysisId),
-        runId: meta.runId,
-        stepId: meta.stepId,
-    });
-    await mkdir(stepDir, { recursive: true });
-    await Promise.all(STEP_SUBDIRS.map((sub) => mkdir(join(stepDir, sub), { recursive: true })));
+    const write = sandboxWriteTail(meta);
+    if (write === undefined) return;
+    // `tailWritePrefix` (not a raw `join`) so every segment runs through the same
+    // id validation the mount builders apply — a crafted tail cannot escape the
+    // resolved root.
+    const writeDir = tailWritePrefix({ workspaceRoot: deps.resolveWorkspaceRoot(meta.analysisId), tail: write.tail });
+    await mkdir(writeDir, { recursive: true });
+    await Promise.all(write.subdirs.map((sub) => mkdir(join(writeDir, sub), { recursive: true })));
     if (deps.stepTreeAccess === "world-writable") {
-        await chmod(stepDir, 0o777);
-        await Promise.all(STEP_SUBDIRS.map((sub) => chmod(join(stepDir, sub), 0o777)));
+        await chmod(writeDir, 0o777);
+        await Promise.all(write.subdirs.map((sub) => chmod(join(writeDir, sub), 0o777)));
     }
 }
 

@@ -8,6 +8,7 @@ import { createRegistry } from "../tools/registry.js";
 import type { EmbeddingProvider } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ThreadStore } from "../memory/thread-store.js";
+import type { ReportSessionStateStore } from "../state/report-session-state.js";
 import type { ReportVersionStore } from "../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../tools/report-authoring/authoring-tools.js";
 
@@ -25,6 +26,7 @@ function buildAgent() {
         store: {} as ReportVersionStore,
         threads: {} as Pick<ThreadStore, "getThread">,
         chrome: {},
+        derivations: {} as Pick<ReportSessionStateStore, "appendDerivation">,
     });
 }
 
@@ -32,8 +34,8 @@ function buildAgent() {
 const READ_SURFACE = ["read_file", "list_files", "file_stat", "grep", "workspace_search", "inspect_run", "inspect_data_profile"] as const;
 
 // The composition surface: the eight authoring tools, the pinned-artifact listing
-// tool, the render-and-preview tool, the eyes tool, and the record tool. These
-// twelve ids are what makes the report path a report path.
+// tool, the derivation tool, the render-and-preview tool, the eyes tool, and the
+// record tool. These thirteen ids are what makes the report path a report path.
 const COMPOSITION_SURFACE = [
     "add_block",
     "change_block",
@@ -44,6 +46,7 @@ const COMPOSITION_SURFACE = [
     "read_block",
     "finish_draft",
     "list_pinned_artifacts",
+    "derive_table",
     "preview_report",
     "examine_page",
     "record_report_version",
@@ -81,7 +84,7 @@ describe("createReportSessionAgent", () => {
         }
     });
 
-    test("holds the twelve composition tools", () => {
+    test("holds the thirteen composition tools", () => {
         const ids = new Set(buildAgent().tools.map((tool) => tool.id));
         for (const expected of COMPOSITION_SURFACE) {
             expect(ids.has(expected)).toBe(true);
@@ -202,6 +205,16 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("The angle of the brief decides the order of the findings");
         // The anti-pattern entry names evidence that precedes its sentence.
         expect(reportSessionPrompt).toContain("Show evidence before its sentence");
+    });
+
+    test("the prompt divides a derivation from a chart knob", () => {
+        // The tool name, the three reshaping cases, and the per-row bound are stable
+        // substrings, thus the assertion does not couple to the full prose.
+        expect(reportSessionPrompt).toContain("derive_table");
+        expect(reportSessionPrompt).toContain("a pivot, and an aggregate are such reshaping");
+        expect(reportSessionPrompt).toContain("transform is not: a chart block reads the column that it needs");
+        // A derived table is evidence of the session, thus it binds like a pinned one.
+        expect(reportSessionPrompt).toContain("binds like any pinned artifact");
     });
 
     test("the prompt carries the chart-first rule", () => {
