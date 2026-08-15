@@ -192,6 +192,55 @@ describe("validateReferenceStructure", () => {
         });
     });
 
+    describe("the columns of a chart grammar", () => {
+        // A fixture snapshot carries the rows of its artifacts, thus the tier can answer a column match
+        // from the snapshot alone.
+        const ROWS_PATH = "runs/run-1/step-c/output/de-rows.csv";
+        const ROWS_HASH = `sha256:${"7".repeat(64)}`;
+        const rowSnapshot: ReportSnapshot = {
+            artifacts: {
+                ...snapshot.artifacts,
+                [ROWS_PATH]: { hash: ROWS_HASH, fileType: "output", rows: [{ gene: "TP53", log2FoldChange: 6, padj: 0.001 }] },
+            },
+        };
+
+        /** Validate one chart binding against the named grammar columns. */
+        function columnFailure(columns: string[], reference = tableReference(ROWS_PATH, ROWS_HASH)): UnresolvedReference | undefined {
+            return validateReferenceStructure(reference, rowSnapshot, columns).match(
+                () => undefined,
+                (failure) => failure,
+            );
+        }
+
+        it("passes a composition whose every column is a column of the bound table", () => {
+            expect(columnFailure(["gene", "log2FoldChange", "padj"])).toBeUndefined();
+        });
+
+        it("refuses a column that the bound table does not hold", () => {
+            const failure = columnFailure(["log2FoldChange", "invented"]);
+            expect(failure?.reason).toBe("locator-out-of-range");
+            expect(failure?.detail).toContain("invented");
+        });
+
+        it("refuses a column that the declared column subset leaves out", () => {
+            const projection = { ...tableReference(ROWS_PATH, ROWS_HASH), columns: ["gene"] };
+            const failure = columnFailure(["gene", "padj"], projection);
+            expect(failure?.reason).toBe("locator-out-of-range");
+            expect(failure?.detail).toContain("padj");
+        });
+
+        it("passes each column against a snapshot that pins identity and holds no row", () => {
+            // A production snapshot carries no row. It contradicts no name, thus the value tier settles the
+            // match over the artifact that it reads.
+            expect(columnFailure(["invented"], tableReference(OUTPUT_PATH, OUTPUT_HASH))).toBeUndefined();
+        });
+
+        it("refuses a bad pin before it looks at one column", () => {
+            const failure = columnFailure(["invented"], tableReference(ROWS_PATH, WRONG_HASH));
+            expect(failure?.reason).toBe("hash-mismatch");
+        });
+    });
+
     describe("the read of a file", () => {
         it("passes a sound reference whose path holds no file on disk", () => {
             // The path is under a run directory that nothing ever made, thus a read of it must fail. The

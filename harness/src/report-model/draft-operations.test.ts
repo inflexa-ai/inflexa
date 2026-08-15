@@ -292,6 +292,40 @@ describe("addBlock", () => {
         expect(draft).toEqual(before);
     });
 
+    // A fixture snapshot carries the rows of its artifacts, thus the structural tier can match a chart
+    // column before the block lands.
+    const rowSnapshot: ReportSnapshot = { artifacts: { [OUTPUT_PATH]: { hash: OUTPUT_HASH, fileType: "output", rows: [{ gene: "TP53", padj: 0.001 }] } } };
+
+    /** A chart block that plots one composition over the rows of the snapshot. */
+    function composedChart(id: string, yColumn: string): DraftBlock {
+        return {
+            kind: "chart",
+            id,
+            binding: tableReference(),
+            composition: { series: [{ form: "scatter", encoding: { x: "gene", y: { column: yColumn, transform: "neg_log10" }, label: "gene" } }] },
+        };
+    }
+
+    it("lands a composition whose every column is a column of the bound table", () => {
+        const draft = baseDraft();
+        const landed = addBlock(draft, { block: composedChart("chart-ok", "padj"), destination: { parentId: "sec-2" } }, rowSnapshot)._unsafeUnwrap();
+
+        expect(landed.sections[1].blocks.map((block) => block.id)).toEqual(["chart-ok"]);
+    });
+
+    it("refuses a composition whose series channel names a column outside the bound table", () => {
+        const draft = baseDraft();
+        const before = structuredClone(draft);
+        const failure = addBlock(draft, { block: composedChart("chart-bad", "invented"), destination: { parentId: "sec-2" } }, rowSnapshot)._unsafeUnwrapErr();
+
+        expect(failure.reason).toBe("unresolved-reference");
+        if (failure.reason === "unresolved-reference") {
+            expect(failure.unresolved[0].reason).toBe("locator-out-of-range");
+            expect(failure.unresolved[0].detail).toContain("invented");
+        }
+        expect(draft).toEqual(before);
+    });
+
     it("lands a reference that names the path alone, and stamps the snapshot hash", () => {
         const draft = baseDraft();
         const landed = addBlock(

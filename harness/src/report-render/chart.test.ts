@@ -1,12 +1,13 @@
 import { describe, expect, it } from "bun:test";
 
-import type { ChartBlock } from "../contracts/report-blocks.js";
+import type { ChartBlock, ChartComposition } from "../contracts/report-blocks.js";
 import { renderChart } from "./views/chart-view.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "./chart.js";
+import { MANHATTAN_P_THRESHOLD, VOLCANO_EFFECT_THRESHOLD, VOLCANO_P_THRESHOLD } from "./chart-presets.js";
 import { DESIGN_CSS } from "./design.js";
 
-type Encoding = ChartBlock["encoding"];
-type ChartType = ChartBlock["chartType"];
+type Encoding = NonNullable<ChartBlock["encoding"]>;
+type ChartType = NonNullable<ChartBlock["chartType"]>;
 
 /** Build a chart block with a placeholder binding. The renderer never reads the binding. */
 function chartBlock(chartType: ChartType, encoding: Encoding, extra: { id?: string; title?: string; caption?: string } = {}): ChartBlock {
@@ -18,6 +19,17 @@ function chartBlock(chartType: ChartType, encoding: Encoding, extra: { id?: stri
         encoding,
         ...(extra.title !== undefined ? { title: extra.title } : {}),
         ...(extra.caption !== undefined ? { caption: extra.caption } : {}),
+    };
+}
+
+/** Build a chart block that carries one composition. The renderer never reads the binding. */
+function composedBlock(composition: ChartComposition, extra: { id?: string; title?: string } = {}): ChartBlock {
+    return {
+        kind: "chart",
+        id: extra.id ?? "c1",
+        binding: { kind: "artifact-table", path: "table.csv", hash: "sha256:00" },
+        composition,
+        ...(extra.title !== undefined ? { title: extra.title } : {}),
     };
 }
 
@@ -344,6 +356,388 @@ describe("the axis name placement", () => {
         const xAxis = asObj(derive(chartBlock("histogram", { x: "n" }), [{ n: 1 }, { n: 2 }]).xAxis);
         expect("name" in xAxis).toBe(false);
         expect("nameLocation" in xAxis).toBe(false);
+    });
+});
+
+describe("the composition derivation", () => {
+    const rows: ChartRow[] = [
+        { t: 1, hi: 5, lo: 2, arm: "A", gene: "CA9" },
+        { t: 2, hi: 7, lo: 3, arm: "A", gene: "TP53" },
+        { t: 1, hi: 4, lo: 1, arm: "B", gene: "VEGFA" },
+    ];
+
+    it("gives one runtime series for each declared series", () => {
+        const option = derive(
+            composedBlock({
+                series: [
+                    { form: "line", encoding: { x: "t", y: "hi" }, name: "Upper" },
+                    { form: "bar", encoding: { x: "t", y: "lo" }, name: "Lower" },
+                ],
+            }),
+            rows,
+        );
+        const series = asArr(option.series);
+        expect(series.length).toBe(2);
+        expect(asObj(series[0]).type).toBe("line");
+        expect(asObj(series[0]).name).toBe("Upper");
+        expect(asObj(series[1]).type).toBe("bar");
+        expect(asObj(series[1]).name).toBe("Lower");
+    });
+
+    it("gives one runtime series for each group value, in first-appearance order", () => {
+        const option = derive(composedBlock({ series: [{ form: "step", encoding: { x: "t", y: "hi", group: "arm" } }] }), rows);
+        const series = asArr(option.series);
+        expect(series.map((entry) => asObj(entry).name)).toEqual(["A", "B"]);
+        expect(asObj(series[0]).data).toEqual([
+            [1, 5],
+            [2, 7],
+        ]);
+    });
+
+    it("emits the step flag for a step series", () => {
+        const series = asObj(asArr(derive(composedBlock({ series: [{ form: "step", encoding: { x: "t", y: "hi" } }] }), rows).series)[0]);
+        expect(series.type).toBe("line");
+        expect(series.step).toBe("end");
+    });
+
+    it("sorts a line by x, and keeps the row order of a bar", () => {
+        const unsorted: ChartRow[] = [
+            { t: 3, v: 30 },
+            { t: 1, v: 10 },
+            { t: 2, v: 20 },
+        ];
+        const line = derive(composedBlock({ series: [{ form: "line", encoding: { x: "t", y: "v" } }] }), unsorted);
+        const bar = derive(composedBlock({ series: [{ form: "bar", encoding: { x: "t", y: "v" } }] }), unsorted);
+        expect(asObj(asArr(line.series)[0]).data).toEqual([
+            [1, 10],
+            [2, 20],
+            [3, 30],
+        ]);
+        expect(asObj(asArr(bar.series)[0]).data).toEqual([
+            [3, 30],
+            [1, 10],
+            [2, 20],
+        ]);
+    });
+
+    it("names the axes from the channels, and takes a declared title and scale", () => {
+        const bare = derive(composedBlock({ series: [{ form: "line", encoding: { x: "t", y: "hi" } }] }), rows);
+        expect(asObj(bare.xAxis).name).toBe("t");
+        expect(asObj(bare.yAxis).name).toBe("hi");
+
+        const titled = derive(
+            composedBlock({
+                series: [{ form: "line", encoding: { x: "t", y: "hi" } }],
+                axes: { x: { title: "Months" }, y: { title: "Level", scale: "log" } },
+            }),
+            rows,
+        );
+        expect(asObj(titled.xAxis).name).toBe("Months");
+        expect(asObj(titled.yAxis).name).toBe("Level");
+        expect(asObj(titled.yAxis).type).toBe("log");
+    });
+
+    it("refuses a series channel that names a column no row holds", () => {
+        const block = composedBlock({ series: [{ form: "line", encoding: { x: "t", y: "invented" } }] }, { id: "cx" });
+        const problem = deriveChartOption(block, rows)._unsafeUnwrapErr();
+        expect(problem.kind).toBe("invalid-chart-input");
+        expect(problem.blockId).toBe("cx");
+        expect(problem.detail).toContain("invented");
+    });
+
+    it("gives the larger hit radius to a dense scatter", () => {
+        const sparse: ChartRow[] = Array.from({ length: 10 }, (_entry, index) => ({ t: index, v: index }));
+        const dense: ChartRow[] = Array.from({ length: 2001 }, (_entry, index) => ({ t: index, v: index }));
+        const block = composedBlock({ series: [{ form: "scatter", encoding: { x: "t", y: "v" } }] });
+        expect("symbolSize" in asObj(asArr(derive(block, sparse).series)[0])).toBe(false);
+        expect(asObj(asArr(derive(block, dense).series)[0]).symbolSize).toBe(12);
+    });
+});
+
+describe("the composition transforms", () => {
+    it("transforms each row, and drops the point that the transform cannot take", () => {
+        const rows: ChartRow[] = [
+            { gene: "A", p: 0.01 },
+            { gene: "B", p: 0 },
+            { gene: "C", p: -1 },
+            { gene: "D", p: "not a number" },
+        ];
+        const option = derive(composedBlock({ series: [{ form: "scatter", encoding: { x: "gene", y: { column: "p", transform: "neg_log10" } } }] }), rows);
+        expect(asObj(asArr(option.series)[0]).data).toEqual([["A", 2]]);
+        // The axis carries the transform, thus it never names the untransformed column.
+        expect(asObj(option.yAxis).name).toBe("neg_log10(p)");
+    });
+
+    it("takes the absolute value of each cell", () => {
+        const rows: ChartRow[] = [
+            { g: "A", v: -3 },
+            { g: "B", v: 4 },
+        ];
+        const option = derive(composedBlock({ series: [{ form: "bar", encoding: { x: "g", y: { column: "v", transform: "abs" } } }] }), rows);
+        expect(asObj(asArr(option.series)[0]).data).toEqual([
+            ["A", 3],
+            ["B", 4],
+        ]);
+    });
+
+    it("ranks a column upward, and a tie shares its place", () => {
+        const rows: ChartRow[] = [
+            { g: "a", v: 30 },
+            { g: "b", v: 10 },
+            { g: "c", v: 20 },
+            { g: "d", v: 20 },
+        ];
+        const option = derive(composedBlock({ series: [{ form: "bar", encoding: { x: "g", y: { column: "v", transform: "rank" } } }] }), rows);
+        // The two ties both take the place 2, thus the next value takes the place 4.
+        expect(asObj(asArr(option.series)[0]).data).toEqual([
+            ["a", 4],
+            ["b", 1],
+            ["c", 2],
+            ["d", 2],
+        ]);
+    });
+
+    it("derives the same bytes two times over the same rows", () => {
+        const rows: ChartRow[] = [
+            { g: "a", v: 20 },
+            { g: "b", v: 20 },
+            { g: "c", v: 5 },
+        ];
+        const block = composedBlock({
+            series: [{ form: "scatter", encoding: { x: { column: "v", transform: "rank" }, y: { column: "v", transform: "log10" }, label: "g" } }],
+            annotations: [{ kind: "point-labels", column: "v", order: "desc", n: 2 }],
+        });
+        expect(JSON.stringify(derive(block, rows))).toBe(JSON.stringify(derive(block, rows)));
+    });
+});
+
+describe("the composition tooltip and the point names", () => {
+    const rows: ChartRow[] = [
+        { gene: "CA9", lfc: 2.94, padj: 0.001 },
+        { gene: "TP53", lfc: -2.41, padj: 0.02 },
+    ];
+
+    it("puts the label on each data item, and gives a static template formatter", () => {
+        const option = derive(composedBlock({ series: [{ form: "scatter", encoding: { x: "lfc", y: "padj", label: "gene" } }] }), rows);
+        expect(asObj(asArr(option.series)[0]).data).toEqual([
+            { value: [2.94, 0.001], name: "CA9" },
+            { value: [-2.41, 0.02], name: "TP53" },
+        ]);
+        const tooltip = asObj(option.tooltip);
+        expect(tooltip.trigger).toBe("item");
+        expect(typeof tooltip.formatter).toBe("string");
+        expect(tooltip.formatter).toBe("{b}<br/>{a}: {c}");
+    });
+
+    it("gives the plain template when no point carries a name", () => {
+        const option = derive(composedBlock({ series: [{ form: "scatter", encoding: { x: "lfc", y: "padj" } }] }), rows);
+        expect(asObj(option.tooltip).formatter).toBe("{a}: {c}");
+    });
+
+    it("routes a quick-path scatter with a label through the composition", () => {
+        const option = derive(chartBlock("scatter", { x: "lfc", y: "padj", label: "gene" }), rows);
+        expect(asObj(asArr(option.series)[0]).data).toEqual([
+            { value: [2.94, 0.001], name: "CA9" },
+            { value: [-2.41, 0.02], name: "TP53" },
+        ]);
+        expect(asObj(option.tooltip).formatter).toBe("{b}<br/>{a}: {c}");
+    });
+
+    it("refuses a label on a chart that draws no point for one row", () => {
+        const problem = deriveChartOption(chartBlock("histogram", { x: "lfc", label: "gene" }, { id: "h1" }), rows)._unsafeUnwrapErr();
+        expect(problem.detail).toContain("label");
+    });
+});
+
+describe("the composition annotations", () => {
+    const rows: ChartRow[] = [
+        { gene: "CA9", lfc: 2.94, score: 9 },
+        { gene: "TP53", lfc: -2.41, score: 5 },
+        { gene: "VEGFA", lfc: 1.1, score: 7 },
+    ];
+
+    it("puts a reference line and a reference band on the first series as static mark data", () => {
+        const option = derive(
+            composedBlock({
+                series: [{ form: "scatter", encoding: { x: "lfc", y: "score" } }],
+                annotations: [
+                    { kind: "reference-line", axis: "y", value: 6, label: "cut" },
+                    { kind: "reference-band", axis: "x", from: -1, to: 1 },
+                ],
+            }),
+            rows,
+        );
+        const series = asObj(asArr(option.series)[0]);
+        expect(asObj(series.markLine).silent).toBe(true);
+        expect(asArr(asObj(series.markLine).data)).toEqual([{ yAxis: 6, label: { formatter: "cut" } }]);
+        expect(asArr(asObj(series.markArea).data)).toEqual([[{ xAxis: -1 }, { xAxis: 1 }]]);
+    });
+
+    it("names the declared top-N subset alone, and no other point", () => {
+        const option = derive(
+            composedBlock({
+                series: [{ form: "scatter", encoding: { x: "lfc", y: "score", label: "gene" } }],
+                annotations: [{ kind: "point-labels", column: "score", order: "desc", n: 1 }],
+            }),
+            rows,
+        );
+        const data = asArr(asObj(asArr(option.series)[0]).data);
+        expect(data[0]).toEqual({ value: [2.94, 9], name: "CA9", label: { show: true, formatter: "{b}" } });
+        expect(data[1]).toEqual({ value: [-2.41, 5], name: "TP53" });
+        expect(data[2]).toEqual({ value: [1.1, 7], name: "VEGFA" });
+    });
+
+    it("names a marked point after the x cell when the series carries no label channel", () => {
+        const option = derive(
+            composedBlock({
+                series: [{ form: "scatter", encoding: { x: "gene", y: "score" } }],
+                annotations: [{ kind: "point-labels", column: "score", order: "asc", n: 1 }],
+            }),
+            rows,
+        );
+        const data = asArr(asObj(asArr(option.series)[0]).data);
+        expect(data[1]).toEqual({ value: ["TP53", 5], name: "TP53", label: { show: true, formatter: "{b}" } });
+        expect(data[0]).toEqual(["CA9", 9]);
+    });
+
+    it("carries no function text into the option", () => {
+        const json = JSON.stringify(
+            derive(
+                composedBlock({
+                    series: [{ form: "scatter", encoding: { x: "lfc", y: "score", label: "gene" } }],
+                    annotations: [
+                        { kind: "reference-line", axis: "y", value: 6 },
+                        { kind: "point-labels", column: "score", order: "asc", n: 2 },
+                    ],
+                }),
+                rows,
+            ),
+        );
+        expect(json).not.toContain("function");
+        expect(json).not.toContain("=>");
+    });
+
+    it("refuses a rank column that no row holds", () => {
+        const block = composedBlock(
+            {
+                series: [{ form: "scatter", encoding: { x: "lfc", y: "score" } }],
+                annotations: [{ kind: "point-labels", column: "invented", order: "asc", n: 2 }],
+            },
+            { id: "cp" },
+        );
+        expect(deriveChartOption(block, rows)._unsafeUnwrapErr().detail).toContain("invented");
+    });
+});
+
+describe("the area band", () => {
+    const rows: ChartRow[] = [
+        { t: 1, lo: 2, hi: 5 },
+        { t: 2, lo: 3, hi: 7 },
+    ];
+
+    it("gives the two stacked series that draw the band between the two columns", () => {
+        const option = derive(composedBlock({ series: [{ form: "area", encoding: { x: "t", y: "hi", y0: "lo" } }] }), rows);
+        const series = asArr(option.series);
+        expect(series.length).toBe(2);
+        // The runtime stacks the band. Thus the lower series carries the `y0` column, and the sum of the
+        // two series at each x is the `y` column.
+        expect(asObj(series[0]).data).toEqual([
+            [1, 2],
+            [2, 3],
+        ]);
+        expect(asObj(series[1]).data).toEqual([
+            [1, 3],
+            [2, 4],
+        ]);
+        expect(asObj(series[0]).stack).toBe(asObj(series[1]).stack);
+        expect(asObj(asObj(series[1]).areaStyle).opacity).toBe(0.25);
+    });
+
+    it("draws a plain filled line for an area series with no lower bound", () => {
+        const option = derive(composedBlock({ series: [{ form: "area", encoding: { x: "t", y: "hi" } }] }), rows);
+        const series = asArr(option.series);
+        expect(series.length).toBe(1);
+        expect(asObj(series[0]).areaStyle).toEqual({});
+    });
+});
+
+describe("the preset expansion", () => {
+    const rows: ChartRow[] = [
+        { gene: "CA9", lfc: 2.94, p: 0.001, position: 10, chrom: "1", mean: 40, time: 1, survival: 0.9, arm: "A" },
+        { gene: "TP53", lfc: -2.41, p: 0.5, position: 20, chrom: "2", mean: 60, time: 2, survival: 0.7, arm: "B" },
+    ];
+
+    it("derives a volcano as a scatter over the effect and the transformed p, with the guide lines", () => {
+        const option = derive(chartBlock("volcano", { x: "lfc", y: "p", label: "gene" }), rows);
+        const series = asObj(asArr(option.series)[0]);
+        expect(series.type).toBe("scatter");
+        expect(asArr(series.data)[0]).toEqual({ value: [2.94, 3], name: "CA9" });
+        expect(asArr(asObj(series.markLine).data)).toEqual([
+            { yAxis: -Math.log10(VOLCANO_P_THRESHOLD), label: { formatter: `p ${VOLCANO_P_THRESHOLD}` } },
+            { xAxis: -VOLCANO_EFFECT_THRESHOLD },
+            { xAxis: VOLCANO_EFFECT_THRESHOLD },
+        ]);
+        expect(asObj(option.xAxis).name).toBe("lfc");
+        expect(asObj(option.yAxis).name).toBe("-log10 p");
+    });
+
+    it("derives a manhattan with the genome-wide guide line and one series per chromosome", () => {
+        const option = derive(chartBlock("manhattan", { x: "position", y: "p", group: "chrom" }), rows);
+        const series = asArr(option.series);
+        expect(series.map((entry) => asObj(entry).name)).toEqual(["1", "2"]);
+        expect(asArr(asObj(asObj(series[0]).markLine).data)).toEqual([
+            { yAxis: -Math.log10(MANHATTAN_P_THRESHOLD), label: { formatter: `p ${MANHATTAN_P_THRESHOLD}` } },
+        ]);
+    });
+
+    it("derives an MA plot with the baseline guide line", () => {
+        const option = derive(chartBlock("ma", { x: "mean", y: "lfc" }), rows);
+        const series = asObj(asArr(option.series)[0]);
+        expect(series.type).toBe("scatter");
+        expect(asArr(series.data)).toEqual([
+            [40, 2.94],
+            [60, -2.41],
+        ]);
+        expect(asArr(asObj(series.markLine).data)).toEqual([{ yAxis: 0 }]);
+    });
+
+    it("derives a survival plot as one step series for each arm, and it estimates nothing", () => {
+        const option = derive(chartBlock("km", { x: "time", y: "survival", group: "arm" }), rows);
+        const series = asArr(option.series);
+        expect(series.map((entry) => asObj(entry).name)).toEqual(["A", "B"]);
+        expect(asObj(series[0]).step).toBe("end");
+        expect(asObj(series[0]).data).toEqual([[1, 0.9]]);
+        expect("markLine" in asObj(series[0])).toBe(false);
+    });
+
+    it("names the missing demanded channel of a preset", () => {
+        const problem = deriveChartOption(chartBlock("volcano", { x: "lfc" }, { id: "v1" }), rows)._unsafeUnwrapErr();
+        expect(problem.detail).toContain("volcano");
+        expect(problem.detail).toContain("y");
+    });
+});
+
+describe("the quick-path transform", () => {
+    it("derives the transformed column, and names the axis after it", () => {
+        const rows: ChartRow[] = [
+            { g: "A", v: 100 },
+            { g: "B", v: 0 },
+            { g: "C", v: 1000 },
+        ];
+        const option = derive(chartBlock("bar", { x: "g", y: { column: "v", transform: "log10" } }), rows);
+        expect(asObj(option.yAxis).name).toBe("log10(v)");
+        // The zero cell takes no logarithm, thus its row drops and no substitute value appears.
+        expect(asObj(option.xAxis).data).toEqual(["A", "C"]);
+        expect(asObj(asArr(option.series)[0]).data).toEqual([
+            ["A", 2],
+            ["C", 3],
+        ]);
+    });
+
+    it("refuses a transform over a column that no row holds", () => {
+        const rows: ChartRow[] = [{ g: "A", v: 100 }];
+        const problem = deriveChartOption(chartBlock("bar", { x: "g", y: { column: "invented", transform: "log10" } }, { id: "q1" }), rows)._unsafeUnwrapErr();
+        expect(problem.detail).toContain("invented");
     });
 });
 
