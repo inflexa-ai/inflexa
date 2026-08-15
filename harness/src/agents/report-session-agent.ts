@@ -13,6 +13,10 @@
  * mutate surface. Thus no tool starts a run, and no tool changes an analysis. The
  * roster omits those tools, and no runtime guard blocks them.
  *
+ * The derivation tool is the one tool that runs a container, and it changes no
+ * analysis either. It mints no run id, it registers no artifact, and it writes under
+ * the directory of the session alone.
+ *
  * The definition carries no per-session value. The system prompt composes through
  * `composeSystemPrompt` with the identity part and the conversational part, the
  * same composition as the conversation agent. Thus the prompt prefix stays constant
@@ -22,7 +26,10 @@
 import type { Pool } from "pg";
 
 import type { AuthContext } from "../auth/types.js";
+import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { AgentDefinition } from "../loop/types.js";
+import type { SandboxClient } from "../sandbox/client.js";
+import type { ReportSessionStateStore } from "../state/report-session-state.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { EmbeddingProvider } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
@@ -36,6 +43,7 @@ import type { ReportVersionStore } from "../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../tools/report-authoring/authoring-tools.js";
 import { createReportAuthoringTools } from "../tools/report-authoring/authoring-tools.js";
 import {
+    createDeriveTableTool,
     createExaminePageTool,
     createListPinnedArtifactsTool,
     createPreviewReportTool,
@@ -77,6 +85,18 @@ export interface ReportSessionAgentDeps {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Append-only version store -- the record tool gates the whole document first, then records one version. */
     readonly store: ReportVersionStore;
+    /** Derivation ledger -- the derivation tool appends one record for each derived table. */
+    readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
+    /**
+     * Sandbox seam -- the derivation tool runs one ephemeral container for each derived table. Omitted, the
+     * tool reports that the composition gives no sandbox, and it derives nothing.
+     */
+    readonly sandboxClient?: SandboxClient;
+    /**
+     * Run-authorization seam -- the derivation tool authorizes the exec and revokes on every terminal path.
+     * Omitted, the tool derives nothing, the same as an absent sandbox client.
+     */
+    readonly runAuthorizer?: RunAuthorizer;
     /** Thread reader -- the record tool reads the anchor of the report thread. */
     readonly threads: Pick<ThreadStore, "getThread">;
     /** Headless-Chrome config -- the eyes tool opens the rendered page. */
@@ -105,6 +125,7 @@ export interface ReportSessionAgentDeps {
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
     const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, eyes, makeResolver, resolvePageAsset, logger } = deps;
+    const { derivations, sandboxClient, runAuthorizer } = deps;
     const authoring = createReportAuthoringTools(gateway);
 
     const tools: Tool[] = [
@@ -131,6 +152,16 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         createListPinnedArtifactsTool({
             gateway,
             resolveWorkspaceRoot,
+            ...(logger ? { logger } : {}),
+        }),
+        // The derivation tool. It reshapes the pinned evidence into one table under the
+        // session directory, on the sandbox rails of the value tier.
+        createDeriveTableTool({
+            gateway,
+            resolveWorkspaceRoot,
+            derivations,
+            ...(sandboxClient ? { sandboxClient } : {}),
+            ...(runAuthorizer ? { runAuthorizer } : {}),
             ...(logger ? { logger } : {}),
         }),
         // The render-and-preview tool. It resolves the page root per call.

@@ -164,6 +164,22 @@ function columnsOf(read: HeaderRead, delimiter: string): string[] | undefined {
 }
 
 /**
+ * The header columns of a file on disk, or `undefined` when the file gives none.
+ *
+ * `path` decides whether the file carries a header at all, and `absolute` is where the bytes sit. The
+ * derivation tool reads the columns of its own output the same way, thus the two surfaces describe a table
+ * with one rule.
+ */
+export async function readHeaderColumns(path: string, absolute: string): Promise<string[] | undefined> {
+    const delimiter = delimiterOf(path);
+    if (delimiter === undefined) {
+        return undefined;
+    }
+    const read = await readHeaderLine(absolute);
+    return read === undefined ? undefined : columnsOf(read, delimiter);
+}
+
+/**
  * Make the pinned-artifact listing tool over the session-state gateway.
  *
  * The tool reads the thread id from the scope of the call, and it loads the snapshot through the gateway.
@@ -224,12 +240,10 @@ export function createListPinnedArtifactsTool(deps: ListPinnedArtifactsToolDeps)
                 const entry = state.snapshot.artifacts[path];
                 const fileType = entry.fileType;
                 const artifact: PinnedArtifact = { path, hash: entry.hash, ...(typeof fileType === "string" ? { fileType } : {}) };
-                const delimiter = delimiterOf(path);
-                if (root !== undefined && delimiter !== undefined && !fileTypeHoldsNoCell(fileType)) {
+                if (root !== undefined && !fileTypeHoldsNoCell(fileType)) {
                     const resolved = resolveWorkspacePath({ workspaceRoot: root, analysisId, path });
                     if (resolved.kind === "ok") {
-                        const read = await readHeaderLine(resolved.absolute);
-                        const columns = read === undefined ? undefined : columnsOf(read, delimiter);
+                        const columns = await readHeaderColumns(path, resolved.absolute);
                         if (columns !== undefined) {
                             artifact.columns = columns;
                         }

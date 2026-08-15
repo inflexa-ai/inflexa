@@ -36,9 +36,9 @@ import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
-import { stepWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
-import { buildMountPlan } from "./mount-plan.js";
+import { buildMountPlan, sandboxWriteTail } from "./mount-plan.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
 function statusOf(e: SandboxError): number | undefined {
@@ -304,13 +304,16 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     });
 
                     const hostTreePath = config.resolveWorkspaceRoot(meta.analysisId);
-                    // `stepWritePrefix` (not a raw `join`) so the RW bind source runs through
-                    // the same id validation as the pre-created step tree — a crafted stepId
-                    // cannot escape the resolved root into the container.
-                    const hostStepPath = stepWritePrefix({ workspaceRoot: hostTreePath, runId: meta.runId, stepId: meta.stepId });
+                    // `tailWritePrefix` (not a raw `join`) so the RW bind source runs through
+                    // the same validation as the pre-created write tree — a crafted stepId or
+                    // a crafted tail cannot escape the resolved root into the container. The
+                    // tail is the step directory, or the one the caller declared.
+                    const write = sandboxWriteTail(meta);
                     const binds = [
                         `${hostTreePath}:${plan.readonlyTreePath}:ro`,
-                        ...(plan.writableStepPath ? [`${hostStepPath}:${plan.writableStepPath}:rw`] : []),
+                        ...(write && plan.writableStepPath
+                            ? [`${tailWritePrefix({ workspaceRoot: hostTreePath, tail: write.tail })}:${plan.writableStepPath}:rw`]
+                            : []),
                         ...(libsMounted && config.libStorePath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
                         ...(refsMounted && config.refStorePath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
                     ];

@@ -23,6 +23,7 @@ export {
     type PageCapture,
 } from "./examine-page.js";
 export { createRecordVersionTool, type RecordVersionInput, type RecordVersionResult, type RecordVersionToolDeps } from "./record-version.js";
+export { createDeriveTableTool, type DeriveTableInput, type DeriveTableResult, type DeriveTableToolDeps } from "./derive-table.js";
 export {
     createListPinnedArtifactsTool,
     type ListPinnedArtifactsInput,

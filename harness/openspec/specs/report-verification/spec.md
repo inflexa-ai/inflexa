@@ -43,6 +43,13 @@ The record MUST refuse until the eyes ran against the current document state. Th
 - **WHEN** the eyes ran, and the agent then changed a block
 - **THEN** the record refuses until a new preview and a new look run
 
+### Requirement: A derivation is repeatable
+The derivation record MUST hold what a second run needs: the script text, the script hash, the source paths with their hashes, and the output hash. A verifier can mount the same pinned inputs, run the recorded script, and compare the output hash. The record is immutable, thus the chain from a derived cell to the pinned evidence stays whole.
+
+#### Scenario: The record admits a re-run
+- **WHEN** a verifier reads a derivation record
+- **THEN** the record names the script, the sources with their hashes, and the expected output hash
+
 ### Requirement: The eyes seam
 The composition MUST give the eyes through one provisioning seam. The acquire operation takes a scope and returns a lease. The scope carries the analysis id and the workspace root, thus a realization can mount the root for a `file://` navigation. The lease carries a browser endpoint and a release operation.
 

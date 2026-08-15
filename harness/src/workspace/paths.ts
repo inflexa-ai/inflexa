@@ -154,6 +154,44 @@ export function stepWritePrefix(args: { readonly workspaceRoot: string; readonly
 }
 
 /**
+ * Split a declared sandbox write tail into its segments, and refuse a tail that is
+ * not one workspace-relative path.
+ *
+ * A tail names the one writable mount of a sandbox in place of the step directory.
+ * It reaches the mount builders from a caller, thus it takes the same discipline as
+ * a `stepId`: each segment passes {@link assertSafeId}, which refuses a separator,
+ * a NUL, a shell-hostile char, and a pure-dot segment. An empty tail names the
+ * workspace root itself, and an absolute tail names a host location. Both are
+ * refused, because a write mount must be a directory inside the tree.
+ *
+ * The segments come back so a host-path builder joins the validated parts, and it
+ * never re-splits the raw text.
+ */
+export function assertSafeTail(tail: string, label = "writableTail"): string[] {
+    if (tail.length === 0 || tail.startsWith("/")) {
+        throw new Error(`Invalid ${label}: ${tail}`);
+    }
+    const segments = tail.split("/");
+    for (const segment of segments) {
+        assertSafeId(segment, label);
+    }
+    return segments;
+}
+
+/**
+ * Derive the host path of a declared write tail under a workspace root.
+ *
+ * The counterpart of {@link stepWritePrefix} for a sandbox that declares its own
+ * write tail. The tail passes the same validation before it becomes a host
+ * directory path, thus a crafted segment cannot widen or escape the mount. This is
+ * the one builder of that path: the host makes the directory with it, and the
+ * Docker bind source comes from it.
+ */
+export function tailWritePrefix(args: { readonly workspaceRoot: string; readonly tail: string }): string {
+    return resolvePath(args.workspaceRoot, ...assertSafeTail(args.tail));
+}
+
+/**
  * Map a host-side absolute path within an analysis's workspace tree to its
  * in-sandbox absolute path. The tree is bind-mounted at `/{resourceId}`, so
  * the sandbox path is the resource id plus the root-relative tail — the host
