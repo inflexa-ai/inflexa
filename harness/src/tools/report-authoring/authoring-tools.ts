@@ -512,7 +512,8 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
             "Add one block to the draft. The `block` schema gives the eight kinds and the fields of each one. " +
             "You choose the `id` of the block, and it must be unique in the draft. " +
             "Name the destination with `parentId` and one of `place`, `before`, or `after`. " +
-            "The root admits a section only, and an atom needs a section as its parent.",
+            "The root admits a section only, and an atom needs a section as its parent. " +
+            "A reference names the path of a pinned artifact, and the session stamps the hash from the pinned evidence.",
         inputSchema: addBlockInput,
         executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => {
@@ -547,7 +548,8 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
         id: "change_block",
         description:
             "Change one block by its id. Give a `title` to retitle a section, or a `block` to replace an atom, and never both. " +
-            "The change keeps the id of the target, thus the `id` of the payload does not matter. A kind change is permitted.",
+            "The change keeps the id of the target, thus the `id` of the payload does not matter. A kind change is permitted. " +
+            "A reference names the path of a pinned artifact, and the session stamps the hash from the pinned evidence.",
         inputSchema: changeBlockInput,
         executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => `change ${input.targetId}`,
