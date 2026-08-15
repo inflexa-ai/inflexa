@@ -494,13 +494,16 @@ img {
   border-bottom: 1px solid var(--color-border-subtle);
 }
 /* A sortable header. The page script adds one of the two mark classes to the header that orders the table,
-   and it holds that class on one header at a time. */
-.data-table-sort {
+   and it holds that class on one header at a time.
+
+   The affordance shows under the live marker alone. A zero-row table never takes the marker, thus its
+   headers stay plain and no pointer promises a sort that does nothing. */
+.report-table-live .data-table-sort {
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
 }
-.data-table-sort:hover {
+.report-table-live .data-table-sort:hover {
   color: var(--color-heading);
 }
 .data-table-sort-asc::after,
@@ -552,6 +555,11 @@ img {
 }
 .report-table-live .report-table-toggle {
   display: block;
+}
+/* The filter can keep the cap or less. No row then waits behind the toggle, thus the script hides it. The
+   rule comes after the rule that shows the toggle, thus it wins on the same specificity. */
+.report-table-live .report-table-toggle-off {
+  display: none;
 }
 .report-table-toggle:hover {
   color: var(--color-primary-700);

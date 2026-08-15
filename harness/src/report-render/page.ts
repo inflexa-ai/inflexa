@@ -7,7 +7,7 @@
 
 import { assetSource, ECHARTS_ASSET } from "./assets.js";
 import { ECHARTS_THEME_NAME } from "./design.js";
-import { TABLE_ROW_CAP } from "./views/values.js";
+import { SHOW_ALL_PREFIX, TABLE_ROW_CAP } from "./views/values.js";
 
 /**
  * The head references of the staged assets. The page loads the chart runtime from the sibling assets
@@ -82,6 +82,14 @@ const SORT_DESCENDING_CLASS = "data-table-sort-desc";
  * cannot open.
  */
 const TABLE_LIVE_CLASS = "report-table-live";
+
+/**
+ * The class that hides the toggle of the row cap.
+ *
+ * A filter that keeps the cap or less leaves no row behind the toggle. The script writes this class at that
+ * time, thus the reader sees a control only while the control does something.
+ */
+const TOGGLE_HIDDEN_CLASS = "report-table-toggle-off";
 
 /**
  * The label of the toggle while every row that the filter keeps shows.
@@ -355,20 +363,27 @@ export const SECTION_SPY = `(function () {
  * The script marks each card that it takes. The rule that hides a row reads that marker, thus a browser with
  * no script keeps the plain table with every row, and the cap costs the reader nothing there.
  *
- * A click on a header cycles the column: ascending, then descending, then the document order. The script
- * records the initial index of each row at start, thus the document order is always recoverable. The sort
- * reads the `data-value` attribute of a cell, thus a rounded number still orders by its full magnitude. A
- * column sorts numerically when every non-empty value of it parses as a number, and in code-unit order at
- * every other time. An empty cell holds no rank, thus it stays at the end under both directions. Two equal
- * cells keep the document order, thus one sort gives one order and not the order of the engine.
+ * A click on a header cycles the column: ascending, then descending, then the document order. The Enter key
+ * and the Space key give the same cycle, thus a reader sorts from the keyboard. The script records the
+ * initial index of each row at start, thus the document order is always recoverable.
  *
- * The filter hides each row whose text misses the query. The comparison lowercases both texts with
- * `toLowerCase`. That method reads no locale, and it is exact over the ASCII range of a gene name and an
- * accession.
+ * The sort reads the `data-value` attribute of a cell, thus a rounded number still orders by its full
+ * magnitude. A column sorts numerically when one non-empty value of it parses as a number, thus a sentinel
+ * such as `NA` cannot drop the column to text order and rank `10` before `9`. A value that holds no rank,
+ * which is an empty cell and a cell that the numeric column cannot parse, stays at the end under both
+ * directions. Two equal cells keep the document order, thus one sort gives one order and not the order of
+ * the engine.
+ *
+ * The filter reads the `data-value` attributes of a row, and never the shown text. Thus a reader finds the
+ * accession that the trim hides, and a match cannot form across two cells. The comparison lowercases both
+ * texts with `toLowerCase`. That method reads no locale, and it is exact over the ASCII range of a gene name
+ * and an accession.
  *
  * The cap composes with both. After each change the first rows that the filter keeps show, up to the cap,
  * and the rest hide. The toggle opens the table, and each row that the filter keeps then shows. The label of
- * the toggle flips between the collapsed label of the view and the label above.
+ * the toggle flips between the collapsed label and the label above, and the collapsed label counts the rows
+ * that the filter keeps. A filter that keeps the cap or less hides the toggle, because nothing then waits
+ * behind it.
  *
  * The script registers no reveal work. It touches neither the reveal gate nor the readiness sentinel, thus a
  * capture of the page still signals at the same point.
@@ -379,24 +394,31 @@ export const TABLE_ENHANCER = `(function () {
   var ASCENDING = ${JSON.stringify(SORT_ASCENDING_CLASS)};
   var DESCENDING = ${JSON.stringify(SORT_DESCENDING_CLASS)};
   var LIVE = ${JSON.stringify(TABLE_LIVE_CLASS)};
+  var TOGGLE_OFF = ${JSON.stringify(TOGGLE_HIDDEN_CLASS)};
   var FEWER = ${JSON.stringify(SHOW_FEWER_LABEL)};
+  var ALL = ${JSON.stringify(SHOW_ALL_PREFIX)};
   function rawValue(row, index) {
     var cell = row.cells[index];
     return cell ? cell.getAttribute("data-value") || "" : "";
   }
+  function rowValues(row) {
+    var joined = "";
+    for (var c = 0; c < row.cells.length; c++) {
+      joined += (row.cells[c].getAttribute("data-value") || "") + "\\n";
+    }
+    return joined.toLowerCase();
+  }
   function numericColumn(rows, index) {
-    var seen = false;
     for (var i = 0; i < rows.length; i++) {
       var value = rawValue(rows[i], index);
-      if (value === "") {
-        continue;
+      if (value !== "" && !isNaN(Number(value))) {
+        return true;
       }
-      if (isNaN(Number(value))) {
-        return false;
-      }
-      seen = true;
     }
-    return seen;
+    return false;
+  }
+  function rankless(value, numeric) {
+    return value === "" || (numeric && isNaN(Number(value)));
   }
   function enhance(card) {
     var table = card.querySelector("table.data-table");
@@ -406,14 +428,15 @@ export const TABLE_ENHANCER = `(function () {
     }
     var rows = [];
     var order = [];
+    var values = [];
     for (var r = 0; r < body.rows.length; r++) {
       rows.push(body.rows[r]);
       order.push(r);
+      values.push(rowValues(body.rows[r]));
     }
     var headers = table.querySelectorAll("th[data-sort-index]");
     var filter = card.querySelector(".report-table-filter");
     var toggle = card.querySelector(".report-table-toggle");
-    var collapsed = toggle ? toggle.textContent : "";
     var query = "";
     var open = false;
     var sorted = null;
@@ -421,8 +444,9 @@ export const TABLE_ENHANCER = `(function () {
     function paint() {
       var kept = 0;
       for (var i = 0; i < order.length; i++) {
-        var row = rows[order[i]];
-        if (query !== "" && (row.textContent || "").toLowerCase().indexOf(query) < 0) {
+        var index = order[i];
+        var row = rows[index];
+        if (query !== "" && values[index].indexOf(query) < 0) {
           row.classList.add(HIDDEN);
           continue;
         }
@@ -434,14 +458,21 @@ export const TABLE_ENHANCER = `(function () {
         }
       }
       if (toggle) {
-        toggle.textContent = open ? FEWER : collapsed;
+        toggle.textContent = open ? FEWER : ALL + kept;
+        if (kept > CAP) {
+          toggle.classList.remove(TOGGLE_OFF);
+        } else {
+          toggle.classList.add(TOGGLE_OFF);
+        }
       }
       for (var h = 0; h < headers.length; h++) {
         headers[h].classList.remove(ASCENDING);
         headers[h].classList.remove(DESCENDING);
+        headers[h].setAttribute("aria-sort", "none");
       }
       if (sorted) {
         sorted.classList.add(descending ? DESCENDING : ASCENDING);
+        sorted.setAttribute("aria-sort", descending ? "descending" : "ascending");
       }
     }
     function place() {
@@ -455,8 +486,10 @@ export const TABLE_ENHANCER = `(function () {
       order.sort(function (left, right) {
         var a = rawValue(rows[left], index);
         var b = rawValue(rows[right], index);
-        if (a === "" || b === "") {
-          return a === b ? left - right : a === "" ? 1 : -1;
+        var aOut = rankless(a, numeric);
+        var bOut = rankless(b, numeric);
+        if (aOut || bOut) {
+          return aOut === bOut ? left - right : aOut ? 1 : -1;
         }
         var rank = numeric ? Number(a) - Number(b) : a < b ? -1 : a > b ? 1 : 0;
         return rank === 0 ? left - right : rank * direction;
@@ -486,6 +519,15 @@ export const TABLE_ENHANCER = `(function () {
     }
     function bind(header, index) {
       header.addEventListener("click", function () {
+        cycle(header, index);
+      });
+      header.addEventListener("keydown", function (event) {
+        if (event.key !== "Enter" && event.key !== " ") {
+          return;
+        }
+        // The Space key scrolls the page by default. The header takes the key instead, thus the keyboard
+        // gives the same cycle as the pointer.
+        event.preventDefault();
         cycle(header, index);
       });
     }
