@@ -95,6 +95,21 @@ The in-progress document and the pinned snapshot of a thread MUST live in one du
 - **WHEN** one process lands an add, and a different process serves the next turn
 - **THEN** the outline of the next turn holds the added block
 
+### Requirement: The session tools name their calls
+The report tools MUST give a call detail that names their subject. `add_block` names the kind, with the title of a section or the file name of a bound artifact. `change_block`, `move_block`, and `remove_block` name the block id. On an ok outcome, `preview_report` names the page path, and `record_report_version` names the version. `examine_page` names the look outcome, and the listing tool names the listed count with the truncation.
+
+#### Scenario: An added section names its title
+- **WHEN** the agent adds a section block titled "Summary"
+- **THEN** the call line reads the kind and the title
+
+#### Scenario: An added table names its file
+- **WHEN** the agent adds a table block bound to a workspace path
+- **THEN** the call line reads the kind and the file name of the path
+
+#### Scenario: The preview names the page
+- **WHEN** the preview renders the page
+- **THEN** the finished line names the page path
+
 ### Requirement: The read-only roster
 The roster of the agent MUST hold: the workspace read tools (`read_file`, `list_files`, `file_stat`, and `grep`), the workspace search, `inspect_run`, `inspect_data_profile`, the authoring tools, the pinned-artifact listing tool, and the render-and-preview tool. The roster MUST NOT hold a planner, a run launcher, a working-memory write, or a sandbox mutate surface. Thus no tool starts a run, and no tool changes an analysis.
 

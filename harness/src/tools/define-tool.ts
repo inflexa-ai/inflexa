@@ -138,6 +138,8 @@ export interface Tool<Input = unknown, Output = unknown> {
     readonly executionMode: ToolExecutionMode;
     /** See {@link ToolDefinition.describeCall}. Absent when the tool declares none. */
     describeCall?(input: Input): string;
+    /** See {@link ToolDefinition.describeResult}. Absent when the tool declares none. */
+    describeResult?(input: Input, result: Output): string;
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
@@ -179,6 +181,36 @@ export interface ToolDefinition<Schema extends z.ZodType, Output> {
      * The hook never reaches the model.
      */
     describeCall: ((input: z.infer<Schema>) => string) | "none";
+    /**
+     * One line that names what THIS call PRODUCED — the outcome-time counterpart
+     * of `describeCall`. A page path, a recorded id, and a listed count are facts
+     * of the result, thus no hook over the input can name one. The finished event
+     * carries this line, and it carries the call detail when the hook gives
+     * nothing.
+     *
+     * The decision is OPTIONAL, unlike `describeCall`. A call always has an input
+     * to describe or an input that cannot distinguish it, thus that decision is
+     * forced. A result is different: a tool whose ok value adds no fact that a
+     * reader wants leaves the call detail to stand for the whole call. Thus the
+     * absent key is the whole of "this tool describes no result", and the `"none"`
+     * sentinel has no counterpart here.
+     *
+     * The hook runs on an ok outcome only. An error outcome already names itself,
+     * and a hook over a failed call reads a shape that does not exist.
+     *
+     * A hook is synchronous and pure — no I/O, no ambient state — and a
+     * description must never fail a call: the loop guards the call and drops the
+     * detail on any failure (see the tool-call-detail capability). The result
+     * arrives as the tool produced it, thus the hook reads a value of its own
+     * declared `Output` type and no parse stands between the two.
+     *
+     * Return whatever reads best. Normalization — one line, control characters
+     * removed, secrets redacted, length capped — happens once at the emit site,
+     * never here.
+     *
+     * The hook never reaches the model.
+     */
+    readonly describeResult?: (input: z.infer<Schema>, result: Output) => string;
     execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
@@ -216,6 +248,10 @@ export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition
         // `typeof` is the discriminator, not equality with the sentinel, so a
         // hook that returns the string `"none"` still packages as a hook.
         ...(typeof def.describeCall === "function" ? { describeCall: def.describeCall } : {}),
+        // The same property-presence pattern as `describeCall`: a tool that
+        // declares no result hook carries no key, thus "has a hook" is one
+        // property check on either side.
+        ...(typeof def.describeResult === "function" ? { describeResult: def.describeResult } : {}),
         execute: def.execute,
     };
 }

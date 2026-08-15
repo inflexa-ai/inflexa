@@ -9,6 +9,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { Scope } from "../../auth/types.js";
+import { normalizeDetail } from "../../loop/tool-detail.js";
 import type { DraftDocument } from "../../report-model/draft.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
@@ -679,5 +680,101 @@ describe("the cost of a landing", () => {
         const value = (await tools.set_title.execute({ title: "Report" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(value).toEqual({ applied: true, changed: [] });
+    });
+});
+
+describe("the call detail", () => {
+    /** The tools of a bare gateway. Each hook is pure, thus no seeded state matters here. */
+    const tools = createReportAuthoringTools(makeFakeGateway());
+
+    /** Run a tool's call hook, asserting that the tool declares one. */
+    function detailOf(tool: { describeCall?: (input: never) => string }, input: unknown): string {
+        expect(tool.describeCall).toBeDefined();
+        return tool.describeCall!(input as never);
+    }
+
+    /** A whole-table reference onto one pinned path. */
+    function tableBinding(path: string): Record<string, unknown> {
+        return { kind: "artifact-table", path, hash: "sha256:aaa" };
+    }
+
+    it("names the kind and the title of an added section", () => {
+        expect(detailOf(tools.add_block, { block: { kind: "section", id: "s1", title: "Summary", blocks: [] } })).toBe('add section "Summary"');
+    });
+
+    it("names the file of an added table, chart, and figure", () => {
+        expect(detailOf(tools.add_block, { block: { kind: "table", id: "b1", binding: tableBinding("runs/r1/s1/output/de.csv") } })).toBe("add table de.csv");
+        expect(
+            detailOf(tools.add_block, {
+                block: { kind: "chart", id: "b2", binding: tableBinding("runs/r1/s1/output/de.csv"), chartType: "bar", encoding: { x: "gene" } },
+            }),
+        ).toBe("add chart de.csv");
+        expect(
+            detailOf(tools.add_block, {
+                block: { kind: "figure", id: "b3", binding: { kind: "artifact-file", path: "runs/r1/s1/figures/volcano.png", hash: "sha256:bbb" } },
+            }),
+        ).toBe("add figure volcano.png");
+    });
+
+    it("names the first bound file of a claim, and skips a citation that names none", () => {
+        const bindings = [
+            { kind: "citation", idKind: "pmid", id: "12345", raw: "Watson 1953" },
+            { kind: "artifact-value", path: "output/de.csv", hash: "sha256:aaa", locator: { column: "padj", row: 0 } },
+        ];
+
+        expect(detailOf(tools.add_block, { block: { kind: "claim", id: "c1", content: { prose: "x" }, bindings } })).toBe("add claim de.csv");
+    });
+
+    it("names the file of a metric, through a direct value and through a derivation", () => {
+        const direct = { kind: "artifact-value", path: "output/counts.csv", hash: "sha256:aaa", locator: { column: "n", row: 0 } };
+        const derived = {
+            kind: "derivation",
+            op: "ratio",
+            inputs: [
+                { kind: "artifact-value", path: "output/a.csv", hash: "sha256:aaa", locator: { column: "n", row: 0 } },
+                { kind: "artifact-value", path: "output/b.csv", hash: "sha256:bbb", locator: { column: "n", row: 0 } },
+            ],
+        };
+
+        expect(detailOf(tools.add_block, { block: { kind: "metric", id: "m1", label: "count", value: direct } })).toBe("add metric counts.csv");
+        expect(detailOf(tools.add_block, { block: { kind: "metric", id: "m2", label: "ratio", value: derived } })).toBe("add metric a.csv");
+    });
+
+    it("gives the kind alone for a block that names no subject", () => {
+        expect(detailOf(tools.add_block, { block: { kind: "text", id: "t1", content: { prose: "hello" } } })).toBe("add text");
+        expect(detailOf(tools.add_block, { block: { kind: "section", id: "s1", title: "", blocks: [] } })).toBe("add section");
+        expect(detailOf(tools.add_block, { block: { kind: "claim", id: "c1", content: { prose: "x" }, bindings: [{ kind: "citation", id: "1" }] } })).toBe(
+            "add claim",
+        );
+    });
+
+    it("gives a bare line for a payload that names no kind", () => {
+        expect(detailOf(tools.add_block, { block: { id: "b1" } })).toBe("add a block");
+        expect(detailOf(tools.add_block, { block: "not a block at all" })).toBe("add a block");
+    });
+
+    // A model routinely sends a nested object as a stringified payload, and the tool decodes it before
+    // the core reads it. The detail decodes the same value, thus the two never disagree about the call.
+    it("reads a double-encoded payload the same as a plain one", () => {
+        const block = JSON.stringify({ kind: "table", id: "b1", binding: tableBinding("output/de.csv") });
+
+        expect(detailOf(tools.add_block, { block })).toBe("add table de.csv");
+    });
+
+    // The emit-site cap cuts the tail. Left to it, a long title takes the whole line and the quote that
+    // closes the mark goes with the cut. The hook bounds the title, thus the mark always closes.
+    it("bounds a long section title, so the mark always closes", () => {
+        const detail = detailOf(tools.add_block, { block: { kind: "section", id: "s1", title: "T".repeat(80), blocks: [] } });
+
+        expect(detail).toBe(`add section "${"T".repeat(31)}…"`);
+        expect(normalizeDetail(detail)).toBe(detail);
+    });
+
+    it("keeps the block id as the whole detail of each other mutation and of the read", () => {
+        expect(detailOf(tools.change_block, { targetId: "b1" })).toBe("change b1");
+        expect(detailOf(tools.move_block, { targetId: "b1", parentId: "s2" })).toBe("move b1");
+        expect(detailOf(tools.remove_block, { targetId: "b1" })).toBe("remove b1");
+        expect(detailOf(tools.read_block, { targetId: "b1" })).toBe("read b1");
+        expect(detailOf(tools.set_title, { title: "Report" })).toBe("title the report Report");
     });
 });

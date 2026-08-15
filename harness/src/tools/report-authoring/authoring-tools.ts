@@ -18,9 +18,11 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
+import { basename } from "node:path";
 import { z } from "zod";
 
 import type { Scope } from "../../auth/types.js";
+import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { isSafeId } from "../../workspace/paths.js";
 import {
     addBlock,
@@ -407,14 +409,78 @@ function readId(block: unknown): string | undefined {
     return readStringField(block, "id");
 }
 
-function readStringField(block: unknown, field: "kind" | "id"): string | undefined {
-    if (block !== null && typeof block === "object") {
-        const value = (block as Record<string, unknown>)[field];
-        if (typeof value === "string") {
-            return value;
+/** Read one field of an untyped payload, or `undefined` when the payload is not an object. */
+function fieldOf(value: unknown, field: string): unknown {
+    return value !== null && typeof value === "object" ? (value as Record<string, unknown>)[field] : undefined;
+}
+
+function readStringField(block: unknown, field: string): string | undefined {
+    const value = fieldOf(block, field);
+    return typeof value === "string" ? value : undefined;
+}
+
+/** The pinned path of an untyped reference payload, or `undefined` when it names none. */
+function referencePath(reference: unknown): string | undefined {
+    const path = readStringField(reference, "path");
+    return path === undefined || path.length === 0 ? undefined : path;
+}
+
+/**
+ * The artifact path that an untyped block payload binds, or `undefined` when the kind binds no path.
+ *
+ * Where a reference sits differs per kind, thus the walk reads the one field of each kind and never
+ * searches the payload. A claim can hold a citation first, which names no path, thus the walk takes the
+ * first binding that names one. A metric holds a scalar reference, and a derivation holds its own two
+ * inputs, thus the first input names the derived value. A text block, a citation block, and a section
+ * bind no artifact at all.
+ *
+ * The payload is model-authored and unvalidated here, thus each read is a guarded read and a wrong shape
+ * gives `undefined`.
+ */
+function boundArtifactPath(kind: string, block: unknown): string | undefined {
+    if (kind === "table" || kind === "chart" || kind === "figure") {
+        return referencePath(fieldOf(block, "binding"));
+    }
+    if (kind === "claim") {
+        const bindings = fieldOf(block, "bindings");
+        if (!Array.isArray(bindings)) {
+            return undefined;
         }
+        for (const binding of bindings) {
+            const path = referencePath(binding);
+            if (path !== undefined) {
+                return path;
+            }
+        }
+        return undefined;
+    }
+    if (kind === "metric") {
+        const value = fieldOf(block, "value");
+        const direct = referencePath(value);
+        if (direct !== undefined) {
+            return direct;
+        }
+        const inputs = fieldOf(value, "inputs");
+        return Array.isArray(inputs) ? referencePath(inputs[0]) : undefined;
     }
     return undefined;
+}
+
+/**
+ * The subject that names one added block: the title of a section in quotes, or the file name of the
+ * artifact that the block binds. A block that names neither gives no subject, and the kind stands alone.
+ *
+ * The title is model-authored text of no fixed length, thus the needle bound cuts it before the emit-site
+ * cap can cut the quote that closes it. The file name is the base name alone, because the directory
+ * segments of an analysis path repeat across every block and the file name is what tells two apart.
+ */
+function addedSubject(kind: string, block: unknown): string | undefined {
+    if (kind === "section") {
+        const title = readStringField(block, "title");
+        return title === undefined || title.length === 0 ? undefined : `"${capCodePoints(title, DETAIL_NEEDLE_MAX_LENGTH)}"`;
+    }
+    const path = boundArtifactPath(kind, block);
+    return path === undefined ? undefined : basename(path);
 }
 
 /**
@@ -517,8 +583,13 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway): 
         inputSchema: addBlockInput,
         executionMode: AUTHORING_EXECUTION_MODE,
         describeCall: (input): string => {
-            const kind = readKind(decodeBlockPayload(input.block));
-            return kind !== undefined ? `add ${kind}` : "add a block";
+            const block = decodeBlockPayload(input.block);
+            const kind = readKind(block);
+            if (kind === undefined) {
+                return "add a block";
+            }
+            const subject = addedSubject(kind, block);
+            return subject === undefined ? `add ${kind}` : `add ${kind} ${subject}`;
         },
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
             const opened = await openThread(ctx);

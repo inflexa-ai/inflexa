@@ -35,7 +35,7 @@ import type {
 } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { readToolResultImage, type ToolContext } from "../define-tool.js";
-import { createExaminePageTool, type CapturePage, type PageCapture } from "./examine-page.js";
+import { createExaminePageTool, type CapturePage, type ExaminePageResult, type PageCapture } from "./examine-page.js";
 
 const DEFAULT_ANALYSIS_ID = "analysis-001";
 
@@ -552,5 +552,56 @@ describe("the transport precedence", () => {
         // The static realization gives the configured endpoint, thus the capture reaches that one.
         expect(connected).toEqual([CONFIGURED_ENDPOINT]);
         expect(gateway.seenOf(threadId)).toBe("rendered-hash");
+    });
+});
+
+describe("the result detail", () => {
+    /** Run the tool's result hook, asserting that the tool declares one. */
+    function detailOf(tool: ReturnType<typeof createExaminePageTool>, result: ExaminePageResult): string {
+        expect(tool.describeResult).toBeDefined();
+        return tool.describeResult!({}, result);
+    }
+
+    it("names the look outcome of a capture", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const stub: PageCapture = { screenshotBase64: "BASE64PNG", consoleErrors: [], failedRequests: [] };
+        const capture: CapturePage = () => Promise.resolve(stub);
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(detailOf(tool, result)).toBe("examined");
+    });
+
+    it("names the absent page", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", null);
+        const capture: CapturePage = () => Promise.reject(new Error("the capture must not run when no page exists"));
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(detailOf(tool, result)).toBe("no-page");
+    });
+
+    it("names a failed capture", async () => {
+        const root = await makeRoot();
+        const threadId = "t1";
+        await writePage(root, threadId);
+        const gateway = makeFakeGateway();
+        gateway.seed(threadId, "rendered-hash");
+        const capture: CapturePage = () => Promise.reject(new Error("the browser refused the page"));
+        const tool = createExaminePageTool({ gateway, resolveWorkspaceRoot: () => root, chrome: {}, capture, logger: recordingLogger().logger });
+
+        const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("capture-failed");
+        // The cause of the fault stays in the log, thus the line never carries a browser message.
+        expect(detailOf(tool, result)).toBe("capture-failed");
     });
 });
