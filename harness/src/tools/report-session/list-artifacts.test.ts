@@ -435,6 +435,20 @@ describe("the result detail", () => {
         expect(detailOf(tool, result)).toBe("3 artifacts");
     });
 
+    it("counts one artifact in the singular, and an empty pinned set in the plural", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("one", stagedInputs(1));
+        gateway.seed("none", stagedInputs(0));
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const one = (await tool.execute({}, ctxForThread("one")))._unsafeUnwrap();
+        const none = (await tool.execute({}, ctxForThread("none")))._unsafeUnwrap();
+
+        expect(detailOf(tool, one)).toBe("1 artifact");
+        expect(detailOf(tool, none)).toBe("0 artifacts");
+    });
+
     // A count alone reads as the whole pinned set, thus a cut listing names the total it came from.
     it("names the total beside the count of a truncated listing", async () => {
         const root = await makeRoot();

@@ -1,12 +1,12 @@
 ## Context
 
-The detail seam computes one line from the input at dispatch (`loop/tool-detail.ts`), and the finished event echoes the started detail (`contracts/chat-events.ts`). The page path, the recorded version, and the listed count are outcomes, thus no input hook can name them. The CLI part update takes a present finished detail, and it never blanks on an absent one. Thus a richer finished detail reaches the line with no CLI change.
+The detail seam computes one line from the input at dispatch (`loop/tool-detail.ts`), and the finished event echoes the started detail (`contracts/chat-events.ts`). The page path, the recorded version, and the listed count are outcomes, thus no input hook can name them. The CLI part update applies a present finished detail, and it never blanks on an absent one. One line in the conversation hook carries that rule, and the dev printer shows the finished line.
 
 ## Goals / Non-Goals
 
 - Goal: a watcher reads what the agent touches and what a call produced, from the call line alone.
 - Non-goal: a payload channel. The result hook rides the same guard, the same normalization, and the same length cap.
-- Non-goal: a CLI change.
+- Non-goal: a CLI redesign. The conversation hook takes one line, and the dev printer takes one line.
 
 ## Decisions
 

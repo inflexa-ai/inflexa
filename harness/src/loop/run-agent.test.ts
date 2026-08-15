@@ -1219,6 +1219,31 @@ describe("runAgent — tool result detail", () => {
         expect("detail" in finished[1]!).toBe(false);
         expect(finished[2]).toMatchObject({ toolUseId: "tu-3", detail: "page last.html" });
     });
+
+    // A step-mode call goes through `runStep`, which hands back what a PRIOR run cached. A workflow
+    // in flight when the shape of that return widened replays the bare result and never re-enters
+    // the body. This step stands for such a replay: it drops the pair and gives the bare value back.
+    it("reads a replayed step that cached the bare result, and keeps the started detail", async () => {
+        const replayBareResult: RunStep = async (_name, fn) => {
+            const settled = (await fn()) as { result?: unknown };
+            // The cast restates the shape the body returns. The step store is untyped across two
+            // builds of the loop, thus only the read site can state which of the two it holds.
+            return (settled.result ?? settled) as never;
+        };
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "render", { path: "draft" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([describedRender()], provider, { runStep: replayBareResult });
+
+        expect(events).toHaveLength(2);
+        expect(events[0]).toMatchObject({ type: "tool-started", detail: "draft" });
+        // A cached bare value carries no result detail, thus the call keeps the line its start showed.
+        expect(events[1]).toMatchObject({ type: "tool-finished", detail: "draft", outcome: "ok" });
+        // The result still reached the model, thus the turn ran to its reply.
+        expect(provider.calls).toHaveLength(2);
+    });
 });
 
 describe("runAgent — tool-finished outcome", () => {
