@@ -418,6 +418,52 @@ describe("docker createSandbox — mounts and platform", () => {
         expect(sandboxOf(created)!.workingDir).toBe("/an-1");
     });
 
+    test("binds a declared write tail in place of the step directory", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { ...META, runId: "derive-table", stepId: "derive", writableTail: "report-sessions/thread-1/derived" },
+                mintSandboxIdentity("derive-table"),
+            )
+        )._unsafeUnwrap();
+
+        const sandbox = sandboxOf(created)!;
+        // The tree stays read-only, and the one read-write bind covers the declared tail alone.
+        expect(sandbox.binds).toEqual(["/sessions/an-1:/an-1:ro", "/sessions/an-1/report-sessions/thread-1/derived:/an-1/report-sessions/thread-1/derived:rw"]);
+        // No step directory of the coordinates reaches a bind.
+        expect(sandbox.binds.some((b) => b.includes("runs/derive-table"))).toBe(false);
+        expect(sandbox.workingDir).toBe("/an-1/report-sessions/thread-1/derived");
+    });
+
+    test("refuses a crafted write tail before any container is created", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        // The mount builders validate each segment, thus a traversal never becomes a bind source. The
+        // refusal is a throw at the builder, and the `ResultAsync` carries it as a rejection.
+        const attempt = async (): Promise<void> => {
+            (await ops.createSandbox({ ...META, writableTail: "../escape" }, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        };
+        await expect(attempt()).rejects.toThrow(/Invalid writableTail/);
+        expect(created).toHaveLength(0);
+    });
+
     test("skips the /mnt/libs mount when the store's current pointer has vanished since boot", async () => {
         const { docker, created } = stubDocker();
         await rm(join(libRoot, "current"), { force: true });

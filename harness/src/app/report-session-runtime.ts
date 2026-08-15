@@ -26,6 +26,11 @@
  * thread and a wrong thread type are permanent, and a store or pin fault is
  * transient. The persist is a compare-and-swap against the prior document that the
  * load read, thus two concurrent turns cannot both land.
+ *
+ * The load serves the stored pin with the derivations of the session merged onto it.
+ * Thus a derived table binds, resolves, and validates the same way as a pinned one.
+ * The stored pin never changes, thus the anchor stays honest and the merge is
+ * recomputable from the row.
  */
 
 import type { Pool } from "pg";
@@ -36,7 +41,14 @@ import type { Logger } from "../lib/logger.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import type { DraftDocument } from "../report-model/draft.js";
 import { pinReportSnapshot } from "../report-model/pin-snapshot.js";
-import { createReportSessionStateStore, type ReportSessionState as StoredSessionState, type SessionStateReadError } from "../state/report-session-state.js";
+import type { ArtifactSnapshot, ReportSnapshot } from "../report-model/reference-resolver.js";
+import {
+    createReportSessionStateStore,
+    type DerivationRecord,
+    type ReportSessionState as StoredSessionState,
+    type ReportSessionStateStore,
+    type SessionStateReadError,
+} from "../state/report-session-state.js";
 import type {
     ReportSessionStateGateway,
     SeenStampResult,
@@ -83,7 +95,37 @@ export interface ReportSessionRuntimeDeps {
  */
 export interface ReportSessionRuntime {
     readonly gateway: ReportSessionStateGateway;
+    /**
+     * The derivation ledger of the session state. The derivation tool appends one record for each
+     * derivation, and the gateway load serves each record as a member of the snapshot.
+     */
+    readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
     ensureSessionState(threadId: string): Promise<EnsureSessionStateResult>;
+}
+
+/**
+ * The served membership: the stored pin, with one entry for each derivation of the session.
+ *
+ * The tools read the served snapshot, thus a derived table binds the same way as a pinned one. The stored
+ * pin stays untouched, thus the merge runs again on each load and the row keeps the evidence of the pin
+ * alone.
+ *
+ * A derived entry carries the output hash alone. A file type states a role of the run ledger, and a
+ * derivation holds none. The map takes a null prototype, the same as the stored parse, thus a path such as
+ * `__proto__` stays an ordinary entry.
+ */
+function serveMembership(snapshot: ReportSnapshot, derivations: readonly DerivationRecord[]): ReportSnapshot {
+    if (derivations.length === 0) {
+        return snapshot;
+    }
+    const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
+    for (const [path, entry] of Object.entries(snapshot.artifacts)) {
+        artifacts[path] = entry;
+    }
+    for (const record of derivations) {
+        artifacts[record.outputPath] = { hash: record.outputHash };
+    }
+    return { ...snapshot, artifacts };
 }
 
 /**
@@ -171,6 +213,9 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
      * no document, thus the load gives the empty draft. The found load carries the
      * stored analysis and the prior document as the concurrency token. A row with no
      * snapshot cannot serve a tool, because the pin writes the snapshot first.
+     *
+     * The served snapshot is the stored pin with the derivations merged onto it, thus a
+     * tool reads one membership and it never merges again.
      */
     function toLoad(state: StoredSessionState): SessionStateLoad {
         if (state.snapshot === null) {
@@ -179,7 +224,7 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
         }
         return {
             outcome: "found",
-            state: { document: state.document ?? EMPTY_DRAFT, snapshot: state.snapshot },
+            state: { document: state.document ?? EMPTY_DRAFT, snapshot: serveMembership(state.snapshot, state.derivations) },
             analysisId: state.analysisId,
             token: state.document,
             seenDocumentHash: state.seenDocumentHash,
@@ -257,5 +302,5 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
         },
     };
 
-    return { gateway, ensureSessionState };
+    return { gateway, derivations: store, ensureSessionState };
 }

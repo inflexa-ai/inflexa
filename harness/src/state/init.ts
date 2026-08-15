@@ -180,6 +180,13 @@ CREATE INDEX IF NOT EXISTS idx_cortex_report_versions_analysis
 -- holds the hash that the last eyes capture saw, copied from the rendered hash.
 -- Each is nullable, because a fresh session has run no preview and no eyes. The
 -- record refuses unless the seen hash equals the hash of the current draft.
+--
+-- The derivations column holds the derivation list of the session. One record
+-- carries the derived output path, the output hash, the source paths with their
+-- hashes, the script hash, and the script text. The column is nullable, because a
+-- session that derived nothing holds no list, and the read gives an empty list for
+-- such a row. The served membership merges the records onto the pin, and the pin
+-- itself never changes.
 CREATE TABLE IF NOT EXISTS cortex_report_session_state (
   thread_id              TEXT PRIMARY KEY,
   analysis_id            TEXT NOT NULL
@@ -187,6 +194,7 @@ CREATE TABLE IF NOT EXISTS cortex_report_session_state (
                            ON DELETE CASCADE,
   document               JSONB,
   snapshot               JSONB,
+  derivations            JSONB,
   rendered_document_hash TEXT,
   seen_document_hash     TEXT,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -578,6 +586,10 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                 // which is the honest state, thus an existing row reads back as never-seen.
                 "ALTER TABLE cortex_report_session_state ADD COLUMN IF NOT EXISTS rendered_document_hash TEXT",
                 "ALTER TABLE cortex_report_session_state ADD COLUMN IF NOT EXISTS seen_document_hash TEXT",
+                // The derivation list of a report session. Nullable and unbackfilled: a
+                // session that derived nothing holds no list, and the read gives an empty
+                // list for such a row.
+                "ALTER TABLE cortex_report_session_state ADD COLUMN IF NOT EXISTS derivations JSONB",
                 // Databases created before `data_profile_status` became nullable still
                 // carry the NOT NULL floor, which would reject a clear. Idempotent:
                 // dropping an absent NOT NULL no-ops, so this is a no-op on fresh DBs.

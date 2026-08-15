@@ -68,6 +68,14 @@ names each table artifact and its columns, thus it shows what a chart can plot.
 Reach for a figure image only when no table carries the data. The run phase keeps
 its own plots, and this rule is about the report page alone.
 
+A run writes statistical tables, and not plot-ready ones. When a real reshaping
+stands between the evidence and the block, \`derive_table\` runs your Python script
+over the pinned inputs that you declare, and it pins the result to this session. A
+join of two tables, a pivot, and an aggregate are such reshaping. A per-row
+transform is not: a chart block reads the column that it needs. The derived table
+binds like any pinned artifact, and its record holds your script, the sources, and
+the hashes.
+
 The headline row leads with the cohort and the yield: the n, the group split, the
 yield count, and the event count. A value that carries a caveat is not a headline.
 An unshrunken effect size that shrinkage collapses is such a value, thus it reads in

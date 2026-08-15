@@ -10,6 +10,17 @@
  * artifacts, lib store read-only at `/mnt/libs`, ref store read-only at
  * `/mnt/refs`.
  *
+ * A caller can declare its own `writableTail` in place of the step tail — a
+ * workspace-relative path that becomes the one read-write mount, with no step
+ * subdirectories under it. The session derivation declares one; the run path
+ * declares none and keeps the step tail. Thus a sandbox writes into the step
+ * directory or into the one declared tail, and nowhere else.
+ *
+ * The precedence is a refusal, not an order: `readOnly` and `writableTail` state
+ * opposite things about the same mount, thus a coordinate set that carries both
+ * throws here — the same as a crafted id. No caller can hold both and get a
+ * silently chosen winner.
+ *
  * Container paths are a function of `resourceId` alone — they never carry the
  * host location of the tree. Where that tree physically lives is the embedder's
  * (`resolveWorkspaceRoot`); the two are reconciled per backend: Docker binds the
@@ -17,7 +28,7 @@
  * (see {@link buildSessionSubPaths}).
  */
 
-import { assertSafeId } from "../workspace/paths.js";
+import { assertSafeId, assertSafeTail } from "../workspace/paths.js";
 
 export const STEP_SUBDIRS = ["output", "scripts", "figures", "logs", "notebooks"] as const;
 
@@ -39,6 +50,14 @@ export interface MountPlanCoords {
      * a generic read-only agent that must not mutate analysis files.
      */
     readOnly?: boolean;
+    /**
+     * The declared write tail: a workspace-relative path that takes the place of the
+     * step tail as the one read-write mount, with no step subdirectories under it.
+     * Each segment passes the safe-id discipline of the step builder. Absent keeps
+     * the step tail, thus the run path is unchanged. A tail beside `readOnly` is a
+     * contradiction, and the builders refuse it.
+     */
+    writableTail?: string;
 }
 
 export interface MountPlanStores {
@@ -52,20 +71,21 @@ export interface MountPlan {
     /** Flat read-only mount of the whole analysis tree. */
     readonlyTreePath: string;
     /**
-     * Nested read-write mount for this step's artifacts, also the WorkingDir.
-     * Undefined for a read-only sandbox — no writable mount exists; the
-     * WorkingDir falls back to the read-only tree root.
+     * Nested read-write mount, also the WorkingDir: the step's artifact directory,
+     * or the declared write tail in its place. Undefined for a read-only sandbox —
+     * no writable mount exists; the WorkingDir falls back to the read-only tree
+     * root.
      */
     writableStepPath?: string;
-    /** Container WorkingDir: the writable step path, or the RO tree root in
+    /** Container WorkingDir: the writable mount, or the RO tree root in
      *  read-only mode. */
     workingDir: string;
     /** Container path of the lib store, present only when `libs`. */
     libsPath?: string;
     /** Container path of the ref store, present only when `refs`. */
     refsPath?: string;
-    /** Pre-created subdirectories under the writable step path. Empty when
-     *  read-only (nothing to pre-create). */
+    /** Pre-created subdirectories under the writable mount. Empty when read-only
+     *  (nothing to pre-create) and when a declared tail replaces the step tail. */
     stepSubdirs: readonly string[];
     /** Env merged into the sandbox container: provenance + lib-store vars. */
     env: Record<string, string>;
@@ -75,7 +95,7 @@ export interface MountPlan {
 export interface SessionSubPaths {
     /** Read-only mount of the whole analysis tree. */
     readonly ro: string;
-    /** Read-write mount of the step's artifact dir; absent when read-only. */
+    /** Read-write mount of the step's artifact dir, or of the declared tail; absent when read-only. */
     readonly rw?: string;
 }
 
@@ -90,6 +110,35 @@ function stepTail(runId: string, stepId: string): string {
     assertSafeId(runId, "runId");
     assertSafeId(stepId, "stepId");
     return `runs/${runId}/${stepId}`;
+}
+
+/** The one writable mount of a sandbox: its workspace-relative tail, and what the host pre-makes under it. */
+export interface SandboxWriteTail {
+    /** The tail beneath the workspace root, in both container and PVC-relative space. */
+    readonly tail: string;
+    /** The subdirectories the host pre-creates under the tail. A declared tail is one directory, thus none. */
+    readonly subdirs: readonly string[];
+}
+
+/**
+ * The write tail of a sandbox, or `undefined` when the sandbox holds no write mount.
+ *
+ * The one owner of the rule, read by the container path, the PVC subPath, and the
+ * host-side preparation alike. Thus the directory the harness makes and the
+ * directory the sandbox mounts are provably the same one.
+ *
+ * `readOnly` beside a declared tail states two opposite things about one mount, thus
+ * it throws rather than picking a winner.
+ */
+export function sandboxWriteTail(coords: MountPlanCoords): SandboxWriteTail | undefined {
+    if (coords.writableTail === undefined) {
+        return coords.readOnly ? undefined : { tail: stepTail(coords.runId, coords.stepId), subdirs: STEP_SUBDIRS };
+    }
+    if (coords.readOnly) {
+        throw new Error(`sandbox mount: a read-only sandbox cannot declare a write tail (got ${coords.writableTail})`);
+    }
+    // The segments come back validated, thus the join below re-splits nothing.
+    return { tail: assertSafeTail(coords.writableTail).join("/"), subdirs: [] };
 }
 
 /**
@@ -108,9 +157,10 @@ export function buildSessionSubPaths(coords: MountPlanCoords, workspaceSubPath: 
             `buildSessionSubPaths: workspaceSubPath must be a non-empty PVC-root-relative path without '..' (got ${JSON.stringify(workspaceSubPath)})`,
         );
     }
+    const write = sandboxWriteTail(coords);
     return {
         ro: workspaceSubPath,
-        rw: coords.readOnly ? undefined : `${workspaceSubPath}/${stepTail(coords.runId, coords.stepId)}`,
+        ...(write === undefined ? {} : { rw: `${workspaceSubPath}/${write.tail}` }),
     };
 }
 
@@ -127,12 +177,13 @@ function libStoreEnv(): Record<string, string> {
 }
 
 export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores): MountPlan {
-    const { analysisId, runId, stepId, readOnly } = coords;
+    const { analysisId } = coords;
     // `analysisId` becomes the RO mount point `/{analysisId}` even in read-only
     // mode (where `stepTail` — which validates runId/stepId — is not reached).
     assertSafeId(analysisId, "analysisId");
     const readonlyTreePath = `/${analysisId}`;
-    const writableStepPath = readOnly ? undefined : `${readonlyTreePath}/${stepTail(runId, stepId)}`;
+    const write = sandboxWriteTail(coords);
+    const writableStepPath = write === undefined ? undefined : `${readonlyTreePath}/${write.tail}`;
 
     return {
         readonlyTreePath,
@@ -140,7 +191,7 @@ export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores)
         workingDir: writableStepPath ?? readonlyTreePath,
         libsPath: stores.libs ? LIBS_CONTAINER_PATH : undefined,
         refsPath: stores.refs ? REFS_CONTAINER_PATH : undefined,
-        stepSubdirs: readOnly ? [] : STEP_SUBDIRS,
+        stepSubdirs: write?.subdirs ?? [],
         env: {
             PROVENANCE_WATCH_DIRS: readonlyTreePath,
             ...(stores.libs ? libStoreEnv() : {}),

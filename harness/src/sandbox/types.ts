@@ -237,6 +237,12 @@ export interface CreateSandboxMeta {
     /** Enforced read-only: provision with no read-write step mount, only the
      *  read-only analysis tree for generic read-only agents. */
     readOnly?: boolean;
+    /** Workspace-relative path that becomes the one read-write mount, in place of
+     *  the step directory and with no step subdirectories under it. Each segment
+     *  passes the safe-id discipline of the step builder. Absent keeps the step
+     *  mount, thus a run provisions exactly as before. A tail beside `readOnly` is
+     *  a contradiction, and the mount builders refuse it. */
+    writableTail?: string;
     /** Billing attribution stamped as pod labels for OpenCost compute metering.
      *  Absent ⇒ the pod is invisible to the metering reconciler (filter-level). */
     billing?: { billingContextId: string; userId: string };
