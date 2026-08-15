@@ -153,6 +153,15 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("Probe for a hash");
     });
 
+    test("the prompt teaches the citation blocks and their pinned-evidence bound", () => {
+        // The citation rule and its anti-pattern are stable substrings, thus the
+        // assertion does not couple to the full prose.
+        expect(reportSessionPrompt).toContain("citation blocks");
+        expect(reportSessionPrompt).toContain("citation id of the pinned evidence");
+        expect(reportSessionPrompt).toContain("does not resolve");
+        expect(reportSessionPrompt).toContain("Inline a citation that does not resolve");
+    });
+
     test("the definition carries no per-session value in the prompt", () => {
         const { systemPrompt } = buildAgent();
         // A per-session value (a thread id, an analysis id, a resolved path) breaks

@@ -45,6 +45,7 @@ import type {
     SessionStateToken,
     StampResult,
 } from "../tools/report-authoring/authoring-tools.js";
+import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 
 /** The empty draft of a fresh session. The pin writes the snapshot first, thus the document is empty here. */
 const EMPTY_DRAFT: DraftDocument = { title: "", sections: [] };
@@ -65,6 +66,11 @@ export type EnsureSessionStateResult = { outcome: "ready"; state: StoredSessionS
 
 export interface ReportSessionRuntimeDeps {
     readonly pool: Pool;
+    /**
+     * The workspace-root seam of the pin. The citation evidence of an analysis sits on disk under the
+     * root, thus a composition that binds no seam pins the artifact map alone.
+     */
+    readonly resolveWorkspaceRoot?: ResolveWorkspaceRoot;
     readonly logger?: Logger;
 }
 
@@ -109,12 +115,20 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
      * Pin the snapshot and write the row. A pin failure writes no row, thus a
      * later run pins again. The write is insert-if-absent, thus two concurrent
      * first runs make one row and both read the winner back.
+     *
+     * The pin takes the workspace-root seam for the citation evidence. An absent
+     * seam pins no citation, thus a citation block of the session resolves against
+     * an empty list. The warning names that condition one time for each session.
      */
     async function pinAndWrite(threadId: string, analysisId: string): Promise<EnsureSessionStateResult> {
-        const pinned = await pinReportSnapshot(pool, analysisId);
+        if (deps.resolveWorkspaceRoot === undefined) {
+            log.warn("the composition binds no workspace root, thus the pin carries no citation evidence", { threadId, analysisId });
+        }
+        const pinned = await pinReportSnapshot(pool, analysisId, deps.resolveWorkspaceRoot ? { resolveWorkspaceRoot: deps.resolveWorkspaceRoot } : {});
         if (pinned.isErr()) {
-            log.error("the snapshot pin failed", { threadId, analysisId, ...log.errorFields(pinned.error.cause) });
-            return { outcome: "failed", kind: "unavailable", detail: "the artifact ledger read failed" };
+            log.error("the snapshot pin failed", { threadId, analysisId, kind: pinned.error.kind, ...log.errorFields(pinned.error.cause) });
+            const detail = pinned.error.kind === "run-listing-failed" ? "the run listing read failed" : "the artifact ledger read failed";
+            return { outcome: "failed", kind: "unavailable", detail };
         }
         const written = await store.writeSnapshot({ threadId, analysisId, snapshot: pinned.value });
         return written.match(
