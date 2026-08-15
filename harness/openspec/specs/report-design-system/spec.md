@@ -35,7 +35,7 @@ The renderer MUST give each block kind its identity component:
 
 - A `text` block renders as prose with a capped measure.
 - A `claim` block renders as prose with the styled evidence markers.
-- A `metric` block renders as a stat card with a mono value and an accent.
+- A `metric` block renders as a stat card with a mono value and an accent. The value MUST stay inside the card: the card carries an overflow guard, thus a long value can never paint past the card edge.
 - A consecutive run of `metric` siblings renders as one responsive grid.
 - A `table` block renders as a data table inside a corner-accent card.
 - A `chart` block renders as a window-chrome panel with a fixed-height chart body.
@@ -54,6 +54,10 @@ The renderer MUST give each block kind its identity component:
 #### Scenario: A chart panel carries the chrome and a height
 - **WHEN** the caller renders a chart block
 - **THEN** the panel holds the chrome header with the dots and the `CORTEX` badge, and the chart container carries a fixed height
+
+#### Scenario: A long metric value stays inside its card
+- **WHEN** the caller renders a metric whose formatted value still runs wide on a narrow card
+- **THEN** the value stays inside the card bounds, and no character paints past the card edge
 
 ### Requirement: The geometric identity rules
 A data card MUST hold square corners with the corner accents. The window-chrome panel is the one exception, and it MUST hold rounded corners. The theme MUST stay light: white and slate surfaces, with dark only in the footer.
