@@ -7,7 +7,16 @@ The prompt of the agent MUST name its tools and their mechanisms, and it MUST NO
 
 The prompt MUST teach the verification loop: preview, look, repair, and record only after a look at the current page. The "Do NOT" list MUST name the visual spiral. The agent does not loop on a cosmetic doubt, and it records when the page reads clean.
 
-The look step MUST carry the fault checklist. The agent examines the picture for: clipped text, a truncated number, an overflowing card, a raw column name on an axis, an unreadable precision, and content that stayed invisible. A found fault is a repair, and never a note.
+The look step MUST carry the fault checklist. The agent examines the picture for these faults:
+
+- clipped text, and a truncated number
+- an overflowing card
+- a raw column name on an axis
+- an unreadable precision
+- content that stayed invisible
+- a number in the prose that disagrees with its card
+
+A found fault is a repair, and never a note.
 
 The prompt MUST name the listing tool as the orientation source for the pinned evidence. It MUST state that a reference names the path alone, and that the session stamps the hash. The "Do NOT" list MUST name the hash probe: the agent never guesses a hash, and it never adds a block to read a hash from a refusal.
 
@@ -17,7 +26,7 @@ The prompt MUST carry the narrative spine. Before the first block, the agent com
 
 The prompt MUST carry the chart-first rule: prefer a chart block when a table artifact holds the data, and reach for a figure image only when no table does.
 
-The prompt MUST carry the headline obligations. The headline row leads with the cohort and the yield. A caveated value is not a headline. The card set carries its own contrast, and the prose rounds as the cards round.
+The prompt MUST carry the headline obligations. The headline row leads with the cohort and the yield. When the pinned evidence gives no cohort value, the headline leads with what the evidence gives, and the agent says so. A caveated value is not a headline. The card set carries its own contrast, and the prose rounds to the short form that the look confirms.
 
 #### Scenario: The prompt stays free of environment detail
 - **WHEN** a reviewer reads the prompt module
