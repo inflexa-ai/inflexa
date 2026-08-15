@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: The pin collects the citation evidence
-The pin MUST collect the key references of each run synthesis into the snapshot citation list. Each PMID becomes the key `pmid:<id>`, and the keys dedupe and sort in code-unit order. The collection reads the synthesis record of each run of the analysis. An absent synthesis, an unreadable one, and a malformed one each give no keys and no error, because absence is a normal condition. A composition that gives no workspace-root seam pins no citations, and the pin still lands. A failed run listing MUST fail the pin, because a store fault is not absence.
+The pin MUST collect the citation ids of each run synthesis into the snapshot citation list: the key references, and the per-finding references. Each PMID becomes the key `pmid:<id>`, and the keys dedupe and sort in code-unit order. The collection reads the synthesis record of each run of the analysis. An absent synthesis, an unreadable one, and a malformed one each give no keys and no error, because absence is a normal condition. A composition that gives no workspace-root seam pins no citations, and the pin still lands. A failed run listing MUST fail the pin, because a store fault is not absence.
 
 #### Scenario: A synthesis PMID becomes a pinned citation key
 - **WHEN** the pin runs for an analysis whose run synthesis carries the key reference PMID `12345`

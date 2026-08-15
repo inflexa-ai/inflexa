@@ -98,7 +98,7 @@ The in-progress document and the pinned snapshot of a thread MUST live in one du
 ### Requirement: The read-only roster
 The roster of the agent MUST hold: the workspace read tools (`read_file`, `list_files`, `file_stat`, and `grep`), the workspace search, `inspect_run`, `inspect_data_profile`, the authoring tools, the pinned-artifact listing tool, and the render-and-preview tool. The roster MUST NOT hold a planner, a run launcher, a working-memory write, or a sandbox mutate surface. Thus no tool starts a run, and no tool changes an analysis.
 
-The listing tool MUST give the pinned artifacts in a deterministic order: the path, the hash, and the file type. The listing is bounded, and a truncated listing MUST carry the total count and a truncation marker. For a `.csv` or a `.tsv` artifact it also gives the columns, from a bounded read of the header. A header that the bounded read cannot parse whole gives no columns. An unreadable header gives no columns and no error, because absence is a normal condition.
+The listing tool MUST give the pinned artifacts in a deterministic order: the path, the hash, and the file type. It MUST also give the pinned citation ids. The listing is bounded, and a truncated listing MUST carry the total count and a truncation marker. For a `.csv` or a `.tsv` artifact it also gives the columns, from a bounded read of the header. A header that the bounded read cannot parse whole gives no columns. An unreadable header gives no columns and no error, because absence is a normal condition.
 
 #### Scenario: The roster holds no run starter
 - **WHEN** the assembled agent lists its tools
@@ -159,7 +159,7 @@ The prompt MUST teach the verification loop: preview, look, repair, and record o
 
 The prompt MUST name the listing tool as the orientation source for the pinned evidence. It MUST state that a reference names the path alone, and that the session stamps the hash. The "Do NOT" list MUST name the hash probe: the agent never guesses a hash, and it never adds a block to read a hash from a refusal.
 
-The prompt MUST state that the literature references compose as citation blocks, against the citation ids of the pinned evidence. It MUST state that a citation outside the pinned evidence does not resolve, and that the agent reports it instead of an inline workaround.
+The prompt MUST state that the literature references compose as citation blocks, against the citation ids of the pinned evidence. It MUST name the listing tool as the route to the pinned citation ids. It MUST state that a citation outside the pinned evidence does not resolve, and that the agent reports it instead of an inline workaround.
 
 #### Scenario: The prompt stays free of environment detail
 - **WHEN** a reviewer reads the prompt module

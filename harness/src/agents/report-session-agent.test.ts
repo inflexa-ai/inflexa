@@ -160,6 +160,9 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("citation id of the pinned evidence");
         expect(reportSessionPrompt).toContain("does not resolve");
         expect(reportSessionPrompt).toContain("Inline a citation that does not resolve");
+        // The listing tool is the route to a pinned id, thus the agent never learns one from a refusal.
+        expect(reportSessionPrompt).toContain("`citations` field");
+        expect(reportSessionPrompt).toContain("never take an id out of a refusal");
     });
 
     test("the definition carries no per-session value in the prompt", () => {
