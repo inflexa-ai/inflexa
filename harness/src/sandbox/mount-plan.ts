@@ -131,6 +131,11 @@ export interface SandboxWriteTail {
  * it throws rather than picking a winner.
  */
 export function sandboxWriteTail(coords: MountPlanCoords): SandboxWriteTail | undefined {
+    // The two ids reach the sandbox name, the ownership labels, and the registry row on every path, not the
+    // step tail alone. Thus they take their validation before any branch, and a crafted id is refused even
+    // where no step directory is built.
+    assertSafeId(coords.runId, "runId");
+    assertSafeId(coords.stepId, "stepId");
     if (coords.writableTail === undefined) {
         return coords.readOnly ? undefined : { tail: stepTail(coords.runId, coords.stepId), subdirs: STEP_SUBDIRS };
     }

@@ -113,6 +113,10 @@ export interface ReportSessionRuntime {
  * A derived entry carries the output hash alone. A file type states a role of the run ledger, and a
  * derivation holds none. The map takes a null prototype, the same as the stored parse, thus a path such as
  * `__proto__` stays an ordinary entry.
+ *
+ * The derivations land last, thus a record whose output path equals a pinned path would shadow the pin. No
+ * such record exists: the derivation tool refuses an output name that the served membership already holds,
+ * and the output path of a derivation sits under the session directory, which the pin never reaches.
  */
 function serveMembership(snapshot: ReportSnapshot, derivations: readonly DerivationRecord[]): ReportSnapshot {
     if (derivations.length === 0) {

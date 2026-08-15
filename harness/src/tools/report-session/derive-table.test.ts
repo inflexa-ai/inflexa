@@ -25,7 +25,7 @@ import type { DbError } from "../../lib/db-result.js";
 import { computeSha256 } from "../../lib/fs-helpers.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import type { CreateSandboxMeta, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
+import type { CreateSandboxMeta, ExecResult, SandboxRef, SandboxTransport, SubmitExecBody } from "../../sandbox/types.js";
 import type { AppendDerivationOutcome, DerivationRecord } from "../../state/report-session-state.js";
 import { reportSessionDir } from "../../workspace/paths.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
@@ -154,6 +154,7 @@ function makeSandbox(args: {
     readonly root: string;
     readonly reply?: ExecResult;
     readonly throws?: boolean;
+    readonly transport?: SandboxTransport;
     readonly write?: (outputHostPath: string) => Promise<void>;
 }): FakeSandbox {
     const creates: CreateSandboxMeta[] = [];
@@ -161,6 +162,7 @@ function makeSandbox(args: {
     const teardowns: string[] = [];
     const ref: SandboxRef = { sandboxId: "sbx-derive-1", host: "127.0.0.1", port: 8765, backend: "docker", callbackSecret: "base64:secret" };
     const client = {
+        ...(args.transport === undefined ? {} : { transport: args.transport }),
         createSandbox(meta: CreateSandboxMeta): Promise<SandboxRef> {
             creates.push(meta);
             return Promise.resolve(ref);
@@ -482,6 +484,23 @@ describe("a derivation that gives no table", () => {
         expect(auth.revoked).toEqual(["derive-table-failed"]);
     });
 
+    it("clears the output path first, thus a stale file is never adopted as the new table", async () => {
+        const root = await makeRoot();
+        const stale = join(root, reportSessionDir("t1"), "derived", "yield.csv");
+        await mkdir(dirname(stale), { recursive: true });
+        await writeFile(stale, "stale,bytes\n1,2\n", "utf8");
+        // The script exits clean and it writes no file. The bytes of the failed attempt before it must not
+        // become the table of this one.
+        const sandbox = makeSandbox({ root, reply: execResult({ stdout: "a log line\n" }) });
+        const { tool, ledger } = makeTool({ root, sandbox });
+
+        const result = await derive(tool, {});
+
+        expect(result.outcome).toBe("no-output");
+        expect(ledger.records).toHaveLength(0);
+        expect(existsSync(stale)).toBe(false);
+    });
+
     it("refuses an output that resolves outside the workspace tree", async () => {
         const root = await makeRoot();
         const outside = join(await makeRoot(), "secret.csv");
@@ -518,6 +537,22 @@ describe("a derivation that gives no table", () => {
         expect(auth.revoked).toEqual(["derive-table-failed"]);
     });
 
+    it("revokes the authorization when the work throws", async () => {
+        const root = await makeRoot();
+        // A stored path is untrusted text. One that escapes the tree makes the host-to-container mapper
+        // throw, and the authorization must not stand behind that throw.
+        const hostile = "../../etc/passwd";
+        const { tool, auth, sandbox } = makeTool({ root, snapshot: { artifacts: { [hostile]: { hash: PINNED_HASH } } } });
+
+        const attempt = async (): Promise<void> => {
+            (await tool.execute({ script: SCRIPT, inputs: [hostile], output: "yield.csv" }, ctxForThread("t1")))._unsafeUnwrap();
+        };
+
+        await expect(attempt()).rejects.toThrow(/escapes the workspace root/);
+        expect(auth.revoked).toEqual(["derive-table-failed"]);
+        expect(sandbox.creates).toHaveLength(0);
+    });
+
     it("reports a ledger fault as a failed derivation", async () => {
         const root = await makeRoot();
         const fault: DbError = { type: "mutation_failed", op: "append", cause: new Error("the pool is down") };
@@ -540,6 +575,33 @@ describe("a composition with no sandbox", () => {
         const result = (await tool.execute({ script: SCRIPT, inputs: [PINNED_PATH], output: "yield.csv" }, ctxForThread("t1")))._unsafeUnwrap();
 
         expect(result.outcome).toBe("unavailable");
+    });
+
+    it("refuses under a callback transport, because a turn cannot await one", async () => {
+        const root = await makeRoot();
+        // The callback await is a workflow-body call, and a report turn is not one. The refusal comes before
+        // any container starts, thus nothing is left running that nothing can await.
+        const sandbox = makeSandbox({ root, transport: "callback", write: writesTable() });
+        const { tool, ledger } = makeTool({ root, sandbox });
+
+        const result = await derive(tool, {});
+
+        expect(result.outcome).toBe("unavailable");
+        if (result.outcome === "unavailable") {
+            expect(result.detail).toContain("callbacks");
+        }
+        expect(sandbox.creates).toHaveLength(0);
+        expect(ledger.records).toHaveLength(0);
+    });
+
+    it("derives under the poll transport, and under a client that states none", async () => {
+        const root = await makeRoot();
+        const polling = makeTool({ root, sandbox: makeSandbox({ root, transport: "poll", write: writesTable() }) });
+        expect((await derive(polling.tool, {})).outcome).toBe("derived");
+
+        // An absent field states nothing, thus it reads as the poll default and it refuses nothing.
+        const silent = makeTool({ root: await makeRoot() });
+        expect((await derive(silent.tool, {})).outcome).toBe("derived");
     });
 
     it("refuses a call whose scope names no report thread", async () => {
