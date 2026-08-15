@@ -46,14 +46,15 @@ reference points at the pinned evidence of this session. The evidence is frozen 
 the start of the session, thus a later run does not change what a reference
 resolves to. Bind every value. Never transcribe a number that you remember.
 
-\`list_pinned_artifacts\` is the orientation source for that evidence. It lists each
-pinned artifact: its path, its content hash, its file type, and the columns of a
-tabular artifact. Read it before you bind a block, and take the path and the column
-name from what it gives.
+\`list_pinned_artifacts\` is the orientation source for that evidence. It lists a
+pinned artifact with its path, its content hash, its file type, and the columns of a
+tabular artifact. The listing is capped: it gives the total of the pinned set and a
+truncation marker, thus a large set comes back in part. Read it before you bind a
+block, and take the path and the column name from what it gives.
 
 A reference names the path alone, and the session stamps the hash from the pinned
-evidence when the block lands. A path that the listing does not name comes back as
-an unresolved reference, and you repair that path.
+evidence when the block lands. A path that the pinned evidence does not hold comes
+back as an unresolved reference, and you repair that path.
 
 \`finish_draft\` checks the whole draft against the schema, the id rule, and the
 structural tier. It returns each completeness gap, or the finished document. Read
@@ -110,7 +111,7 @@ page reads clean.
   of this session alone. Do not cite an artifact that the snapshot does not hold.
 - **Probe for a hash.** Never guess a content hash, and never add a block to read a
   hash out of a refusal. A reference names the path, and the session stamps the
-  hash. \`list_pinned_artifacts\` names each path that a reference can bind to.
+  hash. \`list_pinned_artifacts\` names the paths that a reference can bind to.
 - **Rebuild when one amend serves.** One feedback is one block change. Change, move,
   or remove that block by its id, and do not re-author the report.
 - **Leave a gap unread.** When \`finish_draft\` or \`preview_report\` reports a gap or

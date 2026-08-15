@@ -3,7 +3,7 @@
  *
  * The stamp runs before the grammar parse, thus each test drives it with a plain payload and reads the
  * value that it gives back. The tests cover the fill, the unknown path, the explicit hash, a derivation
- * input, a value that is not a reference, and the intact input.
+ * input, a value that is not a reference, the faithful copy, and the intact input.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -186,6 +186,24 @@ describe("the value that is not a reference", () => {
         expect(stampReferenceHashes(null, snapshot)._unsafeUnwrap()).toBeNull();
         const list = [1, "two", null];
         expect(stampReferenceHashes(list, snapshot)._unsafeUnwrap()).toBe(list);
+    });
+});
+
+describe("the faithful copy", () => {
+    it("copies an own key that names the prototype, and it keeps the copy a plain object", () => {
+        // `JSON.parse` makes an own `__proto__` key, and a stored payload arrives through it. An object
+        // literal cannot express the same key, because the literal sets the prototype.
+        const payload: unknown = JSON.parse(
+            `{"kind":"table","id":"table-1","__proto__":{"note":"an own key"},"binding":{"kind":"artifact-table","path":"${OUTPUT_PATH}"}}`,
+        );
+
+        const stamped = stampReferenceHashes(payload, snapshot)._unsafeUnwrap();
+
+        expect(field(stamped, "binding", "hash")).toBe(OUTPUT_HASH);
+        // A plain assignment at this key reaches the prototype setter, thus the copy would lose the key.
+        expect(Object.hasOwn(stamped as object, "__proto__")).toBe(true);
+        expect(field(stamped, "__proto__", "note")).toBe("an own key");
+        expect(Object.getPrototypeOf(stamped)).toBe(Object.prototype);
     });
 });
 

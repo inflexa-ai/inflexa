@@ -2,7 +2,8 @@
  * The tests of the pinned-artifact listing tool.
  *
  * Each test drives the tool through `execute` with a temp directory as the workspace root and an
- * in-memory gateway. The tests cover the order of the listing, the columns of a CSV and of a TSV, the
+ * in-memory gateway. The tests cover the order of the listing, the cap of the listing, the columns of a
+ * CSV and of a TSV, the extension that carries no header, the cut header line, the quoted header, the
  * absent file, the file type that holds no cell, and the session refusal.
  */
 
@@ -113,6 +114,52 @@ describe("the listing order", () => {
     });
 });
 
+describe("the listing cap", () => {
+    /** Seed a snapshot of `count` staged inputs. The names pad, thus the code-unit order is the numeric order. */
+    function stagedInputs(count: number): ReportSnapshot {
+        const artifacts: ReportSnapshot["artifacts"] = {};
+        for (let index = 0; index < count; index += 1) {
+            artifacts[`data/inputs/f${String(index).padStart(3, "0")}/raw.csv`] = { hash: `sha256:${index}`, fileType: "output" };
+        }
+        return { artifacts };
+    }
+
+    it("lists the first 200 paths of a large pinned set, and it marks the listing as truncated", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", stagedInputs(250));
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            expect(result.artifacts).toHaveLength(200);
+            expect(result.total).toBe(250);
+            expect(result.truncated).toBe(true);
+            // The cap cuts the tail of the order, thus the listing is the prefix of the whole listing.
+            expect(result.artifacts[0].path).toBe("data/inputs/f000/raw.csv");
+            expect(result.artifacts[199].path).toBe("data/inputs/f199/raw.csv");
+        }
+    });
+
+    it("marks a set under the cap as complete, and it gives the total", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", stagedInputs(3));
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            expect(result.artifacts).toHaveLength(3);
+            expect(result.total).toBe(3);
+            expect(result.truncated).toBe(false);
+        }
+    });
+});
+
 describe("the columns", () => {
     it("splits the header of a CSV on the comma, and trims each name", async () => {
         const root = await makeRoot();
@@ -141,6 +188,91 @@ describe("the columns", () => {
         expect(result.outcome).toBe("listed");
         if (result.outcome === "listed") {
             expect(result.artifacts[0].columns).toEqual(["gene", "padj", "log2fc"]);
+        }
+    });
+
+    it("reads the header of a path whose extension is uppercase", async () => {
+        const root = await makeRoot();
+        await writeUnder(root, "runs/r1/step-a/output/DE.CSV", "gene,padj\nTP53,0.01\n");
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/DE.CSV": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            expect(result.artifacts[0].columns).toEqual(["gene", "padj"]);
+        }
+    });
+
+    it("reads no header for an extension that carries none, even under an output file type", async () => {
+        const root = await makeRoot();
+        // A minified JSON holds a comma at each field, thus a split of it gives many names that address nothing.
+        await writeUnder(root, "runs/r1/step-a/output/results.json", '{"gene":"TP53","padj":0.01,"log2fc":2.5}\n');
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/results.json": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            expect(result.artifacts[0].fileType).toBe("output");
+            expect(result.artifacts[0].columns).toBeUndefined();
+        }
+    });
+
+    it("gives no columns for a header line that holds a double quote", async () => {
+        const root = await makeRoot();
+        // The quoted field holds the delimiter, thus a naive split gives two wrong names for one column.
+        await writeUnder(root, "runs/r1/step-a/output/quoted.csv", '"gene, symbol",padj\nTP53,0.01\n');
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/quoted.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            expect(result.artifacts[0].columns).toBeUndefined();
+        }
+    });
+
+    it("drops the last name of a header line that the read cut", async () => {
+        const root = await makeRoot();
+        // The header overflows the 16 KiB window, thus the bytes stop inside one name.
+        const names = Array.from({ length: 3000 }, (_, index) => `col${String(index).padStart(4, "0")}`);
+        await writeUnder(root, "runs/r1/step-a/output/wide.csv", `gene,${names.join(",")}\nTP53\n`);
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/wide.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            const columns = result.artifacts[0].columns ?? [];
+            expect(columns[0]).toBe("gene");
+            // Each name that lands is whole, thus a locator that names one addresses a real column.
+            expect(columns.every((name) => name === "gene" || /^col\d{4}$/.test(name))).toBe(true);
+            expect(columns.length).toBeLessThan(names.length);
+        }
+    });
+
+    it("gives no columns when the cut leaves no whole name", async () => {
+        const root = await makeRoot();
+        // One name overflows the window and no delimiter lands inside it, thus nothing whole comes out.
+        await writeUnder(root, "runs/r1/step-a/output/one.csv", `${"g".repeat(20000)}\n`);
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { artifacts: { "runs/r1/step-a/output/one.csv": { hash: "sha256:aaa", fileType: "output" } } });
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("listed");
+        if (result.outcome === "listed") {
+            expect(result.artifacts[0].columns).toBeUndefined();
         }
     });
 
