@@ -1,5 +1,5 @@
 /**
- * The page constants: the head references, the readiness names, and the two page-side scripts.
+ * The page constants: the head references, the readiness names, and the three page-side scripts.
  *
  * A script here is browser source text, not module code. Thus it reads no module binding, and each value
  * that it needs is interpolated at build time. The style rules and the ECharts theme live in `design.ts`.
@@ -50,6 +50,17 @@ const REVEAL_GATE = "__inflexaWhenRevealed";
  * signal in that condition, thus such a page still signals and the capture returns on the signal.
  */
 const REVEAL_SETTLE_TIMEOUT_MS = 2_000;
+
+/**
+ * The class that marks the navigation link of the section in view, and the bottom root margin of the
+ * scrollspy in percent.
+ *
+ * The design sheet holds the matching rule under the same class name. The negative bottom margin shrinks the
+ * observation box to the top band of the viewport. Thus the section that sits nearest the top of the page
+ * wins, and a tall section below it never steals the mark.
+ */
+const NAV_ACTIVE_CLASS = "report-nav-link-active";
+const SPY_BOTTOM_MARGIN_PERCENT = 70;
 
 /**
  * The page-side script that wires each chart. It finds every chart container, reads the option JSON from
@@ -196,6 +207,81 @@ export const FADE_IN_OBSERVER = `(function () {
       observer.observe(nodes[k]);
     }
     setTimeout(settle, ${REVEAL_SETTLE_TIMEOUT_MS});
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start);
+  } else {
+    start();
+  }
+})();`;
+
+/**
+ * The page-side script that marks the navigation link of the section in view.
+ *
+ * Each navigation anchor targets one top-level section by its id. The script resolves each anchor to its
+ * section, and an `IntersectionObserver` over those sections drives the active class. The observation box
+ * covers the top band of the viewport alone, thus the script marks the first section of that band in
+ * document order and exactly one link carries the class.
+ *
+ * A section that no anchor targets, and an anchor whose target is absent, drop out of the walk. Thus the
+ * reference band never takes the mark.
+ *
+ * The highlight is decoration. A browser with no `IntersectionObserver`, and a page with no navigation,
+ * keep the plain links. The script writes one class and it reads nothing that the reveal script writes,
+ * thus the two observers never contend.
+ */
+export const SECTION_SPY = `(function () {
+  function start() {
+    var links = document.querySelectorAll(".report-nav-link");
+    if (typeof IntersectionObserver === "undefined" || links.length === 0) {
+      return;
+    }
+    var anchors = [];
+    var sections = [];
+    for (var i = 0; i < links.length; i++) {
+      var href = links[i].getAttribute("href") || "";
+      var section = href.charAt(0) === "#" ? document.getElementById(href.slice(1)) : null;
+      if (!section) {
+        continue;
+      }
+      anchors.push(links[i]);
+      sections.push(section);
+    }
+    if (sections.length === 0) {
+      return;
+    }
+    var inBand = [];
+    for (var s = 0; s < sections.length; s++) {
+      inBand.push(false);
+    }
+    function paint() {
+      var active = -1;
+      for (var a = 0; a < inBand.length; a++) {
+        if (inBand[a]) {
+          active = a;
+          break;
+        }
+      }
+      for (var b = 0; b < anchors.length; b++) {
+        if (b === active) {
+          anchors[b].classList.add(${JSON.stringify(NAV_ACTIVE_CLASS)});
+        } else {
+          anchors[b].classList.remove(${JSON.stringify(NAV_ACTIVE_CLASS)});
+        }
+      }
+    }
+    var observer = new IntersectionObserver(function (entries) {
+      for (var e = 0; e < entries.length; e++) {
+        var index = sections.indexOf(entries[e].target);
+        if (index >= 0) {
+          inBand[index] = entries[e].isIntersecting === true;
+        }
+      }
+      paint();
+    }, { rootMargin: "0px 0px -${SPY_BOTTOM_MARGIN_PERCENT}% 0px", threshold: 0 });
+    for (var k = 0; k < sections.length; k++) {
+      observer.observe(sections[k]);
+    }
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", start);

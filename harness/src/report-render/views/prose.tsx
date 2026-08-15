@@ -12,8 +12,11 @@ import type { ClaimBlock, SectionBlock, TextBlock } from "../../contracts/report
 import type { ReferenceLedger } from "../references.js";
 import { Marker } from "./references-view.js";
 
-/** The paragraph class of a text block and a claim block. The measure caps the line inside the wide band. */
+/** The paragraph class of a text block and a claim block. The paragraph fills the content column. */
 const PARAGRAPH_CLASS = "report-prose";
+
+/** The site that the navigation brand links to. It is the one reference of the page that leaves the page. */
+const BRAND_HREF = "https://inflexa.ai/";
 
 /**
  * Split prose into paragraphs on a blank line. A run of blank lines makes one split. An empty part drops
@@ -98,7 +101,9 @@ export function renderNav(topSections: SectionBlock[]): string {
     return String(
         <aside id="report-sidebar" class="report-nav" aria-label="Report navigation">
             <div class="report-nav-brand">
-                <span class="report-nav-brand-name">inflexa</span>
+                <a class="report-nav-brand-name" href={BRAND_HREF}>
+                    inflexa
+                </a>
             </div>
             <nav class="report-nav-list" aria-label="Report sections">
                 {topSections.map((section, index) => (
