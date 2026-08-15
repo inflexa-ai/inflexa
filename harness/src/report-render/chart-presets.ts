@@ -12,7 +12,15 @@
  * channel and it drops an authored transform there, and no value takes the transform two times.
  */
 
-import { channelColumn, type ChartChannel, type ChartComposition, type ChartEncoding, type ChartType } from "../contracts/report-blocks.js";
+import {
+    channelColumn,
+    channelTransform,
+    type ChartAxes,
+    type ChartChannel,
+    type ChartComposition,
+    type ChartEncoding,
+    type ChartType,
+} from "../contracts/report-blocks.js";
 
 /** The four chart types that expand into a composition. */
 export const PRESET_CHART_TYPES = ["volcano", "manhattan", "ma", "km"] as const;
@@ -79,7 +87,7 @@ function volcano(x: ChartChannel, y: ChartChannel, encoding: ChartEncoding): Cha
             { kind: "reference-line", axis: "x", value: -VOLCANO_EFFECT_THRESHOLD },
             { kind: "reference-line", axis: "x", value: VOLCANO_EFFECT_THRESHOLD },
         ],
-        axes: { x: { title: channelColumn(x) }, y: { title: `-log10 ${pColumn}` } },
+        axes: plainTitle(x),
     };
 }
 
@@ -94,7 +102,7 @@ function manhattan(x: ChartChannel, y: ChartChannel, encoding: ChartEncoding): C
             },
         ],
         annotations: [{ kind: "reference-line", axis: "y", value: -Math.log10(MANHATTAN_P_THRESHOLD), label: `p ${MANHATTAN_P_THRESHOLD}` }],
-        axes: { x: { title: channelColumn(x) }, y: { title: `-log10 ${pColumn}` } },
+        axes: plainTitle(x),
     };
 }
 
@@ -117,6 +125,18 @@ function km(x: ChartChannel, y: ChartChannel, encoding: ChartEncoding): ChartCom
     return {
         series: [{ form: "step", encoding: { x, y, ...optionalChannels(encoding) } }],
     };
+}
+
+/**
+ * The x title of a preset.
+ *
+ * A preset titles the x axis with the column that feeds it. A channel that carries a transform plots a
+ * derived quantity, thus the column name would state the wrong one. Such a channel takes no title, and the
+ * derived name of the renderer states the true quantity. The y axis of a preset that transforms its p
+ * column takes no title for the same reason.
+ */
+function plainTitle(x: ChartChannel): ChartAxes {
+    return channelTransform(x) === undefined ? { x: { title: channelColumn(x) } } : {};
 }
 
 /** The two optional channels that every preset carries through from the quick-path encoding. */
