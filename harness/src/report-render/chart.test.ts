@@ -543,6 +543,17 @@ describe("the composition tooltip and the point names", () => {
         expect(asObj(option.tooltip).formatter).toBe("{b}<br/>{a}: {c}");
     });
 
+    it("draws a labeled bar on the axis and the gap of the base bar rule", () => {
+        const barRows: ChartRow[] = [
+            { day: "Mon", count: 5 },
+            { day: "Tue", count: 7 },
+        ];
+        const base = derive(chartBlock("bar", { x: "day", y: "count" }), barRows);
+        const labeled = derive(chartBlock("bar", { x: "day", y: "count", label: "day" }), barRows);
+        expect(labeled.xAxis).toEqual(base.xAxis);
+        expect(asObj(asArr(labeled.series)[0]).barGap).toBe(asObj(asArr(base.series)[0]).barGap);
+    });
+
     it("refuses a label on a chart that draws no point for one row", () => {
         const problem = deriveChartOption(chartBlock("histogram", { x: "lfc", label: "gene" }, { id: "h1" }), rows)._unsafeUnwrapErr();
         expect(problem.detail).toContain("label");
@@ -617,6 +628,26 @@ describe("the composition annotations", () => {
         expect(json).not.toContain("=>");
     });
 
+    it("marks the smallest cell of a text p-value column", () => {
+        const textRows: ChartRow[] = [
+            { gene: "A", lfc: 1, p: "1e-3" },
+            { gene: "B", lfc: 2, p: "9e-9" },
+            { gene: "C", lfc: 3, p: "2e-4" },
+        ];
+        const option = derive(
+            composedBlock({
+                series: [{ form: "scatter", encoding: { x: "lfc", y: "lfc", label: "gene" } }],
+                annotations: [{ kind: "point-labels", column: "p", order: "asc", n: 1 }],
+            }),
+            textRows,
+        );
+        // A code-unit order would put "1e-3" first, which is the largest of the three p-values.
+        const data = asArr(asObj(asArr(option.series)[0]).data);
+        expect(asObj(data[1]).label).toEqual({ show: true, formatter: "{b}" });
+        expect("label" in asObj(data[0])).toBe(false);
+        expect("label" in asObj(data[2])).toBe(false);
+    });
+
     it("refuses a rank column that no row holds", () => {
         const block = composedBlock(
             {
@@ -653,6 +684,19 @@ describe("the area band", () => {
         expect(asObj(asObj(series[1]).areaStyle).opacity).toBe(0.25);
     });
 
+    it("refuses a band whose lower bound is over its upper bound", () => {
+        const inverted: ChartRow[] = [
+            { t: 1, lo: 2, hi: 5 },
+            { t: 2, lo: 7, hi: 3 },
+        ];
+        const block = composedBlock({ series: [{ form: "area", encoding: { x: "t", y: "hi", y0: "lo" } }] }, { id: "cb" });
+        const problem = deriveChartOption(block, inverted)._unsafeUnwrapErr();
+        expect(problem.kind).toBe("invalid-chart-input");
+        expect(problem.blockId).toBe("cb");
+        expect(problem.detail).toContain("hi");
+        expect(problem.detail).toContain("lo");
+    });
+
     it("draws a plain filled line for an area series with no lower bound", () => {
         const option = derive(composedBlock({ series: [{ form: "area", encoding: { x: "t", y: "hi" } }] }), rows);
         const series = asArr(option.series);
@@ -678,7 +722,30 @@ describe("the preset expansion", () => {
             { xAxis: VOLCANO_EFFECT_THRESHOLD },
         ]);
         expect(asObj(option.xAxis).name).toBe("lfc");
-        expect(asObj(option.yAxis).name).toBe("-log10 p");
+        // The y channel carries the transform, thus the derived name states the plotted quantity.
+        expect(asObj(option.yAxis).name).toBe("neg_log10(p)");
+    });
+
+    it("gives no x title to a preset channel that carries a transform", () => {
+        const option = derive(chartBlock("volcano", { x: { column: "lfc", transform: "abs" }, y: "p" }), rows);
+        expect(asObj(option.xAxis).name).toBe("abs(lfc)");
+    });
+
+    it("orders the survival steps by the number of a text time column", () => {
+        const timeRows: ChartRow[] = [
+            { time: "2", survival: "0.8" },
+            { time: "10", survival: "0.5" },
+            { time: "1", survival: "0.9" },
+            { time: "11", survival: "0.4" },
+        ];
+        const option = derive(chartBlock("km", { x: "time", y: "survival" }), timeRows);
+        // A CSV gives each cell as text. A code-unit order would put "10" between "1" and "2".
+        expect(asObj(asArr(option.series)[0]).data).toEqual([
+            ["1", "0.9"],
+            ["2", "0.8"],
+            ["10", "0.5"],
+            ["11", "0.4"],
+        ]);
     });
 
     it("derives a manhattan with the genome-wide guide line and one series per chromosome", () => {
@@ -738,6 +805,27 @@ describe("the quick-path transform", () => {
         const rows: ChartRow[] = [{ g: "A", v: 100 }];
         const problem = deriveChartOption(chartBlock("bar", { x: "g", y: { column: "invented", transform: "log10" } }, { id: "q1" }), rows)._unsafeUnwrapErr();
         expect(problem.detail).toContain("invented");
+    });
+
+    it("refuses a derived name that the bound table already holds", () => {
+        // The derived column goes into a copy of each row. A write over a real column of the table would
+        // plot the wrong cells under the right name.
+        const rows: ChartRow[] = [{ g: "A", v: 100, "log10(v)": 7 }];
+        const problem = deriveChartOption(chartBlock("bar", { x: "g", y: { column: "v", transform: "log10" } }, { id: "q2" }), rows)._unsafeUnwrapErr();
+        expect(problem.kind).toBe("invalid-chart-input");
+        expect(problem.detail).toContain("log10(v)");
+    });
+});
+
+describe("the composition guards", () => {
+    it("refuses a composition that carries no series", () => {
+        // The schema holds a composition to one series at least, thus the cast is the only way to reach the
+        // guard that protects the axes of the derivation.
+        const empty = { series: [] } as unknown as ChartComposition;
+        const problem = deriveChartOption(composedBlock(empty, { id: "ce" }), [{ t: 1 }])._unsafeUnwrapErr();
+        expect(problem.kind).toBe("invalid-chart-input");
+        expect(problem.blockId).toBe("ce");
+        expect(problem.detail).toContain("no series");
     });
 });
 
