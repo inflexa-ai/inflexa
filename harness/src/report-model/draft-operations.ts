@@ -314,7 +314,7 @@ function commit(candidate: DraftDocument, added: DraftBlock | undefined, snapsho
 
     const unresolved: UnresolvedReference[] = [];
     for (const entry of walkBlocks([added]).references) {
-        validateReferenceStructure(entry.reference, snapshot).match(
+        validateReferenceStructure(entry.reference, snapshot, entry.encodingColumns).match(
             () => {},
             (failure) => {
                 unresolved.push(failure);

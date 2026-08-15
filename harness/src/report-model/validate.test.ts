@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import type { Block, ReportDocument } from "../contracts/report-blocks.js";
+import type { Block, ChartComposition, ReportDocument } from "../contracts/report-blocks.js";
 import { parseReference, serializeReference, type Reference } from "../contracts/report-reference.js";
 import { valuesMatch } from "./assert-rules.js";
 import { createFixtureResolver } from "./fixture-resolver.js";
@@ -807,6 +807,53 @@ describe("validateReport — a chart encoding", () => {
 
     it("validates an encoding with no channel at all", async () => {
         expectValid(await validateReport(reportWith(chartWith("chart-bare", {})), snapshot, resolver));
+    });
+});
+
+describe("validateReport — a chart composition", () => {
+    /** Bind a composition to table B, whose rows hold `sample` and `value`. */
+    function compositionChart(id: string, composition: ChartComposition): Block {
+        return { kind: "chart", id, binding: { kind: "artifact-table", run: "run-1", path: TABLE_B_PATH, hash: TABLE_B_HASH }, composition };
+    }
+
+    it("validates a composition whose every column is a real column", async () => {
+        const result = await validateReport(
+            reportWith(
+                compositionChart("chart-composed", {
+                    series: [
+                        { form: "line", encoding: { x: "sample", y: "value", label: "sample" } },
+                        { form: "area", encoding: { x: "sample", y: "value", y0: "value", group: "sample" } },
+                    ],
+                    annotations: [{ kind: "point-labels", column: "value", order: "desc", n: 3 }],
+                }),
+            ),
+            snapshot,
+            resolver,
+        );
+        expectValid(result);
+    });
+
+    it("names an invented column in a series channel, in a transform, in `y0`, in a label, and in a rank rule", async () => {
+        const invalid = expectInvalid(
+            await validateReport(
+                reportWith(
+                    compositionChart("chart-invented-grammar", {
+                        series: [
+                            { form: "scatter", encoding: { x: "nope-x", y: { column: "nope-transform", transform: "neg_log10" }, label: "nope-label" } },
+                            { form: "area", encoding: { x: "sample", y: "value", y0: "nope-y0" } },
+                        ],
+                        annotations: [{ kind: "point-labels", column: "nope-rank", order: "asc", n: 5 }],
+                    }),
+                ),
+                snapshot,
+                resolver,
+            ),
+        );
+        const detail = (invalid.resolutionFailures ?? [])[0].failure.detail ?? "";
+        expect((invalid.resolutionFailures ?? [])[0].failure.reason).toBe("locator-out-of-range");
+        for (const name of ["nope-x", "nope-transform", "nope-label", "nope-y0", "nope-rank"]) {
+            expect(detail).toContain(name);
+        }
     });
 });
 
