@@ -94,7 +94,7 @@ The in-progress document and the pinned snapshot of a thread MUST live in one du
 ### Requirement: The read-only roster
 The roster of the agent MUST hold: the workspace read tools (`read_file`, `list_files`, `file_stat`, and `grep`), the workspace search, `inspect_run`, `inspect_data_profile`, the authoring tools, the pinned-artifact listing tool, and the render-and-preview tool. The roster MUST NOT hold a planner, a run launcher, a working-memory write, or a sandbox mutate surface. Thus no tool starts a run, and no tool changes an analysis.
 
-The listing tool MUST give each pinned artifact in a deterministic order: the path, the hash, and the file type. For a tabular artifact it also gives the columns, from a bounded read of the header. A file type that holds no cell gives no columns. An unreadable header gives no columns and no error, because absence is a normal condition.
+The listing tool MUST give the pinned artifacts in a deterministic order: the path, the hash, and the file type. The listing is bounded, and a truncated listing MUST carry the total count and a truncation marker. For a `.csv` or a `.tsv` artifact it also gives the columns, from a bounded read of the header. A header that the bounded read cannot parse whole gives no columns. An unreadable header gives no columns and no error, because absence is a normal condition.
 
 #### Scenario: The roster holds no run starter
 - **WHEN** the assembled agent lists its tools
@@ -111,6 +111,10 @@ The listing tool MUST give each pinned artifact in a deterministic order: the pa
 #### Scenario: An unreadable artifact still lists
 - **WHEN** the snapshot pins a path whose bytes are absent from the disk
 - **THEN** the result carries the path and the hash, with no columns and no error
+
+#### Scenario: A large pinned set truncates with a marker
+- **WHEN** the snapshot pins more artifacts than the listing bound
+- **THEN** the result carries the bounded listing, the total count, and the truncation marker
 
 ### Requirement: The render-and-preview tool
 The preview tool MUST run the finish on the draft first. A gap list MUST return as data, and no render runs. On a pass, the tool MUST resolve each reference through the injected `ReferenceResolver`, bridge the values, and render with `renderReportPage`. The page and its staged assets MUST land in the session directory `report-sessions/{threadId}/` under the workspace root. The result MUST carry the page path as data. When the page lands, the tool MUST stamp the hash of the rendered document on the session state.
