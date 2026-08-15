@@ -387,20 +387,24 @@ export function createReportSessionStateStore({ pool }: ReportSessionStateStoreD
     function appendDerivation(threadId: string, record: DerivationRecord): ResultAsync<AppendDerivationOutcome, DbError> {
         return tryMutation("report-session-state.appendDerivation", async () => {
             // One statement tells a duplicate from an absence, the same way the persist does. `existed`
-            // counts the row, and `appended` counts the update. The name rule reads the stored list inside
-            // the statement, thus two concurrent appends of one name cannot both land.
+            // counts the row, and `appended` counts the update.
+            //
+            // The name rule sits in the qualification of the UPDATE, over the row that the statement locks.
+            // A read of the CTE would test the list as it stood at the start of the statement: two
+            // concurrent appends of one name would each pass that test, and both would land. Postgres
+            // re-evaluates the qualification of an UPDATE against the row that it waited for, thus the
+            // loser of the race sees the list of the winner and it appends nothing.
             const { rows } = await pool.query<{ existed: number; appended: number }>({
                 text: `WITH target AS (
-    SELECT thread_id, COALESCE(derivations, '[]'::jsonb) AS list
+    SELECT thread_id
       FROM cortex_report_session_state
      WHERE thread_id = $1
   ), appended AS (
     UPDATE cortex_report_session_state AS s
        SET derivations = COALESCE(s.derivations, '[]'::jsonb) || $2::jsonb
-      FROM target AS t
-     WHERE s.thread_id = t.thread_id
+     WHERE s.thread_id = $1
        AND NOT EXISTS (
-         SELECT 1 FROM jsonb_array_elements(t.list) AS held WHERE held->>'outputPath' = $3
+         SELECT 1 FROM jsonb_array_elements(COALESCE(s.derivations, '[]'::jsonb)) AS held WHERE held->>'outputPath' = $3
        )
     RETURNING 1
   )

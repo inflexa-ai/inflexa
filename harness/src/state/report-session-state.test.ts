@@ -310,6 +310,63 @@ describe("createReportSessionStateStore", () => {
         expect(read!.derivations).toEqual([landed]);
     });
 
+    /**
+     * Wait until a backend blocks on a lock over the session-state table.
+     *
+     * The concurrency case must know that the second append reached the row lock before the first one
+     * commits. A `pg_stat_activity` read is that signal, thus the case drives a real wait and never a sleep
+     * that a slow machine turns into a pass.
+     */
+    async function waitForBlockedAppend(): Promise<void> {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+            const { rows } = await pool.query<{ waiting: number }>({
+                text: `SELECT COUNT(*)::int AS waiting FROM pg_stat_activity
+                        WHERE datname = current_database() AND wait_event_type = 'Lock'
+                          AND query LIKE '%cortex_report_session_state%'`,
+            });
+            if ((rows[0]?.waiting ?? 0) > 0) return;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        throw new Error("the second append never blocked on the row lock");
+    }
+
+    it("lands one of two concurrent appends of the same output path", async () => {
+        const analysisId = "analysis-derivation-race";
+        await seedAnalysis(analysisId);
+        const threadId = "thread-derivation-race";
+        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+
+        // Two sessions, each on its own connection and inside its own transaction. The first append holds
+        // the row lock while the second one runs, thus the second one must re-read the list of the first
+        // before it decides. A name rule that read a snapshot of the list would let both records land.
+        const first = await pool.connect();
+        const second = await pool.connect();
+        try {
+            // The store calls `query` alone, thus a pooled client stands in for the pool here.
+            const firstStore = createReportSessionStateStore({ pool: first as unknown as Pool });
+            const secondStore = createReportSessionStateStore({ pool: second as unknown as Pool });
+            const record = derivation("race.csv");
+
+            await first.query("BEGIN");
+            await second.query("BEGIN");
+
+            expect((await firstStore.appendDerivation(threadId, record))._unsafeUnwrap()).toBe("appended");
+            // The second append blocks on the row that the first one holds. It settles after the commit.
+            const blocked = secondStore.appendDerivation(threadId, { ...record, outputHash: "sha256:second" });
+            await waitForBlockedAppend();
+            await first.query("COMMIT");
+            expect((await blocked)._unsafeUnwrap()).toBe("duplicate");
+            await second.query("COMMIT");
+        } finally {
+            first.release();
+            second.release();
+        }
+
+        // The thread holds the record of the winner, and it holds it one time.
+        const read = (await store.readState(threadId))._unsafeUnwrap();
+        expect(read!.derivations).toEqual([derivation("race.csv")]);
+    });
+
     it("gives an absence for an append against a thread with no row", async () => {
         expect((await store.appendDerivation("thread-derivation-absent", derivation("a.csv")))._unsafeUnwrap()).toBe("absent");
     });
