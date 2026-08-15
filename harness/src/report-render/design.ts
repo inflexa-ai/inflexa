@@ -438,6 +438,36 @@ img {
   text-transform: uppercase;
   color: var(--color-primary-500);
 }
+/* The control strip of a table card. It holds the filter input of the page enhancer.
+
+   The strip shows under the live marker alone. The page script writes that marker on each card that it
+   enhances, thus a browser with no script sees no input that it cannot drive. */
+.report-table-controls {
+  display: none;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-card);
+}
+.report-table-live .report-table-controls {
+  display: block;
+}
+.report-table-filter {
+  width: 100%;
+  max-width: 320px;
+  padding: 7px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text-strong);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+}
+.report-table-filter:focus {
+  outline: none;
+  border-color: var(--color-primary-500);
+}
+.report-table-filter::placeholder {
+  color: var(--color-text-muted);
+}
 .data-table-scroll {
   overflow-x: auto;
 }
@@ -463,6 +493,27 @@ img {
   color: var(--color-text-strong);
   border-bottom: 1px solid var(--color-border-subtle);
 }
+/* A sortable header. The page script adds one of the two mark classes to the header that orders the table,
+   and it holds that class on one header at a time. */
+.data-table-sort {
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.data-table-sort:hover {
+  color: var(--color-heading);
+}
+.data-table-sort-asc::after,
+.data-table-sort-desc::after {
+  padding-left: 4px;
+  color: var(--color-primary-500);
+}
+.data-table-sort-asc::after {
+  content: "\\2191";
+}
+.data-table-sort-desc::after {
+  content: "\\2193";
+}
 .report-row {
   transition: background-color 0.15s ease;
 }
@@ -471,6 +522,40 @@ img {
 }
 .report-row:last-child td {
   border-bottom: 0;
+}
+/* The cap hides each row past it, and the toggle and the filter both write this class. The row stays in the
+   document, thus the page keeps every resolved value and no data moves.
+
+   The rule takes effect under the live marker alone. The page script writes that marker on each card that it
+   enhances. Thus a browser with no script shows the complete plain table, and no row hides behind a toggle
+   that cannot open. */
+.report-table-live .report-row-hidden {
+  display: none;
+}
+/* The toggle of the row cap. It sits under the table, and it names the total row count. It shows under the
+   live marker alone, thus a browser with no script sees no button that it cannot drive. */
+.report-table-toggle {
+  display: none;
+  width: 100%;
+  padding: 10px 16px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--color-primary-500);
+  background: var(--color-bg-alt);
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  cursor: pointer;
+}
+.report-table-live .report-table-toggle {
+  display: block;
+}
+.report-table-toggle:hover {
+  color: var(--color-primary-700);
+  background: var(--color-border-subtle);
 }
 
 /* ── Figure and citation cards ────────────────────────── */
@@ -706,6 +791,15 @@ img {
   .texture-grid::before,
   .texture-noise::after {
     display: none;
+  }
+  /* Paper carries no filter and no toggle. Thus the controls drop out, and each hidden row prints. Each
+     selector matches its live rule above, thus print wins on the same specificity and by its position. */
+  .report-table-live .report-table-controls,
+  .report-table-live .report-table-toggle {
+    display: none;
+  }
+  .report-table-live .report-row-hidden {
+    display: table-row;
   }
   .report-footer {
     background: var(--color-bg);

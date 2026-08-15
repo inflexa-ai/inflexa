@@ -5,9 +5,10 @@ import type { Block, CitationBlock, MetricBlock, ReportDocument, TextBlock } fro
 import { ASSETS_DIR, PAGE_ASSETS } from "./assets.js";
 import { DESIGN_CSS } from "./design.js";
 import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "./fixture.js";
-import { CHART_BOOTSTRAP, SECTION_SPY } from "./page.js";
+import { CHART_BOOTSTRAP, SECTION_SPY, TABLE_ENHANCER } from "./page.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
+import { TABLE_ROW_CAP } from "./views/values.js";
 
 /**
  * The site of the navigation brand. It is the one reference of the page that names a remote host.
@@ -662,6 +663,123 @@ describe("the section scrollspy", () => {
         const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
         expect(html).toContain(SECTION_SPY);
         expect(DESIGN_CSS).toContain(`.${ACTIVE_CLASS}`);
+    });
+});
+
+describe("the table enhancer", () => {
+    /** The print block of the sheet. It is the last block, thus the tail from its opening is its body. */
+    const PRINT_BLOCK = DESIGN_CSS.slice(DESIGN_CSS.indexOf("@media print"));
+
+    /** A page with one table of `count` rows and two columns. */
+    function tablePage(count: number): { document: ReportDocument; values: RenderValues } {
+        const rows = [];
+        for (let index = 0; index < count; index += 1) {
+            rows.push({ gene: `G${index}`, padj: 0.01 });
+        }
+        return {
+            document: {
+                title: "T",
+                sections: [
+                    {
+                        kind: "section",
+                        id: "s",
+                        title: "S",
+                        blocks: [{ kind: "table", id: "tbl", binding: { kind: "artifact-table", path: "t.csv", hash: "sha256:aaa" } }],
+                    },
+                ],
+            },
+            values: { tbl: { type: "table", rows } },
+        };
+    }
+
+    it("rides the page after the scrollspy", () => {
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        expect(html).toContain(TABLE_ENHANCER);
+        expect(html.indexOf(TABLE_ENHANCER)).toBeGreaterThan(html.indexOf(SECTION_SPY));
+    });
+
+    it("bounds the markup and the script at one cap", () => {
+        // The view hides the rows past the cap, and the script applies the same cap again after each sort
+        // and each filter. Two numbers here would show one count and then show a different one.
+        expect(TABLE_ENHANCER).toContain(`var CAP = ${TABLE_ROW_CAP};`);
+    });
+
+    it("writes the classes that the view emits and that the design source styles", () => {
+        expect(TABLE_ENHANCER).toContain(`"report-row-hidden"`);
+        expect(TABLE_ENHANCER).toContain(`"data-table-sort-asc"`);
+        expect(TABLE_ENHANCER).toContain(`"data-table-sort-desc"`);
+        expect(DESIGN_CSS).toContain(".report-row-hidden");
+        expect(DESIGN_CSS).toContain(".data-table-sort-asc");
+        expect(DESIGN_CSS).toContain(".data-table-sort-desc");
+    });
+
+    it("reads no locale in the filter comparison and no locale in the sort", () => {
+        // `toLowerCase` is exact over the ASCII range of a gene name. A locale method gives different text
+        // and a different order on a different host, thus the page would stop being deterministic.
+        expect(TABLE_ENHANCER).toContain("toLowerCase()");
+        expect(TABLE_ENHANCER).not.toContain("localeCompare");
+        expect(TABLE_ENHANCER).not.toContain("toLocale");
+    });
+
+    it("touches neither the reveal gate nor the readiness sentinel", () => {
+        // The enhancer registers no reveal work. A page that waited on the enhancer would signal late.
+        expect(TABLE_ENHANCER).not.toContain("__inflexa");
+    });
+
+    it("hides a row under the live marker alone, thus a browser with no script shows every row", () => {
+        // The script writes the marker on each card that it takes. Without the marker no rule hides a row,
+        // thus the plain table stays complete and no row hides behind a toggle that cannot open.
+        const selectors = [...DESIGN_CSS.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/[^{}]*\.report-row-hidden[^{}]*\{/g)].map((match) => match[0]);
+        expect(selectors.length).toBeGreaterThan(0);
+        for (const selector of selectors) {
+            expect(selector).toContain(".report-table-live");
+        }
+        expect(TABLE_ENHANCER).toContain(`var LIVE = "report-table-live";`);
+        expect(TABLE_ENHANCER).toContain("card.classList.add(LIVE);");
+    });
+
+    it("shows a control under the live marker alone", () => {
+        const css = DESIGN_CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+        for (const control of ["report-table-controls", "report-table-toggle"]) {
+            const rules = [...css.matchAll(new RegExp(`([^{}]*\\.${control}[^{}]*)\\{([^}]*)\\}`, "g"))];
+            const withDisplay = rules.filter((rule) => /display:\s*[a-z-]+/.test(rule[2]));
+            expect(withDisplay.length).toBeGreaterThan(0);
+            for (const rule of withDisplay) {
+                if (/display:\s*none/.test(rule[2])) {
+                    continue;
+                }
+                // A rule that shows the control must name the marker. Without it a browser with no script
+                // paints an input and a button that nothing drives.
+                expect(rule[1]).toContain(".report-table-live");
+            }
+            // The default is hidden, thus the control appears only after the script takes the card.
+            const hiddenByDefault = withDisplay.some((rule) => !rule[1].includes(".report-table-live") && /display:\s*none/.test(rule[2]));
+            expect(hiddenByDefault).toBe(true);
+        }
+    });
+
+    it("shows every row in the print form and drops the controls", () => {
+        // The base rule hides a capped row. The print rule comes after it, thus it wins on paper.
+        expect(DESIGN_CSS.indexOf(".report-row-hidden")).toBeLessThan(DESIGN_CSS.indexOf("@media print"));
+        expect(PRINT_BLOCK).toMatch(/\.report-row-hidden\s*\{[^}]*display:\s*table-row/);
+        expect(PRINT_BLOCK).toMatch(/\.report-table-live \.report-table-controls,\s*\.report-table-live \.report-table-toggle\s*\{[^}]*display:\s*none/);
+    });
+
+    it("puts the sort headers, the filter, the hidden rows, and the toggle on a page over the cap", () => {
+        const over = tablePage(TABLE_ROW_CAP + 3);
+        const page = load(renderReportPage(over.document, over.values)._unsafeUnwrap());
+        expect(page("th.data-table-sort").length).toBe(2);
+        expect(page(".report-table-filter").length).toBe(1);
+        expect(page("tbody tr").length).toBe(TABLE_ROW_CAP + 3);
+        expect(page("tbody tr.report-row-hidden").length).toBe(3);
+        expect(page(".report-table-toggle").text()).toBe(`Show all ${TABLE_ROW_CAP + 3}`);
+    });
+
+    it("leaves a page at the cap with no hidden row and no toggle", () => {
+        const atCap = tablePage(TABLE_ROW_CAP);
+        const page = load(renderReportPage(atCap.document, atCap.values)._unsafeUnwrap());
+        expect(page("tbody tr.report-row-hidden").length).toBe(0);
+        expect(page(".report-table-toggle").length).toBe(0);
     });
 });
 

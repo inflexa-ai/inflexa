@@ -1,5 +1,5 @@
 /**
- * The page constants: the head references, the readiness names, and the three page-side scripts.
+ * The page constants: the head references, the readiness names, and the four page-side scripts.
  *
  * A script here is browser source text, not module code. Thus it reads no module binding, and each value
  * that it needs is interpolated at build time. The style rules and the ECharts theme live in `design.ts`.
@@ -7,6 +7,7 @@
 
 import { assetSource, ECHARTS_ASSET } from "./assets.js";
 import { ECHARTS_THEME_NAME } from "./design.js";
+import { TABLE_ROW_CAP } from "./views/values.js";
 
 /**
  * The head references of the staged assets. The page loads the chart runtime from the sibling assets
@@ -61,6 +62,34 @@ const REVEAL_SETTLE_TIMEOUT_MS = 2_000;
  */
 const NAV_ACTIVE_CLASS = "report-nav-link-active";
 const SPY_BOTTOM_MARGIN_PERCENT = 70;
+
+/**
+ * The class that hides one table row, and the two classes that mark the sorted header.
+ *
+ * The table view emits the hidden class on each row past the cap, and the enhancer below writes the same
+ * class as the filter and the toggle change what shows. The design sheet holds the matching rule of each of
+ * the three names.
+ */
+const ROW_HIDDEN_CLASS = "report-row-hidden";
+const SORT_ASCENDING_CLASS = "data-table-sort-asc";
+const SORT_DESCENDING_CLASS = "data-table-sort-desc";
+
+/**
+ * The marker class of a card that the enhancer took.
+ *
+ * The rule that hides a row takes effect under this marker alone. The script writes the marker when it binds
+ * a card, thus a browser with no script shows the complete plain table and no row hides behind a toggle that
+ * cannot open.
+ */
+const TABLE_LIVE_CLASS = "report-table-live";
+
+/**
+ * The label of the toggle while every row that the filter keeps shows.
+ *
+ * The view composes the collapsed label, because the view holds the total row count. Thus the enhancer keeps
+ * the label that it finds and it restores that text, and the two sites cannot disagree over the count.
+ */
+const SHOW_FEWER_LABEL = "Show fewer";
 
 /**
  * The page-side script that wires each chart. It finds every chart container, reads the option JSON from
@@ -308,6 +337,182 @@ export const SECTION_SPY = `(function () {
     }, { rootMargin: "0px 0px -${SPY_BOTTOM_MARGIN_PERCENT}% 0px", threshold: 0 });
     for (var k = 0; k < sections.length; k++) {
       observer.observe(sections[k]);
+    }
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start);
+  } else {
+    start();
+  }
+})();`;
+
+/**
+ * The page-side script that gives each table its sort, its filter, and its row cap.
+ *
+ * The enhancer is presentation over a complete DOM. Every resolved row is already in the markup, thus the
+ * script moves a row and hides a row, and it never adds one and never removes one.
+ *
+ * The script marks each card that it takes. The rule that hides a row reads that marker, thus a browser with
+ * no script keeps the plain table with every row, and the cap costs the reader nothing there.
+ *
+ * A click on a header cycles the column: ascending, then descending, then the document order. The script
+ * records the initial index of each row at start, thus the document order is always recoverable. The sort
+ * reads the `data-value` attribute of a cell, thus a rounded number still orders by its full magnitude. A
+ * column sorts numerically when every non-empty value of it parses as a number, and in code-unit order at
+ * every other time. An empty cell holds no rank, thus it stays at the end under both directions. Two equal
+ * cells keep the document order, thus one sort gives one order and not the order of the engine.
+ *
+ * The filter hides each row whose text misses the query. The comparison lowercases both texts with
+ * `toLowerCase`. That method reads no locale, and it is exact over the ASCII range of a gene name and an
+ * accession.
+ *
+ * The cap composes with both. After each change the first rows that the filter keeps show, up to the cap,
+ * and the rest hide. The toggle opens the table, and each row that the filter keeps then shows. The label of
+ * the toggle flips between the collapsed label of the view and the label above.
+ *
+ * The script registers no reveal work. It touches neither the reveal gate nor the readiness sentinel, thus a
+ * capture of the page still signals at the same point.
+ */
+export const TABLE_ENHANCER = `(function () {
+  var CAP = ${TABLE_ROW_CAP};
+  var HIDDEN = ${JSON.stringify(ROW_HIDDEN_CLASS)};
+  var ASCENDING = ${JSON.stringify(SORT_ASCENDING_CLASS)};
+  var DESCENDING = ${JSON.stringify(SORT_DESCENDING_CLASS)};
+  var LIVE = ${JSON.stringify(TABLE_LIVE_CLASS)};
+  var FEWER = ${JSON.stringify(SHOW_FEWER_LABEL)};
+  function rawValue(row, index) {
+    var cell = row.cells[index];
+    return cell ? cell.getAttribute("data-value") || "" : "";
+  }
+  function numericColumn(rows, index) {
+    var seen = false;
+    for (var i = 0; i < rows.length; i++) {
+      var value = rawValue(rows[i], index);
+      if (value === "") {
+        continue;
+      }
+      if (isNaN(Number(value))) {
+        return false;
+      }
+      seen = true;
+    }
+    return seen;
+  }
+  function enhance(card) {
+    var table = card.querySelector("table.data-table");
+    var body = table ? table.querySelector("tbody") : null;
+    if (!body || body.rows.length === 0) {
+      return;
+    }
+    var rows = [];
+    var order = [];
+    for (var r = 0; r < body.rows.length; r++) {
+      rows.push(body.rows[r]);
+      order.push(r);
+    }
+    var headers = table.querySelectorAll("th[data-sort-index]");
+    var filter = card.querySelector(".report-table-filter");
+    var toggle = card.querySelector(".report-table-toggle");
+    var collapsed = toggle ? toggle.textContent : "";
+    var query = "";
+    var open = false;
+    var sorted = null;
+    var descending = false;
+    function paint() {
+      var kept = 0;
+      for (var i = 0; i < order.length; i++) {
+        var row = rows[order[i]];
+        if (query !== "" && (row.textContent || "").toLowerCase().indexOf(query) < 0) {
+          row.classList.add(HIDDEN);
+          continue;
+        }
+        kept += 1;
+        if (open || kept <= CAP) {
+          row.classList.remove(HIDDEN);
+        } else {
+          row.classList.add(HIDDEN);
+        }
+      }
+      if (toggle) {
+        toggle.textContent = open ? FEWER : collapsed;
+      }
+      for (var h = 0; h < headers.length; h++) {
+        headers[h].classList.remove(ASCENDING);
+        headers[h].classList.remove(DESCENDING);
+      }
+      if (sorted) {
+        sorted.classList.add(descending ? DESCENDING : ASCENDING);
+      }
+    }
+    function place() {
+      for (var p = 0; p < order.length; p++) {
+        body.appendChild(rows[order[p]]);
+      }
+    }
+    function sort(index) {
+      var numeric = numericColumn(rows, index);
+      var direction = descending ? -1 : 1;
+      order.sort(function (left, right) {
+        var a = rawValue(rows[left], index);
+        var b = rawValue(rows[right], index);
+        if (a === "" || b === "") {
+          return a === b ? left - right : a === "" ? 1 : -1;
+        }
+        var rank = numeric ? Number(a) - Number(b) : a < b ? -1 : a > b ? 1 : 0;
+        return rank === 0 ? left - right : rank * direction;
+      });
+      place();
+    }
+    function reset() {
+      order.sort(function (left, right) {
+        return left - right;
+      });
+      place();
+    }
+    function cycle(header, index) {
+      if (sorted !== header) {
+        sorted = header;
+        descending = false;
+        sort(index);
+      } else if (!descending) {
+        descending = true;
+        sort(index);
+      } else {
+        sorted = null;
+        descending = false;
+        reset();
+      }
+      paint();
+    }
+    function bind(header, index) {
+      header.addEventListener("click", function () {
+        cycle(header, index);
+      });
+    }
+    for (var k = 0; k < headers.length; k++) {
+      bind(headers[k], parseInt(headers[k].getAttribute("data-sort-index") || "0", 10) || 0);
+    }
+    if (filter) {
+      filter.addEventListener("input", function () {
+        query = (filter.value || "").toLowerCase();
+        paint();
+      });
+    }
+    if (toggle) {
+      toggle.addEventListener("click", function () {
+        open = !open;
+        paint();
+      });
+    }
+    card.classList.add(LIVE);
+  }
+  function start() {
+    if (!document.querySelectorAll || typeof document.documentElement.classList === "undefined") {
+      return;
+    }
+    var cards = document.querySelectorAll(".report-table");
+    for (var c = 0; c < cards.length; c++) {
+      enhance(cards[c]);
     }
   }
   if (document.readyState === "loading") {

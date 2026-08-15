@@ -9,6 +9,10 @@
  * A number reaches the page through the number format. The name that stands over the number selects the
  * kind: the label of a metric, and the column name of a table cell.
  *
+ * A table card also carries the markup of the page enhancer: the raw value of each cell, the sortable
+ * header, the filter input, and the row cap with its toggle. The markup alone is a complete plain table,
+ * thus the enhancer adds behavior over it and it never supplies a value.
+ *
  * Each data card carries the `corner-accents` class. Thus the card keeps square corners with the L-shaped
  * accents, which is the geometric identity of the report.
  */
@@ -20,6 +24,18 @@ import { Marker } from "./references-view.js";
 import { formatNumberCell, selectNumberKind } from "../number-format.js";
 import type { ReferenceLedger } from "../references.js";
 import type { RenderValue } from "../types.js";
+
+/**
+ * The count of table rows that the page shows before the toggle.
+ *
+ * The cap is a renderer constant, thus a block carries no field for it and the column subset stays the one
+ * content-level choice. The page enhancer reads the same constant, thus the markup and the script bound the
+ * table at one number.
+ */
+export const TABLE_ROW_CAP = 20;
+
+/** The delimiter of an encoded set name, for example `HALLMARK_HYPOXIA%MSigDB%M5891`. */
+const NAME_DELIMITER = "%";
 
 /** The scalar value that a metric renders from. */
 type ScalarValue = Extract<RenderValue, { type: "scalar" }>;
@@ -74,43 +90,94 @@ function tableColumns(value: TableValue): string[] {
 }
 
 /**
+ * The first segment of a delimited name, or `undefined` when the text carries no delimited name.
+ *
+ * An enrichment tool joins the name of a set, its collection, and its accession with a percent sign. The
+ * name alone identifies the row, thus the rest is noise inside a narrow column. A text of two or more
+ * non-empty segments is such a name. Every other text, for example `95%`, keeps its whole form, because an
+ * empty segment is no segment.
+ */
+function firstNameSegment(text: string): string | undefined {
+    const segments = text.split(NAME_DELIMITER);
+    if (segments.length < 2) {
+        return undefined;
+    }
+    return segments.every((segment) => segment.length > 0) ? segments[0] : undefined;
+}
+
+/**
  * One body cell of a table.
  *
  * The column name selects the number kind, thus a p-value column reads in the scientific form. The full
  * digits ride the `title` attribute when the shown form hides one. An absent cell renders as an empty
  * cell, thus a ragged row keeps its shape.
+ *
+ * Each cell carries its raw value in the `data-value` attribute. The page enhancer sorts on that value, thus
+ * the shown text stays presentation and a rounded number still sorts by its full magnitude.
+ *
+ * A delimited name shows its first segment, and the whole name rides the `title` attribute. Such a name
+ * holds no finite number, thus the number format passed it through and this trim reads the text that the
+ * format gave.
  */
 function Cell({ column, cell }: { column: string; cell: string | number | undefined }) {
     if (cell === undefined) {
-        return <td></td>;
+        return <td data-value=""></td>;
     }
     const shown = formatNumberCell(cell, selectNumberKind(column, cell));
-    return <td title={shown.full}>{shown.text}</td>;
+    const segment = firstNameSegment(shown.text);
+    if (segment !== undefined) {
+        return (
+            <td data-value={String(cell)} title={shown.text}>
+                {segment}
+            </td>
+        );
+    }
+    return (
+        <td data-value={String(cell)} title={shown.full}>
+            {shown.text}
+        </td>
+    );
 }
 
 /**
  * Render a table block. The header holds one cell for each column, and the body holds one row for each
  * resolved row. A zero-row table renders the header alone. The title and the caption render only when the
  * block carries one.
+ *
+ * Each header cell stays a plain `th`. It carries the sort class and the index of its column, thus the
+ * enhancer reads the column of a click and a browser with no script keeps a plain header.
+ *
+ * The body holds every resolved row. A row past the cap carries the hidden class, and the card then carries
+ * the toggle that names the total count. A table at the cap or under it carries no hidden row and no toggle.
+ * The hidden class hides a row under the live marker of the enhancer alone, thus a browser with no script
+ * shows every row.
+ * The label of the toggle is the one site that composes the collapsed text, and the enhancer keeps that text
+ * and restores it.
  */
 export function renderTable(block: TableBlock, value: TableValue): string {
     const columns = tableColumns(value);
+    const total = value.rows.length;
     return String(
         <div class="report-table">
             {block.title !== undefined ? <div class="report-table-title">{block.title}</div> : null}
             <div class="corner-accents">
+                <div class="report-table-controls">
+                    <input class="report-table-filter" type="text" placeholder="Filter rows" aria-label="Filter rows" />
+                </div>
                 <div class="data-table-scroll">
                     <table class="data-table">
                         <thead>
                             <tr>
-                                {columns.map((column) => (
-                                    <th>{column}</th>
+                                {columns.map((column, index) => (
+                                    <th class="data-table-sort" data-sort-index={String(index)}>
+                                        {column}
+                                    </th>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {value.rows.map((row) => (
-                                <tr class="report-row">
+                            {value.rows.map((row, index) => (
+                                <tr class={index < TABLE_ROW_CAP ? "report-row" : "report-row report-row-hidden"}>
                                     {columns.map((column) => (
                                         <Cell column={column} cell={row[column]} />
                                     ))}
@@ -119,6 +186,7 @@ export function renderTable(block: TableBlock, value: TableValue): string {
                         </tbody>
                     </table>
                 </div>
+                {total > TABLE_ROW_CAP ? <button type="button" class="report-table-toggle">{`Show all ${total}`}</button> : null}
             </div>
             {block.caption !== undefined ? <p class="report-caption">{block.caption}</p> : null}
         </div>,
