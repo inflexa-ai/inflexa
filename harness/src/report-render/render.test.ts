@@ -419,6 +419,61 @@ describe("the chart bootstrap under a broken chart", () => {
     });
 });
 
+describe("renderReportPage number format", () => {
+    /** A one-section page over one metric block and one table block. */
+    function pageOf(blocks: Block[]): ReportDocument {
+        return { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks }] };
+    }
+
+    it("shows a long metric value in the short form and the full digits on the title", () => {
+        const document = pageOf([{ kind: "metric", id: "m1", label: "Effect size", value: scalarRef }]);
+        const html = renderReportPage(document, { m1: { type: "scalar", value: -5.7618623255 } })._unsafeUnwrap();
+        const value = load(html)(".stat-card-value");
+        expect(value.text()).toBe("-5.76");
+        expect(value.attr("title")).toBe("-5.7618623255");
+    });
+
+    it("gives a metric whose form hides no digit no title attribute", () => {
+        const document = pageOf([{ kind: "metric", id: "m1", label: "Genes tested", value: scalarRef }]);
+        const html = renderReportPage(document, { m1: { type: "scalar", value: 18432 } })._unsafeUnwrap();
+        const value = load(html)(".stat-card-value");
+        expect(value.text()).toBe("18,432");
+        expect(value.attr("title")).toBeUndefined();
+    });
+
+    it("formats each numeric table cell by its column and passes a text cell through", () => {
+        const document = pageOf([{ kind: "table", id: "tbl", binding: { kind: "artifact-table", path: "t.csv", hash: "sha256:aaa" } }]);
+        const values: RenderValues = {
+            tbl: {
+                type: "table",
+                columns: ["gene", "log2FoldChange", "padj", "direction"],
+                rows: [{ gene: "TP53", log2FoldChange: -3.089028528355109, padj: 0.0000427777663038, direction: "up" }],
+            },
+        };
+        const cells = load(renderReportPage(document, values)._unsafeUnwrap())(".data-table tbody td");
+        expect(cells.map((_, cell) => load(cell).text()).get()).toEqual(["TP53", "-3.09", "4.3e-5", "up"]);
+        expect(cells.eq(1).attr("title")).toBe("-3.089028528355109");
+        expect(cells.eq(2).attr("title")).toBe("0.0000427777663038");
+        expect(cells.eq(3).attr("title")).toBeUndefined();
+    });
+});
+
+describe("the stat card value style rule", () => {
+    /** The declaration body of each `.stat-card-value` rule of a style sheet, with each comment removed. */
+    function statValueRules(css: string): string[] {
+        return [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/\.stat-card-value\s*\{([^}]*)\}/g)].map((match) => match[1]);
+    }
+
+    it("guards the overflow of the value", () => {
+        const rules = statValueRules(DESIGN_CSS);
+        expect(rules.length).toBeGreaterThan(0);
+
+        // A value that the number format cannot shorten, for example a long identifier, would paint past
+        // the card edge without the guard.
+        expect(rules.some((body) => /(?:^|;)\s*overflow-wrap\s*:\s*anywhere\b/.test(body))).toBe(true);
+    });
+});
+
 describe("renderReportPage escaping", () => {
     it("keeps a script tag in the title as text in the title and the heading", () => {
         const document: ReportDocument = {

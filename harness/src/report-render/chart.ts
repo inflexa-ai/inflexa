@@ -12,6 +12,11 @@
  * The derivation is deterministic. Every object builds in one fixed key order, and the code reads no
  * clock, no random value, and no locale. A string comparison uses the code-unit order (`<`) and never
  * `localeCompare`, thus the same rows give the same bytes on every host.
+ *
+ * The option rides to the page as inline JSON. Thus no axis label can carry a function formatter, and a
+ * string `axisLabel.formatter` substitutes the value without a round. As a result the derivation bounds the
+ * tick precision of the one axis whose unit it declares itself, and every other value axis keeps the tick
+ * values that ECharts computes.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -45,6 +50,14 @@ const VIRIDIS = ["#440154", "#482777", "#3e4989", "#31688e", "#26828e", "#1f9e89
  * value is a fixed constant, thus the derivation stays deterministic.
  */
 const X_AXIS_NAME_GAP = 34;
+
+/**
+ * The y axis of a histogram.
+ *
+ * The axis counts rows, thus a fractional tick names no count. `minInterval` holds each tick a whole count
+ * apart from the next one, and it is the one static field that bounds the tick precision of a value axis.
+ */
+const COUNT_AXIS: EchartOption = { type: "value", name: "Count", minInterval: 1 };
 
 /**
  * The name fields of an x axis.
@@ -171,7 +184,7 @@ function deriveHistogram(block: ChartBlock, rows: readonly ChartRow[], columns: 
     if (rows.length === 0) {
         return ok({
             xAxis: { type: "value", scale: true },
-            yAxis: { type: "value", name: "Count" },
+            yAxis: { ...COUNT_AXIS },
             series: [{ type: "bar", barWidth: "99%", data: [] }],
         });
     }
@@ -198,7 +211,7 @@ function deriveHistogram(block: ChartBlock, rows: readonly ChartRow[], columns: 
 
     return ok({
         xAxis: { type: "value", scale: true },
-        yAxis: { type: "value", name: "Count" },
+        yAxis: { ...COUNT_AXIS },
         series,
     });
 }
