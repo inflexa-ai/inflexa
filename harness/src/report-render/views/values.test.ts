@@ -18,7 +18,8 @@ describe("renderMetric", () => {
     it("shows the label and the scalar value", () => {
         const html = renderMetric(metric("Adjusted p-value"), { type: "scalar", value: 0.0123 });
         expect(html).toContain("Adjusted p-value");
-        expect(html).toContain(">1.2e-2<");
+        // A p-value from one hundredth up reads better as a plain decimal than as an exponent.
+        expect(html).toContain(">0.0123<");
     });
 
     it("puts the full digits in the title attribute of the value", () => {
@@ -91,6 +92,18 @@ describe("renderTable", () => {
     it("groups a count and gives it no title, because the grouping hides no digit", () => {
         const html = renderTable(block, { type: "table", rows: [{ gene: "TP53", reads: 14201 }] });
         expect(html).toContain(`<td>14,201</td>`);
+    });
+
+    it("keeps an identifier column whole, with no grouping and no title", () => {
+        const html = renderTable(block, { type: "table", rows: [{ gene: "TP53", pmid: "31978945" }] });
+        expect(html).toContain(`<td>31978945</td>`);
+        expect(html).not.toContain("31,978,945");
+        expect(html).not.toContain("title=");
+    });
+
+    it("gives a grouped whole number to a large float and keeps the full digits on the title", () => {
+        const html = renderTable(block, { type: "table", rows: [{ gene: "TP53", baseMean: 15234.7 }] });
+        expect(html).toContain(`<td title="15234.7">15,235</td>`);
     });
 
     it("passes a non-numeric cell through unchanged and gives it no title", () => {
