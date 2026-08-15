@@ -327,6 +327,10 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
         inputSchema: examinePageInput,
         executionMode: "inline",
         describeCall: "none",
+        // A look gives a picture, and a picture has no one-line form. Thus the outcome of the look is the
+        // whole line: a watcher reads that the eyes saw the page, or that the page was absent, or that the
+        // capture failed.
+        describeResult: (_input, result): string => result.outcome,
         execute: async (_input, ctx): Promise<Result<ExaminePageResult, ToolError>> => {
             // The check runs before every read, thus one clear signal replaces a capture failure for each
             // page. The arm stamps no seen hash, because no eyes saw the page. It also narrows the transport

@@ -4,8 +4,8 @@ import { z } from "zod";
 
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { LogFields, Logger } from "../lib/logger.js";
-import { defineTool, type Tool } from "../tools/define-tool.js";
-import { computeDetail, DETAIL_MAX_LENGTH, normalizeDetail } from "./tool-detail.js";
+import { defineTool, type Tool, type ToolError } from "../tools/define-tool.js";
+import { computeDetail, computeResultDetail, DETAIL_MAX_LENGTH, normalizeDetail } from "./tool-detail.js";
 
 /** A logger that records every `debug` record, for the hook-failure path. */
 function recordingLogger(): { logger: Logger; debugs: { msg: string; fields?: LogFields }[] } {
@@ -31,6 +31,23 @@ function toolWithHook(describeCall: (input: { path: string }) => string): Tool {
         inputSchema: z.object({ path: z.string() }),
         describeCall,
         execute: async () => ok({}),
+    });
+}
+
+/** The ok value that a result-describing tool of these tests gives. */
+interface ReadOutcome {
+    bytes: number;
+}
+
+/** A tool over `{ path }` whose result hook is whatever the test supplies. */
+function toolWithResultHook(describeResult: (input: { path: string }, result: ReadOutcome) => string): Tool {
+    return defineTool({
+        id: "described-result",
+        description: "A tool that describes its own results.",
+        inputSchema: z.object({ path: z.string() }),
+        describeCall: ({ path }) => path,
+        describeResult,
+        execute: async () => ok<ReadOutcome, ToolError>({ bytes: 0 }),
     });
 }
 
@@ -212,5 +229,69 @@ describe("computeDetail", () => {
 
         expect(computeDetail(throwingRefinement, { path: "a.csv" }, logger)).toBeUndefined();
         expect(debugs[0]!.fields).toMatchObject({ tool: "throwing_refinement", error: "refinement is broken" });
+    });
+});
+
+describe("computeResultDetail", () => {
+    const log = createNoopLogger();
+
+    it("returns the normalized hook output for an ok result", () => {
+        const tool = toolWithResultHook((_input, { bytes }) => `${bytes} bytes`);
+
+        expect(computeResultDetail(tool, { path: "a.csv" }, { bytes: 2048 }, log)).toBe("2048 bytes");
+    });
+
+    it("hands the hook the parsed input beside the result", () => {
+        const tool = toolWithResultHook(({ path }, { bytes }) => `${path}: ${bytes} bytes`);
+
+        expect(computeResultDetail(tool, { path: "output/de.csv" }, { bytes: 12 }, log)).toBe("output/de.csv: 12 bytes");
+    });
+
+    it("yields undefined for a tool with no result hook", () => {
+        const tool = toolWithHook(({ path }) => path);
+
+        expect(computeResultDetail(tool, { path: "a.csv" }, { bytes: 1 }, log)).toBeUndefined();
+    });
+
+    it("normalizes at the emit site, not in the tool", () => {
+        const tool = toolWithResultHook((_input, { bytes }) => `wrote\n${bytes}\tbytes`);
+
+        expect(computeResultDetail(tool, { path: "a.csv" }, { bytes: 7 }, log)).toBe("wrote 7 bytes");
+    });
+
+    it("caps an over-long result the same as a call detail", () => {
+        const tool = toolWithResultHook(() => "x".repeat(5000));
+
+        const detail = computeResultDetail(tool, { path: "a.csv" }, { bytes: 1 }, log)!;
+
+        expect(detail).toHaveLength(DETAIL_MAX_LENGTH);
+        expect(detail.endsWith("…")).toBe(true);
+    });
+
+    it("swallows a throwing result hook and records it at debug", () => {
+        const { logger, debugs } = recordingLogger();
+        const tool = toolWithResultHook(() => {
+            throw new Error("result hook is broken");
+        });
+
+        expect(computeResultDetail(tool, { path: "a.csv" }, { bytes: 1 }, logger)).toBeUndefined();
+        expect(debugs).toHaveLength(1);
+        expect(debugs[0]!.fields).toMatchObject({ tool: "described-result", error: "result hook is broken" });
+    });
+
+    it("ignores a hook that returns a non-string or an empty string", () => {
+        const nonString = toolWithResultHook(() => undefined as unknown as string);
+        const empty = toolWithResultHook(() => "");
+
+        expect(computeResultDetail(nonString, { path: "a.csv" }, { bytes: 1 }, log)).toBeUndefined();
+        expect(computeResultDetail(empty, { path: "a.csv" }, { bytes: 1 }, log)).toBeUndefined();
+    });
+
+    // The result satisfies no schema, thus a hook that reads a field the tool never produced sees
+    // `undefined` and the guard keeps that mistake cosmetic.
+    it("survives a hook that reads a field the result does not carry", () => {
+        const tool = toolWithResultHook((_input, result) => (result as unknown as { missing: { deep: string } }).missing.deep);
+
+        expect(computeResultDetail(tool, { path: "a.csv" }, { bytes: 1 }, createNoopLogger())).toBeUndefined();
     });
 });

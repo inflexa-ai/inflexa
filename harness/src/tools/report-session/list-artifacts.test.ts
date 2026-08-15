@@ -17,7 +17,7 @@ import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
-import { createListPinnedArtifactsTool } from "./list-artifacts.js";
+import { createListPinnedArtifactsTool, type ListPinnedArtifactsResult } from "./list-artifacts.js";
 
 /** Each root that a test made. The cleanup removes them after the suite. */
 const roots: string[] = [];
@@ -405,5 +405,55 @@ describe("the session refusal", () => {
         if (result.outcome === "refused") {
             expect(result.refusal.reason).toBe("absent-state");
         }
+    });
+});
+
+describe("the result detail", () => {
+    /** Seed a snapshot of `count` staged inputs, as the cap tests do. */
+    function stagedInputs(count: number): ReportSnapshot {
+        const artifacts: ReportSnapshot["artifacts"] = {};
+        for (let index = 0; index < count; index += 1) {
+            artifacts[`data/inputs/f${String(index).padStart(3, "0")}/raw.csv`] = { hash: `sha256:${index}`, fileType: "output" };
+        }
+        return { artifacts };
+    }
+
+    /** Run the tool's result hook, asserting that the tool declares one. */
+    function detailOf(tool: ReturnType<typeof createListPinnedArtifactsTool>, result: ListPinnedArtifactsResult): string {
+        expect(tool.describeResult).toBeDefined();
+        return tool.describeResult!({}, result);
+    }
+
+    it("names the listed count of a whole listing", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", stagedInputs(3));
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(detailOf(tool, result)).toBe("3 artifacts");
+    });
+
+    // A count alone reads as the whole pinned set, thus a cut listing names the total it came from.
+    it("names the total beside the count of a truncated listing", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", stagedInputs(250));
+        const tool = createListPinnedArtifactsTool({ gateway, resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(detailOf(tool, result)).toBe("200 artifacts of 250");
+    });
+
+    it("names the outcome kind of a refusal", async () => {
+        const root = await makeRoot();
+        const tool = createListPinnedArtifactsTool({ gateway: makeFakeGateway(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("absent")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("refused");
+        expect(detailOf(tool, result)).toBe("refused");
     });
 });

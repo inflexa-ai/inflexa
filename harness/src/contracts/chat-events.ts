@@ -61,7 +61,7 @@ export type ToolCallOutcome = ToolOutcome | "incomplete";
 
 /**
  * One line naming what a tool call is doing, produced by the tool's own
- * `describeCall` hook and normalized at the emit site.
+ * `describeCall` or `describeResult` hook and normalized at the emit site.
  *
  * Opaque display text. A consumer renders it and derives nothing from it — no
  * splitting, no keying on separators. The contract is harness-owned so it can
@@ -90,7 +90,12 @@ export interface ToolFinishedEvent {
     name: string;
     /** How the call ended. See {@link ToolOutcome}. */
     outcome: ToolOutcome;
-    /** The same detail the matching `tool-started` carried. */
+    /**
+     * See {@link ToolCallDetail}. It can differ from the detail the matching
+     * `tool-started` carried: a tool that describes its own result names the
+     * outcome here, and a call that produced none carries the started detail
+     * again.
+     */
     detail?: ToolCallDetail;
     /**
      * The time in milliseconds around this call's own dispatch. Absent — never
