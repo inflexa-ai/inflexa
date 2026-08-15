@@ -300,6 +300,11 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
         inputSchema: previewReportInput,
         executionMode: "inline",
         describeCall: "none",
+        // The page path is the one fact of a preview that a watcher wants, and it exists only in the
+        // result. Each other arm is a degraded condition whose kind already names it, thus the kind
+        // stands as the line. A stamp failure is such an arm: the page landed, but the marker did not,
+        // and a line that named the page would read as a clean pass.
+        describeResult: (_input, result): string => (result.outcome === "rendered" ? `page ${result.pagePath}` : result.outcome),
         execute: async (_input, ctx): Promise<Result<PreviewReportResult, ToolError>> => {
             const opened = await openReportThread(deps.gateway, ctx.session.scope);
             if (opened.isErr()) {

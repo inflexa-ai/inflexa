@@ -1026,6 +1026,27 @@ function describedRead(fail = false): Tool {
     });
 }
 
+/**
+ * A `render` tool that describes its call by path and its result by the page it produced.
+ * `fail` makes `execute` throw, and `breakHook` makes the result hook throw.
+ */
+function describedRender(options: { fail?: boolean; breakHook?: boolean } = {}): Tool<{ path: string }, { page: string }> {
+    return defineTool({
+        id: "render",
+        description: "Render a path to a page.",
+        inputSchema: z.object({ path: z.string() }),
+        describeCall: ({ path }) => path,
+        describeResult: (_input, { page }) => {
+            if (options.breakHook === true) throw new Error("result hook is broken");
+            return `page ${page}`;
+        },
+        execute: async ({ path }) => {
+            if (options.fail === true) throw new Error("disk on fire");
+            return ok({ page: `${path}.html` });
+        },
+    });
+}
+
 describe("runAgent — tool call detail", () => {
     it("carries the same detail on both events of a described call", async () => {
         const provider = scriptedProvider([
@@ -1108,6 +1129,95 @@ describe("runAgent — tool call detail", () => {
 
         expect("detail" in events[0]!).toBe(false);
         expect(events[1]).toMatchObject({ type: "tool-finished", outcome: "error" });
+    });
+});
+
+describe("runAgent — tool result detail", () => {
+    it("names the call on the started event and the outcome on the finished one", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "render", { path: "draft" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([describedRender()], provider);
+
+        expect(events).toHaveLength(2);
+        expect(events[0]).toMatchObject({ type: "tool-started", name: "render", detail: "draft" });
+        expect(events[1]).toMatchObject({ type: "tool-finished", name: "render", detail: "page draft.html", outcome: "ok" });
+    });
+
+    // The hook reads the ok value, and a failed call produced none. The started detail is the whole
+    // account of what the call was, thus it stands.
+    it("keeps the started detail when the call fails", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "render", { path: "draft" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([describedRender({ fail: true })], provider);
+
+        expect(events[0]).toMatchObject({ type: "tool-started", detail: "draft" });
+        expect(events[1]).toMatchObject({ type: "tool-finished", detail: "draft", outcome: "error" });
+    });
+
+    it("keeps the started detail when the result hook throws, and the call still succeeds", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "render", { path: "draft" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([describedRender({ breakHook: true })], provider);
+
+        expect(events[1]).toMatchObject({ type: "tool-finished", detail: "draft", outcome: "ok" });
+        // The tool ran and the model read its result, thus the turn continued to the reply.
+        expect(provider.calls).toHaveLength(2);
+    });
+
+    it("normalizes the result detail at the emit site", async () => {
+        const noisy: Tool<{ text: string }, { echoed: string }> = defineTool({
+            id: "noisy_result",
+            description: "Returns an unnormalized result detail.",
+            inputSchema: z.object({ text: z.string() }),
+            describeCall: ({ text }) => text,
+            describeResult: (_input, { echoed }) => `wrote\n${echoed}`,
+            execute: async ({ text }) => ok({ echoed: text }),
+        });
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "noisy_result", { text: `line one ${"z".repeat(400)}` })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([noisy], provider);
+        const detail = (events[1] as { detail?: string }).detail!;
+
+        expect(detail.startsWith("wrote line one")).toBe(true);
+        expect(detail).not.toContain("\n");
+        expect(detail).toHaveLength(120);
+        expect(detail.endsWith("…")).toBe(true);
+    });
+
+    // The two events of one call are positionally paired, thus a round of several calls must not let
+    // one tool's result detail reach a sibling's finished event.
+    it("aligns each result detail with its own call across a round", async () => {
+        const provider = scriptedProvider([
+            makeMessage(
+                [
+                    toolUseBlock("tu-1", "render", { path: "first" }),
+                    toolUseBlock("tu-2", "echo", { label: "x" }),
+                    toolUseBlock("tu-3", "render", { path: "last" }),
+                ],
+                "tool_use",
+            ),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const events = await runCapturingToolEvents([describedRender(), echoTool()], provider);
+        const finished = events.filter((event) => event.type === "tool-finished");
+
+        expect(finished).toHaveLength(3);
+        expect(finished[0]).toMatchObject({ toolUseId: "tu-1", detail: "page first.html" });
+        expect("detail" in finished[1]!).toBe(false);
+        expect(finished[2]).toMatchObject({ toolUseId: "tu-3", detail: "page last.html" });
     });
 });
 

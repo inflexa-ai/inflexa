@@ -188,6 +188,16 @@ export function createListPinnedArtifactsTool(deps: ListPinnedArtifactsToolDeps)
         inputSchema: listPinnedArtifactsInput,
         executionMode: "inline",
         describeCall: "none",
+        // The size of the listing is what a watcher reads, and the cap makes that size differ from the
+        // pinned set. Thus a truncated listing names the total beside the count, and a whole listing names
+        // the count alone, because a total that equals the count says the same thing two times.
+        describeResult: (_input, result): string => {
+            if (result.outcome !== "listed") {
+                return result.outcome;
+            }
+            const listed = `${result.artifacts.length} artifacts`;
+            return result.truncated ? `${listed} of ${result.total}` : listed;
+        },
         execute: async (_input, ctx): Promise<Result<ListPinnedArtifactsResult, ToolError>> => {
             const opened = await openReportThread(deps.gateway, ctx.session.scope);
             if (opened.isErr()) {

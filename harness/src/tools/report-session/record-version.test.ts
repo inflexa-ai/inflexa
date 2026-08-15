@@ -25,7 +25,7 @@ import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
 import type { ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
 import { createPreviewReportTool } from "./preview-report.js";
-import { createRecordVersionTool } from "./record-version.js";
+import { createRecordVersionTool, type RecordVersionResult } from "./record-version.js";
 
 const ANALYSIS_ID = "analysis-001";
 
@@ -262,5 +262,38 @@ describe("createRecordVersionTool", () => {
             const resolved = (await resolver.resolve(block.value, metricSnapshot))._unsafeUnwrap();
             expect(resolved).toEqual({ type: "scalar", value: 42 });
         }
+    });
+
+    describe("the result detail", () => {
+        /** Run the tool's result hook, asserting that the tool declares one. */
+        function detailOf(tool: ReturnType<typeof createRecordVersionTool>, result: RecordVersionResult): string {
+            expect(tool.describeResult).toBeDefined();
+            return tool.describeResult!({}, result);
+        }
+
+        it("names the version that landed", async () => {
+            const parentId = "parent-detail";
+            const threadId = "thread-detail";
+            (await threads.createThread({ threadId: parentId, analysisId: ANALYSIS_ID }))._unsafeUnwrap();
+            (await threads.createThread({ threadId, analysisId: ANALYSIS_ID, type: "report", parentThreadId: parentId, parentSeq: 1 }))._unsafeUnwrap();
+            const doc = metricDoc();
+            const tool = makeTool(gatewayFor(threadId, doc, metricSnapshot, computeDraftHash(doc)));
+
+            const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+            expect(result.outcome).toBe("recorded");
+            if (result.outcome === "recorded") {
+                expect(detailOf(tool, result)).toBe(`version ${result.versionId}`);
+            }
+        });
+
+        it("names the outcome kind of a gate that refused", async () => {
+            const threadId = "thread-detail-never-seen";
+            const tool = makeTool(gatewayFor(threadId, metricDoc(), metricSnapshot, null));
+
+            const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+            expect(detailOf(tool, result)).toBe("never-seen");
+        });
     });
 });

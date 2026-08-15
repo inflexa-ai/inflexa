@@ -117,6 +117,9 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
         inputSchema: recordVersionInput,
         executionMode: "inline",
         describeCall: "none",
+        // The version id is the one durable product of the call, thus the recorded arm names it. Each
+        // other arm is a gate that refused, and the kind of the arm is what a watcher must read.
+        describeResult: (_input, result): string => (result.outcome === "recorded" ? `version ${result.versionId}` : result.outcome),
         execute: async (_input, ctx): Promise<Result<RecordVersionResult, ToolError>> => {
             const opened = await openReportThread(deps.gateway, ctx.session.scope);
             if (opened.isErr()) {

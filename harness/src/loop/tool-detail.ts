@@ -2,8 +2,10 @@
  * The call detail: one line naming what a tool call is doing.
  *
  * A tool states it through its own `describeCall` hook, colocated with the Zod
- * `inputSchema` the compiler checks it against. Everything else about the
- * detail happens here, once, for every tool: validate, guard, normalize.
+ * `inputSchema` the compiler checks it against, and through its optional
+ * `describeResult` hook, which names what the call produced. Everything else
+ * about the detail happens here, once, for every tool: validate, guard,
+ * normalize.
  *
  * Two rules make this the only place that matters:
  *
@@ -140,6 +142,37 @@ export function computeDetail(tool: Tool, rawInput: unknown, log: Logger): ToolC
         // `debug`, not `warn`: a broken description is a cosmetic defect in one
         // tool, and the turn it happened in succeeded.
         log.debug("describeCall failed", { tool: tool.id, ...log.errorFields(err) });
+        return undefined;
+    }
+}
+
+/**
+ * Compute a tool call's result detail, best-effort.
+ *
+ * `parsedInput` is the value the dispatch already validated, and `result` is the
+ * ok value the tool returned one line above. Thus neither is re-parsed here: a
+ * second parse of the input would repeat work the dispatch did, and the result
+ * satisfies no schema at all — the tool's own `Output` type is what the hook
+ * declares, and the tool is the author of both.
+ *
+ * The guard is the whole difference from a bare call. A hook that throws, returns
+ * a non-string, or returns nothing usable yields no result detail, and the
+ * finished event falls back on the call detail. A description must never be able
+ * to fail a call that already succeeded.
+ */
+export function computeResultDetail(tool: Tool, parsedInput: unknown, result: unknown, log: Logger): ToolCallDetail | undefined {
+    // The guard tests for a function, not for presence, for the same reason as in
+    // `computeDetail`: a packaged tool comes from an open list, thus a
+    // `describeResult` that is not callable is reachable.
+    const describeResult = tool.describeResult;
+    if (typeof describeResult !== "function") return undefined;
+
+    try {
+        return normalizeDetail(describeResult(parsedInput, result));
+    } catch (err) {
+        // `debug`, not `warn`: a broken description is a cosmetic defect in one
+        // tool, and the call it happened on succeeded.
+        log.debug("describeResult failed", { tool: tool.id, ...log.errorFields(err) });
         return undefined;
     }
 }

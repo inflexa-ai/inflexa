@@ -22,7 +22,7 @@ import { PAGE_ASSETS } from "../../report-render/assets.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
-import { createPreviewReportTool } from "./preview-report.js";
+import { createPreviewReportTool, type PreviewReportResult } from "./preview-report.js";
 
 /** Each root that a test made. The cleanup removes them after the suite. */
 const roots: string[] = [];
@@ -467,5 +467,59 @@ describe("the session refusal", () => {
         }
         // The mismatch refuses before any resolution, thus no page lands.
         expect(existsSync(join(root, "report-sessions"))).toBe(false);
+    });
+});
+
+describe("the result detail", () => {
+    /** Run the tool's result hook, asserting that the tool declares one. */
+    function detailOf(tool: ReturnType<typeof createPreviewReportTool>, result: PreviewReportResult): string {
+        expect(tool.describeResult).toBeDefined();
+        return tool.describeResult!({}, result);
+    }
+
+    it("names the page path of a render", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        expect(detailOf(tool, result)).toBe(`page ${join(root, "report-sessions", "t1", "index.html")}`);
+    });
+
+    it("names the outcome kind of a degraded arm", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: { title: "", sections: [] }, snapshot: { artifacts: {} } });
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+        });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("gaps");
+        expect(detailOf(tool, result)).toBe("gaps");
+    });
+
+    // The page landed and the marker did not, thus the line must not read as a clean pass.
+    it("names the stamp failure, and never the page that it left on disk", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        const tool = createPreviewReportTool({
+            gateway,
+            makeResolver: () => createFixtureResolver(),
+            resolveWorkspaceRoot: () => root,
+        });
+
+        expect(detailOf(tool, { outcome: "stamp-failed", pagePath: join(root, "page.html"), detail: "the store is down" })).toBe("stamp-failed");
+        expect(detailOf(tool, { outcome: "refused", refusal: { reason: "absent-state", detail: "no session" } })).toBe("refused");
     });
 });

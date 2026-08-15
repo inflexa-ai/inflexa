@@ -28,7 +28,7 @@ import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderC
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
 import { isToolError, readToolResultImage, type Tool, type ToolContext, type ToolResultImage } from "../tools/define-tool.js";
 import { addChatUsage, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
-import { computeDetail, type ToolCallDetail } from "./tool-detail.js";
+import { computeDetail, computeResultDetail, type ToolCallDetail } from "./tool-detail.js";
 import { toolOutcomeForOutputType, type ToolOutcome } from "./tool-outcome.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
 
@@ -282,7 +282,8 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
      *
      * Computed once per round and carried onto both the `tool-started` and the
      * `tool-finished` event, so the pair a host renders as one chip cannot show
-     * two different descriptions of the same call.
+     * two different descriptions of the same call. A tool that describes its own
+     * result replaces the second half of that pair with the outcome it produced.
      */
     const roundDetails = (calls: readonly ToolCallPart[]): (ToolCallDetail | undefined)[] =>
         calls.map((tu) => {
@@ -299,14 +300,15 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
      * it is not a thrown failure, so nothing reports it and the loop simply feeds it
      * back — and a run that ends badly is usually a run whose tool calls were failing.
      *
-     * `details` and `durations` are positionally aligned with `calls`. `dispatchTools`
-     * measures a duration around the call itself, because this sink emits every finish
-     * event only after the whole round settles.
+     * `details`, `resultDetails` and `durations` are positionally aligned with `calls`.
+     * `dispatchTools` measures a duration around the call itself, because this sink emits
+     * every finish event only after the whole round settles.
      */
     const settleRound = async (
         calls: readonly ToolCallPart[],
         results: readonly ToolResultPart[],
         details: readonly (ToolCallDetail | undefined)[],
+        resultDetails: readonly (ToolCallDetail | undefined)[],
         durations: readonly (number | undefined)[],
     ): Promise<string[]> => {
         const errored: string[] = [];
@@ -327,7 +329,11 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
                 toolUseId: tu.toolCallId,
                 name: tu.toolName,
                 outcome,
-                ...detailField(details[idx]),
+                // The result detail wins where there is one, and the call detail
+                // stands otherwise. Only the ok branch of a dispatch computes a
+                // result detail, thus an error and a denial reach here with none
+                // and keep the line the `tool-started` carried.
+                ...detailField(resultDetails[idx] ?? details[idx]),
                 ...durationField(durations[idx]),
             });
         }
@@ -388,8 +394,16 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             for (const [idx, tu] of earlier.entries()) {
                 await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(earlierDetails[idx]) });
             }
-            const { results, durations } = await dispatchTools(earlier, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool, encoding);
-            const errored = await settleRound(earlier, results, earlierDetails, durations);
+            const { results, durations, resultDetails } = await dispatchTools(
+                earlier,
+                toolsById,
+                toolCtx,
+                isFatalLoopError,
+                runStep,
+                formatStepName.tool,
+                encoding,
+            );
+            const errored = await settleRound(earlier, results, earlierDetails, resultDetails, durations);
             results.push(errorResult(trailing, TRUNCATED_TOOL_USE_ERROR));
             // The trailing call was never dispatched, but it reaches the model as an error
             // result like any other — so it counts, or `toolErrors` reports a cleaner run
@@ -419,8 +433,16 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         for (const [idx, tu] of toolCalls.entries()) {
             await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(details[idx]) });
         }
-        const { results, durations } = await dispatchTools(toolCalls, toolsById, toolCtx, isFatalLoopError, runStep, formatStepName.tool, encoding);
-        const errored = await settleRound(toolCalls, results, details, durations);
+        const { results, durations, resultDetails } = await dispatchTools(
+            toolCalls,
+            toolsById,
+            toolCtx,
+            isFatalLoopError,
+            runStep,
+            formatStepName.tool,
+            encoding,
+        );
+        const errored = await settleRound(toolCalls, results, details, resultDetails, durations);
         if (errored.length > 0) log.debug("tool results returned errors", { iteration: i, tools: errored });
         messages.push({ role: "tool", content: results });
         appendDeferredImages(messages, results, encoding.deferredImages);
@@ -566,9 +588,11 @@ interface DeferredImage {
 
 /**
  * How a completed tool result is encoded onto the provider message. `placement`
- * says where the picture of a tool result goes, and `log` is the sink for the drop
- * record. `deferredImages` collects the picture of each tool result of the round
- * under the user-message placement, and the round assembly empties it.
+ * says where the picture of a tool result goes, and `log` is the diagnostic sink
+ * of one dispatch: the record of a dropped picture, and the record of a result
+ * description that failed. `deferredImages` collects the picture of each tool
+ * result of the round under the user-message placement, and the round assembly
+ * empties it.
  *
  * CAUTION: the collector fills as a side effect inside the tool step body. A
  * replayed durable step returns its cached result, and it does not run the body.
@@ -619,7 +643,7 @@ function appendDeferredImages(messages: LoopMessage[], results: readonly ToolRes
 /**
  * Dispatch one round of tool calls, and measure the time of each call.
  *
- * `results` and `durations` are positionally aligned with `toolUses`.
+ * `results`, `durations` and `resultDetails` are positionally aligned with `toolUses`.
  *
  * Each measurement brackets the same unit that the loop awaits for that call. For a
  * step-mode call that unit is `runStep`, thus the figure includes the durable-step
@@ -634,12 +658,16 @@ async function dispatchTools(
     runStep: RunStep,
     toolStepName: (toolName: string, toolUseId: string) => string,
     encoding: ResultEncoding,
-): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[] }> {
+): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[]; resultDetails: (ToolCallDetail | undefined)[] }> {
     const results = new Array<ToolResultPart>(toolUses.length);
     // The array starts with holes, which read as `undefined`. The element type
     // says so, thus it agrees with what `settleRound` accepts. Every index is in
     // fact assigned, because the mode partition below covers each call.
     const durations = new Array<number | undefined>(toolUses.length);
+    // A hole stays a hole for a call that described no result: an error, a
+    // denial, and a tool with no result hook each leave the index unassigned,
+    // and `settleRound` then reads the call detail.
+    const resultDetails = new Array<ToolCallDetail | undefined>(toolUses.length);
     const stepTools: { tu: ToolCallPart; idx: number }[] = [];
     const workflowTools: { tu: ToolCallPart; idx: number }[] = [];
     const inlineTools: { tu: ToolCallPart; idx: number }[] = [];
@@ -656,28 +684,47 @@ async function dispatchTools(
             const startedAt = performance.now();
             return runStep(toolStepName(tu.toolName, tu.toolCallId), () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding)).then((r) => {
                 durations[idx] = elapsedMs(startedAt);
-                results[idx] = r;
+                results[idx] = r.result;
+                if (r.detail !== undefined) resultDetails[idx] = r.detail;
             });
         }),
     );
 
     for (const { tu, idx } of workflowTools) {
         const startedAt = performance.now();
-        results[idx] = await dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding);
+        const dispatched = await dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding);
+        results[idx] = dispatched.result;
+        if (dispatched.detail !== undefined) resultDetails[idx] = dispatched.detail;
         durations[idx] = elapsedMs(startedAt);
     }
     for (const { tu, idx } of inlineTools) {
         const startedAt = performance.now();
-        results[idx] = await dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding);
+        const dispatched = await dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding);
+        results[idx] = dispatched.result;
+        if (dispatched.detail !== undefined) resultDetails[idx] = dispatched.detail;
         durations[idx] = elapsedMs(startedAt);
     }
 
-    return { results, durations };
+    return { results, durations, resultDetails };
 }
 
 /** Whole milliseconds since `startedAt`, on the monotonic clock that took that mark. */
 function elapsedMs(startedAt: number): number {
     return Math.round(performance.now() - startedAt);
+}
+
+/**
+ * One settled tool call: the result the model reads, and the line that the tool's
+ * own `describeResult` hook made of its ok value.
+ *
+ * The detail rides beside the result, because the ok value it reads exists only
+ * here. Past this point the value is JSON on a `tool_result` part, which drops a
+ * symbol key and flattens every class, thus a hook that ran later would read a
+ * shape its tool never produced.
+ */
+interface DispatchedCall {
+    readonly result: ToolResultPart;
+    readonly detail?: ToolCallDetail;
 }
 
 async function dispatchTool(
@@ -686,10 +733,10 @@ async function dispatchTool(
     ctx: ToolContext,
     isFatalLoopError: (err: unknown) => boolean,
     encoding: ResultEncoding,
-): Promise<ToolResultPart> {
+): Promise<DispatchedCall> {
     const tool = toolsById.get(tu.toolName);
     if (tool === undefined) {
-        return errorResult(tu, `unknown tool: ${tu.toolName}`);
+        return { result: errorResult(tu, `unknown tool: ${tu.toolName}`) };
     }
 
     const parsed = tool.inputSchema.safeParse(tu.input);
@@ -703,7 +750,7 @@ async function dispatchTool(
     const repaired = repairedInput === undefined ? undefined : tool.inputSchema.safeParse(repairedInput);
     if (repaired?.success === true) return execute(tu, tool, repaired.data, ctx, isFatalLoopError, encoding);
 
-    return errorResult(tu, `input validation failed: ${formatZodIssues(parsed.error, tu.input)}`);
+    return { result: errorResult(tu, `input validation failed: ${formatZodIssues(parsed.error, tu.input)}`) };
 }
 
 async function execute(
@@ -713,15 +760,19 @@ async function execute(
     ctx: ToolContext,
     isFatalLoopError: (err: unknown) => boolean,
     encoding: ResultEncoding,
-): Promise<ToolResultPart> {
+): Promise<DispatchedCall> {
     try {
         const output = await tool.execute(input, ctx);
-        if (output.isErr()) return errorResult(tu, toolErrorContent(output.error));
-        return successResult(tu, output.value, encoding);
+        if (output.isErr()) return { result: errorResult(tu, toolErrorContent(output.error)) };
+        // The one place a result description runs: the ok value in hand, the
+        // input already validated, and the guard inside the compute.
+        const detail = computeResultDetail(tool, input, output.value, encoding.log);
+        const result = successResult(tu, output.value, encoding);
+        return detail === undefined ? { result } : { result, detail };
     } catch (err) {
         if (isFatalLoopError(err)) throw err;
-        if (isAskRejected(err)) return deniedResult(tu, err.feedback);
-        return errorResult(tu, toolErrorContent(err));
+        if (isAskRejected(err)) return { result: deniedResult(tu, err.feedback) };
+        return { result: errorResult(tu, toolErrorContent(err)) };
     }
 }
 
