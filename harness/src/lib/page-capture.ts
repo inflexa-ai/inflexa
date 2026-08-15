@@ -10,6 +10,10 @@
  * imports them, thus a rename or a retime reaches the waiter at compile time. A second copy of the wait
  * script would instead degrade every capture to the readiness timeout, and no type would break.
  *
+ * The capture emulates the reduced-motion preference before the navigation. The design source collapses each
+ * transition under that preference, and it starts each reveal in its visible state. Thus the picture shows
+ * the final state, and no element appears mid-fade.
+ *
  * The capture speaks the throw protocol, because the chrome connection does. A caller that needs a typed
  * outcome guards the call.
  */
@@ -95,6 +99,10 @@ export function capturePage(chrome: ChromeConfig, url: string, options: CaptureO
         page.on("requestfailed", (req) => {
             failedRequests.push({ url: req.url(), reason: req.failure()?.errorText ?? "unknown" });
         });
+
+        // The preference is active before the navigation, because the page reveals its sections as it loads.
+        // A preference that arrives after the load reaches a page that already runs its transitions.
+        await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
 
         await page.goto(url, { waitUntil: "networkidle2", timeout: PAGE_NAV_TIMEOUT_MS });
 

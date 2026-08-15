@@ -157,6 +157,8 @@ The prompt of the agent MUST name its tools and their mechanisms, and it MUST NO
 
 The prompt MUST teach the verification loop: preview, look, repair, and record only after a look at the current page. The "Do NOT" list MUST name the visual spiral. The agent does not loop on a cosmetic doubt, and it records when the page reads clean.
 
+The look step MUST carry the fault checklist. The agent examines the picture for: clipped text, a truncated number, an overflowing card, a raw column name on an axis, an unreadable precision, and content that stayed invisible. A found fault is a repair, and never a note.
+
 The prompt MUST name the listing tool as the orientation source for the pinned evidence. It MUST state that a reference names the path alone, and that the session stamps the hash. The "Do NOT" list MUST name the hash probe: the agent never guesses a hash, and it never adds a block to read a hash from a refusal.
 
 The prompt MUST state that the literature references compose as citation blocks, against the citation ids of the pinned evidence. It MUST name the listing tool as the route to the pinned citation ids. It MUST state that a citation outside the pinned evidence does not resolve, and that the agent reports it instead of an inline workaround.
@@ -176,6 +178,10 @@ The prompt MUST state that the literature references compose as citation blocks,
 #### Scenario: The prompt teaches the citation blocks
 - **WHEN** a reviewer reads the prompt module
 - **THEN** the citation-block rule and the pinned-evidence bound are present
+
+#### Scenario: The prompt carries the fault checklist
+- **WHEN** a reviewer reads the prompt module
+- **THEN** the look step names the clipped text, the truncated number, the overflowing card, the raw axis name, and the precision fault
 
 ### Requirement: The report turn reads the copied narrative, never the live memory
 
