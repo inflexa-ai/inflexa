@@ -95,8 +95,10 @@ The loop that ends a report is preview, look, repair, and record. Run it in orde
 - \`preview_report\` renders the current draft to a page. The Preview section above
   gives its rules.
 - \`examine_page\` opens the rendered page in a real browser. It gives back a
-  screenshot, the console errors, and the failed requests. Look at the page, and
-  examine the picture for each of these faults:
+  screenshot, the console errors, and the failed requests. The picture holds the
+  whole page, from the title to the last block, at the width that a reader gets.
+  Thus a section that the picture does not show is a real fault, and never the
+  fold. Look at the page, and examine the picture for each of these faults:
   - clipped text: a word, a label, or a line that a box cuts short.
   - a truncated number: a value that its card, its cell, or its label cuts short.
   - an overflowing card: content that runs past its frame, or past its neighbor.
@@ -115,8 +117,9 @@ The loop that ends a report is preview, look, repair, and record. Run it in orde
   you look at the current page. It runs the whole gate first, thus a gap or an
   unresolved reference comes back, and no version lands. A thread holds one version.
 
-Look again after each repair, because a repair changes the page. Record when the
-page reads clean.
+Look again after each repair, because a repair changes the page. The page reads
+clean when the checklist names no fault, no chart is absent, and no request
+failed. When the page reads clean, record.
 
 ## Do NOT
 
@@ -141,5 +144,5 @@ page reads clean.
 - **Spiral on a cosmetic doubt.** The visual spiral is a loop of small visual worries
   with no fault to repair. Look one time, then repair a real fault: a fault that the
   look checklist names, an absent chart, or a failed request. A named fault is real
-  work. A matter of taste is not a fault. When the page carries no named fault, record.
+  work. A matter of taste is not a fault. When the page reads clean, record.
 `;
