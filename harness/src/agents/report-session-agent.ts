@@ -3,9 +3,9 @@
  *
  * `createReportSessionAgent` is the composition root of the report path. It gets
  * the shared deps one time, and it hands each tool exactly what it needs. The
- * authoring tools, the preview tool, the eyes tool, and the record tool bind to the
- * session-state gateway, thus one assembled definition serves every thread, and the
- * per-session state stays behind the tool boundary.
+ * authoring tools, the listing tool, the preview tool, the eyes tool, and the record
+ * tool bind to the session-state gateway, thus one assembled definition serves every
+ * thread, and the per-session state stays behind the tool boundary.
  *
  * The roster is read-only toward the analysis. It holds the workspace read tools,
  * the workspace search, the run inspection, and the data-profile inspection. It
@@ -35,7 +35,13 @@ import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import type { ReportVersionStore } from "../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../tools/report-authoring/authoring-tools.js";
 import { createReportAuthoringTools } from "../tools/report-authoring/authoring-tools.js";
-import { createExaminePageTool, createPreviewReportTool, createRecordVersionTool, type ResolvePageAsset } from "../tools/report-session/index.js";
+import {
+    createExaminePageTool,
+    createListPinnedArtifactsTool,
+    createPreviewReportTool,
+    createRecordVersionTool,
+    type ResolvePageAsset,
+} from "../tools/report-session/index.js";
 import { createFileStatTool, createGrepTool, createListFilesTool, createReadFileTool, createWorkspaceSearchTool } from "../tools/workspace/index.js";
 import { createInspectDataProfileTool, createInspectRunTool } from "../tools/research/index.js";
 import { reportSessionPrompt } from "../prompts/report-session.js";
@@ -65,9 +71,9 @@ export interface ReportSessionAgentDeps {
     readonly embedding: EmbeddingProvider;
     /** Workspace filesystem read seam -- the four read tools. */
     readonly workspaceFs: WorkspaceFilesystem;
-    /** Session-state gateway -- the authoring tools, the preview tool, the eyes tool, and the record tool bind to it. */
+    /** Session-state gateway -- the authoring tools, the listing tool, the preview tool, the eyes tool, and the record tool bind to it. */
     readonly gateway: ReportSessionStateGateway;
-    /** Workspace-root resolution seam -- the preview tool and the eyes tool resolve the page root per call. */
+    /** Workspace-root resolution seam -- the listing tool, the preview tool, and the eyes tool resolve the root per call. */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Append-only version store -- the record tool gates the whole document first, then records one version. */
     readonly store: ReportVersionStore;
@@ -120,6 +126,13 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         authoring.read_outline,
         authoring.read_block,
         authoring.finish_draft,
+        // The orientation source of the pinned evidence. It reads the snapshot of the
+        // thread, and it resolves the workspace root per call for the header columns.
+        createListPinnedArtifactsTool({
+            gateway,
+            resolveWorkspaceRoot,
+            ...(logger ? { logger } : {}),
+        }),
         // The render-and-preview tool. It resolves the page root per call.
         createPreviewReportTool({
             gateway,

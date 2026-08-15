@@ -23,3 +23,10 @@ export {
     type PageCapture,
 } from "./examine-page.js";
 export { createRecordVersionTool, type RecordVersionInput, type RecordVersionResult, type RecordVersionToolDeps } from "./record-version.js";
+export {
+    createListPinnedArtifactsTool,
+    type ListPinnedArtifactsInput,
+    type ListPinnedArtifactsResult,
+    type ListPinnedArtifactsToolDeps,
+    type PinnedArtifact,
+} from "./list-artifacts.js";
