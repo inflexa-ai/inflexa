@@ -10,11 +10,38 @@ const tableBinding: TableBlock["binding"] = { kind: "artifact-table", path: "run
 const figureBinding: FigureBlock["binding"] = { kind: "artifact-file", path: "runs/r1/plot.png", hash: "sha256:aaa" };
 
 describe("renderMetric", () => {
+    /** One metric block with the given label. The label selects the number kind of the value. */
+    function metric(label: string): MetricBlock {
+        return { kind: "metric", id: "m1", label, value: scalarBinding };
+    }
+
     it("shows the label and the scalar value", () => {
-        const block: MetricBlock = { kind: "metric", id: "m1", label: "Adjusted p-value", value: scalarBinding };
-        const html = renderMetric(block, { type: "scalar", value: 0.0123 });
+        const html = renderMetric(metric("Adjusted p-value"), { type: "scalar", value: 0.0123 });
         expect(html).toContain("Adjusted p-value");
-        expect(html).toContain("0.0123");
+        expect(html).toContain(">1.2e-2<");
+    });
+
+    it("puts the full digits in the title attribute of the value", () => {
+        const html = renderMetric(metric("Effect size"), { type: "scalar", value: -5.7618623255 });
+        expect(html).toContain(`<div class="stat-card-value" title="-5.7618623255">-5.76</div>`);
+    });
+
+    it("shows a p-value label in the scientific form with the full digits on the title", () => {
+        const html = renderMetric(metric("padj"), { type: "scalar", value: 0.0000427777663038 });
+        expect(html).toContain(`title="0.0000427777663038"`);
+        expect(html).toContain(">4.3e-5<");
+    });
+
+    it("groups a count and carries no title, because the grouping hides no digit", () => {
+        const html = renderMetric(metric("Genes tested"), { type: "scalar", value: 18432 });
+        expect(html).toContain(`<div class="stat-card-value">18,432</div>`);
+        expect(html).not.toContain("title=");
+    });
+
+    it("passes a non-numeric value through with no title", () => {
+        const html = renderMetric(metric("Sequencing depth"), { type: "scalar", value: "42.6M" });
+        expect(html).toContain(`<div class="stat-card-value">42.6M</div>`);
+        expect(html).not.toContain("title=");
     });
 });
 
@@ -49,6 +76,33 @@ describe("renderTable", () => {
         });
         expect(html).toContain(`<td></td>`);
         expect(html).not.toContain("undefined");
+    });
+
+    it("shows a p-value column in the scientific form with the full digits on the title", () => {
+        const html = renderTable(block, { type: "table", rows: [{ gene: "TP53", padj: 0.0000427777663038 }] });
+        expect(html).toContain(`<td title="0.0000427777663038">4.3e-5</td>`);
+    });
+
+    it("rounds a long float to three significant digits and keeps the full digits on the title", () => {
+        const html = renderTable(block, { type: "table", rows: [{ gene: "TP53", log2FoldChange: -3.089028528355109 }] });
+        expect(html).toContain(`<td title="-3.089028528355109">-3.09</td>`);
+    });
+
+    it("groups a count and gives it no title, because the grouping hides no digit", () => {
+        const html = renderTable(block, { type: "table", rows: [{ gene: "TP53", reads: 14201 }] });
+        expect(html).toContain(`<td>14,201</td>`);
+    });
+
+    it("passes a non-numeric cell through unchanged and gives it no title", () => {
+        const html = renderTable(block, { type: "table", rows: [{ gene: "TP53", direction: "up" }] });
+        expect(html).toContain(`<td>up</td>`);
+        expect(html).not.toContain("title=");
+    });
+
+    it("keeps a hostile cell as text after the format passes it through", () => {
+        const html = renderTable(block, { type: "table", rows: [{ gene: "<script>alert(1)</script>", padj: 0.01 }] });
+        expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+        expect(html).not.toContain("<script>alert(1)");
     });
 });
 

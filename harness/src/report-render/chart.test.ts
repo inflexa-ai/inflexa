@@ -153,6 +153,13 @@ describe("deriveChartOption histogram", () => {
         expect(JSON.stringify(first)).toBe(JSON.stringify(second));
     });
 
+    it("holds the count ticks a whole count apart, thus no tick carries a fraction", () => {
+        // The axis counts rows. `minInterval` is the one static field that bounds a tick, because the
+        // option rides as inline JSON and a function formatter cannot cross it.
+        expect(asObj(derive(block, rows).yAxis).minInterval).toBe(1);
+        expect(asObj(derive(block, []).yAxis).minInterval).toBe(1);
+    });
+
     it("shares the same edges across the groups", () => {
         const groupRows: ChartRow[] = [
             { n: 1, g: "G1" },
