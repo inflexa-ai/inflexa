@@ -95,9 +95,22 @@ The loop that ends a report is preview, look, repair, and record. Run it in orde
 - \`preview_report\` renders the current draft to a page. The Preview section above
   gives its rules.
 - \`examine_page\` opens the rendered page in a real browser. It gives back a
-  screenshot, the console errors, and the failed requests. Look at the page.
-- Repair each fault that the look shows. A broken layout, an absent chart, and a
-  failed request each name a block or a binding that you repair.
+  screenshot, the console errors, and the failed requests. Look at the page, and
+  examine the picture for each of these faults:
+  - clipped text: a word, a label, or a line that a box cuts short.
+  - a truncated number: a value that its card, its cell, or its label cuts short.
+  - an overflowing card: content that runs past its frame, or past its neighbor.
+  - a raw column name on an axis, in a legend, or in a table header. A reader reads
+    a written label, not the name that the evidence carries.
+  - an unreadable precision: a number with too many digits to read, or a rounding
+    that hides the result.
+  - content that stayed invisible: an empty band, a blank card, or a section that
+    the picture does not show.
+
+  A found fault is a repair, and never a note. Never describe such a fault to the
+  user in place of the repair.
+- Repair each fault that the look shows. A named fault of the checklist, an absent
+  chart, and a failed request each name a block or a binding that you repair.
 - \`record_report_version\` records the report as one version. It records only after
   you look at the current page. It runs the whole gate first, thus a gap or an
   unresolved reference comes back, and no version lands. A thread holds one version.
@@ -126,7 +139,7 @@ page reads clean.
 - **Leave a gap unread.** When \`finish_draft\` or \`preview_report\` reports a gap or
   an unresolved reference, repair it. Do not present a report that does not finish.
 - **Spiral on a cosmetic doubt.** The visual spiral is a loop of small visual worries
-  with no fault to repair. Look one time, then repair a real fault: a broken layout, an
-  absent chart, or a failed request. A matter of taste is not a fault. When the page
-  reads clean, record.
+  with no fault to repair. Look one time, then repair a real fault: a fault that the
+  look checklist names, an absent chart, or a failed request. A named fault is real
+  work. A matter of taste is not a fault. When the page carries no named fault, record.
 `;

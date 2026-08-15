@@ -143,6 +143,21 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("cosmetic doubt");
     });
 
+    test("the look step carries the fault checklist", () => {
+        // Each fault of the checklist is a stable substring, thus a look that judges
+        // by taste alone cannot pass as guidance.
+        expect(reportSessionPrompt).toContain("clipped text");
+        expect(reportSessionPrompt).toContain("a truncated number");
+        expect(reportSessionPrompt).toContain("an overflowing card");
+        expect(reportSessionPrompt).toContain("a raw column name on an axis");
+        expect(reportSessionPrompt).toContain("an unreadable precision");
+        expect(reportSessionPrompt).toContain("content that stayed invisible");
+        // A found fault ends in a repair, thus the agent never reports one instead.
+        expect(reportSessionPrompt).toContain("A found fault is a repair, and never a note");
+        // The spiral warning reads against the same checklist, thus the two agree.
+        expect(reportSessionPrompt).toContain("look checklist names");
+    });
+
     test("the prompt names the listing tool as the orientation source and bans the hash probe", () => {
         // The path-only rule and its anti-pattern are stable substrings, thus the
         // assertion does not couple to the full prose.
