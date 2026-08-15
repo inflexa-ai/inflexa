@@ -40,7 +40,7 @@ The session runtime MUST bind the per-session state to the thread, behind the si
 - **THEN** the tool returns typed data that names the missing thread id, and it does not throw
 
 ### Requirement: The snapshot pins at session start
-The runtime MUST give an idempotent operation that makes sure that the session state of a thread exists. The first run of the operation MUST pin the snapshot with `pinReportSnapshot`, and it MUST write the row. Every later call MUST read the stored snapshot, and it MUST NOT pin again. A pin failure MUST return as typed data, and a later call can pin again, because no row was written.
+The runtime MUST give an idempotent operation that makes sure that the session state of a thread exists. The first run of the operation MUST pin the snapshot with `pinReportSnapshot`, and it MUST write the row. The pin MUST carry the citation evidence of the analysis beside the artifact map, through the workspace-root seam of the runtime. Every later call MUST read the stored snapshot, and it MUST NOT pin again. A pin failure MUST return as typed data, and a later call can pin again, because no row was written.
 
 The spawn MUST run the operation directly after the seed of the child lands. The spawn mints one moment, and the two pins of that moment are the anchor of the transcript and the snapshot of the data. A pin at the first tool call of a later turn reads a different moment. A run can register an artifact between the two, and the session then cites an artifact that the anchor never held.
 
@@ -79,6 +79,10 @@ The serving path of a report turn MUST run the operation at the start of the tur
 #### Scenario: A pin failure does not poison the thread
 - **WHEN** the first pin fails and the store recovers
 - **THEN** the next call pins again, and the session continues
+
+#### Scenario: The stored snapshot carries the citation evidence
+- **WHEN** the spawn pins a session of an analysis whose run synthesis carries key references
+- **THEN** the stored snapshot citation list holds the `pmid:` key of each reference
 
 ### Requirement: The session state is durable for each thread
 The in-progress document and the pinned snapshot of a thread MUST live in one durable session-state row, keyed by the thread id. A landed operation MUST persist the document before it reports `applied: true`. A process restart and a replica change MUST NOT lose a landed operation. A purge of the analysis MUST remove the session-state rows of its threads.
@@ -155,6 +159,8 @@ The prompt MUST teach the verification loop: preview, look, repair, and record o
 
 The prompt MUST name the listing tool as the orientation source for the pinned evidence. It MUST state that a reference names the path alone, and that the session stamps the hash. The "Do NOT" list MUST name the hash probe: the agent never guesses a hash, and it never adds a block to read a hash from a refusal.
 
+The prompt MUST state that the literature references compose as citation blocks, against the citation ids of the pinned evidence. It MUST state that a citation outside the pinned evidence does not resolve, and that the agent reports it instead of an inline workaround.
+
 #### Scenario: The prompt stays free of environment detail
 - **WHEN** a reviewer reads the prompt module
 - **THEN** no dataset name, no path, and no format promise is present
@@ -166,6 +172,10 @@ The prompt MUST name the listing tool as the orientation source for the pinned e
 #### Scenario: The prompt teaches the path-only rule
 - **WHEN** a reviewer reads the prompt module
 - **THEN** the listing tool is the named orientation source, and the hash-probe anti-pattern is present
+
+#### Scenario: The prompt teaches the citation blocks
+- **WHEN** a reviewer reads the prompt module
+- **THEN** the citation-block rule and the pinned-evidence bound are present
 
 ### Requirement: The report turn reads the copied narrative, never the live memory
 
