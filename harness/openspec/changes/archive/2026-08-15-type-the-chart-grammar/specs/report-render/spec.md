@@ -7,6 +7,8 @@ The renderer MUST derive one option from a chart composition: one runtime series
 
 A preset MUST expand into a composition through one pure expansion, before the derivation. The `km` preset renders precomputed survival columns as grouped step series, and the renderer estimates nothing. A dense scatter over a row-count threshold takes a larger symbol size. The derivation MUST stay deterministic, and it MUST compute no aggregate.
 
+Two authoring faults MUST refuse as render problems. A band whose lower bound sits above its upper bound refuses, and the problem names the block. A quick-path transform whose derived name collides with a real table column refuses, and the problem names the collision.
+
 #### Scenario: A volcano derives from the preset
 - **WHEN** the caller renders a `volcano` chart over an effect column and a p column
 - **THEN** the option holds a scatter over the effect and the transformed p, with the declared guide lines

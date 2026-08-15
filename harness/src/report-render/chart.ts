@@ -248,6 +248,11 @@ function resolveQuickPath(
             return err(problem(blockId, `The column "${column}" is absent from every row.`));
         }
         const name = transformedName(transform, column);
+        if (columnPresent(name, rows, columns)) {
+            // The derived column goes into a copy of each row. A table that already holds that name would
+            // lose its own column under the derived one, and the chart would plot the wrong cells.
+            return err(problem(blockId, `The transform of "${column}" derives the column "${name}", which the bound table already holds.`));
+        }
         resolved[channel] = name;
         derived.push({ column, name, transform });
     }
@@ -618,6 +623,12 @@ function deriveComposition(
         resolved.push(series.value);
     }
 
+    if (resolved.length === 0) {
+        // The schema holds a composition to one series at least. The guard states the same rule for a
+        // value that reaches the renderer without a parse, because the axes come from the first series.
+        return err(problem(blockId, "The composition carries no series."));
+    }
+
     const annotations = composition.annotations ?? [];
     const labeled = pointLabelRows(blockId, annotations, rows, columns);
     if (labeled.isErr()) return err(labeled.error);
@@ -626,7 +637,9 @@ function deriveComposition(
     const emitted: EmittedSeries[] = [];
     for (const entry of resolved) {
         for (const group of splitByChannel(rows, entry.group)) {
-            emitted.push(...buildSeries(entry, group, labeled.value, dense, emitted.length));
+            const built = buildSeries(blockId, entry, group, labeled.value, dense, emitted.length);
+            if (built.isErr()) return err(built.error);
+            emitted.push(...built.value);
         }
     }
 
@@ -640,7 +653,7 @@ function deriveComposition(
     const named = resolved.some((entry) => entry.label !== undefined) || labeled.value.size > 0;
     return ok({
         tooltip: named ? { ...NAMED_TOOLTIP } : { ...PLAIN_TOOLTIP },
-        xAxis: compositionAxis(rows, first.x, "x", composition.axes?.x),
+        xAxis: compositionXAxis(rows, first, composition.axes?.x),
         yAxis: compositionAxis(rows, first.y, "y", composition.axes?.y),
         series: emitted.map((entry) => entry.option),
     });
@@ -736,12 +749,13 @@ function splitByChannel(rows: readonly ChartRow[], group: ResolvedChannel | unde
 
 /** Build the runtime series of one declared series over one group of rows. */
 function buildSeries(
+    blockId: string,
     entry: ResolvedSeries,
     group: { name: Cell | undefined; indices: readonly number[] },
     labeled: ReadonlySet<number>,
     dense: boolean,
     emittedCount: number,
-): EmittedSeries[] {
+): Result<EmittedSeries[], RenderProblem> {
     const form = entry.declared.form;
     const points = collectPoints(entry, group.indices);
     if (SORTED_FORMS.has(form)) {
@@ -750,15 +764,16 @@ function buildSeries(
     const name = seriesName(entry, group.name);
 
     if (entry.y0 !== undefined) {
-        const [lower, upper] = bandSeries(name, points, `band-${emittedCount}`);
-        return [
-            { option: lower, carriesMarks: false },
-            { option: upper, carriesMarks: true },
-        ];
+        const band = bandSeries(blockId, entry, name, points, `band-${emittedCount}`);
+        if (band.isErr()) return err(band.error);
+        return ok([
+            { option: band.value[0], carriesMarks: false },
+            { option: band.value[1], carriesMarks: true },
+        ]);
     }
 
     const { data, itemObjects } = seriesData(entry, points, labeled);
-    return [{ option: { type: runtimeType(form), name, ...formOptions(form, dense, itemObjects), data }, carriesMarks: true }];
+    return ok([{ option: { type: runtimeType(form), name, ...formOptions(form, dense, itemObjects), data }, carriesMarks: true }]);
 }
 
 /** The points of one group. A row whose channel gives no value drops, and no substitute value appears. */
@@ -828,21 +843,31 @@ function seriesData(entry: ResolvedSeries, points: readonly Point[], labeled: Re
  * The chart runtime stacks a band. Thus the lower series carries the `y0` column, the upper series carries
  * the difference between the two columns, and the stack puts the upper line back on the `y` column. The
  * two series show no tooltip, because the difference is no cell of the table.
+ *
+ * A stack takes a difference that is not negative. A row where `y` is under `y0` names the lower bound as
+ * the upper one, thus the band would draw from the axis and state a bound that no cell holds. The two
+ * columns are in the wrong order, and the refusal names the row.
  */
-function bandSeries(name: string, points: readonly Point[], stack: string): EchartOption[] {
+function bandSeries(blockId: string, entry: ResolvedSeries, name: string, points: readonly Point[], stack: string): Result<EchartOption[], RenderProblem> {
     const lower: unknown[] = [];
     const upper: unknown[] = [];
     for (const point of points) {
         const base = toNumber(point.y0);
         const top = toNumber(point.y);
         if (base === null || top === null) continue;
+        if (top < base) {
+            const detail =
+                `The band of the series "${name}" holds a row where the "${entry.y.name}" value ${top} ` +
+                `is under the "${entry.y0?.name ?? ""}" value ${base}. The upper bound belongs on "y".`;
+            return err(problem(blockId, detail));
+        }
         lower.push([point.x, base]);
         upper.push([point.x, top - base]);
     }
-    return [
+    return ok([
         { type: "line", name, stack, showSymbol: false, silent: true, lineStyle: { opacity: 0 }, tooltip: { show: false }, data: lower },
         { type: "line", name, stack, showSymbol: false, areaStyle: { opacity: BAND_OPACITY }, tooltip: { show: false }, data: upper },
-    ];
+    ]);
 }
 
 /** The runtime type of one form. A step and an area are both a line with one more field. */
@@ -863,7 +888,9 @@ function runtimeType(form: ChartSeries["form"]): string {
 function formOptions(form: ChartSeries["form"], dense: boolean, itemObjects: boolean): EchartOption {
     switch (form) {
         case "bar":
-            return {};
+            // The base bar rule puts the bars of one category side by side with no gap between them. A bar
+            // of either path then reads the same.
+            return { barGap: 0 };
         case "line":
             return { showSymbol: false };
         case "step":
@@ -949,6 +976,22 @@ function markLabel(label: string | undefined): EchartOption {
 /** The mark key of one axis. A mark member names `xAxis` or `yAxis`, and the constant that sits on it. */
 function axisKey(axis: "x" | "y"): "xAxis" | "yAxis" {
     return axis === "x" ? "xAxis" : "yAxis";
+}
+
+/**
+ * The x axis of a composition.
+ *
+ * A bar takes a category axis, and every other form takes the inferred axis. A declared scale is the one
+ * exception, because the author asked for a numeric axis and a category axis has no scale.
+ */
+function compositionXAxis(rows: readonly ChartRow[], first: ResolvedSeries, declared: ChartAxes["x"]): EchartOption {
+    if (first.declared.form !== "bar" || declared?.scale !== undefined) {
+        return compositionAxis(rows, first.x, "x", declared);
+    }
+    // A bar counts its categories. The base bar rule lists the x values in first-appearance order, thus a
+    // bar of either path draws the same axis.
+    const categories = firstAppearance(first.x.values.filter((value): value is Cell => value !== null));
+    return { type: "category", data: categories, ...xAxisName(declared?.title ?? first.x.name) };
 }
 
 /**
@@ -1174,13 +1217,19 @@ function sortByX(pairs: Cell[][]): Cell[][] {
 }
 
 /**
- * Compare two cells for a sort by x. Two numbers compare by their difference. Any other pair compares
- * by the code-unit order of the string form. The comparison never calls `localeCompare`, thus the order
- * stays the same on every host.
+ * Compare two cells for a sort by x, and for a rank rule.
+ *
+ * A pair that both hold a finite number compares by that number. A text-backed table gives each cell as a
+ * string, thus a code-unit order would put `"10"` between `"1"` and `"2"` and a time axis would run out of
+ * order. Any other pair compares by the code-unit order of the string form.
+ *
+ * The comparison never calls `localeCompare`, thus the order stays the same on every host.
  */
 function compareCell(a: Cell, b: Cell): number {
-    if (typeof a === "number" && typeof b === "number") {
-        return a - b;
+    const leftNumber = toNumber(a);
+    const rightNumber = toNumber(b);
+    if (leftNumber !== null && rightNumber !== null) {
+        return leftNumber - rightNumber;
     }
     const left = String(a);
     const right = String(b);
