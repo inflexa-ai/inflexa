@@ -49,7 +49,7 @@ The renderer MUST give each block kind its identity component:
 - A `claim` block renders as prose with the styled evidence markers.
 - A `metric` block renders as a stat card with a mono value and an accent. The value MUST stay inside the card: the card carries an overflow guard, thus a long value can never paint past the card edge.
 - A consecutive run of `metric` siblings renders as one responsive grid.
-- A `table` block renders as a data table inside a corner-accent card.
+- A `table` block renders as a data table inside a corner-accent card. The card carries the sort headers, the filter input, and the row-cap toggle.
 - A `chart` block renders as a corner-accent card with a mono title line and a fixed-height chart body. The card carries no window chrome, no dots, no badge, and no hover raise, because a report is a document and not an application window.
 - A `figure` block renders as a corner-accent card with its caption.
 - A `citation` block renders as a card in the reference form.
@@ -70,6 +70,10 @@ The renderer MUST give each block kind its identity component:
 #### Scenario: A long metric value stays inside its card
 - **WHEN** the caller renders a metric whose formatted value still runs wide on a narrow card
 - **THEN** the value stays inside the card bounds, and no character paints past the card edge
+
+#### Scenario: The table carries the enhancer controls
+- **WHEN** the caller renders a table block
+- **THEN** the card holds the sort headers and the filter input, in the identity styles of the design source
 
 ### Requirement: The geometric identity rules
 A data card MUST hold square corners with the corner accents. The theme MUST stay light: white and slate surfaces, with dark only in the footer.
