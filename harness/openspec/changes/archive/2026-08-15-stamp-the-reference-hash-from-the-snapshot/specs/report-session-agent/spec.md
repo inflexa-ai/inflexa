@@ -5,7 +5,7 @@
 ### Requirement: The read-only roster
 The roster of the agent MUST hold: the workspace read tools (`read_file`, `list_files`, `file_stat`, and `grep`), the workspace search, `inspect_run`, `inspect_data_profile`, the authoring tools, the pinned-artifact listing tool, and the render-and-preview tool. The roster MUST NOT hold a planner, a run launcher, a working-memory write, or a sandbox mutate surface. Thus no tool starts a run, and no tool changes an analysis.
 
-The listing tool MUST give each pinned artifact in a deterministic order: the path, the hash, and the file type. For a tabular artifact it also gives the columns, from a bounded read of the header. A file type that holds no cell gives no columns. An unreadable header gives no columns and no error, because absence is a normal condition.
+The listing tool MUST give the pinned artifacts in a deterministic order: the path, the hash, and the file type. The listing is bounded, and a truncated listing MUST carry the total count and a truncation marker. For a `.csv` or a `.tsv` artifact it also gives the columns, from a bounded read of the header. A header that the bounded read cannot parse whole gives no columns. An unreadable header gives no columns and no error, because absence is a normal condition.
 
 #### Scenario: The roster holds no run starter
 - **WHEN** the assembled agent lists its tools
@@ -22,6 +22,10 @@ The listing tool MUST give each pinned artifact in a deterministic order: the pa
 #### Scenario: An unreadable artifact still lists
 - **WHEN** the snapshot pins a path whose bytes are absent from the disk
 - **THEN** the result carries the path and the hash, with no columns and no error
+
+#### Scenario: A large pinned set truncates with a marker
+- **WHEN** the snapshot pins more artifacts than the listing bound
+- **THEN** the result carries the bounded listing, the total count, and the truncation marker
 
 ### Requirement: The prompt obligations
 The prompt of the agent MUST name its tools and their mechanisms, and it MUST NOT name a dataset, a path, or a format. The prompt MUST carry an explicit "Do NOT" list with the failure modes of report composition. The prompt MUST state that the agent grounds each claim through a reference, and that it does not transcribe a number from memory.

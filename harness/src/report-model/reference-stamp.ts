@@ -85,7 +85,9 @@ function stampValue(value: unknown, snapshot: ReportSnapshot, missing: MissingPi
         if (stamped !== record[key]) {
             changed = true;
         }
-        next[key] = stamped;
+        // A plain assignment at the key `__proto__` reaches the prototype setter, thus the copy loses an
+        // own key that the author wrote. The definition makes an own data property for each key.
+        Object.defineProperty(next, key, { value: stamped, enumerable: true, writable: true, configurable: true });
     }
 
     const path = stampablePath(record);
