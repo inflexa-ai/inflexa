@@ -67,6 +67,27 @@ function attributeReferences(html: string): string[] {
 }
 
 /**
+ * The tag name and the attribute name of each element that carries the given value in a reference
+ * attribute, in document order. One element gives one entry for each attribute that names the value.
+ *
+ * The gate admits one remote value. A navigation to it costs no request, but a subresource with the same
+ * value fetches on open. Thus the admission binds to the element, and a value alone never earns it.
+ */
+function referenceSites(html: string, value: string): string[] {
+    const page = load(html);
+    const sites: string[] = [];
+    for (const element of page("[href], [src], [srcset]").toArray()) {
+        for (const name of ["href", "src", "srcset"]) {
+            const attribute = page(element).attr(name);
+            if (attribute === undefined) continue;
+            const values = name === "srcset" ? srcsetCandidates(attribute) : [attribute];
+            if (values.includes(value)) sites.push(`${element.tagName}[${name}]`);
+        }
+    }
+    return sites;
+}
+
+/**
  * Each remote-capable reference of a style sheet, without its quotes. The `@font-face` rules reach the page
  * through the inline sheet, thus the font references live here and not in an attribute.
  *
@@ -116,6 +137,10 @@ describe("the page stands alone", () => {
         const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
         const references = [...attributeReferences(html), ...styleReferences(DESIGN_CSS)];
         expect(references.length).toBeGreaterThan(0);
+
+        // The brand value reaches the page as a navigation and as nothing else. A `src` that names the same
+        // host fetches on open, thus the exemption below binds to the anchor and not to the value.
+        expect(referenceSites(html, BRAND_LINK)).toEqual(["a[href]"]);
 
         // The scheme test reads the start of the value. A namespace URI inside a data URI names no host to
         // fetch, thus the test must not read a scheme out of the middle of a value.
@@ -169,6 +194,13 @@ describe("the stands-alone extraction", () => {
             `.b { background-image: url("assets/local.svg"); }`,
         ].join("\n");
         expect(remote(styleReferences(doctored))).toEqual(["https://cdn.example.com/sheet.css", "https://cdn.example.com/one.avif"]);
+    });
+
+    it("names the element and the attribute of each site of one value", () => {
+        // The exemption of the gate rides on the anchor. Thus the extraction must divide a navigation from
+        // a subresource that names the same value.
+        const doctored = `<a href="https://inflexa.ai/">brand</a><script src="https://inflexa.ai/"></script>`;
+        expect(referenceSites(doctored, "https://inflexa.ai/")).toEqual(["a[href]", "script[src]"]);
     });
 
     it("keeps a data URI whole and reads no scheme out of the middle of one", () => {
@@ -475,11 +507,25 @@ describe("the section scrollspy", () => {
     /** The class that the spy writes. The design source holds the matching rule under the same name. */
     const ACTIVE_CLASS = "report-nav-link-active";
 
+    /** The viewport height of the fake page. The observation box is the top band of this height. */
+    const VIEWPORT_HEIGHT = 1000;
+
     /** One navigation link that records each class name that the script writes. */
     type FakeLink = { getAttribute: () => string; classList: { add: (name: string) => void; remove: (name: string) => void }; classes: Set<string> };
 
-    /** The result of one spy run: the active links, the intersection driver, and the observed root margin. */
-    type SpyRun = { active: () => string[]; intersect: (visible: boolean[]) => void; rootMargin: string };
+    /** One section that reports a movable top offset, as `getBoundingClientRect` does in a browser. */
+    type FakeSection = { id: string; box: { top: number }; getBoundingClientRect: () => { top: number } };
+
+    /**
+     * The result of one spy run: the active links, the intersection driver, the section placement, and the
+     * observed root margin.
+     */
+    type SpyRun = { active: () => string[]; intersect: (visible: boolean[]) => void; place: (tops: number[]) => void; rootMargin: string };
+
+    function fakeSection(id: string, top: number): FakeSection {
+        const box = { top };
+        return { id, box, getBoundingClientRect: () => ({ top: box.top }) };
+    }
 
     function fakeLink(href: string): FakeLink {
         const classes = new Set<string>();
@@ -500,14 +546,18 @@ describe("the section scrollspy", () => {
     /**
      * Run the emitted spy over fake page globals. The script hands its callback to the fake observer, thus
      * the test drives the intersection directly and no real browser is necessary.
+     *
+     * The `tops` list places each section in the coordinates of the fake page. The default list puts the
+     * first section at the top of the box and each other section one viewport lower.
      */
-    function runSpy(ids: string[], hasObserver = true): SpyRun {
+    function runSpy(ids: string[], hasObserver = true, tops?: number[]): SpyRun {
         const links = ids.map((id) => fakeLink(`#${id}`));
-        const sections = ids.map((id) => ({ id }));
+        const sections = ids.map((id, index) => fakeSection(id, tops?.[index] ?? index * VIEWPORT_HEIGHT));
         let callback: ((entries: { target: unknown; isIntersecting: boolean }[]) => void) | undefined;
         let rootMargin = "";
         const doc = {
             readyState: "complete",
+            documentElement: { clientHeight: VIEWPORT_HEIGHT },
             querySelectorAll: () => links,
             getElementById: (id: string) => sections[ids.indexOf(id)] ?? null,
             addEventListener: () => undefined,
@@ -523,6 +573,11 @@ describe("the section scrollspy", () => {
         return {
             active: () => links.filter((link) => link.classes.has(ACTIVE_CLASS)).map((link) => link.getAttribute()),
             intersect: (visible: boolean[]) => callback?.(sections.map((target, index) => ({ target, isIntersecting: visible[index] }))),
+            place: (next: number[]) => {
+                for (let index = 0; index < sections.length; index++) {
+                    sections[index].box.top = next[index];
+                }
+            },
             rootMargin,
         };
     }
@@ -545,6 +600,55 @@ describe("the section scrollspy", () => {
         run.intersect([true]);
         // The negative bottom margin is what keeps one section in the box at a time.
         expect(run.rootMargin).toMatch(/0px 0px -\d+% 0px/);
+    });
+
+    it("marks the first link when every section starts below the box", () => {
+        // The page opens at scroll 0, and each section then sits under the box. A capture of that page must
+        // still show the reader a position in the report.
+        const run = runSpy(["sec-1", "sec-2", "sec-3"], true, [400, 1400, 2400]);
+        run.intersect([false, false, false]);
+        expect(run.active()).toEqual(["#sec-1"]);
+    });
+
+    it("marks the last section above the box when a short tail leaves the box empty", () => {
+        // A tail that is shorter than the viewport never lifts the last section into the top band. Without
+        // the fallback the link of that section can never take the mark.
+        const run = runSpy(["sec-1", "sec-2", "sec-3"], true, [-1200, -800, -400]);
+        run.intersect([false, false, false]);
+        expect(run.active()).toEqual(["#sec-3"]);
+    });
+
+    it("prefers the observed section over the fallback", () => {
+        // The fallback holds the mark on the first section here, thus the observed section is the one that
+        // proves which reading wins.
+        const run = runSpy(["sec-1", "sec-2"], true, [-900, 2000]);
+        run.intersect([false, true]);
+        expect(run.active()).toEqual(["#sec-2"]);
+    });
+
+    it("reads the section positions again on each paint", () => {
+        const run = runSpy(["sec-1", "sec-2"], true, [400, 1400]);
+        run.intersect([false, false]);
+        expect(run.active()).toEqual(["#sec-1"]);
+
+        // A scroll moves each section. A cached position would hold the mark on the first link for the
+        // whole page.
+        run.place([-1000, 100]);
+        run.intersect([false, false]);
+        expect(run.active()).toEqual(["#sec-2"]);
+    });
+
+    it("reads the end of the box from the margin that the observer takes", () => {
+        const run = runSpy(["sec-1"]);
+        run.intersect([true]);
+        const margin = /-(\d+)% 0px/.exec(run.rootMargin);
+        expect(margin).not.toBeNull();
+        // The script is browser source text, thus the test reads it as text. The fallback measures the same
+        // box that the observer takes, and one constant feeds both. Thus the two readings cannot drift.
+        expect(SECTION_SPY).toContain(`(100 - ${margin?.[1]})`);
+        expect(SECTION_SPY).toContain("clientHeight");
+        expect(SECTION_SPY).toContain("getBoundingClientRect().top <= end");
+        expect(SECTION_SPY).toContain("active = nearestAbove()");
     });
 
     it("keeps the plain links in a browser with no observer", () => {

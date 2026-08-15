@@ -226,6 +226,15 @@ export const FADE_IN_OBSERVER = `(function () {
  * A section that no anchor targets, and an anchor whose target is absent, drop out of the walk. Thus the
  * reference band never takes the mark.
  *
+ * A page can leave the observation box empty. At scroll 0, each section can start below the box. A short
+ * tail also holds the last section below the box for the whole scroll. Thus the paint step has a fallback.
+ * The fallback marks the last section whose top sits at the end of the box or above it. It marks the first
+ * section when every top sits below the box.
+ *
+ * The fallback reads each position with `getBoundingClientRect` at paint time. A scroll moves each section,
+ * thus a cached position names the wrong link. As a result, exactly one link carries the active class on a
+ * page that has a section.
+ *
  * The highlight is decoration. A browser with no `IntersectionObserver`, and a page with no navigation,
  * keep the plain links. The script writes one class and it reads nothing that the reveal script writes,
  * thus the two observers never contend.
@@ -254,6 +263,21 @@ export const SECTION_SPY = `(function () {
     for (var s = 0; s < sections.length; s++) {
       inBand.push(false);
     }
+    function boxEnd() {
+      var root = document.documentElement;
+      var height = root ? root.clientHeight : 0;
+      return (height * (100 - ${SPY_BOTTOM_MARGIN_PERCENT})) / 100;
+    }
+    function nearestAbove() {
+      var end = boxEnd();
+      var last = -1;
+      for (var n = 0; n < sections.length; n++) {
+        if (sections[n].getBoundingClientRect().top <= end) {
+          last = n;
+        }
+      }
+      return last < 0 ? 0 : last;
+    }
     function paint() {
       var active = -1;
       for (var a = 0; a < inBand.length; a++) {
@@ -261,6 +285,9 @@ export const SECTION_SPY = `(function () {
           active = a;
           break;
         }
+      }
+      if (active < 0) {
+        active = nearestAbove();
       }
       for (var b = 0; b < anchors.length; b++) {
         if (b === active) {
