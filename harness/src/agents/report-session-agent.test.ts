@@ -137,7 +137,9 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("preview, look, repair");
         expect(reportSessionPrompt).toContain("examine_page");
         expect(reportSessionPrompt).toContain("record_report_version");
-        expect(reportSessionPrompt).toContain("only after");
+        // The record gate is the look, thus the substring carries that clause and
+        // not the bare "only after" that a line wrap cuts.
+        expect(reportSessionPrompt).toContain("you look at the current page");
         // The anti-pattern entry names the visual spiral.
         expect(reportSessionPrompt).toContain("visual spiral");
         expect(reportSessionPrompt).toContain("cosmetic doubt");
@@ -151,6 +153,7 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("an overflowing card");
         expect(reportSessionPrompt).toContain("a raw column name on an axis");
         expect(reportSessionPrompt).toContain("an unreadable precision");
+        expect(reportSessionPrompt).toContain("a number that disagrees");
         expect(reportSessionPrompt).toContain("content that stayed invisible");
         // A found fault ends in a repair, thus the agent never reports one instead.
         expect(reportSessionPrompt).toContain("A found fault is a repair, and never a note");
@@ -180,10 +183,10 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("never take an id out of a refusal");
     });
 
-    test("the prompt carries the narrative spine", () => {
+    test("the prompt carries the argument spine", () => {
         // The spine order and the two prose rules are stable substrings, thus the
         // assertion does not couple to the full prose.
-        expect(reportSessionPrompt).toContain("compose the argument outline");
+        expect(reportSessionPrompt).toContain("compose the argument spine");
         expect(reportSessionPrompt).toContain("the findings, in order of strength");
         expect(reportSessionPrompt).toContain("the negative result, in its honest place");
         expect(reportSessionPrompt).toContain("the limits of the evidence");
@@ -196,29 +199,31 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("opens with its topic sentence");
         expect(reportSessionPrompt).toContain("before the sentence that tells the reader what to see");
         expect(reportSessionPrompt).toContain("The evidence illustrates the prose");
-        expect(reportSessionPrompt).toContain("The angle of the brief decides the");
+        expect(reportSessionPrompt).toContain("The angle of the brief decides the order of the findings");
         // The anti-pattern entry names evidence that precedes its sentence.
         expect(reportSessionPrompt).toContain("Show evidence before its sentence");
     });
 
     test("the prompt carries the chart-first rule", () => {
-        // The preference, its table condition, and the run-phase bound are stable
+        // The preference, its table condition, and the report-page bound are stable
         // substrings, thus the assertion does not couple to the full prose.
         expect(reportSessionPrompt).toContain("Prefer a chart block when a table artifact holds the data");
         expect(reportSessionPrompt).toContain("a figure image only when no table carries the data");
-        expect(reportSessionPrompt).toContain("The run phase keeps its own");
+        expect(reportSessionPrompt).toContain("this rule is about the report page alone");
         // The anti-pattern entry names the figure that stands where a table serves.
         expect(reportSessionPrompt).toContain("Reach for a figure where a table serves");
     });
 
     test("the prompt carries the headline obligations", () => {
-        // The cohort-and-yield lead, the caveat ban, the contrast rule, and the
-        // rounding agreement are stable substrings.
+        // The cohort-and-yield lead, the caveat ban, the absence branch, the
+        // contrast rule, and the rounding rule are stable substrings.
         expect(reportSessionPrompt).toContain("leads with the cohort and the yield");
         expect(reportSessionPrompt).toContain("the group split");
         expect(reportSessionPrompt).toContain("carries a caveat is not a headline");
+        expect(reportSessionPrompt).toContain("the pinned evidence holds no cohort value");
+        expect(reportSessionPrompt).toContain("headline leads with what the evidence gives");
         expect(reportSessionPrompt).toContain("The card set carries its own contrast");
-        expect(reportSessionPrompt).toContain("rounds as the cards round");
+        expect(reportSessionPrompt).toContain("Round a number in the prose to the short form");
         // The anti-pattern entry names the caveated headline.
         expect(reportSessionPrompt).toContain("Lead with a caveated value");
     });

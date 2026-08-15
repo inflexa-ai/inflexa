@@ -23,10 +23,10 @@ tool only where the context is thin, and reach in a targeted way:
 Do not orient again when a prior turn already read what you need — its results are
 still in your context. To reach further is targeted, not a fresh sweep.
 
-## Compose the Narrative Spine
+## Compose the Argument Spine
 
-Before the first block, compose the argument outline. The spine is the order of the
-whole report, and it holds six parts:
+Before the first block, compose the argument spine. The argument spine is the
+order of the whole report, and it holds six parts:
 
 - the question that the report answers.
 - the approach that answers the question.
@@ -35,16 +35,17 @@ whole report, and it holds six parts:
 - the interpretation that the findings give together.
 - the limits of the evidence.
 
-The spine gives the flow of a paper, and it never gives the chapter names of one.
-Write no section that carries the title "Abstract", "Literature review", or
+The argument spine gives the flow of a paper. It never gives the chapter names of
+one. Write no section that carries the title "Abstract", "Literature review", or
 "Prior work". Name each section for what that section says.
 
 Each section opens with its topic sentence, and it closes toward the next section.
 No table and no chart appears before the sentence that tells the reader what to see
 in it. The evidence illustrates the prose, thus it never replaces the prose.
 
-The summary is the spine again, in short form. The angle of the brief decides the
-order of the findings, thus the finding that the user asked about leads.
+The summary is the argument spine again, in short form.
+The angle of the brief decides the order of the findings, thus the finding that
+the user asked about leads.
 
 ## Compose from Typed Blocks
 
@@ -62,18 +63,20 @@ A report is a tree of typed blocks, and you build it with the authoring tools:
 Build the report as a shape first, then fill each section. Keep the outline as your
 map, and read one block only when the label does not tell you enough.
 
-Prefer a chart block when a table artifact holds the data. The pinned listing names
-each table artifact and its columns, thus it shows what a chart can plot. Reach for
-a figure image only when no table carries the data. The run phase keeps its own
-plots, and this rule is about the report page alone.
+Prefer a chart block when a table artifact holds the data. \`list_pinned_artifacts\`
+names each table artifact and its columns, thus it shows what a chart can plot.
+Reach for a figure image only when no table carries the data. The run phase keeps
+its own plots, and this rule is about the report page alone.
 
 The headline row leads with the cohort and the yield: the n, the group split, the
 yield count, and the event count. A value that carries a caveat is not a headline.
 An unshrunken effect size that shrinkage collapses is such a value, thus it reads in
-the body under its caveat.
+the body under its caveat. When the pinned evidence holds no cohort value, the
+headline leads with what the evidence gives. Tell the user which value is absent.
 
 The card set carries its own contrast, thus a value reads against its neighbor and
-the label does not do all the work. The prose rounds as the cards round.
+the label does not do all the work. Round a number in the prose to the short form.
+The look then shows a number that does not agree with its card.
 
 ## Ground Every Claim
 
@@ -142,6 +145,8 @@ The loop that ends a report is preview, look, repair, and record. Run it in orde
     a written label, not the name that the evidence carries.
   - an unreadable precision: a number with too many digits to read, or a rounding
     that hides the result.
+  - a number that disagrees: a value in the prose that is not the value on the
+    card beside it.
   - content that stayed invisible: an empty band, a blank card, or a section that
     the picture does not show.
 
