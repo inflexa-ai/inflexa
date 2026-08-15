@@ -18,7 +18,7 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
-import { fileTypeHoldsNoCell, snapshotEntry, type ReportSnapshot } from "./reference-resolver.js";
+import { columnsHeldByNoRow, fileTypeHoldsNoCell, snapshotEntry, type ReportSnapshot } from "./reference-resolver.js";
 
 /** The three reference kinds that name one artifact directly. Each one carries the artifact pin fields. */
 type PinnedReference = ArtifactValueReference | ArtifactTableReference | ArtifactFileReference;
@@ -51,18 +51,52 @@ function validatePin(reference: PinnedReference, snapshot: ReportSnapshot): Resu
 }
 
 /**
+ * Match each column that a chart grammar names against the table that the block binds.
+ *
+ * The tier reads the snapshot alone, thus it answers from the two things that the snapshot holds. A table
+ * reference that declares a column subset answers on its own terms, because a name outside the subset
+ * addresses nothing. A snapshot entry that carries rows answers from those rows.
+ *
+ * A snapshot that pins identity alone holds no rows. Such a snapshot contradicts no name, thus the tier
+ * passes and the value tier settles the match over the artifact that it reads.
+ */
+function validateColumns(reference: ArtifactTableReference, snapshot: ReportSnapshot, columns: readonly string[]): Result<void, UnresolvedReference> {
+    const subset = reference.columns;
+    if (subset !== undefined) {
+        const outside = columns.filter((column) => !subset.includes(column));
+        if (outside.length > 0) {
+            return fail(reference, "locator-out-of-range", `the chart names column ${outside.join(", ")}, which the bound column subset leaves out`);
+        }
+    }
+    const absent = columnsHeldByNoRow(snapshotEntry(snapshot, reference.path)?.rows ?? [], columns);
+    if (absent.length > 0) {
+        return fail(reference, "locator-out-of-range", `the chart names column ${absent.join(", ")}, which the bound table does not hold`);
+    }
+    return ok();
+}
+
+/**
  * Validate one reference against the snapshot.
  *
  * The `Ok` channel carries no value. The tier answers membership, identity, and the file type, and a
  * value comes from a read of the artifact. An `assert` is the authored belief about that value, thus this
  * tier matches no assertion and a reference that carries one passes on its pin alone.
  *
+ * `columns` carries each column that the grammar of a chart block names. The walk collects them, thus a
+ * chart that plots an invented column refuses before it lands, wherever the snapshot can answer.
+ *
  * The answer is synchronous, because the snapshot is already in memory.
  */
-export function validateReferenceStructure(reference: Reference, snapshot: ReportSnapshot): Result<void, UnresolvedReference> {
+export function validateReferenceStructure(reference: Reference, snapshot: ReportSnapshot, columns?: readonly string[]): Result<void, UnresolvedReference> {
     switch (reference.kind) {
+        case "artifact-table": {
+            const pin = validatePin(reference, snapshot);
+            if (pin.isErr() || columns === undefined || columns.length === 0) {
+                return pin;
+            }
+            return validateColumns(reference, snapshot, columns);
+        }
         case "artifact-value":
-        case "artifact-table":
         case "artifact-file":
             return validatePin(reference, snapshot);
         case "derivation": {

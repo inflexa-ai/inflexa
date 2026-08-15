@@ -5,8 +5,9 @@
  * draft one time: the full document schema, the unique ids, and the structural tier over every reference.
  *
  * The finish opens no file, and it reads the snapshot alone. Thus it runs the structural tier only, and
- * the value tier stays in the gate of the report pipeline. The chart encoding-column match needs the rows
- * behind a binding, thus it stays with the value tier.
+ * the value tier stays in the gate of the report pipeline. The structural tier matches the columns of a
+ * chart wherever the snapshot can answer, and the value tier matches them again over the rows that it
+ * reads.
  *
  * The free-numeral scan needs no file, thus the finish runs it and reports each hit as a warning. A
  * warning never makes a draft invalid, and it rides beside the outcome in either case. Without the
@@ -81,7 +82,7 @@ export function finishDraft(draft: DraftDocument, snapshot: ReportSnapshot): Fin
     }
 
     for (const entry of references) {
-        const result = validateReferenceStructure(entry.reference, snapshot);
+        const result = validateReferenceStructure(entry.reference, snapshot, entry.encodingColumns);
         if (result.isErr()) {
             gaps.push({ kind: "unresolved-reference", blockId: entry.blockId, failure: result.error });
         }

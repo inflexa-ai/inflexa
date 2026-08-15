@@ -13,7 +13,7 @@
  * which part it needs.
  */
 
-import type { Block } from "../contracts/report-blocks.js";
+import { channelColumn, type Block, type ChartBlock, type ChartChannel } from "../contracts/report-blocks.js";
 import type { Reference } from "../contracts/report-reference.js";
 import type { DraftBlock } from "./draft.js";
 
@@ -23,10 +23,10 @@ export type AnyBlock = Block | DraftBlock;
 /**
  * One reference that the walk met, tied to the block that carries it.
  *
- * `encodingColumns` is present for a `chart` only. A chart names its axes as free strings, thus the names
- * must be matched against the table that the binding resolves to. Nothing else can catch a chart that
- * plots a column which does not exist. The match needs the resolved rows, thus only a value-tier consumer
- * reads this field.
+ * `encodingColumns` is present for a `chart` only. A chart names its columns as free strings, thus the
+ * names must be matched against the table that the binding resolves to. Nothing else can catch a chart
+ * that plots a column which does not exist. The field carries every column that the chart grammar names,
+ * thus the structural tier and the value tier match the same set.
  */
 export interface CollectedReference {
     blockId: string;
@@ -75,6 +75,50 @@ export function numeralWarnings(blockId: string, prose: string): ReportWarning[]
 }
 
 /**
+ * Each column that the grammar of one chart names.
+ *
+ * The quick path names its four channels and its label. A composition names the channels of each series,
+ * the lower bound of a band, the label of each series, and the column of each rank rule. A transform rides
+ * beside its column, thus a transformed channel names the same column as a plain one.
+ *
+ * A name comes back one time, in the order that the grammar states it. Thus a refusal names each absent
+ * column one time.
+ */
+function chartColumns(block: ChartBlock): string[] {
+    const columns: string[] = [];
+    const add = (column: string | undefined): void => {
+        if (column !== undefined && !columns.includes(column)) columns.push(column);
+    };
+    const addChannel = (channel: ChartChannel | undefined): void => {
+        if (channel !== undefined) add(channelColumn(channel));
+    };
+
+    const encoding = block.encoding;
+    if (encoding !== undefined) {
+        addChannel(encoding.x);
+        addChannel(encoding.y);
+        addChannel(encoding.group);
+        addChannel(encoding.value);
+        add(encoding.label);
+    }
+
+    const composition = block.composition;
+    if (composition !== undefined) {
+        for (const series of composition.series) {
+            addChannel(series.encoding.x);
+            addChannel(series.encoding.y);
+            addChannel(series.encoding.y0);
+            addChannel(series.encoding.group);
+            add(series.encoding.label);
+        }
+        for (const annotation of composition.annotations ?? []) {
+            if (annotation.kind === "point-labels") add(annotation.column);
+        }
+    }
+    return columns;
+}
+
+/**
  * Walk a block tree, and report each reference, each repeated id, and each free numeral.
  *
  * An id is what makes a block addressable, thus an amend by id is well defined only while each id belongs
@@ -110,12 +154,9 @@ export function walkBlocks(blocks: readonly AnyBlock[]): BlockWalk {
             case "metric":
                 references.push({ blockId: block.id, reference: block.value });
                 return;
-            case "chart": {
-                const encoding = block.encoding;
-                const encodingColumns = [encoding.x, encoding.y, encoding.group, encoding.value].filter((column) => column !== undefined);
-                references.push({ blockId: block.id, reference: block.binding, encodingColumns });
+            case "chart":
+                references.push({ blockId: block.id, reference: block.binding, encodingColumns: chartColumns(block) });
                 return;
-            }
             case "table":
             case "figure":
             case "citation":
