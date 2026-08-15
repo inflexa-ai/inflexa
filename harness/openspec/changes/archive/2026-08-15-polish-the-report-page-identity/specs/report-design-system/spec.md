@@ -25,7 +25,7 @@ The renderer MUST give each block kind its identity component:
 
 #### Scenario: A chart card carries no window costume
 - **WHEN** the caller renders a chart block
-- **THEN** the card holds the title line and the fixed-height chart body, and no dot, no badge, and no hover raise is present
+- **THEN** the title line sits over the card, and the card holds the fixed-height chart body with no dot, no badge, and no raise
 
 #### Scenario: A long metric value stays inside its card
 - **WHEN** the caller renders a metric whose formatted value still runs wide on a narrow card

@@ -108,7 +108,7 @@ When the shown form hides digits, the element MUST carry the full digits in its 
 ### Requirement: The page navigation
 The page MUST hold a left-side navigation with one anchor for each top-level section. Each anchor MUST target its section by the section block id.
 
-The page script MUST highlight the anchor of the section in view, through an observer over the section anchors and with no dependency. One anchor is active at a time. A browser without the observer keeps the plain links, because the highlight is decoration.
+The page script MUST highlight the anchor of the section in view, through an observer over the section anchors and with no dependency. Exactly one anchor is active on a page with sections, at every scroll position. A browser without the observer keeps the plain links, because the highlight is decoration.
 
 #### Scenario: The navigation lists the top-level sections
 - **WHEN** the caller renders a document with three top-level sections
