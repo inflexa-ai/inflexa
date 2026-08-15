@@ -158,6 +158,22 @@ describe("renderTable", () => {
         expect(html).toContain(`<td data-value="95%">95%</td>`);
     });
 
+    it("keeps a text of two segments whole, because an encoded name holds three", () => {
+        const html = renderTable(block, { type: "table", rows: [{ gene: "TP53", note: "KEGG%hsa04110" }] });
+        expect(html).toContain(`<td data-value="KEGG%hsa04110">KEGG%hsa04110</td>`);
+    });
+
+    it("keeps a sentence with a percentage whole, because a segment of an encoded name holds no space", () => {
+        const html = renderTable(block, { type: "table", rows: [{ gene: "TP53", change: "up 20% vs control%cohort" }] });
+        expect(html).toContain(`<td data-value="up 20% vs control%cohort">up 20% vs control%cohort</td>`);
+    });
+
+    it("gives each sortable header the tab order, thus the keyboard reaches the sort", () => {
+        const html = renderTable(block, { type: "table", rows: [{ gene: "TP53", padj: 0.01 }] });
+        expect(html.split(`<th class="data-table-sort" data-sort-index="`).length - 1).toBe(2);
+        expect(html.split(`tabindex="0"`).length - 1).toBe(2);
+    });
+
     it("keeps a hostile cell as text after the format passes it through", () => {
         const html = renderTable(block, { type: "table", rows: [{ gene: "<script>alert(1)</script>", padj: 0.01 }] });
         expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
