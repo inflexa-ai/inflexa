@@ -392,6 +392,9 @@ img {
   font-weight: 700;
   line-height: 1.2;
   color: var(--color-stat-primary);
+  /* A value that the number format cannot shorten, for example a long identifier, breaks inside the card
+     instead of past its edge. */
+  overflow-wrap: anywhere;
 }
 .stat-card-label {
   margin-top: 8px;

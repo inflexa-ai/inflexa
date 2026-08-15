@@ -3,7 +3,11 @@
  *
  * The caller resolves each value, and it narrows the value to the shape that the block needs. The runtime
  * escapes every interpolated string, thus a hostile label, a hostile cell, a hostile caption, or a
- * hostile source reaches the page as text.
+ * hostile source reaches the page as text. The `title` attribute takes the same escape as every other
+ * attribute value, thus the full digits cannot break out of their slot.
+ *
+ * A number reaches the page through the number format. The name that stands over the number selects the
+ * kind: the label of a metric, and the column name of a table cell.
  *
  * Each data card carries the `corner-accents` class. Thus the card keeps square corners with the L-shaped
  * accents, which is the geometric identity of the report.
@@ -13,6 +17,7 @@ import { raw } from "hono/html";
 
 import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../contracts/report-blocks.js";
 import { Marker } from "./references-view.js";
+import { formatNumberCell, selectNumberKind } from "../number-format.js";
 import type { ReferenceLedger } from "../references.js";
 import type { RenderValue } from "../types.js";
 
@@ -25,11 +30,19 @@ type TableValue = Extract<RenderValue, { type: "table" }>;
 /** The figure value that a figure renders from. */
 type FigureValue = Extract<RenderValue, { type: "figure" }>;
 
-/** Render a metric block as a stat card with the mono value and the mono label. */
+/**
+ * Render a metric block as a stat card with the mono value and the mono label.
+ *
+ * The label names the value, thus it selects the number kind. The full digits ride the `title` attribute
+ * when the shown form hides one, and no attribute appears at any other time.
+ */
 export function renderMetric(block: MetricBlock, value: ScalarValue): string {
+    const shown = formatNumberCell(value.value, selectNumberKind(block.label, value.value));
     return String(
         <div class="stat-card corner-accents">
-            <div class="stat-card-value">{value.value}</div>
+            <div class="stat-card-value" title={shown.full}>
+                {shown.text}
+            </div>
             <div class="stat-card-label">{block.label}</div>
         </div>,
     );
@@ -61,9 +74,24 @@ function tableColumns(value: TableValue): string[] {
 }
 
 /**
+ * One body cell of a table.
+ *
+ * The column name selects the number kind, thus a p-value column reads in the scientific form. The full
+ * digits ride the `title` attribute when the shown form hides one. An absent cell renders as an empty
+ * cell, thus a ragged row keeps its shape.
+ */
+function Cell({ column, cell }: { column: string; cell: string | number | undefined }) {
+    if (cell === undefined) {
+        return <td></td>;
+    }
+    const shown = formatNumberCell(cell, selectNumberKind(column, cell));
+    return <td title={shown.full}>{shown.text}</td>;
+}
+
+/**
  * Render a table block. The header holds one cell for each column, and the body holds one row for each
  * resolved row. A zero-row table renders the header alone. The title and the caption render only when the
- * block carries one. An absent cell renders as an empty cell, thus a ragged row keeps its shape.
+ * block carries one.
  */
 export function renderTable(block: TableBlock, value: TableValue): string {
     const columns = tableColumns(value);
@@ -84,7 +112,7 @@ export function renderTable(block: TableBlock, value: TableValue): string {
                             {value.rows.map((row) => (
                                 <tr class="report-row">
                                     {columns.map((column) => (
-                                        <td>{row[column]}</td>
+                                        <Cell column={column} cell={row[column]} />
                                     ))}
                                 </tr>
                             ))}
