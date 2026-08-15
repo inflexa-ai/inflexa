@@ -27,4 +27,4 @@ None.
 - `harness/src/tools/define-tool.ts` and `harness/src/loop/tool-detail.ts` — the result hook and its compute.
 - `harness/src/loop/run-agent.ts` — the finished-event detail.
 - `harness/src/tools/report-authoring/` and `harness/src/tools/report-session/` — the providers.
-- The CLI renders the finished detail already, thus no CLI change.
+- The CLI part update applies a present finished detail, and an absent one never blanks the started detail. One line in the conversation hook carries that rule.

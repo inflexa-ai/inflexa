@@ -15,8 +15,13 @@
  *   registry construction.
  *
  * It resolves through the same `computeDetail` the loop uses, so a reloaded
- * thread cannot show a different detail from the one the live turn showed.
- * Nothing is persisted: storage stays the pure model transcript.
+ * thread shows the same CALL detail the live turn showed.
+ *
+ * The bound is the input. A reload reconstructs from the persisted call alone, and a
+ * tool that describes its own RESULT names a fact that the input cannot carry — a page
+ * path, a recorded version. That line reaches the live surface on the finished event and
+ * it does not reappear here, thus a reloaded call falls back to its call detail. Nothing
+ * is persisted: storage stays the pure model transcript.
  */
 
 import { computeDetail, type ToolCallDetail } from "../loop/tool-detail.js";

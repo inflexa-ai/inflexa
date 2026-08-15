@@ -195,7 +195,8 @@ export function createListPinnedArtifactsTool(deps: ListPinnedArtifactsToolDeps)
             if (result.outcome !== "listed") {
                 return result.outcome;
             }
-            const listed = `${result.artifacts.length} artifacts`;
+            const count = result.artifacts.length;
+            const listed = `${count} ${count === 1 ? "artifact" : "artifacts"}`;
             return result.truncated ? `${listed} of ${result.total}` : listed;
         },
         execute: async (_input, ctx): Promise<Result<ListPinnedArtifactsResult, ToolError>> => {

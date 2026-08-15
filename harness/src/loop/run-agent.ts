@@ -682,11 +682,14 @@ async function dispatchTools(
     await Promise.all(
         stepTools.map(({ tu, idx }) => {
             const startedAt = performance.now();
-            return runStep(toolStepName(tu.toolName, tu.toolCallId), () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding)).then((r) => {
-                durations[idx] = elapsedMs(startedAt);
-                results[idx] = r.result;
-                if (r.detail !== undefined) resultDetails[idx] = r.detail;
-            });
+            return runStep(toolStepName(tu.toolName, tu.toolCallId), () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding)).then(
+                (settled: DispatchedCall | ToolResultPart) => {
+                    durations[idx] = elapsedMs(startedAt);
+                    const dispatched = readDispatchedStep(settled);
+                    results[idx] = dispatched.result;
+                    if (dispatched.detail !== undefined) resultDetails[idx] = dispatched.detail;
+                },
+            );
         }),
     );
 
@@ -725,6 +728,20 @@ function elapsedMs(startedAt: number): number {
 interface DispatchedCall {
     readonly result: ToolResultPart;
     readonly detail?: ToolCallDetail;
+}
+
+/**
+ * Read one settled step-mode dispatch, tolerating the bare result beside the pair.
+ *
+ * A step-mode call goes through `runStep`, which caches what the body returned and hands
+ * that cached value back on a replay. The durable step store therefore holds values that
+ * a DIFFERENT build of this file wrote: a workflow in flight when the shape of the return
+ * widened replays the bare `ToolResultPart` its own run cached, and it never re-enters the
+ * body that would produce the pair. The replay boundary is the whole reason for the test:
+ * a bare value carries no detail, thus the call keeps the line its `tool-started` showed.
+ */
+function readDispatchedStep(settled: DispatchedCall | ToolResultPart): DispatchedCall {
+    return "result" in settled ? settled : { result: settled };
 }
 
 async function dispatchTool(
