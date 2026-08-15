@@ -92,7 +92,9 @@ The in-progress document and the pinned snapshot of a thread MUST live in one du
 - **THEN** the outline of the next turn holds the added block
 
 ### Requirement: The read-only roster
-The roster of the agent MUST hold: the workspace read tools (`read_file`, `list_files`, `file_stat`, and `grep`), the workspace search, `inspect_run`, `inspect_data_profile`, the authoring tools, and the render-and-preview tool. The roster MUST NOT hold a planner, a run launcher, a working-memory write, or a sandbox mutate surface. Thus no tool starts a run, and no tool changes an analysis.
+The roster of the agent MUST hold: the workspace read tools (`read_file`, `list_files`, `file_stat`, and `grep`), the workspace search, `inspect_run`, `inspect_data_profile`, the authoring tools, the pinned-artifact listing tool, and the render-and-preview tool. The roster MUST NOT hold a planner, a run launcher, a working-memory write, or a sandbox mutate surface. Thus no tool starts a run, and no tool changes an analysis.
+
+The listing tool MUST give each pinned artifact in a deterministic order: the path, the hash, and the file type. For a tabular artifact it also gives the columns, from a bounded read of the header. A file type that holds no cell gives no columns. An unreadable header gives no columns and no error, because absence is a normal condition.
 
 #### Scenario: The roster holds no run starter
 - **WHEN** the assembled agent lists its tools
@@ -101,6 +103,14 @@ The roster of the agent MUST hold: the workspace read tools (`read_file`, `list_
 #### Scenario: The analysis read surface is present
 - **WHEN** the assembled agent lists its tools
 - **THEN** the workspace read tools, the search, the run inspection, and the data-profile inspection are present
+
+#### Scenario: The listing gives the pinned set with columns
+- **WHEN** the agent calls the listing tool in a session whose snapshot pins a CSV artifact
+- **THEN** the result carries the path, the hash, the file type, and the header columns of that artifact
+
+#### Scenario: An unreadable artifact still lists
+- **WHEN** the snapshot pins a path whose bytes are absent from the disk
+- **THEN** the result carries the path and the hash, with no columns and no error
 
 ### Requirement: The render-and-preview tool
 The preview tool MUST run the finish on the draft first. A gap list MUST return as data, and no render runs. On a pass, the tool MUST resolve each reference through the injected `ReferenceResolver`, bridge the values, and render with `renderReportPage`. The page and its staged assets MUST land in the session directory `report-sessions/{threadId}/` under the workspace root. The result MUST carry the page path as data. When the page lands, the tool MUST stamp the hash of the rendered document on the session state.
@@ -139,6 +149,8 @@ The prompt of the agent MUST name its tools and their mechanisms, and it MUST NO
 
 The prompt MUST teach the verification loop: preview, look, repair, and record only after a look at the current page. The "Do NOT" list MUST name the visual spiral. The agent does not loop on a cosmetic doubt, and it records when the page reads clean.
 
+The prompt MUST name the listing tool as the orientation source for the pinned evidence. It MUST state that a reference names the path alone, and that the session stamps the hash. The "Do NOT" list MUST name the hash probe: the agent never guesses a hash, and it never adds a block to read a hash from a refusal.
+
 #### Scenario: The prompt stays free of environment detail
 - **WHEN** a reviewer reads the prompt module
 - **THEN** no dataset name, no path, and no format promise is present
@@ -146,6 +158,10 @@ The prompt MUST teach the verification loop: preview, look, repair, and record o
 #### Scenario: The prompt teaches the loop order
 - **WHEN** a reviewer reads the prompt module
 - **THEN** the loop order and the visual-spiral anti-pattern are present
+
+#### Scenario: The prompt teaches the path-only rule
+- **WHEN** a reviewer reads the prompt module
+- **THEN** the listing tool is the named orientation source, and the hash-probe anti-pattern is present
 
 ### Requirement: The report turn reads the copied narrative, never the live memory
 
