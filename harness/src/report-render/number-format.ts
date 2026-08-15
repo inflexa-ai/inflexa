@@ -1,21 +1,23 @@
 /**
  * The number format of a resolved value.
  *
- * The renderer shows a number in one of three kinds. `scientific` gives a coefficient of two significant
+ * The renderer shows a number in one of four kinds. `scientific` gives a coefficient of two significant
  * digits and an exponent, for example `4.3e-5`. `compact` gives an integer with comma grouping, for example
- * `14,201`. `compact-scientific` gives three significant digits, for example `-3.09`, and it falls to the
- * scientific form for a magnitude under one thousandth.
+ * `14,201`. `compact-scientific` gives three significant digits, for example `-3.09`. It gives a grouped
+ * whole number for a magnitude from `1e3` to `1e15`, for example `15,235`, and it falls to the scientific
+ * form under one thousandth and from `1e15` up. `identifier` gives the source text.
  *
  * The module reads no locale. `toLocaleString` gives different text on a different host, thus the render
  * function would stop being a pure function of its inputs. The comma grouping is written here for that
  * reason.
  *
- * A shown form hides digits when it no longer parses back to the value. The caller puts the full digits in
- * the `title` attribute at that time, and it emits no attribute at any other time.
+ * A shown form hides digits when it no longer parses back to the value, or when it no longer matches the
+ * source text of a string cell. The caller puts the full digits in the `title` attribute at that time, and
+ * it emits no attribute at any other time.
  */
 
-/** The three number kinds that the renderer shows. */
-export type NumberKind = "scientific" | "compact" | "compact-scientific";
+/** The four number kinds that the renderer shows. */
+export type NumberKind = "scientific" | "compact" | "compact-scientific" | "identifier";
 
 /** One formatted cell. `full` holds the full digits, and it is present only when `text` hides one. */
 export interface FormattedNumber {
@@ -29,14 +31,26 @@ const SCIENTIFIC_DIGITS = 2;
 /** The significant digits of the compact-scientific form, for example the three digits of `-3.09`. */
 const COMPACT_DIGITS = 3;
 
+/** The magnitude under which a p-value column selects the scientific kind. */
+const SCIENTIFIC_FLOOR = 1e-2;
+
 /** The magnitude under which the compact-scientific form falls to the scientific form. */
-const SCIENTIFIC_FLOOR = 1e-3;
+const COMPACT_SCIENTIFIC_FLOOR = 1e-3;
+
+/** The rounded magnitude from which the compact-scientific form gives a grouped whole number. */
+const GROUPED_FLOOR = 1e3;
+
+/** The rounded magnitude from which the grouped whole number gives way to the scientific form. */
+const GROUPED_CEILING = 1e15;
 
 /** The size of one grouped digit run, for example the three digits of `14,201`. */
 const GROUP_SIZE = 3;
 
 /** The whole tokens of a column name that name a p-value. Such a value reads better in the scientific form. */
 const P_VALUE_TOKENS = new Set(["p", "pval", "pvalue", "padj", "fdr", "q", "qval"]);
+
+/** The whole tokens of a column name that name an identifier. Such a value is a name, not a magnitude. */
+const IDENTIFIER_TOKENS = new Set(["id", "pmid", "doi", "entrez", "taxid", "year", "accession"]);
 
 /** The boundary between a lowercase or numeric character and an uppercase character. */
 const CASE_BOUNDARY = /([a-z0-9])([A-Z])/g;
@@ -54,36 +68,48 @@ const GROUP_COMMAS = /,/g;
  * Format one cell in one kind.
  *
  * A cell that holds no finite number passes through as its own text, and it carries no full form. A finite
- * number formats in the kind, and it carries the full digits only when the shown text parses back to a
- * different number.
+ * number formats in the kind, and it carries the full digits only when the shown text loses one.
  */
 export function formatNumberCell(cell: string | number, kind: NumberKind): FormattedNumber {
+    if (kind === "identifier") {
+        // An identifier is a name that is written with digits. A group comma and a rounded digit both break
+        // the name, thus each character of the source reaches the page.
+        return { text: String(cell).trim() };
+    }
     const value = finiteValue(cell);
     if (value === null) {
         return { text: String(cell) };
     }
     const text = formatValue(value, kind);
-    if (!hidesDigits(text, value)) {
-        return { text };
+    if (typeof cell === "string") {
+        // A string cell carries its own digits already, thus the source text is the truer full form. A
+        // comparison of the two texts also catches a loss that a comparison of two numbers cannot see, for
+        // example the leading zero of `007` and the trailing zero of `1.50`.
+        const source = cell.trim();
+        return ungrouped(text) === source ? { text } : { text, full: source };
     }
-    // A string cell carries its own digits already. Thus the original text is the truer full form, because
-    // a round trip through a number can drop a trailing zero that the source held.
-    return { text, full: typeof cell === "string" ? cell.trim() : String(cell) };
+    return hidesDigits(text, value) ? { text, full: String(cell) } : { text };
 }
 
 /**
  * Select the number kind for one cell of one column.
  *
- * A p-value column selects the scientific kind for a value between zero and one. A safe integer selects the
- * compact kind. Every other finite number selects the compact-scientific kind. A cell that holds no finite
- * number selects the compact-scientific kind too, because the format passes such a cell through unchanged.
+ * An identifier column selects the identifier kind. A p-value column selects the scientific kind for a value
+ * between zero and one hundredth. A safe integer selects the compact kind. Every other finite number selects
+ * the compact-scientific kind. A cell that holds no finite number selects the compact-scientific kind too,
+ * because the format passes such a cell through unchanged.
  */
 export function selectNumberKind(column: string, cell: string | number): NumberKind {
+    if (isIdentifierColumn(column)) {
+        return "identifier";
+    }
     const value = finiteValue(cell);
     if (value === null) {
         return "compact-scientific";
     }
-    if (value > 0 && value < 1 && isPValueColumn(column)) {
+    // From one hundredth up, the plain decimal is as short as the exponent and it is easier to read. Thus
+    // `0.05` stays `0.05` and it does not become `5e-2`.
+    if (value > 0 && value < SCIENTIFIC_FLOOR && isPValueColumn(column)) {
         return "scientific";
     }
     // An integer above the safe range is no longer exact, thus it reads as a general float and not as a count.
@@ -106,18 +132,27 @@ function finiteValue(cell: string | number): number | null {
     return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** The text of one finite value in one kind. */
-function formatValue(value: number, kind: NumberKind): string {
+/** The text of one finite value in one kind. The identifier kind takes no value, thus it is absent here. */
+function formatValue(value: number, kind: Exclude<NumberKind, "identifier">): string {
     switch (kind) {
         case "scientific":
             return scientificForm(value);
         case "compact":
             return compactForm(value);
-        case "compact-scientific":
-            if (value !== 0 && Math.abs(value) < SCIENTIFIC_FLOOR) {
+        case "compact-scientific": {
+            const magnitude = Math.abs(value);
+            if (value !== 0 && magnitude < COMPACT_SCIENTIFIC_FLOOR) {
                 return scientificForm(value);
             }
+            // Above three significant digits `toPrecision` crosses to the exponential form, and `1.52e4`
+            // reads worse than `15,235`. The grouped form holds up to the width where a group run stops
+            // being easy to count.
+            const rounded = Math.round(magnitude);
+            if (rounded >= GROUPED_FLOOR && rounded < GROUPED_CEILING) {
+                return compactForm(value);
+            }
             return tidy(value.toPrecision(COMPACT_DIGITS));
+        }
     }
 }
 
@@ -179,17 +214,24 @@ function trimTrailingZeros(text: string): string {
     return text.slice(0, end);
 }
 
-/**
- * True when the shown text no longer parses back to the value. The comparison drops the group commas
- * first, thus the grouping alone never counts as a hidden digit.
- */
+/** One shown form without its group commas, thus the grouping alone never counts as a hidden digit. */
+function ungrouped(text: string): string {
+    return text.replace(GROUP_COMMAS, "");
+}
+
+/** True when the shown text no longer parses back to the value. */
 function hidesDigits(text: string, value: number): boolean {
-    return Number(text.replace(GROUP_COMMAS, "")) !== value;
+    return Number(ungrouped(text)) !== value;
 }
 
 /** True when one whole token of the column name names a p-value. A bare substring never matches. */
 function isPValueColumn(column: string): boolean {
     return columnTokens(column).some((token) => P_VALUE_TOKENS.has(token));
+}
+
+/** True when one whole token of the column name names an identifier. A bare substring never matches. */
+function isIdentifierColumn(column: string): boolean {
+    return columnTokens(column).some((token) => IDENTIFIER_TOKENS.has(token));
 }
 
 /**

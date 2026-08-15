@@ -4,8 +4,8 @@ The renderer prints each resolved value at full float precision. On the first re
 
 ## What Changes
 
-- One number helper lands in the report-render design source. It has three kinds: `scientific`, `compact`, and `compact-scientific`.
-- The renderer applies the helper to the metric value, to each numeric table cell, and to the chart axis labels.
+- One number helper lands in the report-render layer, beside the design source. It has three kinds: `scientific`, `compact`, and `compact-scientific`.
+- The renderer applies the helper to the metric value and to each numeric table cell. The chart option admits no formatter, thus only the histogram count axis takes a static whole-tick bound.
 - The renderer picks the kind by magnitude and by column meaning. No block gains a format field, because a block names content and never presentation.
 - The full digits appear on hover, through the `title` attribute. The tooltip appears only when the helper hid digits.
 - The metric card gains an overflow guard, thus a value can never paint past its card edge.
@@ -23,7 +23,8 @@ None.
 
 ## Impact
 
-- `harness/src/report-render/design.ts` — the helper and the guard styles.
-- `harness/src/report-render/views/values.tsx` and the table view — the call sites of the helper.
-- `harness/src/report-render/chart.ts` — the axis-label formatting.
+- `harness/src/report-render/number-format.ts` — the helper.
+- `harness/src/report-render/design.ts` — the overflow guard.
+- `harness/src/report-render/views/values.tsx` — the call sites of the helper.
+- `harness/src/report-render/chart.ts` — the count-axis bound.
 - No contract change, no agent change, and no store change.
