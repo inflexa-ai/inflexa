@@ -8,7 +8,7 @@ import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "./fixture.js";
 import { CHART_BOOTSTRAP, SECTION_SPY, TABLE_ENHANCER } from "./page.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
-import { TABLE_ROW_CAP } from "./views/values.js";
+import { SHOW_ALL_PREFIX, TABLE_ROW_CAP } from "./views/values.js";
 
 /**
  * The site of the navigation brand. It is the one reference of the page that names a remote host.
@@ -758,6 +758,17 @@ describe("the table enhancer", () => {
         }
     });
 
+    it("gives the sort affordance under the live marker alone", () => {
+        const css = DESIGN_CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+        const rules = [...css.matchAll(/([^{}]*\.data-table-sort[^{}]*)\{([^}]*)\}/g)];
+        const affordance = rules.filter((rule) => /cursor:/.test(rule[2]) || /:hover/.test(rule[1]));
+        expect(affordance.length).toBeGreaterThan(0);
+        for (const rule of affordance) {
+            // A zero-row table never takes the marker. Its headers must then promise no sort.
+            expect(rule[1]).toContain(".report-table-live");
+        }
+    });
+
     it("shows every row in the print form and drops the controls", () => {
         // The base rule hides a capped row. The print rule comes after it, thus it wins on paper.
         expect(DESIGN_CSS.indexOf(".report-row-hidden")).toBeLessThan(DESIGN_CSS.indexOf("@media print"));
@@ -780,6 +791,218 @@ describe("the table enhancer", () => {
         const page = load(renderReportPage(atCap.document, atCap.values)._unsafeUnwrap());
         expect(page("tbody tr.report-row-hidden").length).toBe(0);
         expect(page(".report-table-toggle").length).toBe(0);
+    });
+});
+
+describe("the table enhancer behavior", () => {
+    /** The event that a header handler reads. The key selects the branch, and the guard stops the scroll. */
+    interface FakeEvent {
+        key?: string;
+        preventDefault: () => void;
+    }
+
+    /** One element in the shape that the script reads: a class set, an attribute map, and its handlers. */
+    interface FakeNode {
+        classes: Set<string>;
+        attributes: Record<string, string>;
+        classList: { add: (name: string) => void; remove: (name: string) => void };
+        addEventListener: (name: string, handler: (event: FakeEvent) => void) => void;
+        setAttribute: (name: string, value: string) => void;
+        getAttribute: (name: string) => string | null;
+        fire: (name: string, key?: string) => void;
+    }
+
+    type FakeRow = FakeNode & { cells: { getAttribute: (name: string) => string | null }[] };
+    type FakeFilter = FakeNode & { value: string };
+    type FakeToggle = FakeNode & { textContent: string };
+    type FakeCard = FakeNode & { querySelector: (selector: string) => unknown };
+
+    /** The handles of one mounted table: the elements, the painted order, and the two readings of it. */
+    interface Mounted {
+        card: FakeNode;
+        headers: FakeNode[];
+        filter: FakeFilter;
+        toggle: FakeToggle;
+        column: (index: number) => string[];
+        visible: () => string[];
+    }
+
+    function fakeNode(initial: string[] = []): FakeNode {
+        const classes = new Set(initial);
+        const attributes: Record<string, string> = {};
+        const handlers: Record<string, ((event: FakeEvent) => void)[]> = {};
+        return {
+            classes,
+            attributes,
+            classList: {
+                add: (name) => {
+                    classes.add(name);
+                },
+                remove: (name) => {
+                    classes.delete(name);
+                },
+            },
+            addEventListener: (name, handler) => {
+                handlers[name] = [...(handlers[name] ?? []), handler];
+            },
+            setAttribute: (name, value) => {
+                attributes[name] = value;
+            },
+            getAttribute: (name) => attributes[name] ?? null,
+            fire: (name, key) => {
+                for (const handler of handlers[name] ?? []) {
+                    handler({ key, preventDefault: () => undefined });
+                }
+            },
+        };
+    }
+
+    /**
+     * Mount one table of raw cell values and run the emitted enhancer over it.
+     *
+     * The script is browser source text. Each global arrives as a parameter, thus these fakes are the whole
+     * DOM that it drives and no real browser is necessary. `appendChild` moves a row to the end, as the
+     * browser method does, thus the painted order is the order that a reader sees.
+     */
+    function mount(cells: string[][], withToggle = false): Mounted {
+        const rows: FakeRow[] = cells.map((values) => ({
+            ...fakeNode(["report-row"]),
+            cells: values.map((value) => ({ getAttribute: (name: string) => (name === "data-value" ? value : null) })),
+        }));
+        const headers = (cells[0] ?? []).map((_, index) => {
+            const header = fakeNode(["data-table-sort"]);
+            header.attributes["data-sort-index"] = String(index);
+            return header;
+        });
+        const filter: FakeFilter = { ...fakeNode(), value: "" };
+        const toggle: FakeToggle = { ...fakeNode(["report-table-toggle"]), textContent: `${SHOW_ALL_PREFIX}${rows.length}` };
+        const painted = [...rows];
+        const body = {
+            rows,
+            appendChild: (node: FakeRow) => {
+                const at = painted.indexOf(node);
+                if (at >= 0) {
+                    painted.splice(at, 1);
+                }
+                painted.push(node);
+            },
+        };
+        const table = { querySelector: () => body, querySelectorAll: () => headers };
+        const card: FakeCard = {
+            ...fakeNode(["report-table"]),
+            querySelector: (selector: string): unknown => {
+                if (selector === "table.data-table") {
+                    return table;
+                }
+                if (selector === ".report-table-filter") {
+                    return filter;
+                }
+                return withToggle ? toggle : null;
+            },
+        };
+        const doc = {
+            readyState: "complete",
+            documentElement: { classList: { add: () => undefined } },
+            querySelectorAll: () => [card],
+            addEventListener: () => undefined,
+        };
+        new Function("document", TABLE_ENHANCER)(doc);
+        return {
+            card,
+            headers,
+            filter,
+            toggle,
+            column: (index) => painted.map((row) => row.cells[index].getAttribute("data-value") ?? ""),
+            visible: () => painted.filter((row) => !row.classes.has("report-row-hidden")).map((row) => row.cells[0].getAttribute("data-value") ?? ""),
+        };
+    }
+
+    it("sorts a numeric column that holds a sentinel by magnitude", () => {
+        const table = mount([["10"], ["NA"], ["9"]]);
+        table.headers[0].fire("click");
+        // One value that parses keeps the column numeric. Under a text order `10` would rank before `9`.
+        expect(table.column(0)).toEqual(["9", "10", "NA"]);
+        table.headers[0].fire("click");
+        // The sentinel holds no rank, thus it stays at the end under both directions.
+        expect(table.column(0)).toEqual(["10", "9", "NA"]);
+        table.headers[0].fire("click");
+        expect(table.column(0)).toEqual(["10", "NA", "9"]);
+    });
+
+    it("sorts a text column in code-unit order", () => {
+        const table = mount([["b"], ["A"], ["a"]]);
+        table.headers[0].fire("click");
+        expect(table.column(0)).toEqual(["A", "a", "b"]);
+    });
+
+    it("cycles from the keyboard and writes the sort state of each header", () => {
+        const table = mount([
+            ["2", "x"],
+            ["1", "y"],
+        ]);
+        table.headers[0].fire("keydown", "Enter");
+        expect(table.column(0)).toEqual(["1", "2"]);
+        expect(table.headers[0].attributes["aria-sort"]).toBe("ascending");
+        expect(table.headers[1].attributes["aria-sort"]).toBe("none");
+        table.headers[0].fire("keydown", " ");
+        expect(table.headers[0].attributes["aria-sort"]).toBe("descending");
+        // A key that names no action leaves the order and the state as they are.
+        table.headers[0].fire("keydown", "a");
+        expect(table.headers[0].attributes["aria-sort"]).toBe("descending");
+    });
+
+    it("filters on the raw values of a row and forms no match across two cells", () => {
+        const table = mount([
+            ["AB", "CD"],
+            ["ZZ", "YY"],
+        ]);
+        table.filter.value = "bc";
+        table.filter.fire("input");
+        expect(table.visible()).toEqual([]);
+        table.filter.value = "cd";
+        table.filter.fire("input");
+        expect(table.visible()).toEqual(["AB"]);
+    });
+
+    it("finds the text that the trim hides, because the filter reads the raw value", () => {
+        const table = mount([["HALLMARK_HYPOXIA%MSigDB%M5891"], ["TP53"]]);
+        table.filter.value = "m5891";
+        table.filter.fire("input");
+        expect(table.visible()).toEqual(["HALLMARK_HYPOXIA%MSigDB%M5891"]);
+    });
+
+    it("counts the kept rows on the toggle and hides the toggle at the cap", () => {
+        const cells: string[][] = [];
+        for (let index = 0; index < TABLE_ROW_CAP + 5; index += 1) {
+            cells.push([`G${index}`]);
+        }
+        const table = mount(cells, true);
+        table.filter.fire("input");
+        expect(table.visible().length).toBe(TABLE_ROW_CAP);
+        expect(table.toggle.textContent).toBe(`${SHOW_ALL_PREFIX}${TABLE_ROW_CAP + 5}`);
+        expect(table.toggle.classes.has("report-table-toggle-off")).toBe(false);
+
+        table.toggle.fire("click");
+        expect(table.visible().length).toBe(TABLE_ROW_CAP + 5);
+        expect(table.toggle.textContent).toBe("Show fewer");
+        table.toggle.fire("click");
+
+        // The filter keeps 11 rows: `G1` and `G10` through `G19`. Nothing then waits behind the toggle.
+        table.filter.value = "g1";
+        table.filter.fire("input");
+        expect(table.visible().length).toBe(11);
+        expect(table.toggle.textContent).toBe(`${SHOW_ALL_PREFIX}11`);
+        expect(table.toggle.classes.has("report-table-toggle-off")).toBe(true);
+
+        table.filter.value = "";
+        table.filter.fire("input");
+        expect(table.toggle.textContent).toBe(`${SHOW_ALL_PREFIX}${TABLE_ROW_CAP + 5}`);
+        expect(table.toggle.classes.has("report-table-toggle-off")).toBe(false);
+    });
+
+    it("marks a card that it takes and leaves a zero-row card unmarked", () => {
+        expect(mount([["a"]]).card.classes.has("report-table-live")).toBe(true);
+        expect(mount([]).card.classes.has("report-table-live")).toBe(false);
     });
 });
 

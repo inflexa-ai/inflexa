@@ -37,6 +37,20 @@ export const TABLE_ROW_CAP = 20;
 /** The delimiter of an encoded set name, for example `HALLMARK_HYPOXIA%MSigDB%M5891`. */
 const NAME_DELIMITER = "%";
 
+/** The count of segments that an encoded set name holds: the name, the collection, and the accession. */
+const NAME_SEGMENTS = 3;
+
+/** One whitespace character. A segment of an encoded name holds none. */
+const WHITESPACE = /\s/;
+
+/**
+ * The collapsed label of the row-cap toggle.
+ *
+ * The view composes the label at render, and the enhancer composes it again from the count that the filter
+ * keeps. Both read this one prefix, thus the two labels cannot drift apart.
+ */
+export const SHOW_ALL_PREFIX = "Show all ";
+
 /** The scalar value that a metric renders from. */
 type ScalarValue = Extract<RenderValue, { type: "scalar" }>;
 
@@ -93,16 +107,19 @@ function tableColumns(value: TableValue): string[] {
  * The first segment of a delimited name, or `undefined` when the text carries no delimited name.
  *
  * An enrichment tool joins the name of a set, its collection, and its accession with a percent sign. The
- * name alone identifies the row, thus the rest is noise inside a narrow column. A text of two or more
- * non-empty segments is such a name. Every other text, for example `95%`, keeps its whole form, because an
- * empty segment is no segment.
+ * name alone identifies the row, thus the rest is noise inside a narrow column.
+ *
+ * Such a name holds three or more segments, each segment holds a character, and no segment holds a
+ * whitespace character. Every other text keeps its whole form. Thus `95%` stays whole, and a sentence such
+ * as `up 20% vs control` stays whole.
  */
 function firstNameSegment(text: string): string | undefined {
     const segments = text.split(NAME_DELIMITER);
-    if (segments.length < 2) {
+    if (segments.length < NAME_SEGMENTS) {
         return undefined;
     }
-    return segments.every((segment) => segment.length > 0) ? segments[0] : undefined;
+    const encoded = segments.every((segment) => segment.length > 0 && !WHITESPACE.test(segment));
+    return encoded ? segments[0] : undefined;
 }
 
 /**
@@ -145,14 +162,14 @@ function Cell({ column, cell }: { column: string; cell: string | number | undefi
  * block carries one.
  *
  * Each header cell stays a plain `th`. It carries the sort class and the index of its column, thus the
- * enhancer reads the column of a click and a browser with no script keeps a plain header.
+ * enhancer reads the column of a click and a browser with no script keeps a plain header. The header also
+ * takes the tab order, thus a reader sorts the table from the keyboard.
  *
  * The body holds every resolved row. A row past the cap carries the hidden class, and the card then carries
  * the toggle that names the total count. A table at the cap or under it carries no hidden row and no toggle.
  * The hidden class hides a row under the live marker of the enhancer alone, thus a browser with no script
- * shows every row.
- * The label of the toggle is the one site that composes the collapsed text, and the enhancer keeps that text
- * and restores it.
+ * shows every row. The label of the toggle names the total, and the enhancer composes the same label again
+ * from the count that the filter keeps.
  */
 export function renderTable(block: TableBlock, value: TableValue): string {
     const columns = tableColumns(value);
@@ -169,7 +186,7 @@ export function renderTable(block: TableBlock, value: TableValue): string {
                         <thead>
                             <tr>
                                 {columns.map((column, index) => (
-                                    <th class="data-table-sort" data-sort-index={String(index)}>
+                                    <th class="data-table-sort" data-sort-index={String(index)} tabindex={0}>
                                         {column}
                                     </th>
                                 ))}
@@ -186,7 +203,7 @@ export function renderTable(block: TableBlock, value: TableValue): string {
                         </tbody>
                     </table>
                 </div>
-                {total > TABLE_ROW_CAP ? <button type="button" class="report-table-toggle">{`Show all ${total}`}</button> : null}
+                {total > TABLE_ROW_CAP ? <button type="button" class="report-table-toggle">{`${SHOW_ALL_PREFIX}${total}`}</button> : null}
             </div>
             {block.caption !== undefined ? <p class="report-caption">{block.caption}</p> : null}
         </div>,
