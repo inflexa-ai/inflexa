@@ -289,7 +289,13 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     // tool boundary, thus one instance serves every report thread. It comes before
     // the conversation agent, because `start_report_session` takes its anchor
     // operation and pins the snapshot of a new session at the spawn.
-    const reportSession = createReportSessionRuntime({ pool: conversation.pool, ...(conversation.logger ? { logger: conversation.logger } : {}) });
+    // The runtime takes the same root resolver as the session tools, because the pin reads the citation
+    // evidence out of the run tree of the analysis.
+    const reportSession = createReportSessionRuntime({
+        pool: conversation.pool,
+        resolveWorkspaceRoot: conversation.resolveWorkspaceRoot,
+        ...(conversation.logger ? { logger: conversation.logger } : {}),
+    });
 
     // The eyes of the composition resolve one time here. Thus the agent that looks at a page and
     // the tool that starts a session read one answer. No tool reads the precedence again.

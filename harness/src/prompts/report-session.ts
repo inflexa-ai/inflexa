@@ -56,6 +56,11 @@ A reference names the path alone, and the session stamps the hash from the pinne
 evidence when the block lands. A path that the pinned evidence does not hold comes
 back as an unresolved reference, and you repair that path.
 
+The literature of the report composes as citation blocks, and each one binds to a
+citation id of the pinned evidence. A citation that the pinned evidence does not
+hold does not resolve. Report such a citation to the user, and never write it into
+the prose instead.
+
 \`finish_draft\` checks the whole draft against the schema, the id rule, and the
 structural tier. It returns each completeness gap, or the finished document. Read
 the gaps, repair the draft, and finish again.
@@ -112,6 +117,9 @@ page reads clean.
 - **Probe for a hash.** Never guess a content hash, and never add a block to read a
   hash out of a refusal. A reference names the path, and the session stamps the
   hash. \`list_pinned_artifacts\` names the paths that a reference can bind to.
+- **Inline a citation that does not resolve.** A citation block binds to a citation
+  id of the pinned evidence. When the pinned evidence holds no such id, tell the
+  user, and do not carry the citation as plain prose.
 - **Rebuild when one amend serves.** One feedback is one block change. Change, move,
   or remove that block by its id, and do not re-author the report.
 - **Leave a gap unread.** When \`finish_draft\` or \`preview_report\` reports a gap or

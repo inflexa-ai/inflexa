@@ -9,6 +9,9 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
@@ -16,6 +19,7 @@ import { createThreadStore } from "../memory/thread-store.js";
 import type { DraftDocument } from "../report-model/draft.js";
 import { upsertAnalysis } from "../state/analyses.js";
 import { upsertArtifact, type RegisterArtifactInput } from "../state/artifacts.js";
+import { insertRun } from "../state/runs.js";
 import { createReportSessionRuntime } from "./report-session-runtime.js";
 
 const DOC_ONE: DraftDocument = {
@@ -185,5 +189,63 @@ describe("createReportSessionRuntime", () => {
         expect(reloaded.outcome).toBe("found");
         if (reloaded.outcome !== "found") throw new Error("expected found");
         expect(Object.keys(reloaded.state.snapshot.artifacts)).toEqual([earlyPath]);
+    });
+
+    /** Write the synthesis record of a run under a workspace root. */
+    async function writeSynthesis(root: string, runId: string, pmids: string[]): Promise<void> {
+        const dir = join(root, "runs", runId);
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, "synthesis.json"), JSON.stringify({ runId, keyReferences: pmids.map((pmid) => ({ pmid })) }), "utf8");
+    }
+
+    it("carries the citation evidence into the stored snapshot through the seam", async () => {
+        const analysisId = "analysis-citations";
+        const threadId = "thread-citations";
+        const runId = "run-citations";
+        await seedAnalysis(analysisId);
+        await seedThread(threadId, analysisId);
+        (await insertRun(pool, { runId, analysisId, workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        const root = await mkdtemp(join(tmpdir(), "session-citations-"));
+        try {
+            await writeSynthesis(root, runId, ["12345", "678"]);
+
+            const runtime = createReportSessionRuntime({ pool, resolveWorkspaceRoot: () => root });
+            const ensured = await runtime.ensureSessionState(threadId);
+            expect(ensured.outcome).toBe("ready");
+
+            // The stored row is the anchor. A fresh runtime reads it back, thus the assertion is on the
+            // durable state and not on the return of the pin.
+            const loaded = await createReportSessionRuntime({ pool, resolveWorkspaceRoot: () => root }).gateway.load(threadId);
+            expect(loaded.outcome).toBe("found");
+            if (loaded.outcome !== "found") throw new Error("expected found");
+            expect(loaded.state.snapshot.citations).toEqual(["pmid:12345", "pmid:678"]);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it("lands the pin with no citation when the deps bind no workspace root", async () => {
+        const analysisId = "analysis-no-seam";
+        const threadId = "thread-no-seam";
+        const runId = "run-no-seam";
+        await seedAnalysis(analysisId);
+        await seedThread(threadId, analysisId);
+        (await insertRun(pool, { runId, analysisId, workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        const root = await mkdtemp(join(tmpdir(), "session-no-seam-"));
+        try {
+            await writeSynthesis(root, runId, ["12345"]);
+
+            // The deps bind no root, thus the record on disk reaches no key.
+            const runtime = createReportSessionRuntime({ pool });
+            const ensured = await runtime.ensureSessionState(threadId);
+            expect(ensured.outcome).toBe("ready");
+
+            const loaded = await runtime.gateway.load(threadId);
+            expect(loaded.outcome).toBe("found");
+            if (loaded.outcome !== "found") throw new Error("expected found");
+            expect(loaded.state.snapshot.citations).toEqual([]);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
     });
 });
