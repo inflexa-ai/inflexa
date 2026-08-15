@@ -180,6 +180,49 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("never take an id out of a refusal");
     });
 
+    test("the prompt carries the narrative spine", () => {
+        // The spine order and the two prose rules are stable substrings, thus the
+        // assertion does not couple to the full prose.
+        expect(reportSessionPrompt).toContain("compose the argument outline");
+        expect(reportSessionPrompt).toContain("the findings, in order of strength");
+        expect(reportSessionPrompt).toContain("the negative result, in its honest place");
+        expect(reportSessionPrompt).toContain("the limits of the evidence");
+        // The flow of a paper carries no chapter name of one.
+        expect(reportSessionPrompt).toContain("never gives the chapter names");
+        expect(reportSessionPrompt).toContain('"Abstract"');
+        expect(reportSessionPrompt).toContain('"Literature review"');
+        expect(reportSessionPrompt).toContain('"Prior work"');
+        // Each section opens with its topic sentence, and no evidence precedes it.
+        expect(reportSessionPrompt).toContain("opens with its topic sentence");
+        expect(reportSessionPrompt).toContain("before the sentence that tells the reader what to see");
+        expect(reportSessionPrompt).toContain("The evidence illustrates the prose");
+        expect(reportSessionPrompt).toContain("The angle of the brief decides the");
+        // The anti-pattern entry names evidence that precedes its sentence.
+        expect(reportSessionPrompt).toContain("Show evidence before its sentence");
+    });
+
+    test("the prompt carries the chart-first rule", () => {
+        // The preference, its table condition, and the run-phase bound are stable
+        // substrings, thus the assertion does not couple to the full prose.
+        expect(reportSessionPrompt).toContain("Prefer a chart block when a table artifact holds the data");
+        expect(reportSessionPrompt).toContain("a figure image only when no table carries the data");
+        expect(reportSessionPrompt).toContain("The run phase keeps its own");
+        // The anti-pattern entry names the figure that stands where a table serves.
+        expect(reportSessionPrompt).toContain("Reach for a figure where a table serves");
+    });
+
+    test("the prompt carries the headline obligations", () => {
+        // The cohort-and-yield lead, the caveat ban, the contrast rule, and the
+        // rounding agreement are stable substrings.
+        expect(reportSessionPrompt).toContain("leads with the cohort and the yield");
+        expect(reportSessionPrompt).toContain("the group split");
+        expect(reportSessionPrompt).toContain("carries a caveat is not a headline");
+        expect(reportSessionPrompt).toContain("The card set carries its own contrast");
+        expect(reportSessionPrompt).toContain("rounds as the cards round");
+        // The anti-pattern entry names the caveated headline.
+        expect(reportSessionPrompt).toContain("Lead with a caveated value");
+    });
+
     test("the definition carries no per-session value in the prompt", () => {
         const { systemPrompt } = buildAgent();
         // A per-session value (a thread id, an analysis id, a resolved path) breaks
