@@ -291,6 +291,80 @@ describe("addBlock", () => {
         expect(failure.reason).toBe("unresolved-reference");
         expect(draft).toEqual(before);
     });
+
+    it("lands a reference that names the path alone, and stamps the snapshot hash", () => {
+        const draft = baseDraft();
+        const landed = addBlock(
+            draft,
+            { block: { kind: "table", id: "table-2", binding: { kind: "artifact-table", path: OUTPUT_PATH } }, destination: { parentId: "sec-2" } },
+            snapshot,
+        )._unsafeUnwrap();
+
+        const block = findById(landed, "table-2");
+        expect(block?.kind).toBe("table");
+        if (block?.kind === "table") {
+            expect(block.binding.kind).toBe("artifact-table");
+            if (block.binding.kind === "artifact-table") {
+                expect(block.binding.hash).toBe(OUTPUT_HASH);
+            }
+        }
+    });
+
+    it("stamps each derivation input that names the path alone", () => {
+        const draft = baseDraft();
+        const payload = {
+            kind: "metric",
+            id: "metric-2",
+            label: "ratio",
+            value: {
+                kind: "derivation",
+                op: "ratio",
+                inputs: [
+                    { kind: "artifact-value", path: OUTPUT_PATH, locator: { column: "padj", row: 0 } },
+                    { kind: "artifact-value", path: OUTPUT_PATH, locator: { column: "padj", row: 1 } },
+                ],
+            },
+        };
+        const landed = addBlock(draft, { block: payload, destination: { parentId: "sec-2" } }, snapshot)._unsafeUnwrap();
+
+        const block = findById(landed, "metric-2");
+        expect(block?.kind).toBe("metric");
+        if (block?.kind === "metric" && block.value.kind === "derivation") {
+            expect(block.value.inputs.map((input) => input.hash)).toEqual([OUTPUT_HASH, OUTPUT_HASH]);
+        }
+    });
+
+    it("refuses a path-only reference whose path the snapshot does not hold, and names the path", () => {
+        const draft = baseDraft();
+        const before = structuredClone(draft);
+        const failure = addBlock(
+            draft,
+            { block: { kind: "table", id: "table-2", binding: { kind: "artifact-table", path: ABSENT_PATH } }, destination: { parentId: "sec-2" } },
+            snapshot,
+        )._unsafeUnwrapErr();
+
+        expect(failure.reason).toBe("unresolved-reference");
+        expect(failure.detail).toContain(ABSENT_PATH);
+        if (failure.reason === "unresolved-reference") {
+            expect(failure.unresolved[0].reason).toBe("artifact-missing");
+        }
+        expect(draft).toEqual(before);
+    });
+
+    it("refuses an explicit hash that differs from the snapshot with hash-mismatch", () => {
+        const draft = baseDraft();
+        const stale = `sha256:${"c".repeat(64)}`;
+        const failure = addBlock(
+            draft,
+            { block: { kind: "table", id: "table-2", binding: tableReference(OUTPUT_PATH, stale) }, destination: { parentId: "sec-2" } },
+            snapshot,
+        )._unsafeUnwrapErr();
+
+        expect(failure.reason).toBe("unresolved-reference");
+        if (failure.reason === "unresolved-reference") {
+            expect(failure.unresolved[0].reason).toBe("hash-mismatch");
+        }
+    });
 });
 
 describe("changeBlock", () => {
@@ -401,6 +475,35 @@ describe("changeBlock", () => {
         )._unsafeUnwrapErr();
 
         expect(failure.reason).toBe("unresolved-reference");
+        expect(draft).toEqual(before);
+    });
+
+    it("lands a reference that names the path alone, and stamps the snapshot hash", () => {
+        const draft = chartDraft();
+        const landed = changeBlock(
+            draft,
+            { targetId: "table-1", block: { kind: "table", binding: { kind: "artifact-table", path: OUTPUT_PATH } } },
+            snapshot,
+        )._unsafeUnwrap();
+
+        const block = findById(landed, "table-1");
+        expect(block?.kind).toBe("table");
+        if (block?.kind === "table" && block.binding.kind === "artifact-table") {
+            expect(block.binding.hash).toBe(OUTPUT_HASH);
+        }
+    });
+
+    it("refuses a path-only reference whose path the snapshot does not hold, and names the path", () => {
+        const draft = baseDraft();
+        const before = structuredClone(draft);
+        const failure = changeBlock(
+            draft,
+            { targetId: "metric-1", block: { kind: "table", binding: { kind: "artifact-table", path: ABSENT_PATH } } },
+            snapshot,
+        )._unsafeUnwrapErr();
+
+        expect(failure.reason).toBe("unresolved-reference");
+        expect(failure.detail).toContain(ABSENT_PATH);
         expect(draft).toEqual(before);
     });
 });

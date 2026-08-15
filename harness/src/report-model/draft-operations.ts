@@ -23,6 +23,7 @@ import type { UnresolvedReference } from "../contracts/report-reference.js";
 import { walkBlocks } from "./block-walk.js";
 import { DraftBlockSchema, type DraftBlock, type DraftDocument, type DraftSectionBlock } from "./draft.js";
 import type { ReportSnapshot } from "./reference-resolver.js";
+import { stampReferenceHashes } from "./reference-stamp.js";
 import { validateReferenceStructure } from "./structural-validation.js";
 
 /**
@@ -101,9 +102,16 @@ export function setTitle(draft: DraftDocument, title: string): DraftDocument {
  *
  * The root admits a section only, thus an atom at the root refuses. The validation covers the payload and
  * each of its descendants.
+ *
+ * The stamp runs before the parse. Thus a reference that names a path of the snapshot and no hash carries
+ * the hash of that path when the grammar reads it.
  */
 export function addBlock(draft: DraftDocument, operation: AddOperation, snapshot: ReportSnapshot): Result<DraftDocument, DraftRefusal> {
-    const parsed = DraftBlockSchema.safeParse(operation.block);
+    const stamped = stampReferenceHashes(operation.block, snapshot);
+    if (stamped.isErr()) {
+        return err(stamped.error);
+    }
+    const parsed = DraftBlockSchema.safeParse(stamped.value);
     if (!parsed.success) {
         return err(malformed(parsed.error));
     }
@@ -146,10 +154,16 @@ export function changeBlock(draft: DraftDocument, operation: ChangeOperation, sn
     if (payload === null || typeof payload !== "object") {
         return err({ reason: "malformed-block", detail: "the payload is not an object" });
     }
-    // The stamp sets the target id on the payload before the parse. Thus an id mismatch is
+    // The id stamp sets the target id on the payload before the parse. Thus an id mismatch is
     // unrepresentable, and a replacement always keeps the id of its target.
-    const stamped = { ...(payload as Record<string, unknown>), id: operation.targetId };
-    const parsed = DraftBlockSchema.safeParse(stamped);
+    const withId = { ...(payload as Record<string, unknown>), id: operation.targetId };
+    // The hash stamp then fills each absent reference hash from the snapshot, thus the grammar reads a
+    // complete pin. The two stamps are independent, because one reads the block and one reads a reference.
+    const hashed = stampReferenceHashes(withId, snapshot);
+    if (hashed.isErr()) {
+        return err(hashed.error);
+    }
+    const parsed = DraftBlockSchema.safeParse(hashed.value);
     if (!parsed.success) {
         return err(malformed(parsed.error));
     }

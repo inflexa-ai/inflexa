@@ -31,9 +31,9 @@ function buildAgent() {
 // The read surface toward the analysis. The roster roams the tree read-only.
 const READ_SURFACE = ["read_file", "list_files", "file_stat", "grep", "workspace_search", "inspect_run", "inspect_data_profile"] as const;
 
-// The composition surface: the eight authoring tools, the render-and-preview tool,
-// the eyes tool, and the record tool. These eleven ids are what makes the report
-// path a report path.
+// The composition surface: the eight authoring tools, the pinned-artifact listing
+// tool, the render-and-preview tool, the eyes tool, and the record tool. These
+// twelve ids are what makes the report path a report path.
 const COMPOSITION_SURFACE = [
     "add_block",
     "change_block",
@@ -43,6 +43,7 @@ const COMPOSITION_SURFACE = [
     "read_outline",
     "read_block",
     "finish_draft",
+    "list_pinned_artifacts",
     "preview_report",
     "examine_page",
     "record_report_version",
@@ -80,7 +81,7 @@ describe("createReportSessionAgent", () => {
         }
     });
 
-    test("holds the eleven composition tools", () => {
+    test("holds the twelve composition tools", () => {
         const ids = new Set(buildAgent().tools.map((tool) => tool.id));
         for (const expected of COMPOSITION_SURFACE) {
             expect(ids.has(expected)).toBe(true);
@@ -140,6 +141,16 @@ describe("createReportSessionAgent", () => {
         // The anti-pattern entry names the visual spiral.
         expect(reportSessionPrompt).toContain("visual spiral");
         expect(reportSessionPrompt).toContain("cosmetic doubt");
+    });
+
+    test("the prompt names the listing tool as the orientation source and bans the hash probe", () => {
+        // The path-only rule and its anti-pattern are stable substrings, thus the
+        // assertion does not couple to the full prose.
+        expect(reportSessionPrompt).toContain("list_pinned_artifacts");
+        expect(reportSessionPrompt).toContain("orientation source");
+        expect(reportSessionPrompt).toContain("names the path alone");
+        expect(reportSessionPrompt).toContain("stamps the hash");
+        expect(reportSessionPrompt).toContain("Probe for a hash");
     });
 
     test("the definition carries no per-session value in the prompt", () => {
