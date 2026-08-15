@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Pool } from "pg";
 
+import type { CitationReference } from "../contracts/report-reference.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { upsertArtifact, upsertArtifacts, type RegisterArtifactInput } from "../state/artifacts.js";
 import { insertRun } from "../state/runs.js";
+import { createFixtureResolver } from "./fixture-resolver.js";
 import { pinReportSnapshot } from "./pin-snapshot.js";
 
 const ANALYSIS = "analysis-pin";
@@ -167,6 +169,38 @@ describe("the citation evidence of the pin", () => {
         expect(await pinCitations()).toEqual(["pmid:12345", "pmid:987"]);
     });
 
+    it("gives one `pmid:` key for each reference of a finding", async () => {
+        await seedRun("run-findings");
+        // The record names the paper in the references of a finding alone. That field carries the
+        // superset of the literature that the synthesis engaged, thus a citation over it must resolve.
+        await writeSynthesis(
+            "run-findings",
+            JSON.stringify({
+                findings: [
+                    { stepId: "step-1", references: [{ pmid: "31234", citation: "Smith 2020" }, { pmid: " 4567 " }] },
+                    { stepId: "step-2", references: [{ pmid: "" }, { pmid: 42 }, "text", {}] },
+                    "not-an-object",
+                ],
+                keyReferences: [],
+            }),
+        );
+
+        expect(await pinCitations()).toEqual(["pmid:31234", "pmid:4567"]);
+    });
+
+    it("dedupes one paper that both fields of a record name", async () => {
+        await seedRun("run-both");
+        await writeSynthesis(
+            "run-both",
+            JSON.stringify({
+                findings: [{ references: [{ pmid: "12345" }, { pmid: "678" }] }],
+                keyReferences: [{ pmid: "12345", citation: "Smith 2020" }],
+            }),
+        );
+
+        expect(await pinCitations()).toEqual(["pmid:12345", "pmid:678"]);
+    });
+
     it("dedupes one paper across two runs and sorts the keys in code-unit order", async () => {
         await seedRun("run-a");
         await seedRun("run-b");
@@ -229,6 +263,19 @@ describe("the citation evidence of the pin", () => {
         const snapshot = (await pinReportSnapshot(pool, ANALYSIS))._unsafeUnwrap();
 
         expect(snapshot.citations).toEqual([]);
+    });
+
+    it("resolves a citation reference over a pinned synthesis pmid", async () => {
+        await seedRun("run-agree");
+        await writeSynthesis("run-agree", JSON.stringify({ keyReferences: [{ pmid: "31234", citation: "Smith 2020" }] }));
+
+        const snapshot = (await pinReportSnapshot(pool, ANALYSIS, { resolveWorkspaceRoot: resolveRoot }))._unsafeUnwrap();
+        const reference: CitationReference = { kind: "citation", idKind: "pmid", id: "31234", raw: "Smith 2020" };
+        const resolved = await createFixtureResolver().resolve(reference, snapshot);
+
+        // The pin writes the key, and the resolver reads it. One test over the two sides locks the shape
+        // of the key, thus a change on one side alone fails here and not at a session of a user.
+        expect(resolved._unsafeUnwrap()).toEqual({ type: "citation", id: "pmid:31234" });
     });
 
     it("fails the pin when the run listing fails", async () => {

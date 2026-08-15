@@ -8,9 +8,10 @@
  * The artifact ledger holds one row for each path, and it keeps no history. Thus the set at a past
  * moment is not recoverable later, and the pin must run at the anchor itself.
  *
- * The snapshot carries the citation evidence beside the artifact map. The key references of a run
- * synthesis are the papers that the analysis engaged, and they live in the run tree on disk. Thus the
- * pin reads that tree through the workspace-root seam of the caller.
+ * The snapshot carries the citation evidence beside the artifact map. The pinned set is the literature
+ * that the synthesis engaged, and two fields of a run synthesis carry it: the key references and the
+ * references of each finding. The records live in the run tree on disk. Thus the pin reads that tree
+ * through the workspace-root seam of the caller.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -72,8 +73,19 @@ async function readSynthesisText(absolute: string): Promise<string | undefined> 
                 // The window takes one byte more than the cap. A read that fills it states that the file
                 // holds more bytes than the cap admits, thus the two conditions stay apart.
                 const buffer = Buffer.alloc(SYNTHESIS_CAP_BYTES + 1);
-                const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-                return bytesRead > SYNTHESIS_CAP_BYTES ? undefined : buffer.subarray(0, bytesRead).toString("utf8");
+                // One read of a network-backed file can give fewer bytes than the window holds. Such a
+                // short read cuts the text in the middle of the JSON, and the record then parses to no
+                // key at all. Thus the loop reads again from the offset that the last read reached, and
+                // it stops when the window fills or when a read gives no byte.
+                let filled = 0;
+                while (filled < buffer.length) {
+                    const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
+                    if (bytesRead === 0) {
+                        break;
+                    }
+                    filled += bytesRead;
+                }
+                return filled > SYNTHESIS_CAP_BYTES ? undefined : buffer.subarray(0, filled).toString("utf8");
             } finally {
                 await handle.close();
             }
@@ -83,28 +95,16 @@ async function readSynthesisText(absolute: string): Promise<string | undefined> 
 }
 
 /**
- * The citation keys of one synthesis text.
+ * Take one `pmid:` key from each entry of one reference list, and add it to `keys`.
  *
- * The extraction is lenient: it parses the JSON and it takes each `keyReferences` PMID that is a
- * non-empty string. A whole-schema parse would empty the citation list of the whole analysis for one
- * record that a different schema version wrote. Malformed JSON gives no key.
+ * The walk is lenient: a value that is not a list, an entry that is not an object, and a PMID that is
+ * not a non-empty string each give no key.
  */
-function citationKeysOf(text: string): string[] {
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(text);
-    } catch {
-        return [];
+function pushPmidKeys(list: unknown, keys: string[]): void {
+    if (!Array.isArray(list)) {
+        return;
     }
-    if (typeof parsed !== "object" || parsed === null) {
-        return [];
-    }
-    const references = (parsed as { keyReferences?: unknown }).keyReferences;
-    if (!Array.isArray(references)) {
-        return [];
-    }
-    const keys: string[] = [];
-    for (const reference of references) {
+    for (const reference of list) {
         if (typeof reference !== "object" || reference === null) {
             continue;
         }
@@ -117,24 +117,53 @@ function citationKeysOf(text: string): string[] {
             keys.push(`pmid:${id}`);
         }
     }
+}
+
+/**
+ * The citation keys of one synthesis text.
+ *
+ * The extraction is lenient: it parses the JSON, and it takes each PMID of `keyReferences` and of the
+ * references of each finding. The key references are the papers that the synthesis names as primary, and
+ * the references of the findings are the superset. Thus a citation over either one resolves. A
+ * whole-schema parse would empty the citation list of the whole analysis for one record that a different
+ * schema version wrote. Malformed JSON gives no key.
+ */
+function citationKeysOf(text: string): string[] {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(text);
+    } catch {
+        return [];
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+        return [];
+    }
+    const keys: string[] = [];
+    pushPmidKeys((parsed as { keyReferences?: unknown }).keyReferences, keys);
+    const findings = (parsed as { findings?: unknown }).findings;
+    if (Array.isArray(findings)) {
+        for (const finding of findings) {
+            if (typeof finding !== "object" || finding === null) {
+                continue;
+            }
+            pushPmidKeys((finding as { references?: unknown }).references, keys);
+        }
+    }
     return keys;
 }
 
 /**
  * Collect the citation evidence of one analysis from the synthesis record of each of its runs.
  *
- * The keys dedupe, and they sort in code-unit order. Thus one disk state gives one list, and a second
- * pin over that state gives the same list.
+ * The pinned set is the literature that the synthesis engaged, and both fields of a record carry it: the
+ * key references and the references of each finding. The keys dedupe, and they sort in code-unit order.
+ * Thus one disk state gives one list, and a second pin over that state gives the same list.
  *
  * A run listing that fails fails the collection, because a store fault is not absence. Each other fault
  * is a normal condition: an unresolvable workspace root, an absent record, an unreadable record, and a
  * malformed record each give no key and no error.
  */
-export async function collectCitationKeys(
-    pool: Querier,
-    resolveWorkspaceRoot: ResolveWorkspaceRoot,
-    analysisId: string,
-): Promise<Result<string[], PinSnapshotError>> {
+async function collectCitationKeys(pool: Querier, resolveWorkspaceRoot: ResolveWorkspaceRoot, analysisId: string): Promise<Result<string[], PinSnapshotError>> {
     let root: string;
     try {
         root = resolveWorkspaceRoot(analysisId);
