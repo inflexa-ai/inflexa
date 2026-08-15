@@ -1,5 +1,5 @@
 /**
- * The reference markup: the evidence marker and the ordered reference list.
+ * The reference markup: the evidence marker and the ordered provenance list.
  *
  * The runtime escapes each child and each attribute value, thus a hostile path, a hostile id, or a
  * hostile operation reaches the page as text. The list keeps the first-appearance order of the ledger,
@@ -100,8 +100,9 @@ function ReferenceEntry({ reference }: { reference: Reference }) {
 }
 
 /**
- * The ordered reference list for the end of the page. An empty ledger gives an empty string, thus the
- * page shows no empty list.
+ * The ordered provenance list for the end of the page. The list is an appendix: a reader consults one entry
+ * from a marker, thus the design keeps it quieter than the body. An empty ledger gives an empty string, thus
+ * the page shows no empty list.
  */
 export function renderReferenceList(ledger: ReferenceLedger): string {
     const entries = ledger.entries();

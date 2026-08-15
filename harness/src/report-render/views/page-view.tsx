@@ -1,20 +1,24 @@
 /**
  * The page assembly: the hero, the bands, the reference band, and the footer.
  *
- * The skeleton inlines the style rules in the head, and it puts the three scripts at the end of the body.
- * The order of the three scripts is a contract. The theme registration runs before the chart bootstrap,
- * thus each chart finds its theme. The fade-in observer also runs before the chart bootstrap, thus the
- * bootstrap finds the reveal gate and it signals readiness after the first reveal pass. The navigation, the
- * main content, and the reference frame arrive as already-escaped markup strings, thus `raw()` inserts them
- * byte for byte.
+ * The skeleton inlines the style rules in the head, and it puts the four scripts at the end of the body.
+ * The order of the first three scripts is a contract. The theme registration runs before the chart
+ * bootstrap, thus each chart finds its theme. The fade-in observer also runs before the chart bootstrap,
+ * thus the bootstrap finds the reveal gate and it signals readiness after the first reveal pass. The
+ * scrollspy reads the sections alone, thus its position is free. The navigation, the main content, and the
+ * reference frame arrive as already-escaped markup strings, thus `raw()` inserts them byte for byte.
  *
  * One band holds one top-level section. The band index drives the alternation of the background and of the
  * texture, thus a caller that adds a band passes the next index.
+ *
+ * The container gives the full-bleed gutter of a region, and the content column inside it gives the one
+ * measure of the page. The hero, each band, and the footer use the same pair. Thus every block kind reads at
+ * one width, and the title over them sits on the same left edge.
  */
 
 import { raw } from "hono/html";
 
-import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER } from "../page.js";
+import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER, SECTION_SPY } from "../page.js";
 import { DESIGN_CSS, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
 import type { ReferenceLedger } from "../references.js";
 import { renderReferenceList } from "./references-view.js";
@@ -24,7 +28,10 @@ import { scriptJson } from "../script-json.js";
 const HERO_EYEBROW = "INFLEXA · ANALYSIS REPORT";
 
 /** The constant note of the footer. */
-const FOOTER_NOTE = "Powered by Inflexa Cortex";
+const FOOTER_NOTE = "Powered by Inflexa";
+
+/** The title of the auto-generated appendix. The literature stays in the citation blocks of the sections. */
+const PROVENANCE_TITLE = "Data provenance";
 
 /**
  * The theme object as script-safe JSON. `scriptJson` replaces every `<` with `\u003c`, thus a later edit
@@ -53,7 +60,9 @@ export function renderBand(index: number, inner: string): string {
     const surface = index % 2 === 0 ? "report-band-white texture-dots" : "report-band-slate texture-grid";
     return String(
         <section class={`report-band ${surface} texture-noise`}>
-            <div class="report-container fade-in">{raw(inner)}</div>
+            <div class="report-container fade-in">
+                <div class="report-content">{raw(inner)}</div>
+            </div>
         </section>,
     );
 }
@@ -67,7 +76,7 @@ export function renderReferenceSection(ledger: ReferenceLedger, index: number): 
     if (list === "") {
         return "";
     }
-    const heading = String(<h2 class="report-heading report-heading-2">References</h2>);
+    const heading = String(<h2 class="report-heading report-heading-3 report-ref-title">{PROVENANCE_TITLE}</h2>);
     return renderBand(index, heading + list);
 }
 
@@ -92,8 +101,10 @@ export function assemblePage(title: string, nav: string, content: string, refere
                     {raw(nav)}
                     <header class="report-hero texture-noise">
                         <div class="report-container">
-                            <p class="report-eyebrow">{HERO_EYEBROW}</p>
-                            <h1 class="report-display">{title}</h1>
+                            <div class="report-content">
+                                <p class="report-eyebrow">{HERO_EYEBROW}</p>
+                                <h1 class="report-display">{title}</h1>
+                            </div>
                         </div>
                     </header>
                     <main>
@@ -101,14 +112,17 @@ export function assemblePage(title: string, nav: string, content: string, refere
                         {references.length > 0 ? raw(references) : null}
                     </main>
                     <footer class="report-footer">
-                        <div class="report-container report-footer-row">
-                            <span class="report-footer-title">{title}</span>
-                            <span class="report-footer-note">{FOOTER_NOTE}</span>
+                        <div class="report-container">
+                            <div class="report-content report-footer-row">
+                                <span class="report-footer-title">{title}</span>
+                                <span class="report-footer-note">{FOOTER_NOTE}</span>
+                            </div>
                         </div>
                     </footer>
                     <script>{raw(THEME_REGISTRATION)}</script>
                     <script>{raw(FADE_IN_OBSERVER)}</script>
                     <script>{raw(CHART_BOOTSTRAP)}</script>
+                    <script>{raw(SECTION_SPY)}</script>
                 </body>
             </html>,
         )

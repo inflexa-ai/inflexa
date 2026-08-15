@@ -375,14 +375,36 @@ describe("renderChart", () => {
         expect(html).toMatch(/<div[^>]*\bdata-echarts-id="b3"[^>]*\bclass="chart-container"[^>]*>/);
     });
 
-    it("wraps the chart in the chrome header with its three dots and the product badge", () => {
+    it("wraps the chart in the corner-accent card under the mono title line", () => {
         const block = chartBlock("bar", { x: "day", y: "count" }, { id: "b4", title: "Panel title" });
         const html = renderChart(block, derive(block, [{ day: "Mon", count: 1 }]));
-        expect(html).toContain(`class="window-chrome-bar"`);
-        // The three dots are the window-chrome signature of the panel.
-        expect(html.match(/class="chrome-dot dot-\d"/g)).toHaveLength(3);
-        expect(html).toContain(`<span class="window-chrome-badge">CORTEX</span>`);
-        expect(html).toContain(`<span class="window-chrome-title">Panel title</span>`);
+        expect(html).toContain(`<div class="report-chart-title">Panel title</div>`);
+        expect(html).toContain(`class="report-chart-card corner-accents"`);
+    });
+
+    it("wears no window costume", () => {
+        const block = chartBlock("bar", { x: "day", y: "count" }, { id: "b5", title: "Panel title" });
+        const html = renderChart(block, derive(block, [{ day: "Mon", count: 1 }]));
+        // A report is a document. The dots, the badge, and the chrome bar make a data card read as an
+        // application window, thus the card carries none of them.
+        expect(html).not.toContain("window-chrome");
+        expect(html).not.toContain("chrome-dot");
+        expect(html).not.toContain("CORTEX");
+        // Each dead class rule leaves the design source with its emitter.
+        expect(DESIGN_CSS).not.toContain("window-chrome");
+        expect(DESIGN_CSS).not.toContain("chrome-dot");
+        expect(DESIGN_CSS).not.toContain("chrome-dots");
+    });
+
+    it("gives the card the square corners and no hover raise", () => {
+        // The corner-accent card is the one geometry of a data card. A border radius on the chart, or a
+        // transform under hover, brings the window costume back through the style sheet.
+        const cardRules = [...DESIGN_CSS.matchAll(/\.report-chart-card[^{]*\{([^}]*)\}/g)].map((match) => match[1]);
+        expect(cardRules.length).toBeGreaterThan(0);
+        for (const body of cardRules) {
+            expect(body).not.toContain("border-radius");
+            expect(body).not.toContain("transform");
+        }
     });
 });
 

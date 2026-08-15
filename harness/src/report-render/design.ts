@@ -115,6 +115,7 @@ export const DESIGN_CSS = `${FONT_FACES}
   --font-sans: "Space Grotesk Variable", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --layout-max: 1600px;
+  --content-max: 1100px;
   --nav-width: 15rem;
 }
 
@@ -177,6 +178,13 @@ img {
   max-width: var(--layout-max);
   padding-left: 24px;
   padding-right: 24px;
+}
+/* The one content column of the page. The container gives the full-bleed gutter, and this column carries
+   every block kind. Thus the prose, the metric grid, the tables, and the charts read at one measure. */
+.report-content {
+  margin-left: auto;
+  margin-right: auto;
+  max-width: var(--content-max);
 }
 
 .report-hero {
@@ -264,11 +272,13 @@ img {
   padding: 20px;
   border-bottom: 1px solid var(--color-border);
 }
+/* The brand is the one link of the page that leaves it. It reads as the brand, not as a link. */
 .report-nav-brand-name {
   font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.08em;
+  text-decoration: none;
   color: var(--color-primary-500);
 }
 .report-nav-list {
@@ -293,6 +303,13 @@ img {
   background-color: var(--color-bg-alt);
   border-left-color: var(--color-primary-500);
 }
+/* The page script adds this class to the link of the section in view. One link carries it at a time. */
+.report-nav-link-active {
+  font-weight: 600;
+  color: var(--color-heading);
+  background-color: var(--color-bg-alt);
+  border-left-color: var(--color-primary-500);
+}
 .report-nav-index {
   flex-shrink: 0;
   width: 16px;
@@ -310,8 +327,8 @@ img {
 }
 
 /* ── Prose and evidence markers ───────────────────────── */
+/* The prose fills the content column. No inner measure caps it, thus a band carries no half-empty side. */
 .report-prose {
-  max-width: 72ch;
   margin-bottom: 16px;
   line-height: 1.7;
   color: var(--color-text);
@@ -410,7 +427,9 @@ img {
 .report-table {
   margin-bottom: 32px;
 }
-.report-table-title {
+/* The title line of a data card. A table and a chart carry the same line, thus one rule serves both. */
+.report-table-title,
+.report-chart-title {
   margin-bottom: 12px;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -478,70 +497,12 @@ img {
   color: var(--color-text-muted);
 }
 
-/* ── Window-chrome chart panel ────────────────────────── */
-/* The chart panel is the one component with rounded corners. */
+/* ── Chart card ───────────────────────────────────────── */
+/* The chart is a data card, thus it takes the square corner-accent form of the table and the figure. */
 .report-chart {
   margin-bottom: 32px;
 }
-.window-chrome {
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  background: var(--color-card);
-  box-shadow: 0 8px 30px -8px rgba(15, 23, 42, 0.08), 0 4px 12px -4px rgba(15, 23, 42, 0.04);
-  transition: transform 0.5s ease, box-shadow 0.5s ease, border-color 0.5s ease;
-}
-.window-chrome:hover {
-  transform: translateY(-4px);
-  border-color: var(--color-border-hover);
-  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.18), 0 12px 24px -8px rgba(15, 23, 42, 0.1);
-}
-.window-chrome-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 16px;
-  background-color: var(--color-bg-alt);
-  border-bottom: 1px solid var(--color-border-subtle);
-}
-.chrome-dots {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.chrome-dot {
-  display: block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background-color: var(--color-border-hover);
-  transition: background-color 0.3s ease;
-}
-.window-chrome:hover .dot-1 {
-  background-color: #fb7185;
-}
-.window-chrome:hover .dot-2 {
-  background-color: #fbbf24;
-}
-.window-chrome:hover .dot-3 {
-  background-color: #4ade80;
-}
-.window-chrome-title {
-  flex: 1 1 auto;
-  text-align: center;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-heading);
-}
-.window-chrome-badge {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  color: var(--color-primary-500);
-}
-.window-chrome-body {
+.report-chart-card {
   padding: 16px;
 }
 /* The chart runtime measures the container. A container with no height shows no chart. */
@@ -550,30 +511,37 @@ img {
   height: 400px;
 }
 
-/* ── Reference list ───────────────────────────────────── */
+/* ── Provenance appendix ──────────────────────────────── */
+/* The appendix is a record of where each value came from. A reader consults it, and a reader does not read
+   it through. Thus it stays smaller and quieter than the body of the report. */
+.report-ref-title {
+  color: var(--color-text-secondary);
+}
 .report-references {
   padding-left: 24px;
   list-style: decimal;
+  color: var(--color-text-muted);
 }
 .report-ref-item {
-  margin-bottom: 8px;
-  font-size: 14px;
-  color: var(--color-text);
+  margin-bottom: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
 }
 .report-ref-kind {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-text-muted);
 }
 .report-ref-path {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-primary-700);
 }
 .report-ref-detail {
-  color: var(--color-text-secondary);
+  color: var(--color-text-muted);
 }
 
 /* ── Section textures ─────────────────────────────────── */
@@ -745,9 +713,6 @@ img {
   .report-footer-title,
   .report-footer-note {
     color: var(--color-text-strong);
-  }
-  .window-chrome {
-    box-shadow: none;
   }
 }`;
 
