@@ -72,4 +72,10 @@ describe("renderNav", () => {
         expect(html).toContain("Overview");
         expect(html).toContain("Results");
     });
+
+    it("links the brand to the Inflexa site", () => {
+        const child: TextBlock = { kind: "text", id: "t", content: { prose: "x" } };
+        const html = renderNav([{ kind: "section", id: "sec-1", title: "Overview", blocks: [child] }]);
+        expect(html).toContain(`<a class="report-nav-brand-name" href="https://inflexa.ai/">inflexa</a>`);
+    });
 });

@@ -5,9 +5,17 @@ import type { Block, CitationBlock, MetricBlock, ReportDocument, TextBlock } fro
 import { ASSETS_DIR, PAGE_ASSETS } from "./assets.js";
 import { DESIGN_CSS } from "./design.js";
 import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "./fixture.js";
-import { CHART_BOOTSTRAP } from "./page.js";
+import { CHART_BOOTSTRAP, SECTION_SPY } from "./page.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
+
+/**
+ * The site of the navigation brand. It is the one reference of the page that names a remote host.
+ *
+ * A brand link is a navigation, and a navigation costs no request. Thus the page still opens with no
+ * network, and the stands-alone gate admits this one value.
+ */
+const BRAND_LINK = "https://inflexa.ai/";
 
 /** One citation reference. A claim binding and a citation binding both admit it. */
 const citation: CitationBlock["binding"] = { kind: "citation", idKind: "pmid", id: "12345", raw: "Doe 2020" };
@@ -111,13 +119,17 @@ describe("the page stands alone", () => {
 
         // The scheme test reads the start of the value. A namespace URI inside a data URI names no host to
         // fetch, thus the test must not read a scheme out of the middle of a value.
-        const remote = references.filter((value) => /^https?:/i.test(value));
+        const remote = references.filter((value) => /^https?:/i.test(value) && value !== BRAND_LINK);
         expect(remote).toEqual([]);
 
         // Each reference resolves inside the page directory: a staged asset, an inline data URI, or an
-        // anchor of the page itself.
-        const foreign = references.filter((value) => !(value.startsWith(`${ASSETS_DIR}/`) || value.startsWith("data:") || value.startsWith("#")));
+        // anchor of the page itself. The brand link is the one exception, and it fetches nothing.
+        const local = (value: string) => value.startsWith(`${ASSETS_DIR}/`) || value.startsWith("data:") || value.startsWith("#") || value === BRAND_LINK;
+        const foreign = references.filter((value) => !local(value));
         expect(foreign).toEqual([]);
+
+        // The one remote value reaches the page one time, thus no second surface names a host.
+        expect(html.split(BRAND_LINK).length - 1).toBe(1);
     });
 
     it("names one manifest entry for each staged asset reference", () => {
@@ -356,6 +368,196 @@ describe("renderReportPage navigation and references", () => {
         expect(html.split(`<li id="ref-`).length - 1).toBe(1);
         // The claim marker and the citation marker point at the same entry.
         expect(html.split(`href="#ref-1"`).length - 1).toBe(2);
+    });
+});
+
+describe("the page identity", () => {
+    const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+
+    it("closes the page with the Inflexa footer note", () => {
+        expect(html).toContain("Powered by Inflexa");
+    });
+
+    it("links the navigation brand to the Inflexa site", () => {
+        const brand = load(html)("a.report-nav-brand-name");
+        expect(brand.length).toBe(1);
+        expect(brand.attr("href")).toBe(BRAND_LINK);
+    });
+
+    it("names the engine on no surface", () => {
+        // The page is the surface that a reader outside the team sees. The engine name is an internal term,
+        // thus no heading, no badge, and no note carries it.
+        expect(html).not.toContain("Cortex");
+        expect(html).not.toContain("CORTEX");
+    });
+});
+
+describe("the one content column", () => {
+    /** A document that carries prose, a table, and a chart. The three kinds must read at one measure. */
+    const columnDocument: ReportDocument = {
+        title: "T",
+        sections: [
+            {
+                kind: "section",
+                id: "s",
+                title: "S",
+                blocks: [
+                    { kind: "text", id: "t", content: { prose: "Prose." } },
+                    { kind: "table", id: "tbl", binding: { kind: "artifact-table", path: "t.csv", hash: "sha256:aaa" } },
+                    {
+                        kind: "chart",
+                        id: "cht",
+                        binding: { kind: "artifact-table", path: "t.csv", hash: "sha256:aaa" },
+                        chartType: "bar",
+                        encoding: { x: "day", y: "count" },
+                    },
+                ],
+            },
+        ],
+    };
+
+    /** One table value for the table block and one for the chart block. */
+    const columnValues: RenderValues = {
+        tbl: { type: "table", rows: [{ day: "Mon", count: 1 }] },
+        cht: { type: "table", rows: [{ day: "Mon", count: 1 }] },
+    };
+
+    it("holds the prose, the table, and the chart inside the one column", () => {
+        const page = load(renderReportPage(columnDocument, columnValues)._unsafeUnwrap());
+        expect(page(".report-content .report-prose").length).toBe(1);
+        expect(page(".report-content .report-table").length).toBe(1);
+        expect(page(".report-content .report-chart").length).toBe(1);
+        // One column sits inside each container, thus one mechanism serves the hero, each band, and the
+        // footer. A second mechanism would let one region drift away from the rest.
+        expect(page(".report-content").length).toBe(page(".report-container").length);
+    });
+
+    it("caps no prose measure below the column width", () => {
+        const proseRules = [...DESIGN_CSS.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/\.report-prose\s*\{([^}]*)\}/g)].map((match) => match[1]);
+        expect(proseRules.length).toBeGreaterThan(0);
+        // An inner measure on the prose alone leaves a half-empty band beside a full-width table.
+        for (const body of proseRules) {
+            expect(body).not.toContain("max-width");
+        }
+        // The width rides one token, thus each region reads the same value.
+        expect(DESIGN_CSS).toMatch(/\.report-content\s*\{[^}]*max-width:\s*var\(--content-max\)/);
+        expect(DESIGN_CSS).toMatch(/--content-max:\s*\d+px/);
+    });
+});
+
+describe("the provenance appendix", () => {
+    /** A document with one claim. The ledger then holds one entry, thus the appendix renders. */
+    const claimDocument: ReportDocument = {
+        title: "T",
+        sections: [{ kind: "section", id: "s", title: "S", blocks: [{ kind: "claim", id: "c1", content: { prose: "A claim." }, bindings: [citation] }] }],
+    };
+
+    it("titles the auto-generated list Data provenance", () => {
+        const html = renderReportPage(claimDocument, {})._unsafeUnwrap();
+        expect(html).toContain("Data provenance");
+        // A reader expects literature under "References". The auto-generated list is provenance, thus no
+        // heading of the page carries that word.
+        expect(html).not.toContain(">References<");
+        expect(load(html)("h2.report-ref-title").length).toBe(1);
+    });
+
+    it("reads quieter than the body of the report", () => {
+        const itemRules = [...DESIGN_CSS.matchAll(/\.report-ref-item\s*\{([^}]*)\}/g)].map((match) => match[1]);
+        const sizes = itemRules.flatMap((body) => [...body.matchAll(/font-size:\s*(\d+)px/g)].map((match) => Number(match[1])));
+        expect(sizes.length).toBeGreaterThan(0);
+        // The body reads at 16px. A reader consults one entry of the appendix from a marker, thus the
+        // appendix reads smaller than the text that sent the reader to it.
+        expect(Math.max(...sizes)).toBeLessThan(16);
+    });
+});
+
+describe("the section scrollspy", () => {
+    /** The class that the spy writes. The design source holds the matching rule under the same name. */
+    const ACTIVE_CLASS = "report-nav-link-active";
+
+    /** One navigation link that records each class name that the script writes. */
+    type FakeLink = { getAttribute: () => string; classList: { add: (name: string) => void; remove: (name: string) => void }; classes: Set<string> };
+
+    /** The result of one spy run: the active links, the intersection driver, and the observed root margin. */
+    type SpyRun = { active: () => string[]; intersect: (visible: boolean[]) => void; rootMargin: string };
+
+    function fakeLink(href: string): FakeLink {
+        const classes = new Set<string>();
+        return {
+            getAttribute: () => href,
+            classList: {
+                add: (name: string) => {
+                    classes.add(name);
+                },
+                remove: (name: string) => {
+                    classes.delete(name);
+                },
+            },
+            classes,
+        };
+    }
+
+    /**
+     * Run the emitted spy over fake page globals. The script hands its callback to the fake observer, thus
+     * the test drives the intersection directly and no real browser is necessary.
+     */
+    function runSpy(ids: string[], hasObserver = true): SpyRun {
+        const links = ids.map((id) => fakeLink(`#${id}`));
+        const sections = ids.map((id) => ({ id }));
+        let callback: ((entries: { target: unknown; isIntersecting: boolean }[]) => void) | undefined;
+        let rootMargin = "";
+        const doc = {
+            readyState: "complete",
+            querySelectorAll: () => links,
+            getElementById: (id: string) => sections[ids.indexOf(id)] ?? null,
+            addEventListener: () => undefined,
+        };
+        const observer = hasObserver
+            ? function (cb: (entries: { target: unknown; isIntersecting: boolean }[]) => void, options: { rootMargin: string }) {
+                  callback = cb;
+                  rootMargin = options.rootMargin;
+                  return { observe: () => undefined };
+              }
+            : undefined;
+        new Function("document", "IntersectionObserver", SECTION_SPY)(doc, observer);
+        return {
+            active: () => links.filter((link) => link.classes.has(ACTIVE_CLASS)).map((link) => link.getAttribute()),
+            intersect: (visible: boolean[]) => callback?.(sections.map((target, index) => ({ target, isIntersecting: visible[index] }))),
+            rootMargin,
+        };
+    }
+
+    it("marks the section nearest the top and marks no other", () => {
+        const run = runSpy(["sec-1", "sec-2", "sec-3"]);
+        run.intersect([false, true, true]);
+        expect(run.active()).toEqual(["#sec-2"]);
+    });
+
+    it("moves the mark when a different section reaches the top", () => {
+        const run = runSpy(["sec-1", "sec-2"]);
+        run.intersect([false, true]);
+        run.intersect([true, true]);
+        expect(run.active()).toEqual(["#sec-1"]);
+    });
+
+    it("shrinks the observation box to the top band of the viewport", () => {
+        const run = runSpy(["sec-1"]);
+        run.intersect([true]);
+        // The negative bottom margin is what keeps one section in the box at a time.
+        expect(run.rootMargin).toMatch(/0px 0px -\d+% 0px/);
+    });
+
+    it("keeps the plain links in a browser with no observer", () => {
+        const run = runSpy(["sec-1", "sec-2"], false);
+        run.intersect([true, false]);
+        // The highlight is decoration, thus its absence costs the reader no navigation.
+        expect(run.active()).toEqual([]);
+    });
+
+    it("rides the page beside the other scripts, with its rule in the design source", () => {
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap();
+        expect(html).toContain(SECTION_SPY);
+        expect(DESIGN_CSS).toContain(`.${ACTIVE_CLASS}`);
     });
 });
 
