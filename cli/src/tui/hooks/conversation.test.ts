@@ -246,6 +246,47 @@ describe("send() drives the adapter + engine", () => {
         expect(tool?.status).toBe("ok");
     });
 
+    // A tool that describes its own result names the outcome on the finish — the page it wrote, the
+    // version it recorded. That fact does not exist at dispatch, so the chip must take the newer line.
+    test("a present finished detail replaces the one the start showed", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            const src = { agentId: "tui-chat", callPath: ["tui-chat"] };
+            void emit({ type: "tool-started", source: src, toolUseId: "t4", name: "preview_report", input: {} });
+            void emit({ type: "tool-finished", source: src, toolUseId: "t4", name: "preview_report", outcome: "ok", detail: "page /w/t4/index.html" });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        expect(tool?.detail).toBe("page /w/t4/index.html");
+        expect(tool?.status).toBe("ok");
+    });
+
+    // The finish can only improve the chip. A tool that describes no result finishes with no detail,
+    // and blanking the started line there would lose the only description the call ever had.
+    test("an absent finished detail never blanks the one the start showed", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            const src = { agentId: "tui-chat", callPath: ["tui-chat"] };
+            void emit({ type: "tool-started", source: src, toolUseId: "t5", name: "read_file", input: {}, detail: "output/summary.md" });
+            void emit({ type: "tool-finished", source: src, toolUseId: "t5", name: "read_file", outcome: "ok" });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        expect(tool?.detail).toBe("output/summary.md");
+    });
+
+    // An error keeps the started detail by construction: the harness runs no result hook on a failed
+    // call. The chip must show that line beside the failure, and not fall back to the bare tool name.
+    test("a failed call keeps the detail its start showed", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            const src = { agentId: "tui-chat", callPath: ["tui-chat"] };
+            void emit({ type: "tool-started", source: src, toolUseId: "t6", name: "add_block", input: {}, detail: 'add section "Summary"' });
+            void emit({ type: "tool-finished", source: src, toolUseId: "t6", name: "add_block", outcome: "error", detail: 'add section "Summary"' });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        expect(tool?.detail).toBe('add section "Summary"');
+        expect(tool?.status).toBe("error");
+    });
+
     test("a call from a tool with no hook carries no detail", async () => {
         const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
             const src = { agentId: "tui-chat", callPath: ["tui-chat"] };

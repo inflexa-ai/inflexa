@@ -479,7 +479,10 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
                 // Three outcomes get three words. `denied` is the user's own refusal of an approval, so
                 // printing it as `error` would report their decision as a fault of the tool.
                 const outcome = event.outcome === "error" ? "error" : event.outcome === "denied" ? "denied" : `done${dur}`;
-                sink.out(`  [tool] ${name} ${outcome}\n`);
+                // A tool that describes its own result names the outcome here — the page it wrote, the
+                // version it recorded — so the finished line prints what the running line could not know.
+                const detail = event.detail;
+                sink.out(`  [tool] ${name}${detail === undefined ? "" : ` ${detail}`} ${outcome}\n`);
                 return;
             }
             default: {

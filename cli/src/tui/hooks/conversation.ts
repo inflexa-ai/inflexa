@@ -346,10 +346,17 @@ function updateToolPart(toolUseId: string, name: string, status: "ok" | "error" 
                 // `activity` is dropped, not carried: it described work in flight, and a finished
                 // call has an outcome instead. Leaving it would strand "planner: bash" under a chip
                 // that already says `ok · 14ms`.
-                // `detail` is NOT overwritten from the finished event: the started event already set the
-                // identical value (the loop computes it once per call), so rewriting it would only risk
-                // blanking a good detail if a finish ever arrived without one.
-                msg.parts[idx] = { ...(msg.parts[idx] as ToolCallPart), status, durationMs, activity: undefined };
+                // `detail` is applied only when the finish CARRIES one. A tool that describes its own
+                // result names the outcome there — `page …`, `version …` — and that line supersedes
+                // the one the start showed. An absent detail leaves the started line standing, so a
+                // finish can only ever improve the chip and never blank it.
+                msg.parts[idx] = {
+                    ...(msg.parts[idx] as ToolCallPart),
+                    status,
+                    durationMs,
+                    activity: undefined,
+                    ...(detail !== undefined ? { detail } : {}),
+                };
             } else {
                 msg.parts.push({
                     id: toolUseId,
