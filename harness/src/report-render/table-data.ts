@@ -31,16 +31,20 @@ export const TABLE_DATA_GLOBAL = "__REPORT_TABLES";
 /** One cell of an encoded row: a raw value, a dictionary index, or `null` for a cell that the row lacks. */
 export type EncodedCell = string | number | null;
 
+/** The filter that a column takes on the page: the number filter of a magnitude, or the text filter of a name. */
+export type ColumnFilter = "number" | "text";
+
 /**
- * How one column shows on the page: the header label, the number kind of the column, and the bound of a
- * stored zero where the column holds one.
+ * How one column shows on the page: the header label, the number kind of the column, the filter of the
+ * column, and the bound of a stored zero where the column holds one.
  *
- * The server resolves each of the three, and the page reads them. Thus the declaration, the token guess,
- * and the read of a whole column stay on the server, and the page formats alone.
+ * The server resolves each of the four, and the page reads them. Thus the declaration, the token guess, and
+ * the read of a whole column stay on the server, and the page formats and filters alone.
  */
 export interface ColumnDisplay {
     label: string;
     kind: NumberKind;
+    filter: ColumnFilter;
     bound?: number;
 }
 

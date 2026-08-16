@@ -14,7 +14,7 @@ The payload MUST carry a display member: the resolved header label of each colum
 
 The grid theme MUST build from the design tokens, thus the grid reads as the page does. The per-column filters and the header sort are the one filter surface, and no separate filter input renders. The full raw value of a formatted cell rides the cell tooltip, exactly as the `title` attribute carried it.
 
-The renderer MUST trim a percent-delimited display name to its first segment, with the full text on the cell tooltip. The print form MUST take the grid's print layout, thus every bounded row prints, and the row bound keeps the print sane. A grid mount whose payload the registry does not hold keeps the header card and the download link, and the boot skips it.
+The renderer MUST trim a percent-delimited display name to its first segment, with the full text on the cell tooltip. The print form MUST take the grid's print layout, up to a stated print cap. A larger table prints its first rows, and a printed line names the truncation and the download. A grid mount whose payload the registry does not hold keeps the header card and the download link, and the boot skips it.
 
 #### Scenario: The grid renders the bounded table
 
@@ -31,10 +31,15 @@ The renderer MUST trim a percent-delimited display name to its first segment, wi
 - **WHEN** the page renders any table block
 - **THEN** no standalone filter input sits above the grid, and the column filters serve
 
-#### Scenario: The print shows every bounded row
+#### Scenario: The print shows the bounded rows
 
-- **WHEN** the page prints a table block
-- **THEN** the print form holds every bounded row, and no scroll viewport clips one
+- **WHEN** the page prints a table block at or under the print cap
+- **THEN** the print form holds every row, and no scroll viewport clips one
+
+#### Scenario: A giant table prints with a stated truncation
+
+- **WHEN** the page prints a table block over the print cap
+- **THEN** the print holds the first rows, and a printed line names the truncation and the download
 
 #### Scenario: A missing payload keeps the card honest
 

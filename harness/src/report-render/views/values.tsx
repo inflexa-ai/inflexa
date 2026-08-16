@@ -28,9 +28,9 @@ import { declaredForColumn } from "../../contracts/report-reference.js";
 import type { CitationRecord } from "../../report-model/reference-resolver.js";
 import { stagedSource, tableSidecarName } from "../assets.js";
 import { LadderMarker } from "./references-view.js";
-import { formatNumberCell, selectColumnKind, selectNumberKind, smallestPositiveValue } from "../number-format.js";
+import { formatNumberCell, formatTableCell, holdsANumber, selectColumnKind, selectNumberKind, smallestPositiveValue } from "../number-format.js";
 import { citationKeyOf, type ReferenceLedger } from "../references.js";
-import type { ColumnDisplay } from "../table-data.js";
+import type { ColumnDisplay, ColumnFilter } from "../table-data.js";
 import type { RenderValue } from "../types.js";
 
 /**
@@ -40,8 +40,28 @@ import type { RenderValue } from "../types.js";
  */
 export const GRID_MOUNT_ATTRIBUTE = "data-report-grid";
 
-/** The label of the download link of a table card. It names what the reader gets, which is the whole table. */
-const DOWNLOAD_LABEL = "Download the full table";
+/**
+ * The class of the print note of a table card.
+ *
+ * The note is empty on the screen. The page script writes the bound of a truncated print form into it at
+ * print time, and it clears the text after. The page script reads the same class, thus the card and the
+ * boot cannot disagree over a rename.
+ */
+export const GRID_NOTE_CLASS = "report-grid-note";
+
+/**
+ * The class of the row count of a table card.
+ *
+ * The renderer writes the count of the resolved rows, and the page script writes it again after each filter.
+ * The page script reads the same class, thus the card and the boot cannot disagree over a rename.
+ */
+export const GRID_COUNT_CLASS = "report-table-count";
+
+/** The word that follows a row count, in the status line of the card and in the print note alike. */
+export const GRID_ROWS_WORD = "rows";
+
+/** The label of the download button of a table card, without the format of the file. */
+const DOWNLOAD_LABEL = "Download";
 
 /** The scalar value that a metric renders from. */
 type ScalarValue = Extract<RenderValue, { type: "scalar" }>;
@@ -115,25 +135,61 @@ function columnLabel(column: string, labels: TableBlock["binding"]["columnLabels
 /**
  * The display of each column of a table, in the column order of the header.
  *
- * The renderer resolves the label, the number kind, and the bound of a stored zero one time for each
- * column, and the data asset ships them. Thus the page formats a cell with no read of a declaration and no
- * second pass over a column.
+ * The renderer resolves the label, the number kind, the filter, and the bound of a stored zero one time for
+ * each column, and the data asset ships them. Thus the page formats a cell with no read of a declaration
+ * and no second pass over a column.
  *
- * A probability column carries the smallest positive value of its own rows as the bound. The read runs one
- * time for each such column, thus a wide table reads no column twice. A column with no positive value takes
- * no bound, and its zero then reads as the near-zero form.
+ * The filter reads the cells and not the kind. A column of gene names carries no number, thus it takes the
+ * text filter and a reader finds a gene by its name. A column where one cell parses takes the number filter.
+ *
+ * A probability column carries the smallest positive value of its own rows as the bound. A column with no
+ * positive value takes no bound, and its zero then reads as the near-zero form.
  */
 export function tableDisplay(block: TableBlock, value: TableValue, columns: readonly string[]): ColumnDisplay[] {
     const binding = block.binding;
     return columns.map((column) => {
+        // One pass over the column serves the filter and the bound alike, thus a wide table reads no column
+        // twice.
+        const cells = value.rows.map((row) => row[column]);
         const kind = selectColumnKind(column, declaredForColumn(binding.columnMeanings, column));
         const label = columnLabel(column, binding.columnLabels);
+        const filter: ColumnFilter = holdsANumber(cells) ? "number" : "text";
         if (kind !== "scientific") {
-            return { label, kind };
+            return { label, kind, filter };
         }
-        const bound = smallestPositiveValue(value.rows.map((row) => row[column]));
-        return bound === undefined ? { label, kind } : { label, kind, bound };
+        const bound = smallestPositiveValue(cells);
+        return bound === undefined ? { label, kind, filter } : { label, kind, filter, bound };
     });
+}
+
+/**
+ * The label of the download button: the word and the format of the pinned file, for example `Download CSV`.
+ *
+ * The extension of the path names the format, thus the label states what the reader gets. A path with no
+ * extension gives the word alone, because a made-up format would be a claim about bytes that nobody read.
+ */
+function downloadLabel(path: string): string {
+    const base = path.slice(path.lastIndexOf("/") + 1);
+    const dot = base.lastIndexOf(".");
+    const format = dot > 0 ? base.slice(dot + 1).toUpperCase() : "";
+    return format === "" ? DOWNLOAD_LABEL : `${DOWNLOAD_LABEL} ${format}`;
+}
+
+/**
+ * The row bound of a binding as text, for example `top 20 by padj`, or `undefined` where the binding carries
+ * none.
+ *
+ * The bound is what the resolution kept, thus the status line states it beside the count and a reader never
+ * reads a cut table as the whole artifact. The rank direction names the end that the bound kept.
+ */
+function boundText(binding: TableBlock["binding"]): string | undefined {
+    const bound = binding.rowBound;
+    if (bound === undefined) {
+        return undefined;
+    }
+    const end = bound.order === "asc" ? "lowest" : "top";
+    const count = formatTableCell(bound.count, "compact-scientific");
+    return `${end} ${count} by ${columnLabel(bound.column, binding.columnLabels)}`;
 }
 
 /**
@@ -144,23 +200,38 @@ export function tableDisplay(block: TableBlock, value: TableValue, columns: read
  * page script builds the grid over the payload that registers under the block id.
  *
  * The mount names its block in the mount attribute. A mount whose block the registry does not hold stays
- * empty, thus the card keeps its title and its download and the page throws nothing.
+ * empty, thus the card keeps its title, its status, and its download, and the page throws nothing.
+ *
+ * The footer holds one status line and the download button. The status states the count of the resolved
+ * rows, and the row bound of the binding beside it. The page script writes the count again after each
+ * filter, thus a reader of a narrowed table sees what the grid shows and what the table holds.
+ *
+ * The note under the status stays empty on the screen. A print of a table that passes the print bound writes
+ * the bound into it, thus the paper states what it shows and what it leaves out.
  *
  * The download names the staged copy of the pinned artifact. The link is relative and the browser saves
  * the file, thus the page fetches nothing when it opens and the reader still gets the whole table.
  */
-export function renderTable(block: TableBlock): string {
+export function renderTable(block: TableBlock, rowCount: number): string {
     const binding = block.binding;
     const download = tableSidecarName(binding.hash, binding.path);
+    const bound = boundText(binding);
     return String(
         <div class="report-table">
             {block.title !== undefined ? <div class="report-table-title">{block.title}</div> : null}
             <div class="corner-accents">
                 <div class="report-grid" {...{ [GRID_MOUNT_ATTRIBUTE]: block.id }}></div>
                 <div class="report-table-footer">
-                    <a class="report-table-download" href={stagedSource(download)} download={download}>
-                        {DOWNLOAD_LABEL}
-                    </a>
+                    <div class="report-table-footer-row">
+                        <span class="report-table-status">
+                            <span class={GRID_COUNT_CLASS}>{`${formatTableCell(rowCount, "compact-scientific")} ${GRID_ROWS_WORD}`}</span>
+                            {bound !== undefined ? <span class="report-table-bound">{bound}</span> : null}
+                        </span>
+                        <a class="report-table-download" href={stagedSource(download)} download={download}>
+                            {downloadLabel(binding.path)}
+                        </a>
+                    </div>
+                    <div class={GRID_NOTE_CLASS}></div>
                 </div>
             </div>
             {block.caption !== undefined ? <p class="report-caption">{block.caption}</p> : null}

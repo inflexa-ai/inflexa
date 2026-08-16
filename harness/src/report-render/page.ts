@@ -12,6 +12,7 @@ import {
     GRID_HEADER_BORDER_PX,
     GRID_HEADER_HEIGHT_PX,
     GRID_MIN_COLUMN_WIDTH_PX,
+    GRID_PRINT_ROW_CAP,
     GRID_ROW_HEIGHT_PX,
     GRID_THEME_PARAMS,
     GRID_TOOLTIP_DELAY_MS,
@@ -19,17 +20,26 @@ import {
 } from "./design.js";
 import { scriptJson } from "./script-json.js";
 import { TABLE_DATA_GLOBAL } from "./table-data.js";
-import { GRID_MOUNT_ATTRIBUTE } from "./views/values.js";
+import { GRID_COUNT_CLASS, GRID_MOUNT_ATTRIBUTE, GRID_NOTE_CLASS, GRID_ROWS_WORD } from "./views/values.js";
 
 /**
- * The head references of the staged assets. The page loads the chart runtime and the grid runtime from the
- * sibling assets directory, thus the head names no remote host. The manifest gives each staged name, thus
- * the tag and the stage step of the caller cannot disagree.
+ * The head reference of the chart runtime. The page loads it from the sibling assets directory, thus the
+ * head names no remote host. The manifest gives the staged name, thus the tag and the stage step of the
+ * caller cannot disagree.
  *
- * Each of the two is a classic script. A `file://` page refuses a module request, thus a classic script is
- * the one form that loads beside the page.
+ * The tag is a classic script. A `file://` page refuses a module request, thus a classic script is the one
+ * form that loads beside the page.
  */
-export const ASSET_HEAD = `<script src="${assetSource(ECHARTS_ASSET)}"></script><script src="${assetSource(AG_GRID_ASSET)}"></script>`;
+export const ASSET_HEAD = `<script src="${assetSource(ECHARTS_ASSET)}"></script>`;
+
+/**
+ * The head reference of the grid runtime.
+ *
+ * The bundle weighs about two megabytes, and a page with no table has nothing to build. Thus the skeleton
+ * writes this tag only for a page that carries table data, and the manifest still stages the file for the
+ * whole directory.
+ */
+export const GRID_ASSET_HEAD = `<script src="${assetSource(AG_GRID_ASSET)}"></script>`;
 
 /**
  * The name of the readiness event, and the name of the window sentinel that guards a late listener. The
@@ -520,15 +530,20 @@ function trimZeros(text) {
  * The column definition takes the label, the filter, and the two readings of a cell. The formatter gives the
  * shown text under the kind of the column, and the tooltip gives the raw cell where the shown text differs
  * from it. A value getter reads the own key of the row, because the field of a column reads a point as a
- * path and a column name can hold one.
+ * path and a column name can hold one. A number column also parses the cell for its filter, thus a column
+ * of numeric text compares as a number and a sentinel matches nothing.
  *
  * The row model is the client-side model. It renders the visible slice alone, thus a table of many thousands
  * of rows costs the DOM a screen of rows. The mount takes the height of its rows, up to the visible count,
- * thus a short table leaves no empty box under it.
+ * thus a short table leaves no empty box under it. A wide table adds the horizontal scroll bar that the
+ * host paints, measured at the first data render, thus the bar covers no row.
+ *
+ * The status of the card reads the model of the grid. The grid gives a model event after each filter and
+ * each sort, thus the count states what the reader sees against what the table holds.
  *
  * The print hooks switch the grid to its print layout. That layout lays every row out at once and it holds
- * no scroll viewport, thus each bounded row reaches the paper. The row bound of the binding is what keeps
- * that page count sane.
+ * no scroll viewport, thus each row of the print form reaches the paper. The print stops at the print bound,
+ * and the note of the card then states what the paper shows and where the whole table is.
  *
  * One grid builds inside a guard. A malformed payload is exactly the fault that a look must diagnose, thus
  * it must never stop a sibling grid and it must never throw out of the page.
@@ -564,20 +579,88 @@ export const GRID_BOOTSTRAP = `(function () {
         var raw = String(params.value);
         return raw === formatCell(params.value, kind, bound) ? "" : raw;
       },
-      filter: kind === "identifier" ? "agTextColumnFilter" : "agNumberColumnFilter"
+      filter: display.filter === "number" ? "agNumberColumnFilter" : "agTextColumnFilter"
     };
+    if (display.filter === "number") {
+      // The number filter compares numbers. A cell of numeric text would compare as text under it, thus the
+      // filter reads the parsed value and a cell that parses to nothing matches no comparison.
+      column.filterValueGetter = function (params) {
+        var cell = params.data ? params.data[name] : undefined;
+        var parsed = cell === undefined || cell === null || cell === "" ? NaN : Number(cell);
+        return isFinite(parsed) ? parsed : null;
+      };
+    }
     if (label !== name) {
       column.headerTooltip = name;
     }
     return column;
   }
-  function bindPrint(api, mount, height) {
+  function scrollBarHeight(mount) {
+    // The grid lays its horizontal bar in a strip of its own under the rows, and that strip takes its space
+    // from the box of the mount. Thus the height of the strip is what the last row loses, and an overlay bar
+    // leaves the strip at zero. A grid that names the strip differently gives none, and the box then holds
+    // the rows alone.
+    var strip = mount.querySelector(".ag-body-horizontal-scroll");
+    return strip ? strip.offsetHeight : 0;
+  }
+  function fitToScrollBar(mount, rowSpace) {
+    var height = rowSpace + scrollBarHeight(mount) + "px";
+    if (mount.style.height !== height) {
+      mount.style.height = height;
+    }
+  }
+  function onFirstRender(mount, rowSpace) {
+    // The grid lays its columns out with the first data render. A measure before that render finds no
+    // viewport and no bar, thus the fit waits for the grid to say that the rows are on the page.
+    return function () {
+      fitToScrollBar(mount, rowSpace);
+    };
+  }
+  function statusText(shown, total) {
+    var whole = formatCell(total, "compact-scientific") + " ${GRID_ROWS_WORD}";
+    return shown === total ? whole : formatCell(shown, "compact-scientific") + " of " + whole;
+  }
+  function onModelUpdate(count, total) {
+    // The grid gives this event after each filter and each sort, thus the status states what the reader
+    // sees against what the table holds.
+    return function (params) {
+      if (count) {
+        count.textContent = statusText(params.api.getDisplayedRowCount(), total);
+      }
+    };
+  }
+  function printNote(total) {
+    return (
+      "The print shows the first " +
+      formatCell(${GRID_PRINT_ROW_CAP}, "compact-scientific") +
+      " of " +
+      formatCell(total, "compact-scientific") +
+      " ${GRID_ROWS_WORD}. The full table rides the download."
+    );
+  }
+  function bindPrint(api, mount, note, rows) {
+    var capped = rows.length > ${GRID_PRINT_ROW_CAP};
+    var height = "";
     window.addEventListener("beforeprint", function () {
+      // The height of the screen form is whatever the fit left, thus the restore reads it at print time.
+      height = mount.style.height;
       mount.style.height = "auto";
+      if (capped) {
+        api.setGridOption("rowData", rows.slice(0, ${GRID_PRINT_ROW_CAP}));
+        if (note) {
+          note.textContent = printNote(rows.length);
+        }
+      }
       api.setGridOption("domLayout", "print");
     });
     window.addEventListener("afterprint", function () {
       api.setGridOption("domLayout", "normal");
+      if (capped) {
+        api.setGridOption("rowData", rows);
+        if (note) {
+          note.textContent = "";
+        }
+      }
       mount.style.height = height;
     });
   }
@@ -588,6 +671,9 @@ export const GRID_BOOTSTRAP = `(function () {
     if (!payload || !payload.columns || !payload.display) {
       continue;
     }
+    var card = mount.parentNode;
+    var note = card ? card.querySelector(".${GRID_NOTE_CLASS}") : null;
+    var count = card ? card.querySelector(".${GRID_COUNT_CLASS}") : null;
     try {
       var columns = [];
       for (var c = 0; c < payload.columns.length; c++) {
@@ -595,22 +681,21 @@ export const GRID_BOOTSTRAP = `(function () {
       }
       var rows = payload.rows || [];
       var shown = rows.length < ${GRID_VISIBLE_ROWS} ? rows.length : ${GRID_VISIBLE_ROWS};
-      var height = ${GRID_HEADER_HEIGHT_PX + GRID_HEADER_BORDER_PX} + shown * ${GRID_ROW_HEIGHT_PX} + "px";
-      mount.style.height = height;
-      bindPrint(
-        agGrid.createGrid(mount, {
-          theme: theme,
-          columnDefs: columns,
-          rowData: rows,
-          defaultColDef: { sortable: true, resizable: true, flex: 1, minWidth: ${GRID_MIN_COLUMN_WIDTH_PX} },
-          suppressCellFocus: true,
-          // The tooltip carries the raw value of a shown cell. A reader hovers to read that value, thus the
-          // delay is short and the value arrives while the pointer is still on the cell.
-          tooltipShowDelay: ${GRID_TOOLTIP_DELAY_MS}
-        }),
-        mount,
-        height
-      );
+      var rowSpace = ${GRID_HEADER_HEIGHT_PX + GRID_HEADER_BORDER_PX} + shown * ${GRID_ROW_HEIGHT_PX};
+      mount.style.height = rowSpace + "px";
+      var api = agGrid.createGrid(mount, {
+        theme: theme,
+        columnDefs: columns,
+        rowData: rows,
+        defaultColDef: { sortable: true, resizable: true, flex: 1, minWidth: ${GRID_MIN_COLUMN_WIDTH_PX} },
+        suppressCellFocus: true,
+        // The tooltip carries the raw value of a shown cell. A reader hovers to read that value, thus the
+        // delay is short and the value arrives while the pointer is still on the cell.
+        tooltipShowDelay: ${GRID_TOOLTIP_DELAY_MS},
+        onFirstDataRendered: onFirstRender(mount, rowSpace),
+        onModelUpdated: onModelUpdate(count, rows.length)
+      });
+      bindPrint(api, mount, note, rows);
     } catch (cause) {
       console.error("grid boot failed for " + id + ": " + (cause && cause.message ? cause.message : cause));
     }

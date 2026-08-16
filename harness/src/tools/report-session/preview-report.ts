@@ -30,9 +30,7 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
-import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { extname, join } from "node:path";
 import { z } from "zod";
 
@@ -47,6 +45,7 @@ import { finishDraft, type FinishGap } from "../../report-model/draft-finish.js"
 import type { ReferenceResolver, ReportSnapshot, ResolvedValue } from "../../report-model/reference-resolver.js";
 import { resolveDocumentReferences, type ResolutionFailure } from "../../report-model/validate.js";
 import { bridgeValues, type BlockResolution, type BridgeMismatch, type ResolvedFile } from "../../report-render/value-bridge.js";
+import { resolvePageAssetFromInstallation } from "../../report-render/asset-lookup.js";
 import { ASSETS_DIR, PAGE_ASSETS, tableSidecarName } from "../../report-render/assets.js";
 import { renderReportPage } from "../../report-render/render.js";
 import type { DataAsset } from "../../report-render/table-data.js";
@@ -118,34 +117,6 @@ function assetFileName(file: ResolvedFile): string {
 function figureSourcePolicy(file: ResolvedFile): string {
     return `assets/${assetFileName(file)}`;
 }
-
-/**
- * The resolver of a package source. A manifest entry names a module specifier, and the resolution reads
- * the installation of the harness. Thus the staged bytes are the bytes of the pinned version.
- */
-const moduleResolver = createRequire(import.meta.url);
-
-/**
- * The default asset lookup: the module resolution of the installation of the harness.
- *
- * A package that publishes an `exports` map refuses a subpath that the map does not name, and a browser
- * bundle beside the module entry is such a subpath. The fallback reads the specifier as a path under each
- * candidate `node_modules` directory of the resolution. Thus a bundle that the map hides still stages, and
- * a specifier that names no file still fails with the resolution error of the package.
- */
-export const resolvePageAssetFromInstallation: ResolvePageAsset = (specifier) => {
-    try {
-        return moduleResolver.resolve(specifier);
-    } catch (cause) {
-        for (const directory of moduleResolver.resolve.paths(specifier) ?? []) {
-            const candidate = join(directory, specifier);
-            if (existsSync(candidate)) {
-                return candidate;
-            }
-        }
-        throw cause;
-    }
-};
 
 /**
  * Pair each block with the resolved value of its binding, in document order.

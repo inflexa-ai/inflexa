@@ -19,7 +19,7 @@
 
 import { raw } from "hono/html";
 
-import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER, GRID_BOOTSTRAP, SECTION_SPY, TABLE_DATA_DECODER } from "../page.js";
+import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER, GRID_ASSET_HEAD, GRID_BOOTSTRAP, SECTION_SPY, TABLE_DATA_DECODER } from "../page.js";
 import { stagedSource } from "../assets.js";
 import { DESIGN_CSS, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
 import type { DataAsset } from "../table-data.js";
@@ -108,7 +108,7 @@ export function renderReferenceSection(ledger: ReferenceLedger, index: number, r
  *
  * Each data asset rides a classic `script` tag at the end of the body, and the decoder runs after the last
  * of them. Thus every payload is registered before any reader looks. A table block always gives one data
- * asset, thus a page with no asset carries no tag, no decoder, and no grid boot.
+ * asset, thus a page with no asset carries no tag, no decoder, no grid runtime, and no grid boot.
  */
 export function assemblePage(title: string, nav: string, content: string, references: string, dataAssets: readonly DataAsset[] = []): string {
     return (
@@ -120,6 +120,7 @@ export function assemblePage(title: string, nav: string, content: string, refere
                     <meta name="viewport" content="width=device-width, initial-scale=1" />
                     <title>{title}</title>
                     {raw(ASSET_HEAD)}
+                    {dataAssets.length > 0 ? raw(GRID_ASSET_HEAD) : null}
                     <style>{raw(DESIGN_CSS)}</style>
                 </head>
                 <body>

@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { ASSETS_DIR, PAGE_ASSETS } from "../src/report-render/assets.js";
 import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "../src/report-render/fixture.js";
 import { renderReportPage } from "../src/report-render/render.js";
-import { resolvePageAssetFromInstallation } from "../src/tools/report-session/preview-report.js";
+import { resolvePageAssetFromInstallation } from "../src/report-render/asset-lookup.js";
 
 const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES);
 if (rendered.isErr()) {
@@ -28,8 +28,8 @@ if (rendered.isErr()) {
 const pageDir = join(tmpdir(), "inflexa-report-fixture");
 const assetsDir = join(pageDir, ASSETS_DIR);
 await mkdir(assetsDir, { recursive: true });
-// The fixture stages what the preview stages. Thus one lookup answers for both, and a manifest entry that
-// the preview resolves cannot be an entry that the fixture page misses.
+// The fixture stages what the preview stages, because one lookup answers for both. Thus a manifest entry
+// that the preview resolves cannot be an entry that the fixture page misses.
 for (const asset of PAGE_ASSETS) {
     await copyFile(resolvePageAssetFromInstallation(asset.specifier), join(assetsDir, asset.file));
 }
