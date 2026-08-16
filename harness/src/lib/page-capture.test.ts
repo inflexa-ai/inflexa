@@ -136,14 +136,18 @@ describe("the degraded capture", () => {
 
     it("propagates the fault when the window bitmap also fails", async () => {
         const recorder = makeRecorder();
+        const refusedFullPage = new Error("the compositor refused the bitmap");
         restoreConnector = setBrowserConnector(async () =>
-            makeFakeBrowser(recorder, { failFullPage: new Error("the compositor refused the bitmap"), failViewport: new Error("the browser is broken") }),
+            makeFakeBrowser(recorder, { failFullPage: refusedFullPage, failViewport: new Error("the browser is broken") }),
         );
 
         const capture = capturePage({ browserUrl: "http://capture-broken.test:9222" }, "http://page.test/report");
 
         // A window bitmap that also fails names a broken browser, thus the capture keeps its throw protocol.
         await expect(capture).rejects.toThrow("the browser is broken");
+        // The report of a dead look names the second refusal, thus the first one rides on it as the cause.
+        const thrown = await capture.catch((cause: unknown) => cause);
+        expect((thrown as Error).cause).toBe(refusedFullPage);
         expect(recorder.shots).toEqual([{ encoding: "base64", fullPage: true }, { encoding: "base64" }]);
     });
 });

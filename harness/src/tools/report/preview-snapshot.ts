@@ -38,6 +38,8 @@ type PreviewSnapshotOutput =
     | {
           ok: true;
           screenshotBase64: string;
+          /** What the screenshot holds: the whole page, or the top window alone when the full page failed. */
+          coverage: "full" | "viewport";
           consoleErrors: string[];
           failedRequests: Array<{ url: string; reason: string }>;
       };
@@ -118,6 +120,7 @@ export function createPreviewSnapshotTool(state: PreviewSnapshotToolState): Tool
                 return ok({
                     ok: true as const,
                     screenshotBase64: captured.screenshotBase64,
+                    coverage: captured.coverage,
                     consoleErrors: captured.consoleErrors,
                     failedRequests: captured.failedRequests,
                 });
