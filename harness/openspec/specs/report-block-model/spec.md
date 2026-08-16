@@ -94,6 +94,8 @@ A chart block MUST carry either the quick path or the composition, and never bot
 
 The annotations are typed members. A reference line names an axis and a constant. A reference band names an axis and two constants. Point labels name a rank rule over a named column, with a bounded count. The chart type enum holds the seven base types and the presets `volcano`, `manhattan`, `ma`, and `km`.
 
+The bar MUST admit an optional orientation: `vertical`, the default, and `horizontal`. The quick path carries the orientation beside the chart type, and the composition carries it on the bar series form. The channels keep their data meaning in both orientations: `x` names the category column, and `y` names the value column. An orientation beside a quick-path type that is not a bar is an authoring fault.
+
 The grammar MUST keep the fabrication holes unrepresentable. No member carries a data literal, and no member carries script text. The structural tier MUST refuse a grammar column that the bound table does not hold.
 
 #### Scenario: The quick path and the composition exclude each other
@@ -115,6 +117,18 @@ The grammar MUST keep the fabrication holes unrepresentable. No member carries a
 #### Scenario: A preset parses on the quick path
 - **WHEN** a chart block carries the `volcano` type with an effect column, a p column, and a label column
 - **THEN** the block parses on the quick path
+
+#### Scenario: A horizontal bar validates
+- **WHEN** the author binds a quick-path `bar` with the `horizontal` orientation
+- **THEN** the block validates, and the orientation rides the stored document
+
+#### Scenario: An orientation on a non-bar refuses
+- **WHEN** the author states an orientation beside the `line` chart type
+- **THEN** the render refuses with a problem that names the fault
+
+#### Scenario: An absent orientation stays vertical
+- **WHEN** a stored bar block carries no orientation
+- **THEN** the block validates, and the chart renders exactly as before
 
 ### Requirement: Each evidentiary kind carries a binding field
 

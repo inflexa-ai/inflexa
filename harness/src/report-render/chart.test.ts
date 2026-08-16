@@ -12,14 +12,22 @@ type ChartType = NonNullable<ChartBlock["chartType"]>;
 /** The declared display labels of a binding, keyed by the raw column name. */
 type Labels = ChartBlock["binding"]["columnLabels"];
 
+/** The arrangement of a bar, as the quick path states it. */
+type Orientation = ChartBlock["orientation"];
+
 /** Build a chart block. The binding declares a label only where a test states one. */
-function chartBlock(chartType: ChartType, encoding: Encoding, extra: { id?: string; title?: string; caption?: string; labels?: Labels } = {}): ChartBlock {
+function chartBlock(
+    chartType: ChartType,
+    encoding: Encoding,
+    extra: { id?: string; title?: string; caption?: string; labels?: Labels; orientation?: Orientation } = {},
+): ChartBlock {
     return {
         kind: "chart",
         id: extra.id ?? "c1",
         binding: { kind: "artifact-table", path: "table.csv", hash: "sha256:00", ...(extra.labels !== undefined ? { columnLabels: extra.labels } : {}) },
         chartType,
         encoding,
+        ...(extra.orientation !== undefined ? { orientation: extra.orientation } : {}),
         ...(extra.title !== undefined ? { title: extra.title } : {}),
         ...(extra.caption !== undefined ? { caption: extra.caption } : {}),
     };
@@ -109,6 +117,170 @@ describe("deriveChartOption bar", () => {
         const second = derive(block, rows);
         expect(first).toEqual(second);
         expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+    });
+});
+
+describe("the bar orientation", () => {
+    /** The GSEA summary of the session: a long set name, and the enrichment score beside it. */
+    const nesRows: ChartRow[] = [
+        { set: "HALLMARK_HYPOXIA", nes: 2.41 },
+        { set: "HALLMARK_G2M_CHECKPOINT", nes: -1.74 },
+        { set: "HALLMARK_GLYCOLYSIS", nes: 2.18 },
+    ];
+
+    it("renders the category on y and the value on x, with every label", () => {
+        const option = derive(chartBlock("bar", { x: "set", y: "nes" }, { orientation: "horizontal" }), nesRows);
+        const xAxis = asObj(option.xAxis);
+        const yAxis = asObj(option.yAxis);
+        expect(yAxis.type).toBe("category");
+        expect(yAxis.data).toEqual(["HALLMARK_HYPOXIA", "HALLMARK_G2M_CHECKPOINT", "HALLMARK_GLYCOLYSIS"]);
+        expect(xAxis.type).toBe("value");
+        // The long names are the reason for the arrangement, thus no label of the category axis drops.
+        expect(asObj(yAxis.axisLabel).interval).toBe(0);
+        // The rotation is an x-axis rule, thus a name up the y axis reads level.
+        expect("rotate" in asObj(yAxis.axisLabel)).toBe(false);
+    });
+
+    it("leads each pair with the value, because the runtime reads the first member on x", () => {
+        const option = derive(chartBlock("bar", { x: "set", y: "nes" }, { orientation: "horizontal" }), nesRows);
+        expect(asObj(asArr(option.series)[0]).data).toEqual([
+            [2.41, "HALLMARK_HYPOXIA"],
+            [-1.74, "HALLMARK_G2M_CHECKPOINT"],
+            [2.18, "HALLMARK_GLYCOLYSIS"],
+        ]);
+    });
+
+    it("lands the title of each column on the axis that draws it", () => {
+        const option = derive(
+            chartBlock("bar", { x: "set", y: "nes" }, { orientation: "horizontal", labels: { set: "Gene set", nes: "Normalized enrichment score" } }),
+            nesRows,
+        );
+        expect(asObj(option.xAxis).name).toBe("Normalized enrichment score");
+        expect(asObj(option.yAxis).name).toBe("Gene set");
+        // An x axis takes the centered name, thus the value title clears the right margin of the grid.
+        expect(asObj(option.xAxis).nameLocation).toBe("middle");
+    });
+
+    it("states the fault of an orientation beside a type that is not a bar", () => {
+        for (const chartType of ["line", "pie", "volcano"] as const) {
+            const block = chartBlock(chartType, { x: "set", y: "nes", value: "nes", group: "set" }, { id: "o1", orientation: "horizontal" });
+            const problem = deriveChartOption(block, nesRows)._unsafeUnwrapErr();
+            expect(problem.blockId).toBe("o1");
+            expect(problem.detail).toContain(chartType);
+            expect(problem.detail).toContain("orientation");
+        }
+    });
+
+    it("keeps the vertical arrangement of a bar that states no orientation", () => {
+        const option = derive(chartBlock("bar", { x: "set", y: "nes" }), nesRows);
+        expect(JSON.stringify(option)).toBe(
+            JSON.stringify({
+                xAxis: {
+                    type: "category",
+                    data: ["HALLMARK_HYPOXIA", "HALLMARK_G2M_CHECKPOINT", "HALLMARK_GLYCOLYSIS"],
+                    name: "set",
+                    nameLocation: "middle",
+                    nameGap: 34,
+                    axisLabel: { interval: 0 },
+                },
+                yAxis: { type: "value", name: "nes", axisLabel: { interval: 0 } },
+                series: [
+                    {
+                        type: "bar",
+                        barGap: 0,
+                        data: [
+                            ["HALLMARK_HYPOXIA", 2.41],
+                            ["HALLMARK_G2M_CHECKPOINT", -1.74],
+                            ["HALLMARK_GLYCOLYSIS", 2.18],
+                        ],
+                    },
+                ],
+                legend: { show: false },
+                grid: { top: "8%", bottom: "20%", left: "10%", right: "5%" },
+                toolbox: { right: 0, top: 0, feature: { saveAsImage: { type: "png", name: "chart" } } },
+            }),
+        );
+    });
+
+    it("renders the NES chart horizontal, with the zero line on the value axis", () => {
+        const option = derive(
+            composedBlock({
+                series: [{ form: "bar", orientation: "horizontal", encoding: { x: "set", y: "nes" } }],
+                annotations: [{ kind: "reference-line", axis: "x", value: 0 }],
+            }),
+            nesRows,
+        );
+        const yAxis = asObj(option.yAxis);
+        expect(yAxis.type).toBe("category");
+        expect(yAxis.data).toEqual(["HALLMARK_HYPOXIA", "HALLMARK_G2M_CHECKPOINT", "HALLMARK_GLYCOLYSIS"]);
+        expect(asObj(yAxis.axisLabel).interval).toBe(0);
+        expect(asObj(option.xAxis).type).toBe("value");
+        // An annotation names a rendered axis, thus the zero of a horizontal bar stands on `x`.
+        const marks = asArr(asObj(asObj(asArr(option.series)[0]).markLine).data);
+        expect(marks).toEqual([{ xAxis: 0, label: { position: "start" } }]);
+    });
+
+    it("swaps the pairs of a composition bar too, and keeps the category name on a named point", () => {
+        const option = derive(
+            composedBlock({
+                series: [{ form: "bar", orientation: "horizontal", encoding: { x: "set", y: "nes" } }],
+                annotations: [{ kind: "point-labels", column: "nes", order: "desc", n: 1 }],
+            }),
+            nesRows,
+        );
+        const data = asArr(asObj(asArr(option.series)[0]).data);
+        expect(data[1]).toEqual([-1.74, "HALLMARK_G2M_CHECKPOINT"]);
+        // The name of a bar is what it counts, thus the marked point still reads the category cell.
+        expect(asObj(data[0]).name).toBe("HALLMARK_HYPOXIA");
+        expect(asObj(data[0]).value).toEqual([2.41, "HALLMARK_HYPOXIA"]);
+    });
+
+    it("titles the rendered axes of a composition, thus a declared axes title names the axis it sits on", () => {
+        const option = derive(
+            composedBlock({
+                series: [{ form: "bar", orientation: "horizontal", encoding: { x: "set", y: "nes" } }],
+                axes: { x: { title: "Enrichment" }, y: { title: "Pathway" } },
+            }),
+            nesRows,
+        );
+        expect(asObj(option.xAxis).name).toBe("Enrichment");
+        expect(asObj(option.yAxis).name).toBe("Pathway");
+    });
+
+    it("refuses a grid that mixes a horizontal bar with another series", () => {
+        const block = composedBlock(
+            {
+                series: [
+                    { form: "bar", orientation: "horizontal", encoding: { x: "set", y: "nes" } },
+                    { form: "scatter", encoding: { x: "set", y: "nes" } },
+                ],
+            },
+            { id: "m1" },
+        );
+        const problem = deriveChartOption(block, nesRows)._unsafeUnwrapErr();
+        expect(problem.blockId).toBe("m1");
+        expect(problem.detail).toContain("horizontal bar");
+        expect(problem.detail).toContain("y axis");
+    });
+
+    it("carries the orientation through the quick path that names its points", () => {
+        // A `label` channel routes the quick path through a composition, and the arrangement crosses with it.
+        const option = derive(chartBlock("bar", { x: "set", y: "nes", label: "set" }, { orientation: "horizontal" }), nesRows);
+        expect(asObj(option.yAxis).type).toBe("category");
+        expect(asObj(asArr(asObj(asArr(option.series)[0]).data)[0]).value).toEqual([2.41, "HALLMARK_HYPOXIA"]);
+    });
+
+    it("keeps a vertical bar beside another series, because the two share an axis pair", () => {
+        const option = derive(
+            composedBlock({
+                series: [
+                    { form: "bar", encoding: { x: "set", y: "nes" } },
+                    { form: "scatter", encoding: { x: "set", y: "nes" } },
+                ],
+            }),
+            nesRows,
+        );
+        expect(asArr(option.series).length).toBe(2);
     });
 });
 

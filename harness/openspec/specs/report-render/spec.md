@@ -267,6 +267,25 @@ The renderer MUST hold one fixed derivation rule for each chart type. A chart wh
 - **WHEN** the caller renders a bar chart whose categories first appear as Day2, Day10, Day1
 - **THEN** the category axis lists Day2, Day10, Day1 in that order
 
+### Requirement: The horizontal bar renders with the category on y
+
+A horizontal bar MUST render the category axis on y and the value axis on x. The category axis MUST keep every label, because the long names are the reason the orientation exists. An annotation names a rendered axis, thus a zero line on the horizontal value axis is an `x` reference line. The axis titles, the declared labels, and the number rules bind to the axes wherever they render. A composition that mixes a horizontal bar with another series on one grid MUST refuse as a render problem.
+
+#### Scenario: The NES chart renders horizontal with a zero line
+
+- **WHEN** the caller derives a horizontal bar over a set-name column and an NES column, with an `x` reference line at zero
+- **THEN** the category axis sits on y with every label, and the zero line stands on the value axis
+
+#### Scenario: A vertical bar stays as it is
+
+- **WHEN** the caller derives a bar with no orientation
+- **THEN** the option is byte-identical to the option before the orientation existed
+
+#### Scenario: A mixed grid refuses
+
+- **WHEN** a composition holds a horizontal bar series and a scatter series
+- **THEN** the derivation refuses with a problem that names the mix
+
 ### Requirement: The chart text reads for a reader
 
 A preset MUST fill its semantic axis titles. A volcano titles "log2 fold change" and "−log10(p)", and a manhattan titles "−log10(p)" on its y axis. The precedence, most specific first: an agent axes title, a declared column label, the preset title, then the raw or derived name.

@@ -70,6 +70,47 @@ describe("the quick path", () => {
     });
 });
 
+describe("the bar orientation", () => {
+    it("takes a horizontal bar, and the orientation rides the parsed block", () => {
+        const parsed = ChartBlockSchema.safeParse(chart({ chartType: "bar", encoding: { x: "pathway", y: "nes" }, orientation: "horizontal" }));
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.orientation).toBe("horizontal");
+    });
+
+    it("takes a bar with no orientation, thus a stored block keeps parsing", () => {
+        const parsed = ChartBlockSchema.safeParse(chart({ chartType: "bar", encoding: { x: "pathway", y: "nes" } }));
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.orientation).toBeUndefined();
+    });
+
+    it("takes an orientation beside a type that is not a bar, because the render states that fault", () => {
+        // The grammar admits it. A silent ignore is what the rule forbids, and the derivation refuses it.
+        expect(parses({ chartType: "line", encoding: { x: "time", y: "survival" }, orientation: "horizontal" })).toBe(true);
+    });
+
+    it("refuses an orientation outside the two arrangements", () => {
+        expect(parses({ chartType: "bar", encoding: { x: "pathway", y: "nes" }, orientation: "sideways" })).toBe(false);
+    });
+
+    it("takes the orientation on a bar series of a composition", () => {
+        expect(parses({ composition: { series: [{ form: "bar", orientation: "horizontal", encoding: { x: "pathway", y: "nes" } }] } })).toBe(true);
+    });
+
+    it("refuses the orientation on a series form that draws no bar", () => {
+        for (const form of ["line", "scatter", "area", "step"]) {
+            expect(parses({ composition: { series: [{ form, orientation: "horizontal", encoding: { x: "time", y: "survival" } }] } })).toBe(false);
+        }
+    });
+
+    it("refuses a block-level orientation beside a composition, because the series states the arrangement", () => {
+        expect(parses({ composition: scatterComposition(), orientation: "horizontal" })).toBe(false);
+    });
+
+    it("refuses an orientation that stands alone, with no chart type and no composition", () => {
+        expect(parses({ orientation: "horizontal" })).toBe(false);
+    });
+});
+
 describe("the composition", () => {
     it("takes one series of each form", () => {
         for (const form of ["line", "scatter", "bar", "area", "step"]) {
