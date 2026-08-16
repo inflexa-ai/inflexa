@@ -282,7 +282,7 @@ A claim MUST render its prose with evidence markers. The references MUST list at
 
 The citation card MUST render the short citation of its pinned record, the note of the block, and the citation key. A `pmid:` key MUST also render a PubMed link, built deterministically from the id. The link is a navigation and it loads nothing, thus the stand-alone rule holds. A key with no pinned record renders the key and the note alone, because absence is a normal condition.
 
-The citation markers MUST number in their own bracket ladder, split from the numeric ladder of the artifact footnotes. The appendix citation entry MUST show the short citation beside the key when the record exists.
+The citation markers MUST number in their own bracket ladder, split from the numeric ladder of the artifact footnotes. The ladder MUST number by the citation key, thus two blocks over one paper share one number. The bibliography MUST list under its own heading, apart from the provenance appendix. Each entry shows the short citation, and the description when the record carries one, beside the key.
 
 #### Scenario: The card renders the bibliography
 
@@ -298,6 +298,16 @@ The citation markers MUST number in their own bracket ladder, split from the num
 
 - **WHEN** a page holds two artifact references and two citations
 - **THEN** the artifact markers read `1` and `2`, and the citation markers read `[1]` and `[2]`
+
+#### Scenario: One paper takes one number
+
+- **WHEN** a claim binding and a citation block name one `pmid:` key with different display text
+- **THEN** both markers read `[1]`, and the bibliography holds one entry for the key
+
+#### Scenario: The bibliography wears its own heading
+
+- **WHEN** the caller renders a document whose only references are citations
+- **THEN** the literature lists under its own heading, and no list titles it "Data provenance"
 
 ### Requirement: The page stands alone
 The skeleton MUST inline the style rules. The page MUST reference each script and each font as a relative `assets/<name>` path, and it MUST reference no CDN host. The renderer MUST export one asset manifest, and each entry MUST name the staged file and its package source. The caller MUST stage each manifest entry beside the page, in the same pipeline that stages the figures.
