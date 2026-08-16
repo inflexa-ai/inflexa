@@ -8,7 +8,7 @@ A preset MUST fill its semantic axis titles. A volcano titles "log2 fold change"
 
 The category value `ns` on a preset-expanded chart MUST take the muted chart color of the design source. Thus the significant categories carry the color, and the null category recedes.
 
-The value label of a vertical reference line MUST sit at the axis end, out of the title band. A horizontal line keeps its label at the right edge.
+The value label of a vertical reference line MUST sit at the axis end, out of the title band. A vertical reference band labels the same way. A horizontal line keeps its label at the right edge.
 
 A category series name MUST prettify at derivation: underscores become spaces, deterministically. The tooltip reads the same name, and the raw value stays in the data rows.
 

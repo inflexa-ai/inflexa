@@ -660,7 +660,8 @@ describe("the composition annotations", () => {
         const series = asObj(asArr(option.series)[0]);
         expect(asObj(series.markLine).silent).toBe(true);
         expect(asArr(asObj(series.markLine).data)).toEqual([{ yAxis: 6, label: { formatter: "cut" } }]);
-        expect(asArr(asObj(series.markArea).data)).toEqual([[{ xAxis: -1 }, { xAxis: 1 }]]);
+        // A vertical band labels at its inside bottom edge, thus the text sits at the axis and not on the title.
+        expect(asArr(asObj(series.markArea).data)).toEqual([[{ xAxis: -1, label: { position: "insideBottom" } }, { xAxis: 1 }]]);
     });
 
     it("names the declared top-N subset alone, and no other point", () => {
@@ -923,6 +924,54 @@ describe("the chart text", () => {
         const marks = asArr(asObj(asObj(asArr(option.series)[0]).markLine).data);
         expect(marks[0]).toEqual({ xAxis: 1, label: { formatter: "effect", position: "start" } });
         expect(marks[1]).toEqual({ yAxis: 0.05, label: { formatter: "p" } });
+    });
+
+    it("names a group-less preset series with the preset title, thus the tooltip reads no machine text", () => {
+        const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p" }), rows).series);
+        // The `{a}` of the tooltip template reads this name, and the y axis reads the same text.
+        expect(asObj(series[0]).name).toBe("−log10(p)");
+    });
+
+    it("keeps a declared label over the preset title in the series name too", () => {
+        const option = derive(chartBlock("ma", { x: "lfc", y: "p" }, { labels: { p: "Adjusted p-value" } }), rows);
+        expect(asObj(asArr(option.series)[0]).name).toBe("Adjusted p-value");
+        expect(asObj(option.yAxis).name).toBe("Adjusted p-value");
+    });
+
+    it("puts the guide lines on a series that no muted color paints", () => {
+        // The null category appears first, thus the carrier of the marks is not the first emitted series.
+        const nsFirst: ChartRow[] = [
+            { gene: "B", lfc: -2.4, p: 0.5, sig: "ns" },
+            { gene: "A", lfc: 2.9, p: 0.001, sig: "up_in_nonresponders" },
+        ];
+        const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p", group: "sig" }), nsFirst).series);
+        expect(asObj(series[0]).name).toBe("ns");
+        expect(asObj(series[0]).itemStyle).toEqual({ color: MUTED_CHART_COLOR });
+        // The runtime strokes a guide in the item color of its carrier, thus a muted carrier greys each guide.
+        expect("markLine" in asObj(series[0])).toBe(false);
+        expect(asArr(asObj(asObj(series[1]).markLine).data).length).toBe(3);
+    });
+
+    it("keeps the guide lines on the first series when every series is muted", () => {
+        const allNull: ChartRow[] = [
+            { gene: "B", lfc: -2.4, p: 0.5, sig: "ns" },
+            { gene: "C", lfc: 0.1, p: 0.9, sig: "ns" },
+        ];
+        const series = asArr(derive(chartBlock("volcano", { x: "lfc", y: "p", group: "sig" }), allNull).series);
+        // No series can carry a guide clear of the muted color, thus each guide still reaches the page.
+        expect(asArr(asObj(asObj(series[0]).markLine).data).length).toBe(3);
+    });
+
+    it("keeps a horizontal band on its default label position", () => {
+        const option = derive(
+            composedBlock({
+                series: [{ form: "scatter", encoding: { x: "lfc", y: "p" } }],
+                annotations: [{ kind: "reference-band", axis: "y", from: 0, to: 1, label: "range" }],
+            }),
+            rows,
+        );
+        const areas = asArr(asObj(asObj(asArr(option.series)[0]).markArea).data);
+        expect(areas[0]).toEqual([{ yAxis: 0, label: { formatter: "range" } }, { yAxis: 1 }]);
     });
 
     it("reads a category series name as words, and keeps the raw value in the data rows", () => {
