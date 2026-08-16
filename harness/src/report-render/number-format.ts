@@ -6,7 +6,7 @@
  * `14,201`. `compact-scientific` gives three significant digits, for example `-3.09`. It gives a grouped
  * whole number for a magnitude from `1e3` to `1e15`, for example `15,235`, and it falls to the scientific
  * form under one thousandth and from `1e15` up. `identifier` gives the source text. `below-resolution`
- * gives a bound over a stored zero, for example `<4e-4`.
+ * gives a bound over a stored zero, for example `<4e-4`, or `<0.02` where the column is coarse.
  *
  * The module reads no locale. `toLocaleString` gives different text on a different host, thus the render
  * function would stop being a pure function of its inputs. The comma grouping is written here for that
@@ -39,6 +39,12 @@ const COMPACT_DIGITS = 3;
 
 /** The magnitude under which a p-value column selects the scientific kind. */
 const SCIENTIFIC_FLOOR = 1e-2;
+
+/**
+ * The exponent from which the bound of a stored zero reads as a plain decimal. It is the exponent of
+ * `SCIENTIFIC_FLOOR`, thus a bound and the values around it read in one notation.
+ */
+const PLAIN_BOUND_EXPONENT = -2;
 
 /** The magnitude under which the compact-scientific form falls to the scientific form. */
 const COMPACT_SCIENTIFIC_FLOOR = 1e-3;
@@ -208,13 +214,23 @@ export function smallestPositiveValue(cells: readonly (string | number | undefin
  * mantissa holds something under the first digit. A round to the nearest digit would fall under the
  * neighbor and state a bound that is false. Thus the first digit goes up by one wherever a digit follows
  * it, and a digit that reaches ten carries into the exponent.
+ *
+ * From `PLAIN_BOUND_EXPONENT` up the bound reads as a plain decimal. A coarse estimator gives a bound
+ * beside values that the scientific floor leaves as plain decimals, and one column must read in one
+ * notation. Thus `<0.02` stands beside `0.04`, and no bound gives an exponent of zero.
  */
 function boundForm(bound: number): string {
     const [mantissa, exponent] = bound.toExponential().split("e");
     const digits = mantissa.replace(".", "");
     const raised = Number(digits[0]) + (digits.length > 1 ? 1 : 0);
     const carries = raised === 10;
-    return `${carries ? 1 : raised}e${Number(exponent) + (carries ? 1 : 0)}`;
+    const digit = carries ? 1 : raised;
+    const power = Number(exponent) + (carries ? 1 : 0);
+    if (power < PLAIN_BOUND_EXPONENT) {
+        return `${digit}e${power}`;
+    }
+    // The decimal text builds from the digit and the exponent, thus no float arithmetic can shift it.
+    return power >= 0 ? `${digit}${"0".repeat(power)}` : `0.${"0".repeat(-power - 1)}${digit}`;
 }
 
 /** The finite number of one cell, or `null` when the cell holds no finite number. */
