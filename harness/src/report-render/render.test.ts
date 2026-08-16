@@ -133,6 +133,58 @@ describe("renderReportPage assembly", () => {
     });
 });
 
+describe("renderReportPage text lists", () => {
+    /** One page whose section holds the given text block. */
+    function pageOfText(block: TextBlock): ReturnType<typeof load> {
+        const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [block] }] };
+        return load(renderReportPage(document, {})._unsafeUnwrap());
+    }
+
+    it("holds the lead paragraph and the ordered list of six items", () => {
+        const items = [
+            "The cohort is small.",
+            "The batch confounds.",
+            "No cohort validates.",
+            "The profile is bulk.",
+            "The follow-up is short.",
+            "One database.",
+        ];
+        const page = pageOfText({ kind: "text", id: "t1", content: { prose: "Six limits bound the reading.", list: { ordered: true, items } } });
+
+        expect(page("p.report-prose").text()).toBe("Six limits bound the reading.");
+        expect(page("ol.report-list li").length).toBe(6);
+        expect(
+            page("ol.report-list li")
+                .toArray()
+                .map((node) => page(node).text()),
+        ).toEqual(items);
+    });
+
+    it("holds the unordered list alone for a block with an empty prose", () => {
+        const page = pageOfText({ kind: "text", id: "t2", content: { prose: "", list: { ordered: false, items: ["One.", "Two.", "Three."] } } });
+
+        expect(page("ul.report-list li").length).toBe(3);
+        // An empty prose gives no paragraph, thus the band holds the list alone.
+        expect(page("p.report-prose").length).toBe(0);
+    });
+
+    it("carries a list on the design fixture, thus the validity gate reads the markup", () => {
+        const page = load(renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap());
+
+        // The fixture is the page that the HTML validation and the design review both read. A fixture
+        // with no list would drop the new markup out of each of them in silence.
+        expect(page("ul.report-list li").length).toBeGreaterThan(0);
+    });
+
+    it("fills the content column with the list, the same as with a paragraph", () => {
+        const listRules = [...DESIGN_CSS.matchAll(/\.report-list\s*\{([^}]*)\}/g)].map((match) => match[1]);
+        expect(listRules.length).toBe(1);
+        // A list reads at the measure of the prose around it, thus no inner width caps it.
+        expect(listRules[0]).not.toContain("max-width");
+        expect(listRules[0]).toContain("line-height: 1.7");
+    });
+});
+
 describe("the page stands alone", () => {
     /** A page whose citation card carries a pinned record, thus the body holds a PubMed navigation. */
     function pageWithACitation(): string {

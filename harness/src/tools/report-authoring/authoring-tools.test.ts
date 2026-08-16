@@ -201,6 +201,33 @@ describe("add_block", () => {
         expect(gateway.peek("t1")!.document.sections[0]!.blocks.map((block) => block.id)).toEqual(["t1"]);
     });
 
+    it("lands a text block that carries a typed list, and the gateway holds each item", async () => {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
+        const block = { kind: "text", id: "t1", content: { prose: "Two limits bound the reading.", list: { ordered: true, items: ["One.", "Two."] } } };
+
+        const value = (await tools.add_block.execute({ block, parentId: "s1" }, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(value.applied).toBe(true);
+        // The draft grammar composes from the contract atoms, thus the field reaches the tool with no
+        // payload of its own and the stored draft keeps it.
+        const landed = gateway.peek("t1")!.document.sections[0]!.blocks[0]!;
+        expect(landed.kind === "text" ? landed.content.list : undefined).toEqual({ ordered: true, items: ["One.", "Two."] });
+    });
+
+    it("refuses a text block whose list holds no item", async () => {
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: oneSectionDraft(), snapshot });
+        const tools = createReportAuthoringTools(gateway);
+        const block = { kind: "text", id: "t1", content: { prose: "Lead.", list: { ordered: true, items: [] } } };
+
+        const value = (await tools.add_block.execute({ block, parentId: "s1" }, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(value.applied).toBe(false);
+        expect(gateway.peek("t1")!.document.sections[0]!.blocks).toEqual([]);
+    });
+
     it("accepts an explicit null in each destination field that the call does not use", async () => {
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: oneSectionDraft(), snapshot });

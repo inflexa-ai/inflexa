@@ -75,6 +75,9 @@ function clip(text: string): string {
  * a note. A text and a claim carry prose. Every one of them clips: a caption, a note, and a title are free
  * prose too, thus an unclipped arm would put a paragraph into each outline that names the block.
  *
+ * A text block carries its enumeration in the list, and the lead sentences above it can be empty. Such a
+ * block gives the first item, thus the outline names it and the agent reads which block it is.
+ *
  * A block with an absent optional field gives an empty label.
  */
 function labelOf(block: DraftBlock): string {
@@ -91,8 +94,10 @@ function labelOf(block: DraftBlock): string {
             return clip(block.caption ?? "");
         case "citation":
             return clip(block.note ?? "");
-        case "text":
-            return clip(block.content.prose);
+        case "text": {
+            const prose = block.content.prose;
+            return clip(prose.trim().length > 0 ? prose : (block.content.list?.items[0] ?? ""));
+        }
         case "claim":
             return clip(block.content.prose);
     }

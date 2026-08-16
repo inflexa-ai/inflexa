@@ -50,6 +50,8 @@ The renderer MUST take the values keyed by block id, as a closed union: a scalar
 ### Requirement: A rendered form for each block kind
 The renderer MUST give each of the eight block kinds a rendered form. The renderer makes each layout decision, and no markup comes from the document.
 
+A text block with a list MUST render the list after its prose paragraphs, as ordered or unordered list markup by the flag. Each item escapes exactly as a paragraph does, and the list fills the content column. A text block with a list and an empty prose renders the list alone.
+
 #### Scenario: A section renders as a heading by depth
 - **WHEN** the caller renders a section with a nested child section
 - **THEN** the outer title renders as a higher heading level than the inner title
@@ -73,6 +75,16 @@ The renderer MUST give each of the eight block kinds a rendered form. The render
 #### Scenario: An empty chart still renders its container
 - **WHEN** the caller renders a chart block whose value entry holds zero rows
 - **THEN** the page holds the chart container, and the inline option holds an empty data list
+
+#### Scenario: An enumeration renders as a list
+
+- **WHEN** the caller renders a text block with a lead sentence and six ordered items
+- **THEN** the page holds the paragraph and an ordered list with the six items
+
+#### Scenario: A list stands alone
+
+- **WHEN** the caller renders a text block with an empty prose and three unordered items
+- **THEN** the page holds the unordered list, and no empty paragraph
 
 ### Requirement: The number format of a resolved value
 The renderer MUST format each numeric value that it shows, through one number helper and its closed set of kinds. The kinds are `scientific`, `compact`, `compact-scientific`, `identifier`, and `below-resolution`. The helper applies to the metric value and to each numeric table cell. The renderer picks the kind by magnitude and by column meaning, and no block carries a format field.

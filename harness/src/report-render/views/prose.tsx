@@ -4,16 +4,22 @@
  * The runtime escapes every interpolated string, thus hostile prose reaches the page as text. A text
  * block and a claim block split the prose on a blank line, and each part becomes one paragraph. A claim
  * adds one marker for each binding, and the markers number through the shared ledger.
+ *
+ * A text block also carries a typed list, and the list renders as list markup after the paragraphs. Each
+ * item takes the same escape as a paragraph, thus no item reaches the page as markup.
  */
 
 import { raw } from "hono/html";
 
-import type { ClaimBlock, SectionBlock, TextBlock } from "../../contracts/report-blocks.js";
+import type { ClaimBlock, SectionBlock, TextBlock, TextList } from "../../contracts/report-blocks.js";
 import type { ReferenceLedger } from "../references.js";
 import { LadderMarker } from "./references-view.js";
 
 /** The paragraph class of a text block and a claim block. The paragraph fills the content column. */
 const PARAGRAPH_CLASS = "report-prose";
+
+/** The class of a rendered list. The list fills the content column, the same as a paragraph. */
+const LIST_CLASS = "report-list";
 
 /** The site that the navigation brand links to. It is the one reference of the page that leaves the page. */
 const BRAND_HREF = "https://inflexa.ai/";
@@ -34,14 +40,31 @@ function splitParagraphs(prose: string): string[] {
     return paragraphs;
 }
 
-/** Render a text block as escaped paragraphs. */
+/**
+ * One typed list as list markup. The flag selects the element: an ordered list numbers its items, and an
+ * unordered one bullets them. Each item is one inline line, thus no item holds a list of its own.
+ */
+function TextListView({ list }: { list: TextList }) {
+    const items = list.items.map((item) => <li class="report-list-item">{item}</li>);
+    return list.ordered ? <ol class={LIST_CLASS}>{items}</ol> : <ul class={LIST_CLASS}>{items}</ul>;
+}
+
+/**
+ * Render a text block as escaped paragraphs, and then its list.
+ *
+ * The lead sentences introduce the enumeration, thus the list comes after them. An empty prose gives no
+ * paragraph, and a block with a list alone renders the list alone. A block with no list renders the
+ * paragraphs alone, exactly as it did before the field existed.
+ */
 export function renderText(block: TextBlock): string {
     const paragraphs = splitParagraphs(block.content.prose);
+    const list = block.content.list;
     return String(
         <>
             {paragraphs.map((paragraph) => (
                 <p class={PARAGRAPH_CLASS}>{paragraph}</p>
             ))}
+            {list !== undefined ? <TextListView list={list} /> : null}
         </>,
     );
 }

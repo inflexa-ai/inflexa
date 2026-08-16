@@ -151,11 +151,31 @@ export const ChartCompositionSchema = z.strictObject({
     axes: ChartAxesSchema.optional().describe("The axis titles and the axis scales."),
 });
 
+/**
+ * One typed list of a text block: the flag that selects the form, and the items.
+ *
+ * An item is one inline line, and the renderer escapes it as it escapes a paragraph. No item carries
+ * markup, and no item carries a list of its own. A deeper structure composes as a section with blocks.
+ */
+export const TextListSchema = z.strictObject({
+    ordered: z.boolean().describe("True for a numbered list, for example a ranked set or a sequence of steps. False for a bulleted list of parallel points."),
+    items: z
+        .array(z.string().min(1).describe("One item as one inline line. It carries no markup and no list of its own."))
+        .min(1)
+        .describe("One item at least. Each item is one point."),
+});
+
 /** Prose with no binding. The absence of a binding field is the rule for this kind. */
 export const TextBlockSchema = z.strictObject({
     kind: z.literal("text"),
     id: z.string().min(1).describe("The stable identity of the block."),
-    content: z.strictObject({ prose: z.string() }),
+    content: z.strictObject({
+        prose: z.string(),
+        list: TextListSchema.optional().describe(
+            "The enumeration of the block, as a list. Three or more parallel points compose here, and never inline in the prose as " +
+                '"(1) ... (6)". The prose above the list carries the lead sentences that introduce it, and it can be empty.',
+        ),
+    }),
 });
 
 /** Prose with at least one reference that justifies it. */
@@ -320,6 +340,7 @@ export type ChartAnnotation = z.infer<typeof ChartAnnotationSchema>;
 export type ChartAxes = z.infer<typeof ChartAxesSchema>;
 export type ChartComposition = z.infer<typeof ChartCompositionSchema>;
 export type ChartType = z.infer<typeof ChartTypeSchema>;
+export type TextList = z.infer<typeof TextListSchema>;
 export type TextBlock = z.infer<typeof TextBlockSchema>;
 export type ClaimBlock = z.infer<typeof ClaimBlockSchema>;
 export type MetricBlock = z.infer<typeof MetricBlockSchema>;
