@@ -212,3 +212,51 @@ describe("selectNumberKind", () => {
         expect(selectNumberKind("padj", "")).toBe("compact-scientific");
     });
 });
+
+describe("selectNumberKind with a declared meaning", () => {
+    it("gives the scientific kind to a declared p-value under one hundredth, although its name matches no token", () => {
+        expect(selectNumberKind("significance", 0.004, "p-value")).toBe("scientific");
+        expect(formatNumberCell(0.00427777663038, selectNumberKind("significance", 0.00427777663038, "p-value"))).toEqual({
+            text: "4.3e-3",
+            full: "0.00427777663038",
+        });
+    });
+
+    it("keeps a declared p-value from one hundredth up as a plain decimal", () => {
+        expect(selectNumberKind("significance", 0.536, "p-value")).toBe("compact-scientific");
+        expect(formatNumberCell(0.536, selectNumberKind("significance", 0.536, "p-value"))).toEqual({ text: "0.536" });
+    });
+
+    it("gives the same bytes as a token match, thus the declaration replaces the name alone", () => {
+        for (const cell of [0.00000038, 0.0099, 0.01, 0.05, 0.536, 1, 0]) {
+            const declared = formatNumberCell(cell, selectNumberKind("significance", cell, "p-value"));
+            const guessed = formatNumberCell(cell, selectNumberKind("padj", cell));
+            expect(declared).toEqual(guessed);
+        }
+    });
+
+    it("gives each of the other four meanings the kind of its own nature", () => {
+        expect(selectNumberKind("significance", 2.5, "effect")).toBe("compact-scientific");
+        expect(selectNumberKind("significance", 14201, "count")).toBe("compact");
+        expect(selectNumberKind("significance", 31978945, "identifier")).toBe("identifier");
+        expect(selectNumberKind("significance", "01", "category")).toBe("identifier");
+    });
+
+    it("keeps a category cell that reads as a number as its own text", () => {
+        expect(formatNumberCell("01", selectNumberKind("cluster", "01", "category"))).toEqual({ text: "01" });
+    });
+
+    it("replaces the name guess, thus a name of a different nature decides nothing", () => {
+        // The name names an identifier, and the declaration names a count.
+        expect(selectNumberKind("pmid", 31978945, "count")).toBe("compact");
+        // The name names a p-value, and the declaration names an effect.
+        expect(selectNumberKind("padj", 0.0001, "effect")).toBe("compact-scientific");
+    });
+
+    it("keeps the magnitude arms under a declared magnitude, the same as an undeclared column", () => {
+        // A count above the safe range is no longer exact, thus it reads as a general float.
+        expect(selectNumberKind("total", 1e21, "count")).toBe(selectNumberKind("genes", 1e21));
+        // A whole-number effect takes the compact kind, the same as any other whole number.
+        expect(selectNumberKind("shift", 3, "effect")).toBe(selectNumberKind("log2FoldChange", 3));
+    });
+});

@@ -174,6 +174,47 @@ describe("renderTable", () => {
         expect(html.split(`tabindex="0"`).length - 1).toBe(2);
     });
 
+    /** One table block whose binding carries the declarations that a test states. */
+    function declared(declaration: Pick<TableBlock["binding"], "columnMeanings" | "columnLabels">): TableBlock {
+        return { kind: "table", id: "tb1", binding: { ...tableBinding, ...declaration } };
+    }
+
+    it("reads a declared p-value column in the scientific form, although its name matches no token", () => {
+        const rows = { type: "table", rows: [{ gene: "TP53", significance: 0.00427777663038 }] } as const;
+        const html = renderTable(declared({ columnMeanings: { significance: "p-value" } }), rows);
+        expect(html).toContain(`<td data-value="0.00427777663038" title="0.00427777663038">4.3e-3</td>`);
+        // The same cell with no declaration keeps the guess, thus the declaration is what moved the kind.
+        expect(renderTable(block, rows)).toContain(`>0.00428</td>`);
+    });
+
+    it("keeps a declared p-value from one hundredth up as a plain decimal with no full form", () => {
+        const rows = { type: "table", rows: [{ gene: "TP53", significance: 0.536 }] } as const;
+        const html = renderTable(declared({ columnMeanings: { significance: "p-value" } }), rows);
+        expect(html).toContain(`<td data-value="0.536">0.536</td>`);
+        expect(html).not.toContain("5.4e-1");
+    });
+
+    it("shows the declared label of a column and keeps the raw name on hover", () => {
+        const html = renderTable(declared({ columnLabels: { padj: "Adjusted p-value" } }), { type: "table", rows: [{ gene: "TP53", padj: 0.01 }] });
+        expect(html).toContain(`tabindex="0" title="padj">Adjusted p-value</th>`);
+    });
+
+    it("prettifies an undeclared header and keeps the raw name on hover", () => {
+        const html = renderTable(block, { type: "table", rows: [{ gene_symbol: "TP53" }] });
+        expect(html).toContain(`tabindex="0" title="gene_symbol">gene symbol</th>`);
+    });
+
+    it("gives no title to a header whose shown text is its raw name", () => {
+        const html = renderTable(declared({ columnLabels: { gene: "gene" } }), { type: "table", rows: [{ gene: "TP53" }] });
+        expect(html).toContain(`tabindex="0">gene</th>`);
+    });
+
+    it("ignores a declaration that names no column of the table", () => {
+        const rows = { type: "table", rows: [{ gene: "TP53", padj: 0.00427777663038 }] } as const;
+        const stray = declared({ columnMeanings: { absent: "identifier" }, columnLabels: { absent: "Absent column" } });
+        expect(renderTable(stray, rows)).toBe(renderTable(block, rows));
+    });
+
     it("keeps a hostile cell as text after the format passes it through", () => {
         const html = renderTable(block, { type: "table", rows: [{ gene: "<script>alert(1)</script>", padj: 0.01 }] });
         expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
