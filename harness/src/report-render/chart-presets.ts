@@ -12,15 +12,7 @@
  * channel and it drops an authored transform there, and no value takes the transform two times.
  */
 
-import {
-    channelColumn,
-    channelTransform,
-    type ChartAxes,
-    type ChartChannel,
-    type ChartComposition,
-    type ChartEncoding,
-    type ChartType,
-} from "../contracts/report-blocks.js";
+import { channelColumn, channelTransform, type ChartChannel, type ChartComposition, type ChartEncoding, type ChartType } from "../contracts/report-blocks.js";
 
 /** The four chart types that expand into a composition. */
 export const PRESET_CHART_TYPES = ["volcano", "manhattan", "ma", "km"] as const;
@@ -39,6 +31,21 @@ export const MANHATTAN_P_THRESHOLD = 5e-8;
 
 /** The baseline of an MA plot. A point above it rose, and a point below it fell. */
 export const MA_BASELINE = 0;
+
+/**
+ * The x title of a volcano. The two effect guides sit at `±1`, which is a log2 claim, thus the preset states
+ * the same quantity in words.
+ */
+const LOG2_EFFECT_TITLE = "log2 fold change";
+
+/** The y title of a preset that transforms its p column. The minus sign is the character, not a hyphen. */
+const NEG_LOG10_P_TITLE = "−log10(p)";
+
+/** The semantic axis titles of one preset. A preset whose axis carries no fixed quantity states none. */
+export interface PresetAxisTitles {
+    readonly x?: string;
+    readonly y?: string;
+}
 
 /** True when the chart type expands into a composition. */
 export function isPresetChartType(chartType: ChartType): chartType is PresetChartType {
@@ -87,7 +94,6 @@ function volcano(x: ChartChannel, y: ChartChannel, encoding: ChartEncoding): Cha
             { kind: "reference-line", axis: "x", value: -VOLCANO_EFFECT_THRESHOLD },
             { kind: "reference-line", axis: "x", value: VOLCANO_EFFECT_THRESHOLD },
         ],
-        axes: plainTitle(x),
     };
 }
 
@@ -102,7 +108,6 @@ function manhattan(x: ChartChannel, y: ChartChannel, encoding: ChartEncoding): C
             },
         ],
         annotations: [{ kind: "reference-line", axis: "y", value: -Math.log10(MANHATTAN_P_THRESHOLD), label: `p ${MANHATTAN_P_THRESHOLD}` }],
-        axes: plainTitle(x),
     };
 }
 
@@ -128,15 +133,30 @@ function km(x: ChartChannel, y: ChartChannel, encoding: ChartEncoding): ChartCom
 }
 
 /**
- * The x title of a preset.
+ * The semantic axis titles that one preset states.
  *
- * A preset titles the x axis with the column that feeds it. A channel that carries a transform plots a
- * derived quantity, thus the column name would state the wrong one. Such a channel takes no title, and the
- * derived name of the renderer states the true quantity. The y axis of a preset that transforms its p
- * column takes no title for the same reason.
+ * A preset knows its own quantities, thus it names them in words. A volcano plots a log2 effect against the
+ * transformed p, and a manhattan plots a genome position against the same transformed p. The `ma` and the
+ * `km` presets name nothing, because neither axis of them carries a fixed quantity.
+ *
+ * A channel that carries an authored transform plots a derived quantity, thus the semantic title would
+ * state the wrong one. Such a channel takes no title, and the derived name of the renderer states the true
+ * quantity. The y channel of a volcano and of a manhattan takes the transform of the preset itself, thus
+ * its title is exact.
+ *
+ * The titles rank under a declared column label. Thus they ride beside the composition and never inside its
+ * `axes` field, where an agent title sits and where they would outrank the label.
  */
-function plainTitle(x: ChartChannel): ChartAxes {
-    return channelTransform(x) === undefined ? { x: { title: channelColumn(x) } } : {};
+export function presetAxisTitles(preset: PresetChartType, x: ChartChannel): PresetAxisTitles {
+    switch (preset) {
+        case "volcano":
+            return { ...(channelTransform(x) === undefined ? { x: LOG2_EFFECT_TITLE } : {}), y: NEG_LOG10_P_TITLE };
+        case "manhattan":
+            return { y: NEG_LOG10_P_TITLE };
+        case "ma":
+        case "km":
+            return {};
+    }
 }
 
 /** The two optional channels that every preset carries through from the quick-path encoding. */

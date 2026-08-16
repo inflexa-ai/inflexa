@@ -40,7 +40,8 @@ import {
 } from "../contracts/report-blocks.js";
 import { declaredForColumn, type ArtifactTableReference } from "../contracts/report-reference.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
-import { expandPreset, isPresetChartType, type PresetChartType } from "./chart-presets.js";
+import { expandPreset, isPresetChartType, presetAxisTitles, type PresetAxisTitles, type PresetChartType } from "./chart-presets.js";
+import { MUTED_CHART_COLOR } from "./design.js";
 import type { RenderProblem } from "./types.js";
 
 /** One cell of a resolved row. A cell is one string or one number. */
@@ -60,6 +61,12 @@ type BaseChartType = Exclude<ChartType, PresetChartType>;
 
 /** The display labels that the bound table declares, keyed by the raw column name. */
 type ColumnLabels = ArtifactTableReference["columnLabels"];
+
+/**
+ * The category value that carries no finding. A preset draws the significance split itself, thus the
+ * convention writes the insignificant group with this one literal.
+ */
+const NULL_CATEGORY = "ns";
 
 /**
  * A quick-path block whose channels are resolved to plain column names.
@@ -89,6 +96,14 @@ const VIRIDIS = ["#440154", "#482777", "#3e4989", "#31688e", "#26828e", "#1f9e89
 const X_AXIS_NAME_GAP = 34;
 
 /**
+ * The label position of a vertical guide line.
+ *
+ * The start of such a line sits at the x axis, and its end sits at the top of the plot. The top is the band
+ * of the y-axis title, thus a label there reads over the title.
+ */
+const VERTICAL_LABEL_POSITION = "start";
+
+/**
  * The y axis of a histogram.
  *
  * The axis counts rows, thus a fractional tick names no count. `minInterval` holds each tick a whole count
@@ -108,25 +123,41 @@ function xAxisName(title: string): EchartOption {
 }
 
 /**
- * The title of the axis that reads one column: the declared label, or the raw column name when the binding
- * declares none.
+ * The title of the axis that reads one column, most specific first: the declared label of the column, the
+ * semantic title of the preset, then the raw column name.
+ *
+ * A declared label answers for this one column of this one artifact, and a preset title answers for every
+ * chart of its kind. Thus the label outranks the preset. The caller resolves an agent axes title over this
+ * whole chain, because that title names this one axis of this one block.
  *
  * A transformed channel reads a derived name such as `neg_log10(padj)`, which no declaration keys. Thus the
  * axis of a transform keeps the name that states the transform, and it never states the raw quantity.
  */
-function axisTitle(labels: ColumnLabels, column: string): string {
-    return declaredForColumn(labels, column) ?? column;
+function axisTitle(labels: ColumnLabels, column: string, preset?: string): string {
+    return declaredForColumn(labels, column) ?? preset ?? column;
+}
+
+/**
+ * The legend text of one category value: the value with each underscore as a space.
+ *
+ * An analysis column carries a machine category such as `up_in_nonresponders`, and a legend reads for a
+ * person. The replacement reads no locale, thus the same value gives the same text on every host. The raw
+ * value stays in the data rows, thus the provenance loses nothing. No hover carries the raw text, because a
+ * legend formatter is a function and the option rides as inline JSON.
+ */
+function categoryName(value: Cell): string {
+    return String(value).replaceAll("_", " ");
 }
 
 /**
  * Derive the ECharts option for a chart block, then pass it through `normalizeEchartSpec`.
  *
  * The normalizer owns the bottom legend, the save action, and the axis-label discipline. Thus the
- * derivation sets no `title`, no `legend`, no `toolbox`, and no explicit series color. The theme palette
- * assigns the series colors by their order.
+ * derivation sets no `title`, no `legend`, and no `toolbox`. The theme palette assigns the series colors by
+ * their order, and the null category of a preset is the one series that names a color of its own.
  *
- * The axis of a channel names the label that the binding declares for its column. The raw column name
- * answers for a column that declares none.
+ * The axis of a channel names the label that the binding declares for its column. The semantic title of a
+ * preset answers next, and the raw column name answers last.
  */
 export function deriveChartOption(block: ChartBlock, rows: readonly ChartRow[], columns?: readonly string[]): Result<EchartOption, RenderProblem> {
     return deriveRaw(block, rows, columns).map((option) => normalizeEchartSpec(option, { title: block.title }));
@@ -195,7 +226,8 @@ function derivePreset(
     if (x.isErr()) return err(x.error);
     const y = requireChannel(blockId, preset, encoding, "y");
     if (y.isErr()) return err(y.error);
-    return deriveComposition(blockId, expandPreset(preset, x.value, y.value, encoding), rows, columns, labels);
+    const composition = expandPreset(preset, x.value, y.value, encoding);
+    return deriveComposition(blockId, composition, rows, columns, labels, presetAxisTitles(preset, x.value));
 }
 
 /** The quick-path types that map onto one series form. A point of such a chart can carry a name. */
@@ -324,7 +356,7 @@ function deriveBar(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
     const categories = firstAppearance(rows.map((row) => row[x]));
     const series = groupedSeries(rows, block.encoding.group, (groupRows, name) => ({
         type: "bar",
-        ...(name !== undefined ? { name: String(name) } : {}),
+        ...(name !== undefined ? { name: categoryName(name) } : {}),
         barGap: 0,
         data: groupRows.map((row) => [row[x], row[y]]),
     }));
@@ -347,7 +379,7 @@ function deriveLine(block: ResolvedChartBlock, rows: readonly ChartRow[], column
 
     const series = groupedSeries(rows, block.encoding.group, (groupRows, name) => ({
         type: "line",
-        ...(name !== undefined ? { name: String(name) } : {}),
+        ...(name !== undefined ? { name: categoryName(name) } : {}),
         showSymbol: false,
         data: sortByX(groupRows.map((row) => [row[x], row[y]])),
     }));
@@ -370,7 +402,7 @@ function deriveScatter(block: ResolvedChartBlock, rows: readonly ChartRow[], col
 
     const series = groupedSeries(rows, block.encoding.group, (groupRows, name) => ({
         type: "scatter",
-        ...(name !== undefined ? { name: String(name) } : {}),
+        ...(name !== undefined ? { name: categoryName(name) } : {}),
         large: true,
         largeThreshold: 2000,
         data: groupRows.map((row) => [row[x], row[y]]),
@@ -471,14 +503,14 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
 
         series.push({
             type: "boxplot",
-            ...(group.name !== undefined ? { name: String(group.name) } : {}),
+            ...(group.name !== undefined ? { name: categoryName(group.name) } : {}),
             data: boxData,
         });
         // The outlier scatter pairs with its box series, thus it only appears when an outlier exists.
         if (outliers.length > 0) {
             series.push({
                 type: "scatter",
-                ...(group.name !== undefined ? { name: String(group.name) } : {}),
+                ...(group.name !== undefined ? { name: categoryName(group.name) } : {}),
                 symbolSize: 4,
                 data: outliers,
             });
@@ -643,6 +675,10 @@ interface EmittedSeries {
  *
  * The axes come from the first declared series. A composition plots one pair of axes, thus a later series
  * shares them.
+ *
+ * `preset` is present when a preset expanded this composition. It carries the semantic axis titles, and its
+ * presence states that the null-category rule applies. Thus an authored composition keeps every series on
+ * the palette, and a `ns` group of it carries no muted color.
  */
 function deriveComposition(
     blockId: string,
@@ -650,6 +686,7 @@ function deriveComposition(
     rows: readonly ChartRow[],
     columns: readonly string[] | undefined,
     labels: ColumnLabels,
+    preset?: PresetAxisTitles,
 ): Result<EchartOption, RenderProblem> {
     const resolved: ResolvedSeries[] = [];
     for (const declared of composition.series) {
@@ -672,7 +709,8 @@ function deriveComposition(
     const emitted: EmittedSeries[] = [];
     for (const entry of resolved) {
         for (const group of splitByChannel(rows, entry.group)) {
-            const built = buildSeries(blockId, entry, group, labeled.value, dense, emitted.length, labels);
+            const muted = preset !== undefined && group.name === NULL_CATEGORY;
+            const built = buildSeries(blockId, entry, group, labeled.value, dense, emitted.length, labels, muted);
             if (built.isErr()) return err(built.error);
             emitted.push(...built.value);
         }
@@ -688,8 +726,8 @@ function deriveComposition(
     const named = resolved.some((entry) => entry.label !== undefined) || labeled.value.size > 0;
     return ok({
         tooltip: named ? { ...NAMED_TOOLTIP } : { ...PLAIN_TOOLTIP },
-        xAxis: compositionXAxis(rows, first, composition.axes?.x, labels),
-        yAxis: compositionAxis(rows, first.y, "y", composition.axes?.y, labels),
+        xAxis: compositionXAxis(rows, first, composition.axes?.x, labels, preset?.x),
+        yAxis: compositionAxis(rows, first.y, "y", composition.axes?.y, labels, preset?.y),
         series: emitted.map((entry) => entry.option),
     });
 }
@@ -782,7 +820,13 @@ function splitByChannel(rows: readonly ChartRow[], group: ResolvedChannel | unde
     return buckets;
 }
 
-/** Build the runtime series of one declared series over one group of rows. */
+/**
+ * Build the runtime series of one declared series over one group of rows.
+ *
+ * `muted` states that this series carries the null category. It takes the muted chart color, thus it
+ * recedes behind the categories that carry a finding. Every other series takes no color of its own, and the
+ * theme palette assigns one by the series order.
+ */
 function buildSeries(
     blockId: string,
     entry: ResolvedSeries,
@@ -791,6 +835,7 @@ function buildSeries(
     dense: boolean,
     emittedCount: number,
     labels: ColumnLabels,
+    muted: boolean,
 ): Result<EmittedSeries[], RenderProblem> {
     const form = entry.declared.form;
     const points = collectPoints(entry, group.indices);
@@ -809,7 +854,8 @@ function buildSeries(
     }
 
     const { data, itemObjects } = seriesData(entry, points, labeled);
-    return ok([{ option: { type: runtimeType(form), name, ...formOptions(form, dense, itemObjects), data }, carriesMarks: true }]);
+    const color = muted ? { itemStyle: { color: MUTED_CHART_COLOR } } : {};
+    return ok([{ option: { type: runtimeType(form), name, ...color, ...formOptions(form, dense, itemObjects), data }, carriesMarks: true }]);
 }
 
 /** The points of one group. A row whose channel gives no value drops, and no substitute value appears. */
@@ -836,12 +882,15 @@ function collectPoints(entry: ResolvedSeries, indices: readonly number[]): Point
  * Each series carries a name, thus the `{a}` of the tooltip template always names something. A series with
  * no declared name and no group takes the name of its y channel. That name reads the declared label of the
  * column, the same as the y axis, thus one chart names one column one way.
+ *
+ * The category value of a group prettifies, and the declared name of a series and the label of a column
+ * both stay as the author wrote them. The tooltip reads this same name, thus the legend and the hover agree.
  */
 function seriesName(entry: ResolvedSeries, group: Cell | undefined, labels: ColumnLabels): string {
     const declared = entry.declared.name;
-    if (declared !== undefined && group !== undefined) return `${declared} (${String(group)})`;
+    if (declared !== undefined && group !== undefined) return `${declared} (${categoryName(group)})`;
     if (declared !== undefined) return declared;
-    if (group !== undefined) return String(group);
+    if (group !== undefined) return categoryName(group);
     return axisTitle(labels, entry.y.name);
 }
 
@@ -986,13 +1035,18 @@ function topRows(rows: readonly ChartRow[], column: string, order: "asc" | "desc
  *
  * A reference line and a reference band both carry a declared constant, thus each one rides as static
  * data of a mark member and nothing here reads a cell.
+ *
+ * A line on the x axis runs up the plot. Its end sits at the top, inside the band of the y-axis title, thus
+ * its label takes the start position at the axis. A line on the y axis runs across, and its end sits at the
+ * right edge, where the label already reads clear.
  */
 function markMembers(annotations: readonly ChartAnnotation[]): EchartOption {
     const lines: EchartOption[] = [];
     const areas: EchartOption[][] = [];
     for (const annotation of annotations) {
         if (annotation.kind === "reference-line") {
-            lines.push({ [axisKey(annotation.axis)]: annotation.value, ...markLabel(annotation.label) });
+            const position = annotation.axis === "x" ? VERTICAL_LABEL_POSITION : undefined;
+            lines.push({ [axisKey(annotation.axis)]: annotation.value, ...markLabel(annotation.label, position) });
             continue;
         }
         if (annotation.kind === "reference-band") {
@@ -1005,9 +1059,18 @@ function markMembers(annotations: readonly ChartAnnotation[]): EchartOption {
     };
 }
 
-/** The label of one mark member. The text is a constant of the annotation, and never a template. */
-function markLabel(label: string | undefined): EchartOption {
-    return label !== undefined ? { label: { formatter: label } } : {};
+/**
+ * The label of one mark member. The text is a constant of the annotation, and never a template.
+ *
+ * A member that carries neither a text nor a position emits no label member. Thus the chart runtime keeps
+ * its own default, and a member of either kind that states nothing gives the same bytes as before.
+ */
+function markLabel(label: string | undefined, position?: string): EchartOption {
+    const fields = {
+        ...(label !== undefined ? { formatter: label } : {}),
+        ...(position !== undefined ? { position } : {}),
+    };
+    return Object.keys(fields).length > 0 ? { label: fields } : {};
 }
 
 /** The mark key of one axis. A mark member names `xAxis` or `yAxis`, and the constant that sits on it. */
@@ -1021,26 +1084,39 @@ function axisKey(axis: "x" | "y"): "xAxis" | "yAxis" {
  * A bar takes a category axis, and every other form takes the inferred axis. A declared scale is the one
  * exception, because the author asked for a numeric axis and a category axis has no scale.
  */
-function compositionXAxis(rows: readonly ChartRow[], first: ResolvedSeries, declared: ChartAxes["x"], labels: ColumnLabels): EchartOption {
+function compositionXAxis(
+    rows: readonly ChartRow[],
+    first: ResolvedSeries,
+    declared: ChartAxes["x"],
+    labels: ColumnLabels,
+    preset: string | undefined,
+): EchartOption {
     if (first.declared.form !== "bar" || declared?.scale !== undefined) {
-        return compositionAxis(rows, first.x, "x", declared, labels);
+        return compositionAxis(rows, first.x, "x", declared, labels, preset);
     }
     // A bar counts its categories. The base bar rule lists the x values in first-appearance order, thus a
     // bar of either path draws the same axis.
     const categories = firstAppearance(first.x.values.filter((value): value is Cell => value !== null));
-    return { type: "category", data: categories, ...xAxisName(declared?.title ?? axisTitle(labels, first.x.name)) };
+    return { type: "category", data: categories, ...xAxisName(declared?.title ?? axisTitle(labels, first.x.name, preset)) };
 }
 
 /**
  * The axis of one composition channel.
  *
  * A declared axis title wins, because it names this one axis. The declared label of the column comes next,
- * and the raw column name answers last. A declared `log` scale maps onto the logarithmic axis type. A
- * transformed channel gives a number for each point that survives it, thus its axis is a value axis and
- * the cells of the untransformed column decide nothing.
+ * then the semantic title of the preset, and the raw column name answers last. A declared `log` scale maps
+ * onto the logarithmic axis type. A transformed channel gives a number for each point that survives it,
+ * thus its axis is a value axis and the cells of the untransformed column decide nothing.
  */
-function compositionAxis(rows: readonly ChartRow[], channel: ResolvedChannel, axis: "x" | "y", declared: ChartAxes["x"], labels: ColumnLabels): EchartOption {
-    const title = declared?.title ?? axisTitle(labels, channel.name);
+function compositionAxis(
+    rows: readonly ChartRow[],
+    channel: ResolvedChannel,
+    axis: "x" | "y",
+    declared: ChartAxes["x"],
+    labels: ColumnLabels,
+    preset: string | undefined,
+): EchartOption {
+    const title = declared?.title ?? axisTitle(labels, channel.name, preset);
     const nameFields = axis === "x" ? xAxisName(title) : { name: title };
     if (declared?.scale === "log") {
         return { type: "log", ...nameFields };
@@ -1353,7 +1429,7 @@ function histogramSeries(values: readonly number[], edges: readonly number[], na
     }
     return {
         type: "bar",
-        name: String(name),
+        name: categoryName(name),
         barWidth: "99%",
         barGap: "-100%",
         itemStyle: { opacity: 0.7 },
