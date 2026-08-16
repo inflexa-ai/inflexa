@@ -293,6 +293,13 @@ describe("slotFor — the arms a seeded render cannot reach", () => {
         expect(slotFor(11, MARKS, positionOf, roleAt, MOUNTED)).toBe(4);
     });
 
+    test("an `event` row between the crossing turn and its reply is passed by", () => {
+        // A record that this app appended is neither a request nor a reply. To stop the walk on it would
+        // seat the entry under a row that nobody said, and above the reply that answered the request.
+        const withRecord: MessageRole[] = ["user", "assistant", "user", "event", "assistant"];
+        expect(slotFor(11, MARKS, positionOf, (at) => withRecord[at], MOUNTED)).toBe(5);
+    });
+
     test("a crossing turn that has not answered yet puts the entry at the END", () => {
         // Nothing after the request is a reply, thus there is no position that sits below the request and
         // above a later turn. The tail is the one honest answer.

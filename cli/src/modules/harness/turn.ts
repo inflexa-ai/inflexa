@@ -201,9 +201,13 @@ export function buildChatSession(agentId: string, analysisId: string, threadId: 
  * throw arm has no finish to read — and on a run whose calls reported nothing.
  *
  * `durationMs` rides beside it, and it is measured on the arm where the run RESOLVED. A run
- * that threw persists the user message alone, thus it carries no assistant row for the store
- * to write the figure onto. Such a turn also shows no header live, because the surface drops
- * the empty assistant shell of an abort. Thus the two surfaces agree by construction.
+ * that threw persists the user message alone. Thus it carries no assistant row for the store to
+ * write the figure onto.
+ *
+ * A throw before any output reads the same on both surfaces, because the live view drops the
+ * empty assistant shell of an abort. A throw after output does not. The live header keeps the
+ * streamed reply with the time that the surface stamped, and the reload shows that reply with no
+ * time. The store has no row to hold the figure for such a turn, thus the gap stays open.
  */
 type RunPhase =
     | { readonly kind: "ok"; readonly fallbackText: string; readonly turnUsage?: TurnUsage; readonly durationMs?: number }
@@ -313,6 +317,10 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
                 // The run settled, thus the span from the start of the turn to here is what the turn took.
                 // The append below is deliberately outside it: the figure must exist before the write that
                 // carries it, and a store round trip is not time that the reader spent waiting on an answer.
+                //
+                // Thus the stored span reads under the live header, and the round trip is most of the gap.
+                // The two spans come from one `Date.now` pair in one process. The gap is milliseconds, thus
+                // the printed figures differ only on a short turn or on a rounding step.
                 const durationMs = Date.now() - turnStartedAt;
                 return result.finish.reason === "aborted"
                     ? { phase: { kind: "aborted", durationMs, ...(turnUsage ? { turnUsage } : {}) }, toPersist }

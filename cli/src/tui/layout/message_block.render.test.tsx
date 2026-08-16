@@ -128,6 +128,24 @@ describe("MessageBlock turn-usage figures", () => {
         }
     });
 
+    test("a measured zero prints as a figure, because the header reads the prop against absence", async () => {
+        // A turn that settled inside one millisecond measured zero. A header that tested the prop for
+        // truth would drop that figure and read as a turn that nobody timed, which is a different fact.
+        const setup = await renderAssistant({ durationMs: 0 });
+        try {
+            await setup.renderOnce();
+            // Scoped to the header ROW, because the body prose below it is free to carry the same text.
+            const header = setup
+                .captureCharFrame()
+                .split("\n")
+                .find((line) => line.includes("Inflexa"));
+            expect(header).toBeDefined();
+            expect(header).toContain("0ms");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
     test("the cache and reasoning counts are folded into neither figure", () => {
         // Asserted on the formatter rather than the frame: "these two numbers are the reported ones"
         // is a claim about arithmetic, and a frame containing two numbers cannot pin WHICH numbers.
