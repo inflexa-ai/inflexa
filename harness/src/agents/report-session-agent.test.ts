@@ -139,7 +139,10 @@ describe("createReportSessionAgent", () => {
         // stable substrings, thus the assertion does not couple to the full prose.
         expect(reportSessionPrompt).toContain("Never write a zero p-value into a sentence");
         expect(reportSessionPrompt).toContain("below the resolution of the test");
-        expect(reportSessionPrompt).toContain("The page renders the honest bound itself");
+        // A column bounds the zero, thus the promise names the two blocks that carry
+        // one. A metric card holds one cell, thus the look catches its printed value.
+        expect(reportSessionPrompt).toContain("A table and a chart render the honest bound");
+        expect(reportSessionPrompt).toContain("A metric card reads one cell");
         // The prose reads the printed form, and the look settles the agreement.
         expect(reportSessionPrompt).toContain("Quote a number as the page prints it");
         expect(reportSessionPrompt).toContain("the sentence and the card agree");
@@ -150,7 +153,10 @@ describe("createReportSessionAgent", () => {
     test("the prompt teaches the reader words of a gene set", () => {
         // The rule and its home for the raw token are stable substrings.
         expect(reportSessionPrompt).toContain("Name a gene set in reader words");
-        expect(reportSessionPrompt).toContain("belongs to the table and to the appendix");
+        // The token stays where the evidence puts it, and the appendix is a region
+        // that the renderer writes and never a place that the agent authors into.
+        expect(reportSessionPrompt).toContain("it stays in the table cell that holds it");
+        expect(reportSessionPrompt).toContain("The renderer writes the");
         // The anti-pattern entry names the raw token in the prose.
         expect(reportSessionPrompt).toContain("Write a raw token into the prose");
     });
@@ -159,9 +165,13 @@ describe("createReportSessionAgent", () => {
         // The rule and its two cases stay at the mechanism level, thus the assertion
         // pins the preset and the orientation and never a dataset or a column.
         expect(reportSessionPrompt).toContain("Derive that table and");
-        expect(reportSessionPrompt).toContain("A survival figure derives its step table");
+        // The derivation reads the evidence and never the image, thus the wording
+        // names the evidence that the figure plots. The two substrings sit on two
+        // lines of the prompt, thus neither one crosses the wrap between them.
+        expect(reportSessionPrompt).toContain("For a survival figure, derive the step table from the");
+        expect(reportSessionPrompt).toContain("evidence that the figure plots");
         expect(reportSessionPrompt).toContain("`km`");
-        expect(reportSessionPrompt).toContain("A ranked-set figure derives its ranked table");
+        expect(reportSessionPrompt).toContain("derive the ranked table the same way");
         expect(reportSessionPrompt).toContain("horizontal");
     });
 
@@ -211,6 +221,9 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("an overflowing card");
         expect(reportSessionPrompt).toContain("a raw column name on an axis");
         expect(reportSessionPrompt).toContain("an unreadable precision");
+        // A metric card carries no column to bound a zero, thus the look is where a
+        // printed zero probability gets caught.
+        expect(reportSessionPrompt).toContain("a printed zero probability");
         expect(reportSessionPrompt).toContain("a number that disagrees");
         expect(reportSessionPrompt).toContain("content that stayed invisible");
         // A found fault ends in a repair, thus the agent never reports one instead.
@@ -269,7 +282,12 @@ describe("createReportSessionAgent", () => {
         // substrings, thus the assertion does not couple to the full prose.
         expect(reportSessionPrompt).toContain("derive_table");
         expect(reportSessionPrompt).toContain("a pivot, and an aggregate are such reshaping");
-        expect(reportSessionPrompt).toContain("transform is not: a chart block reads the column that it needs");
+        // The exclusion is chart-scoped. A table carries no knob, thus its composed
+        // display column derives and the two paragraphs agree. Each substring sits on
+        // one line of the prompt, thus a line wrap cuts none of them.
+        expect(reportSessionPrompt).toContain("transform of a chart is not: a chart block reads the column that it needs");
+        expect(reportSessionPrompt).toContain("A table carries no such knob");
+        expect(reportSessionPrompt).toContain("column of a table derives");
         // A derived table is evidence of the session, thus it binds like a pinned one.
         expect(reportSessionPrompt).toContain("binds like any pinned artifact");
     });
@@ -280,8 +298,10 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("Prefer a chart block when a table artifact holds the data");
         expect(reportSessionPrompt).toContain("a figure image only when no table carries the data");
         expect(reportSessionPrompt).toContain("this rule is about the report page alone");
-        // The anti-pattern entry names the figure that stands where a table serves.
+        // The anti-pattern entry names the figure that stands where a table serves,
+        // and the derivation widens what a table can serve.
         expect(reportSessionPrompt).toContain("Reach for a figure where a table serves");
+        expect(reportSessionPrompt).toContain("that no derivation can give");
     });
 
     test("the prompt carries the headline obligations", () => {

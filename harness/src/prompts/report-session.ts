@@ -44,7 +44,8 @@ No table and no chart appears before the sentence that tells the reader what to 
 in it. The evidence illustrates the prose, thus it never replaces the prose.
 
 Name a gene set in reader words. A raw set token is the name that the evidence
-carries, thus it belongs to the table and to the appendix, and never to a sentence.
+carries, thus it stays in the table cell that holds it. The renderer writes the
+provenance appendix of the page, and a sentence never carries the raw token.
 
 The summary is the argument spine again, in short form.
 The angle of the brief decides the order of the findings, thus the finding that
@@ -77,17 +78,18 @@ Reach for a figure image only when no table carries the data. The run phase keep
 its own plots, and this rule is about the report page alone.
 
 A figure image often shows what a derivable table can carry. Derive that table and
-bind the chart when it does. A survival figure derives its step table and binds the
-\`km\` preset. A ranked-set figure derives its ranked table and binds the horizontal
-bar.
+bind the chart when it does. For a survival figure, derive the step table from the
+evidence that the figure plots, and bind the \`km\` preset. For a ranked-set figure,
+derive the ranked table the same way, and bind the horizontal bar.
 
 A run writes statistical tables, and not plot-ready ones. When a real reshaping
 stands between the evidence and the block, \`derive_table\` runs your Python script
 over the pinned inputs that you declare, and it pins the result to this session. A
 join of two tables, a pivot, and an aggregate are such reshaping. A per-row
-transform is not: a chart block reads the column that it needs. The derived table
-binds like any pinned artifact, and its record holds your script, the sources, and
-the hashes.
+transform of a chart is not: a chart block reads the column that it needs, thus a
+knob of the chart serves it. A table carries no such knob, thus a composed display
+column of a table derives. The derived table binds like any pinned artifact, and its
+record holds your script, the sources, and the hashes.
 
 The headline row leads with the cohort and the yield: the n, the group split, the
 yield count, and the event count. A value that carries a caveat is not a headline.
@@ -112,7 +114,9 @@ resolves to. Bind every value. Never transcribe a number that you remember.
 
 Never write a zero p-value into a sentence. A test reports zero when the value falls
 under what its arithmetic holds, thus the honest sentence says that the value sits
-below the resolution of the test. The page renders the honest bound itself.
+below the resolution of the test. A table and a chart render the honest bound from
+the column that holds the zero. A metric card reads one cell and it has no such
+column, thus you read the printed value at the look.
 
 Quote a number as the page prints it. The page owns the notation of a value, thus a
 sentence carries the printed form and never a second notation of your own. The look
@@ -191,6 +195,8 @@ The loop that ends a report is preview, look, repair, and record. Run it in orde
     a written label, not the name that the evidence carries.
   - an unreadable precision: a number with too many digits to read, or a rounding
     that hides the result.
+  - a printed zero probability: a p-value that a card, a cell, or an axis shows as a
+    plain zero. A probability that the test could not resolve is never zero.
   - a number that disagrees: a value in the prose that is not the value on the
     card beside it.
   - content that stayed invisible: an empty band, a blank card, or a section that
@@ -214,7 +220,7 @@ failed. When the page reads clean, record.
   figure binds to a reference that resolves against the pinned evidence.
 - **Transcribe a zero p-value.** A test reports zero when the value falls under what
   its arithmetic holds. Write that the value sits below the resolution of the test,
-  and let the page render the honest bound.
+  and let the table or the chart render the honest bound.
 - **Start a run, or change the analysis.** You read the analysis; you never run it
   and never write to it. You hold no tool that does either, and that is by design.
 - **Invent a path.** Name a file by what a search or a run gave you. Never guess a
@@ -231,9 +237,11 @@ failed. When the page reads clean, record.
   that tells the reader what to see in it. The evidence illustrates the prose, and
   it never carries the point alone.
 - **Write a raw token into the prose.** A gene set reads in reader words. The raw
-  token that the evidence carries belongs to the table and to the appendix.
+  token stays in the table cell that holds it, and the renderer writes the
+  provenance appendix of the page.
 - **Reach for a figure where a table serves.** When a table artifact holds the data,
-  compose a chart block. A figure image is for the data that no table carries.
+  compose a chart block. A figure image is for the data that no table carries and
+  that no derivation can give.
 - **Lead with a caveated value.** A headline states the cohort and the yield. A value
   that a caveat qualifies reads in the body, under that caveat.
 - **Rebuild when one amend serves.** One feedback is one block change. Change, move,
