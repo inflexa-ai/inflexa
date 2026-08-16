@@ -383,6 +383,17 @@ function deriveScatter(block: ResolvedChartBlock, rows: readonly ChartRow[], col
     });
 }
 
+/**
+ * The x axis of a histogram.
+ *
+ * The axis carries a bin range and not the cells of the column, thus it stays bare where the author names
+ * nothing. A declared label names the quantity that the bins measure, and the axis then carries it.
+ */
+function histogramXAxis(labels: ColumnLabels, column: string): EchartOption {
+    const label = declaredForColumn(labels, column);
+    return { type: "value", scale: true, ...(label !== undefined ? xAxisName(label) : {}) };
+}
+
 /** Equal-width bins over the global range. Each group shares the same edges. */
 function deriveHistogram(block: ResolvedChartBlock, rows: readonly ChartRow[], columns: readonly string[] | undefined): Result<EchartOption, RenderProblem> {
     const xResult = requireColumn(block, rows, columns, "x");
@@ -392,7 +403,7 @@ function deriveHistogram(block: ResolvedChartBlock, rows: readonly ChartRow[], c
 
     if (rows.length === 0) {
         return ok({
-            xAxis: { type: "value", scale: true },
+            xAxis: histogramXAxis(block.labels, x),
             yAxis: { ...COUNT_AXIS },
             series: [{ type: "bar", barWidth: "99%", data: [] }],
         });
@@ -419,7 +430,7 @@ function deriveHistogram(block: ResolvedChartBlock, rows: readonly ChartRow[], c
     }
 
     return ok({
-        xAxis: { type: "value", scale: true },
+        xAxis: histogramXAxis(block.labels, x),
         yAxis: { ...COUNT_AXIS },
         series,
     });
@@ -661,7 +672,7 @@ function deriveComposition(
     const emitted: EmittedSeries[] = [];
     for (const entry of resolved) {
         for (const group of splitByChannel(rows, entry.group)) {
-            const built = buildSeries(blockId, entry, group, labeled.value, dense, emitted.length);
+            const built = buildSeries(blockId, entry, group, labeled.value, dense, emitted.length, labels);
             if (built.isErr()) return err(built.error);
             emitted.push(...built.value);
         }
@@ -779,13 +790,14 @@ function buildSeries(
     labeled: ReadonlySet<number>,
     dense: boolean,
     emittedCount: number,
+    labels: ColumnLabels,
 ): Result<EmittedSeries[], RenderProblem> {
     const form = entry.declared.form;
     const points = collectPoints(entry, group.indices);
     if (SORTED_FORMS.has(form)) {
         points.sort((a, b) => compareCell(a.x, b.x));
     }
-    const name = seriesName(entry, group.name);
+    const name = seriesName(entry, group.name, labels);
 
     if (entry.y0 !== undefined) {
         const band = bandSeries(blockId, entry, name, points, `band-${emittedCount}`);
@@ -822,14 +834,15 @@ function collectPoints(entry: ResolvedSeries, indices: readonly number[]): Point
  * The name of one runtime series.
  *
  * Each series carries a name, thus the `{a}` of the tooltip template always names something. A series with
- * no declared name and no group takes the name of its y channel.
+ * no declared name and no group takes the name of its y channel. That name reads the declared label of the
+ * column, the same as the y axis, thus one chart names one column one way.
  */
-function seriesName(entry: ResolvedSeries, group: Cell | undefined): string {
+function seriesName(entry: ResolvedSeries, group: Cell | undefined, labels: ColumnLabels): string {
     const declared = entry.declared.name;
     if (declared !== undefined && group !== undefined) return `${declared} (${String(group)})`;
     if (declared !== undefined) return declared;
     if (group !== undefined) return String(group);
-    return entry.y.name;
+    return axisTitle(labels, entry.y.name);
 }
 
 /**

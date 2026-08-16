@@ -123,7 +123,9 @@ export const ArtifactTableReferenceSchema = z.strictObject({
             "What each column holds, keyed by the raw column name. A meaning is the content of the column, and it is not a format: `p-value` is a probability, `effect` is a signed magnitude such as a fold change, `count` is a whole tally, `identifier` is a name that is written with digits, and `category` is a label. You read the artifact, thus you know which column is which. Declare the columns that you know, and omit the rest. A key that names no column of the artifact has no effect.",
         ),
     columnLabels: z
-        .record(z.string(), z.string())
+        // A label replaces the column name on the page. Empty text names nothing, thus it would blank the
+        // header and the axis title. Omit the key instead, which is the way to declare no label.
+        .record(z.string(), z.string().min(1))
         .optional()
         .describe(
             "The display name of each column, keyed by the raw column name. A label names what the column measures, for example `Adjusted p-value` for `padj`. The page shows the label in the table header and in the axis title, and the raw name stays on hover. A key that names no column of the artifact has no effect.",

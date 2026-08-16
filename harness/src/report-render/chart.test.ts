@@ -427,6 +427,8 @@ describe("the composition derivation", () => {
         const bare = derive(composedBlock({ series: [{ form: "line", encoding: { x: "t", y: "hi" } }] }), rows);
         expect(asObj(bare.xAxis).name).toBe("t");
         expect(asObj(bare.yAxis).name).toBe("hi");
+        // A series with no declared name and no group falls back to its y channel, thus it agrees with the axis.
+        expect(asObj(asArr(bare.series)[0]).name).toBe("hi");
 
         const titled = derive(
             composedBlock({
@@ -557,6 +559,28 @@ describe("the declared column labels", () => {
         );
         // The axis states the plotted quantity, and the plotted quantity is the transform of the column.
         expect(asObj(derive(block, transformed).yAxis).name).toBe("neg_log10(p)");
+    });
+
+    it("names the series fallback with the declared label, thus the series and the axis agree", () => {
+        const block = composedBlock({ series: [{ form: "line", encoding: { x: "day", y: "count" } }] }, { labels: { count: "Cells counted" } });
+        const option = derive(block, rows);
+        expect(asObj(asArr(option.series)[0]).name).toBe("Cells counted");
+        expect(asObj(option.yAxis).name).toBe("Cells counted");
+    });
+
+    it("names the histogram axis with the declared label of its column", () => {
+        const counts: ChartRow[] = [{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }];
+        const xAxis = asObj(derive(chartBlock("histogram", { x: "n" }, { labels: { n: "Reads per cell" } }), counts).xAxis);
+        expect(xAxis.name).toBe("Reads per cell");
+        expect(xAxis.nameLocation).toBe("middle");
+    });
+
+    it("keeps the bare histogram axis of a column that declares no label", () => {
+        const counts: ChartRow[] = [{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }];
+        const bare = { type: "value", scale: true, axisLabel: { interval: 0 } };
+        expect(JSON.stringify(derive(chartBlock("histogram", { x: "n" }), counts).xAxis)).toBe(JSON.stringify(bare));
+        // A zero-row histogram takes the same axis, thus the empty container states the same quantity.
+        expect(JSON.stringify(derive(chartBlock("histogram", { x: "n" }), []).xAxis)).toBe(JSON.stringify(bare));
     });
 
     it("ignores a label that names no column, thus the derivation gives the same bytes", () => {

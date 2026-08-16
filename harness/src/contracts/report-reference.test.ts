@@ -304,6 +304,10 @@ describe("parseReference — the per-kind assert shape", () => {
         expectParseError(encodeUnchecked({ kind: "artifact-table", path: "t.csv", hash: HASH, columnLabels: { padj: 7 } }), "schema-mismatch");
     });
 
+    it("rejects an empty column label, which would blank the header and the axis", () => {
+        expectParseError(encodeUnchecked({ kind: "artifact-table", path: "t.csv", hash: HASH, columnLabels: { padj: "" } }), "schema-mismatch");
+    });
+
     it("rejects any assert on an artifact-table", () => {
         expectParseError(encodeUnchecked({ kind: "artifact-table", run: "r", path: "p", hash: HASH, assert: { hash: HASH } }), "schema-mismatch");
         expectParseError(encodeUnchecked({ kind: "artifact-table", run: "r", path: "p", hash: HASH, assert: { value: 5 } }), "schema-mismatch");
