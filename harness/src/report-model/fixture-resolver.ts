@@ -19,6 +19,7 @@ import type {
 } from "../contracts/report-reference.js";
 import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
 import {
+    applyRowBound,
     columnsHeldByNoRow,
     fileTypeHoldsNoCell,
     snapshotEntry,
@@ -107,7 +108,15 @@ function resolveArtifactTable(reference: ArtifactTableReference, snapshot: Repor
         return fail(reference, "unreadable-artifact", `the ${tableFileType} at ${reference.path} holds no cell to read`);
     }
 
-    const rows = artifact.rows ?? [];
+    // The bound ranks the rows as the artifact holds them, thus a bound over a column that the subset
+    // below leaves out still ranks them. An unknown bound column addresses nothing, exactly as an unknown
+    // subset column does.
+    const bound = reference.rowBound;
+    const allRows = artifact.rows ?? [];
+    if (bound !== undefined && columnsHeldByNoRow(allRows, [bound.column]).length > 0) {
+        return fail(reference, "locator-out-of-range", `the row bound names column ${bound.column}, which the table at ${reference.path} does not hold`);
+    }
+    const rows = bound === undefined ? allRows : applyRowBound(allRows, bound);
     const columns = reference.columns;
     if (columns === undefined) {
         return ok({ type: "table", rows });

@@ -34,7 +34,12 @@ await mkdir(assetsDir, { recursive: true });
 for (const asset of PAGE_ASSETS) {
     await copyFile(moduleResolver.resolve(asset.specifier), join(assetsDir, asset.file));
 }
+// The rows of a table ride a data asset. Without the write the page opens with a failed script request,
+// and the person sees a table card with no data behind it.
+for (const asset of rendered.value.dataAssets) {
+    await writeFile(join(assetsDir, asset.name), asset.bytes, "utf8");
+}
 
 const pagePath = join(pageDir, "index.html");
-await writeFile(pagePath, rendered.value, "utf8");
+await writeFile(pagePath, rendered.value.html, "utf8");
 console.log(pagePath);

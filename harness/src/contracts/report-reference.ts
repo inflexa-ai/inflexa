@@ -104,6 +104,23 @@ export const ArtifactValueReferenceSchema = z.strictObject({
 export const ColumnMeaningSchema = z.enum(["p-value", "effect", "count", "identifier", "category"]);
 
 /**
+ * The row bound of a whole-table binding: the top rows by one column.
+ *
+ * The bound is content and not presentation. The resolution applies it, thus the resolved table, the
+ * rendered card, the staged data, and the gate all read one bounded set.
+ */
+export const RowBoundSchema = z.strictObject({
+    column: z.string().min(1).describe("The column that ranks the rows. The artifact must hold it, and the bound refuses a name that it does not."),
+    count: z.number().int().positive().describe("How many rows to keep. The bound takes the first rows of the ranked order."),
+    order: z
+        .enum(["desc", "asc"])
+        .optional()
+        .describe(
+            "The rank direction. Omit it for `desc`, which keeps the largest values. Use `asc` for a column where the smallest value ranks first, such as a p-value.",
+        ),
+});
+
+/**
  * A reference to a whole table artifact. It carries no locator, because it binds every row.
  *
  * It carries no assert. A table is not one value, thus the only belief that an author can hold about it
@@ -115,6 +132,9 @@ export const ColumnMeaningSchema = z.enum(["p-value", "effect", "count", "identi
 export const ArtifactTableReferenceSchema = z.strictObject({
     kind: z.literal("artifact-table"),
     ...artifactPinShape,
+    rowBound: RowBoundSchema.optional().describe(
+        "The primary size control of a table: the top rows by one column. Bind the whole artifact and bound it here, and never bind a pre-cut copy of the file. A binding with no bound resolves every row of the artifact.",
+    ),
     columns: z.array(z.string()).optional().describe("An optional column subset to render. Omit to bind every column."),
     columnMeanings: z
         .record(z.string(), ColumnMeaningSchema)
@@ -239,6 +259,7 @@ export const UnresolvedReferenceSchema = z.strictObject({
 
 export type ArtifactValueReference = z.infer<typeof ArtifactValueReferenceSchema>;
 export type ArtifactTableReference = z.infer<typeof ArtifactTableReferenceSchema>;
+export type RowBound = z.infer<typeof RowBoundSchema>;
 export type ColumnMeaning = z.infer<typeof ColumnMeaningSchema>;
 export type ArtifactFileReference = z.infer<typeof ArtifactFileReferenceSchema>;
 export type CitationReference = z.infer<typeof CitationReferenceSchema>;

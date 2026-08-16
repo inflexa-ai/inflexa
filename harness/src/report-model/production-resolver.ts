@@ -39,6 +39,7 @@ import { computeSha256File } from "../lib/fs-helpers.js";
 import { resolveWorkspacePath } from "../workspace/paths.js";
 import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
 import {
+    applyRowBound,
     columnsHeldByNoRow,
     fileTypeHoldsNoCell,
     snapshotEntry,
@@ -805,7 +806,15 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
         if (gated.isErr()) {
             return err(gated.error);
         }
-        const rows = gated.value;
+        // The bound ranks the rows as the artifact holds them, thus a bound over a column that the subset
+        // below leaves out still ranks them. An unknown bound column addresses nothing, exactly as an
+        // unknown subset column does.
+        const bound = reference.rowBound;
+        const allRows = gated.value;
+        if (bound !== undefined && columnsHeldByNoRow(allRows, [bound.column]).length > 0) {
+            return fail(reference, "locator-out-of-range", `the row bound names column ${bound.column}, which the table at ${reference.path} does not hold`);
+        }
+        const rows = bound === undefined ? allRows : applyRowBound(allRows, bound);
         const columns = reference.columns;
         if (columns === undefined) {
             return ok({ type: "table", rows });

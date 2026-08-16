@@ -8,6 +8,8 @@
  * image bytes.
  */
 
+import type { DataAsset } from "./table-data.js";
+
 /**
  * The value that one block resolves to, as a closed union. A `scalar` gives one number or one string. A
  * `table` gives the rows and the optional column order. A `figure` gives a ready source string. A
@@ -31,3 +33,14 @@ export interface RenderProblem {
 
 /** The value map that the renderer takes, keyed by block id. */
 export type RenderValues = Record<string, RenderValue>;
+
+/**
+ * One rendered page: the HTML string, and each data asset that the page references.
+ *
+ * The renderer writes no file. Thus it gives the asset bytes back to the caller, and the caller stages
+ * them beside the page. A document with no table gives an empty list, and its page references none.
+ */
+export interface RenderedPage {
+    html: string;
+    dataAssets: DataAsset[];
+}

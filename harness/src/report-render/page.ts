@@ -7,6 +7,7 @@
 
 import { assetSource, ECHARTS_ASSET } from "./assets.js";
 import { ECHARTS_THEME_NAME } from "./design.js";
+import { TABLE_DATA_GLOBAL } from "./table-data.js";
 import { SHOW_ALL_PREFIX, TABLE_ROW_CAP } from "./views/values.js";
 
 /**
@@ -561,5 +562,54 @@ export const TABLE_ENHANCER = `(function () {
     document.addEventListener("DOMContentLoaded", start);
   } else {
     start();
+  }
+})();`;
+
+/**
+ * The decoder of the table data assets.
+ *
+ * Each data asset registers its payload under the global map, keyed by the block id. The payload is
+ * columnar: a row is an array in column order, and a number in a column that carries a dictionary is the
+ * index of its value. This script materializes the decoded rows one time, thus a reader of the data takes
+ * plain row objects and no reader repeats the decode.
+ *
+ * The decoded rows land on the payload itself, under `rows`. The encoded arrays stay under `encoded`, thus
+ * the decode runs one time even when the script runs again. A cell of `null` names a column that the row
+ * does not hold, and the decoded row omits that key. Thus a ragged row stays ragged and no key reads as an
+ * empty value.
+ *
+ * The script runs after the data assets and before the page scripts. A page with no table registers no
+ * map, and the guard leaves such a page untouched.
+ */
+export const TABLE_DATA_DECODER = `(function () {
+  var registry = window.${TABLE_DATA_GLOBAL};
+  if (!registry) {
+    return;
+  }
+  var ids = Object.keys(registry);
+  for (var i = 0; i < ids.length; i++) {
+    var payload = registry[ids[i]];
+    if (!payload || payload.encoded) {
+      continue;
+    }
+    var columns = payload.columns || [];
+    var dict = payload.dict || {};
+    var encoded = payload.rows || [];
+    var decoded = [];
+    for (var r = 0; r < encoded.length; r++) {
+      var row = encoded[r];
+      var record = {};
+      for (var c = 0; c < columns.length; c++) {
+        var cell = row[c];
+        if (cell === null || cell === undefined) {
+          continue;
+        }
+        var values = dict[columns[c]];
+        record[columns[c]] = values && typeof cell === "number" ? values[cell] : cell;
+      }
+      decoded.push(record);
+    }
+    payload.encoded = encoded;
+    payload.rows = decoded;
   }
 })();`;

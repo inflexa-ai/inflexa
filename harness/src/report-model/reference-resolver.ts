@@ -8,8 +8,9 @@
 
 import type { Result } from "neverthrow";
 
-import type { Reference, UnresolvedReference } from "../contracts/report-reference.js";
+import type { Reference, RowBound, UnresolvedReference } from "../contracts/report-reference.js";
 import type { ArtifactType } from "../schemas/artifact-manifest.js";
+import { asFiniteNumber } from "./assert-rules.js";
 
 /**
  * One pinned artifact: its content hash, and its rows as plain cells.
@@ -111,6 +112,66 @@ export function columnsHeldByNoRow(rows: Array<Record<string, string | number>>,
         return [];
     }
     return columns.filter((column) => !rows.some((row) => column in row));
+}
+
+/**
+ * The rank of one cell against another, under the numeric-aware compare.
+ *
+ * A text-backed artifact holds every cell as a string, thus a numeric column arrives as `"0.01"`. Two
+ * cells that both read as a finite number compare as numbers. Thus a p-value column ranks by magnitude,
+ * and a code-unit order would put `"10"` between `"1"` and `"2"`.
+ *
+ * Any other pair compares by the code-unit order of the string form. The comparison never calls
+ * `localeCompare`, because the ICU of a host decides that order and the bounded rows reach the bytes of
+ * the data asset. Thus one table gives one payload and one asset name on every host.
+ *
+ * A cell that the row does not hold ranks last in either direction. Such a row carries no value for the
+ * bound to rank, thus it never displaces a row that does.
+ */
+function rankCells(left: string | number | undefined, right: string | number | undefined, descending: boolean): number {
+    if (left === undefined || right === undefined) {
+        return left === right ? 0 : left === undefined ? 1 : -1;
+    }
+    const rank = rankValues(left, right);
+    if (rank === 0) {
+        return 0;
+    }
+    return descending ? -rank : rank;
+}
+
+/** The rank of two present cells: numeric when both read as a finite number, and code-unit order otherwise. */
+function rankValues(left: string | number, right: string | number): number {
+    const leftNumber = asFiniteNumber(left);
+    const rightNumber = asFiniteNumber(right);
+    if (leftNumber !== undefined && rightNumber !== undefined) {
+        return leftNumber - rightNumber;
+    }
+    const leftText = String(left);
+    const rightText = String(right);
+    if (leftText < rightText) return -1;
+    if (leftText > rightText) return 1;
+    return 0;
+}
+
+/**
+ * Apply a row bound to a table: rank the rows by the bound column, and keep the first `count` of them.
+ *
+ * The sort is stable by construction. The walk carries the source index of each row and it breaks a tie on
+ * that index, thus two rows of equal rank keep the order of the file and two runs over one table give one
+ * result. `Array.prototype.sort` is specified as stable in the current language, and the explicit tiebreak
+ * states the property at the site that depends on it.
+ *
+ * The bound reads the rows as they arrive. A caller that projects onto a column subset projects after the
+ * bound, thus a bound over a column that the subset leaves out still ranks the rows.
+ */
+export function applyRowBound(rows: Array<Record<string, string | number>>, bound: RowBound): Array<Record<string, string | number>> {
+    const descending = (bound.order ?? "desc") === "desc";
+    const ranked = rows.map((row, index) => ({ row, index }));
+    ranked.sort((left, right) => {
+        const rank = rankCells(left.row[bound.column], right.row[bound.column], descending);
+        return rank === 0 ? left.index - right.index : rank;
+    });
+    return ranked.slice(0, bound.count).map((entry) => entry.row);
 }
 
 /**

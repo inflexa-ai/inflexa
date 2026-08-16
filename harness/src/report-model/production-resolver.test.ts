@@ -362,6 +362,107 @@ describe("production resolver, the table and chart values", () => {
     });
 });
 
+describe("production resolver, the row bound", () => {
+    /** A CSV of `count` rows. The score falls as the index rises, thus the top of a `desc` bound is the head. */
+    function rankedCsv(count: number): string {
+        const lines = ["gene,score"];
+        for (let index = 0; index < count; index += 1) {
+            lines.push(`G${index},${(count - index) / count}`);
+        }
+        return `${lines.join("\n")}\n`;
+    }
+
+    test("a bounded reference gives the top rows by the named column", async () => {
+        const hash = await writeArtifact("bound.csv", rankedCsv(14201));
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const reference: ArtifactTableReference = { ...tableRef("bound.csv", hash), rowBound: { column: "score", count: 20 } };
+
+        const result = await resolver.resolve(reference, snapshotOf([{ path: "bound.csv", hash }]));
+
+        const rows = (result._unsafeUnwrap() as { type: "table"; rows: Row[] }).rows;
+        // The resolved table is the bounded table. Thus the card, the data asset, and the gate read one set.
+        expect(rows.length).toBe(20);
+        expect(rows[0].gene).toBe("G0");
+        expect(rows[19].gene).toBe("G19");
+    });
+
+    test("an ascending bound reads the numeric magnitude of a text cell", async () => {
+        const hash = await writeArtifact("padj.csv", "gene,padj\nA,0.5\nB,1e-9\nC,0.02\n");
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const reference: ArtifactTableReference = { ...tableRef("padj.csv", hash), rowBound: { column: "padj", count: 2, order: "asc" } };
+
+        const result = await resolver.resolve(reference, snapshotOf([{ path: "padj.csv", hash }]));
+
+        // A CSV holds each cell as text. A text compare would rank `0.02` before `1e-9`.
+        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["B", "C"]);
+    });
+
+    test("a tie keeps the order of the file, thus two runs give one result", async () => {
+        const hash = await writeArtifact("ties.csv", "gene,score\nA,1\nB,1\nC,1\nD,0\n");
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const reference: ArtifactTableReference = { ...tableRef("ties.csv", hash), rowBound: { column: "score", count: 3 } };
+        const snapshot = snapshotOf([{ path: "ties.csv", hash }]);
+
+        const first = await resolver.resolve(reference, snapshot);
+        const second = await resolver.resolve(reference, snapshot);
+
+        expect((first._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.gene)).toEqual(["A", "B", "C"]);
+        expect(second._unsafeUnwrap()).toEqual(first._unsafeUnwrap());
+    });
+
+    test("a text column ranks in code-unit order, and never in the collation of the host", async () => {
+        const hash = await writeArtifact("case.csv", "label,n\na,1\nB,2\nA,3\n");
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const reference: ArtifactTableReference = { ...tableRef("case.csv", hash), rowBound: { column: "label", count: 3, order: "asc" } };
+
+        const result = await resolver.resolve(reference, snapshotOf([{ path: "case.csv", hash }]));
+
+        // The code-unit order puts each capital before each lowercase letter. An ICU collation ranks `a`
+        // before `A`, and it varies with the host. The bounded rows reach the bytes of the data asset,
+        // thus the order of the bound is part of the content address of that asset.
+        expect((result._unsafeUnwrap() as { rows: Row[] }).rows.map((row) => row.label)).toEqual(["A", "B", "a"]);
+        expect("a".localeCompare("A", "en")).toBeLessThan(0);
+    });
+
+    test("a bound over a column that the table does not hold refuses", async () => {
+        const hash = await writeArtifact("nobound.csv", "gene,score\nA,1\n");
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const reference: ArtifactTableReference = { ...tableRef("nobound.csv", hash), rowBound: { column: "padj", count: 5 } };
+
+        const result = await resolver.resolve(reference, snapshotOf([{ path: "nobound.csv", hash }]));
+
+        expect(result._unsafeUnwrapErr().reason).toBe("locator-out-of-range");
+        expect(result._unsafeUnwrapErr().detail).toContain("padj");
+    });
+
+    test("the bound ranks before the projection, thus a subset that omits the bound column still bounds", async () => {
+        const hash = await writeArtifact("subset.csv", "gene,score\nA,0.1\nB,0.9\n");
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+        const reference: ArtifactTableReference = { ...tableRef("subset.csv", hash, ["gene"]), rowBound: { column: "score", count: 1 } };
+
+        const result = await resolver.resolve(reference, snapshotOf([{ path: "subset.csv", hash }]));
+
+        expect((result._unsafeUnwrap() as { rows: Row[] }).rows).toEqual([{ gene: "B" }]);
+    });
+
+    test("the fixture realization bounds the same rows as the production one", async () => {
+        const hash = await writeArtifact("agree.csv", "gene,score\nA,0.1\nB,0.9\nC,0.5\n");
+        const rows: Row[] = [
+            { gene: "A", score: "0.1" },
+            { gene: "B", score: "0.9" },
+            { gene: "C", score: "0.5" },
+        ];
+        const snapshot = snapshotOf([{ path: "agree.csv", hash, rows }]);
+        const reference: ArtifactTableReference = { ...tableRef("agree.csv", hash), rowBound: { column: "score", count: 2 } };
+
+        const production = await createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS }).resolve(reference, snapshot);
+        const fixture = await createFixtureResolver().resolve(reference, snapshot);
+
+        // One rule of the bound serves both realizations, thus a fixture test states the production answer.
+        expect(fixture._unsafeUnwrap()).toEqual(production._unsafeUnwrap());
+    });
+});
+
 describe("production resolver, the prepare cache", () => {
     test("after a prepare, resolve answers from the cache even when the file is gone", async () => {
         const hash = await writeArtifact("cached.csv", "gene,score\nBRCA1,0.9\n");

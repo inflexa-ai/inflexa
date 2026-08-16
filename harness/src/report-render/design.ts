@@ -577,6 +577,28 @@ img {
   color: var(--color-primary-700);
   background: var(--color-border-subtle);
 }
+/* The footer of a table card. It holds the download of the raw bytes, thus it reads as a foot rule under
+   the table and never as a second control bar. */
+.report-table-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 16px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-alt);
+}
+.report-table-download {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-primary-500);
+  text-decoration: none;
+}
+.report-table-download:hover {
+  color: var(--color-primary-700);
+  text-decoration: underline;
+}
 
 /* ── Figure and citation cards ────────────────────────── */
 .report-figure {

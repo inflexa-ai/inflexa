@@ -9,7 +9,7 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,7 +18,7 @@ import type { DraftDocument } from "../../report-model/draft.js";
 import { computeDraftHash } from "../../report-model/draft-hash.js";
 import { createFixtureResolver } from "../../report-model/fixture-resolver.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
-import { PAGE_ASSETS } from "../../report-render/assets.js";
+import { PAGE_ASSETS, tableSidecarName } from "../../report-render/assets.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad, SessionStatePersist, StampResult } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
@@ -308,6 +308,121 @@ describe("the staged asset", () => {
             expect(content).toContain("assets/sha256-bbb.png");
         }
         assertNoLegacyDirs(root);
+    });
+});
+
+describe("the staged table data", () => {
+    const TABLE_PATH = "runs/r1/output/de.csv";
+    const TABLE_HASH = "sha256:ccc";
+    const TABLE_CSV = "gene,direction\nTP53,up\nMYC,down\nEGFR,up\n";
+
+    /** A snapshot whose one artifact is the table that the card binds. The fixture reads its rows. */
+    function tableSnapshot(): ReportSnapshot {
+        return {
+            artifacts: {
+                [TABLE_PATH]: {
+                    hash: TABLE_HASH,
+                    fileType: "output",
+                    rows: [
+                        { gene: "TP53", direction: "up" },
+                        { gene: "MYC", direction: "down" },
+                        { gene: "EGFR", direction: "up" },
+                    ],
+                },
+            },
+        };
+    }
+
+    /** A draft of one table block, with an optional second block that a later preview drops. */
+    function tableDoc(extra?: DraftDocument["sections"][number]["blocks"][number]): DraftDocument {
+        return {
+            title: "Tables",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Results",
+                    blocks: [
+                        { kind: "table", id: "tbl", binding: { kind: "artifact-table", path: TABLE_PATH, hash: TABLE_HASH } },
+                        ...(extra === undefined ? [] : [extra]),
+                    ],
+                },
+            ],
+        };
+    }
+
+    /** Write the artifact that the sidecar copies, under the workspace root. */
+    async function seedTable(root: string): Promise<void> {
+        await mkdir(join(root, "runs/r1/output"), { recursive: true });
+        await writeFile(join(root, TABLE_PATH), TABLE_CSV);
+    }
+
+    it("stages the data asset and the raw sidecar, and the page references both", async () => {
+        const root = await makeRoot();
+        await seedTable(root);
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: tableDoc(), snapshot: tableSnapshot() });
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            const assetsDir = join(root, "report-sessions", "t1", "assets");
+            const staged = await readdir(assetsDir);
+            const dataAsset = staged.find((name) => name.endsWith(".data.js"));
+            const sidecar = tableSidecarName(TABLE_HASH, TABLE_PATH);
+
+            expect(dataAsset).toBeDefined();
+            // The sidecar is the pinned bytes themselves, thus the reader downloads the file and never a
+            // re-serialization of it.
+            expect(await readFile(join(assetsDir, sidecar), "utf8")).toBe(TABLE_CSV);
+            expect(await readFile(join(assetsDir, dataAsset!), "utf8")).toContain("TP53");
+
+            const page = await readFile(result.pagePath, "utf8");
+            expect(page).toContain(`assets/${dataAsset!}`);
+            expect(page).toContain(`assets/${sidecar}`);
+        }
+        assertNoLegacyDirs(root);
+    });
+
+    it("removes what the new page does not reference, and keeps each manifest static", async () => {
+        const root = await makeRoot();
+        await seedTable(root);
+        await mkdir(join(root, "runs/r1/figures"), { recursive: true });
+        await writeFile(join(root, "runs/r1/figures/plot.png"), "PNGDATA");
+        const snapshot = tableSnapshot();
+        snapshot.artifacts["runs/r1/figures/plot.png"] = { hash: "sha256:bbb", fileType: "figure" };
+        const gateway = makeFakeGateway();
+        const figure = {
+            kind: "figure" as const,
+            id: "f1",
+            binding: { kind: "artifact-file" as const, path: "runs/r1/figures/plot.png", hash: "sha256:bbb" },
+            caption: "A plot",
+        };
+        gateway.seed("t1", { document: tableDoc(figure), snapshot });
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+        const assetsDir = join(root, "report-sessions", "t1", "assets");
+
+        const first = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        expect(first.outcome).toBe("rendered");
+        const afterFirst = await readdir(assetsDir);
+        expect(afterFirst).toContain("sha256-bbb.png");
+
+        // A stale file of an earlier preview, and the block that produced the figure, both go.
+        await writeFile(join(assetsDir, "t-000000000000.data.js"), "stale");
+        gateway.seed("t1", { document: tableDoc(), snapshot });
+        const second = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+        expect(second.outcome).toBe("rendered");
+
+        const afterSecond = await readdir(assetsDir);
+        expect(afterSecond).not.toContain("sha256-bbb.png");
+        expect(afterSecond).not.toContain("t-000000000000.data.js");
+        expect(afterSecond.filter((name) => name.endsWith(".data.js")).length).toBe(1);
+        expect(afterSecond).toContain(tableSidecarName(TABLE_HASH, TABLE_PATH));
+        for (const asset of PAGE_ASSETS) {
+            expect(afterSecond).toContain(asset.file);
+        }
     });
 });
 
