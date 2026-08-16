@@ -134,6 +134,61 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("never from memory");
     });
 
+    test("the prompt teaches the zero-p rule and the notation agreement", () => {
+        // The fault, its honest phrasing, and the page that renders the bound are
+        // stable substrings, thus the assertion does not couple to the full prose.
+        expect(reportSessionPrompt).toContain("Never write a zero p-value into a sentence");
+        expect(reportSessionPrompt).toContain("below the resolution of the test");
+        expect(reportSessionPrompt).toContain("The page renders the honest bound itself");
+        // The prose reads the printed form, and the look settles the agreement.
+        expect(reportSessionPrompt).toContain("Quote a number as the page prints it");
+        expect(reportSessionPrompt).toContain("the sentence and the card agree");
+        // The anti-pattern entry names the zero-p transcription.
+        expect(reportSessionPrompt).toContain("Transcribe a zero p-value");
+    });
+
+    test("the prompt teaches the reader words of a gene set", () => {
+        // The rule and its home for the raw token are stable substrings.
+        expect(reportSessionPrompt).toContain("Name a gene set in reader words");
+        expect(reportSessionPrompt).toContain("belongs to the table and to the appendix");
+        // The anti-pattern entry names the raw token in the prose.
+        expect(reportSessionPrompt).toContain("Write a raw token into the prose");
+    });
+
+    test("the prompt teaches derive-and-chart with the two named cases", () => {
+        // The rule and its two cases stay at the mechanism level, thus the assertion
+        // pins the preset and the orientation and never a dataset or a column.
+        expect(reportSessionPrompt).toContain("Derive that table and");
+        expect(reportSessionPrompt).toContain("A survival figure derives its step table");
+        expect(reportSessionPrompt).toContain("`km`");
+        expect(reportSessionPrompt).toContain("A ranked-set figure derives its ranked table");
+        expect(reportSessionPrompt).toContain("horizontal");
+    });
+
+    test("the prompt teaches the headline derivation", () => {
+        // The derivation comes first, and the absence branch is the last resort.
+        expect(reportSessionPrompt).toContain("derive the headline table first");
+        expect(reportSessionPrompt).toContain("Report an absent value only when the derivation cannot give it");
+    });
+
+    test("the prompt teaches the declarations, the row bound, and the composed column", () => {
+        // The two declaration maps and the bound are stable substrings, thus a
+        // binding that ships raw column names cannot pass as guidance.
+        expect(reportSessionPrompt).toContain("Declare the column meanings and");
+        expect(reportSessionPrompt).toContain("the display labels on it");
+        expect(reportSessionPrompt).toContain("Set the row bound on a large table");
+        // The composed display column is an offer, thus the agent proposes it.
+        expect(reportSessionPrompt).toContain("composed display column");
+    });
+
+    test("the prompt ends the probes at the block call", () => {
+        // A metric binds a number, an enumeration composes as the list, and the
+        // arguments are settled before the call.
+        expect(reportSessionPrompt).toContain("A metric binds a numeric cell");
+        expect(reportSessionPrompt).toContain("composes as the typed list");
+        expect(reportSessionPrompt).toContain("before you make the call");
+    });
+
     test("the prompt teaches the verification loop and names the visual spiral", () => {
         // The loop order and the two verification tools are stable substrings, thus
         // the assertion does not couple to the full prose.
