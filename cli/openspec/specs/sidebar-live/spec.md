@@ -5,29 +5,11 @@ The sidebar's live-data contract: the DATA PROFILE and RUNS sections source the 
 ## Requirements
 ### Requirement: The sidebar renders live ledger data with graceful degradation
 
-The sidebar SHALL source its DATA PROFILE and RUNS sections from the harness ledger through the
-booted runtime's pool — the data-profile status row and the analysis's newest runs — never from
-mock fixtures. Before the runtime is `ready` the sections SHALL render a muted placeholder (no
-reads are attempted); an unprofiled analysis renders "not profiled"; a read failure renders an
-unavailable state — none of these SHALL crash or block the sidebar. Every state distinguishes
-itself by glyph and tone from the design system.
+The sidebar MUST source its DATA PROFILE and RUNS sections from the harness ledger, through the pool of the booted runtime. The sources are the data-profile status row and the newest runs of the analysis, never mock fixtures. Before the runtime is `ready`, the sections MUST render a muted placeholder, and no read runs. An unprofiled analysis renders "not profiled". A read failure renders an unavailable state. None of these states can crash or block the sidebar. Every state distinguishes itself by glyph and tone from the design system.
 
-The RUNS section SHALL render **every active run**, not only the newest. An active
-(non-terminal) run SHALL render its own run block — the progress meter, `done/total`, and the
-bounded step window (the narrow windowed mount, `maxSteps` capped) — directly under its run row,
-WITHOUT repeating the run block's name/tag heading, since the run row above is the heading. A
-terminal run SHALL render as a plain one-line row, and terminal rows SHALL stay capped as before.
-Because a block is keyed by the run id of the row it renders under, one run's progress under
-another run's row is not representable. The rail scrolls, so its length tracks live work rather
-than history.
+The RUNS section MUST render **every active run**, not only the newest. An active (non-terminal) run MUST render its own run block directly under its run row: the progress meter, `done/total`, and the bounded step window (the narrow windowed mount, `maxSteps` capped). The block does not show the name or tag heading again, because the run row above is the heading. A terminal run MUST render as a plain one-line row, and the terminal rows stay capped as before. The run id of the row keys the block. Thus the progress of one run under the row of a different run is not representable. The rail scrolls, thus its length tracks live work rather than history.
 
-Live work SHALL NOT be sourced from a windowed listing. The runs listing is capped to the newest
-few rows ordered by start time, which drops the OLDEST running run first — precisely the long
-analysis these surfaces exist to keep visible. The set of active runs SHALL therefore come from a
-separate, uncapped read, and the two SHALL be merged so a run that has fallen outside the listing
-window is still listed and still tracked. The uncapped read SHALL be bounded by live concurrency
-rather than by history, and its failure SHALL degrade to the listing's own view rather than
-removing runs the listing can see.
+Live work MUST NOT come from a windowed listing. The runs listing caps at the newest few rows, ordered by start time, and it drops the OLDEST running run first. That run is exactly the long analysis that these surfaces keep visible. Thus the set of active runs MUST come from a separate, uncapped read. The two reads merge, thus a run outside the listing window is still listed and still tracked. The uncapped read is bounded by live concurrency, not by history. Its failure MUST degrade to the view of the listing alone, and it removes no run that the listing sees.
 
 #### Scenario: A long-running run outside the listing window stays observable
 
@@ -39,22 +21,11 @@ removing runs the listing can see.
 - **WHEN** the uncapped active read fails while the listing succeeds
 - **THEN** the section renders exactly what the listing alone would have shown
 
-Runs and steps SHALL be identified by name rather than by opaque id wherever a name exists. A run
-SHALL be labelled by its plan's title, resolved from the persisted plan, falling back to the
-workflow name and then the id tail when no title is available — the stored workflow name is
-identical on every row and identifies nothing. A step SHALL be labelled by its plan-assigned name,
-falling back to its step id, and SHALL show the agent that owns it.
+Runs and steps MUST carry a name rather than an opaque id wherever a name exists. A run MUST take the title of its plan, from the persisted plan. The fallback is the workflow name, then the id tail. The stored workflow name is identical on every row, and it identifies nothing. A step MUST take its plan-assigned name, with its step id as the fallback, and it MUST show the agent that owns it.
 
-A step's rendered state SHALL preserve distinctions the ledger records rather than collapse them:
-a step that was skipped SHALL be distinguishable from one still waiting to start, a blocked step
-SHALL surface the recorded reason it was blocked rather than reading as an ordinary failure, and a
-step that was retried SHALL show that it was.
+The rendered state of a step MUST keep the distinctions that the ledger records. A skipped step MUST be distinguishable from one that waits to start. A blocked step MUST surface the recorded reason, and it does not read as an ordinary failure. A retried step MUST show the retry.
 
-The completed-profile line SHALL show the absolute completed time (`toLocaleString()`, matching
-the details dialog) rather than a relative age: a profile is a durable record referenced long
-after it ran, and a bare `8h` forces the reader to do date arithmetic the absolute time answers
-directly. The RUNS rows and the SESSION age keep compact relative ages — an absolute timestamp on
-every run row would exceed the rail's usable width and wrap each row.
+The completed-profile line MUST show the absolute completed time (`toLocaleString()`, matching the details dialog), not a relative age. A profile is a durable record, referenced long after it ran. A bare `8h` forces the reader to do date arithmetic that the absolute time answers directly. The RUNS rows keep compact relative ages. An absolute timestamp on every run row would exceed the usable width of the rail, and each row would wrap. The SESSION created time is absolute for the same durable-record reason, per the sidebar requirement of `tui-layout`.
 
 #### Scenario: Sections degrade before the runtime is ready
 
@@ -84,7 +55,8 @@ every run row would exceed the rail's usable width and wrap each row.
 #### Scenario: Runs and steps are named
 
 - **WHEN** a run's plan carries a title and its steps carry names
-- **THEN** the run row shows the plan title and each step row shows its plan name and owning agent, rather than an id tail and a step slug
+- **THEN** the run row shows the plan title, and each step row shows its plan name and owning agent
+- **AND** no row falls back to an id tail or a step slug while the name exists
 
 #### Scenario: Blocked and skipped states stay distinct
 

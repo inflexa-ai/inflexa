@@ -83,15 +83,19 @@ Because focus is always on some widget, the dialog host's focus save/restore SHA
 
 ### Requirement: Persistent status bar
 
-`StatusBar` SHALL render a left region, an OPTIONAL middle region, and a right region. Left = `inflexa` in `theme().accent` plus a screen title or the active analysis name. The middle region is parameterized by the caller: in the chat it SHALL show the live session state (`ready`/`thinking`/`error`), each with a leading glyph (e.g. `● ready`), colored `theme().success`/`theme().warn`/`theme().error` and sourced from the shared chat-status store (see "Chat status lives in a shared reactive store"); in `config` it SHALL show the unsaved-changes indicator in `theme().warn` and SHALL render nothing when there are no unsaved changes. Right = affordance hint labels sourced from the central keymap. `StatusBar` SHALL import only `theme` (no `modules/`/`db/` imports) and SHALL be composed by both `app.tsx` and `app_config.tsx`, replacing their hand-rolled header boxes. All colors SHALL come from `theme()`; no hex is inlined.
+`StatusBar` MUST render a left region, an OPTIONAL middle region, and a right region. The left region holds `inflexa` in `theme().accent`, plus a screen title or the active analysis name. The caller parameterizes the middle region. In the chat it MUST show the live session state (`ready`/`thinking`/`error`), each with a leading glyph (for example `● ready`). The state colors are `theme().success`, `theme().warn`, and `theme().error`, from the shared chat-status store (see "Chat status lives in a shared reactive store"). In `config` it MUST show the unsaved-changes indicator in `theme().warn`, and it MUST render nothing when no unsaved change exists.
 
-The chat's `StatusBar` SHALL additionally accept an OPTIONAL workspace-path segment, rendered as a muted ` | <path>` segment immediately after the state segment — part of the left-flowing segments, NOT the right-aligned hints region. `app.tsx` SHALL pass it only when the terminal width is at or above the design-system breakpoint token (`size.breakpointWide`), sourcing the value from the workspace store's `workingDir` with the home directory contracted to `~`; below the breakpoint the prop is absent and the path renders in the sidebar instead (see the sidebar requirement). `StatusBar` itself stays dumb — it renders whatever path string it is given and keeps its no-domain-imports rule.
+The right region holds affordance hint labels from the central keymap. `StatusBar` MUST import only `theme` (no `modules/` or `db/` imports). Both `app.tsx` and `app_config.tsx` MUST compose it, in place of a hand-rolled header box. Each color MUST come from `theme()`, and no hex is inlined.
 
-The status bar SHALL NOT render the interrupt hint: that affordance is mode-scoped and lives in the input-bar footer beside the mode word it depends on (see "Input bar footer shows mode info and mode-scoped hints"). The status bar carries no state-aware turn affordances.
+The chat's `StatusBar` MUST also accept an OPTIONAL workspace-path segment. The segment renders as a muted ` | <path>` segment directly after the state segment. It is part of the left-flowing segments, NOT the right-aligned hints region. `app.tsx` MUST pass it only when the terminal width is at or above the breakpoint token (`size.breakpointWide`). The value comes from the `workingDir` of the workspace store, with the home directory contracted to `~`. Below the breakpoint the prop is absent, and the path renders in the sidebar instead (see the sidebar requirement). `StatusBar` stays dumb: it renders the given path string, and it keeps its no-domain-imports rule.
+
+The chat's `StatusBar` MUST also accept an OPTIONAL scope segment, per `report-session-identity`. The segment renders in the accent role, after the identity and subtitle pair and before the middle state region. `app.tsx` MUST pass it only while the open thread loads as a report row. `StatusBar` renders the given string, and its no-domain-imports rule is unchanged.
+
+The status bar MUST NOT render the interrupt hint. That affordance is mode-scoped, and it lives in the input-bar footer beside the mode word (see "Input bar footer shows mode info and mode-scoped hints"). The status bar carries no state-aware turn affordance.
 
 #### Scenario: Shows analysis name and live state
 
-- **WHEN** a chat is open and the assistant is streaming
+- **WHEN** a chat is open and the assistant streams
 - **THEN** the status bar shows the analysis name on the left and `thinking` (in the warn color) in the middle
 
 #### Scenario: Reused by the config screen
@@ -101,23 +105,28 @@ The status bar SHALL NOT render the interrupt hint: that affordance is mode-scop
 
 #### Scenario: Optional middle region in config
 
-- **WHEN** `inflexa config` has unsaved changes
-- **THEN** the status bar's middle region shows the unsaved indicator, and renders nothing when there are no unsaved changes
+- **WHEN** `inflexa config` holds unsaved changes
+- **THEN** the middle region of the status bar shows the unsaved indicator, and it renders nothing when no unsaved change exists
 
 #### Scenario: Wide terminal shows the workspace path in the header
 
 - **WHEN** the chat renders on a terminal at or above `size.breakpointWide` columns
-- **THEN** the status bar shows the home-contracted working directory immediately after the state segment, before the right-aligned hints
+- **THEN** the status bar shows the home-contracted working directory directly after the state segment, before the right-aligned hints
 
 #### Scenario: Narrow terminal keeps the header path-free
 
 - **WHEN** the chat renders on a terminal below `size.breakpointWide` columns
 - **THEN** the status bar shows no path segment (the sidebar carries the path)
 
+#### Scenario: A report session shows the scope segment
+
+- **WHEN** the chat renders while the open thread loads as a report row
+- **THEN** the status bar shows the accent `report` segment after the analysis name, before the state segment
+
 #### Scenario: No interrupt hint in the header
 
-- **WHEN** a turn is streaming in NORMAL mode
-- **THEN** the status bar's right hints region shows no interrupt hint — the input-bar footer carries it
+- **WHEN** a turn streams in NORMAL mode
+- **THEN** the right hints region of the status bar shows no interrupt hint, because the input-bar footer carries it
 
 ### Requirement: Fixed-gutter message block
 
@@ -171,38 +180,17 @@ A user turn SHALL additionally differentiate itself with a left border rule in t
 
 ### Requirement: Toggleable four-section sidebar
 
-`Sidebar` SHALL render four sections in fixed order — SESSION, ANALYSIS, DATA PROFILE, RUNS — as a
-fixed-width, full-height column with a divider against the chat column. The order is the pipeline
-order: the analysis's inputs feed the data profile, and the profile feeds runs. Its width SHALL be
-sourced from `size.railWidth` (the design-tokens layer), NOT an inline integer, and it is NOT
-mouse-resizable. SESSION SHALL show the short session id (`S·` + the first 4 hex of the id), the
-session age as a relative duration (e.g. `6m12s`, the two-unit `Date.relativeAge` rendering), and
-the message count from live data. ANALYSIS SHALL show the analysis name, the anchor path with a ✓/⚠ badge
-derived from the anchor's `markerWritten`, the input count, and the project name when the analysis
-has one. DATA PROFILE and RUNS SHALL render live ledger data per the `sidebar-live` capability
-(states, refresh, details views, the active-run progress embed) — the sidebar MUST NOT display mock
-fixtures or values fabricated inline at the render site. The sidebar's data SHALL update when the
-open analysis or session changes (an in-place `openSession` swap).
+`Sidebar` MUST render four sections in a fixed order: SESSION, ANALYSIS, DATA PROFILE, RUNS. It is a fixed-width, full-height column with a divider against the chat column. The order is the pipeline order: the inputs of the analysis feed the data profile, and the profile feeds the runs. The width MUST come from `size.railWidth` (the design-tokens layer), NOT an inline integer, and the rail is NOT mouse-resizable.
 
-The rail's section stack SHALL be vertically scrollable: when the sections outgrow the rail's
-height (the RUNS section's progress embed makes its height variable), the rail scrolls rather than
-clipping or squeezing sections. The scroll container SHALL NOT take focus on mount (the rail is not
-a focus target; mouse-wheel scrolling suffices) and SHALL introduce no scroll keybindings.
+SESSION MUST show the short session id (`S·` + the first 4 hex of the id), the absolute created time of the session (`toLocaleString()`, the durable-record rendering), and the message count from live data. A click on the id chip MUST copy the full id, per `report-session-identity`. A report child MUST carry the context line, per the same capability.
 
-The ANALYSIS anchor-path line SHALL render only when the terminal is below the design-system
-breakpoint (`size.breakpointWide`); at or above it the path moves to the status bar (see the status
-bar requirement) and the ✓/⚠ badge — which reports anchor-marker health, not the path, and never
-moves to the header — SHALL join the ANALYSIS meta line (inputs · project) instead.
+ANALYSIS MUST show the analysis name, the input count, and the project name when one exists. It MUST show the anchor path, with a ✓/⚠ badge from the `markerWritten` of the anchor. DATA PROFILE and RUNS MUST render live ledger data per the `sidebar-live` capability (states, refresh, details views, the active-run progress embed). The sidebar MUST NOT display mock fixtures, and it MUST NOT display values fabricated inline at the render site. The data of the sidebar MUST update when the open analysis or session changes (an in-place `openSession` swap).
 
-Section headers SHALL use vertical space responsively: a section whose value is a single short
-string (SESSION's short id, ANALYSIS's name) SHALL render `LABEL <flex gap> value` on one row when
-the label, a separating gap, and the value fit the rail's usable width — and SHALL fall back to
-today's stacked layout (label above a full-width value line) when they do not, so a long analysis
-name is never truncated or wrapped inside a right-hand cell. Sections whose first line is a
-composite (DATA PROFILE's glyph-bearing `N files · time` line) and row-list sections (RUNS) keep
-the stacked layout — the merge models a single plain value, not a styled composite. The fit
-decision is measured in cells (one character per cell) against the rail width minus its padding
-and border.
+The section stack of the rail MUST be vertically scrollable. When the sections outgrow the height of the rail, the rail scrolls, and it does not clip or squeeze a section. (The progress embed of the RUNS section makes the height variable.) The scroll container MUST NOT take focus on mount, because the rail is not a focus target and mouse-wheel scrolling suffices. It MUST introduce no scroll keybinding.
+
+The ANALYSIS anchor-path line MUST render only when the terminal is below the breakpoint (`size.breakpointWide`). At or above it, the path moves to the status bar (see the status bar requirement). The ✓/⚠ badge then MUST join the ANALYSIS meta line (inputs · project). The badge reports anchor-marker health, not the path, and it never moves to the header.
+
+Section headers MUST use vertical space responsively. A section whose value is one short string (the short id of SESSION, the name of ANALYSIS) MUST render `LABEL <flex gap> value` on one row. The condition is that the label, a gap, and the value fit the usable width of the rail. When they do not fit, the section MUST fall back to the stacked layout: the label above a full-width value line. Thus a long analysis name is never truncated, and it never wraps inside a right-hand cell. A section whose first line is a composite (the glyph-bearing `N files · time` line of DATA PROFILE) keeps the stacked layout, and a row-list section (RUNS) does too. The merge models a single plain value, not a styled composite. The fit decision counts cells (one character for each cell) against the rail width minus its padding and border.
 
 #### Scenario: Sidebar renders live sections for an open analysis
 
@@ -213,6 +201,11 @@ and border.
 
 - **WHEN** the sidebar renders
 - **THEN** the sections appear top-to-bottom as SESSION, ANALYSIS, DATA PROFILE, RUNS
+
+#### Scenario: The session time is absolute
+
+- **WHEN** the SESSION section renders for a session with a created time
+- **THEN** the line shows the absolute local date-time, not a relative age
 
 #### Scenario: Anchor badge reflects marker state
 
@@ -231,7 +224,7 @@ and border.
 
 #### Scenario: Overflowing rail scrolls instead of clipping
 
-- **WHEN** the sections (e.g. RUNS carrying the active-run progress embed) outgrow the rail's height
+- **WHEN** the sections (for example RUNS with the active-run progress embed) outgrow the height of the rail
 - **THEN** the rail scrolls vertically — no section is clipped or squeezed away — and the scroll container has not stolen focus from the chat
 
 #### Scenario: Short value shares the label row
@@ -279,42 +272,54 @@ The chat's live status (`idle`/`busy`/`error`) SHALL be held in a shared reactiv
 
 ### Requirement: Input bar footer shows mode info and mode-scoped hints
 
-`ChatBar` SHALL compose the shared `TextArea` component with `chrome="full"` and the `Type a message…` placeholder (via `GLYPHS.ellipsis`), and render a single external footer row below the bordered textarea. The footer row SHALL show the mode word on the left (`INSERT` when the textarea is focused, `NORMAL` when blurred — with `NORMAL` rendered in bold with the accent color and the row given a `bgActive` background) and the newline chord hint on the right (`ctrl+j newline`). After the mode word the footer SHALL render the mode-scoped interrupt affordance while a turn is busy: in NORMAL, the interrupt hint labeled from the live `app.interrupt` binding, flipping to its "again to interrupt" form with a visually distinct armed treatment while the window is armed (the armed treatment SHALL remain distinguishable from the accent mode word on the `bgActive` row, on light themes included); in INSERT, the one-press abort-chord hint labeled from the live `app.abort` binding. The hint SHALL be absent when idle, when a dialog is stacked, or when an approval prompt is docked — the same honesty gates as the interrupt binding itself. Labels SHALL derive from the live bindings (`chordLabel`, never hand-written), arriving as data — `ChatBar` keeps its no-domain-imports rule. GLOBAL keybind hints (command-palette, sidebar-toggle, quit) SHALL NOT appear in this footer: they live ONLY in the status bar, so the header and the footer never repeat the same keys — the footer carries only the mode word and what the interrupt keys mean in the current mode.
+`ChatBar` MUST compose the shared `TextArea` with `chrome="full"` and the `Type a message…` placeholder (through `GLYPHS.ellipsis`). It MUST render one external footer row below the bordered textarea. The footer row MUST show the mode word on the left: `INSERT` when the textarea holds focus, and `NORMAL` when it is blurred. `NORMAL` renders bold in the accent color, and the row gets a `bgActive` background. Beside the mode word the footer MUST render the session scope word, per `report-session-identity`. The newline chord hint (`ctrl+j newline`) sits on the right.
+
+While a turn is busy, the footer MUST render the mode-scoped interrupt affordance after the mode and scope words. In NORMAL it is the interrupt hint, labeled from the live `app.interrupt` binding. While the window is armed, the hint flips to its "again to interrupt" form, with a distinct armed treatment. The armed treatment MUST stay distinguishable from the accent mode word on the `bgActive` row, on light themes included. In INSERT it is the abort-chord hint, labeled from the live `app.abort` binding — the one chord that interrupts while the user types.
+
+The hint MUST be absent when the turn is idle. It MUST also be absent when a dialog is stacked, and when an approval prompt is docked. These are the honesty gates of the interrupt binding itself. Labels MUST derive from the live bindings (`chordLabel`, never hand-written), and they arrive as data. `ChatBar` keeps its no-domain-imports rule.
+
+GLOBAL keybind hints (command-palette, sidebar-toggle, quit) MUST NOT appear in this footer. They live ONLY in the status bar, thus the header and the footer never show the same keys. The footer carries only the mode word, the session scope word, and what the interrupt keys mean in the current mode.
 
 #### Scenario: ChatBar composes TextArea
 
 - **WHEN** the chat renders the input area
 - **THEN** `ChatBar` renders a `TextArea` with `chrome="full"` for the bordered textarea, plus its own external footer row
 
+#### Scenario: The footer carries the scope word
+
+- **WHEN** the chat renders on a report thread
+- **THEN** the footer shows the scope word beside the mode word, and the global keys stay in the header
+
 #### Scenario: Busy NORMAL shows the esc hint beside the mode word
 
-- **WHEN** a turn is streaming and the pane holds focus (NORMAL, unarmed)
+- **WHEN** a turn streams and the pane holds focus (NORMAL, unarmed)
 - **THEN** the footer shows `NORMAL` followed by the interrupt hint labeled from the live binding, and the newline hint stays on the right
 
 #### Scenario: Arming flips the footer hint
 
-- **WHEN** the user presses esc once in NORMAL during a turn
-- **THEN** the footer hint flips to its "again to interrupt" form with the distinct armed treatment for the armed window, then reverts when the window lapses or the turn ends
+- **WHEN** the user pushes esc one time in NORMAL during a turn
+- **THEN** the footer hint flips to its "again to interrupt" form with the distinct armed treatment
+- **AND** the hint reverts when the window lapses or the turn ends
 
-#### Scenario: Busy INSERT advertises the one-press chord
+#### Scenario: Busy INSERT advertises the abort chord
 
-- **WHEN** a turn is streaming while the composer holds focus (INSERT)
-- **THEN** the footer shows `INSERT` followed by the abort-chord hint (the one-press interrupt that works while typing)
+- **WHEN** a turn streams while the composer holds focus (INSERT)
+- **THEN** the footer shows `INSERT` followed by the abort-chord hint (the one-stroke interrupt that works while the user types)
 
 #### Scenario: Idle, dialogs, and asks keep the footer quiet
 
 - **WHEN** no turn is in flight, or a dialog is stacked, or an approval prompt is docked
-- **THEN** the footer shows no interrupt affordance — only the mode word and the newline hint
+- **THEN** the footer shows no interrupt affordance — only the mode word, the scope word, and the newline hint
 
 #### Scenario: Global keys live in the header only
 
-- **WHEN** the user looks for the command-palette / sidebar shortcuts
-- **THEN** they appear in the status bar, not duplicated in the input footer
+- **WHEN** the user looks for the command-palette or sidebar shortcuts
+- **THEN** they appear in the status bar, and the input footer does not show them
 
 #### Scenario: NORMAL mode has distinct visual treatment
 
 - **WHEN** the textarea is blurred (NORMAL mode)
-- **THEN** the footer row shows `NORMAL` in bold accent color with `bgActive` background, signaling that vim scroll keys are live
+- **THEN** the footer row shows `NORMAL` in the bold accent color with the `bgActive` background, which signals that the vim scroll keys are live
 
 ### Requirement: Shared gutter marker set
 
