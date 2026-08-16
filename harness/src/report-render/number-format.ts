@@ -14,7 +14,12 @@
  * A shown form hides digits when it no longer parses back to the value, or when it no longer matches the
  * source text of a string cell. The caller puts the full digits in the `title` attribute at that time, and
  * it emits no attribute at any other time.
+ *
+ * The column meaning that a binding declares replaces the name of the column in the kind decision. The
+ * magnitude of the cell decides after it, the same for a declared column and for an undeclared one.
  */
+
+import type { ColumnMeaning } from "../contracts/report-reference.js";
 
 /** The four number kinds that the renderer shows. */
 export type NumberKind = "scientific" | "compact" | "compact-scientific" | "identifier";
@@ -46,7 +51,12 @@ const GROUPED_CEILING = 1e15;
 /** The size of one grouped digit run, for example the three digits of `14,201`. */
 const GROUP_SIZE = 3;
 
-/** The whole tokens of a column name that name a p-value. Such a value reads better in the scientific form. */
+/**
+ * The whole tokens of a column name that name a p-value. Such a value reads better in the scientific form.
+ *
+ * The tokens are the fallback for a column that declares no meaning. A declaration states what the column
+ * is, and a name only suggests it. Thus a token match answers where the author declared nothing.
+ */
 const P_VALUE_TOKENS = new Set(["p", "pval", "pvalue", "padj", "fdr", "q", "qval"]);
 
 /** The whole tokens of a column name that name an identifier. Such a value is a name, not a magnitude. */
@@ -94,13 +104,17 @@ export function formatNumberCell(cell: string | number, kind: NumberKind): Forma
 /**
  * Select the number kind for one cell of one column.
  *
- * An identifier column selects the identifier kind. A p-value column selects the scientific kind for a value
- * between zero and one hundredth. A safe integer selects the compact kind. Every other finite number selects
- * the compact-scientific kind. A cell that holds no finite number selects the compact-scientific kind too,
- * because the format passes such a cell through unchanged.
+ * A declaration replaces the name of the column, and the magnitude decides after it exactly as it does for
+ * a name match. Thus a declared p-value column gives the same bytes as a p-value column that the tokens
+ * match: `3.8e-7` takes the scientific form, and `0.536` stays `0.536`.
+ *
+ * An identifier column selects the identifier kind. A p-value column selects the scientific kind for a
+ * value between zero and one hundredth. A safe integer selects the compact kind. Every other finite number
+ * selects the compact-scientific kind. A cell that holds no finite number selects the compact-scientific
+ * kind too, because the format passes such a cell through unchanged.
  */
-export function selectNumberKind(column: string, cell: string | number): NumberKind {
-    if (isIdentifierColumn(column)) {
+export function selectNumberKind(column: string, cell: string | number, meaning?: ColumnMeaning): NumberKind {
+    if (holdsAName(column, meaning)) {
         return "identifier";
     }
     const value = finiteValue(cell);
@@ -109,7 +123,7 @@ export function selectNumberKind(column: string, cell: string | number): NumberK
     }
     // From one hundredth up, the plain decimal is as short as the exponent and it is easier to read. Thus
     // `0.05` stays `0.05` and it does not become `5e-2`.
-    if (value > 0 && value < SCIENTIFIC_FLOOR && isPValueColumn(column)) {
+    if (value > 0 && value < SCIENTIFIC_FLOOR && holdsAPValue(column, meaning)) {
         return "scientific";
     }
     // An integer above the safe range is no longer exact, thus it reads as a general float and not as a count.
@@ -117,6 +131,31 @@ export function selectNumberKind(column: string, cell: string | number): NumberK
         return "compact";
     }
     return "compact-scientific";
+}
+
+/**
+ * True when the column holds a name and not a magnitude.
+ *
+ * A declared `identifier` and a declared `category` both hold one. The identifier kind is the one kind that
+ * gives the source text unchanged, thus a category that reads as a number keeps its own text, for example
+ * the cluster `01`. A column that declares no meaning falls to the name tokens.
+ */
+function holdsAName(column: string, meaning: ColumnMeaning | undefined): boolean {
+    if (meaning !== undefined) {
+        return meaning === "identifier" || meaning === "category";
+    }
+    return isIdentifierColumn(column);
+}
+
+/**
+ * True when the column holds a probability. A column that declares no meaning falls to the name tokens.
+ *
+ * A declared `effect` and a declared `count` both hold a magnitude, thus each one takes the magnitude arms
+ * below this test. An effect is a float, and it reads there in the compact-scientific kind. A count is a
+ * whole number, and it reads there in the compact kind.
+ */
+function holdsAPValue(column: string, meaning: ColumnMeaning | undefined): boolean {
+    return meaning !== undefined ? meaning === "p-value" : isPValueColumn(column);
 }
 
 /** The finite number of one cell, or `null` when the cell holds no finite number. */

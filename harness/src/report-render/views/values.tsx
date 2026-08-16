@@ -6,8 +6,9 @@
  * hostile source reaches the page as text. The `title` attribute takes the same escape as every other
  * attribute value, thus the full digits cannot break out of their slot.
  *
- * A number reaches the page through the number format. The name that stands over the number selects the
- * kind: the label of a metric, and the column name of a table cell.
+ * A number reaches the page through the number format. A table cell takes the meaning that the binding
+ * declares for its column, and the column name answers for a column that declares none. A metric takes its
+ * label, because a value locator declares no column-wide meaning.
  *
  * A table card also carries the markup of the page enhancer: the raw value of each cell, the sortable
  * header, the filter input, and the row cap with its toggle. The markup alone is a complete plain table,
@@ -20,6 +21,7 @@
 import { raw } from "hono/html";
 
 import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../contracts/report-blocks.js";
+import { declaredForColumn, type ColumnMeaning } from "../../contracts/report-reference.js";
 import { Marker } from "./references-view.js";
 import { formatNumberCell, selectNumberKind } from "../number-format.js";
 import type { ReferenceLedger } from "../references.js";
@@ -123,11 +125,24 @@ function firstNameSegment(text: string): string | undefined {
 }
 
 /**
+ * The heading of one column: the text on the page, and the raw name for the `title` attribute.
+ *
+ * A declared label names what the column measures. A column with no label prettifies, thus an underscore
+ * reads as a space. The raw name rides the hover only when the shown text differs from it, because a title
+ * that repeats the text tells a reader nothing.
+ */
+function columnHeading(column: string, labels: TableBlock["binding"]["columnLabels"]): { text: string; title?: string } {
+    const label = declaredForColumn(labels, column);
+    const text = label ?? column.replaceAll("_", " ");
+    return text === column ? { text } : { text, title: column };
+}
+
+/**
  * One body cell of a table.
  *
- * The column name selects the number kind, thus a p-value column reads in the scientific form. The full
- * digits ride the `title` attribute when the shown form hides one. An absent cell renders as an empty
- * cell, thus a ragged row keeps its shape.
+ * The declared meaning selects the number kind, and the column name selects it for a column that declares
+ * none. Thus a p-value column reads in the scientific form. The full digits ride the `title` attribute when
+ * the shown form hides one. An absent cell renders as an empty cell, thus a ragged row keeps its shape.
  *
  * Each cell carries its raw value in the `data-value` attribute. The page enhancer sorts on that value, thus
  * the shown text stays presentation and a rounded number still sorts by its full magnitude.
@@ -136,11 +151,11 @@ function firstNameSegment(text: string): string | undefined {
  * holds no finite number, thus the number format passed it through and this trim reads the text that the
  * format gave.
  */
-function Cell({ column, cell }: { column: string; cell: string | number | undefined }) {
+function Cell({ column, cell, meaning }: { column: string; cell: string | number | undefined; meaning: ColumnMeaning | undefined }) {
     if (cell === undefined) {
         return <td data-value=""></td>;
     }
-    const shown = formatNumberCell(cell, selectNumberKind(column, cell));
+    const shown = formatNumberCell(cell, selectNumberKind(column, cell, meaning));
     const segment = firstNameSegment(shown.text);
     if (segment !== undefined) {
         return (
@@ -163,7 +178,8 @@ function Cell({ column, cell }: { column: string; cell: string | number | undefi
  *
  * Each header cell stays a plain `th`. It carries the sort class and the index of its column, thus the
  * enhancer reads the column of a click and a browser with no script keeps a plain header. The header also
- * takes the tab order, thus a reader sorts the table from the keyboard.
+ * takes the tab order, thus a reader sorts the table from the keyboard. The header shows the declared label
+ * of the column, and the raw name rides the `title` attribute.
  *
  * The body holds every resolved row. A row past the cap carries the hidden class, and the card then carries
  * the toggle that names the total count. A table at the cap or under it carries no hidden row and no toggle.
@@ -174,6 +190,7 @@ function Cell({ column, cell }: { column: string; cell: string | number | undefi
 export function renderTable(block: TableBlock, value: TableValue): string {
     const columns = tableColumns(value);
     const total = value.rows.length;
+    const binding = block.binding;
     return String(
         <div class="report-table">
             {block.title !== undefined ? <div class="report-table-title">{block.title}</div> : null}
@@ -185,18 +202,21 @@ export function renderTable(block: TableBlock, value: TableValue): string {
                     <table class="data-table">
                         <thead>
                             <tr>
-                                {columns.map((column, index) => (
-                                    <th class="data-table-sort" data-sort-index={String(index)} tabindex={0}>
-                                        {column}
-                                    </th>
-                                ))}
+                                {columns.map((column, index) => {
+                                    const heading = columnHeading(column, binding.columnLabels);
+                                    return (
+                                        <th class="data-table-sort" data-sort-index={String(index)} tabindex={0} title={heading.title}>
+                                            {heading.text}
+                                        </th>
+                                    );
+                                })}
                             </tr>
                         </thead>
                         <tbody>
                             {value.rows.map((row, index) => (
                                 <tr class={index < TABLE_ROW_CAP ? "report-row" : "report-row report-row-hidden"}>
                                     {columns.map((column) => (
-                                        <Cell column={column} cell={row[column]} />
+                                        <Cell column={column} cell={row[column]} meaning={declaredForColumn(binding.columnMeanings, column)} />
                                     ))}
                                 </tr>
                             ))}

@@ -38,6 +38,7 @@ import {
     type ChartTransform,
     type ChartType,
 } from "../contracts/report-blocks.js";
+import { declaredForColumn, type ArtifactTableReference } from "../contracts/report-reference.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
 import { expandPreset, isPresetChartType, type PresetChartType } from "./chart-presets.js";
 import type { RenderProblem } from "./types.js";
@@ -57,6 +58,9 @@ type Channel = "x" | "y" | "group" | "value";
 /** One chart type that carries its own fixed rule. A preset carries no rule, because it expands first. */
 type BaseChartType = Exclude<ChartType, PresetChartType>;
 
+/** The display labels that the bound table declares, keyed by the raw column name. */
+type ColumnLabels = ArtifactTableReference["columnLabels"];
+
 /**
  * A quick-path block whose channels are resolved to plain column names.
  *
@@ -67,6 +71,7 @@ interface ResolvedChartBlock {
     id: string;
     chartType: BaseChartType;
     encoding: Partial<Record<Channel, string>>;
+    labels: ColumnLabels;
 }
 
 /**
@@ -98,8 +103,19 @@ const COUNT_AXIS: EchartOption = { type: "value", name: "Count", minInterval: 1 
  * of `"end"` puts the name at the right end of the axis, thus the name runs past that margin and the panel
  * clips it. A centered name sits under the middle of the axis, and no margin can cut it.
  */
-function xAxisName(column: string): EchartOption {
-    return { name: column, nameLocation: "middle", nameGap: X_AXIS_NAME_GAP };
+function xAxisName(title: string): EchartOption {
+    return { name: title, nameLocation: "middle", nameGap: X_AXIS_NAME_GAP };
+}
+
+/**
+ * The title of the axis that reads one column: the declared label, or the raw column name when the binding
+ * declares none.
+ *
+ * A transformed channel reads a derived name such as `neg_log10(padj)`, which no declaration keys. Thus the
+ * axis of a transform keeps the name that states the transform, and it never states the raw quantity.
+ */
+function axisTitle(labels: ColumnLabels, column: string): string {
+    return declaredForColumn(labels, column) ?? column;
 }
 
 /**
@@ -108,6 +124,9 @@ function xAxisName(column: string): EchartOption {
  * The normalizer owns the bottom legend, the save action, and the axis-label discipline. Thus the
  * derivation sets no `title`, no `legend`, no `toolbox`, and no explicit series color. The theme palette
  * assigns the series colors by their order.
+ *
+ * The axis of a channel names the label that the binding declares for its column. The raw column name
+ * answers for a column that declares none.
  */
 export function deriveChartOption(block: ChartBlock, rows: readonly ChartRow[], columns?: readonly string[]): Result<EchartOption, RenderProblem> {
     return deriveRaw(block, rows, columns).map((option) => normalizeEchartSpec(option, { title: block.title }));
@@ -121,8 +140,9 @@ export function deriveChartOption(block: ChartBlock, rows: readonly ChartRow[], 
  * composition item carries a name. Every other quick path reaches the fixed rule of its base type.
  */
 function deriveRaw(block: ChartBlock, rows: readonly ChartRow[], columns?: readonly string[]): Result<EchartOption, RenderProblem> {
+    const labels = block.binding.columnLabels;
     if (block.composition !== undefined) {
-        return deriveComposition(block.id, block.composition, rows, columns);
+        return deriveComposition(block.id, block.composition, rows, columns, labels);
     }
     const chartType = block.chartType;
     const encoding = block.encoding;
@@ -132,12 +152,12 @@ function deriveRaw(block: ChartBlock, rows: readonly ChartRow[], columns?: reado
         return err(problem(block.id, "The chart carries neither a chart type with an encoding, nor a composition."));
     }
     if (isPresetChartType(chartType)) {
-        return derivePreset(block.id, chartType, encoding, rows, columns);
+        return derivePreset(block.id, chartType, encoding, rows, columns, labels);
     }
     if (encoding.label !== undefined) {
-        return deriveLabeled(block.id, chartType, encoding, rows, columns);
+        return deriveLabeled(block.id, chartType, encoding, rows, columns, labels);
     }
-    const quick = resolveQuickPath(block.id, chartType, encoding, rows, columns);
+    const quick = resolveQuickPath(block.id, chartType, encoding, rows, columns, labels);
     if (quick.isErr()) return err(quick.error);
     return deriveBase(quick.value.block, quick.value.rows, columns);
 }
@@ -169,12 +189,13 @@ function derivePreset(
     encoding: ChartEncoding,
     rows: readonly ChartRow[],
     columns: readonly string[] | undefined,
+    labels: ColumnLabels,
 ): Result<EchartOption, RenderProblem> {
     const x = requireChannel(blockId, preset, encoding, "x");
     if (x.isErr()) return err(x.error);
     const y = requireChannel(blockId, preset, encoding, "y");
     if (y.isErr()) return err(y.error);
-    return deriveComposition(blockId, expandPreset(preset, x.value, y.value, encoding), rows, columns);
+    return deriveComposition(blockId, expandPreset(preset, x.value, y.value, encoding), rows, columns, labels);
 }
 
 /** The quick-path types that map onto one series form. A point of such a chart can carry a name. */
@@ -192,6 +213,7 @@ function deriveLabeled(
     encoding: ChartEncoding,
     rows: readonly ChartRow[],
     columns: readonly string[] | undefined,
+    labels: ColumnLabels,
 ): Result<EchartOption, RenderProblem> {
     const form = LABELED_FORMS[chartType];
     if (form === undefined) {
@@ -214,7 +236,7 @@ function deriveLabeled(
             },
         ],
     };
-    return deriveComposition(blockId, composition, rows, columns);
+    return deriveComposition(blockId, composition, rows, columns, labels);
 }
 
 /**
@@ -232,6 +254,7 @@ function resolveQuickPath(
     encoding: ChartEncoding,
     rows: readonly ChartRow[],
     columns: readonly string[] | undefined,
+    labels: ColumnLabels,
 ): Result<{ block: ResolvedChartBlock; rows: readonly ChartRow[] }, RenderProblem> {
     const resolved: Partial<Record<Channel, string>> = {};
     const derived: Array<{ column: string; name: string; transform: ChartTransform }> = [];
@@ -257,7 +280,7 @@ function resolveQuickPath(
         derived.push({ column, name, transform });
     }
 
-    const block: ResolvedChartBlock = { id: blockId, chartType, encoding: resolved };
+    const block: ResolvedChartBlock = { id: blockId, chartType, encoding: resolved, labels };
     return ok({ block, rows: derived.length === 0 ? rows : deriveTransformedRows(rows, derived) });
 }
 
@@ -307,8 +330,8 @@ function deriveBar(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
     }));
 
     return ok({
-        xAxis: { type: "category", data: categories, ...xAxisName(x) },
-        yAxis: { type: "value", name: y },
+        xAxis: { type: "category", data: categories, ...xAxisName(axisTitle(block.labels, x)) },
+        yAxis: { type: "value", name: axisTitle(block.labels, y) },
         series,
     });
 }
@@ -330,8 +353,8 @@ function deriveLine(block: ResolvedChartBlock, rows: readonly ChartRow[], column
     }));
 
     return ok({
-        xAxis: inferAxis(rows, x, "x"),
-        yAxis: inferAxis(rows, y, "y"),
+        xAxis: inferAxis(rows, x, "x", axisTitle(block.labels, x)),
+        yAxis: inferAxis(rows, y, "y", axisTitle(block.labels, y)),
         series,
     });
 }
@@ -354,8 +377,8 @@ function deriveScatter(block: ResolvedChartBlock, rows: readonly ChartRow[], col
     }));
 
     return ok({
-        xAxis: inferAxis(rows, x, "x"),
-        yAxis: inferAxis(rows, y, "y"),
+        xAxis: inferAxis(rows, x, "x", axisTitle(block.labels, x)),
+        yAxis: inferAxis(rows, y, "y", axisTitle(block.labels, y)),
         series,
     });
 }
@@ -452,8 +475,8 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
     }
 
     return ok({
-        xAxis: { type: "category", data: categories, ...xAxisName(x) },
-        yAxis: { type: "value", name: y },
+        xAxis: { type: "category", data: categories, ...xAxisName(axisTitle(block.labels, x)) },
+        yAxis: { type: "value", name: axisTitle(block.labels, y) },
         series,
     });
 }
@@ -496,8 +519,8 @@ function deriveHeatmap(block: ResolvedChartBlock, rows: readonly ChartRow[], col
     const max = finite.length > 0 ? Math.max(...finite) : 1;
 
     return ok({
-        xAxis: { type: "category", data: xCategories.map(String), ...xAxisName(x), splitArea: { show: true } },
-        yAxis: { type: "category", data: yCategories.map(String), name: y, splitArea: { show: true } },
+        xAxis: { type: "category", data: xCategories.map(String), ...xAxisName(axisTitle(block.labels, x)), splitArea: { show: true } },
+        yAxis: { type: "category", data: yCategories.map(String), name: axisTitle(block.labels, y), splitArea: { show: true } },
         visualMap: {
             type: "continuous",
             min,
@@ -615,6 +638,7 @@ function deriveComposition(
     composition: ChartComposition,
     rows: readonly ChartRow[],
     columns: readonly string[] | undefined,
+    labels: ColumnLabels,
 ): Result<EchartOption, RenderProblem> {
     const resolved: ResolvedSeries[] = [];
     for (const declared of composition.series) {
@@ -653,8 +677,8 @@ function deriveComposition(
     const named = resolved.some((entry) => entry.label !== undefined) || labeled.value.size > 0;
     return ok({
         tooltip: named ? { ...NAMED_TOOLTIP } : { ...PLAIN_TOOLTIP },
-        xAxis: compositionXAxis(rows, first, composition.axes?.x),
-        yAxis: compositionAxis(rows, first.y, "y", composition.axes?.y),
+        xAxis: compositionXAxis(rows, first, composition.axes?.x, labels),
+        yAxis: compositionAxis(rows, first.y, "y", composition.axes?.y, labels),
         series: emitted.map((entry) => entry.option),
     });
 }
@@ -984,30 +1008,31 @@ function axisKey(axis: "x" | "y"): "xAxis" | "yAxis" {
  * A bar takes a category axis, and every other form takes the inferred axis. A declared scale is the one
  * exception, because the author asked for a numeric axis and a category axis has no scale.
  */
-function compositionXAxis(rows: readonly ChartRow[], first: ResolvedSeries, declared: ChartAxes["x"]): EchartOption {
+function compositionXAxis(rows: readonly ChartRow[], first: ResolvedSeries, declared: ChartAxes["x"], labels: ColumnLabels): EchartOption {
     if (first.declared.form !== "bar" || declared?.scale !== undefined) {
-        return compositionAxis(rows, first.x, "x", declared);
+        return compositionAxis(rows, first.x, "x", declared, labels);
     }
     // A bar counts its categories. The base bar rule lists the x values in first-appearance order, thus a
     // bar of either path draws the same axis.
     const categories = firstAppearance(first.x.values.filter((value): value is Cell => value !== null));
-    return { type: "category", data: categories, ...xAxisName(declared?.title ?? first.x.name) };
+    return { type: "category", data: categories, ...xAxisName(declared?.title ?? axisTitle(labels, first.x.name)) };
 }
 
 /**
  * The axis of one composition channel.
  *
- * A declared title replaces the column name. A declared `log` scale maps onto the logarithmic axis type. A
+ * A declared axis title wins, because it names this one axis. The declared label of the column comes next,
+ * and the raw column name answers last. A declared `log` scale maps onto the logarithmic axis type. A
  * transformed channel gives a number for each point that survives it, thus its axis is a value axis and
  * the cells of the untransformed column decide nothing.
  */
-function compositionAxis(rows: readonly ChartRow[], channel: ResolvedChannel, axis: "x" | "y", declared: ChartAxes["x"]): EchartOption {
-    const title = declared?.title ?? channel.name;
+function compositionAxis(rows: readonly ChartRow[], channel: ResolvedChannel, axis: "x" | "y", declared: ChartAxes["x"], labels: ColumnLabels): EchartOption {
+    const title = declared?.title ?? axisTitle(labels, channel.name);
     const nameFields = axis === "x" ? xAxisName(title) : { name: title };
     if (declared?.scale === "log") {
         return { type: "log", ...nameFields };
     }
-    const base = channel.transformed ? { type: "value", scale: true } : inferAxis(rows, channel.name, axis);
+    const base = channel.transformed ? { type: "value", scale: true } : inferAxis(rows, channel.name, axis, title);
     return { ...base, ...nameFields };
 }
 
@@ -1166,10 +1191,11 @@ function numericColumn(rows: readonly ChartRow[], column: string): number[] {
  * with its distinct values as strings. Any other column is a value axis with `scale: true`.
  *
  * The `axis` argument names the channel that the column feeds. An x column takes the centered name, and a
- * y column keeps the default name placement.
+ * y column keeps the default name placement. The `title` argument names the axis, thus the column decides
+ * the axis type and the title decides the text.
  */
-function inferAxis(rows: readonly ChartRow[], column: string, axis: "x" | "y"): EchartOption {
-    const nameFields = axis === "x" ? xAxisName(column) : { name: column };
+function inferAxis(rows: readonly ChartRow[], column: string, axis: "x" | "y", title: string): EchartOption {
+    const nameFields = axis === "x" ? xAxisName(title) : { name: title };
     if (rows.some((row) => isNonNumericString(row[column]))) {
         return { type: "category", data: firstAppearance(rows.map((row) => row[column])).map(String), ...nameFields };
     }

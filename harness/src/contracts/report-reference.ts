@@ -96,15 +96,38 @@ export const ArtifactValueReferenceSchema = z.strictObject({
 });
 
 /**
+ * What one column of a table holds, as a closed set of five.
+ *
+ * A meaning states the content of the column. It is not a format: the design source keeps the one rule for
+ * how each meaning reads on the page, thus no block carries a format field.
+ */
+export const ColumnMeaningSchema = z.enum(["p-value", "effect", "count", "identifier", "category"]);
+
+/**
  * A reference to a whole table artifact. It carries no locator, because it binds every row.
  *
  * It carries no assert. A table is not one value, thus the only belief that an author can hold about it
  * is its bytes, and the pinned `hash` already carries that belief.
+ *
+ * The two declaration maps state what the columns are and what to call them. They ride the whole-table
+ * binding, thus one declaration serves the table block and the chart block alike.
  */
 export const ArtifactTableReferenceSchema = z.strictObject({
     kind: z.literal("artifact-table"),
     ...artifactPinShape,
     columns: z.array(z.string()).optional().describe("An optional column subset to render. Omit to bind every column."),
+    columnMeanings: z
+        .record(z.string(), ColumnMeaningSchema)
+        .optional()
+        .describe(
+            "What each column holds, keyed by the raw column name. A meaning is the content of the column, and it is not a format: `p-value` is a probability, `effect` is a signed magnitude such as a fold change, `count` is a whole tally, `identifier` is a name that is written with digits, and `category` is a label. You read the artifact, thus you know which column is which. Declare the columns that you know, and omit the rest. A key that names no column of the artifact has no effect.",
+        ),
+    columnLabels: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe(
+            "The display name of each column, keyed by the raw column name. A label names what the column measures, for example `Adjusted p-value` for `padj`. The page shows the label in the table header and in the axis title, and the raw name stays on hover. A key that names no column of the artifact has no effect.",
+        ),
     ...displayShape,
 });
 
@@ -214,6 +237,7 @@ export const UnresolvedReferenceSchema = z.strictObject({
 
 export type ArtifactValueReference = z.infer<typeof ArtifactValueReferenceSchema>;
 export type ArtifactTableReference = z.infer<typeof ArtifactTableReferenceSchema>;
+export type ColumnMeaning = z.infer<typeof ColumnMeaningSchema>;
 export type ArtifactFileReference = z.infer<typeof ArtifactFileReferenceSchema>;
 export type CitationReference = z.infer<typeof CitationReferenceSchema>;
 export type DerivationInputReference = z.infer<typeof DerivationInputReferenceSchema>;
@@ -222,6 +246,20 @@ export type Reference = z.infer<typeof ReferenceSchema>;
 export type ScalarReference = z.infer<typeof ScalarReferenceSchema>;
 export type UnresolvedReason = z.infer<typeof UnresolvedReasonSchema>;
 export type UnresolvedReference = z.infer<typeof UnresolvedReferenceSchema>;
+
+/**
+ * The declaration that a binding holds for one column, or `undefined` when it holds none.
+ *
+ * A key that names no column of the artifact never reaches this reader, thus a stale declaration after a
+ * re-derivation has no effect. The reader takes an own key alone. Thus a column that carries the name of a
+ * member of the object prototype gives no value, and the declared type stays true at runtime.
+ */
+export function declaredForColumn<T>(declarations: Record<string, T> | undefined, column: string): T | undefined {
+    if (declarations === undefined || !Object.prototype.hasOwnProperty.call(declarations, column)) {
+        return undefined;
+    }
+    return declarations[column];
+}
 
 /** The URI scheme and version for a serialized reference. The payload after it is opaque. */
 const REFERENCE_URI_PREFIX = "inflexa-ref:v1:";

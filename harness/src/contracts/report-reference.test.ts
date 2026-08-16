@@ -55,6 +55,30 @@ describe("serializeReference/parseReference — round trip", () => {
         expectRoundTrip(reference);
     });
 
+    it("round-trips an artifact-table that declares a column meaning and a column label", () => {
+        const reference: Reference = {
+            kind: "artifact-table",
+            run: "run-1",
+            path: "runs/run-1/step-a/output/de.csv",
+            hash: HASH,
+            columnMeanings: { significance: "p-value", log2FoldChange: "effect" },
+            columnLabels: { significance: "Adjusted p-value" },
+        };
+        expectRoundTrip(reference);
+    });
+
+    it("round-trips a declaration whose key names no column, because a stale key is a normal condition", () => {
+        const reference: Reference = {
+            kind: "artifact-table",
+            path: "runs/run-1/step-a/output/de.csv",
+            hash: HASH,
+            columns: ["gene"],
+            columnMeanings: { absent: "count" },
+            columnLabels: { absent: "Absent column" },
+        };
+        expectRoundTrip(reference);
+    });
+
     it("round-trips a derivation with two inputs and an assert", () => {
         const reference: Reference = {
             kind: "derivation",
@@ -270,6 +294,14 @@ describe("parseReference — the per-kind assert shape", () => {
             encodeUnchecked({ kind: "artifact-value", run: "r", path: "p", hash: HASH, locator: { column: "c", row: 0 }, assert: { hash: HASH } }),
             "schema-mismatch",
         );
+    });
+
+    it("rejects a column meaning outside the closed set of five", () => {
+        expectParseError(encodeUnchecked({ kind: "artifact-table", path: "t.csv", hash: HASH, columnMeanings: { padj: "probability" } }), "schema-mismatch");
+    });
+
+    it("rejects a column label that is not text", () => {
+        expectParseError(encodeUnchecked({ kind: "artifact-table", path: "t.csv", hash: HASH, columnLabels: { padj: 7 } }), "schema-mismatch");
     });
 
     it("rejects any assert on an artifact-table", () => {

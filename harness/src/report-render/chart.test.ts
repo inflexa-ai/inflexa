@@ -9,12 +9,15 @@ import { DESIGN_CSS } from "./design.js";
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 type ChartType = NonNullable<ChartBlock["chartType"]>;
 
-/** Build a chart block with a placeholder binding. The renderer never reads the binding. */
-function chartBlock(chartType: ChartType, encoding: Encoding, extra: { id?: string; title?: string; caption?: string } = {}): ChartBlock {
+/** The declared display labels of a binding, keyed by the raw column name. */
+type Labels = ChartBlock["binding"]["columnLabels"];
+
+/** Build a chart block. The binding declares a label only where a test states one. */
+function chartBlock(chartType: ChartType, encoding: Encoding, extra: { id?: string; title?: string; caption?: string; labels?: Labels } = {}): ChartBlock {
     return {
         kind: "chart",
         id: extra.id ?? "c1",
-        binding: { kind: "artifact-table", path: "table.csv", hash: "sha256:00" },
+        binding: { kind: "artifact-table", path: "table.csv", hash: "sha256:00", ...(extra.labels !== undefined ? { columnLabels: extra.labels } : {}) },
         chartType,
         encoding,
         ...(extra.title !== undefined ? { title: extra.title } : {}),
@@ -22,12 +25,12 @@ function chartBlock(chartType: ChartType, encoding: Encoding, extra: { id?: stri
     };
 }
 
-/** Build a chart block that carries one composition. The renderer never reads the binding. */
-function composedBlock(composition: ChartComposition, extra: { id?: string; title?: string } = {}): ChartBlock {
+/** Build a chart block that carries one composition. The binding declares a label only where a test states one. */
+function composedBlock(composition: ChartComposition, extra: { id?: string; title?: string; labels?: Labels } = {}): ChartBlock {
     return {
         kind: "chart",
         id: extra.id ?? "c1",
-        binding: { kind: "artifact-table", path: "table.csv", hash: "sha256:00" },
+        binding: { kind: "artifact-table", path: "table.csv", hash: "sha256:00", ...(extra.labels !== undefined ? { columnLabels: extra.labels } : {}) },
         composition,
         ...(extra.title !== undefined ? { title: extra.title } : {}),
     };
@@ -508,6 +511,58 @@ describe("the composition transforms", () => {
             annotations: [{ kind: "point-labels", column: "v", order: "desc", n: 2 }],
         });
         expect(JSON.stringify(derive(block, rows))).toBe(JSON.stringify(derive(block, rows)));
+    });
+});
+
+describe("the declared column labels", () => {
+    const rows: ChartRow[] = [
+        { day: "Mon", count: 5 },
+        { day: "Tue", count: 7 },
+    ];
+
+    it("names each axis of a quick path with the declared label of its column", () => {
+        const block = chartBlock("bar", { x: "day", y: "count" }, { labels: { day: "Day of the week", count: "Cells counted" } });
+        const option = derive(block, rows);
+        expect(asObj(option.xAxis).name).toBe("Day of the week");
+        expect(asObj(option.yAxis).name).toBe("Cells counted");
+    });
+
+    it("keeps the raw column name on an axis whose column declares no label", () => {
+        const option = derive(chartBlock("scatter", { x: "day", y: "count" }, { labels: { count: "Cells counted" } }), rows);
+        expect(asObj(option.xAxis).name).toBe("day");
+        expect(asObj(option.yAxis).name).toBe("Cells counted");
+    });
+
+    it("names a composition axis with the declared label", () => {
+        const block = composedBlock({ series: [{ form: "line", encoding: { x: "day", y: "count" } }] }, { labels: { count: "Cells counted" } });
+        expect(asObj(derive(block, rows).yAxis).name).toBe("Cells counted");
+    });
+
+    it("keeps the declared axis title over the declared label, because the title names this one axis", () => {
+        const block = composedBlock(
+            { series: [{ form: "line", encoding: { x: "day", y: "count" } }], axes: { y: { title: "Cells per well" } } },
+            { labels: { count: "Cells counted" } },
+        );
+        expect(asObj(derive(block, rows).yAxis).name).toBe("Cells per well");
+    });
+
+    it("keeps the transformed name on an axis whose source column declares a label", () => {
+        const transformed: ChartRow[] = [
+            { gene: "A", p: 0.01 },
+            { gene: "B", p: 0.1 },
+        ];
+        const block = composedBlock(
+            { series: [{ form: "scatter", encoding: { x: "gene", y: { column: "p", transform: "neg_log10" } } }] },
+            { labels: { p: "Adjusted p-value" } },
+        );
+        // The axis states the plotted quantity, and the plotted quantity is the transform of the column.
+        expect(asObj(derive(block, transformed).yAxis).name).toBe("neg_log10(p)");
+    });
+
+    it("ignores a label that names no column, thus the derivation gives the same bytes", () => {
+        const plain = derive(chartBlock("bar", { x: "day", y: "count" }), rows);
+        const stray = derive(chartBlock("bar", { x: "day", y: "count" }, { labels: { absent: "Absent column" } }), rows);
+        expect(JSON.stringify(stray)).toBe(JSON.stringify(plain));
     });
 });
 
