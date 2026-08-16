@@ -26,7 +26,7 @@ import { renderClaim, renderNav, renderSection, renderText } from "./views/prose
 import { citationKeyOf, ReferenceLedger } from "./references.js";
 import { encodeTablePayload, tableDataAsset, type DataAsset } from "./table-data.js";
 import type { RenderedPage, RenderProblem, RenderValue, RenderValues } from "./types.js";
-import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable, tableColumns } from "./views/values.js";
+import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable, tableColumns, tableDisplay } from "./views/values.js";
 
 /**
  * Render a report document, its value map, and the pinned citation records to one page and its data assets.
@@ -102,11 +102,12 @@ function renderBlock(
                 problems.push(wrongShape(block.id, entry.type, "table"));
                 return "";
             }
-            // The rows of the block ride a data asset, and the card holds the header alone. The payload
-            // reads the column order of the header, thus a cell of an encoded row names its column by
-            // position.
-            dataAssets.push(tableDataAsset(block.id, encodeTablePayload(tableColumns(entry), entry.rows)));
-            return renderTable(block, entry);
+            // The rows of the block ride a data asset, and the card holds one empty mount. The payload
+            // carries the column order, thus a cell of an encoded row names its column by position and the
+            // display entry of that column sits at the same index.
+            const columns = tableColumns(entry);
+            dataAssets.push(tableDataAsset(block.id, encodeTablePayload(columns, entry.rows, tableDisplay(block, entry, columns))));
+            return renderTable(block);
         }
         case "figure": {
             const entry = values[block.id];

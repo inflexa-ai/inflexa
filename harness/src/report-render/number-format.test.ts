@@ -1,6 +1,15 @@
 import { describe, expect, it } from "bun:test";
 
-import { formatNumberCell, holdsAPValue, selectNumberKind, smallestPositiveValue } from "./number-format.js";
+import {
+    formatNumberCell,
+    formatTableCell,
+    holdsAPValue,
+    selectColumnKind,
+    selectNumberKind,
+    smallestPositiveValue,
+    type NumberKind,
+} from "./number-format.js";
+import { TABLE_CELL_FORMATTER } from "./page.js";
 
 describe("formatNumberCell scientific", () => {
     it("gives a coefficient of two significant digits and an exponent", () => {
@@ -330,5 +339,103 @@ describe("holdsAPValue", () => {
         expect(holdsAPValue("significance", "p-value")).toBe(true);
         // A declaration replaces the name, thus a p-value name under a different meaning answers false.
         expect(holdsAPValue("padj", "count")).toBe(false);
+    });
+});
+
+describe("selectColumnKind", () => {
+    it("gives the identifier kind to a column of names", () => {
+        expect(selectColumnKind("pmid")).toBe("identifier");
+        expect(selectColumnKind("cluster", "identifier")).toBe("identifier");
+        // A category reads as a name too, thus the cluster `01` keeps its own text.
+        expect(selectColumnKind("cluster", "category")).toBe("identifier");
+    });
+
+    it("gives the scientific kind to a probability column, by the name and by the declaration alike", () => {
+        expect(selectColumnKind("padj")).toBe("scientific");
+        expect(selectColumnKind("significance", "p-value")).toBe("scientific");
+        // A declaration replaces the name, thus a p-value name under a different meaning reads as a magnitude.
+        expect(selectColumnKind("padj", "count")).toBe("compact-scientific");
+    });
+
+    it("gives the rounded kind to every other column", () => {
+        expect(selectColumnKind("log2FoldChange")).toBe("compact-scientific");
+        expect(selectColumnKind("reads")).toBe("compact-scientific");
+        expect(selectColumnKind("effect", "effect")).toBe("compact-scientific");
+    });
+});
+
+/**
+ * The shared vector of the table cell format.
+ *
+ * The server resolves the kind of a column, and the page formats each cell under it. Thus one function has
+ * two realizations: `formatTableCell` here, and the `formatCell` fragment that the grid boot inlines. Each
+ * entry runs through both, and the two must give one text.
+ */
+describe("the table cell format", () => {
+    /** One entry of the vector: the cell, the kind of its column, the bound of the column, and the text. */
+    interface Entry {
+        readonly cell: string | number;
+        readonly kind: NumberKind;
+        readonly bound?: number;
+        readonly expected: string;
+    }
+
+    const VECTOR: readonly Entry[] = [
+        // The identifier kind gives the source text, with no grouping and no rounding.
+        { cell: "31978945", kind: "identifier", expected: "31978945" },
+        { cell: " 007 ", kind: "identifier", expected: "007" },
+        { cell: 12, kind: "identifier", expected: "12" },
+        // A probability column: the bound of a stored zero, the exponent under one hundredth, the decimal above it.
+        { cell: 0, kind: "scientific", bound: 0.00036, expected: "<4e-4" },
+        { cell: "0", kind: "scientific", bound: 0.02, expected: "<0.02" },
+        { cell: 0, kind: "scientific", bound: 9.6e-8, expected: "<1e-7" },
+        { cell: 0, kind: "scientific", expected: "≈0" },
+        { cell: 0.0000427777663038, kind: "scientific", expected: "4.3e-5" },
+        { cell: 2.7e-10, kind: "scientific", expected: "2.7e-10" },
+        { cell: 0.536, kind: "scientific", expected: "0.536" },
+        { cell: 0.05, kind: "scientific", expected: "0.05" },
+        { cell: 1, kind: "scientific", expected: "1" },
+        // A magnitude column: the grouped whole number, the rounded float, the exponent under one thousandth.
+        { cell: 14201, kind: "compact-scientific", expected: "14,201" },
+        { cell: -1234567, kind: "compact-scientific", expected: "-1,234,567" },
+        { cell: 15234.7, kind: "compact-scientific", expected: "15,235" },
+        { cell: -3.089028528355109, kind: "compact-scientific", expected: "-3.09" },
+        { cell: 0.00025, kind: "compact-scientific", expected: "2.5e-4" },
+        { cell: 0, kind: "compact-scientific", expected: "0" },
+        { cell: 1e16, kind: "compact-scientific", expected: "1e16" },
+        { cell: "1.50", kind: "compact-scientific", expected: "1.5" },
+        // A cell that holds no finite number passes through, thus a sentinel keeps its own text.
+        { cell: "NA", kind: "compact-scientific", expected: "NA" },
+        { cell: "up", kind: "compact-scientific", expected: "up" },
+        { cell: "", kind: "compact-scientific", expected: "" },
+        // The trim of a delimited name, and each text that carries a percent sign and stays whole.
+        { cell: "HALLMARK_HYPOXIA%MSigDB%M5891", kind: "compact-scientific", expected: "HALLMARK_HYPOXIA" },
+        { cell: "95%", kind: "compact-scientific", expected: "95%" },
+        { cell: "KEGG%hsa04110", kind: "compact-scientific", expected: "KEGG%hsa04110" },
+        { cell: "up 20% vs control%cohort", kind: "compact-scientific", expected: "up 20% vs control%cohort" },
+        { cell: "GO_APOPTOSIS%GO%GO:0006915", kind: "identifier", expected: "GO_APOPTOSIS" },
+    ];
+
+    /**
+     * The client formatter, as the page runs it.
+     *
+     * The fragment is browser source text. A read of that text would state the serialization and not the
+     * text that a reader sees, thus the test runs the fragment and calls its one entry point.
+     */
+    const formatOnThePage = new Function(`${TABLE_CELL_FORMATTER}\nreturn formatCell;`)() as (
+        cell: string | number,
+        kind: NumberKind,
+        bound?: number,
+    ) => string;
+
+    it("gives the stated text on the server", () => {
+        const actual = VECTOR.map((entry) => formatTableCell(entry.cell, entry.kind, entry.bound));
+        expect(actual).toEqual(VECTOR.map((entry) => entry.expected));
+    });
+
+    it("gives the same text on the page as on the server, for every entry", () => {
+        const server = VECTOR.map((entry) => formatTableCell(entry.cell, entry.kind, entry.bound));
+        const page = VECTOR.map((entry) => formatOnThePage(entry.cell, entry.kind, entry.bound));
+        expect(page).toEqual(server);
     });
 });

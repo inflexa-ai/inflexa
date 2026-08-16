@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import type { CitationBlock, FigureBlock, MetricBlock, TableBlock } from "../../contracts/report-blocks.js";
 import type { ScalarReference } from "../../contracts/report-reference.js";
 import { tableSidecarName } from "../assets.js";
-import { renderCitation, renderFigure, renderMetric, renderTable, renderTableRows, TABLE_ROW_CAP } from "./values.js";
+import { GRID_MOUNT_ATTRIBUTE, renderCitation, renderFigure, renderMetric, renderTable, tableDisplay } from "./values.js";
 import { ReferenceLedger } from "../references.js";
 
 const scalarBinding: ScalarReference = { kind: "artifact-value", path: "runs/r1/de.csv", hash: "sha256:aaa", locator: { column: "padj", row: 0 } };
@@ -57,210 +57,85 @@ describe("renderMetric", () => {
     });
 });
 
-describe("renderTableRows", () => {
+describe("tableDisplay", () => {
     const block: TableBlock = { kind: "table", id: "tb1", binding: tableBinding };
-
-    /** One table value of `count` rows. The gene column numbers each row, thus a sorted order is readable. */
-    function rowsOf(count: number) {
-        const rows = [];
-        for (let index = 0; index < count; index += 1) {
-            rows.push({ gene: `G${index}`, padj: 0.01 });
-        }
-        return { type: "table", rows } as const;
-    }
-
-    it("renders one row for each resolved row", () => {
-        const html = renderTableRows(block, {
-            type: "table",
-            rows: [
-                { gene: "TP53", padj: 0.01 },
-                { gene: "MYC", padj: 0.02 },
-                { gene: "EGFR", padj: 0.03 },
-            ],
-        });
-        expect(html.split(`<tr class="report-row`).length - 1).toBe(3);
-        expect(html).toContain("TP53");
-    });
-
-    it("renders nothing for a zero-row table", () => {
-        expect(renderTableRows(block, { type: "table", rows: [], columns: ["gene", "padj"] })).toBe("");
-    });
-
-    it("renders an absent cell as an empty cell", () => {
-        const html = renderTableRows(block, {
-            type: "table",
-            rows: [{ gene: "TP53", padj: 0.01 }, { gene: "MYC" }],
-            columns: ["gene", "padj"],
-        });
-        expect(html).toContain(`<td data-value=""></td>`);
-        expect(html).not.toContain("undefined");
-    });
-
-    it("shows a p-value column in the scientific form with the full digits on the title", () => {
-        const html = renderTableRows(block, { type: "table", rows: [{ gene: "TP53", padj: 0.0000427777663038 }] });
-        expect(html).toContain(`<td data-value="0.0000427777663038" title="0.0000427777663038">4.3e-5</td>`);
-    });
-
-    it("rounds a long float to three significant digits and keeps the full digits on the title", () => {
-        const html = renderTableRows(block, { type: "table", rows: [{ gene: "TP53", log2FoldChange: -3.089028528355109 }] });
-        expect(html).toContain(`<td data-value="-3.089028528355109" title="-3.089028528355109">-3.09</td>`);
-    });
-
-    it("groups a count and gives it no title, because the grouping hides no digit", () => {
-        const html = renderTableRows(block, { type: "table", rows: [{ gene: "TP53", reads: 14201 }] });
-        expect(html).toContain(`<td data-value="14201">14,201</td>`);
-    });
-
-    it("keeps an identifier column whole, with no grouping and no title", () => {
-        const html = renderTableRows(block, { type: "table", rows: [{ gene: "TP53", pmid: "31978945" }] });
-        expect(html).toContain(`<td data-value="31978945">31978945</td>`);
-        expect(html).not.toContain("31,978,945");
-        expect(html).not.toContain("title=");
-    });
-
-    it("gives a grouped whole number to a large float and keeps the full digits on the title", () => {
-        const html = renderTableRows(block, { type: "table", rows: [{ gene: "TP53", baseMean: 15234.7 }] });
-        expect(html).toContain(`<td data-value="15234.7" title="15234.7">15,235</td>`);
-    });
-
-    it("passes a non-numeric cell through unchanged and gives it no title", () => {
-        const html = renderTableRows(block, { type: "table", rows: [{ gene: "TP53", direction: "up" }] });
-        expect(html).toContain(`<td data-value="up">up</td>`);
-        expect(html).not.toContain("title=");
-    });
-
-    it("carries the raw value of a shortened cell, thus the sort reads the full magnitude", () => {
-        const html = renderTableRows(block, { type: "table", rows: [{ gene: "TP53", baseMean: 15234.7 }] });
-        // The shown text is a rounded form. A sort over the shown text would order `15,235` as a string.
-        expect(html).toContain(`data-value="15234.7"`);
-    });
-
-    it("marks each row past the cap as hidden", () => {
-        const total = TABLE_ROW_CAP + 5;
-        const html = renderTableRows(block, rowsOf(total));
-        expect(html.split(`<tr class="report-row`).length - 1).toBe(total);
-        expect(html.split(`<tr class="report-row report-row-hidden">`).length - 1).toBe(5);
-    });
-
-    it("marks no row of a table at the cap as hidden", () => {
-        const html = renderTableRows(block, rowsOf(TABLE_ROW_CAP));
-        expect(html.split(`<tr class="report-row">`).length - 1).toBe(TABLE_ROW_CAP);
-        expect(html).not.toContain("report-row-hidden");
-    });
-
-    it("shows the first segment of a delimited name and keeps the whole name on the title", () => {
-        const name = "HALLMARK_HYPOXIA%MSigDB%M5891";
-        const html = renderTableRows(block, { type: "table", rows: [{ set: name, padj: 0.01 }] });
-        expect(html).toContain(`<td data-value="${name}" title="${name}">HALLMARK_HYPOXIA</td>`);
-    });
-
-    it("keeps a text whose last segment is empty, thus a percentage stays whole", () => {
-        const html = renderTableRows(block, { type: "table", rows: [{ gene: "TP53", coverage: "95%" }] });
-        expect(html).toContain(`<td data-value="95%">95%</td>`);
-    });
-
-    it("keeps a text of two segments whole, because an encoded name holds three", () => {
-        const html = renderTableRows(block, { type: "table", rows: [{ gene: "TP53", note: "KEGG%hsa04110" }] });
-        expect(html).toContain(`<td data-value="KEGG%hsa04110">KEGG%hsa04110</td>`);
-    });
-
-    it("keeps a sentence with a percentage whole, because a segment of an encoded name holds no space", () => {
-        const html = renderTableRows(block, { type: "table", rows: [{ gene: "TP53", change: "up 20% vs control%cohort" }] });
-        expect(html).toContain(`<td data-value="up 20% vs control%cohort">up 20% vs control%cohort</td>`);
-    });
 
     /** One table block whose binding carries the declarations that a test states. */
     function declared(declaration: Pick<TableBlock["binding"], "columnMeanings" | "columnLabels">): TableBlock {
         return { kind: "table", id: "tb1", binding: { ...tableBinding, ...declaration } };
     }
 
-    it("reads a declared p-value column in the scientific form, although its name matches no token", () => {
-        const rows = { type: "table", rows: [{ gene: "TP53", significance: 0.00427777663038 }] } as const;
-        const html = renderTableRows(declared({ columnMeanings: { significance: "p-value" } }), rows);
-        expect(html).toContain(`<td data-value="0.00427777663038" title="0.00427777663038">4.3e-3</td>`);
-        // The same cell with no declaration keeps the guess, thus the declaration is what moved the kind.
-        expect(renderTableRows(block, rows)).toContain(`>0.00428</td>`);
+    /** The display of the named columns over the given rows, in the column order. */
+    function displayOf(table: TableBlock, columns: string[], rows: Record<string, string | number>[]) {
+        return tableDisplay(table, { type: "table", rows }, columns);
+    }
+
+    it("gives one entry for each column, in the column order", () => {
+        const display = displayOf(block, ["gene", "padj"], [{ gene: "TP53", padj: 0.01 }]);
+
+        expect(display.length).toBe(2);
+        expect(display[0].label).toBe("gene");
+        expect(display[1].label).toBe("padj");
     });
 
-    it("keeps a declared p-value from one hundredth up as a plain decimal with no full form", () => {
-        const rows = { type: "table", rows: [{ gene: "TP53", significance: 0.536 }] } as const;
-        const html = renderTableRows(declared({ columnMeanings: { significance: "p-value" } }), rows);
-        expect(html).toContain(`<td data-value="0.536">0.536</td>`);
-        expect(html).not.toContain("5.4e-1");
+    it("shows the declared label of a column", () => {
+        const display = displayOf(declared({ columnLabels: { padj: "Adjusted p-value" } }), ["padj"], [{ padj: 0.01 }]);
+        expect(display[0].label).toBe("Adjusted p-value");
     });
 
-    it("bounds a zero FDR by the smallest positive value of its own column", () => {
-        const html = renderTableRows(block, {
-            type: "table",
-            rows: [
-                { gene: "TP53", fdr: 0 },
-                { gene: "MYC", fdr: 0.00036 },
-                { gene: "EGFR", fdr: 0.02 },
-            ],
-        });
-        // The runtime escapes the `<` of the bound, thus the comparison reaches the page as text.
-        expect(html).toContain(`<td data-value="0" title="0">&lt;4e-4</td>`);
-        expect(html).not.toContain(`>0</td>`);
+    it("prettifies the label of an undeclared column", () => {
+        const display = displayOf(block, ["gene_symbol"], [{ gene_symbol: "TP53" }]);
+        expect(display[0].label).toBe("gene symbol");
     });
 
-    it("bounds a zero of a declared p-value column, the same as a token-matched one", () => {
-        const rows = {
-            type: "table",
-            rows: [
-                { gene: "TP53", significance: 0 },
-                { gene: "MYC", significance: 0.00036 },
-            ],
-        } as const;
-        const html = renderTableRows(declared({ columnMeanings: { significance: "p-value" } }), rows);
-        expect(html).toContain(`<td data-value="0" title="0">&lt;4e-4</td>`);
-        // With no declaration the name matches no token, thus the zero stays a count-like zero.
-        expect(renderTableRows(block, rows)).toContain(`<td data-value="0">0</td>`);
+    it("reads a p-value column as the scientific kind and every other column as the rounded kind", () => {
+        const display = displayOf(block, ["gene", "padj", "reads"], [{ gene: "TP53", padj: 0.01, reads: 14201 }]);
+
+        expect(display[0].kind).toBe("compact-scientific");
+        expect(display[1].kind).toBe("scientific");
+        expect(display[2].kind).toBe("compact-scientific");
     });
 
-    it("shows the near-zero form for a p-value column that holds no positive value", () => {
-        const html = renderTableRows(block, {
-            type: "table",
-            rows: [
-                { gene: "TP53", padj: 0 },
-                { gene: "MYC", padj: 0 },
-            ],
-        });
-        expect(html).toContain(`<td data-value="0" title="0">≈0</td>`);
+    it("reads a declared p-value column as the scientific kind, although its name matches no token", () => {
+        const table = declared({ columnMeanings: { significance: "p-value" } });
+        expect(displayOf(table, ["significance"], [{ significance: 0.004 }])[0].kind).toBe("scientific");
+        // The same column with no declaration matches no token, thus it keeps the rounded kind.
+        expect(displayOf(block, ["significance"], [{ significance: 0.004 }])[0].kind).toBe("compact-scientific");
     });
 
-    it("reads each p-value column on its own, thus a neighbor of one column bounds no other", () => {
-        const html = renderTableRows(block, {
-            type: "table",
-            rows: [
-                { pvalue: 0, padj: 0.00036 },
-                { pvalue: 0.0002, padj: 0 },
-            ],
-        });
-        expect(html).toContain(`>&lt;2e-4</td>`);
-        expect(html).toContain(`>&lt;4e-4</td>`);
+    it("reads an identifier column and a declared category column as the identifier kind", () => {
+        expect(displayOf(block, ["pmid"], [{ pmid: "31978945" }])[0].kind).toBe("identifier");
+        const table = declared({ columnMeanings: { cluster: "category" } });
+        expect(displayOf(table, ["cluster"], [{ cluster: "01" }])[0].kind).toBe("identifier");
     });
 
-    it("keeps the zero of a declared count column", () => {
-        const html = renderTableRows(declared({ columnMeanings: { hits: "count" } }), { type: "table", rows: [{ gene: "TP53", hits: 0 }] });
-        expect(html).toContain(`<td data-value="0">0</td>`);
-        expect(html).not.toContain("≈0");
+    it("bounds a p-value column by the smallest positive value of its own rows", () => {
+        const rows = [
+            { fdr: 0, pvalue: 0.0002 },
+            { fdr: 0.00036, pvalue: 0 },
+            { fdr: 0.02, pvalue: 0.5 },
+        ];
+        const display = displayOf(block, ["fdr", "pvalue"], rows);
+
+        // Each column reads on its own, thus the neighbor of one column bounds no other.
+        expect(display[0].bound).toBe(0.00036);
+        expect(display[1].bound).toBe(0.0002);
     });
 
-    it("keeps the zero of an undeclared column of a different nature", () => {
-        const html = renderTableRows(block, { type: "table", rows: [{ gene: "TP53", log2FoldChange: 0, reads: 0 }] });
-        expect(html.split(`<td data-value="0">0</td>`).length - 1).toBe(2);
+    it("gives no bound to a p-value column that holds no positive value", () => {
+        const display = displayOf(block, ["padj"], [{ padj: 0 }, { padj: 0 }]);
+        expect(display[0].bound).toBeUndefined();
+    });
+
+    it("gives no bound to a column of another nature, because no zero of it reads as a bound", () => {
+        const display = displayOf(block, ["reads"], [{ reads: 0 }, { reads: 14201 }]);
+        expect(display[0].bound).toBeUndefined();
     });
 
     it("ignores a declaration that names no column of the table", () => {
-        const rows = { type: "table", rows: [{ gene: "TP53", padj: 0.00427777663038 }] } as const;
         const stray = declared({ columnMeanings: { absent: "identifier" }, columnLabels: { absent: "Absent column" } });
-        expect(renderTableRows(stray, rows)).toBe(renderTableRows(block, rows));
-    });
-
-    it("keeps a hostile cell as text after the format passes it through", () => {
-        const html = renderTableRows(block, { type: "table", rows: [{ gene: "<script>alert(1)</script>", padj: 0.01 }] });
-        expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
-        expect(html).not.toContain("<script>alert(1)");
+        const rows = [{ gene: "TP53", padj: 0.004 }];
+        expect(displayOf(stray, ["gene", "padj"], rows)).toEqual(displayOf(block, ["gene", "padj"], rows));
     });
 });
 
@@ -268,63 +143,25 @@ describe("renderTable", () => {
     /** The block that every card test renders. Its binding names the pinned artifact of the download. */
     const block: TableBlock = { kind: "table", id: "tb1", binding: tableBinding };
 
-    /** One table block whose binding carries the declarations that a test states. */
-    function declared(declaration: Pick<TableBlock["binding"], "columnMeanings" | "columnLabels">): TableBlock {
-        return { kind: "table", id: "tb1", binding: { ...tableBinding, ...declaration } };
-    }
+    it("renders one empty grid mount that names its block, and no row", () => {
+        const html = renderTable(block);
 
-    /** One table value of `count` rows. The card renders none of them, thus the count states the input alone. */
-    function rowsOf(count: number) {
-        const rows = [];
-        for (let index = 0; index < count; index += 1) {
-            rows.push({ gene: `G${index}`, padj: 0.01 });
-        }
-        return { type: "table", rows } as const;
-    }
-
-    it("renders one header cell for each column and no data row", () => {
-        const html = renderTable(block, rowsOf(3));
-
-        expect(html.split(`<th class="data-table-sort"`).length - 1).toBe(2);
-        // The rows ride the data asset, thus the markup carries no copy of them.
-        expect(html).toContain("<tbody></tbody>");
+        expect(html).toContain(`<div class="report-grid" ${GRID_MOUNT_ATTRIBUTE}="tb1"></div>`);
+        // The rows and the header ride the data asset, thus the markup carries no copy of either.
+        expect(html).not.toContain("<table");
+        expect(html).not.toContain("<th");
         expect(html).not.toContain("<td");
-        expect(html).not.toContain("G0");
     });
 
-    it("renders the header of a zero-row table with named columns", () => {
-        const html = renderTable(block, { type: "table", rows: [], columns: ["gene", "padj"] });
-        expect(html.split(`<th class="data-table-sort"`).length - 1).toBe(2);
-    });
+    it("renders the title of the card and the caption under it", () => {
+        const html = renderTable({ ...block, title: "Top genes", caption: "The hypoxic group." });
 
-    it("keeps the body empty however many rows resolve", () => {
-        expect(renderTable(block, rowsOf(TABLE_ROW_CAP + 5))).toContain("<tbody></tbody>");
-        expect(renderTable(block, rowsOf(TABLE_ROW_CAP + 5))).not.toContain("report-row");
-    });
-
-    it("gives each sortable header the tab order, thus the keyboard reaches the sort", () => {
-        const html = renderTable(block, { type: "table", rows: [{ gene: "TP53", padj: 0.01 }] });
-        expect(html.split(`<th class="data-table-sort" data-sort-index="`).length - 1).toBe(2);
-        expect(html.split(`tabindex="0"`).length - 1).toBe(2);
-    });
-
-    it("shows the declared label of a column and keeps the raw name on hover", () => {
-        const html = renderTable(declared({ columnLabels: { padj: "Adjusted p-value" } }), { type: "table", rows: [{ gene: "TP53", padj: 0.01 }] });
-        expect(html).toContain(`tabindex="0" title="padj">Adjusted p-value</th>`);
-    });
-
-    it("prettifies an undeclared header and keeps the raw name on hover", () => {
-        const html = renderTable(block, { type: "table", rows: [{ gene_symbol: "TP53" }] });
-        expect(html).toContain(`tabindex="0" title="gene_symbol">gene symbol</th>`);
-    });
-
-    it("gives no title to a header whose shown text is its raw name", () => {
-        const html = renderTable(declared({ columnLabels: { gene: "gene" } }), { type: "table", rows: [{ gene: "TP53" }] });
-        expect(html).toContain(`tabindex="0">gene</th>`);
+        expect(html).toContain(`<div class="report-table-title">Top genes</div>`);
+        expect(html).toContain(`<p class="report-caption">The hypoxic group.</p>`);
     });
 
     it("links the staged raw bytes of the pinned artifact as the download", () => {
-        const html = renderTable(block, rowsOf(2));
+        const html = renderTable(block);
         const name = tableSidecarName(tableBinding.hash, tableBinding.path);
 
         // The link is relative, thus the page fetches no host when it opens. The attribute makes the
@@ -334,10 +171,12 @@ describe("renderTable", () => {
         expect(name.endsWith("de.csv")).toBe(true);
     });
 
-    it("carries no filter and no toggle, because the enhancer drives neither over an empty body", () => {
-        const html = renderTable(block, rowsOf(TABLE_ROW_CAP + 5));
-        expect(html).not.toContain("report-table-filter");
-        expect(html).not.toContain("report-table-toggle");
+    it("carries no filter, no toggle, and no capped row, because the grid owns the table", () => {
+        const html = renderTable(block);
+
+        for (const retired of ["report-table-filter", "report-table-toggle", "report-row", "data-table"]) {
+            expect(html).not.toContain(retired);
+        }
     });
 });
 

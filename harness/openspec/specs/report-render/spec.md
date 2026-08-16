@@ -52,6 +52,8 @@ The renderer MUST give each of the eight block kinds a rendered form. The render
 
 A text block with a list MUST render the list after its prose paragraphs, as ordered or unordered list markup by the flag. Each item escapes exactly as a paragraph does, and the list fills the content column. A text block with a list and an empty prose renders the list alone.
 
+The table block MUST render through the grid over its payload, and the payload holds the rows in place of the markup.
+
 #### Scenario: A section renders as a heading by depth
 - **WHEN** the caller renders a section with a nested child section
 - **THEN** the outer title renders as a higher heading level than the inner title
@@ -60,17 +62,17 @@ A text block with a list MUST render the list after its prose paragraphs, as ord
 - **WHEN** the caller renders a metric block with a scalar value entry
 - **THEN** the page shows the label and the scalar value together
 
-#### Scenario: A table renders every resolved row
+#### Scenario: A table shows every resolved row through the grid
 - **WHEN** the caller renders a table block whose value entry holds three rows
-- **THEN** the page holds an HTML table with the three rows, and no sample note
+- **THEN** the payload holds the three rows, the grid shows them, and no sample note renders
 
 #### Scenario: A figure renders from the supplied source
 - **WHEN** the caller renders a figure block with a figure source string and a caption
 - **THEN** the page holds an image with that source, and the caption below it
 
-#### Scenario: An empty table renders its header alone
+#### Scenario: An empty table keeps its card
 - **WHEN** the caller renders a table block whose value entry holds zero rows and named columns
-- **THEN** the page holds the table with its header, and no data row
+- **THEN** the card holds the title and the download link, and the payload holds the columns with no row
 
 #### Scenario: An empty chart still renders its container
 - **WHEN** the caller renders a chart block whose value entry holds zero rows
@@ -165,34 +167,40 @@ The table header MUST show the declared label of a column, with the raw column n
 - **WHEN** the table view renders the column `gene_symbol` with no declared label
 - **THEN** the header shows `gene symbol`, and the `title` attribute of the header holds the raw name
 
-### Requirement: The table enhancer
-The page MUST enhance each rendered table with a header sort, one filter input, and a row cap, through a page script with no dependency. The DOM MUST hold every resolved row, and the enhancer hides a row with a class and never removes one. The sort MUST read a raw value attribute that the view emits, thus the formatted text stays presentation. A numeric column sorts numerically, and every other column sorts in code-unit order. The cap is a renderer constant, and a table over the cap MUST carry a toggle that names the total row count. The print form MUST show every row. A browser without script keeps the complete plain table.
+### Requirement: The table grid
 
-The renderer MUST trim a percent-delimited display name to its first segment. The full text rides the `title` attribute.
+The page MUST render each table block through the pinned grid bundle, booted by the page script from the registered data of the block. The bundle joins the asset manifest, and the page references it as a classic script. The client-side row model virtualizes the DOM, thus the page holds the visible slice alone.
 
-#### Scenario: The rows stay in the DOM under the cap
-- **WHEN** the caller renders a table with more rows than the cap
-- **THEN** the markup holds every row, the rows past the cap carry the hidden class, and the toggle names the total
+The payload MUST carry a display member: the resolved header label of each column, the resolved number kind, and the below-resolution bound where one exists. The server resolves, and the page formats over the shipped kinds. A shared test vector MUST pin the client formatter against the server helper.
 
-#### Scenario: A sort reads the raw value
-- **WHEN** the view renders a numeric cell with a formatted text
-- **THEN** the cell carries the raw value in a data attribute, and the enhancer sorts by that value
+The grid theme MUST build from the design tokens, thus the grid reads as the page does. The per-column filters and the header sort are the one filter surface, and no separate filter input renders. The full raw value of a formatted cell rides the cell tooltip, exactly as the `title` attribute carried it.
 
-#### Scenario: A small table carries no toggle
-- **WHEN** the caller renders a table at or under the cap
-- **THEN** no row carries the hidden class, and no toggle renders
+The renderer MUST trim a percent-delimited display name to its first segment, with the full text on the cell tooltip. The print form MUST take the grid's print layout, thus every bounded row prints, and the row bound keeps the print sane. A grid mount whose payload the registry does not hold keeps the header card and the download link, and the boot skips it.
 
-#### Scenario: A noisy name trims with the full text on hover
-- **WHEN** a cell holds a percent-delimited set name
-- **THEN** the cell shows the first segment, and the `title` attribute holds the full text
+#### Scenario: The grid renders the bounded table
 
-#### Scenario: The print form shows every row
-- **WHEN** the reader prints a page with a capped table
-- **THEN** the print rules reveal each hidden row
+- **WHEN** the page loads with a table block of 14,201 registered rows
+- **THEN** the grid shows the rows with sort and per-column filters, and the DOM holds the visible slice alone
 
-#### Scenario: A scriptless browser sees the whole plain table
-- **WHEN** the page loads with scripting disabled
-- **THEN** every row paints, and no inert control shows, because the sheet hides and shows only under the live marker
+#### Scenario: The client formats as the server does
+
+- **WHEN** the shared vector runs through the server helper and the client formatter
+- **THEN** the two give identical text for every entry
+
+#### Scenario: No filter row renders
+
+- **WHEN** the page renders any table block
+- **THEN** no standalone filter input sits above the grid, and the column filters serve
+
+#### Scenario: The print shows every bounded row
+
+- **WHEN** the page prints a table block
+- **THEN** the print form holds every bounded row, and no scroll viewport clips one
+
+#### Scenario: A missing payload keeps the card honest
+
+- **WHEN** a grid mount finds no registered data under its block id
+- **THEN** the header card and the download link stay, and the page throws nothing
 
 ### Requirement: The page navigation
 The page MUST hold a left-side navigation with one anchor for each top-level section. Each anchor MUST target its section by the section block id.

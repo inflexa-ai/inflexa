@@ -2,14 +2,23 @@ import { describe, expect, it } from "bun:test";
 import { load } from "cheerio";
 
 import type { Block, CitationBlock, MetricBlock, ReportDocument, TableBlock, TextBlock } from "../contracts/report-blocks.js";
-import { ASSETS_DIR, PAGE_ASSETS, tableSidecarName } from "./assets.js";
-import { DESIGN_CSS } from "./design.js";
+import { AG_GRID_ASSET, ASSETS_DIR, PAGE_ASSETS, tableSidecarName } from "./assets.js";
+import {
+    DESIGN_CSS,
+    GRID_HEADER_BORDER_PX,
+    GRID_HEADER_HEIGHT_PX,
+    GRID_MIN_COLUMN_WIDTH_PX,
+    GRID_ROW_HEIGHT_PX,
+    GRID_THEME_PARAMS,
+    GRID_VISIBLE_ROWS,
+} from "./design.js";
 import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "./fixture.js";
-import { CHART_BOOTSTRAP, SECTION_SPY, TABLE_DATA_DECODER, TABLE_ENHANCER } from "./page.js";
+import { CHART_BOOTSTRAP, GRID_BOOTSTRAP, SECTION_SPY, TABLE_DATA_DECODER } from "./page.js";
+import { formatTableCell } from "./number-format.js";
 import { TABLE_DATA_GLOBAL } from "./table-data.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
-import { SHOW_ALL_PREFIX, TABLE_ROW_CAP } from "./views/values.js";
+import { GRID_MOUNT_ATTRIBUTE } from "./views/values.js";
 
 /**
  * The site of the navigation brand. It is the one reference of the page that names a remote host.
@@ -238,17 +247,28 @@ describe("the table data assets", () => {
         return registry["tbl"];
     }
 
-    it("holds the header and no data row, and the payload holds every row", () => {
+    it("holds one empty grid mount, and the payload holds every row", () => {
         const rendered = renderReportPage(tableDocument(), valuesOf(14201))._unsafeUnwrap();
         const page = load(rendered.html);
 
-        expect(page("th.data-table-sort").length).toBe(3);
-        expect(page("tbody tr").length).toBe(0);
+        expect(page(`[${GRID_MOUNT_ATTRIBUTE}="tbl"]`).length).toBe(1);
+        expect(page(`[${GRID_MOUNT_ATTRIBUTE}]`).text()).toBe("");
         expect(rendered.dataAssets.length).toBe(1);
 
         const payload = registeredPayload(rendered.dataAssets[0]);
         expect(payload.columns).toEqual(["gene", "padj", "direction"]);
         expect(payload.rows.length).toBe(14201);
+    });
+
+    it("carries the display of each column beside the rows", () => {
+        const rendered = renderReportPage(tableDocument(), valuesOf(3))._unsafeUnwrap();
+        const payload = registeredPayload(rendered.dataAssets[0]) as unknown as { display: { label: string; kind: string; bound?: number }[] };
+
+        // The server resolves the label, the kind, and the bound one time for each column. Thus the page
+        // formats each cell with no read of a declaration.
+        expect(payload.display.map((entry) => entry.kind)).toEqual(["compact-scientific", "scientific", "compact-scientific"]);
+        expect(payload.display.map((entry) => entry.label)).toEqual(["gene", "padj", "direction"]);
+        expect(payload.display[1].bound).toBe(1 / 3);
     });
 
     it("compresses a repeated category into the dictionary of its column", () => {
@@ -278,7 +298,7 @@ describe("the table data assets", () => {
         // reaches the reader through a script tag and never through a request.
         expect(rendered.html).toContain(`<script src="${source}"></script>`);
         expect(rendered.html.indexOf(source)).toBeLessThan(rendered.html.indexOf(TABLE_DATA_DECODER));
-        expect(rendered.html.indexOf(TABLE_DATA_DECODER)).toBeLessThan(rendered.html.indexOf(TABLE_ENHANCER));
+        expect(rendered.html.indexOf(TABLE_DATA_DECODER)).toBeLessThan(rendered.html.indexOf(GRID_BOOTSTRAP));
     });
 
     it("decodes the payload into plain rows, one time, in the page script", () => {
@@ -354,8 +374,10 @@ describe("the table data assets", () => {
         const rendered = renderReportPage(document, {})._unsafeUnwrap();
 
         expect(rendered.dataAssets).toEqual([]);
-        // A page with no payload registers no map and carries no decoder, thus it stays what it was.
+        // A page with no payload registers no map, and it carries neither the decoder nor the grid boot,
+        // thus it stays what it was.
         expect(rendered.html).not.toContain(TABLE_DATA_GLOBAL);
+        expect(rendered.html).not.toContain(GRID_BOOTSTRAP);
         expect(rendered.html).not.toContain(".data.js");
         expect(rendered.html).toBe(renderReportPage(document, {})._unsafeUnwrap().html);
     });
@@ -1101,10 +1123,7 @@ describe("the section scrollspy", () => {
     });
 });
 
-describe("the table enhancer", () => {
-    /** The print block of the sheet. It is the last block, thus the tail from its opening is its body. */
-    const PRINT_BLOCK = DESIGN_CSS.slice(DESIGN_CSS.indexOf("@media print"));
-
+describe("the table grid", () => {
     /** A page with one table of `count` rows and two columns. */
     function tablePage(count: number): { document: ReportDocument; values: RenderValues } {
         const rows = [];
@@ -1127,320 +1146,325 @@ describe("the table enhancer", () => {
         };
     }
 
-    it("rides the page after the scrollspy", () => {
+    it("references the grid bundle as a classic script from the staged assets", () => {
         const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
-        expect(html).toContain(TABLE_ENHANCER);
-        expect(html.indexOf(TABLE_ENHANCER)).toBeGreaterThan(html.indexOf(SECTION_SPY));
+
+        // A `file://` page refuses a module request, thus the runtime loads as a classic script. The
+        // manifest carries the entry, thus the stage step of the caller writes the file that the tag names.
+        expect(html).toContain(`<script src="${ASSETS_DIR}/${AG_GRID_ASSET.file}"></script>`);
+        expect(PAGE_ASSETS).toContain(AG_GRID_ASSET);
     });
 
-    it("bounds the markup and the script at one cap", () => {
-        // The view hides the rows past the cap, and the script applies the same cap again after each sort
-        // and each filter. Two numbers here would show one count and then show a different one.
-        expect(TABLE_ENHANCER).toContain(`var CAP = ${TABLE_ROW_CAP};`);
+    it("boots after the decode and before the readiness signal", () => {
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+
+        // The boot reads the decoded rows, thus it runs after the decoder. It runs before the chart
+        // bootstrap, which signals readiness, thus a capture of the page shows a page whose grids stand.
+        expect(html.indexOf(TABLE_DATA_DECODER)).toBeLessThan(html.indexOf(GRID_BOOTSTRAP));
+        expect(html.indexOf(GRID_BOOTSTRAP)).toBeLessThan(html.indexOf(CHART_BOOTSTRAP));
     });
 
-    it("writes the classes that the view emits and that the design source styles", () => {
-        expect(TABLE_ENHANCER).toContain(`"report-row-hidden"`);
-        expect(TABLE_ENHANCER).toContain(`"data-table-sort-asc"`);
-        expect(TABLE_ENHANCER).toContain(`"data-table-sort-desc"`);
-        expect(DESIGN_CSS).toContain(".report-row-hidden");
-        expect(DESIGN_CSS).toContain(".data-table-sort-asc");
-        expect(DESIGN_CSS).toContain(".data-table-sort-desc");
-    });
-
-    it("reads no locale in the filter comparison and no locale in the sort", () => {
-        // `toLowerCase` is exact over the ASCII range of a gene name. A locale method gives different text
-        // and a different order on a different host, thus the page would stop being deterministic.
-        expect(TABLE_ENHANCER).toContain("toLowerCase()");
-        expect(TABLE_ENHANCER).not.toContain("localeCompare");
-        expect(TABLE_ENHANCER).not.toContain("toLocale");
-    });
-
-    it("touches neither the reveal gate nor the readiness sentinel", () => {
-        // The enhancer registers no reveal work. A page that waited on the enhancer would signal late.
-        expect(TABLE_ENHANCER).not.toContain("__inflexa");
-    });
-
-    it("hides a row under the live marker alone, thus a browser with no script shows every row", () => {
-        // The script writes the marker on each card that it takes. Without the marker no rule hides a row,
-        // thus the plain table stays complete and no row hides behind a toggle that cannot open.
-        const selectors = [...DESIGN_CSS.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/[^{}]*\.report-row-hidden[^{}]*\{/g)].map((match) => match[0]);
-        expect(selectors.length).toBeGreaterThan(0);
-        for (const selector of selectors) {
-            expect(selector).toContain(".report-table-live");
-        }
-        expect(TABLE_ENHANCER).toContain(`var LIVE = "report-table-live";`);
-        expect(TABLE_ENHANCER).toContain("card.classList.add(LIVE);");
-    });
-
-    it("shows a control under the live marker alone", () => {
-        const css = DESIGN_CSS.replace(/\/\*[\s\S]*?\*\//g, "");
-        for (const control of ["report-table-controls", "report-table-toggle"]) {
-            const rules = [...css.matchAll(new RegExp(`([^{}]*\\.${control}[^{}]*)\\{([^}]*)\\}`, "g"))];
-            const withDisplay = rules.filter((rule) => /display:\s*[a-z-]+/.test(rule[2]));
-            expect(withDisplay.length).toBeGreaterThan(0);
-            for (const rule of withDisplay) {
-                if (/display:\s*none/.test(rule[2])) {
-                    continue;
-                }
-                // A rule that shows the control must name the marker. Without it a browser with no script
-                // paints an input and a button that nothing drives.
-                expect(rule[1]).toContain(".report-table-live");
-            }
-            // The default is hidden, thus the control appears only after the script takes the card.
-            const hiddenByDefault = withDisplay.some((rule) => !rule[1].includes(".report-table-live") && /display:\s*none/.test(rule[2]));
-            expect(hiddenByDefault).toBe(true);
-        }
-    });
-
-    it("gives the sort affordance under the live marker alone", () => {
-        const css = DESIGN_CSS.replace(/\/\*[\s\S]*?\*\//g, "");
-        const rules = [...css.matchAll(/([^{}]*\.data-table-sort[^{}]*)\{([^}]*)\}/g)];
-        const affordance = rules.filter((rule) => /cursor:/.test(rule[2]) || /:hover/.test(rule[1]));
-        expect(affordance.length).toBeGreaterThan(0);
-        for (const rule of affordance) {
-            // A zero-row table never takes the marker. Its headers must then promise no sort.
-            expect(rule[1]).toContain(".report-table-live");
-        }
-    });
-
-    it("shows every row in the print form and drops the controls", () => {
-        // The base rule hides a capped row. The print rule comes after it, thus it wins on paper.
-        expect(DESIGN_CSS.indexOf(".report-row-hidden")).toBeLessThan(DESIGN_CSS.indexOf("@media print"));
-        expect(PRINT_BLOCK).toMatch(/\.report-row-hidden\s*\{[^}]*display:\s*table-row/);
-        expect(PRINT_BLOCK).toMatch(/\.report-table-live \.report-table-controls,\s*\.report-table-live \.report-table-toggle\s*\{[^}]*display:\s*none/);
-    });
-
-    it("puts the sort headers on a page and no data row under them", () => {
-        const over = tablePage(TABLE_ROW_CAP + 3);
+    it("puts one mount and no row on a page of many rows", () => {
+        const over = tablePage(14_201);
         const page = load(renderReportPage(over.document, over.values)._unsafeUnwrap().html);
-        expect(page("th.data-table-sort").length).toBe(2);
-        // The enhancer of this page finds an empty body and takes no card, thus the page carries neither
-        // the control that it drives nor a row that it hides.
-        expect(page("tbody tr").length).toBe(0);
-        expect(page(".report-table-filter").length).toBe(0);
-        expect(page(".report-table-toggle").length).toBe(0);
+
+        expect(page(`[${GRID_MOUNT_ATTRIBUTE}]`).length).toBe(1);
+        expect(page("tr").length).toBe(0);
+        // The card keeps its download, thus the reader takes the raw bytes whatever the script does.
+        expect(page("a.report-table-download").length).toBe(1);
     });
 });
 
-describe("the table enhancer behavior", () => {
-    /** The event that a header handler reads. The key selects the branch, and the guard stops the scroll. */
-    interface FakeEvent {
-        key?: string;
-        preventDefault: () => void;
+describe("the grid boot", () => {
+    /** One column definition, in the shape that the boot builds. */
+    interface FakeColumn {
+        colId: string;
+        headerName: string;
+        headerTooltip?: string;
+        filter: string;
+        valueGetter: (params: { data?: Record<string, string | number> }) => string | number | undefined;
+        valueFormatter: (params: { value: unknown }) => string;
+        tooltipValueGetter: (params: { value: unknown }) => string;
     }
 
-    /** One element in the shape that the script reads: a class set, an attribute map, and its handlers. */
-    interface FakeNode {
-        classes: Set<string>;
-        attributes: Record<string, string>;
-        classList: { add: (name: string) => void; remove: (name: string) => void };
-        addEventListener: (name: string, handler: (event: FakeEvent) => void) => void;
-        setAttribute: (name: string, value: string) => void;
+    /** The grid options that the boot passes to `createGrid`. */
+    interface FakeOptions {
+        theme: unknown;
+        columnDefs: FakeColumn[];
+        rowData: Record<string, string | number>[];
+        defaultColDef: Record<string, unknown>;
+        rowModelType?: string;
+    }
+
+    /** One mount, in the shape that the boot reads: the block attribute and the inline style. */
+    interface FakeMount {
+        style: { height: string };
         getAttribute: (name: string) => string | null;
-        fire: (name: string, key?: string) => void;
     }
 
-    type FakeRow = FakeNode & { cells: { getAttribute: (name: string) => string | null }[] };
-    type FakeFilter = FakeNode & { value: string };
-    type FakeToggle = FakeNode & { textContent: string };
-    type FakeCard = FakeNode & { querySelector: (selector: string) => unknown };
-
-    /** The handles of one mounted table: the elements, the painted order, and the two readings of it. */
-    interface Mounted {
-        card: FakeNode;
-        headers: FakeNode[];
-        filter: FakeFilter;
-        toggle: FakeToggle;
-        column: (index: number) => string[];
-        visible: () => string[];
-    }
-
-    function fakeNode(initial: string[] = []): FakeNode {
-        const classes = new Set(initial);
-        const attributes: Record<string, string> = {};
-        const handlers: Record<string, ((event: FakeEvent) => void)[]> = {};
-        return {
-            classes,
-            attributes,
-            classList: {
-                add: (name) => {
-                    classes.add(name);
-                },
-                remove: (name) => {
-                    classes.delete(name);
-                },
-            },
-            addEventListener: (name, handler) => {
-                handlers[name] = [...(handlers[name] ?? []), handler];
-            },
-            setAttribute: (name, value) => {
-                attributes[name] = value;
-            },
-            getAttribute: (name) => attributes[name] ?? null,
-            fire: (name, key) => {
-                for (const handler of handlers[name] ?? []) {
-                    handler({ key, preventDefault: () => undefined });
-                }
-            },
-        };
+    /** One payload, in the shape that the decoder leaves under the block id. */
+    function payloadOf(columns: string[], display: unknown[], rows: Record<string, string | number>[]) {
+        return { columns, display, rows, dict: {} };
     }
 
     /**
-     * Mount one table of raw cell values and run the emitted enhancer over it.
+     * Run the emitted boot over the given payloads, and give back what it built.
      *
      * The script is browser source text. Each global arrives as a parameter, thus these fakes are the whole
-     * DOM that it drives and no real browser is necessary. `appendChild` moves a row to the end, as the
-     * browser method does, thus the painted order is the order that a reader sees.
+     * environment that it drives and no real browser and no real grid are necessary.
      */
-    function mount(cells: string[][], withToggle = false): Mounted {
-        const rows: FakeRow[] = cells.map((values) => ({
-            ...fakeNode(["report-row"]),
-            cells: values.map((value) => ({ getAttribute: (name: string) => (name === "data-value" ? value : null) })),
+    function boot(payloads: Record<string, unknown>, mountIds?: string[], breakOn?: string) {
+        const created: { id: string; options: FakeOptions }[] = [];
+        const registered: unknown[][] = [];
+        const applied: { option: string; value: unknown }[] = [];
+        const listeners: Record<string, (() => void)[]> = {};
+        const errors: string[] = [];
+        const themeParams: unknown[] = [];
+        const mounts: FakeMount[] = (mountIds ?? Object.keys(payloads)).map((id) => ({
+            style: { height: "" },
+            getAttribute: (name: string) => (name === GRID_MOUNT_ATTRIBUTE ? id : null),
         }));
-        const headers = (cells[0] ?? []).map((_, index) => {
-            const header = fakeNode(["data-table-sort"]);
-            header.attributes["data-sort-index"] = String(index);
-            return header;
-        });
-        const filter: FakeFilter = { ...fakeNode(), value: "" };
-        const toggle: FakeToggle = { ...fakeNode(["report-table-toggle"]), textContent: `${SHOW_ALL_PREFIX}${rows.length}` };
-        const painted = [...rows];
-        const body = {
-            rows,
-            appendChild: (node: FakeRow) => {
-                const at = painted.indexOf(node);
-                if (at >= 0) {
-                    painted.splice(at, 1);
+        const agGrid = {
+            ModuleRegistry: {
+                registerModules: (modules: unknown[]) => {
+                    registered.push(modules);
+                },
+            },
+            AllCommunityModule: { moduleName: "community" },
+            themeQuartz: {
+                withParams: (given: unknown) => {
+                    themeParams.push(given);
+                    return { params: given };
+                },
+            },
+            createGrid: (mount: FakeMount, options: FakeOptions) => {
+                const id = mount.getAttribute(GRID_MOUNT_ATTRIBUTE) ?? "";
+                if (id === breakOn) {
+                    throw new Error("the grid refused the payload");
                 }
-                painted.push(node);
+                created.push({ id, options });
+                return {
+                    setGridOption: (option: string, value: unknown) => {
+                        applied.push({ option, value });
+                    },
+                };
             },
         };
-        const table = { querySelector: () => body, querySelectorAll: () => headers };
-        const card: FakeCard = {
-            ...fakeNode(["report-table"]),
-            querySelector: (selector: string): unknown => {
-                if (selector === "table.data-table") {
-                    return table;
-                }
-                if (selector === ".report-table-filter") {
-                    return filter;
-                }
-                return withToggle ? toggle : null;
+        const registry = Object.create(null) as Record<string, unknown>;
+        for (const [id, payload] of Object.entries(payloads)) {
+            registry[id] = payload;
+        }
+        const window = {
+            [TABLE_DATA_GLOBAL]: registry,
+            addEventListener: (name: string, handler: () => void) => {
+                listeners[name] = [...(listeners[name] ?? []), handler];
             },
         };
-        const doc = {
-            readyState: "complete",
-            documentElement: { classList: { add: () => undefined } },
-            querySelectorAll: () => [card],
-            addEventListener: () => undefined,
+        const document = { querySelectorAll: () => mounts };
+        const console = {
+            error: (message: string) => {
+                errors.push(message);
+            },
         };
-        new Function("document", TABLE_ENHANCER)(doc);
+        new Function("window", "document", "agGrid", "console", GRID_BOOTSTRAP)(window, document, agGrid, console);
         return {
-            card,
-            headers,
-            filter,
-            toggle,
-            column: (index) => painted.map((row) => row.cells[index].getAttribute("data-value") ?? ""),
-            visible: () => painted.filter((row) => !row.classes.has("report-row-hidden")).map((row) => row.cells[0].getAttribute("data-value") ?? ""),
+            created,
+            registered,
+            applied,
+            errors,
+            mounts,
+            themeParams,
+            fire: (name: string) => {
+                for (const handler of listeners[name] ?? []) {
+                    handler();
+                }
+            },
         };
     }
 
-    it("takes no card whose body holds no row, and it throws nothing", () => {
-        // The card of a table renders its rows from the data asset, thus the body of the markup is empty.
-        // The enhancer of this page finds nothing to drive, and it must leave the card as it is.
-        const table = mount([]);
-
-        expect(table.card.classes.has("report-table-live")).toBe(false);
-        expect(table.headers.length).toBe(0);
-    });
-
-    it("sorts a numeric column that holds a sentinel by magnitude", () => {
-        const table = mount([["10"], ["NA"], ["9"]]);
-        table.headers[0].fire("click");
-        // One value that parses keeps the column numeric. Under a text order `10` would rank before `9`.
-        expect(table.column(0)).toEqual(["9", "10", "NA"]);
-        table.headers[0].fire("click");
-        // The sentinel holds no rank, thus it stays at the end under both directions.
-        expect(table.column(0)).toEqual(["10", "9", "NA"]);
-        table.headers[0].fire("click");
-        expect(table.column(0)).toEqual(["10", "NA", "9"]);
-    });
-
-    it("sorts a text column in code-unit order", () => {
-        const table = mount([["b"], ["A"], ["a"]]);
-        table.headers[0].fire("click");
-        expect(table.column(0)).toEqual(["A", "a", "b"]);
-    });
-
-    it("cycles from the keyboard and writes the sort state of each header", () => {
-        const table = mount([
-            ["2", "x"],
-            ["1", "y"],
-        ]);
-        table.headers[0].fire("keydown", "Enter");
-        expect(table.column(0)).toEqual(["1", "2"]);
-        expect(table.headers[0].attributes["aria-sort"]).toBe("ascending");
-        expect(table.headers[1].attributes["aria-sort"]).toBe("none");
-        table.headers[0].fire("keydown", " ");
-        expect(table.headers[0].attributes["aria-sort"]).toBe("descending");
-        // A key that names no action leaves the order and the state as they are.
-        table.headers[0].fire("keydown", "a");
-        expect(table.headers[0].attributes["aria-sort"]).toBe("descending");
-    });
-
-    it("filters on the raw values of a row and forms no match across two cells", () => {
-        const table = mount([
-            ["AB", "CD"],
-            ["ZZ", "YY"],
-        ]);
-        table.filter.value = "bc";
-        table.filter.fire("input");
-        expect(table.visible()).toEqual([]);
-        table.filter.value = "cd";
-        table.filter.fire("input");
-        expect(table.visible()).toEqual(["AB"]);
-    });
-
-    it("finds the text that the trim hides, because the filter reads the raw value", () => {
-        const table = mount([["HALLMARK_HYPOXIA%MSigDB%M5891"], ["TP53"]]);
-        table.filter.value = "m5891";
-        table.filter.fire("input");
-        expect(table.visible()).toEqual(["HALLMARK_HYPOXIA%MSigDB%M5891"]);
-    });
-
-    it("counts the kept rows on the toggle and hides the toggle at the cap", () => {
-        const cells: string[][] = [];
-        for (let index = 0; index < TABLE_ROW_CAP + 5; index += 1) {
-            cells.push([`G${index}`]);
+    /** One table of two columns: a gene name and an adjusted p-value. */
+    function genePayload(rowCount = 3) {
+        const rows = [];
+        for (let index = 0; index < rowCount; index += 1) {
+            rows.push({ gene: `G${index}`, padj: 0.0001 });
         }
-        const table = mount(cells, true);
-        table.filter.fire("input");
-        expect(table.visible().length).toBe(TABLE_ROW_CAP);
-        expect(table.toggle.textContent).toBe(`${SHOW_ALL_PREFIX}${TABLE_ROW_CAP + 5}`);
-        expect(table.toggle.classes.has("report-table-toggle-off")).toBe(false);
+        return payloadOf(
+            ["gene", "padj"],
+            [
+                { label: "gene", kind: "compact-scientific" },
+                { label: "Adjusted p-value", kind: "scientific", bound: 0.0001 },
+            ],
+            rows,
+        );
+    }
 
-        table.toggle.fire("click");
-        expect(table.visible().length).toBe(TABLE_ROW_CAP + 5);
-        expect(table.toggle.textContent).toBe("Show fewer");
-        table.toggle.fire("click");
+    it("builds one grid for each mount, over the decoded rows of its block", () => {
+        const run = boot({ one: genePayload(2), two: genePayload(5) });
 
-        // The filter keeps 11 rows: `G1` and `G10` through `G19`. Nothing then waits behind the toggle.
-        table.filter.value = "g1";
-        table.filter.fire("input");
-        expect(table.visible().length).toBe(11);
-        expect(table.toggle.textContent).toBe(`${SHOW_ALL_PREFIX}11`);
-        expect(table.toggle.classes.has("report-table-toggle-off")).toBe(true);
-
-        table.filter.value = "";
-        table.filter.fire("input");
-        expect(table.toggle.textContent).toBe(`${SHOW_ALL_PREFIX}${TABLE_ROW_CAP + 5}`);
-        expect(table.toggle.classes.has("report-table-toggle-off")).toBe(false);
+        expect(run.created.map((grid) => grid.id)).toEqual(["one", "two"]);
+        expect(run.created[1].options.rowData.length).toBe(5);
+        // The client-side row model is the default, and it renders the visible slice alone. A page that
+        // named another model would ask the page for rows that no page can give.
+        expect(run.created[0].options.rowModelType).toBeUndefined();
     });
 
-    it("marks a card that it takes and leaves a zero-row card unmarked", () => {
-        expect(mount([["a"]]).card.classes.has("report-table-live")).toBe(true);
-        expect(mount([]).card.classes.has("report-table-live")).toBe(false);
+    it("registers the community modules before it builds a grid", () => {
+        const run = boot({ one: genePayload() });
+
+        expect(run.registered.length).toBe(1);
+        expect(run.registered[0].length).toBe(1);
+    });
+
+    it("names each column from the display and reads the own key of the row", () => {
+        const payload = payloadOf(["p.value"], [{ label: "p value", kind: "scientific" }], [{ "p.value": 0.5 }]);
+        const column = boot({ one: payload }).created[0].options.columnDefs[0];
+
+        expect(column.colId).toBe("p.value");
+        expect(column.headerName).toBe("p value");
+        // A field reads a point as a path into the row. The getter reads the key itself, thus a column
+        // such as `p.value` reaches its own cells.
+        expect(column.valueGetter({ data: { "p.value": 0.5 } })).toBe(0.5);
+        expect(column.valueGetter({})).toBeUndefined();
+    });
+
+    it("puts the raw column name on the header hover where the label differs from it", () => {
+        const columns = boot({ one: genePayload() }).created[0].options.columnDefs;
+
+        expect(columns[1].headerTooltip).toBe("padj");
+        // A hover that repeats the header text tells a reader nothing, thus a plain header carries none.
+        expect(columns[0].headerTooltip).toBeUndefined();
+    });
+
+    it("formats each cell under the kind of its column, as the server does", () => {
+        const columns = boot({ one: genePayload() }).created[0].options.columnDefs;
+
+        expect(columns[1].valueFormatter({ value: 0.0000427777663038 })).toBe(formatTableCell(0.0000427777663038, "scientific"));
+        expect(columns[1].valueFormatter({ value: 0.0000427777663038 })).toBe("4.3e-5");
+        // The bound of the column rides the display, thus a stored zero reads as a bound and never as a result.
+        expect(columns[1].valueFormatter({ value: 0 })).toBe("<1e-4");
+        expect(columns[0].valueFormatter({ value: 14201 })).toBe("14,201");
+        expect(columns[0].valueFormatter({ value: undefined })).toBe("");
+    });
+
+    it("puts the raw value on the tooltip of a cell that the format changed", () => {
+        const columns = boot({ one: genePayload() }).created[0].options.columnDefs;
+
+        expect(columns[1].tooltipValueGetter({ value: 0.0000427777663038 })).toBe("0.0000427777663038");
+        expect(columns[1].tooltipValueGetter({ value: 0 })).toBe("0");
+        // A cell whose shown text is its own raw text carries no tooltip.
+        expect(columns[0].tooltipValueGetter({ value: "up" })).toBe("");
+        expect(columns[0].tooltipValueGetter({ value: undefined })).toBe("");
+    });
+
+    it("trims a delimited name in the cell and keeps the whole name on the tooltip", () => {
+        const name = "HALLMARK_HYPOXIA%MSigDB%M5891";
+        const payload = payloadOf(["set"], [{ label: "set", kind: "compact-scientific" }], [{ set: name }]);
+        const column = boot({ one: payload }).created[0].options.columnDefs[0];
+
+        expect(column.valueFormatter({ value: name })).toBe("HALLMARK_HYPOXIA");
+        expect(column.tooltipValueGetter({ value: name })).toBe(name);
+    });
+
+    it("gives a number filter to a magnitude column and a text filter to a column of names", () => {
+        const payload = payloadOf(
+            ["pmid", "reads"],
+            [
+                { label: "pmid", kind: "identifier" },
+                { label: "reads", kind: "compact-scientific" },
+            ],
+            [{ pmid: "31978945", reads: 12 }],
+        );
+        const columns = boot({ one: payload }).created[0].options.columnDefs;
+
+        expect(columns[0].filter).toBe("agTextColumnFilter");
+        expect(columns[1].filter).toBe("agNumberColumnFilter");
+    });
+
+    it("sorts from the header and fits each column to the width of the grid", () => {
+        const defaults = boot({ one: genePayload() }).created[0].options.defaultColDef;
+
+        // The per-column filters and the header sort are the one filter surface of a table.
+        expect(defaults.sortable).toBe(true);
+        expect(defaults.flex).toBe(1);
+        expect(defaults.minWidth).toBe(GRID_MIN_COLUMN_WIDTH_PX);
+    });
+
+    it("builds the theme from the design tokens", () => {
+        const run = boot({ one: genePayload() });
+
+        expect(run.themeParams).toEqual([GRID_THEME_PARAMS]);
+        expect(run.created[0].options.theme).toEqual({ params: GRID_THEME_PARAMS });
+    });
+
+    it("sizes the mount from the row count, up to the visible bound", () => {
+        const short = boot({ one: genePayload(3) });
+        expect(short.mounts[0].style.height).toBe(`${GRID_HEADER_HEIGHT_PX + GRID_HEADER_BORDER_PX + 3 * GRID_ROW_HEIGHT_PX}px`);
+
+        const long = boot({ one: genePayload(GRID_VISIBLE_ROWS + 40) });
+        // A long table scrolls inside its own viewport, thus the card never grows with the row count.
+        expect(long.mounts[0].style.height).toBe(`${GRID_HEADER_HEIGHT_PX + GRID_HEADER_BORDER_PX + GRID_VISIBLE_ROWS * GRID_ROW_HEIGHT_PX}px`);
+    });
+
+    it("takes the print layout of the grid on a print and gives it back after one", () => {
+        const run = boot({ one: genePayload(3) });
+        const height = run.mounts[0].style.height;
+
+        run.fire("beforeprint");
+        // The print layout lays every row out at once and it holds no scroll viewport, thus each bounded
+        // row reaches the paper.
+        expect(run.applied).toEqual([{ option: "domLayout", value: "print" }]);
+        expect(run.mounts[0].style.height).toBe("auto");
+
+        run.fire("afterprint");
+        expect(run.applied[1]).toEqual({ option: "domLayout", value: "normal" });
+        expect(run.mounts[0].style.height).toBe(height);
+    });
+
+    it("skips a mount whose block the registry does not hold, and it throws nothing", () => {
+        const run = boot({ one: genePayload() }, ["one", "absent"]);
+
+        expect(run.created.map((grid) => grid.id)).toEqual(["one"]);
+        expect(run.errors).toEqual([]);
+        // The mount of the absent block takes no height, thus its card shows its title and its download alone.
+        expect(run.mounts[1].style.height).toBe("");
+    });
+
+    it("skips a payload that carries no display, and it throws nothing", () => {
+        const run = boot({ one: { columns: ["gene"], rows: [{ gene: "TP53" }], dict: {} } });
+
+        expect(run.created).toEqual([]);
+        expect(run.errors).toEqual([]);
+    });
+
+    it("keeps a sibling grid when one grid refuses its payload", () => {
+        const run = boot({ bad: genePayload(), good: genePayload() }, ["bad", "good"], "bad");
+
+        // A malformed payload is the fault that a look must diagnose. It must never stop a sibling grid.
+        expect(run.created.map((grid) => grid.id)).toEqual(["good"]);
+        expect(run.errors.length).toBe(1);
+        expect(run.errors[0]).toContain("bad");
+    });
+});
+
+describe("the retired table enhancer", () => {
+    it("carries no marker, no filter input, and no cap class on a rendered page", () => {
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+
+        // The grid owns the table presentation, thus the page holds one table mechanism and no second one.
+        for (const retired of ["report-table-live", "report-table-filter", "report-table-controls", "report-table-toggle", "report-row-hidden"]) {
+            expect(html).not.toContain(retired);
+        }
+    });
+
+    it("holds no rule and no markup of the plain table", () => {
+        const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES)._unsafeUnwrap().html;
+
+        for (const retired of ["data-table", "data-sort-index", "<tbody", "<thead"]) {
+            expect(html).not.toContain(retired);
+        }
+        for (const rule of [".report-table-live", ".report-table-filter", ".report-table-toggle", ".report-row", ".data-table"]) {
+            expect(DESIGN_CSS).not.toContain(rule);
+        }
     });
 });
 

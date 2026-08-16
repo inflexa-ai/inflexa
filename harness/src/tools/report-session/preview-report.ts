@@ -30,6 +30,7 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { extname, join } from "node:path";
@@ -124,8 +125,27 @@ function figureSourcePolicy(file: ResolvedFile): string {
  */
 const moduleResolver = createRequire(import.meta.url);
 
-/** The default asset lookup: the module resolution of the installation of the harness. */
-const resolvePageAssetFromInstallation: ResolvePageAsset = (specifier) => moduleResolver.resolve(specifier);
+/**
+ * The default asset lookup: the module resolution of the installation of the harness.
+ *
+ * A package that publishes an `exports` map refuses a subpath that the map does not name, and a browser
+ * bundle beside the module entry is such a subpath. The fallback reads the specifier as a path under each
+ * candidate `node_modules` directory of the resolution. Thus a bundle that the map hides still stages, and
+ * a specifier that names no file still fails with the resolution error of the package.
+ */
+export const resolvePageAssetFromInstallation: ResolvePageAsset = (specifier) => {
+    try {
+        return moduleResolver.resolve(specifier);
+    } catch (cause) {
+        for (const directory of moduleResolver.resolve.paths(specifier) ?? []) {
+            const candidate = join(directory, specifier);
+            if (existsSync(candidate)) {
+                return candidate;
+            }
+        }
+        throw cause;
+    }
+};
 
 /**
  * Pair each block with the resolved value of its binding, in document order.

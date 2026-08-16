@@ -1,13 +1,13 @@
 /**
  * The page assembly: the hero, the bands, the appendix bands, and the footer.
  *
- * The skeleton inlines the style rules in the head, and it puts the five scripts at the end of the body.
- * The order of the first three scripts is a contract. The theme registration runs before the chart
- * bootstrap, thus each chart finds its theme. The fade-in observer also runs before the chart bootstrap,
- * thus the bootstrap finds the reveal gate and it signals readiness after the first reveal pass. The
- * scrollspy reads the sections alone, and the table enhancer reads the tables alone, thus the position of
- * each of the two is free. The navigation, the main content, and the reference frame arrive as
- * already-escaped markup strings, thus `raw()` inserts them byte for byte.
+ * The skeleton inlines the style rules in the head, and it puts the page scripts at the end of the body.
+ * The script order is a contract. The theme registration runs before the chart bootstrap, thus each chart
+ * finds its theme. The fade-in observer also runs before the chart bootstrap, thus the bootstrap finds the
+ * reveal gate and it signals readiness after the first reveal pass. The grid boot runs before the chart
+ * bootstrap too, thus every grid stands before the page signals that it is ready. The scrollspy reads the
+ * sections alone, thus its position is free. The navigation, the main content, and the reference frame
+ * arrive as already-escaped markup strings, thus `raw()` inserts them byte for byte.
  *
  * One band holds one top-level section. The band index drives the alternation of the background and of the
  * texture, thus a caller that adds a band passes the next index.
@@ -19,7 +19,7 @@
 
 import { raw } from "hono/html";
 
-import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER, SECTION_SPY, TABLE_DATA_DECODER, TABLE_ENHANCER } from "../page.js";
+import { ASSET_HEAD, CHART_BOOTSTRAP, FADE_IN_OBSERVER, GRID_BOOTSTRAP, SECTION_SPY, TABLE_DATA_DECODER } from "../page.js";
 import { stagedSource } from "../assets.js";
 import { DESIGN_CSS, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
 import type { DataAsset } from "../table-data.js";
@@ -107,8 +107,8 @@ export function renderReferenceSection(ledger: ReferenceLedger, index: number, r
  * optional, thus an empty frame adds no markup.
  *
  * Each data asset rides a classic `script` tag at the end of the body, and the decoder runs after the last
- * of them. Thus every payload is registered before any reader looks, and a page with no table carries
- * neither a tag nor the decoder.
+ * of them. Thus every payload is registered before any reader looks. A table block always gives one data
+ * asset, thus a page with no asset carries no tag, no decoder, and no grid boot.
  */
 export function assemblePage(title: string, nav: string, content: string, references: string, dataAssets: readonly DataAsset[] = []): string {
     return (
@@ -150,9 +150,9 @@ export function assemblePage(title: string, nav: string, content: string, refere
                     {dataAssets.length > 0 ? <script>{raw(TABLE_DATA_DECODER)}</script> : null}
                     <script>{raw(THEME_REGISTRATION)}</script>
                     <script>{raw(FADE_IN_OBSERVER)}</script>
+                    {dataAssets.length > 0 ? <script>{raw(GRID_BOOTSTRAP)}</script> : null}
                     <script>{raw(CHART_BOOTSTRAP)}</script>
                     <script>{raw(SECTION_SPY)}</script>
-                    <script>{raw(TABLE_ENHANCER)}</script>
                 </body>
             </html>,
         )
