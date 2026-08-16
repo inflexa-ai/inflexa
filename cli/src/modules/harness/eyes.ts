@@ -45,6 +45,16 @@ const IMAGE_RUN_SCRIPT = "/headless-shell/run.sh";
 const DEFAULT_LIFETIME_SECONDS = 180;
 
 /**
+ * How much shared memory one container gets.
+ *
+ * Chrome composes a full-page capture bitmap in `/dev/shm`. The podman default of 64 MiB is smaller than that
+ * bitmap for a tall report page, thus the capture fails with a protocol error although the page itself is
+ * sound. One gigabyte holds a page an order of magnitude taller than the observed 11,189 px case, and the
+ * memory is only committed while a look runs.
+ */
+const SHM_SIZE = "1g";
+
+/**
  * How many browsers run at one time.
  *
  * The page gate of the harness bounds one endpoint, and each look here names a new endpoint. Thus the count
@@ -174,6 +184,8 @@ export function createEphemeralEyes(deps: EphemeralEyesDeps): AcquireEyes {
                 "run",
                 "-d",
                 "--rm",
+                "--shm-size",
+                SHM_SIZE,
                 "-p",
                 `127.0.0.1:${port}:${CONTAINER_DEVTOOLS_PORT}`,
                 "-v",
