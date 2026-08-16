@@ -110,6 +110,19 @@ function docWithTable(path: string): DraftDocument {
     return draft;
 }
 
+/** A valid draft with the metric of `metricDoc` and one chart that binds the given derived path. */
+function docWithChart(path: string): DraftDocument {
+    const draft = metricDoc();
+    draft.sections[0].blocks.push({
+        kind: "chart",
+        id: "ch1",
+        binding: { kind: "artifact-table", path, hash: DERIVED_HASH },
+        chartType: "bar",
+        encoding: { x: "gene", y: "padj" },
+    });
+    return draft;
+}
+
 /** Write one file under a workspace root, and make each directory over it. */
 async function stageFile(root: string, path: string): Promise<string> {
     const absolute = join(root, path);
@@ -335,6 +348,25 @@ describe("createRecordVersionTool", () => {
             // The records are append-only. The bytes are reproducible from the script and the sources, thus
             // the prune touches no record.
             expect(records.map((record) => record.outputPath)).toEqual([used, unused]);
+        });
+
+        it("keeps the output that a chart block binds", async () => {
+            const threadId = "thread-prune-chart";
+            await anchorThread(threadId, "parent-prune-chart");
+            const root = await makeRoot("record-prune-chart-");
+
+            const plotted = derivedPath(threadId, "plotted.csv");
+            const plottedFile = await stageFile(root, plotted);
+
+            const doc = docWithChart(plotted);
+            const gateway = gatewayFor(threadId, doc, snapshotWithDerived([plotted]), computeDraftHash(doc), [derivation(plotted)]);
+
+            const result = (await makeTool(gateway, root).execute({}, ctxForThread(threadId)))._unsafeUnwrap();
+
+            expect(result.outcome).toBe("recorded");
+            // A chart holds no card of its own rows, and it still names its artifact. Thus the whole-table
+            // binding of a chart uses the derivation and the prune removes nothing.
+            expect(existsSync(plottedFile)).toBe(true);
         });
 
         it("keeps the version and logs when a removal fails", async () => {

@@ -37,7 +37,7 @@ import type { ReportDocument } from "../../contracts/report-blocks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { describeDbError } from "../../lib/db-result.js";
 import { describeFsError, tryFsWrite } from "../../lib/fs-result.js";
-import { defaultErrorFields, type Logger } from "../../lib/logger.js";
+import type { Logger } from "../../lib/logger.js";
 import type { ThreadStore } from "../../memory/thread-store.js";
 import { referencedPaths, walkBlocks } from "../../report-model/block-walk.js";
 import { finishDraft, type FinishGap, type SessionDerivation } from "../../report-model/draft-finish.js";
@@ -126,7 +126,8 @@ function describeRecordFailure(error: RecordVersionError): string {
  *
  * The version already stands at this point. Thus each failure costs the cleanup alone: an unresolvable root,
  * a path that escapes, and a failed removal each log and change no outcome. The records stay, and the bytes
- * are reproducible from the script and the sources.
+ * are reproducible from the script and the sources. The scope of the prune resolves inside the same guard as
+ * the root, because both builders throw and a throw here would read as a failure of a call that succeeded.
  */
 async function pruneUnusedDerivations(args: {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
@@ -146,17 +147,18 @@ async function pruneUnusedDerivations(args: {
     }
 
     let root: string;
+    let derivedDir: string;
     try {
         root = args.resolveWorkspaceRoot(args.analysisId);
+        derivedDir = resolvePath(root, reportSessionDerivedDir(args.threadId));
     } catch (cause) {
         args.logger.warn("the unused derivations did not prune", {
             threadId: args.threadId,
             analysisId: args.analysisId,
-            ...defaultErrorFields(cause),
+            ...args.logger.errorFields(cause),
         });
         return;
     }
-    const derivedDir = resolvePath(root, reportSessionDerivedDir(args.threadId));
 
     for (const record of unused) {
         const resolved = resolveWorkspacePath({ workspaceRoot: root, analysisId: args.analysisId, path: record.outputPath });

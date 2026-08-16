@@ -17,6 +17,9 @@
  * each column ride a data asset beside the page, and the page script builds the grid over them. Thus the
  * markup carries no row, and `tableDisplay` gives the page what the server resolved for each column.
  *
+ * Each card marks its binding in the shared ledger, thus every evidentiary block carries a marker and an
+ * appendix entry. A reference that two blocks share keeps one number and one entry.
+ *
  * Each data card carries the `corner-accents` class. Thus the card keeps square corners with the L-shaped
  * accents, which is the geometric identity of the report.
  */
@@ -80,15 +83,23 @@ type FigureValue = Extract<RenderValue, { type: "figure" }>;
  *
  * A metric reads one cell and it has no column, thus no neighbor bounds a zero here. A zero under a
  * p-value label reads as the near-zero form.
+ *
+ * The value binding joins the provenance ladder, thus the label line carries the marker and the appendix
+ * names the cell. The marker sits on the label and never on the value, because the value line is the one
+ * figure that a reader takes from the card.
  */
-export function renderMetric(block: MetricBlock, value: ScalarValue): string {
+export function renderMetric(block: MetricBlock, ledger: ReferenceLedger, value: ScalarValue): string {
+    const mark = ledger.mark(block.value);
     const shown = formatNumberCell(value.value, selectNumberKind(block.label, value.value));
     return String(
         <div class="stat-card corner-accents">
             <div class="stat-card-value" title={shown.full}>
                 {shown.text}
             </div>
-            <div class="stat-card-label">{block.label}</div>
+            <div class="stat-card-label">
+                {block.label}
+                <LadderMarker mark={mark} />
+            </div>
         </div>,
     );
 }
@@ -251,13 +262,21 @@ export function renderTable(block: TableBlock, ledger: ReferenceLedger, rowCount
  * Render a figure block as a corner-accent card. The source rides the `src` attribute, and the caption
  * renders below the image. The caption also fills the `alt` attribute, thus the escape keeps a hostile
  * source and a hostile caption inside their slots.
+ *
+ * The whole-file binding joins the provenance ladder, thus the caption line carries the marker and the
+ * appendix names the image. A figure with no caption still shows its marker on that line. The marker stays
+ * out of the `alt` text, because a screen reader reads the alt as the picture and not as a footnote.
  */
-export function renderFigure(block: FigureBlock, value: FigureValue): string {
+export function renderFigure(block: FigureBlock, ledger: ReferenceLedger, value: FigureValue): string {
+    const mark = ledger.mark(block.binding);
     const caption = block.caption;
     return String(
         <figure class="report-figure corner-accents">
             <img src={value.src} alt={caption !== undefined ? caption : ""} class="report-figure-image" />
-            {caption !== undefined ? <figcaption class="report-caption">{caption}</figcaption> : null}
+            <figcaption class="report-caption">
+                {caption}
+                <LadderMarker mark={mark} />
+            </figcaption>
         </figure>,
     );
 }

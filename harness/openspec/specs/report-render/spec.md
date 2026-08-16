@@ -392,7 +392,7 @@ A claim MUST render its prose with evidence markers. The references MUST list at
 
 ### Requirement: Every evidentiary binding joins the provenance appendix
 
-The whole-table binding of a table block and of a chart block MUST join the provenance ledger, and the card shows the marker. The appendix entry names the path, in the artifact-table entry form. The appendix entry of a derived path MUST add the chain of its record: each source path with its hash prefix, and the script hash prefix. The derivation records ride the render call, exactly as the citation records do, and the renderer stays pure.
+The binding of each evidentiary block MUST join its ladder: the metric value, the table, the chart, and the figure beside the claim and the citation. The card shows the marker, and the appendix entry names the path in its entry form. The appendix entry of a derived path MUST add the chain of its record: each source path with its hash prefix, and the script hash prefix. The derivation records ride the render call, exactly as the citation records do, and the renderer stays pure.
 
 #### Scenario: A bound table gains its appendix entry
 

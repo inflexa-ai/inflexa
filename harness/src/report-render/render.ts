@@ -99,7 +99,7 @@ function renderBlock(
                 problems.push(wrongShape(block.id, entry.type, "scalar"));
                 return "";
             }
-            return renderMetric(block, entry);
+            return renderMetric(block, ledger, entry);
         }
         case "table": {
             const entry = values[block.id];
@@ -128,7 +128,7 @@ function renderBlock(
                 problems.push(wrongShape(block.id, entry.type, "figure"));
                 return "";
             }
-            return renderFigure(block, entry);
+            return renderFigure(block, ledger, entry);
         }
         case "chart": {
             const entry = values[block.id];

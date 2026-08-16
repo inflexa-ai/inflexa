@@ -962,7 +962,7 @@ describe("the appendix bands", () => {
     });
 });
 
-describe("the whole-table bindings in the appendix", () => {
+describe("the evidentiary bindings in the appendix", () => {
     const PINNED = "runs/run-1/step-a/output/de.csv";
     const DERIVED = "report-sessions/t1/derived/merged.csv";
     const PINNED_HASH = `sha256:${"a".repeat(64)}`;
@@ -984,7 +984,7 @@ describe("the whole-table bindings in the appendix", () => {
         return renderReportPage(document, values, undefined, derivations)._unsafeUnwrap().html;
     }
 
-    /** One table block over the given path, and one chart block over it. */
+    /** One block of each evidentiary kind over the given artifact. Each one binds through its own kind. */
     function tableBlock(path: string, hash: string): Block {
         return { kind: "table", id: "tbl", binding: { kind: "artifact-table", path, hash } };
     }
@@ -993,9 +993,19 @@ describe("the whole-table bindings in the appendix", () => {
         return { kind: "chart", id: "cht", binding: { kind: "artifact-table", path, hash }, chartType: "bar", encoding: { x: "day", y: "count" } };
     }
 
+    function metricBlock(path: string, hash: string): Block {
+        return { kind: "metric", id: "mtr", label: "Genes tested", value: { kind: "artifact-value", path, hash, locator: { column: "count", row: 0 } } };
+    }
+
+    function figureBlock(path: string, hash: string): Block {
+        return { kind: "figure", id: "fig", binding: { kind: "artifact-file", path, hash } };
+    }
+
     const oneRow: RenderValues = {
         tbl: { type: "table", rows: [{ day: "Mon", count: 1 }] },
         cht: { type: "table", rows: [{ day: "Mon", count: 1 }] },
+        mtr: { type: "scalar", value: 1 },
+        fig: { type: "figure", src: "assets/plot.png" },
     };
 
     it("gives a bound table its marker and its appendix entry", () => {
@@ -1024,6 +1034,33 @@ describe("the whole-table bindings in the appendix", () => {
         // entry and both markers point at it.
         expect(page("ol.report-references li").length).toBe(1);
         expect(page('.report-marker a[href="#ref-1"]').length).toBe(2);
+    });
+
+    it("gives a marker and a chain entry to each evidentiary kind over one derived path", () => {
+        const blocks = [
+            metricBlock(DERIVED, DERIVED_HASH),
+            tableBlock(DERIVED, DERIVED_HASH),
+            chartBlock(DERIVED, DERIVED_HASH),
+            figureBlock(DERIVED, DERIVED_HASH),
+        ];
+        const page = load(pageOf(blocks, oneRow, [chain]));
+
+        // Each of the four cards carries its marker, each on the line that names the card.
+        expect(page(".stat-card-label .report-marker").length).toBe(1);
+        expect(page(".report-table-title .report-marker").length).toBe(1);
+        expect(page(".report-chart-title .report-marker").length).toBe(1);
+        expect(page(".report-figure .report-caption .report-marker").length).toBe(1);
+
+        // Each marker points at an entry that exists. The table and the chart bind one whole-table
+        // reference, thus three entries serve the four cards.
+        const targets = page(".report-marker a")
+            .toArray()
+            .map((node) => page(node).attr("href"));
+        expect(targets.length).toBe(4);
+        expect(targets.filter((target) => page(`li${target}`).length === 1).length).toBe(4);
+        expect(page("ol.report-references li").length).toBe(3);
+        // Every entry names the derived path, thus every entry states the chain of that path.
+        expect(page("ol.report-references li .report-ref-chain").length).toBe(3);
     });
 
     it("states the chain of a derived chart in its appendix entry", () => {
