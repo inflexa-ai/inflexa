@@ -127,6 +127,25 @@ const VERTICAL_LABEL_POSITION = "start";
 const VERTICAL_BAND_LABEL_POSITION = "insideBottom";
 
 /**
+ * The type fields of a category axis that renders on y.
+ *
+ * The chart runtime draws the first category of a y axis at the origin, thus it stacks the rows upward and
+ * a table that is sorted strongest-first reads weakest-on-top. The inverted axis puts the first row at the
+ * top, and the page then reads down in the order that the rows hold. The data order itself never moves.
+ */
+const HORIZONTAL_CATEGORY_AXIS: EchartOption = { type: "category", inverse: true };
+
+/**
+ * The grid of a chart whose category names render as axis labels.
+ *
+ * The theme pins `containLabel: false`, and the normalizer fills a left margin of 10 percent. A long
+ * category name then draws past the edge of the canvas. `containLabel` gives the measurement to the chart
+ * runtime, which is the one part that can measure the text. A fixed band of pixels would guess a width
+ * here, and a guess clips a longer name and wastes the room of a shorter one.
+ */
+const LABEL_CONTAINING_GRID: EchartOption = { containLabel: true };
+
+/**
  * The y axis of a histogram.
  *
  * The axis counts rows, thus a fractional tick names no count. `minInterval` holds each tick a whole count
@@ -195,6 +214,13 @@ export function deriveChartOption(block: ChartBlock, rows: readonly ChartRow[], 
  */
 function deriveRaw(block: ChartBlock, rows: readonly ChartRow[], columns?: readonly string[]): Result<EchartOption, RenderProblem> {
     const labels = block.binding.columnLabels;
+    const orientation = block.orientation;
+    if (orientation !== undefined && block.composition !== undefined) {
+        // The schema refine already makes this pair unrepresentable. The guard states the same rule for a
+        // value that reaches the renderer without a parse, because a composition states the arrangement on
+        // its own bar series and this one would otherwise drop in silence.
+        return err(problem(block.id, "A composition states the arrangement on its own bar series, thus the chart carries no orientation beside it."));
+    }
     if (block.composition !== undefined) {
         return deriveComposition(block.id, block.composition, rows, columns, labels);
     }
@@ -205,7 +231,6 @@ function deriveRaw(block: ChartBlock, rows: readonly ChartRow[], columns?: reado
         // value that reaches the renderer without a parse.
         return err(problem(block.id, "The chart carries neither a chart type with an encoding, nor a composition."));
     }
-    const orientation = block.orientation;
     if (orientation !== undefined && chartType !== "bar") {
         // A silent ignore would teach the author a field that does nothing, thus the fault is stated.
         return err(problem(block.id, `The ${chartType} chart takes no orientation. An orientation is a rule of the bar alone.`));
@@ -387,7 +412,8 @@ function deriveTransformedRows(rows: readonly ChartRow[], derived: ReadonlyArray
  *
  * The category axis of the horizontal arrangement keeps every label. `normalizeEchartSpec` pins the label
  * interval of each axis, and it turns an x label alone, thus a long name on y reads level and none of them
- * drops.
+ * drops. The same arrangement inverts that axis and contains its labels, for the reasons that
+ * `HORIZONTAL_CATEGORY_AXIS` and `LABEL_CONTAINING_GRID` give.
  */
 function deriveBar(block: ResolvedChartBlock, rows: readonly ChartRow[], columns: readonly string[] | undefined): Result<EchartOption, RenderProblem> {
     const xResult = requireColumn(block, rows, columns, "x");
@@ -409,8 +435,9 @@ function deriveBar(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
     if (horizontal) {
         return ok({
             xAxis: { type: "value", ...xAxisName(axisTitle(block.labels, y)) },
-            yAxis: { type: "category", data: categories, name: axisTitle(block.labels, x) },
+            yAxis: { ...HORIZONTAL_CATEGORY_AXIS, data: categories, name: axisTitle(block.labels, x) },
             series,
+            grid: { ...LABEL_CONTAINING_GRID },
         });
     }
     return ok({
@@ -791,6 +818,8 @@ function deriveComposition(
         xAxis: axes.xAxis,
         yAxis: axes.yAxis,
         series: emitted.map((entry) => entry.option),
+        // A horizontal bar draws its category names as y labels, thus the grid must hold them.
+        ...(isHorizontalBar(first.declared) ? { grid: { ...LABEL_CONTAINING_GRID } } : {}),
     });
 }
 
@@ -1226,6 +1255,8 @@ function compositionXAxis(
  * A bar counts its categories. The base bar rule lists the values of the category channel in
  * first-appearance order, thus a bar of either path draws the same axis. A declared scale asks for a
  * numeric axis, and a category axis has no scale, thus such an axis falls to the inferred one.
+ *
+ * A category axis on y inverts, thus the first row of the table reads at the top of the plot.
  */
 function barCategoryAxis(
     rows: readonly ChartRow[],
@@ -1240,8 +1271,9 @@ function barCategoryAxis(
     }
     const categories = firstAppearance(channel.values.filter((value): value is Cell => value !== null));
     const title = declared?.title ?? axisTitle(labels, channel.name, preset);
+    const typeFields = axis === "x" ? { type: "category" } : { ...HORIZONTAL_CATEGORY_AXIS };
     const nameFields = axis === "x" ? xAxisName(title) : { name: title };
-    return { type: "category", data: categories, ...nameFields };
+    return { ...typeFields, data: categories, ...nameFields };
 }
 
 /**

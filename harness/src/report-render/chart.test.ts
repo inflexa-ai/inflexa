@@ -139,6 +139,24 @@ describe("the bar orientation", () => {
         expect(asObj(yAxis.axisLabel).interval).toBe(0);
         // The rotation is an x-axis rule, thus a name up the y axis reads level.
         expect("rotate" in asObj(yAxis.axisLabel)).toBe(false);
+        // The runtime draws the first category at the origin, thus the axis inverts to read top-down.
+        expect(yAxis.inverse).toBe(true);
+    });
+
+    it("holds the category labels inside the grid, thus a long name draws whole", () => {
+        const quick = derive(chartBlock("bar", { x: "set", y: "nes" }, { orientation: "horizontal" }), nesRows);
+        const composed = derive(composedBlock({ series: [{ form: "bar", orientation: "horizontal", encoding: { x: "set", y: "nes" } }] }), nesRows);
+        for (const option of [quick, composed]) {
+            expect(asObj(option.grid).containLabel).toBe(true);
+            // The normalizer fills only an unset key, thus the margins land beside the contained labels.
+            expect(asObj(option.grid).left).toBe("10%");
+        }
+    });
+
+    it("leaves the grid of a vertical bar to the normalizer alone", () => {
+        const option = derive(chartBlock("bar", { x: "set", y: "nes" }), nesRows);
+        expect("containLabel" in asObj(option.grid)).toBe(false);
+        expect("inverse" in asObj(option.xAxis)).toBe(false);
     });
 
     it("leads each pair with the value, because the runtime reads the first member on x", () => {
@@ -212,8 +230,11 @@ describe("the bar orientation", () => {
         );
         const yAxis = asObj(option.yAxis);
         expect(yAxis.type).toBe("category");
+        // The rows arrive strongest-first, thus the inverted axis reads them down from the top.
         expect(yAxis.data).toEqual(["HALLMARK_HYPOXIA", "HALLMARK_G2M_CHECKPOINT", "HALLMARK_GLYCOLYSIS"]);
+        expect(yAxis.inverse).toBe(true);
         expect(asObj(yAxis.axisLabel).interval).toBe(0);
+        expect(asObj(option.grid).containLabel).toBe(true);
         expect(asObj(option.xAxis).type).toBe("value");
         // An annotation names a rendered axis, thus the zero of a horizontal bar stands on `x`.
         const marks = asArr(asObj(asObj(asArr(option.series)[0]).markLine).data);
@@ -261,6 +282,22 @@ describe("the bar orientation", () => {
         expect(problem.blockId).toBe("m1");
         expect(problem.detail).toContain("horizontal bar");
         expect(problem.detail).toContain("y axis");
+    });
+
+    it("refuses a block that carries an orientation beside a composition", () => {
+        // The grammar refuses the pair. A block that reaches the renderer without a parse would otherwise
+        // dispatch the composition and drop the orientation in silence.
+        const block: ChartBlock = {
+            kind: "chart",
+            id: "b1",
+            binding: { kind: "artifact-table", path: "table.csv", hash: "sha256:00" },
+            composition: { series: [{ form: "bar", encoding: { x: "set", y: "nes" } }] },
+            orientation: "horizontal",
+        };
+        const problem = deriveChartOption(block, nesRows)._unsafeUnwrapErr();
+        expect(problem.blockId).toBe("b1");
+        expect(problem.detail).toContain("orientation");
+        expect(problem.detail).toContain("composition");
     });
 
     it("carries the orientation through the quick path that names its points", () => {
